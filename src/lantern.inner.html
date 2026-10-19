@@ -13083,6 +13083,2665 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // MODULE: GUIDE_RF - END
 // ===========================================================================
+// ===========================================================================
+// MODULE: DECKPLATE_TAGS - START
+// Depends: CORE
+// Exports: Lantern.DP (namespace), Lantern.DP.parseTags, Lantern.DP.parseID3,
+//          Lantern.DP.parseID3v1, Lantern.DP.parseFLAC, Lantern.DP.parseM4A,
+//          Lantern.DP.nameFallback, Lantern.DP.parseLRC, Lantern.DP.msTag
+// ===========================================================================
+// Pure audio-tag readers for the Deckplate music player: ID3v1/v2.2/v2.3/v2.4
+// (titles, artists, albums, track numbers, embedded art, USLT/SYLT lyrics),
+// FLAC Vorbis comments + PICTURE, iTunes-style M4A ilst atoms, filename
+// fallbacks, and an LRC (timestamped lyric) parser. Buffer in, plain object
+// out; no DOM, no storage, no Lantern calls beyond the namespace attach.
+(function () {
+  var DP = window.Lantern.DP = window.Lantern.DP || {};
+  function latin1(u8) { var s = "", i; for (i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]); return s; }
+  function syncsafe(u8, o) { return ((u8[o] & 0x7f) << 21) | ((u8[o + 1] & 0x7f) << 14) | ((u8[o + 2] & 0x7f) << 7) | (u8[o + 3] & 0x7f); }
+  function trim(s) {
+    var parts = s.replace(/\u0000+$/g, "").split("\u0000"), out = [], i;
+    for (i = 0; i < parts.length; i++) if (parts[i]) out.push(parts[i]);
+    return out.join(" / ").replace(/^\s+|\s+$/g, "");
+  }
+  function decodeText(u8, enc) {
+    try {
+      if (enc === 0) return trim(latin1(u8));
+      if (enc === 3) return trim(new TextDecoder("utf-8").decode(u8));
+      if (enc === 2) return trim(new TextDecoder("utf-16be").decode(u8));
+      if (u8.length >= 2 && u8[0] === 0xff && u8[1] === 0xfe) return trim(new TextDecoder("utf-16le").decode(u8.subarray(2)));
+      if (u8.length >= 2 && u8[0] === 0xfe && u8[1] === 0xff) return trim(new TextDecoder("utf-16be").decode(u8.subarray(2)));
+      return trim(new TextDecoder("utf-16le").decode(u8));
+    } catch (e) { return trim(latin1(u8)); }
+  }
+  function deUnsync(u8) {
+    var out = new Uint8Array(u8.length), j = 0, i;
+    for (i = 0; i < u8.length; i++) { out[j++] = u8[i]; if (u8[i] === 0xff && i + 1 < u8.length && u8[i + 1] === 0x00) i++; }
+    return out.subarray(0, j);
+  }
+  function skipTerminated(u8, p, wide) {
+    if (wide) { while (p + 1 < u8.length && !(u8[p] === 0 && u8[p + 1] === 0)) p += 2; return p + 2; }
+    while (p < u8.length && u8[p] !== 0) p++;
+    return p + 1;
+  }
+  function msTag(ms) {
+    ms = Math.max(0, Math.round(ms));
+    var m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000), c = Math.floor((ms % 1000) / 10);
+    function p(n) { return String(n).length < 2 ? "0" + n : String(n); }
+    return p(m) + ":" + p(s) + "." + p(c);
+  }
+  function parseID3(buf) {
+    var u8 = new Uint8Array(buf);
+    if (u8.length < 10 || u8[0] !== 0x49 || u8[1] !== 0x44 || u8[2] !== 0x33) return null;
+    var ver = u8[3], flags = u8[5];
+    var tagSize = syncsafe(u8, 6);
+    var body = u8.subarray(10, Math.min(10 + tagSize, u8.length));
+    if ((flags & 0x80) && ver < 4) body = deUnsync(body);
+    var off = 0;
+    var dv = new DataView(body.buffer, body.byteOffset, body.byteLength);
+    if (flags & 0x40) { off += (ver === 4) ? syncsafe(body, 0) : dv.getUint32(0) + 4; }
+    var out = {};
+    var idLen = ver === 2 ? 3 : 4, hdrLen = ver === 2 ? 6 : 10;
+    var map2 = { TT2: "TIT2", TP1: "TPE1", TP2: "TPE2", TAL: "TALB", TRK: "TRCK", TYE: "TYER", PIC: "APIC", ULT: "USLT", SLT: "SYLT" };
+    while (off + hdrLen <= body.length) {
+      var id = "", i, c;
+      for (i = 0; i < idLen; i++) { c = body[off + i]; if (c < 0x20) { id = ""; break; } id += String.fromCharCode(c); }
+      if (!id) break;
+      var fsize;
+      if (ver === 2) fsize = (body[off + 3] << 16) | (body[off + 4] << 8) | body[off + 5];
+      else if (ver === 3) fsize = dv.getUint32(off + 4);
+      else fsize = syncsafe(body, off + 4);
+      var fstart = off + hdrLen, fend = fstart + fsize;
+      if (fsize <= 0 || fend > body.length) break;
+      var skip = false, fr = body.subarray(fstart, fend);
+      if (ver >= 3) {
+        var f2 = body[off + 9];
+        if (ver === 3 && (f2 & 0xc0)) skip = true;
+        if (ver === 4 && (f2 & 0x0c)) skip = true;
+        if (ver === 4 && (f2 & 0x01)) fr = fr.subarray(4);
+        if (ver === 4 && (f2 & 0x02)) fr = deUnsync(fr);
+      }
+      var fid = ver === 2 ? (map2[id] || id) : id;
+      if (!skip) {
+        if (fid === "TIT2" || fid === "TPE1" || fid === "TPE2" || fid === "TALB" || fid === "TRCK" || fid === "TYER" || fid === "TDRC") {
+          var txt = decodeText(fr.subarray(1), fr[0]);
+          if (fid === "TIT2") out.title = out.title || txt;
+          else if (fid === "TPE1") out.artist = out.artist || txt;
+          else if (fid === "TPE2") out.albumArtist = out.albumArtist || txt;
+          else if (fid === "TALB") out.album = out.album || txt;
+          else if (fid === "TRCK") out.track = out.track || parseInt(txt, 10) || undefined;
+          else out.year = out.year || parseInt(txt, 10) || undefined;
+        } else if (fid === "USLT" && !out.lyrics) {
+          var p1 = 0, enc1 = fr[p1]; p1 += 4;
+          p1 = skipTerminated(fr, p1, enc1 === 1 || enc1 === 2);
+          var ly = decodeText(fr.subarray(p1), enc1).replace(/^\s+|\s+$/g, "");
+          if (ly) out.lyrics = ly;
+        } else if (fid === "SYLT" && !out.syncedLyrics) {
+          var p2 = 0, enc2 = fr[p2]; p2 += 4;
+          var tsf = fr[p2]; p2 += 2;
+          p2 = skipTerminated(fr, p2, enc2 === 1 || enc2 === 2);
+          if (tsf === 2) { // milliseconds; MPEG-frame stamps need the frame rate
+            var ents = [];
+            while (p2 < fr.length) {
+              var s0 = p2, etxt;
+              if (enc2 === 1 || enc2 === 2) { while (p2 + 1 < fr.length && !(fr[p2] === 0 && fr[p2 + 1] === 0)) p2 += 2; etxt = decodeText(fr.subarray(s0, p2), enc2); p2 += 2; }
+              else { while (p2 < fr.length && fr[p2] !== 0) p2++; etxt = decodeText(fr.subarray(s0, p2), enc2); p2++; }
+              if (p2 + 4 > fr.length) break;
+              var ems = ((fr[p2] << 24) | (fr[p2 + 1] << 16) | (fr[p2 + 2] << 8) | fr[p2 + 3]) >>> 0; p2 += 4;
+              ents.push({ ms: ems, text: etxt.replace(/^\n+/, "").replace(/^\s+|\s+$/g, "") });
+            }
+            if (ents.length) {
+              ents.sort(function (a, b) { return a.ms - b.ms; });
+              var lines = [], k;
+              for (k = 0; k < ents.length; k++) lines.push("[" + msTag(ents[k].ms) + "]" + (ents[k].text ? " " + ents[k].text : ""));
+              out.syncedLyrics = lines.join("\n");
+            }
+          }
+        } else if (fid === "APIC" && !out.art) {
+          var p3 = 0, enc3 = fr[p3++], mime = "";
+          if (ver === 2) { mime = "image/" + latin1(fr.subarray(p3, p3 + 3)).toLowerCase(); p3 += 3; if (mime === "image/jpg") mime = "image/jpeg"; }
+          else { var s1 = p3; while (p3 < fr.length && fr[p3] !== 0) p3++; mime = latin1(fr.subarray(s1, p3)).toLowerCase(); p3++; }
+          p3++; // picture type
+          p3 = skipTerminated(fr, p3, enc3 === 1 || enc3 === 2);
+          if (p3 < fr.length) out.art = { mime: mime || "image/jpeg", data: fr.slice(p3) };
+        }
+      }
+      off = fend;
+    }
+    return out;
+  }
+  function parseID3v1(last128) {
+    var u8 = last128;
+    if (!u8 || u8.length < 128 || u8[0] !== 0x54 || u8[1] !== 0x41 || u8[2] !== 0x47) return null;
+    function f(a, b) { return latin1(u8.subarray(a, b)).replace(/\u0000[\s\S]*$/, "").replace(/^\s+|\s+$/g, ""); }
+    var out = {};
+    out.title = f(3, 33) || undefined;
+    out.artist = f(33, 63) || undefined;
+    out.album = f(63, 93) || undefined;
+    out.year = parseInt(f(93, 97), 10) || undefined;
+    if (u8[125] === 0 && u8[126] !== 0) out.track = u8[126];
+    return out;
+  }
+  function parseFLAC(buf) {
+    var u8 = new Uint8Array(buf);
+    if (u8.length < 8 || latin1(u8.subarray(0, 4)) !== "fLaC") return null;
+    var dv = new DataView(buf);
+    var out = {}, p = 4;
+    while (p + 4 <= u8.length) {
+      var h = u8[p], last = h & 0x80, type = h & 0x7f;
+      var len = (u8[p + 1] << 16) | (u8[p + 2] << 8) | u8[p + 3];
+      var body = p + 4;
+      if (body + len > u8.length) break;
+      if (type === 4) {
+        var q = body;
+        var vlen = dv.getUint32(q, true); q += 4 + vlen;
+        var count = dv.getUint32(q, true); q += 4;
+        for (var i = 0; i < count && q + 4 <= body + len; i++) {
+          var l = dv.getUint32(q, true); q += 4;
+          if (q + l > body + len) break;
+          var s = "";
+          try { s = new TextDecoder("utf-8").decode(u8.subarray(q, q + l)); } catch (e) {}
+          q += l;
+          var eq = s.indexOf("="); if (eq < 0) continue;
+          var k = s.slice(0, eq).toUpperCase(), v = s.slice(eq + 1);
+          if (k === "TITLE") out.title = out.title || v;
+          else if (k === "ARTIST") out.artist = out.artist || v;
+          else if (k === "ALBUM") out.album = out.album || v;
+          else if (k === "ALBUMARTIST") out.albumArtist = out.albumArtist || v;
+          else if (k === "TRACKNUMBER") out.track = out.track || parseInt(v, 10) || undefined;
+          else if (k === "DATE") out.year = out.year || parseInt(v, 10) || undefined;
+          else if (k === "LYRICS" || k === "UNSYNCEDLYRICS") out.lyrics = out.lyrics || v;
+        }
+      } else if (type === 6 && !out.art) {
+        var q2 = body + 4;
+        var ml = dv.getUint32(q2); q2 += 4;
+        var mime = latin1(u8.subarray(q2, q2 + ml)); q2 += ml;
+        var dl = dv.getUint32(q2); q2 += 4 + dl;
+        q2 += 16;
+        var il = dv.getUint32(q2); q2 += 4;
+        if (q2 + il <= body + len) out.art = { mime: mime || "image/jpeg", data: u8.slice(q2, q2 + il) };
+      }
+      p = body + len;
+      if (last) break;
+    }
+    return out;
+  }
+  function parseM4A(buf) {
+    var u8 = new Uint8Array(buf), dv = new DataView(buf);
+    if (u8.length < 12 || latin1(u8.subarray(4, 8)) !== "ftyp") return null;
+    function walk(start, end, cb) {
+      var p = start;
+      while (p + 8 <= end) {
+        var sz = dv.getUint32(p), t = latin1(u8.subarray(p + 4, p + 8)), hs = 8;
+        if (sz === 1) break; // 64-bit atoms: beyond this reader (and ES2017)
+        if (sz === 0) sz = end - p;
+        if (sz < hs || p + sz > end) break;
+        cb(t, p + hs, p + sz);
+        p += sz;
+      }
+    }
+    var ilst = null;
+    walk(0, u8.length, function (t, b, e) { if (t === "moov") walk(b, e, function (t2, b2, e2) { if (t2 === "udta") walk(b2, e2, function (t3, b3, e3) { if (t3 === "meta") walk(b3 + 4, e3, function (t4, b4, e4) { if (t4 === "ilst") ilst = [b4, e4]; }); }); }); });
+    if (!ilst) return {};
+    var out = {};
+    var names = {}; names["\u00a9nam"] = "title"; names["\u00a9ART"] = "artist"; names["\u00a9alb"] = "album";
+    names.aART = "albumArtist"; names["\u00a9day"] = "year"; names["\u00a9lyr"] = "lyrics"; names.trkn = "track"; names.covr = "art";
+    walk(ilst[0], ilst[1], function (item, b, e) {
+      var key = names[item]; if (!key) return;
+      walk(b, e, function (t2, b2, e2) {
+        if (t2 !== "data") return;
+        var kind = dv.getUint32(b2) & 0xffffff;
+        var payload = u8.subarray(b2 + 8, e2);
+        if (key === "track") { if (payload.length >= 4) out.track = out.track || ((payload[2] << 8) | payload[3]) || undefined; }
+        else if (key === "art") { if (!out.art) out.art = { mime: kind === 14 ? "image/png" : "image/jpeg", data: payload.slice() }; }
+        else {
+          var s = "";
+          try { s = new TextDecoder("utf-8").decode(payload); } catch (e3) {}
+          if (key === "year") out.year = out.year || parseInt(s, 10) || undefined;
+          else if (s) out[key] = out[key] || s;
+        }
+      });
+    });
+    return out;
+  }
+  function nameFallback(name, relPath) {
+    var base = (name || "").replace(/\.[^.]+$/, "");
+    var out = {}, rest = base;
+    var m = base.match(/^\s*(\d{1,3})\s*[-\u2013\u2014._)\]]*\s+(.+)$/);
+    if (m) { out.track = parseInt(m[1], 10); rest = m[2]; }
+    var parts = rest.split(/\s+-\s+/);
+    if (parts.length >= 2) { out.artist = parts[0].replace(/^\s+|\s+$/g, ""); out.title = parts.slice(1).join(" - ").replace(/^\s+|\s+$/g, ""); }
+    else out.title = rest.replace(/^\s+|\s+$/g, "");
+    if (relPath) {
+      var seg = String(relPath).split("/"), keep = [], i;
+      for (i = 0; i < seg.length; i++) if (seg[i]) keep.push(seg[i]);
+      if (keep.length >= 2) out.album = keep[keep.length - 2];
+      if (keep.length >= 3) out.folderArtist = keep[keep.length - 3];
+    }
+    return out;
+  }
+  function parseTags(buf, name) {
+    var u8 = new Uint8Array(buf);
+    var tags = null;
+    if (u8.length >= 4 && u8[0] === 0x49 && u8[1] === 0x44 && u8[2] === 0x33) tags = parseID3(buf);
+    else if (u8.length >= 4 && latin1(u8.subarray(0, 4)) === "fLaC") tags = parseFLAC(buf);
+    else if (u8.length >= 12 && latin1(u8.subarray(4, 8)) === "ftyp") tags = parseM4A(buf);
+    tags = tags || {};
+    if ((!tags.title || !tags.artist) && /\.mp3$/i.test(name || "") && u8.length >= 128) {
+      var v1 = parseID3v1(u8.subarray(u8.length - 128));
+      if (v1) {
+        var ks = ["title", "artist", "album", "track", "year"], i;
+        for (i = 0; i < ks.length; i++) if (!tags[ks[i]] && v1[ks[i]]) tags[ks[i]] = v1[ks[i]];
+      }
+    }
+    return tags;
+  }
+  function parseLRC(raw) {
+    var out = { synced: false, lines: [] };
+    if (!raw) return out;
+    var offset = 0, timed = [], plain = [];
+    var rx = /^\s*\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/;
+    var srcLines = String(raw).replace(/\r/g, "").split("\n"), li;
+    for (li = 0; li < srcLines.length; li++) {
+      var line = srcLines[li];
+      var om = line.match(/^\s*\[offset:\s*([+-]?\d+)\s*\]\s*$/i);
+      if (om) { offset = parseInt(om[1], 10) || 0; continue; }
+      var rest = line, m, times = [];
+      while ((m = rest.match(rx))) {
+        var frac = m[3] ? +((m[3] + "00").slice(0, 3)) : 0;
+        times.push((+m[1]) * 60000 + (+m[2]) * 1000 + frac);
+        rest = rest.slice(m[0].length);
+      }
+      var text = rest.replace(/<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>/g, "").replace(/^\s+|\s+$/g, "");
+      if (times.length) { for (var ti = 0; ti < times.length; ti++) timed.push({ ms: times[ti], text: text }); }
+      else if (!/^\s*\[[a-z]{2,}:[^\]]*\]\s*$/i.test(line)) plain.push(line.replace(/\s+$/, ""));
+    }
+    if (timed.length) {
+      out.synced = true;
+      timed.sort(function (a, b) { return a.ms - b.ms; });
+      for (var i2 = 0; i2 < timed.length; i2++) out.lines.push({ ms: Math.max(0, timed[i2].ms - offset), text: timed[i2].text });
+    } else {
+      while (plain.length && plain[0] === "") plain.shift();
+      while (plain.length && plain[plain.length - 1] === "") plain.pop();
+      for (var i3 = 0; i3 < plain.length; i3++) out.lines.push({ ms: null, text: plain[i3] });
+    }
+    return out;
+  }
+  DP.parseID3 = parseID3; DP.parseID3v1 = parseID3v1; DP.parseFLAC = parseFLAC;
+  DP.parseM4A = parseM4A; DP.parseTags = parseTags; DP.nameFallback = nameFallback;
+  DP.parseLRC = parseLRC; DP.msTag = msTag; DP.syncsafe = syncsafe; DP.latin1 = latin1;
+})();
+// ===========================================================================
+// MODULE: DECKPLATE_TAGS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: DECKPLATE_STORE - START
+// Depends: DECKPLATE_TAGS
+// Exports: (extends Lantern.DP: store, dirsAll/dirsAddIfNew/dirsDel/dirsClear,
+//          tombAdd/tombDel/tombsAll/tombsClear, state fields)
+// ===========================================================================
+// Storage note (deliberate deviation from rule 6): audio files are binary
+// blobs, often hundreds of MB per library. Lantern.store is a JSON string
+// wrapper over localStorage (~5 MB cap) and cannot hold them, so Deckplate
+// keeps its library in its own IndexedDB ("deckplate": tracks, watched-folder
+// handles, deletion tombstones). Consequences, stated in GUIDE_DECKPLATE too:
+// the music library is NOT included in Backup's JSON export, and in browser
+// contexts that block IndexedDB the player runs session-only with a warning.
+(function () {
+  var B = window.Lantern.DP;
+  B.db = null; B.sessionOnly = false;
+  B.mem = { arr: [], nid: 1 };
+  B.lib = []; B.byId = {}; B.artURLs = {};
+  function idbOpen() {
+    return new Promise(function (res, rej) {
+      var r;
+      try { r = indexedDB.open("deckplate", 2); } catch (e) { rej(e); return; }
+      r.onupgradeneeded = function (e) {
+        var d = e.target.result;
+        if (!d.objectStoreNames.contains("tracks")) d.createObjectStore("tracks", { keyPath: "id", autoIncrement: true });
+        if (!d.objectStoreNames.contains("dirs")) d.createObjectStore("dirs", { keyPath: "id", autoIncrement: true });
+        if (!d.objectStoreNames.contains("tombs")) d.createObjectStore("tombs", { keyPath: "sig" });
+      };
+      r.onsuccess = function () { res(r.result); };
+      r.onerror = function () { rej(r.error || new Error("idb")); };
+    });
+  }
+  function req(r) { return new Promise(function (res, rej) { r.onsuccess = function () { res(r.result); }; r.onerror = function () { rej(r.error); }; }); }
+  function os(name, mode) { return B.db.transaction(name, mode).objectStore(name); }
+  B.store = {
+    init: async function () {
+      try { B.db = await idbOpen(); await req(os("tracks", "readonly").count()); }
+      catch (e) { B.db = null; B.sessionOnly = true; }
+    },
+    all: async function () { return B.sessionOnly ? B.mem.arr.slice() : req(os("tracks", "readonly").getAll()); },
+    add: async function (rec) {
+      if (B.sessionOnly) { rec.id = B.mem.nid++; B.mem.arr.push(rec); return rec.id; }
+      return req(os("tracks", "readwrite").put(rec));
+    },
+    update: async function (rec) { if (B.sessionOnly) return; try { await req(os("tracks", "readwrite").put(rec)); } catch (e) {} },
+    del: async function (id) {
+      if (B.sessionOnly) { B.mem.arr = B.mem.arr.filter(function (r) { return r.id !== id; }); return; }
+      return req(os("tracks", "readwrite").delete(id));
+    },
+    clear: async function () { if (B.sessionOnly) { B.mem.arr = []; return; } return req(os("tracks", "readwrite").clear()); }
+  };
+  B.dirsAll = async function () { if (B.sessionOnly || !B.db) return []; try { return await req(os("dirs", "readonly").getAll()); } catch (e) { return []; } };
+  B.dirsAddIfNew = async function (handle) {
+    if (B.sessionOnly || !B.db || !handle) return false;
+    try {
+      var cur = await B.dirsAll(), i;
+      for (i = 0; i < cur.length; i++) { try { if (cur[i].handle && await cur[i].handle.isSameEntry(handle)) return false; } catch (e) {} }
+      await req(os("dirs", "readwrite").put({ name: handle.name || "folder", handle: handle, addedAt: Date.now() }));
+      return true;
+    } catch (e2) { return false; }
+  };
+  B.dirsDel = async function (id) { if (B.sessionOnly || !B.db) return; try { await req(os("dirs", "readwrite").delete(id)); } catch (e) {} };
+  B.dirsClear = async function () { if (B.sessionOnly || !B.db) return; try { await req(os("dirs", "readwrite").clear()); } catch (e) {} };
+  B.tombAdd = async function (sig) { if (B.sessionOnly || !B.db) return; try { await req(os("tombs", "readwrite").put({ sig: sig })); } catch (e) {} };
+  B.tombDel = async function (sig) { if (B.sessionOnly || !B.db) return; try { await req(os("tombs", "readwrite").delete(sig)); } catch (e) {} };
+  B.tombsAll = async function () {
+    if (B.sessionOnly || !B.db) return {};
+    try {
+      var rows = await req(os("tombs", "readonly").getAll()), out = {}, i;
+      for (i = 0; i < rows.length; i++) out[rows[i].sig] = 1;
+      return out;
+    } catch (e) { return {}; }
+  };
+  B.tombsClear = async function () { if (B.sessionOnly || !B.db) return; try { await req(os("tombs", "readwrite").clear()); } catch (e) {} };
+  B.indexLib = function () { var m = {}, i; for (i = 0; i < B.lib.length; i++) m[B.lib[i].id] = B.lib[i]; B.byId = m; };
+  B.artURL = function (rec) {
+    if (!rec || !rec.art || typeof URL.createObjectURL !== "function") return null;
+    if (!B.artURLs[rec.id]) B.artURLs[rec.id] = URL.createObjectURL(rec.art);
+    return B.artURLs[rec.id];
+  };
+})();
+// ===========================================================================
+// MODULE: DECKPLATE_STORE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: DECKPLATE_UI - START
+// Depends: CORE, DECKPLATE_STORE
+// Exports: (extends Lantern.DP: injectCss, $, esc, fmtTime, fmtBytes, ICON,
+//          toast, showBar, hideBar, openModal, closeModal, closeSheet)
+// ===========================================================================
+// Styling follows the STYLES mechanism (rule 5: CSS as a JS string, no style
+// tags in markup) with every selector scoped under .dp-root or #dp- ids so
+// nothing leaks into the rest of the suite. Injected once, on first mount.
+(function () {
+  var B = window.Lantern.DP;
+  B.$ = function (id) { return document.getElementById(id); };
+  B.esc = function (s) { return window.Lantern.esc(s); };
+  B.fmtTime = function (sec) {
+    if (!isFinite(sec) || sec <= 0) return "\u2013:\u2013\u2013";
+    sec = Math.round(sec);
+    var s = String(sec % 60);
+    return Math.floor(sec / 60) + ":" + (s.length < 2 ? "0" + s : s);
+  };
+  B.fmtBytes = function (n) {
+    if (!n) return "0 MB";
+    var g = n / 1073741824;
+    return g >= 1 ? g.toFixed(2) + " GB" : (n / 1048576).toFixed(0) + " MB";
+  };
+  B.ICON = {
+    prev: "<svg viewBox=\"0 0 24 24\"><path d=\"M7 5v14\"/><path d=\"M18 5l-9 7 9 7z\"/><\u002Fsvg>",
+    next: "<svg viewBox=\"0 0 24 24\"><path d=\"M17 5v14\"/><path d=\"M6 5l9 7-9 7z\"/><\u002Fsvg>",
+    play: "<svg viewBox=\"0 0 24 24\"><path d=\"M8 5l11 7-11 7z\"/><\u002Fsvg>",
+    pause: "<svg viewBox=\"0 0 24 24\"><path d=\"M8 5v14M16 5v14\"/><\u002Fsvg>",
+    shuf: "<svg viewBox=\"0 0 24 24\"><path d=\"M3 7h3.6l3.6 3.5M12.9 14.6l2.5 2.4H20M3 17h3.6l3.6-3.5M12.9 9.4L15.4 7H20\"/><path d=\"M17.8 4.8L20 7l-2.2 2.2M17.8 14.8L20 17l-2.2 2.2\"/><\u002Fsvg>",
+    rep: "<svg viewBox=\"0 0 24 24\"><path d=\"M16.5 4.5L19 7l-2.5 2.5M19 7H8a4.2 4.2 0 0 0-4.2 4.2M7.5 19.5L5 17l2.5-2.5M5 17h11a4.2 4.2 0 0 0 4.2-4.2\"/><\u002Fsvg>",
+    cc: "<svg viewBox=\"0 0 24 24\"><rect x=\"3.2\" y=\"5.5\" width=\"17.6\" height=\"13\" rx=\"2\"/><path d=\"M7 11h4.5M7 14.5h7.5M14 11h3\"/><\u002Fsvg>",
+    dots: "<svg viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"5.5\" r=\"1.8\"/><circle cx=\"12\" cy=\"12\" r=\"1.8\"/><circle cx=\"12\" cy=\"18.5\" r=\"1.8\"/><\u002Fsvg>",
+    gear: "<svg viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"3.2\"/><path d=\"M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1\"/><\u002Fsvg>"
+  };
+  B.cssDone = false;
+  B.injectCss = function () {
+    if (B.cssDone) return;
+    B.cssDone = true;
+    var css = [
+      ".dp-root{--dps:#17191c;--dpp:#1e2126;--dpp2:#24282e;--dpl:#2e333a;--dpt:#e9e5da;--dpd:#8f8b81;--dpa:#ffb454;--dpad:#b57a2a;--dpr:#e0604f;",
+      "--dpm:ui-monospace,'Cascadia Mono','Roboto Mono',Menlo,Consolas,monospace;",
+      "background:var(--dps);color:var(--dpt);font:15px/1.45 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;min-height:calc(100vh - 56px);padding-bottom:24px;}",
+      ".dp-root *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}",
+      ".dp-root [hidden]{display:none !important;}",
+      ".dp-root button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;min-height:0;min-width:0;border-radius:0;}",
+      ".dp-root :focus-visible{outline:2px solid var(--dpa);outline-offset:2px;border-radius:2px;}",
+      ".dp-lbl{font:600 10px/1 var(--dpm);letter-spacing:.14em;text-transform:uppercase;color:var(--dpd);}",
+      ".dp-hdr{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px 10px;border-bottom:1px solid var(--dpl);}",
+      ".dp-brand{display:flex;align-items:center;gap:10px;min-width:0;}",
+      ".dp-word{font:700 13px/1 var(--dpm);letter-spacing:.22em;color:var(--dpt);}",
+      ".dp-led{width:8px;height:8px;border-radius:50%;background:#3a3e45;box-shadow:0 0 0 1px #000 inset;flex:none;}",
+      ".dp-led.on{background:var(--dpa);box-shadow:0 0 6px 1px rgba(255,180,84,.55);animation:dp-breathe 2.6s ease-in-out infinite;}",
+      "@keyframes dp-breathe{0%,100%{opacity:1}50%{opacity:.45}}",
+      "@media (prefers-reduced-motion:reduce){.dp-root .dp-led.on{animation:none;}}",
+      ".dp-hbtns{display:flex;gap:8px;}",
+      ".dp-hbtn{font:600 11px/1 var(--dpm);letter-spacing:.06em;padding:8px 11px;border:1px solid var(--dpl);border-radius:3px;background:var(--dpp);color:var(--dpt);white-space:nowrap;}",
+      ".dp-hbtn:active{background:var(--dpp2);}",
+      ".dp-hbtn.icon{padding:7px 9px;}.dp-hbtn.icon svg{width:15px;height:15px;display:block;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;}",
+      ".dp-tabs{display:flex;gap:2px;border-bottom:1px solid var(--dpl);padding:0 8px;}",
+      ".dp-tab{font:600 10px/1 var(--dpm);letter-spacing:.14em;text-transform:uppercase;color:var(--dpd);padding:11px 10px 9px;border-bottom:2px solid transparent;margin-bottom:-1px;}",
+      ".dp-tab.on{color:var(--dpa);border-bottom-color:var(--dpa);}",
+      ".dp-searchrow{padding:10px 14px 4px;}",
+      "#dp-search{width:100%;background:var(--dpp);border:1px solid var(--dpl);border-radius:3px;color:var(--dpt);font:14px/1 system-ui,sans-serif;padding:9px 11px;outline:none;min-height:0;}",
+      "#dp-search:focus{border-color:var(--dpad);}#dp-search::placeholder{color:var(--dpd);}",
+      "#dp-content{padding:6px 0 40px;}",
+      ".dp-root.hasnp #dp-content{padding-bottom:150px;}",
+      ".dp-chips{display:flex;align-items:center;gap:8px;padding:8px 14px;flex-wrap:wrap;}",
+      ".dp-chip{display:inline-flex;align-items:center;gap:7px;font:600 11px/1 var(--dpm);letter-spacing:.05em;padding:9px 13px;border:1px solid var(--dpl);border-radius:3px;background:var(--dpp);}",
+      ".dp-chip svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;}",
+      ".dp-chip.hot{border-color:var(--dpad);color:var(--dpa);}",
+      ".dp-count{margin-left:auto;}",
+      ".dp-row{display:flex;align-items:center;gap:11px;padding:8px 8px 8px 14px;width:100%;}",
+      ".dp-row:active{background:var(--dpp);}",
+      ".dp-hit{display:flex;align-items:center;gap:11px;flex:1;min-width:0;text-align:left;padding:0;}",
+      ".dp-thumb{width:42px;height:42px;border-radius:3px;background:var(--dpp2);flex:none;overflow:hidden;display:flex;align-items:center;justify-content:center;border:1px solid var(--dpl);}",
+      ".dp-thumb img{width:100%;height:100%;object-fit:cover;display:block;}",
+      ".dp-ph{font:700 13px var(--dpm);color:var(--dpad);}",
+      ".dp-rmeta{flex:1;min-width:0;}",
+      ".dp-rtitle{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+      ".dp-rsub{font-size:12.5px;color:var(--dpd);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}",
+      ".dp-rdur{font:12px var(--dpm);color:var(--dpd);font-variant-numeric:tabular-nums;flex:none;}",
+      ".dp-rnum{font:12px var(--dpm);color:var(--dpad);width:22px;text-align:right;flex:none;font-variant-numeric:tabular-nums;}",
+      ".dp-more{padding:10px;color:var(--dpd);flex:none;border-radius:3px;}",
+      ".dp-more svg{width:16px;height:16px;display:block;fill:currentColor;}",
+      ".dp-row.playing .dp-rtitle{color:var(--dpa);}",
+      ".dp-qled{width:6px;height:6px;border-radius:50%;background:var(--dpa);flex:none;box-shadow:0 0 5px rgba(255,180,84,.6);}",
+      ".dp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(138px,1fr));gap:14px;padding:10px 14px;}",
+      ".dp-tile{text-align:left;}",
+      ".dp-cover{aspect-ratio:1;border-radius:3px;overflow:hidden;background:var(--dpp2);border:1px solid var(--dpl);display:flex;align-items:center;justify-content:center;margin-bottom:7px;}",
+      ".dp-cover img{width:100%;height:100%;object-fit:cover;display:block;}",
+      ".dp-cover .dp-ph{font-size:22px;}",
+      ".dp-t1{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+      ".dp-t2{font-size:12px;color:var(--dpd);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+      ".dp-dethead{display:flex;gap:14px;padding:14px;align-items:flex-end;}",
+      ".dp-dethead .dp-cover{width:112px;height:112px;flex:none;margin:0;}",
+      ".dp-dethead .dp-cover .dp-ph{font-size:30px;}",
+      ".dp-dethead h2{margin:0 0 3px;font-size:18px;line-height:1.25;font-weight:700;}",
+      ".dp-backrow{padding:10px 14px 0;}",
+      ".dp-back{font:600 10px/1 var(--dpm);letter-spacing:.14em;text-transform:uppercase;color:var(--dpd);padding:6px 8px 6px 0;}",
+      ".dp-empty{margin:48px auto;max-width:430px;padding:0 22px;text-align:center;}",
+      ".dp-empty .dp-panel{border:1px solid var(--dpl);border-radius:4px;background:var(--dpp);padding:30px 22px;}",
+      ".dp-empty p{color:var(--dpd);font-size:14px;margin:12px 0 20px;}",
+      "#dp-transport{position:fixed;left:0;right:0;bottom:0;z-index:40;background:var(--dpp);border-top:1px solid var(--dpl);padding:9px 14px;box-shadow:0 -8px 24px rgba(0,0,0,.45);}",
+      ".dp-trow1{display:flex;align-items:center;gap:11px;}",
+      "#dp-npart{width:46px;height:46px;border-radius:3px;overflow:hidden;background:var(--dpp2);border:1px solid var(--dpl);flex:none;display:flex;align-items:center;justify-content:center;}",
+      "#dp-npart img{width:100%;height:100%;object-fit:cover;display:block;}",
+      "#dp-npmeta{flex:1;min-width:0;}",
+      "#dp-nptitle{font-weight:600;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+      "#dp-npartist{font-size:12px;color:var(--dpd);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+      ".dp-tbtn{padding:9px;color:var(--dpt);border-radius:3px;flex:none;}",
+      ".dp-tbtn svg{width:20px;height:20px;display:block;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;}",
+      ".dp-tbtn.big{border:1px solid var(--dpl);background:var(--dpp2);}.dp-tbtn.big svg{width:22px;height:22px;}",
+      ".dp-trow2{display:flex;align-items:center;gap:10px;margin-top:7px;}",
+      ".dp-time{font:12px var(--dpm);color:var(--dpa);font-variant-numeric:tabular-nums;flex:none;min-width:38px;}",
+      "#dp-tdur{color:var(--dpd);text-align:right;}",
+      "#dp-seek{flex:1;appearance:none;-webkit-appearance:none;height:3px;border-radius:2px;background:linear-gradient(90deg,var(--dpa) var(--p,0%),var(--dpl) var(--p,0%));min-height:0;padding:0;border:0;}",
+      "#dp-seek::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:11px;height:11px;border-radius:2px;background:var(--dpa);border:0;}",
+      "#dp-seek::-moz-range-thumb{width:11px;height:11px;border-radius:2px;background:var(--dpa);border:0;}",
+      "#dp-seek::-moz-range-track{background:transparent;}",
+      ".dp-mbtn{padding:8px;color:var(--dpd);flex:none;border-radius:3px;position:relative;}",
+      ".dp-mbtn svg{width:16px;height:16px;display:block;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}",
+      ".dp-mbtn.on{color:var(--dpa);}",
+      ".dp-mbtn[data-mode=one]:after{content:\"1\";position:absolute;top:1px;right:1px;font:700 8px var(--dpm);color:var(--dpa);}",
+      "#dp-vol{display:none;}",
+      "@media(pointer:fine){#dp-vol{display:block;width:84px;appearance:none;-webkit-appearance:none;height:3px;border-radius:2px;background:linear-gradient(90deg,var(--dpd) var(--p,100%),var(--dpl) var(--p,100%));min-height:0;padding:0;border:0;}",
+      "#dp-vol::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:9px;height:9px;border-radius:2px;background:var(--dpd);border:0;}",
+      "#dp-vol::-moz-range-thumb{width:9px;height:9px;border-radius:2px;background:var(--dpd);border:0;}#dp-vol::-moz-range-track{background:transparent;}",
+      ".dp-root .dp-row:hover{background:var(--dpp);}.dp-root .dp-tile:hover .dp-t1{color:var(--dpa);}}",
+      "#dp-importbar{position:fixed;left:14px;right:14px;bottom:14px;z-index:60;background:var(--dpp2);border:1px solid var(--dpad);border-radius:3px;padding:10px 13px;font:600 11px var(--dpm);letter-spacing:.06em;color:var(--dpa);display:flex;align-items:center;justify-content:space-between;gap:12px;}",
+      ".dp-root.hasnp #dp-importbar{bottom:136px;}",
+      "#dp-importtext{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+      "#dp-importstop{font:700 10px var(--dpm);letter-spacing:.12em;color:var(--dpr);flex:none;padding:4px 2px;}",
+      "#dp-watchbar{position:fixed;left:14px;right:14px;bottom:14px;z-index:59;background:var(--dpp2);border:1px solid var(--dpl);border-radius:3px;padding:10px 13px;font:600 11px var(--dpm);letter-spacing:.06em;color:var(--dpd);display:flex;align-items:center;justify-content:space-between;gap:12px;}",
+      ".dp-root.hasnp #dp-watchbar{bottom:136px;}",
+      "#dp-watchbar .dp-wbtns{display:flex;gap:14px;flex:none;align-items:center;}",
+      "#dp-watchcheck{font:700 10px var(--dpm);letter-spacing:.12em;color:var(--dpa);padding:4px 2px;}",
+      "#dp-watchx{color:var(--dpd);padding:4px 2px;}",
+      "#dp-toast{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;z-index:70;background:var(--dpp2);border:1px solid var(--dpl);border-radius:3px;color:var(--dpt);font-size:13px;padding:10px 15px;max-width:88vw;opacity:0;pointer-events:none;transition:opacity .18s;}",
+      "#dp-toast.show{opacity:1;}.dp-root.hasnp #dp-toast{bottom:140px;}",
+      ".dp-scrim{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:80;}",
+      "#dp-sheet{position:fixed;left:0;right:0;bottom:0;z-index:81;background:var(--dpp);border-top:1px solid var(--dpl);border-radius:8px 8px 0 0;padding:8px 8px 10px;}",
+      "#dp-sheet .dp-shead{padding:10px 12px 8px;border-bottom:1px solid var(--dpl);margin-bottom:6px;}",
+      "#dp-sheet .dp-stitle{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+      "#dp-sheet .dp-ssub{font-size:12px;color:var(--dpd);}",
+      ".dp-sitem{display:block;width:100%;text-align:left;padding:13px 12px;border-radius:3px;font-size:15px;}",
+      ".dp-sitem:active{background:var(--dpp2);}.dp-sitem.danger{color:var(--dpr);}",
+      "#dp-modal{position:fixed;z-index:81;left:50%;top:50%;transform:translate(-50%,-50%);width:min(460px,92vw);max-height:88vh;overflow:auto;background:var(--dpp);border:1px solid var(--dpl);border-radius:5px;padding:18px;}",
+      "#dp-modal h3{margin:0 0 4px;font-size:16px;font-weight:700;}",
+      "#dp-modal .dp-mbody{color:var(--dpd);font-size:13.5px;}",
+      "#dp-modal .dp-stat{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--dpl);font-size:13.5px;}",
+      "#dp-modal .dp-stat b{font-weight:600;color:var(--dpt);}",
+      "#dp-modal .dp-mrow{display:flex;gap:9px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap;}",
+      ".dp-btn{font:600 12px var(--dpm);letter-spacing:.05em;padding:10px 14px;border:1px solid var(--dpl);border-radius:3px;background:var(--dpp2);color:var(--dpt);}",
+      ".dp-btn.danger{border-color:var(--dpr);color:var(--dpr);}.dp-btn.primary{border-color:var(--dpad);color:var(--dpa);}",
+      ".dp-oitem{display:block;width:100%;text-align:left;border:1px solid var(--dpl);border-radius:3px;background:var(--dpp2);padding:12px 13px;margin-bottom:8px;}",
+      ".dp-oitem b{display:block;font-weight:600;margin-bottom:2px;}",
+      ".dp-oitem span{display:block;font-size:12.5px;color:var(--dpd);line-height:1.4;}",
+      ".dp-oitem.hot{border-color:var(--dpad);}.dp-oitem.hot b{color:var(--dpa);}",
+      ".dp-unwatch{font:700 10px var(--dpm);letter-spacing:.1em;color:var(--dpr);padding:3px 2px;}",
+      "#dp-lyrpanel{position:fixed;inset:0;top:56px;z-index:35;background:var(--dps);display:flex;flex-direction:column;}",
+      ".dp-lyrhead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:1px solid var(--dpl);flex:none;}",
+      ".dp-lyrt{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px;}",
+      "#dp-lyrbody{flex:1;overflow-y:auto;padding:16px 18px 45vh;}",
+      ".dp-root.hasnp #dp-lyrbody{padding-bottom:calc(160px + 30vh);}",
+      ".dp-lyrline{display:block;width:100%;text-align:left;font-size:17.5px;line-height:1.55;padding:7px 4px;color:var(--dpd);border-radius:3px;}",
+      ".dp-lyrline.cur{color:var(--dpa);font-weight:600;}.dp-lyrline:active{background:var(--dpp);}",
+      ".dp-lyrplain{font-size:16.5px;line-height:1.6;color:var(--dpt);padding:2px 4px;min-height:1em;}",
+      ".dp-lyrempty{margin:12vh auto 0;max-width:420px;text-align:center;color:var(--dpd);font-size:14.5px;}",
+      ".dp-lyrempty .dp-hint{font-size:12.5px;margin:10px 0 18px;}",
+      "#dp-lyrta{width:100%;height:38vh;background:var(--dpp2);border:1px solid var(--dpl);border-radius:3px;color:var(--dpt);font:13.5px/1.5 var(--dpm);padding:10px;margin-top:10px;resize:vertical;min-height:0;}",
+      "#dp-lyrta:focus{outline:none;border-color:var(--dpad);}"
+    ].join("\n");
+    var tag = document.createElement("style");
+    tag.appendChild(document.createTextNode(css));
+    document.head.appendChild(tag);
+  };
+  B.toastTimer = null;
+  B.toast = function (msg, ms) {
+    var t = B.$("dp-toast");
+    if (!t) return;
+    t.textContent = msg;
+    t.className = "show";
+    clearTimeout(B.toastTimer);
+    B.toastTimer = setTimeout(function () { t.className = ""; }, ms || 3200);
+  };
+  B.showBar = function (text) { var b = B.$("dp-importbar"); if (!b) return; B.$("dp-importtext").textContent = text; b.hidden = false; };
+  B.hideBar = function () { var b = B.$("dp-importbar"); if (b) b.hidden = true; };
+  B.openModal = function (html) {
+    var m = B.$("dp-modal"), s = B.$("dp-modalscrim");
+    if (!m) return null;
+    m.innerHTML = html;
+    m.hidden = false; s.hidden = false;
+    return m;
+  };
+  B.closeModal = function () { var m = B.$("dp-modal"), s = B.$("dp-modalscrim"); if (m) { m.hidden = true; s.hidden = true; } };
+  B.closeSheet = function () { var m = B.$("dp-sheet"), s = B.$("dp-sheetscrim"); if (m) { m.hidden = true; s.hidden = true; } };
+  B.confirmModal = function (title, body, yesLabel, onYes) {
+    var m = B.openModal("<h3>" + title + "<\u002Fh3><div class=\"dp-mbody\">" + body + "<\u002Fdiv>" +
+      "<div class=\"dp-mrow\"><button class=\"dp-btn\" data-m=\"no\">Cancel<\u002Fbutton>" +
+      "<button class=\"dp-btn danger\" data-m=\"yes\">" + yesLabel + "<\u002Fbutton><\u002Fdiv>");
+    if (!m) return;
+    m.onclick = function (e) {
+      var b = e.target.closest("[data-m]"); if (!b) return;
+      B.closeModal();
+      if (b.getAttribute("data-m") === "yes") onYes();
+    };
+  };
+})();
+// ===========================================================================
+// MODULE: DECKPLATE_UI - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: DECKPLATE_ENGINE - START
+// Depends: DECKPLATE_STORE, DECKPLATE_UI
+// Exports: (extends Lantern.DP: audio, queue state, playContext, playCurrent,
+//          stopAll, next, prev, toggleShuffle, cycleRepeat, syncTransport,
+//          timeHooks, trackHooks)
+// ===========================================================================
+// The audio element lives on the namespace, not in the workspace, so music
+// keeps playing when the person goes Home or into another app; every DOM
+// write is guarded and the transport re-syncs on the next mount. Media
+// Session (feature-detected) gives lock-screen controls where it exists.
+(function () {
+  var B = window.Lantern.DP;
+  B.queue = []; B.baseOrder = []; B.qpos = -1;
+  B.shuffleOn = false; B.repeat = "off"; B.curURL = null;
+  B.mounted = false; B.seeking = false;
+  B.timeHooks = []; B.trackHooks = [];
+  B.audio = null;
+  function ensureAudio() {
+    if (B.audio) return;
+    var a = new Audio();
+    a.preload = "auto";
+    B.audio = a;
+    a.addEventListener("ended", function () { B.next(true); });
+    a.addEventListener("play", function () {
+      var p = B.$("dp-play"), l = B.$("dp-led");
+      if (p) p.innerHTML = B.ICON.pause;
+      if (l) l.className = "dp-led on";
+      if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
+    });
+    a.addEventListener("pause", function () {
+      var p = B.$("dp-play"), l = B.$("dp-led");
+      if (p) p.innerHTML = B.ICON.play;
+      if (l) l.className = "dp-led";
+      if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
+    });
+    a.addEventListener("loadedmetadata", function () {
+      var rec = B.curRec(); if (!rec) return;
+      if (a.duration && isFinite(a.duration) && !rec.duration) {
+        rec.duration = a.duration;
+        B.store.update(rec);
+        var cell = document.querySelector(".dp-rdur[data-for=\"" + rec.id + "\"]");
+        if (cell) cell.textContent = B.fmtTime(rec.duration);
+      }
+      var d = B.$("dp-tdur");
+      if (d) d.textContent = B.fmtTime(a.duration);
+    });
+    a.addEventListener("timeupdate", function () {
+      if (!B.seeking) {
+        var c = B.$("dp-tcur"), s = B.$("dp-seek");
+        if (c) c.textContent = B.fmtTime(a.currentTime || 0);
+        if (s) {
+          var p = a.duration ? (a.currentTime / a.duration * 1000) : 0;
+          s.value = p;
+          s.style.setProperty("--p", (p / 10) + "%");
+        }
+      }
+      for (var i = 0; i < B.timeHooks.length; i++) { try { B.timeHooks[i](); } catch (e) {} }
+    });
+  }
+  B.curRec = function () { return B.qpos >= 0 ? B.byId[B.queue[B.qpos]] : null; };
+  B.shuffled = function (arr, firstId) {
+    var a = arr.slice(), i, j, t;
+    for (i = a.length - 1; i > 0; i--) { j = Math.floor(Math.random() * (i + 1)); t = a[i]; a[i] = a[j]; a[j] = t; }
+    if (firstId != null) { var k = a.indexOf(firstId); if (k > 0) { a.splice(k, 1); a.unshift(firstId); } }
+    return a;
+  };
+  B.playContext = function (ids, startId) {
+    if (!ids.length) return;
+    ensureAudio();
+    B.baseOrder = ids.slice();
+    B.queue = B.shuffleOn ? B.shuffled(ids, startId) : ids.slice();
+    B.qpos = Math.max(0, B.queue.indexOf(startId != null ? startId : B.queue[0]));
+    B.playCurrent();
+  };
+  B.playCurrent = function () {
+    ensureAudio();
+    if (B.qpos >= 0 && B.queue.length && !B.byId[B.queue[B.qpos]]) {
+      var keep = [];
+      for (var i = 0; i < B.queue.length; i++) if (B.byId[B.queue[i]]) keep.push(B.queue[i]);
+      B.qpos = Math.min(Math.max(B.qpos, 0), keep.length - 1);
+      B.queue = keep;
+    }
+    var rec = B.curRec();
+    if (!rec) { B.stopAll(); return; }
+    if (typeof URL.createObjectURL === "function") {
+      if (B.curURL) URL.revokeObjectURL(B.curURL);
+      B.curURL = URL.createObjectURL(rec.file);
+      B.audio.src = B.curURL;
+      var pr = B.audio.play();
+      if (pr && pr.catch) pr.catch(function () {});
+    }
+    B.setMediaSession(rec);
+    B.syncTransport();
+    for (var h = 0; h < B.trackHooks.length; h++) { try { B.trackHooks[h](rec); } catch (e) {} }
+  };
+  B.stopAll = function () {
+    if (B.audio) { B.audio.pause(); B.audio.removeAttribute("src"); try { B.audio.load(); } catch (e) {} }
+    B.qpos = -1; B.queue = [];
+    B.syncTransport();
+    for (var h = 0; h < B.trackHooks.length; h++) { try { B.trackHooks[h](null); } catch (e) {} }
+  };
+  B.next = function (auto) {
+    if (auto && B.repeat === "one") { B.audio.currentTime = 0; var p = B.audio.play(); if (p && p.catch) p.catch(function () {}); return; }
+    if (B.qpos + 1 < B.queue.length) { B.qpos++; B.playCurrent(); }
+    else if (B.queue.length && (B.repeat === "all" || !auto)) { B.qpos = 0; B.playCurrent(); }
+    else if (B.audio) { B.audio.pause(); if (B.queue.length) B.audio.currentTime = 0; }
+  };
+  B.prev = function () {
+    if (!B.audio) return;
+    if (B.audio.currentTime > 3 || B.qpos <= 0) { B.audio.currentTime = 0; return; }
+    B.qpos--; B.playCurrent();
+  };
+  B.toggleShuffle = function () {
+    B.shuffleOn = !B.shuffleOn;
+    var btn = B.$("dp-shuf");
+    if (btn) btn.className = "dp-mbtn" + (B.shuffleOn ? " on" : "");
+    var cur = B.qpos >= 0 ? B.queue[B.qpos] : null;
+    if (B.queue.length) {
+      if (B.shuffleOn) { B.queue = B.shuffled(B.queue, cur); B.qpos = cur != null ? 0 : B.qpos; }
+      else if (B.baseOrder.length) { B.queue = B.baseOrder.slice(); B.qpos = Math.max(0, B.queue.indexOf(cur)); }
+    }
+    if (B.view === "queue" && B.render) B.render();
+    B.toast(B.shuffleOn ? "Shuffle on" : "Shuffle off", 1400);
+  };
+  B.cycleRepeat = function () {
+    B.repeat = B.repeat === "off" ? "all" : B.repeat === "all" ? "one" : "off";
+    var btn = B.$("dp-rep");
+    if (btn) { btn.setAttribute("data-mode", B.repeat); btn.className = "dp-mbtn" + (B.repeat !== "off" ? " on" : ""); }
+    B.toast(B.repeat === "off" ? "Repeat off" : B.repeat === "all" ? "Repeat all" : "Repeat one", 1400);
+  };
+  B.setMediaSession = function (rec) {
+    if (!("mediaSession" in navigator)) return;
+    var u = B.artURL(rec);
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: rec.title, artist: rec.artist, album: rec.album,
+        artwork: u ? [{ src: u, sizes: "512x512", type: (rec.art && rec.art.type) || "image/jpeg" }] : []
+      });
+    } catch (e) {}
+    var ms = navigator.mediaSession;
+    function set(a, f) { try { ms.setActionHandler(a, f); } catch (e) {} }
+    set("play", function () { B.audio.play(); });
+    set("pause", function () { B.audio.pause(); });
+    set("previoustrack", B.prev);
+    set("nexttrack", function () { B.next(false); });
+    set("seekto", function (d) { if (d && d.seekTime != null && B.audio.duration) B.audio.currentTime = d.seekTime; });
+    set("seekforward", function () { B.audio.currentTime = Math.min((B.audio.currentTime || 0) + 10, B.audio.duration || 0); });
+    set("seekbackward", function () { B.audio.currentTime = Math.max((B.audio.currentTime || 0) - 10, 0); });
+  };
+  // Re-paint the transport + playing-row marks from current engine state.
+  B.syncTransport = function () {
+    if (!B.mounted) return;
+    var rec = B.curRec(), tp = B.$("dp-transport"), root = B.$("dp-root");
+    var marks = document.querySelectorAll(".dp-row.playing"), i;
+    for (i = 0; i < marks.length; i++) marks[i].classList.remove("playing");
+    if (!rec) {
+      if (tp) tp.hidden = true;
+      if (root) root.classList.remove("hasnp");
+      var l0 = B.$("dp-led"); if (l0) l0.className = "dp-led";
+      return;
+    }
+    if (tp) tp.hidden = false;
+    if (root) root.classList.add("hasnp");
+    var t = B.$("dp-nptitle"), a2 = B.$("dp-npartist"), aw = B.$("dp-npart");
+    if (t) t.textContent = rec.title;
+    if (a2) a2.textContent = rec.artist + (rec.album && rec.album !== "Unknown album" ? " \u00b7 " + rec.album : "");
+    if (aw) {
+      var u = B.artURL(rec);
+      aw.innerHTML = u ? "<img alt=\"\">" : "<span class=\"dp-ph\">" + B.esc((rec.artist || "?").charAt(0).toUpperCase()) + "<\u002Fspan>";
+      if (u) aw.querySelector("img").src = u;
+    }
+    var d = B.$("dp-tdur");
+    if (d) d.textContent = B.fmtTime((B.audio && B.audio.duration) || rec.duration);
+    var pb = B.$("dp-play");
+    if (pb) pb.innerHTML = (B.audio && !B.audio.paused) ? B.ICON.pause : B.ICON.play;
+    var led = B.$("dp-led");
+    if (led) led.className = "dp-led" + ((B.audio && !B.audio.paused) ? " on" : "");
+    var rows = document.querySelectorAll(".dp-row[data-id=\"" + rec.id + "\"]");
+    for (i = 0; i < rows.length; i++) rows[i].classList.add("playing");
+    var sb = B.$("dp-shuf"); if (sb) sb.className = "dp-mbtn" + (B.shuffleOn ? " on" : "");
+    var rb = B.$("dp-rep"); if (rb) { rb.setAttribute("data-mode", B.repeat); rb.className = "dp-mbtn" + (B.repeat !== "off" ? " on" : ""); }
+  };
+})();
+// ===========================================================================
+// MODULE: DECKPLATE_ENGINE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: DECKPLATE_IMPORT - START
+// Depends: DECKPLATE_TAGS, DECKPLATE_STORE, DECKPLATE_UI
+// Exports: (extends Lantern.DP: importFiles, partitionPicked, attachLyricsToLib,
+//          pickFolder, rescanAll, readTags, AUDIO_RE, cancelFlag)
+// ===========================================================================
+// Import once, keep forever: files come in through pickers, folder walks, or
+// drag-drop; tags/art/lyrics are read here; records land in DECKPLATE_STORE.
+// Duplicate signatures are skipped, tombstoned tracks stay deleted on watched
+// rescans (but return on deliberate manual re-import), and .lrc/.txt sidecar
+// lyrics attach by basename - including back-filling already-imported tracks.
+(function () {
+  var B = window.Lantern.DP;
+  B.AUDIO_RE = /\.(mp3|m4a|aac|flac|ogg|oga|opus|wav)$/i;
+  B.LYR_RE = /\.(lrc|txt)$/i;
+  B.importing = false; B.cancelFlag = false;
+  var DENY = { "node_modules": 1, "$recycle.bin": 1, "system volume information": 1, "windows": 1,
+    "program files": 1, "program files (x86)": 1, "programdata": 1, "appdata": 1 };
+  B.lyrKey = function (relPath, name) {
+    var dir = relPath ? String(relPath).slice(0, String(relPath).length - name.length) : "";
+    return (dir + name.replace(/\.[^.]+$/, "")).toLowerCase();
+  };
+  B.readTags = async function (file) {
+    try {
+      var head = new Uint8Array(await file.slice(0, 64).arrayBuffer());
+      var need = 1 << 20;
+      if (head.length >= 10 && head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33) need = 10 + B.syncsafe(head, 6) + 16;
+      else if (B.latin1(head.subarray(0, 4)) === "fLaC") need = 12 * 1024 * 1024;
+      else if (head.length >= 12 && B.latin1(head.subarray(4, 8)) === "ftyp") need = file.size;
+      need = Math.min(Math.max(need, 4096), file.size);
+      var tags = B.parseTags(await file.slice(0, need).arrayBuffer(), file.name) || {};
+      if ((!tags.title || !tags.artist) && /\.mp3$/i.test(file.name) && file.size >= 128) {
+        var v1 = B.parseID3v1(new Uint8Array(await file.slice(file.size - 128).arrayBuffer()));
+        if (v1) {
+          var ks = ["title", "artist", "album", "track", "year"], i;
+          for (i = 0; i < ks.length; i++) if (!tags[ks[i]] && v1[ks[i]]) tags[ks[i]] = v1[ks[i]];
+        }
+      }
+      return tags;
+    } catch (e) { return {}; }
+  };
+  B.importFiles = async function (items, opts) {
+    opts = opts || {};
+    if (B.importing || !items.length) return;
+    B.importing = true; B.cancelFlag = false;
+    var sigs = {}, bySig = {}, i;
+    for (i = 0; i < B.lib.length; i++) { sigs[B.lib[i].sig] = 1; bySig[B.lib[i].sig] = B.lib[i]; }
+    var tombs = opts.respectTombs ? await B.tombsAll() : null;
+    var added = 0, skipped = 0, failed = 0, stopped = false, lyrAttached = 0;
+    for (i = 0; i < items.length; i++) {
+      if (B.cancelFlag) { stopped = true; break; }
+      B.showBar("IMPORTING " + (i + 1) + " / " + items.length);
+      var file = items[i].file, relPath = items[i].relPath;
+      var sig = file.name + "\u0000" + file.size;
+      if (sigs[sig]) {
+        skipped++;
+        if (opts.lyrics) {
+          var lk = opts.lyrics[B.lyrKey(relPath, file.name)];
+          if (lk) {
+            var ex = bySig[sig];
+            if (ex && !ex.lyricsRaw) {
+              ex.lyricsRaw = lk; B.store.update(ex); lyrAttached++;
+              if (B.lyrOpen && B.qpos >= 0 && B.queue[B.qpos] === ex.id && B.renderLyrics) B.renderLyrics();
+            }
+          }
+        }
+        continue;
+      }
+      if (tombs && tombs[sig]) { skipped++; continue; }
+      if (!opts.respectTombs) B.tombDel(sig);
+      try {
+        var tags = await B.readTags(file);
+        var fb = B.nameFallback(file.name, relPath);
+        var rec = { sig: sig,
+          title: tags.title || fb.title || file.name,
+          artist: tags.artist || fb.artist || fb.folderArtist || "Unknown artist",
+          albumArtist: tags.albumArtist || "",
+          album: tags.album || fb.album || "Unknown album",
+          track: tags.track || fb.track || 0, year: tags.year || 0,
+          duration: 0, size: file.size, file: file, art: null,
+          lyricsRaw: (opts.lyrics && opts.lyrics[B.lyrKey(relPath, file.name)]) || tags.syncedLyrics || tags.lyrics || "",
+          addedAt: Date.now() };
+        if (tags.art && tags.art.data && tags.art.data.length) {
+          try { rec.art = new Blob([tags.art.data], { type: tags.art.mime || "image/jpeg" }); } catch (e) {}
+        }
+        rec.id = await B.store.add(rec);
+        B.lib.push(rec); B.byId[rec.id] = rec; sigs[sig] = 1; bySig[sig] = rec; added++;
+      } catch (e2) { failed++; }
+      if (i % 6 === 5) await new Promise(function (r) { setTimeout(r, 0); });
+    }
+    B.hideBar(); B.importing = false;
+    B.sortLib();
+    if (B.render) B.render();
+    B.closeModal(); B.closeSheet();
+    var bits = [added + (opts.quiet ? " new track" + (added === 1 ? "" : "s") : " added")];
+    if (!opts.quiet && skipped) bits.push(skipped + " duplicate" + (skipped > 1 ? "s" : "") + " skipped");
+    if (lyrAttached) bits.push(lyrAttached + " lyrics attached");
+    if (failed) bits.push(failed + " failed");
+    if (opts.extra) bits.push(opts.extra);
+    if (!opts.quiet || added || stopped || failed || lyrAttached) B.toast((stopped ? "Stopped \u2014 " : "") + bits.join(" \u00b7 "));
+    if (added && !B.sessionOnly && navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
+  };
+  B.sortLib = function () {
+    function cmp(a, b) { return String(a).localeCompare(String(b), undefined, { sensitivity: "base" }); }
+    B.lib.sort(function (a, b) {
+      return cmp(a.albumArtist || a.artist, b.albumArtist || b.artist) || cmp(a.album, b.album) ||
+        (a.track - b.track) || cmp(a.title, b.title);
+    });
+  };
+  B.partitionPicked = async function (files) {
+    var items = [], lyr = [], i;
+    for (i = 0; i < files.length; i++) {
+      var f = files[i], rel = f.webkitRelativePath || null;
+      if (B.AUDIO_RE.test(f.name) || (f.type || "").indexOf("audio/") === 0) items.push({ file: f, relPath: rel });
+      else if (B.LYR_RE.test(f.name)) lyr.push({ key: B.lyrKey(rel, f.name), file: f });
+    }
+    var map = {};
+    for (i = 0; i < lyr.length; i++) {
+      if (map[lyr[i].key] == null) { try { map[lyr[i].key] = await lyr[i].file.slice(0, 200 * 1024).text(); } catch (e) {} }
+    }
+    return { items: items, map: map };
+  };
+  B.mapSize = function (map) { var n = 0, k; for (k in map) n++; return n; };
+  B.attachLyricsToLib = async function (map) {
+    var alt = {}, k;
+    for (k in map) { var b = k.split("/").pop(); if (alt[b] == null) alt[b] = map[k]; }
+    var n = 0, i;
+    for (i = 0; i < B.lib.length; i++) {
+      var rec = B.lib[i];
+      var base = rec.file && rec.file.name ? rec.file.name.replace(/\.[^.]+$/, "").toLowerCase() : "";
+      var t = alt[base];
+      if (t && t !== rec.lyricsRaw) { rec.lyricsRaw = t; B.store.update(rec); n++; }
+    }
+    B.toast(n ? n + " lyrics attached" : "No matching tracks for those lyric files");
+    if (n && B.lyrOpen && B.renderLyrics) B.renderLyrics();
+  };
+  B.walkDir = async function (dir, prefix, ctx, prog) {
+    var it = null;
+    try { it = dir.values(); } catch (e) { return; }
+    while (true) {
+      if (B.cancelFlag) return;
+      var entry = null;
+      try { var n = await it.next(); if (n.done) break; entry = n.value; } catch (e2) { break; }
+      if (entry.kind === "file") {
+        if (B.AUDIO_RE.test(entry.name)) {
+          try { ctx.files.push({ file: await entry.getFile(), relPath: prefix + entry.name }); } catch (e3) {}
+          if (ctx.files.length % 25 === 0) B.showBar("SCANNING \u00b7 " + prog.dirs + " FOLDERS \u00b7 " + ctx.files.length + " AUDIO FILES");
+        } else if (B.LYR_RE.test(entry.name)) {
+          try { ctx.lyr.push({ key: B.lyrKey(prefix + entry.name, entry.name), file: await entry.getFile() }); } catch (e4) {}
+        }
+      } else if (entry.kind === "directory") {
+        var nm = entry.name;
+        if (nm.charAt(0) === "." || DENY[nm.toLowerCase()]) continue;
+        prog.dirs++;
+        if (prog.dirs % 20 === 0) B.showBar("SCANNING \u00b7 " + prog.dirs + " FOLDERS \u00b7 " + ctx.files.length + " AUDIO FILES");
+        await B.walkDir(entry, prefix + nm + "/", ctx, prog);
+      }
+    }
+  };
+  B.lyrMapFrom = async function (ctx) {
+    var map = {}, i;
+    for (i = 0; i < ctx.lyr.length; i++) {
+      if (map[ctx.lyr[i].key] == null) { try { map[ctx.lyr[i].key] = await ctx.lyr[i].file.slice(0, 200 * 1024).text(); } catch (e) {} }
+    }
+    return map;
+  };
+  B.pickFolder = async function (mode) {
+    if (window.showDirectoryPicker) {
+      var dir = null;
+      try { dir = await window.showDirectoryPicker(); } catch (e) { return; }
+      B.cancelFlag = false;
+      B.showBar(mode === "scan" ? "SCANNING FOR AUDIO \u2026" : "SCANNING FOLDER \u2026");
+      var ctx = { files: [], lyr: [] }, prog = { dirs: 0 };
+      await B.walkDir(dir, "", ctx, prog);
+      if (B.cancelFlag) { B.hideBar(); B.toast("Scan stopped \u2014 nothing imported"); return; }
+      if (ctx.files.length) {
+        var watched = await B.dirsAddIfNew(dir);
+        var map = await B.lyrMapFrom(ctx);
+        await B.importFiles(ctx.files, { lyrics: map, extra: watched ? ("now watching \u201c" + (dir.name || "folder") + "\u201d") : "" });
+      } else { B.hideBar(); B.toast("No audio files found under that folder"); }
+    } else { var d = B.$("dp-dirinput"); if (d) d.click(); }
+  };
+  B.rescanAll = async function (interactive) {
+    if (B.sessionOnly || !B.db || B.importing) return { blocked: 0, ran: false };
+    var dirs = await B.dirsAll();
+    if (!dirs.length) return { blocked: 0, ran: false };
+    B.cancelFlag = false;
+    var ctx = { files: [], lyr: [] }, blocked = 0, ran = false, i;
+    for (i = 0; i < dirs.length; i++) {
+      if (B.cancelFlag) break;
+      var d = dirs[i];
+      if (!d.handle || !d.handle.queryPermission) continue;
+      var perm = "prompt";
+      try { perm = await d.handle.queryPermission({ mode: "read" }); } catch (e) { continue; }
+      if (perm !== "granted" && interactive) {
+        try { perm = await d.handle.requestPermission({ mode: "read" }); } catch (e2) {}
+      }
+      if (perm !== "granted") { blocked++; continue; }
+      ran = true;
+      B.showBar("CHECKING \u201c" + (d.name || "FOLDER").toUpperCase() + "\u201d FOR NEW MUSIC");
+      try { await B.walkDir(d.handle, "", ctx, { dirs: 0 }); } catch (e3) {}
+    }
+    if (B.cancelFlag) { B.hideBar(); B.toast("Check stopped"); return { blocked: blocked, ran: ran }; }
+    if (ctx.files.length) { var map = await B.lyrMapFrom(ctx); await B.importFiles(ctx.files, { quiet: true, respectTombs: true, lyrics: map }); }
+    else B.hideBar();
+    return { blocked: blocked, ran: ran };
+  };
+})();
+// ===========================================================================
+// MODULE: DECKPLATE_IMPORT - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: DECKPLATE_LYRICS - START
+// Depends: DECKPLATE_TAGS, DECKPLATE_STORE, DECKPLATE_UI, DECKPLATE_ENGINE
+// Exports: (extends Lantern.DP: toggleLyrics, renderLyrics, lyricsEditor)
+// ===========================================================================
+// Closed-caption style lyrics: synced LRC lines light up ~120 ms ahead of the
+// audio, auto-center, and seek on tap; unsynced text is shown honestly as
+// plain scrollable lyrics. Highlighting rides the engine's timeHooks.
+(function () {
+  var B = window.Lantern.DP;
+  B.lyrOpen = false; B.lyrCache = { id: null, raw: null, parsed: null };
+  B.lyrIdx = -1; B.userScrollAt = 0; B.progScroll = false;
+  function lyricsFor(rec) {
+    if (!rec) return { synced: false, lines: [] };
+    if (B.lyrCache.id !== rec.id || B.lyrCache.raw !== rec.lyricsRaw)
+      B.lyrCache = { id: rec.id, raw: rec.lyricsRaw, parsed: B.parseLRC(rec.lyricsRaw || "") };
+    return B.lyrCache.parsed;
+  }
+  B.toggleLyrics = function () {
+    if (!B.lyrOpen && !B.curRec()) { B.toast("Play something first", 1600); return; }
+    B.lyrOpen = !B.lyrOpen;
+    var p = B.$("dp-lyrpanel"), btn = B.$("dp-lyr");
+    if (p) p.hidden = !B.lyrOpen;
+    if (btn) btn.className = "dp-mbtn" + (B.lyrOpen ? " on" : "");
+    if (B.lyrOpen) B.renderLyrics();
+  };
+  B.renderLyrics = function () {
+    if (!B.lyrOpen) return;
+    var rec = B.curRec(), body = B.$("dp-lyrbody"), tk = B.$("dp-lyrtrack");
+    if (!body) return;
+    if (tk) tk.textContent = rec ? rec.title + " \u00b7 " + rec.artist : "";
+    B.lyrIdx = -1;
+    if (!rec) { body.innerHTML = "<div class=\"dp-lyrempty\">Nothing playing.<\u002Fdiv>"; return; }
+    var P = lyricsFor(rec);
+    if (!rec.lyricsRaw || !P.lines.length) {
+      body.innerHTML = "<div class=\"dp-lyrempty\">No lyrics for this track." +
+        "<div class=\"dp-hint\">Put a matching .lrc or .txt file next to the song (same name) and re-check the folder \u2014 or paste them here.<\u002Fdiv>" +
+        "<button class=\"dp-btn primary\" data-l=\"edit\">ADD LYRICS<\u002Fbutton><\u002Fdiv>";
+      return;
+    }
+    var html = "", i;
+    if (P.synced) {
+      for (i = 0; i < P.lines.length; i++)
+        html += "<button class=\"dp-lyrline\" data-i=\"" + i + "\" data-lms=\"" + P.lines[i].ms + "\">" + (B.esc(P.lines[i].text) || "\u2026") + "<\u002Fbutton>";
+    } else {
+      html = "<div class=\"dp-lbl\" style=\"margin-bottom:12px\">UNSYNCED \u2014 SHOWN AS TEXT<\u002Fdiv>";
+      for (i = 0; i < P.lines.length; i++)
+        html += "<div class=\"dp-lyrplain\">" + (B.esc(P.lines[i].text) || "&nbsp;") + "<\u002Fdiv>";
+    }
+    body.innerHTML = html;
+    body.scrollTop = 0;
+    updateHighlight(true);
+  };
+  function updateHighlight(force) {
+    if (!B.lyrOpen || !B.mounted) return;
+    var rec = B.curRec(); if (!rec) return;
+    var P = lyricsFor(rec); if (!P.synced || !P.lines.length) return;
+    var t = ((B.audio && B.audio.currentTime) || 0) * 1000 + 120;
+    var idx = -1, i;
+    for (i = 0; i < P.lines.length; i++) { if (P.lines[i].ms <= t) idx = i; else break; }
+    if (idx === B.lyrIdx && !force) return;
+    B.lyrIdx = idx;
+    var body = B.$("dp-lyrbody"); if (!body) return;
+    var cur = body.querySelectorAll(".dp-lyrline.cur");
+    for (i = 0; i < cur.length; i++) cur[i].classList.remove("cur");
+    if (idx >= 0) {
+      var el = body.querySelector(".dp-lyrline[data-i=\"" + idx + "\"]");
+      if (el) {
+        el.classList.add("cur");
+        if (Date.now() - B.userScrollAt > 3500) {
+          var smooth = (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches) ? "auto" : "smooth";
+          B.progScroll = true;
+          try { el.scrollIntoView({ block: "center", behavior: smooth }); } catch (e) {}
+          setTimeout(function () { B.progScroll = false; }, 420);
+        }
+      }
+    }
+  }
+  B.timeHooks.push(function () { updateHighlight(false); });
+  B.trackHooks.push(function () { if (B.lyrOpen) B.renderLyrics(); });
+  B.lyricsEditor = function (id) {
+    var rec = B.byId[id]; if (!rec) return;
+    var m = B.openModal("<h3>Lyrics<\u002Fh3>" +
+      "<div class=\"dp-mbody\">" + B.esc(rec.title) + " \u00b7 " + B.esc(rec.artist) +
+      ". Paste plain text, or LRC lines like [01:23.45] for closed-caption sync.<\u002Fdiv>" +
+      "<textarea id=\"dp-lyrta\" spellcheck=\"false\"><\u002Ftextarea>" +
+      "<div class=\"dp-mrow\">" + (rec.lyricsRaw ? "<button class=\"dp-btn danger\" data-m=\"rm\">Remove<\u002Fbutton>" : "") +
+      "<button class=\"dp-btn\" data-m=\"no\">Cancel<\u002Fbutton>" +
+      "<button class=\"dp-btn primary\" data-m=\"save\">Save<\u002Fbutton><\u002Fdiv>");
+    if (!m) return;
+    B.$("dp-lyrta").value = rec.lyricsRaw || "";
+    m.onclick = function (e) {
+      var b = e.target.closest("[data-m]"); if (!b) return;
+      var act = b.getAttribute("data-m");
+      if (act === "save") {
+        rec.lyricsRaw = B.$("dp-lyrta").value.replace(/^\s+|\s+$/g, "");
+        B.store.update(rec);
+        B.toast(rec.lyricsRaw ? "Lyrics saved" : "Lyrics cleared", 1500);
+      } else if (act === "rm") {
+        rec.lyricsRaw = ""; B.store.update(rec); B.toast("Lyrics removed", 1500);
+      }
+      B.closeModal();
+      if (B.lyrOpen) B.renderLyrics();
+    };
+  };
+  B.wireLyrPanel = function () {
+    var body = B.$("dp-lyrbody");
+    if (!body) return;
+    body.addEventListener("scroll", function () { if (!B.progScroll) B.userScrollAt = Date.now(); });
+    body.addEventListener("click", function (e) {
+      var line = e.target.closest(".dp-lyrline");
+      if (line) {
+        var ms = +line.getAttribute("data-lms");
+        if (isFinite(ms) && B.audio && B.audio.duration) B.audio.currentTime = ms / 1000;
+        return;
+      }
+      if (e.target.closest("[data-l=\"edit\"]")) { var rec = B.curRec(); if (rec) B.lyricsEditor(rec.id); }
+    });
+    B.$("dp-lyrclose").onclick = B.toggleLyrics;
+    B.$("dp-lyredit").onclick = function () { var rec = B.curRec(); if (rec) B.lyricsEditor(rec.id); };
+  };
+})();
+// ===========================================================================
+// MODULE: DECKPLATE_LYRICS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: DECKPLATE_VIEWS - START
+// Depends: DECKPLATE_STORE, DECKPLATE_UI, DECKPLATE_ENGINE
+// Exports: (extends Lantern.DP: render, searchVisible, view state)
+// ===========================================================================
+// The library views. One delegated click handler on #dp-content routes every
+// row/tile/action through data-act attributes, so re-renders stay cheap on
+// low-end hardware and no per-row listeners pile up.
+(function () {
+  var B = window.Lantern.DP;
+  B.view = "songs"; B.search = ""; B.detail = null;
+  B.lastAlbums = []; B.lastArtists = [];
+  function albums() {
+    var m = {}, out = [], i;
+    for (i = 0; i < B.lib.length; i++) {
+      var r = B.lib[i], k = (r.album || "?") + "\u0000" + (r.albumArtist || r.artist || "?");
+      if (!m[k]) { m[k] = { album: r.album, artist: r.albumArtist || r.artist, ids: [], art: null }; out.push(m[k]); }
+      m[k].ids.push(r.id);
+      if (!m[k].art && r.art) m[k].art = r;
+    }
+    return out;
+  }
+  function artists() {
+    var m = {}, out = [], i;
+    for (i = 0; i < B.lib.length; i++) {
+      var r = B.lib[i], k = r.artist || "?";
+      if (!m[k]) { m[k] = { artist: k, ids: [], art: null }; out.push(m[k]); }
+      m[k].ids.push(r.id);
+      if (!m[k].art && r.art) m[k].art = r;
+    }
+    out.sort(function (a, b) { return String(a.artist).localeCompare(String(b.artist), undefined, { sensitivity: "base" }); });
+    return out;
+  }
+  B.searchVisible = function () {
+    if (!B.search) return B.lib;
+    var q = B.search.toLowerCase(), out = [], i;
+    for (i = 0; i < B.lib.length; i++) {
+      var r = B.lib[i];
+      if ((r.title + " " + r.artist + " " + r.album).toLowerCase().indexOf(q) !== -1) out.push(r);
+    }
+    return out;
+  };
+  function coverHTML(rec, cls) {
+    var u = rec ? B.artURL(rec) : null;
+    if (u) return "<span class=\"" + cls + "\"><img alt=\"\" src=\"" + u + "\"><\u002Fspan>";
+    var ch = rec ? (rec.artist || rec.title || "?").charAt(0).toUpperCase() : "\u266a";
+    return "<span class=\"" + cls + "\"><span class=\"dp-ph\">" + B.esc(ch) + "<\u002Fspan><\u002Fspan>";
+  }
+  function trackRow(rec, opts) {
+    opts = opts || {};
+    var playing = B.qpos >= 0 && B.queue[B.qpos] === rec.id;
+    var lead = opts.num != null ? "<span class=\"dp-rnum\">" + opts.num + "<\u002Fspan>" : coverHTML(rec, "dp-thumb");
+    return "<div class=\"dp-row" + (playing ? " playing" : "") + "\" data-id=\"" + rec.id + "\">" +
+      "<button class=\"dp-hit\" data-act=\"" + (opts.act || "play") + "\" data-id=\"" + rec.id + "\">" + lead +
+      "<span class=\"dp-rmeta\"><span class=\"dp-rtitle\">" + B.esc(rec.title) + "<\u002Fspan>" +
+      "<span class=\"dp-rsub\">" + B.esc(rec.artist) + (opts.album !== false && rec.album && rec.album !== "Unknown album" ? " \u00b7 " + B.esc(rec.album) : "") + "<\u002Fspan><\u002Fspan>" +
+      (playing ? "<span class=\"dp-qled\"><\u002Fspan>" : "") +
+      "<span class=\"dp-rdur\" data-for=\"" + rec.id + "\">" + B.fmtTime(rec.duration) + "<\u002Fspan><\u002Fbutton>" +
+      "<button class=\"dp-more\" data-act=\"more\" data-id=\"" + rec.id + "\" aria-label=\"Track options\">" + B.ICON.dots + "<\u002Fbutton><\u002Fdiv>";
+  }
+  function chipRow(ids, countLabel) {
+    return "<div class=\"dp-chips\">" +
+      "<button class=\"dp-chip hot\" data-act=\"playall\">" + B.ICON.play + " PLAY<\u002Fbutton>" +
+      "<button class=\"dp-chip\" data-act=\"shuffleall\">" + B.ICON.shuf + " SHUFFLE<\u002Fbutton>" +
+      "<span class=\"dp-lbl dp-count\">" + countLabel + "<\u002Fspan><\u002Fdiv>";
+  }
+  B.render = function () {
+    if (!B.mounted) return;
+    var c = B.$("dp-content"); if (!c) return;
+    var html = "", i;
+    if (!B.lib.length) {
+      c.innerHTML = "<div class=\"dp-empty\"><div class=\"dp-panel\">" +
+        "<div class=\"dp-lbl\">NO TRACKS LOADED<\u002Fdiv>" +
+        "<p>Point Deckplate at the folder where your music lives \u2014 once loaded, it plays entirely offline.<\u002Fp>" +
+        "<button class=\"dp-btn primary\" data-act=\"addmusic\">ADD MUSIC<\u002Fbutton>" +
+        "<\u002Fdiv><\u002Fdiv>";
+      B.syncTransport();
+      return;
+    }
+    if (B.view === "songs") {
+      var vis = B.searchVisible();
+      html = chipRow(null, vis.length + " TRACKS");
+      for (i = 0; i < vis.length; i++) html += trackRow(vis[i], {});
+      if (!vis.length) html += "<div class=\"dp-empty\"><div class=\"dp-lbl\">NO MATCHES<\u002Fdiv><\u002Fdiv>";
+      c.setAttribute("data-ctx", "songs");
+    } else if (B.view === "albums" && B.detail == null) {
+      B.lastAlbums = albums();
+      html = "<div class=\"dp-grid\">";
+      for (i = 0; i < B.lastAlbums.length; i++) {
+        var al = B.lastAlbums[i];
+        html += "<button class=\"dp-tile\" data-act=\"album\" data-i=\"" + i + "\">" + coverHTML(al.art, "dp-cover") +
+          "<span class=\"dp-t1\">" + B.esc(al.album) + "<\u002Fspan><span class=\"dp-t2\">" + B.esc(al.artist) + "<\u002Fspan><\u002Fbutton>";
+      }
+      html += "<\u002Fdiv>";
+    } else if (B.view === "albums") {
+      var al2 = B.lastAlbums[B.detail]; if (!al2) { B.detail = null; return B.render(); }
+      html = "<div class=\"dp-backrow\"><button class=\"dp-back\" data-act=\"back\">\u2190 ALBUMS<\u002Fbutton><\u002Fdiv>" +
+        "<div class=\"dp-dethead\">" + coverHTML(al2.art, "dp-cover") +
+        "<div><div class=\"dp-lbl\">ALBUM<\u002Fdiv><h2>" + B.esc(al2.album) + "<\u002Fh2>" +
+        "<div class=\"dp-t2\">" + B.esc(al2.artist) + " \u00b7 " + al2.ids.length + " tracks<\u002Fdiv><\u002Fdiv><\u002Fdiv>" +
+        chipRow(null, "");
+      var n = 0;
+      for (i = 0; i < al2.ids.length; i++) { var r2 = B.byId[al2.ids[i]]; if (r2) html += trackRow(r2, { num: r2.track || ++n, album: false, act: "playctx" }); }
+      c.setAttribute("data-ids", al2.ids.join(","));
+    } else if (B.view === "artists" && B.detail == null) {
+      B.lastArtists = artists();
+      html = "<div class=\"dp-grid\">";
+      for (i = 0; i < B.lastArtists.length; i++) {
+        var ar = B.lastArtists[i];
+        html += "<button class=\"dp-tile\" data-act=\"artist\" data-i=\"" + i + "\">" + coverHTML(ar.art, "dp-cover") +
+          "<span class=\"dp-t1\">" + B.esc(ar.artist) + "<\u002Fspan><span class=\"dp-t2\">" + ar.ids.length + " tracks<\u002Fspan><\u002Fbutton>";
+      }
+      html += "<\u002Fdiv>";
+    } else if (B.view === "artists") {
+      var ar2 = B.lastArtists[B.detail]; if (!ar2) { B.detail = null; return B.render(); }
+      html = "<div class=\"dp-backrow\"><button class=\"dp-back\" data-act=\"back\">\u2190 ARTISTS<\u002Fbutton><\u002Fdiv>" +
+        "<div class=\"dp-dethead\">" + coverHTML(ar2.art, "dp-cover") +
+        "<div><div class=\"dp-lbl\">ARTIST<\u002Fdiv><h2>" + B.esc(ar2.artist) + "<\u002Fh2>" +
+        "<div class=\"dp-t2\">" + ar2.ids.length + " tracks<\u002Fdiv><\u002Fdiv><\u002Fdiv>" +
+        chipRow(null, "");
+      for (i = 0; i < ar2.ids.length; i++) { var r3 = B.byId[ar2.ids[i]]; if (r3) html += trackRow(r3, { act: "playctx" }); }
+      c.setAttribute("data-ids", ar2.ids.join(","));
+    } else if (B.view === "queue") {
+      if (!B.queue.length) html = "<div class=\"dp-empty\"><div class=\"dp-lbl\">QUEUE EMPTY<\u002Fdiv><\u002Fdiv>";
+      else {
+        html = "<div class=\"dp-chips\"><span class=\"dp-lbl\">UP NOW \u00b7 " + B.queue.length + " TRACKS<\u002Fspan>" +
+          "<button class=\"dp-chip dp-count\" data-act=\"clearqueue\">CLEAR UPCOMING<\u002Fbutton><\u002Fdiv>";
+        for (i = 0; i < B.queue.length; i++) { var r4 = B.byId[B.queue[i]]; if (r4) html += trackRow(r4, { num: i + 1, act: "qjump" }); }
+      }
+    }
+    c.innerHTML = html;
+    B.syncTransport();
+  };
+})();
+// ===========================================================================
+// MODULE: DECKPLATE_VIEWS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: DECKPLATE_PANELS - START
+// Depends: DECKPLATE_STORE, DECKPLATE_UI, DECKPLATE_ENGINE, DECKPLATE_IMPORT,
+//          DECKPLATE_LYRICS, DECKPLATE_VIEWS
+// Exports: (extends Lantern.DP: importChooser, openSheet, settings,
+//          removeTrack, onAct, docKeydown/docDrop attach fns)
+// ===========================================================================
+// The overlays: per-track action sheet, first-run import chooser, settings
+// (watched folders, storage stats, clear library), plus the delegated action
+// router and the document-level keyboard/drag-drop handlers that DECKPLATE_APP
+// attaches on mount and detaches on unmount.
+(function () {
+  var B = window.Lantern.DP;
+  B.importChooser = function () {
+    var canWatch = !!window.showDirectoryPicker;
+    var m = B.openModal("<h3>Add music<\u002Fh3>" +
+      "<div class=\"dp-mbody\" style=\"margin-bottom:12px\">Once loaded, everything plays offline from the library.<\u002Fdiv>" +
+      "<button class=\"dp-oitem hot\" data-c=\"folder\"><b>Pick your music folder<\u002Fb><span>Loads every track inside it" +
+      (canWatch ? ", then watches it \u2014 new files show up on their own (one tap may be needed to allow checking)." : ".") + "<\u002Fspan><\u002Fbutton>" +
+      "<button class=\"dp-oitem\" data-c=\"scan\"><b>Search this device for audio<\u002Fb><span>Pick a top folder (like Music or an SD card) and Deckplate digs through everything under it.<\u002Fspan><\u002Fbutton>" +
+      "<button class=\"dp-oitem\" data-c=\"files\"><b>Pick individual files<\u002Fb><span>Choose specific songs \u2014 .lrc/.txt lyric files can come along too.<\u002Fspan><\u002Fbutton>" +
+      "<div class=\"dp-mrow\"><button class=\"dp-btn\" data-c=\"close\">Close<\u002Fbutton><\u002Fdiv>");
+    if (!m) return;
+    m.onclick = function (e) {
+      var b = e.target.closest("[data-c]"); if (!b) return;
+      var c = b.getAttribute("data-c");
+      if (c === "close") { B.closeModal(); return; }
+      B.closeModal();
+      if (c === "files") { var f = B.$("dp-fileinput"); if (f) f.click(); }
+      else B.pickFolder(c);
+    };
+  };
+  B.removeTrack = function (id) {
+    var rec = B.byId[id]; if (!rec) return;
+    B.confirmModal("Remove track?", B.esc(rec.title) + " leaves the library (the original file on this device is untouched). It stays gone on folder checks until you import it again yourself.", "REMOVE", async function () {
+      await B.tombAdd(rec.sig);
+      await B.store.del(id);
+      B.lib = B.lib.filter(function (r) { return r.id !== id; });
+      delete B.byId[id];
+      var qi = B.queue.indexOf(id);
+      if (qi !== -1) {
+        var wasCur = qi === B.qpos;
+        B.queue.splice(qi, 1);
+        if (qi < B.qpos) B.qpos--;
+        if (wasCur) { if (B.qpos >= B.queue.length) B.qpos = B.queue.length - 1; if (B.qpos >= 0) B.playCurrent(); else B.stopAll(); }
+      }
+      var bi = B.baseOrder.indexOf(id);
+      if (bi !== -1) B.baseOrder.splice(bi, 1);
+      B.render();
+      B.toast("Removed from library", 1600);
+    });
+  };
+  B.openSheet = function (id) {
+    var rec = B.byId[id]; if (!rec) return;
+    var m = B.$("dp-sheet"), s = B.$("dp-sheetscrim");
+    if (!m) return;
+    m.innerHTML = "<div class=\"dp-shead\"><div class=\"dp-stitle\">" + B.esc(rec.title) + "<\u002Fdiv>" +
+      "<div class=\"dp-ssub\">" + B.esc(rec.artist) + " \u00b7 " + B.esc(rec.album) + "<\u002Fdiv><\u002Fdiv>" +
+      "<button class=\"dp-sitem\" data-s=\"next\">Play next<\u002Fbutton>" +
+      "<button class=\"dp-sitem\" data-s=\"add\">Add to queue<\u002Fbutton>" +
+      "<button class=\"dp-sitem\" data-s=\"lyrics\">Lyrics\u2026<\u002Fbutton>" +
+      "<button class=\"dp-sitem danger\" data-s=\"rm\">Remove from library<\u002Fbutton>";
+    m.hidden = false; s.hidden = false;
+    m.onclick = function (e) {
+      var b = e.target.closest("[data-s]"); if (!b) return;
+      var act = b.getAttribute("data-s");
+      B.closeSheet();
+      if (act === "next" || act === "add") {
+        if (B.qpos < 0) { B.playContext([id], id); return; }
+        if (act === "next") B.queue.splice(B.qpos + 1, 0, id); else B.queue.push(id);
+        B.baseOrder.push(id);
+        B.toast(act === "next" ? "Playing next" : "Added to queue", 1500);
+        if (B.view === "queue") B.render();
+      } else if (act === "lyrics") B.lyricsEditor(id);
+      else if (act === "rm") B.removeTrack(id);
+    };
+  };
+  B.settings = async function () {
+    var totalBytes = 0, withArt = 0, withLyr = 0, i;
+    for (i = 0; i < B.lib.length; i++) {
+      totalBytes += B.lib[i].size || 0;
+      if (B.lib[i].art) withArt++;
+      if (B.lib[i].lyricsRaw) withLyr++;
+    }
+    var storageLine = B.sessionOnly
+      ? "<b style=\"color:var(--dpr)\">Session only<\u002Fb> \u2014 this browser context blocks IndexedDB, so the library empties when the page closes. Opened from local storage as a plain file, some browsers do this; a small web server or a different browser fixes it."
+      : "Library lives in this browser's IndexedDB on this device. It is not part of Backup's JSON export (audio is too large for it) \u2014 your original files are the backup.";
+    var dirs = (!B.sessionOnly && B.db) ? await B.dirsAll() : [];
+    var dirHtml = "";
+    if (window.showDirectoryPicker && !B.sessionOnly) {
+      dirHtml = "<div class=\"dp-lbl\" style=\"margin:16px 0 6px\">WATCHED FOLDERS<\u002Fdiv>";
+      if (!dirs.length) dirHtml += "<div class=\"dp-mbody\">None yet \u2014 \u201cPick your music folder\u201d starts watching it for new tracks.<\u002Fdiv>";
+      for (i = 0; i < dirs.length; i++)
+        dirHtml += "<div class=\"dp-stat\"><span>" + B.esc(dirs[i].name || "folder") + "<\u002Fspan><button class=\"dp-unwatch\" data-g=\"unwatch\" data-id=\"" + dirs[i].id + "\">UNWATCH<\u002Fbutton><\u002Fdiv>";
+      if (dirs.length) dirHtml += "<div class=\"dp-mrow\" style=\"justify-content:flex-start;margin-top:10px\"><button class=\"dp-btn\" data-g=\"checknow\">Check now<\u002Fbutton><\u002Fdiv>";
+    }
+    var m = B.openModal("<h3>Deckplate<\u002Fh3><div class=\"dp-mbody\">Offline music player \u00b7 part of Lantern<\u002Fdiv>" +
+      "<div style=\"margin-top:12px\">" +
+      "<div class=\"dp-stat\"><span>Tracks<\u002Fspan><b>" + B.lib.length + "<\u002Fb><\u002Fdiv>" +
+      "<div class=\"dp-stat\"><span>Library size<\u002Fspan><b>" + B.fmtBytes(totalBytes) + "<\u002Fb><\u002Fdiv>" +
+      "<div class=\"dp-stat\"><span>With album art<\u002Fspan><b>" + withArt + "<\u002Fb><\u002Fdiv>" +
+      "<div class=\"dp-stat\"><span>With lyrics<\u002Fspan><b>" + withLyr + "<\u002Fb><\u002Fdiv><\u002Fdiv>" +
+      "<div class=\"dp-mbody\" style=\"margin-top:12px\">" + storageLine + "<\u002Fdiv>" + dirHtml +
+      "<div class=\"dp-mrow\"><button class=\"dp-btn danger\" data-g=\"clear\">Clear library<\u002Fbutton>" +
+      "<button class=\"dp-btn primary\" data-g=\"close\">Done<\u002Fbutton><\u002Fdiv>");
+    if (!m) return;
+    m.onclick = function (e) {
+      var b = e.target.closest("[data-g]"); if (!b) return;
+      var g = b.getAttribute("data-g");
+      if (g === "close") B.closeModal();
+      else if (g === "checknow") { B.closeModal(); B.rescanAll(true).then(function (r) { if (r.blocked) B.toast(r.blocked + " folder" + (r.blocked > 1 ? "s" : "") + " still need permission"); }); }
+      else if (g === "unwatch") {
+        var id = +b.getAttribute("data-id");
+        B.dirsDel(id).then(function () { B.toast("Folder unwatched \u2014 its tracks stay in the library", 2600); B.closeModal(); B.settings(); });
+      } else if (g === "clear") {
+        B.closeModal();
+        B.confirmModal("Clear library?", "Removes all " + B.lib.length + " imported tracks, watched folders and remove-history from Deckplate. The audio files on this device are untouched.", "CLEAR", async function () {
+          B.stopAll();
+          await B.store.clear(); await B.dirsClear(); await B.tombsClear();
+          var k; for (k in B.artURLs) { try { URL.revokeObjectURL(B.artURLs[k]); } catch (e2) {} }
+          B.artURLs = {}; B.lib = []; B.byId = {};
+          B.render();
+          B.toast("Library cleared", 1600);
+        });
+      }
+    };
+  };
+  // Delegated action router for #dp-content (wired by DECKPLATE_APP).
+  B.onAct = function (e) {
+    var b = e.target.closest("[data-act]"); if (!b) return;
+    var act = b.getAttribute("data-act");
+    var c = B.$("dp-content");
+    var ctxIds = null;
+    if (c && c.getAttribute("data-ids")) {
+      var raw = c.getAttribute("data-ids").split(","), i;
+      ctxIds = [];
+      for (i = 0; i < raw.length; i++) if (raw[i]) ctxIds.push(+raw[i]);
+    }
+    function songIds() { var out = [], i; var vis = B.searchVisible(); for (i = 0; i < vis.length; i++) out.push(vis[i].id); return out; }
+    if (act === "addmusic") B.importChooser();
+    else if (act === "play") { B.playContext(songIds(), +b.getAttribute("data-id")); B.render(); }
+    else if (act === "playctx") { B.playContext(ctxIds || songIds(), +b.getAttribute("data-id")); B.render(); }
+    else if (act === "playall") { var ids = ctxIds || songIds(); if (ids.length) { B.playContext(ids, ids[0]); B.render(); } }
+    else if (act === "shuffleall") {
+      var ids2 = ctxIds || songIds();
+      if (ids2.length) { if (!B.shuffleOn) B.shuffleOn = true; B.playContext(ids2, null); B.qpos = 0; B.playCurrent(); B.render(); }
+    }
+    else if (act === "album" || act === "artist") { B.detail = +b.getAttribute("data-i"); B.render(); window.scrollTo(0, 0); }
+    else if (act === "back") { B.detail = null; B.render(); }
+    else if (act === "qjump") { B.qpos = B.queue.indexOf(+b.getAttribute("data-id")); B.playCurrent(); B.render(); }
+    else if (act === "clearqueue") { if (B.qpos >= 0) { B.queue = B.queue.slice(0, B.qpos + 1); B.baseOrder = B.queue.slice(); } B.render(); }
+    else if (act === "more") B.openSheet(+b.getAttribute("data-id"));
+  };
+  B.docKeydown = function (e) {
+    var t = e.target && e.target.tagName;
+    if (t === "INPUT" || t === "TEXTAREA" || (e.target && e.target.isContentEditable)) return;
+    if (!B.audio) return;
+    if (e.key === " " || e.code === "Space") { e.preventDefault(); if (B.curRec()) { if (B.audio.paused) B.audio.play(); else B.audio.pause(); } }
+    else if (e.key === "ArrowRight" && e.shiftKey) B.next(false);
+    else if (e.key === "ArrowLeft" && e.shiftKey) B.prev();
+  };
+  B.docDragover = function (e) { e.preventDefault(); };
+  B.docDrop = function (e) {
+    e.preventDefault();
+    if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+    B.partitionPicked(e.dataTransfer.files).then(function (p) {
+      if (p.items.length) B.importFiles(p.items, { lyrics: p.map });
+      else if (B.mapSize(p.map)) B.attachLyricsToLib(p.map);
+    });
+  };
+})();
+// ===========================================================================
+// MODULE: DECKPLATE_PANELS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: DECKPLATE_APP - START
+// Depends: SHELL, DECKPLATE_TAGS, DECKPLATE_STORE, DECKPLATE_UI,
+//          DECKPLATE_ENGINE, DECKPLATE_IMPORT, DECKPLATE_LYRICS,
+//          DECKPLATE_VIEWS, DECKPLATE_PANELS
+// Exports: (registers "deckplate" app)
+// ===========================================================================
+// Mount builds the whole player inside the workspace element the shell hands
+// over; unmount detaches the document-level listeners but leaves the audio
+// element playing, so music continues while other Lantern apps are used.
+(function () {
+  var B = window.Lantern.DP;
+  B.loaded = false; B.booting = false;
+  function skeleton() {
+    var I = B.ICON;
+    return "<div class=\"dp-root\" id=\"dp-root\">" +
+      "<div class=\"dp-hdr\"><div class=\"dp-brand\"><span class=\"dp-led\" id=\"dp-led\"><\u002Fspan>" +
+      "<span class=\"dp-word\">DECKPLATE<\u002Fspan><\u002Fdiv>" +
+      "<div class=\"dp-hbtns\"><button class=\"dp-hbtn\" id=\"dp-add\">ADD MUSIC<\u002Fbutton>" +
+      "<button class=\"dp-hbtn icon\" id=\"dp-gear\" aria-label=\"Settings\">" + I.gear + "<\u002Fbutton><\u002Fdiv><\u002Fdiv>" +
+      "<div class=\"dp-tabs\" id=\"dp-tabs\">" +
+      "<button class=\"dp-tab on\" data-v=\"songs\">Songs<\u002Fbutton>" +
+      "<button class=\"dp-tab\" data-v=\"albums\">Albums<\u002Fbutton>" +
+      "<button class=\"dp-tab\" data-v=\"artists\">Artists<\u002Fbutton>" +
+      "<button class=\"dp-tab\" data-v=\"queue\">Queue<\u002Fbutton><\u002Fdiv>" +
+      "<div class=\"dp-searchrow\"><input id=\"dp-search\" type=\"search\" placeholder=\"Search title, artist, album\u2026\" aria-label=\"Search library\"><\u002Fdiv>" +
+      "<div id=\"dp-content\"><\u002Fdiv>" +
+      "<div id=\"dp-transport\" hidden><div class=\"dp-trow1\">" +
+      "<span id=\"dp-npart\"><\u002Fspan><span id=\"dp-npmeta\"><div id=\"dp-nptitle\"><\u002Fdiv><div id=\"dp-npartist\"><\u002Fdiv><\u002Fspan>" +
+      "<button class=\"dp-tbtn\" id=\"dp-prev\" aria-label=\"Previous\">" + I.prev + "<\u002Fbutton>" +
+      "<button class=\"dp-tbtn big\" id=\"dp-play\" aria-label=\"Play or pause\">" + I.play + "<\u002Fbutton>" +
+      "<button class=\"dp-tbtn\" id=\"dp-next\" aria-label=\"Next\">" + I.next + "<\u002Fbutton><\u002Fdiv>" +
+      "<div class=\"dp-trow2\"><span class=\"dp-time\" id=\"dp-tcur\">0:00<\u002Fspan>" +
+      "<input id=\"dp-seek\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\" aria-label=\"Seek\">" +
+      "<span class=\"dp-time\" id=\"dp-tdur\">\u2013:\u2013\u2013<\u002Fspan>" +
+      "<button class=\"dp-mbtn\" id=\"dp-shuf\" aria-label=\"Shuffle\">" + I.shuf + "<\u002Fbutton>" +
+      "<button class=\"dp-mbtn\" id=\"dp-rep\" data-mode=\"off\" aria-label=\"Repeat\">" + I.rep + "<\u002Fbutton>" +
+      "<button class=\"dp-mbtn\" id=\"dp-lyr\" aria-label=\"Lyrics\">" + I.cc + "<\u002Fbutton>" +
+      "<input id=\"dp-vol\" type=\"range\" min=\"0\" max=\"100\" value=\"100\" aria-label=\"Volume\"><\u002Fdiv><\u002Fdiv>" +
+      "<div id=\"dp-lyrpanel\" hidden><div class=\"dp-lyrhead\"><div style=\"min-width:0\">" +
+      "<div class=\"dp-lbl\">CLOSED CAPTIONS \u00b7 LYRICS<\u002Fdiv><div class=\"dp-lyrt\" id=\"dp-lyrtrack\"><\u002Fdiv><\u002Fdiv>" +
+      "<div class=\"dp-hbtns\"><button class=\"dp-hbtn\" id=\"dp-lyredit\">EDIT<\u002Fbutton>" +
+      "<button class=\"dp-hbtn\" id=\"dp-lyrclose\">CLOSE<\u002Fbutton><\u002Fdiv><\u002Fdiv>" +
+      "<div id=\"dp-lyrbody\"><\u002Fdiv><\u002Fdiv>" +
+      "<div id=\"dp-importbar\" hidden><span id=\"dp-importtext\"><\u002Fspan><button id=\"dp-importstop\">STOP<\u002Fbutton><\u002Fdiv>" +
+      "<div id=\"dp-watchbar\" hidden><span id=\"dp-watchtext\"><\u002Fspan><span class=\"dp-wbtns\">" +
+      "<button id=\"dp-watchcheck\">CHECK<\u002Fbutton><button id=\"dp-watchx\" aria-label=\"Dismiss\">\u2715<\u002Fbutton><\u002Fspan><\u002Fdiv>" +
+      "<div id=\"dp-toast\" role=\"status\"><\u002Fdiv>" +
+      "<div class=\"dp-scrim\" id=\"dp-sheetscrim\" hidden><\u002Fdiv><div id=\"dp-sheet\" hidden><\u002Fdiv>" +
+      "<div class=\"dp-scrim\" id=\"dp-modalscrim\" hidden><\u002Fdiv><div id=\"dp-modal\" hidden><\u002Fdiv>" +
+      "<input id=\"dp-fileinput\" type=\"file\" multiple accept=\"audio/*,.mp3,.m4a,.aac,.flac,.ogg,.oga,.opus,.wav,.lrc,.txt\" style=\"display:none\">" +
+      "<input id=\"dp-dirinput\" type=\"file\" multiple webkitdirectory style=\"display:none\">" +
+      "<\u002Fdiv>";
+  }
+  function showWatchBar(blocked) {
+    var wbar = B.$("dp-watchbar");
+    if (!wbar || !blocked) return;
+    B.$("dp-watchtext").textContent = blocked + " WATCHED FOLDER" + (blocked > 1 ? "S" : "") + " NEED" + (blocked > 1 ? "" : "S") + " A TAP TO CHECK";
+    wbar.hidden = false;
+  }
+  function wire(ws) {
+    B.$("dp-add").onclick = B.importChooser;
+    B.$("dp-gear").onclick = function () { B.settings(); };
+    B.$("dp-tabs").onclick = function (e) {
+      var b = e.target.closest("[data-v]"); if (!b) return;
+      B.view = b.getAttribute("data-v"); B.detail = null;
+      var tabs = B.$("dp-tabs").querySelectorAll(".dp-tab"), i;
+      for (i = 0; i < tabs.length; i++) tabs[i].className = "dp-tab" + (tabs[i] === b ? " on" : "");
+      B.render(); window.scrollTo(0, 0);
+    };
+    B.$("dp-search").oninput = function () { B.search = this.value.replace(/^\s+|\s+$/g, ""); if (B.view !== "songs") { B.view = "songs"; B.detail = null; var tabs = B.$("dp-tabs").querySelectorAll(".dp-tab"), i; for (i = 0; i < tabs.length; i++) tabs[i].className = "dp-tab" + (tabs[i].getAttribute("data-v") === "songs" ? " on" : ""); } B.render(); };
+    B.$("dp-content").addEventListener("click", B.onAct);
+    B.$("dp-play").onclick = function () { if (!B.audio || !B.curRec()) return; if (B.audio.paused) { var p = B.audio.play(); if (p && p.catch) p.catch(function () {}); } else B.audio.pause(); };
+    B.$("dp-prev").onclick = B.prev;
+    B.$("dp-next").onclick = function () { B.next(false); };
+    B.$("dp-shuf").onclick = B.toggleShuffle;
+    B.$("dp-rep").onclick = B.cycleRepeat;
+    B.$("dp-lyr").onclick = B.toggleLyrics;
+    var seek = B.$("dp-seek");
+    seek.oninput = function () { B.seeking = true; var c = B.$("dp-tcur"); if (B.audio && B.audio.duration && c) c.textContent = B.fmtTime(seek.value / 1000 * B.audio.duration); seek.style.setProperty("--p", (seek.value / 10) + "%"); };
+    seek.onchange = function () { if (B.audio && B.audio.duration) B.audio.currentTime = seek.value / 1000 * B.audio.duration; B.seeking = false; };
+    var vol = B.$("dp-vol");
+    vol.oninput = function () { if (B.audio) B.audio.volume = vol.value / 100; vol.style.setProperty("--p", vol.value + "%"); };
+    B.$("dp-importstop").onclick = function () { B.cancelFlag = true; };
+    B.$("dp-watchcheck").onclick = function () {
+      B.$("dp-watchbar").hidden = true;
+      B.rescanAll(true).then(function (r) { if (r.blocked) B.toast(r.blocked + " folder" + (r.blocked > 1 ? "s" : "") + " still blocked \u2014 remove and re-add in settings if this keeps up", 4200); });
+    };
+    B.$("dp-watchx").onclick = function () { B.$("dp-watchbar").hidden = true; };
+    B.$("dp-sheetscrim").onclick = B.closeSheet;
+    B.$("dp-modalscrim").onclick = B.closeModal;
+    B.$("dp-fileinput").onchange = function () {
+      var el = this;
+      B.partitionPicked(el.files).then(function (p) {
+        if (p.items.length) B.importFiles(p.items, { lyrics: p.map });
+        else if (B.mapSize(p.map)) B.attachLyricsToLib(p.map);
+        else B.toast("No audio files in that selection");
+        el.value = "";
+      });
+    };
+    B.$("dp-dirinput").onchange = function () {
+      var el = this;
+      B.partitionPicked(el.files).then(function (p) {
+        if (p.items.length) B.importFiles(p.items, { lyrics: p.map, extra: window.showDirectoryPicker ? "" : "re-pick this folder any time to pull in new files" });
+        else B.toast("No audio files found in that folder");
+        el.value = "";
+      });
+    };
+    B.wireLyrPanel();
+    if (B.audio) vol.value = Math.round(B.audio.volume * 100);
+  }
+  async function boot() {
+    if (B.loaded || B.booting) { B.render(); B.syncTransport(); afterBoot(); return; }
+    B.booting = true;
+    await B.store.init();
+    try { B.lib = await B.store.all(); } catch (e) { B.lib = []; }
+    B.sortLib(); B.indexLib();
+    B.loaded = true; B.booting = false;
+    if (!B.mounted) return;
+    B.render(); B.syncTransport();
+    if (B.sessionOnly) B.toast("Heads up: this browser context blocks storage \u2014 the library lasts this session only", 5200);
+    afterBoot();
+  }
+  function afterBoot() {
+    if (!B.mounted) return;
+    if (!B.lib.length && !B.importing) B.importChooser();
+    B.rescanAll(false).then(function (r) { if (B.mounted && r.blocked) showWatchBar(r.blocked); });
+  }
+  window.Lantern.register("deckplate", {
+    name: "Deckplate", glyph: "\u25c9", color: "#d97706",
+    desc: "Your music, offline",
+    mount: function (ws) {
+      B.injectCss();
+      ws.innerHTML = skeleton();
+      B.mounted = true;
+      B.lyrOpen = false;
+      wire(ws);
+      document.addEventListener("keydown", B.docKeydown);
+      document.addEventListener("dragover", B.docDragover);
+      document.addEventListener("drop", B.docDrop);
+      boot();
+    },
+    unmount: function () {
+      B.mounted = false;
+      B.lyrOpen = false;
+      document.removeEventListener("keydown", B.docKeydown);
+      document.removeEventListener("dragover", B.docDragover);
+      document.removeEventListener("drop", B.docDrop);
+      // Audio deliberately keeps playing; the transport returns on next mount.
+    }
+  });
+})();
+// ===========================================================================
+// MODULE: DECKPLATE_APP - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: GUIDE_DECKPLATE - START
+// Depends: GUIDE, DECKPLATE_APP
+// Exports: (none) -- registers the "deckplate" help guide
+// ===========================================================================
+(function () {
+  window.Lantern.guide.add("deckplate", "Deckplate \u2014 offline music", [
+    ["What it is", "<p>A music player for files you already own. Load your MP3 / M4A / FLAC / OGG / OPUS / WAV files once and they play from the library with no internet, no account, and no scanning of anything you did not point it at. Titles, artists, albums, track numbers, cover art and embedded lyrics are read from the files themselves.<\u002Fp>"],
+    ["Adding music", "<p><b>Add music<\u002Fb> offers three ways in:<\u002Fp><ul>" +
+      "<li><b>Pick your music folder<\u002Fb> \u2014 loads every track inside it. On browsers that support folder access, Deckplate also <b>watches<\u002Fb> the folder: new files show up on their own next time you open the app. The browser may ask for one confirming tap before a check \u2014 that is a privacy feature, not a bug.<\u002Fli>" +
+      "<li><b>Search this device for audio<\u002Fb> \u2014 pick a top folder (Music, an SD card) and it digs through every folder underneath, skipping system junk. A progress bar shows folders and files as it goes; <b>STOP<\u002Fb> cancels cleanly.<\u002Fli>" +
+      "<li><b>Pick individual files<\u002Fb> \u2014 choose specific songs. Lyric files (.lrc / .txt) can ride along.<\u002Fli><\u002Ful>" +
+      "<p>Files can also be dragged into the app. Re-importing the same folder never duplicates: matching tracks are skipped. On phones without folder watching, re-picking the folder pulls in just the new files.<\u002Fp>"],
+    ["Library, queue, shuffle", "<p><b>Songs / Albums / Artists<\u002Fb> tabs browse the library; the search box filters by title, artist or album. Tapping a track plays it and queues what follows; <b>PLAY<\u002Fb> and <b>SHUFFLE<\u002Fb> chips start a whole list. The <b>\u22ee<\u002Fb> button on any row offers <b>Play next<\u002Fb>, <b>Add to queue<\u002Fb>, <b>Lyrics\u2026<\u002Fb> and <b>Remove<\u002Fb>. The <b>Queue<\u002Fb> tab shows what is coming and jumps on tap. Transport buttons cover previous / play-pause / next, shuffle, and repeat (off \u2192 all \u2192 one). With the keyboard: <kbd>Space<\u002Fkbd> pauses, <kbd>Shift<\u002Fkbd>+<kbd>\u2192<\u002Fkbd>/<kbd>\u2190<\u002Fkbd> skip. Where the device supports it, lock-screen and headset controls work too. Music keeps playing while you use other Lantern apps \u2014 come back to Deckplate for the controls.<\u002Fp>"],
+    ["Lyrics & closed captions", "<p>The <b>CC<\u002Fb> button opens the lyrics panel. Timestamped lyrics (LRC, embedded or sidecar) light up line by line in step with the song \u2014 tap a line to jump there. Plain lyrics show as scrollable text, honestly labelled <b>UNSYNCED<\u002Fb>. Deckplate finds lyrics three ways: embedded tags inside the file, a matching <b>.lrc<\u002Fb> or <b>.txt<\u002Fb> next to the song (same name, e.g. <code>Time.mp3<\u002Fcode> + <code>Time.lrc<\u002Fcode>), or paste-your-own via <b>\u22ee \u2192 Lyrics\u2026<\u002Fb> using <code>[01:23.45]<\u002Fcode> time tags for sync. Nothing is fetched online.<\u002Fp>"],
+    ["Where music is stored", "<p>The library lives in this browser's own storage (IndexedDB) on this device \u2014 audio is far too large for Lantern's normal document store, so <b>Deckplate's library is not part of Backup's JSON export<\u002Fb>. Your original files are the backup: removing a track from Deckplate never touches the file on disk, and a removed track stays removed on folder checks until you import it again yourself. Clearing browser site data clears the library. Some contexts (certain browsers opening the file directly from local storage) block IndexedDB entirely \u2014 Deckplate then runs <b>session-only<\u002Fb> and says so; everything works, but the library empties when the page closes.<\u002Fp>"]
+  ]);
+})();
+// ===========================================================================
+// MODULE: GUIDE_DECKPLATE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: ASTRO_CELLS - START
+// Depends: FORMULA, PHYSICS_CORE
+// Exports: (none) -- registers orbital-mechanics and relativity cell functions
+// ===========================================================================
+// Kepler and Einstein, callable from any sheet cell, the calculator, or the
+// Assist app: =VISVIVA(...), =HOHMANN(...), =SCHWARZ(...). All strict SI
+// (metres, kilograms, seconds) and all angles in RADIANS -- use CONVERT and
+// the calculator for units first. Defaults: mu = Earth's GM, c = light speed.
+// KEPLERE solves the transcendental Kepler equation with a capped Newton
+// iteration -- deterministic in, deterministic out, the loop stays hidden.
+// Safe-edit surface for future maintainers: add new reg("NAME", ...) lines;
+// never change existing signatures (sheets in the wild may use them).
+(function () {
+  if (!(window.Lantern.formula && Lantern.formula.register && window.Lantern.PHYS)) return;
+  var P = Lantern.PHYS, reg = Lantern.formula.register;
+  function n(x) { var v = (typeof x === "number") ? x : parseFloat(x); if (isNaN(v)) throw new Error("number expected"); return v; }
+  function mu(a, i) { return a.length > i ? n(a[i]) : P.muEarth; }
+  function cc(a, i) { return a.length > i ? n(a[i]) : P.c; }
+
+  // --- Kepler / orbits (ellipses; circular cases already exist as ORBITV/ORBITT/ESCV) ---
+  reg("VISVIVA", function (a) {              // speed anywhere on an orbit: v = sqrt(mu*(2/r - 1/a))
+    var r = n(a[0]), sa = n(a[1]), m = mu(a, 2);
+    var v2 = m * (2 / r - 1 / sa);
+    if (v2 < 0) throw new Error("r beyond this orbit");
+    return Math.sqrt(v2);
+  });
+  reg("SMAXIS", function (a) {               // semi-major axis from period: a = (mu*T^2/4pi^2)^(1/3)
+    var T = n(a[0]), m = mu(a, 1);
+    return Math.pow(m * T * T / (4 * Math.PI * Math.PI), 1 / 3);
+  });
+  reg("KEPLERE", function (a) {              // eccentric anomaly E from mean anomaly M (radians), e < 1
+    var M = n(a[0]), e = n(a[1]);
+    if (!(e >= 0 && e < 1)) throw new Error("e must be 0..1");
+    var E = e < 0.8 ? M : Math.PI, i;
+    for (i = 0; i < 40; i++) {
+      var d = (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
+      E -= d;
+      if (Math.abs(d) < 1e-12) break;
+    }
+    return E;
+  });
+  reg("TRUEANOM", function (a) {             // true anomaly from eccentric anomaly (radians)
+    var E = n(a[0]), e = n(a[1]);
+    return 2 * Math.atan2(Math.sqrt(1 + e) * Math.sin(E / 2), Math.sqrt(1 - e) * Math.cos(E / 2));
+  });
+  reg("ORBR", function (a) {                 // radius at true anomaly: r = a(1-e^2)/(1+e cos nu)
+    var sa = n(a[0]), e = n(a[1]), nu = n(a[2]);
+    return sa * (1 - e * e) / (1 + e * Math.cos(nu));
+  });
+  reg("HOHMANN", function (a) {              // total delta-v for a Hohmann transfer between circular radii
+    var r1 = n(a[0]), r2 = n(a[1]), m = mu(a, 2);
+    var at = (r1 + r2) / 2;
+    var dv1 = Math.abs(Math.sqrt(m * (2 / r1 - 1 / at)) - Math.sqrt(m / r1));
+    var dv2 = Math.abs(Math.sqrt(m / r2) - Math.sqrt(m * (2 / r2 - 1 / at)));
+    return dv1 + dv2;
+  });
+  reg("HOHMANNT", function (a) {             // transfer time = half the transfer-ellipse period
+    var r1 = n(a[0]), r2 = n(a[1]), m = mu(a, 2);
+    var at = (r1 + r2) / 2;
+    return Math.PI * Math.sqrt(at * at * at / m);
+  });
+
+  // --- Einstein (special + weak-field general relativity) ---
+  reg("SCHWARZ", function (a) {              // Schwarzschild radius: rs = 2Gm/c^2
+    var m = n(a[0]), c = cc(a, 1);
+    return 2 * P.G * m / (c * c);
+  });
+  reg("GRAVDIL", function (a) {              // gravitational time factor: sqrt(1 - rs/r); < 1 means slower
+    var r = n(a[0]), rs = n(a[1]);
+    var f = 1 - rs / r;
+    if (f <= 0) throw new Error("inside the horizon");
+    return Math.sqrt(f);
+  });
+  reg("VELDIL", function (a) {               // moving-clock time factor: 1/gamma = sqrt(1 - v^2/c^2)
+    var v = n(a[0]), c = cc(a, 1);
+    var f = 1 - (v * v) / (c * c);
+    if (f <= 0) throw new Error("v must be below c");
+    return Math.sqrt(f);
+  });
+  reg("PERIPREC", function (a) {             // perihelion advance per orbit (radians): 6 pi mu / (c^2 a (1-e^2))
+    var sa = n(a[0]), e = n(a[1]), m = mu(a, 2), c = cc(a, 3);
+    return 6 * Math.PI * m / (c * c * sa * (1 - e * e));
+  });
+})();
+// ===========================================================================
+// MODULE: ASTRO_CELLS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: ASSIST_CATALOG - START
+// Depends: CORE
+// Exports: Lantern.assistCatalog, Lantern.assistBuiltins
+// ===========================================================================
+// The machine-readable tool manifest: every cell function an AI (or a person)
+// may call through the one FORMULA engine, with signature and a one-line
+// meaning. PURE DATA -- no logic. Maintenance rule for any future editor
+// (human or AI): when a *_CELLS module registers a new function, add one line
+// here in the same module-order grouping; never remove a line while the
+// function still exists. Units are SI everywhere; angles in radians.
+(function () {
+  window.Lantern.assistBuiltins = "SUM AVERAGE MIN MAX COUNT ABS ROUND FLOOR CEIL SQRT POW MOD IF SIN COS TAN ASIN ACOS ATAN LOG LN EXP FACT PI E ANS";
+  window.Lantern.assistCatalog = [
+    // CONVERT (units)
+    { n: "CONVERT", s: "(value,\"from\",\"to\")", d: "unit conversion, e.g. CONVERT(5,\"mile\",\"km\"); C/F/K for temperature" },
+    // PHYSICS_CELLS
+    { n: "FORCE", s: "(m,a)", d: "newtons from mass*acceleration" },
+    { n: "WEIGHT", s: "(m[,g])", d: "weight in newtons; g defaults 9.80665" },
+    { n: "MOMENTUM", s: "(m,v)", d: "kg*m/s" },
+    { n: "WORK", s: "(F,d)", d: "joules from force*distance" },
+    { n: "POWER", s: "(E,t)", d: "watts from energy/time" },
+    { n: "PRESSURE", s: "(F,A)", d: "pascals from force/area" },
+    { n: "STRESS", s: "(F,A)", d: "pascals, same as pressure" },
+    { n: "KE", s: "(m,v)", d: "kinetic energy in joules" },
+    { n: "PE", s: "(m,h[,g])", d: "potential energy in joules" },
+    { n: "TORQUE", s: "(F,r)", d: "newton-metres" },
+    { n: "DENSITY", s: "(m,V)", d: "kg per cubic metre" },
+    { n: "CENTRIP", s: "(v,r)", d: "centripetal acceleration m/s^2" },
+    { n: "ORBITV", s: "(r[,mu])", d: "circular orbit speed at radius r; mu defaults Earth" },
+    { n: "ESCV", s: "(r[,mu])", d: "escape velocity at radius r" },
+    { n: "ORBITT", s: "(r[,mu])", d: "circular orbit period in seconds (Kepler III)" },
+    { n: "GRAV", s: "(m1,m2,r[,G])", d: "Newton gravity force in newtons" },
+    { n: "GAMMA", s: "(v[,c])", d: "Lorentz factor for speed v" },
+    { n: "EMC2", s: "(m[,c])", d: "rest energy in joules" },
+    { n: "RELKE", s: "(m,v[,c])", d: "relativistic kinetic energy" },
+    // ASTRO_CELLS
+    { n: "VISVIVA", s: "(r,a[,mu])", d: "orbital speed at radius r on an ellipse with semi-major axis a" },
+    { n: "SMAXIS", s: "(T[,mu])", d: "semi-major axis in metres from period in seconds" },
+    { n: "KEPLERE", s: "(M,e)", d: "eccentric anomaly from mean anomaly (radians), e<1" },
+    { n: "TRUEANOM", s: "(E,e)", d: "true anomaly from eccentric anomaly (radians)" },
+    { n: "ORBR", s: "(a,e,nu)", d: "orbit radius at true anomaly nu" },
+    { n: "HOHMANN", s: "(r1,r2[,mu])", d: "total delta-v (m/s) for a Hohmann transfer between circular radii" },
+    { n: "HOHMANNT", s: "(r1,r2[,mu])", d: "Hohmann transfer time in seconds" },
+    { n: "SCHWARZ", s: "(m[,c])", d: "Schwarzschild radius in metres for mass m" },
+    { n: "GRAVDIL", s: "(r,rs)", d: "gravitational time factor sqrt(1-rs/r), below 1 = slower clock" },
+    { n: "VELDIL", s: "(v[,c])", d: "moving-clock time factor 1/gamma" },
+    { n: "PERIPREC", s: "(a,e[,mu,c])", d: "perihelion advance per orbit in radians" },
+    // CHEM
+    { n: "MOLARMASS", s: "(\"formula\")", d: "grams per mole, e.g. MOLARMASS(\"H2O\")" },
+    { n: "MOLES", s: "(grams,\"formula\")", d: "moles in a given mass" },
+    { n: "GRAMS", s: "(moles,\"formula\")", d: "mass of a given mole count" },
+    // ENGINEERING
+    { n: "VOLTS", s: "(I,R)", d: "Ohm's law voltage" },
+    { n: "WATTS", s: "(V,I)", d: "electrical power" },
+    { n: "RPARALLEL", s: "(r1,r2,...)", d: "combined parallel resistance" },
+    { n: "GEAR", s: "(driver,driven)", d: "gear ratio driven/driver" },
+    // FARMING / HUSBANDRY
+    { n: "PLANTS", s: "(len_m,wid_m,spacing_cm)", d: "plants that fit a bed" },
+    { n: "EGGS", s: "(hens,per_week)", d: "eggs per week from a flock" },
+    { n: "FEEDKG", s: "(animals,days,g_per_day)", d: "feed needed in kg" },
+    // RF_CELLS (Smith bench set)
+    { n: "REFL", s: "(r,x[,z0])", d: "|reflection coefficient| of impedance r+jx" },
+    { n: "SWR", s: "(r,x[,z0])", d: "standing wave ratio" },
+    { n: "WAVELEN", s: "(f_hz[,vf])", d: "wavelength in metres" },
+    { n: "FRES", s: "(L_h,C_f)", d: "LC resonant frequency in Hz" },
+    { n: "MATCHSER", s: "(r,x,f[,z0])", d: "series element for an L-match" },
+    { n: "MATCHSH", s: "(r,x,f[,z0])", d: "shunt element for an L-match" }
+  ];
+})();
+// ===========================================================================
+// MODULE: ASSIST_CATALOG - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: ASSIST_CARDS - START
+// Depends: CORE
+// Exports: Lantern.assistCards
+// ===========================================================================
+// The prescript deck: each card turns a vague human question into the exact
+// composition an adept would write. PURE DATA. Card fields:
+//   id, ask (canonical question), kw (match keywords), pre (preconditions),
+//   slots: [{k, label, unit, hint, text?}]  (text:true = quoted string slot),
+//   compose (template; {k} holes get slot values), out (what the number means).
+// Editing rule for future maintainers: add cards freely; a card that proves
+// itself often should be PROMOTED into a *_CELLS function and its compose
+// collapsed to one call -- that ladder is the whole point.
+(function () {
+  window.Lantern.assistCards = [
+    { id: "orbit-period", ask: "How long does a satellite take to orbit Earth at a given altitude?",
+      kw: ["orbit", "satellite", "period", "iss", "altitude", "revolution", "long"],
+      pre: "Circular orbit around Earth.",
+      slots: [{ k: "alt_km", label: "Altitude above the surface", unit: "km" }],
+      compose: "=ORBITT(CONVERT({alt_km}+6371,\"km\",\"m\"))/60", out: "minutes per orbit" },
+    { id: "geo-altitude", ask: "How high is a geostationary orbit?",
+      kw: ["geostationary", "geosynchronous", "geo", "altitude", "high", "24"],
+      pre: "Earth; sidereal day = 86164 s.",
+      slots: [{ k: "period_s", label: "Orbit period", unit: "s", hint: "86164 for geostationary" }],
+      compose: "=CONVERT(SMAXIS({period_s}),\"m\",\"km\")-6371", out: "km above the surface" },
+    { id: "escape-v", ask: "What is the escape velocity from Earth at a given altitude?",
+      kw: ["escape", "velocity", "leave", "gravity"],
+      pre: "Ignores drag; from Earth.",
+      slots: [{ k: "alt_km", label: "Altitude above the surface", unit: "km", hint: "0 for the ground" }],
+      compose: "=ESCV(CONVERT({alt_km}+6371,\"km\",\"m\"))", out: "m/s" },
+    { id: "hohmann-dv", ask: "How much delta-v to move between two circular Earth orbits?",
+      kw: ["hohmann", "transfer", "delta", "dv", "raise", "orbit", "leo", "geo"],
+      pre: "Radii are FROM EARTH'S CENTRE (altitude + 6371 km).",
+      slots: [{ k: "r1_km", label: "Start radius from centre", unit: "km" },
+              { k: "r2_km", label: "Target radius from centre", unit: "km" }],
+      compose: "=HOHMANN(CONVERT({r1_km},\"km\",\"m\"),CONVERT({r2_km},\"km\",\"m\"))", out: "m/s total" },
+    { id: "hohmann-time", ask: "How long does a Hohmann transfer between two orbits take?",
+      kw: ["hohmann", "transfer", "time", "long", "hours"],
+      pre: "Radii from Earth's centre.",
+      slots: [{ k: "r1_km", label: "Start radius from centre", unit: "km" },
+              { k: "r2_km", label: "Target radius from centre", unit: "km" }],
+      compose: "=HOHMANNT(CONVERT({r1_km},\"km\",\"m\"),CONVERT({r2_km},\"km\",\"m\"))/3600", out: "hours" },
+    { id: "ellipse-speed", ask: "How fast is a body at radius r on an elliptical orbit?",
+      kw: ["speed", "ellipse", "elliptical", "perigee", "apogee", "vis", "viva"],
+      pre: "Around Earth unless mu changed in the formula.",
+      slots: [{ k: "r_km", label: "Current radius from centre", unit: "km" },
+              { k: "a_km", label: "Semi-major axis", unit: "km" }],
+      compose: "=VISVIVA(CONVERT({r_km},\"km\",\"m\"),CONVERT({a_km},\"km\",\"m\"))", out: "m/s" },
+    { id: "speed-dilation", ask: "How much time does a fast-moving clock lose per day?",
+      kw: ["time", "dilation", "relativity", "fast", "clock", "twin", "speed", "lose"],
+      pre: "Special relativity only (no gravity term).",
+      slots: [{ k: "v_ms", label: "Speed", unit: "m/s" }],
+      compose: "=(1-VELDIL({v_ms}))*86400", out: "seconds lost per day" },
+    { id: "grav-dilation", ask: "How much slower does a clock run deep in a gravity well, per day?",
+      kw: ["gravitational", "gravity", "dilation", "clock", "gps", "well", "slower"],
+      pre: "Weak-field; compares to a clock far away.",
+      slots: [{ k: "m_kg", label: "Central mass", unit: "kg", hint: "5.972e24 Earth, 1.989e30 Sun" },
+              { k: "r_m", label: "Distance from centre", unit: "m" }],
+      compose: "=(1-GRAVDIL({r_m},SCHWARZ({m_kg})))*86400", out: "seconds lost per day" },
+    { id: "schwarzschild", ask: "What is the Schwarzschild radius of a mass?",
+      kw: ["schwarzschild", "black", "hole", "radius", "horizon"],
+      pre: "",
+      slots: [{ k: "m_kg", label: "Mass", unit: "kg", hint: "1.989e30 for the Sun" }],
+      compose: "=SCHWARZ({m_kg})", out: "metres" },
+    { id: "mercury-precession", ask: "How much does an orbit's perihelion advance per orbit (GR)?",
+      kw: ["perihelion", "precession", "mercury", "advance", "einstein"],
+      pre: "Around the Sun by default (mu slot).",
+      slots: [{ k: "a_m", label: "Semi-major axis", unit: "m", hint: "5.79e10 Mercury" },
+              { k: "e", label: "Eccentricity", unit: "", hint: "0.2056 Mercury" },
+              { k: "mu", label: "Central GM", unit: "m^3/s^2", hint: "1.32712e20 Sun" }],
+      compose: "=PERIPREC({a_m},{e},{mu})*206265", out: "arcseconds per orbit" },
+    { id: "molar-mass", ask: "What is the molar mass of a chemical formula?",
+      kw: ["molar", "mass", "mole", "chemical", "formula", "weigh"],
+      pre: "",
+      slots: [{ k: "formula", label: "Chemical formula", unit: "", text: true, hint: "H2O, Ca(OH)2" }],
+      compose: "=MOLARMASS(\"{formula}\")", out: "g/mol" },
+    { id: "grams-moles", ask: "How many moles are in a given mass of a compound?",
+      kw: ["moles", "grams", "mass", "compound", "convert"],
+      pre: "",
+      slots: [{ k: "g", label: "Mass", unit: "g" },
+              { k: "formula", label: "Chemical formula", unit: "", text: true }],
+      compose: "=MOLES({g},\"{formula}\")", out: "mol" },
+    { id: "battery-runtime", ask: "How long will a battery run a load?",
+      kw: ["battery", "runtime", "hours", "load", "run", "solar"],
+      pre: "Halve the answer for lead-acid to protect it.",
+      slots: [{ k: "ah", label: "Capacity", unit: "Ah" }, { k: "v", label: "Voltage", unit: "V" },
+              { k: "w", label: "Load", unit: "W" }],
+      compose: "=({ah}*{v})/{w}", out: "hours" },
+    { id: "parallel-r", ask: "What is the combined resistance of resistors in parallel?",
+      kw: ["parallel", "resistor", "resistance", "combined", "ohm"],
+      pre: "",
+      slots: [{ k: "r1", label: "First resistor", unit: "ohm" }, { k: "r2", label: "Second resistor", unit: "ohm" }],
+      compose: "=RPARALLEL({r1},{r2})", out: "ohms" },
+    { id: "unit-convert", ask: "Convert a value between units.",
+      kw: ["convert", "unit", "units", "how", "many", "km", "miles", "kg", "pounds", "celsius", "fahrenheit"],
+      pre: "Same category only; C/F/K for temperature.",
+      slots: [{ k: "value", label: "Value", unit: "" },
+              { k: "from", label: "From unit", unit: "", text: true, hint: "mile, kg, liter, C" },
+              { k: "to", label: "To unit", unit: "", text: true }],
+      compose: "=CONVERT({value},\"{from}\",\"{to}\")", out: "converted value" },
+    { id: "kinetic", ask: "What is the kinetic energy of a moving mass?",
+      kw: ["kinetic", "energy", "joules", "moving"],
+      pre: "Non-relativistic; use RELKE near light speed.",
+      slots: [{ k: "m_kg", label: "Mass", unit: "kg" }, { k: "v_ms", label: "Speed", unit: "m/s" }],
+      compose: "=KE({m_kg},{v_ms})", out: "joules" }
+  ];
+})();
+// ===========================================================================
+// MODULE: ASSIST_CARDS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: ASSIST_CORE - START
+// Depends: CORE, FORMULA, ASSIST_CATALOG, ASSIST_CARDS
+// Exports: Lantern.assist (match, fill, run, toolCard, buildPrompt,
+//          parseReply, callServer)
+// ===========================================================================
+// The DOM-free brain of the Assist app, and the boundary an external AI talks
+// through. The contract with ANY model (local server or copy-paste courier):
+// the model replies with lines that start with "=" (evaluated top to bottom,
+// ANS carrying the previous result forward) and ends with one "ANSWER:" line
+// in plain words. If it needs a missing value it asks one "NEED:" question.
+// Everything here is testable headless -- no document access.
+(function () {
+  var A = window.Lantern.assist = {};
+  A.match = function (q) {
+    q = String(q || "").toLowerCase();
+    var words = q.split(/[^a-z0-9]+/), scored = [], i, j;
+    var cards = window.Lantern.assistCards || [];
+    for (i = 0; i < cards.length; i++) {
+      var s = 0;
+      for (j = 0; j < cards[i].kw.length; j++) {
+        if (words.indexOf(cards[i].kw[j]) !== -1) s += 2;
+        else if (q.indexOf(cards[i].kw[j]) !== -1) s += 1;
+      }
+      if (s > 0) scored.push({ card: cards[i], score: s });
+    }
+    scored.sort(function (a, b) { return b.score - a.score; });
+    var out = [];
+    for (i = 0; i < scored.length && i < 5; i++) out.push(scored[i].card);
+    return out;
+  };
+  A.fill = function (card, values) {
+    var expr = card.compose, i;
+    for (i = 0; i < card.slots.length; i++) {
+      var sl = card.slots[i], v = values[sl.k];
+      if (v == null || v === "") throw new Error("Missing: " + (sl.label || sl.k));
+      if (!sl.text && isNaN(parseFloat(v))) throw new Error((sl.label || sl.k) + " must be a number");
+      v = String(v).replace(/"/g, "");
+      expr = expr.split("{" + sl.k + "}").join(v);
+    }
+    return expr;
+  };
+  A.run = function (text) {
+    var lines = String(text || "").replace(/\r/g, "").split("\n");
+    var steps = [], last = 0, i;
+    for (i = 0; i < lines.length; i++) {
+      var t = lines[i].replace(/^\s+|\s+$/g, "");
+      if (t.charAt(0) !== "=") continue;
+      var expr = t.slice(1);
+      try {
+        var v = Lantern.formula.evaluate(expr, { deg: false, ans: last });
+        steps.push({ expr: expr, ok: true, value: v });
+        last = v;
+      } catch (e) {
+        steps.push({ expr: expr, ok: false, err: e.message || "error" });
+      }
+    }
+    return { steps: steps, value: steps.length && steps[steps.length - 1].ok ? last : null };
+  };
+  A.toolCard = function () {
+    var cat = window.Lantern.assistCatalog || [], out = [], i;
+    out.push("Built-in: " + window.Lantern.assistBuiltins);
+    for (i = 0; i < cat.length; i++) out.push(cat[i].n + cat[i].s + " - " + cat[i].d);
+    return out.join("\n");
+  };
+  A.buildPrompt = function (question, cards) {
+    var out = [], i, j;
+    out.push("You are a careful calculation assistant working with an offline formula engine.");
+    out.push("Rules: use ONLY the functions listed below. All units are SI (metres, kilograms,");
+    out.push("seconds) and all angles are RADIANS. Convert units with CONVERT first. Reply with");
+    out.push("one or more lines that START with = (each is evaluated in order; ANS holds the");
+    out.push("previous line's result), then finish with exactly one line:");
+    out.push("ANSWER: <one sentence with the number and its unit>");
+    out.push("If a needed value is missing, reply with a single line starting NEED: asking for it.");
+    out.push("No other text.");
+    out.push("");
+    out.push("FUNCTIONS");
+    out.push(A.toolCard());
+    if (cards && cards.length) {
+      out.push("");
+      out.push("RECIPES (use one when it fits; fill the placeholders)");
+      for (i = 0; i < cards.length; i++) {
+        var c = cards[i], sl = [];
+        for (j = 0; j < c.slots.length; j++)
+          sl.push(c.slots[j].k + (c.slots[j].unit ? " in " + c.slots[j].unit : "") + (c.slots[j].hint ? " (" + c.slots[j].hint + ")" : ""));
+        out.push("- " + c.ask + (c.pre ? " [" + c.pre + "]" : ""));
+        out.push("  needs: " + (sl.join("; ") || "nothing"));
+        out.push("  " + c.compose + "   -> " + c.out);
+      }
+    }
+    out.push("");
+    out.push("QUESTION: " + question);
+    return out.join("\n");
+  };
+  A.parseReply = function (text) {
+    text = String(text || "");
+    var need = text.match(/^\s*NEED:\s*(.+)$/m);
+    var ans = text.match(/^\s*ANSWER:\s*(.+)$/m);
+    var exprs = [], lines = text.replace(/\r/g, "").split("\n"), i;
+    for (i = 0; i < lines.length; i++)
+      if (/^\s*=/.test(lines[i])) exprs.push(lines[i].replace(/^\s+/, ""));
+    return { need: need ? need[1] : null, answer: ans ? ans[1] : null, exprText: exprs.join("\n") };
+  };
+  A.callServer = async function (endpoint, model, prompt) {
+    var body = JSON.stringify({
+      model: model || "", stream: false, temperature: 0,
+      messages: [{ role: "user", content: prompt }]
+    });
+    var res = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: body });
+    if (!res.ok) throw new Error("Server said " + res.status + " " + res.statusText);
+    var data = await res.json();
+    if (data.choices && data.choices[0] && data.choices[0].message) return data.choices[0].message.content || "";
+    if (data.message && data.message.content) return data.message.content; // Ollama native /api/chat
+    throw new Error("Unrecognised server reply shape");
+  };
+})();
+// ===========================================================================
+// MODULE: ASSIST_CORE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: ASSIST_APP - START
+// Depends: CORE, STORAGE, SHELL, ASSIST_CORE
+// Exports: (registers "assist" app)
+// ===========================================================================
+// Three ways to get from a plain question to a computed, checkable answer:
+//   1. Recipes (no AI): match a card, fill the blanks, compute.
+//   2. Courier (any AI, zero setup): copy a prompt to any chat AI anywhere,
+//      paste its reply back; the = lines run here, locally and exactly.
+//   3. Local server (offline AI): an OpenAI-compatible endpoint on this
+//      device or LAN (Ollama / llama.cpp) answers, and the = lines run here.
+// The engine result is always shown line by line -- the model proposes,
+// Lantern disposes, and the person can audit every step.
+(function () {
+  var A = Lantern.assist;
+  var ws, out, qIn, mode = "cards";
+  function el(t, a, k) { return Lantern.el(t, a, k); }
+  function stepsBlock(run) {
+    var box = el("div", { style: "font-family:ui-monospace,Consolas,monospace;font-size:13px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:grid;gap:4px;" });
+    for (var i = 0; i < run.steps.length; i++) {
+      var s = run.steps[i];
+      box.appendChild(el("div", { text: "= " + s.expr }));
+      box.appendChild(el("div", {
+        style: "padding-left:14px;color:" + (s.ok ? "var(--ok)" : "var(--bad)"),
+        text: s.ok ? "\u2192 " + Lantern.fmtNum(s.value) : "\u2192 error: " + s.err
+      }));
+    }
+    if (!run.steps.length) box.appendChild(el("div", { "class": "muted", text: "No = lines found." }));
+    return box;
+  }
+  function showRun(run, label, extraTop) {
+    out.innerHTML = "";
+    if (extraTop) out.appendChild(extraTop);
+    out.appendChild(stepsBlock(run));
+    var res = el("div", { "class": "physresult" });
+    if (run.value != null) res.innerHTML = "<b>" + Lantern.fmtNum(Math.round(run.value * 1e6) / 1e6) + "<\u002Fb>" + (label ? " " + Lantern.esc(label) : "");
+    else res.textContent = "No result \u2014 check the steps above.";
+    out.appendChild(res);
+  }
+  function cardForm(card) {
+    out.innerHTML = "";
+    var vals = {}, inputs = {};
+    var box = el("div", { "class": "physbox" });
+    for (var i = 0; i < card.slots.length; i++) (function (sl) {
+      var inp = el("input", { type: sl.text ? "text" : "number", step: "any",
+        placeholder: sl.hint || "", "aria-label": sl.label });
+      inputs[sl.k] = inp;
+      box.appendChild(el("div", { "class": "physvar" }, [
+        el("label", {}, [document.createTextNode(sl.label + (sl.unit ? " (" + sl.unit + ")" : "")),
+          sl.hint ? el("div", { "class": "cst", text: sl.hint }) : null]),
+        inp
+      ]));
+    })(card.slots[i]);
+    out.appendChild(el("p", { "class": "muted", text: card.ask + (card.pre ? " \u2014 " + card.pre : "") }));
+    out.appendChild(box);
+    out.appendChild(el("button", { "class": "primary", text: "Compute", onclick: function () {
+      var k;
+      for (k in inputs) vals[k] = inputs[k].value;
+      try {
+        var expr = A.fill(card, vals);
+        showRun(A.run(expr), card.out);
+      } catch (e) {
+        out.appendChild(el("div", { "class": "physresult", text: e.message }));
+      }
+    } }));
+  }
+  function showCards() {
+    var hits = A.match(qIn.value);
+    out.innerHTML = "";
+    if (!qIn.value.replace(/\s/g, "")) { out.appendChild(el("p", { "class": "muted", text: "Type a question above \u2014 recipes that fit will appear here." })); return; }
+    if (!hits.length) { out.appendChild(el("p", { "class": "muted", text: "No recipe matches. Try Courier or Local server mode, or add a card to ASSIST_CARDS." })); return; }
+    var list = el("div", { "class": "list", style: "margin:8px 0;max-width:none;padding:0" });
+    for (var i = 0; i < hits.length; i++) (function (c) {
+      list.appendChild(el("div", { "class": "item" }, [
+        el("div", { "class": "grow", onclick: function () { cardForm(c); } }, [
+          el("div", { "class": "t", text: c.ask }),
+          el("div", { "class": "s", text: c.compose + "  \u2192 " + c.out })
+        ]),
+        el("button", { "class": "primary", text: "Use", onclick: function () { cardForm(c); } })
+      ]));
+    })(hits[i]);
+    out.appendChild(list);
+  }
+  function courier() {
+    out.innerHTML = "";
+    var q = qIn.value.replace(/^\s+|\s+$/g, "");
+    if (!q) { out.appendChild(el("p", { "class": "muted", text: "Type the question first, then build the prompt." })); return; }
+    var prompt = A.buildPrompt(q, A.match(q));
+    var ta = el("textarea", { rows: "9", style: "width:100%;font-family:ui-monospace,Consolas,monospace;font-size:12px", "aria-label": "Prompt to copy" });
+    ta.value = prompt;
+    var reply = el("textarea", { rows: "6", style: "width:100%;font-family:ui-monospace,Consolas,monospace;font-size:12px",
+      placeholder: "Paste the AI's reply here (its = lines and ANSWER line)", "aria-label": "AI reply" });
+    out.appendChild(el("p", { "class": "muted", text: "1. Copy this prompt into ANY chat AI (another tab, another device, anywhere)." }));
+    out.appendChild(ta);
+    out.appendChild(el("div", { "class": "row", style: "margin:8px 0" }, [
+      el("button", { "class": "primary", text: "Copy prompt", onclick: function () {
+        ta.focus(); ta.select();
+        try { document.execCommand("copy"); } catch (e) {}
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ta.value).catch(function () {});
+      } })
+    ]));
+    out.appendChild(el("p", { "class": "muted", text: "2. Paste the reply below \u2014 the = lines run HERE, on the exact engine, auditable." }));
+    out.appendChild(reply);
+    out.appendChild(el("div", { "class": "row", style: "margin-top:8px" }, [
+      el("button", { "class": "primary", text: "Run reply", onclick: function () {
+        var p = A.parseReply(reply.value);
+        var top = null;
+        if (p.need) top = el("p", { "class": "physresult", text: "The AI needs: " + p.need });
+        else if (p.answer) top = el("p", { "class": "muted", text: "AI says: " + p.answer + " \u2014 verified below:" });
+        showRun(A.run(p.exprText), "", top);
+      } })
+    ]));
+  }
+  function server() {
+    out.innerHTML = "";
+    var q = qIn.value.replace(/^\s+|\s+$/g, "");
+    var ep = el("input", { value: Lantern.store.get("assist.endpoint", "http://127.0.0.1:11434/v1/chat/completions"),
+      style: "flex:2;min-width:220px", "aria-label": "Server endpoint" });
+    var md = el("input", { value: Lantern.store.get("assist.model", "qwen2.5:3b-instruct"),
+      style: "flex:1;min-width:120px", "aria-label": "Model name" });
+    var status = el("div", { "class": "physresult" });
+    out.appendChild(el("p", { "class": "muted", text: "An OpenAI-compatible endpoint on this device or LAN (Ollama, llama.cpp llama-server). See the ? guide for one-line setup." }));
+    out.appendChild(el("div", { "class": "row" }, [ep, md]));
+    out.appendChild(el("div", { "class": "row", style: "margin:8px 0" }, [
+      el("button", { "class": "primary", text: "Ask", onclick: function () {
+        if (!q) { status.textContent = "Type the question first."; out.appendChild(status); return; }
+        Lantern.store.set("assist.endpoint", ep.value);
+        Lantern.store.set("assist.model", md.value);
+        status.textContent = "Asking\u2026";
+        out.appendChild(status);
+        A.callServer(ep.value, md.value, A.buildPrompt(q, A.match(q))).then(function (text) {
+          var p = A.parseReply(text);
+          var top = el("div", {}, [
+            el("p", { "class": "muted", text: "Model replied:" }),
+            el("div", { style: "font-family:ui-monospace,Consolas,monospace;font-size:12px;white-space:pre-wrap;background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:8px", text: text })
+          ]);
+          if (p.need) { out.innerHTML = ""; out.appendChild(top); out.appendChild(el("p", { "class": "physresult", text: "It needs: " + p.need })); return; }
+          showRun(A.run(p.exprText), "", top);
+        }).catch(function (e) {
+          status.textContent = "Could not reach the model: " + e.message + " \u2014 check the endpoint, and that the server allows browser origins (see guide).";
+        });
+      } })
+    ]));
+  }
+  function paintMode() {
+    if (mode === "cards") showCards();
+    else if (mode === "courier") courier();
+    else server();
+  }
+  Lantern.register("assist", {
+    name: "Assist", glyph: "\u2234", color: "#4338ca",
+    desc: "Ask, compute, verify",
+    mount: function (elws) {
+      ws = elws;
+      var wrap = el("div", { "class": "wrap", style: "max-width:760px" });
+      qIn = el("input", { placeholder: "Ask in plain words, e.g. how long does the ISS take to orbit at 420 km", style: "flex:1;min-width:200px", "aria-label": "Your question" });
+      var msel = el("select", { "aria-label": "Mode", html:
+        "<option value=\"cards\">Recipes (no AI)<\u002Foption>" +
+        "<option value=\"courier\">Courier (paste to any AI)<\u002Foption>" +
+        "<option value=\"server\">Local AI server<\u002Foption>" });
+      msel.onchange = function () { mode = msel.value; paintMode(); };
+      qIn.addEventListener("input", function () { if (mode === "cards") showCards(); });
+      qIn.addEventListener("keydown", function (e) { if (e.key === "Enter") paintMode(); });
+      wrap.appendChild(el("div", { "class": "toolbar", style: "position:static;background:transparent;border:0;padding:8px 0" }, [qIn, msel]));
+      out = el("div", {});
+      wrap.appendChild(out);
+      ws.appendChild(wrap);
+      paintMode();
+    }
+  });
+})();
+// ===========================================================================
+// MODULE: ASSIST_APP - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: GUIDE_ASSIST - START
+// Depends: GUIDE, ASSIST_APP
+// Exports: (none) -- registers the "assist" help guide
+// ===========================================================================
+(function () {
+  Lantern.guide.add("assist", "Assist \u2014 ask, compute, verify", [
+    ["The idea", "<p>Language models are good at understanding a question and bad at arithmetic; Lantern's formula engine is the reverse. Assist joins them: the question gets turned into <code>=<\u002Fcode> expressions, and those run on the exact same engine the Sheet and Calculator use \u2014 every step shown, every number reproducible. An AI is optional: the <b>Recipes<\u002Fb> mode is a fully human tool.<\u002Fp>"],
+    ["Recipes (no AI)", "<p>Type your question; matching recipe cards appear. Tap one, fill the blanks (units are printed on every blank \u2014 they matter), and <b>Compute<\u002Fb>. A recipe is the question an adept would ask, pre-scripted: for example the ISS question becomes <code>=ORBITT(CONVERT(alt+6371,\"km\",\"m\"))/60<\u002Fcode>. Recipes live in the ASSIST_CARDS module as plain data anyone can extend.<\u002Fp>"],
+    ["Courier (any AI, zero setup)", "<p><b>Build the prompt<\u002Fb>, copy it into any chat AI \u2014 another tab, another phone, an online model \u2014 then paste its reply back and <b>Run reply<\u002Fb>. The prompt teaches the model the contract: reply only with <code>=<\u002Fcode> lines and one <code>ANSWER:<\u002Fcode> sentence, SI units, radians. The AI proposes; Lantern computes; you audit. Because the maths runs here, even a sloppy model cannot hand you a wrong number silently \u2014 a bad expression shows as an error, not an answer.<\u002Fp>"],
+    ["Local AI server (fully offline)", "<p>Run a small model on this device or another one on your network, then point Assist at it:<\u002Fp><ul>" +
+      "<li><b>Ollama<\u002Fb> (Android via Termux, Raspberry Pi, any PC): install, then <code>OLLAMA_ORIGINS=\"*\" ollama serve<\u002Fcode> and <code>ollama pull qwen2.5:3b-instruct<\u002Fcode>. Endpoint: <code>http://127.0.0.1:11434/v1/chat/completions<\u002Fcode> (use the Pi's LAN address from a phone).<\u002Fli>" +
+      "<li><b>llama.cpp<\u002Fb>: <code>llama-server -m model.gguf --host 0.0.0.0 --port 8080<\u002Fcode>. Endpoint: <code>http://127.0.0.1:8080/v1/chat/completions<\u002Fcode>.<\u002Fli><\u002Ful>" +
+      "<p>The <code>OLLAMA_ORIGINS<\u002Fcode> setting matters: it lets a page opened from a file reach the local server. A 2\u20134B model is enough \u2014 it only has to pick a recipe and fill numbers in, not do the maths.<\u002Fp>"],
+    ["Growing it", "<p>Two ladders. <b>Add cards<\u002Fb>: new question-classes go into ASSIST_CARDS as data \u2014 canonical question, keywords, blanks with units, the composition. <b>Promote cards<\u002Fb>: when a multi-step recipe proves itself, register it as a single cell function in a *_CELLS module (the way HOHMANN swallows two vis-viva steps) and collapse the card to one call \u2014 each promotion permanently shrinks the intelligence needed to use it. New functions also get one line in ASSIST_CATALOG so every AI sees them. Each of these is one small module edit, which is the point of the module boundaries.<\u002Fp>"]
+  ]);
+})();
+// ===========================================================================
+// MODULE: GUIDE_ASSIST - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: MOD_FORGE - START
+// Depends: CORE, STORAGE, FORMULA
+// Exports: Lantern.forge (list, read, staticText, checkText, stage, activate,
+//          deactivate, rollback, remove, exportAll, importText, applyAll,
+//          overlays, bootlog, safeMode), Lantern.selftest (add, run)
+// ===========================================================================
+// The persistence layer that lets capability compound without touching model
+// weights or the file on disk: module OVERLAYS. An overlay is the full text
+// of one module, stored through Lantern.store (so it rides Backup's JSON
+// export), applied by evaluation AFTER every static module has run -- last
+// writer wins, which the suite's late-binding registries make safe. The
+// ratchet is propose -> test -> persist, never propose -> persist: activation
+// runs the whole selftest registry and a failing overlay never comes back on
+// boot. Open the suite with ?safe=1 to skip every overlay (safe mode).
+// Deactivating or rolling back takes full effect on the next reload, because
+// an already-evaluated overlay cannot be un-run -- the UI says so honestly.
+(function () {
+  var F = window.Lantern.forge = {};
+  var T = window.Lantern.selftest = { tests: [] };
+  T.add = function (name, fn) { T.tests.push({ name: name, fn: fn }); };
+  T.run = function () {
+    var out = { pass: 0, fail: [] }, i;
+    for (i = 0; i < T.tests.length; i++) {
+      try { var r = T.tests[i].fn(); if (r === false) throw new Error("returned false"); out.pass++; }
+      catch (e) { out.fail.push({ name: T.tests[i].name, err: e.message || String(e) }); }
+    }
+    return out;
+  };
+  F.safeMode = /[?&]safe=1/.test(location.search);
+  F.bootlog = [];
+  function loadOv() { return Lantern.store.get("forge.overlays", {}); }
+  function saveOv(o) { Lantern.store.set("forge.overlays", o); }
+  F.overlays = loadOv;
+  function srcText() {
+    var ss = document.scripts, i;
+    for (i = 0; i < ss.length; i++) if (ss[i].text && ss[i].text.indexOf("MODULE: CORE - START") !== -1) return ss[i].text;
+    return "";
+  }
+  function blockSpan(src, name) {
+    var mark = "// MODULE: " + name + " - START";
+    var s = src.indexOf(mark);
+    if (s === -1) return null;
+    var ds = src.lastIndexOf("\n", s - 2);            // start of the divider line above
+    ds = src.lastIndexOf("\n", ds - 1) + 1;
+    var em = "// MODULE: " + name + " - END";
+    var e = src.indexOf(em, s);
+    if (e === -1) return null;
+    var de = src.indexOf("\n", src.indexOf("\n", e) + 1); // end of the divider line below
+    return [ds, de + 1];
+  }
+  F.list = function () {
+    var src = srcText(), out = [], seen = {}, m;
+    var re = /\/\/ MODULE: ([A-Z0-9_]+) - START/g;
+    var ov = loadOv();
+    while ((m = re.exec(src))) { if (!seen[m[1]]) { seen[m[1]] = 1; out.push({ name: m[1], overlay: ov[m[1]] ? ov[m[1]].status : null }); } }
+    var k;
+    for (k in ov) if (!seen[k]) out.push({ name: k, overlay: ov[k].status, newModule: true });
+    return out;
+  };
+  F.staticText = function (name) {
+    var src = srcText(), sp = blockSpan(src, name);
+    return sp ? src.slice(sp[0], sp[1]) : "";
+  };
+  F.read = function (name) {
+    var ov = loadOv();
+    return ov[name] ? ov[name].text : F.staticText(name);
+  };
+  F.checkText = function (name, text) {
+    var errs = [], warns = [];
+    if (text.indexOf("// MODULE: " + name + " - START") === -1) errs.push("Missing '// MODULE: " + name + " - START' marker");
+    if (text.indexOf("// MODULE: " + name + " - END") === -1) errs.push("Missing END marker");
+    var re = /\/\/ MODULE: ([A-Z0-9_]+) - (START|END)/g, m, names = {};
+    while ((m = re.exec(text))) names[m[1]] = 1;
+    var k, n = 0;
+    for (k in names) n++;
+    if (n > 1) errs.push("Text contains more than one module; one overlay = one module");
+    if (/<\x2F/.test(text)) errs.push("Literal closing-tag sequence found; write <\\u002F inside strings");
+    if (/\n\n\n\n/.test(text)) warns.push("4+ consecutive blank lines (style rule 8)");
+    var words = text.split(/\s+/).length;
+    if (words > 1700) warns.push("~" + words + " words; the size gate asks for ~1500 -- consider splitting");
+    try { new Function(text); } catch (e) { errs.push("Syntax: " + (e.message || e)); }
+    return { ok: !errs.length, errors: errs, warnings: warns, words: words };
+  };
+  F.stage = function (name, text, note) {
+    var chk = F.checkText(name, text);
+    if (!chk.ok) return { ok: false, check: chk };
+    var ov = loadOv();
+    ov[name] = { text: text, prev: ov[name] ? ov[name].text : null, ts: Date.now(), note: note || "", status: "staged" };
+    saveOv(ov);
+    return { ok: true, check: chk };
+  };
+  F.activate = function (name) {
+    var ov = loadOv();
+    if (!ov[name]) return { ok: false, errors: ["No overlay for " + name] };
+    try { (0, eval)(ov[name].text); }
+    catch (e) {
+      ov[name].status = "failed"; saveOv(ov);
+      return { ok: false, errors: ["Runtime: " + (e.message || e)], reloadAdvised: true };
+    }
+    var t = T.run();
+    if (t.fail.length) {
+      ov[name].status = "failed"; saveOv(ov);
+      var msgs = [], i;
+      for (i = 0; i < t.fail.length; i++) msgs.push(t.fail[i].name + ": " + t.fail[i].err);
+      return { ok: false, errors: msgs, selftests: t, reloadAdvised: true };
+    }
+    ov[name].status = "active"; saveOv(ov);
+    return { ok: true, selftests: t };
+  };
+  F.deactivate = function (name) {
+    var ov = loadOv();
+    if (ov[name]) { ov[name].status = "inactive"; saveOv(ov); }
+    return { ok: true, reloadAdvised: true };
+  };
+  F.rollback = function (name) {
+    var ov = loadOv();
+    if (!ov[name] || ov[name].prev == null) return { ok: false, errors: ["Nothing to roll back to"] };
+    var cur = ov[name].text;
+    ov[name].text = ov[name].prev; ov[name].prev = cur; ov[name].ts = Date.now();
+    saveOv(ov);
+    return F.activate(name);
+  };
+  F.remove = function (name) {
+    var ov = loadOv();
+    delete ov[name]; saveOv(ov);
+    return { ok: true, reloadAdvised: true };
+  };
+  F.exportAll = function () {
+    var ov = loadOv(), parts = [], k;
+    for (k in ov) parts.push(ov[k].text);
+    if (!parts.length) return false;
+    Lantern.download("lantern_overlays.js", parts.join("\n"), "text/javascript");
+    return true;
+  };
+  F.importText = function (bundle) {
+    var re = /\/\/ MODULE: ([A-Z0-9_]+) - START/g, m, names = [], i, staged = 0, errs = [];
+    while ((m = re.exec(bundle))) names.push(m[1]);
+    for (i = 0; i < names.length; i++) {
+      var s = bundle.indexOf("// MODULE: " + names[i] + " - START");
+      var ds = bundle.lastIndexOf("\n", bundle.lastIndexOf("\n", s - 2) - 1) + 1;
+      var e = bundle.indexOf("// MODULE: " + names[i] + " - END", s);
+      var de = bundle.indexOf("\n", bundle.indexOf("\n", e) + 1);
+      if (e === -1) { errs.push(names[i] + ": no END"); continue; }
+      var r = F.stage(names[i], bundle.slice(ds, de + 1), "imported");
+      if (r.ok) staged++; else errs.push(names[i] + ": " + r.check.errors.join("; "));
+    }
+    return { staged: staged, errors: errs };
+  };
+  F.applyAll = function () {
+    if (F.safeMode) { F.bootlog.push("SAFE MODE: " + "overlays skipped (?safe=1)"); return; }
+    var ov = loadOv(), k, applied = 0, dirty = false;
+    for (k in ov) {
+      if (ov[k].status !== "active") continue;
+      try { (0, eval)(ov[k].text); F.bootlog.push("applied " + k); applied++; }
+      catch (e) { ov[k].status = "failed"; dirty = true; F.bootlog.push("FAILED " + k + ": " + (e.message || e)); }
+    }
+    if (dirty) saveOv(ov);
+    if (applied && window.dispatchEvent) {
+      try { var ev = document.createEvent("Event"); ev.initEvent("hashchange", true, false); window.dispatchEvent(ev); } catch (e2) {}
+    }
+  };
+  // Whole-suite sanity: the gate every activation must pass.
+  T.add("formula-basics", function () { return Math.abs(Lantern.formula.evaluate("SUM(1,2,3)+ANS", { ans: 4 }) - 10) < 1e-9; });
+  T.add("convert-mile-km", function () { return Math.abs(Lantern.formula.evaluate("CONVERT(1,\"mile\",\"km\")") - 1.609344) < 1e-6; });
+  T.add("orbitt-iss", function () { var v = Lantern.formula.evaluate("ORBITT(CONVERT(420+6371,\"km\",\"m\"))/60"); return Math.abs(v - 92.8) < 1; });
+  T.add("keplere-residual", function () { var E = Lantern.formula.evaluate("KEPLERE(1.1,0.5)"); return Math.abs(E - 0.5 * Math.sin(E) - 1.1) < 1e-9; });
+  T.add("molarmass-h2o", function () { return Math.abs(Lantern.formula.evaluate("MOLARMASS(\"H2O\")") - 18.015) < 0.01; });
+  T.add("refl-matched-load", function () { return Math.abs(Lantern.formula.evaluate("REFL(50,0)")) < 1e-9; });
+  T.add("assist-card-fill", function () {
+    var cards = Lantern.assistCards, i;
+    for (i = 0; i < cards.length; i++) if (cards[i].id === "orbit-period")
+      return Lantern.assist.fill(cards[i], { alt_km: 420 }) === "=ORBITT(CONVERT(420+6371,\"km\",\"m\"))/60";
+    throw new Error("orbit-period card missing");
+  });
+  T.add("shell-registry", function () { return Lantern.order && Lantern.order.length >= 30; });
+  // Apply persisted overlays once every static module has run (BOOT pattern).
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", F.applyAll);
+  else F.applyAll();
+})();
+// ===========================================================================
+// MODULE: MOD_FORGE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: FORGE_APP - START
+// Depends: CORE, STORAGE, SHELL, MOD_FORGE
+// Exports: (registers "forge" app)
+// ===========================================================================
+// The workshop where module edits -- human-typed, AI-proposed via Chat, or
+// imported -- get reviewed, gated, activated, rolled back, and exported. The
+// list shows every live module read straight out of the running document, so
+// what you edit is exactly what is running. Badges: ACTIVE overlay wins over
+// the built-in text on every boot; STAGED awaits a test run; FAILED never
+// applies again until fixed; INACTIVE returns to built-in after a reload.
+(function () {
+  var F = Lantern.forge, T = Lantern.selftest;
+  var out;
+  function el(t, a, k) { return Lantern.el(t, a, k); }
+  function mono(text) {
+    return el("div", { style: "font-family:ui-monospace,Consolas,monospace;font-size:12px;white-space:pre-wrap;background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:8px 10px", text: text });
+  }
+  function gateReport(r) {
+    var lines = [], i;
+    if (r.check) {
+      for (i = 0; i < r.check.errors.length; i++) lines.push("ERROR " + r.check.errors[i]);
+      for (i = 0; i < r.check.warnings.length; i++) lines.push("warn  " + r.check.warnings[i]);
+      lines.push("~" + r.check.words + " words");
+    }
+    if (r.errors) for (i = 0; i < r.errors.length; i++) lines.push("ERROR " + r.errors[i]);
+    if (r.selftests) lines.push("selftests: " + r.selftests.pass + " passed, " + r.selftests.fail.length + " failed");
+    if (r.reloadAdvised) lines.push("Reload the page to return to a clean state.");
+    if (r.ok) lines.unshift("PASSED " + "-- overlay active; it will re-apply on every boot.");
+    return mono(lines.join("\n"));
+  }
+  function editor(name) {
+    out.innerHTML = "";
+    var ov = F.overlays()[name];
+    out.appendChild(el("div", { "class": "row", style: "align-items:center" }, [
+      el("button", { text: "\u2190 Modules", onclick: paint }),
+      el("b", { text: name }),
+      el("span", { "class": "muted", text: ov ? ("overlay " + ov.status + (ov.note ? " \u00b7 " + ov.note : "")) : "built-in text" })
+    ]));
+    var ta = el("textarea", { rows: "18", spellcheck: "false", style: "width:100%;font-family:ui-monospace,Consolas,monospace;font-size:12px;margin:8px 0", "aria-label": "Module text" });
+    ta.value = F.read(name);
+    out.appendChild(ta);
+    var report = el("div", {});
+    function act(fn) { report.innerHTML = ""; report.appendChild(gateReport(fn())); paintBadges(); }
+    out.appendChild(el("div", { "class": "row", style: "flex-wrap:wrap;gap:8px" }, [
+      el("button", { text: "Check", onclick: function () { act(function () { var c = F.checkText(name, ta.value); return { ok: c.ok, check: c }; }); } }),
+      el("button", { "class": "primary", text: "Test & activate", onclick: function () {
+        act(function () { var s = F.stage(name, ta.value, "edited in Forge"); return s.ok ? F.activate(name) : s; });
+      } }),
+      el("button", { text: "Save as staged", onclick: function () { act(function () { return F.stage(name, ta.value, "staged in Forge"); }); } }),
+      el("button", { text: "Deactivate", onclick: function () { act(function () { return F.deactivate(name); }); } }),
+      el("button", { text: "Roll back", onclick: function () { act(function () { return F.rollback(name); }); } }),
+      el("button", { text: "Remove overlay", onclick: function () { act(function () { return F.remove(name); }); } })
+    ]));
+    out.appendChild(report);
+    var badges = el("div", {});
+    out.appendChild(badges);
+    function paintBadges() {
+      var o = F.overlays()[name];
+      badges.innerHTML = "";
+      if (o) badges.appendChild(el("p", { "class": "muted", text: "Overlay status: " + o.status + " \u00b7 " + new Date(o.ts).toLocaleString() + (o.prev != null ? " \u00b7 previous version kept for rollback" : "") }));
+    }
+    paintBadges();
+  }
+  function paint() {
+    out.innerHTML = "";
+    var log = F.bootlog.length ? F.bootlog.join("\n") : "no overlays applied this boot";
+    out.appendChild(el("p", { "class": "muted", text: (F.safeMode ? "SAFE MODE \u2014 all overlays skipped. " : "") + "Boot log: " + log }));
+    var mods = F.list(), i;
+    var staged = [], rest = [];
+    for (i = 0; i < mods.length; i++) (mods[i].overlay === "staged" ? staged : rest).push(mods[i]);
+    var ordered = staged.concat(rest);
+    var list = el("div", { "class": "list", style: "margin:8px 0;max-width:none;padding:0" });
+    for (i = 0; i < ordered.length; i++) (function (m) {
+      var badge = m.overlay ? (" \u00b7 " + m.overlay.toUpperCase() + (m.newModule ? " (new module)" : "")) : "";
+      list.appendChild(el("div", { "class": "item" }, [
+        el("div", { "class": "grow", onclick: function () { editor(m.name); } }, [
+          el("div", { "class": "t", text: m.name }),
+          el("div", { "class": "s", text: (m.overlay ? "overlay" + badge.toLowerCase() : "built-in") })
+        ]),
+        el("button", { "class": m.overlay === "staged" ? "primary" : "", text: m.overlay === "staged" ? "Review" : "Open", onclick: function () { editor(m.name); } })
+      ]));
+    })(ordered[i]);
+    out.appendChild(list);
+  }
+  Lantern.register("forge", {
+    name: "Forge", glyph: "\u2692", color: "#a16207",
+    desc: "Edit, test, persist modules",
+    mount: function (ws) {
+      var wrap = el("div", { "class": "wrap", style: "max-width:860px" });
+      var imp = el("input", { type: "file", accept: ".js,.txt", style: "display:none" });
+      imp.onchange = function () {
+        var f = imp.files && imp.files[0];
+        if (!f) return;
+        var rd = new FileReader();
+        rd.onload = function () {
+          var r = F.importText(String(rd.result || ""));
+          out.insertBefore(mono("Imported: " + r.staged + " staged" + (r.errors.length ? "; " + r.errors.join("; ") : "")), out.firstChild);
+          paint();
+        };
+        rd.readAsText(f);
+        imp.value = "";
+      };
+      wrap.appendChild(el("div", { "class": "toolbar", style: "position:static;background:transparent;border:0;padding:8px 0;flex-wrap:wrap" }, [
+        el("button", { "class": "primary", text: "Run selftests", onclick: function () {
+          var t = T.run(), lines = ["selftests: " + t.pass + " passed, " + t.fail.length + " failed"], i;
+          for (i = 0; i < t.fail.length; i++) lines.push("FAIL " + t.fail[i].name + ": " + t.fail[i].err);
+          out.insertBefore(mono(lines.join("\n")), out.firstChild);
+        } }),
+        el("button", { text: "Export overlays", onclick: function () { if (!F.exportAll()) out.insertBefore(mono("No overlays to export."), out.firstChild); } }),
+        el("button", { text: "Import bundle", onclick: function () { imp.click(); } })
+      ]));
+      out = el("div", {});
+      wrap.appendChild(out);
+      wrap.appendChild(imp);
+      ws.appendChild(wrap);
+      paint();
+    }
+  });
+})();
+// ===========================================================================
+// MODULE: FORGE_APP - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: ASSIST_CHAT - START
+// Depends: CORE, STORAGE, SHELL, ASSIST_CORE, MOD_FORGE
+// Exports: Lantern.CHAT (buildSystem, parseProposals), registers "chat" app
+// ===========================================================================
+// The inverted flow: the person talks to the model, and the model drives
+// Lantern. Each model turn may contain = lines (run here on the real engine,
+// results fed back automatically as TOOL RESULTS for up to three rounds),
+// one ANSWER: line, one NEED: question, or a PROPOSE MODULE block -- which is
+// NEVER applied directly: it is staged into the Forge gate for review. The
+// model proposes; Lantern verifies; the person stays in charge of persisting.
+(function () {
+  var A = Lantern.assist, F = Lantern.forge;
+  var C = window.Lantern.CHAT = {};
+  var msgs = [], busy = false, log, qIn, statusEl;
+  function el(t, a, k) { return Lantern.el(t, a, k); }
+  C.buildSystem = function () {
+    var out = [];
+    out.push("You are the reasoning half of an offline toolbench called Lantern. The person asks;");
+    out.push("you decide; Lantern computes. Rules: use ONLY the functions listed. SI units, angles");
+    out.push("in RADIANS, CONVERT for units. To compute, reply with lines that START with =");
+    out.push("(evaluated in order; ANS holds the previous result). The results come back to you as");
+    out.push("a TOOL RESULTS message; then reply with exactly one line 'ANSWER: <sentence with the");
+    out.push("number and unit>'. If a needed value is missing, reply one line 'NEED: <question>'.");
+    out.push("You may also improve Lantern itself. To propose a module edit or a new module, output:");
+    out.push("PROPOSE MODULE: <NAME>");
+    out.push("<the complete module text, from its START divider to its END divider>");
+    out.push("END PROPOSAL");
+    out.push("Proposals are syntax-checked and self-tested before they can persist; keep one module");
+    out.push("per proposal and follow the module rules in the text you are editing.");
+    out.push("");
+    out.push("FUNCTIONS");
+    out.push(A.toolCard());
+    return out.join("\n");
+  };
+  C.parseProposals = function (text) {
+    var re = /^PROPOSE MODULE:[ \t]*([A-Z0-9_]+)[ \t]*\r?\n([\s\S]*?)^END PROPOSAL[ \t]*$/gm;
+    var out = [], m;
+    while ((m = re.exec(text))) out.push({ name: m[1], text: m[2] });
+    return out;
+  };
+  function bubble(kind, content, monoText) {
+    var isUser = kind === "user";
+    var b = el("div", { style: "max-width:92%;border:1px solid var(--line);border-radius:10px;padding:8px 11px;margin:6px 0;" +
+      (isUser ? "margin-left:auto;background:#eef2ff;" : "background:#fff;") });
+    if (monoText) b.appendChild(el("div", { style: "font-family:ui-monospace,Consolas,monospace;font-size:12px;white-space:pre-wrap", text: content }));
+    else b.appendChild(el("div", { style: "white-space:pre-wrap", text: content }));
+    log.appendChild(b);
+    log.scrollTop = log.scrollHeight;
+    return b;
+  }
+  function answerBubble(text) {
+    var b = el("div", { "class": "physresult", style: "margin:6px 0" });
+    b.innerHTML = "<b>" + Lantern.esc(text) + "<\u002Fb>";
+    log.appendChild(b);
+    log.scrollTop = log.scrollHeight;
+  }
+  function toolBubble(run) {
+    var lines = [], i;
+    for (i = 0; i < run.steps.length; i++) {
+      var s = run.steps[i];
+      lines.push("= " + s.expr);
+      lines.push("  -> " + (s.ok ? Lantern.fmtNum(s.value) : "error: " + s.err));
+    }
+    bubble("tool", lines.join("\n"), true);
+    return lines.join("\n");
+  }
+  function proposalBubble(p, staged) {
+    var b = el("div", { style: "border:1px dashed var(--line);border-radius:10px;padding:8px 11px;margin:6px 0;background:var(--soft)" });
+    b.appendChild(el("div", {}, [el("b", { text: "Module proposal: " + p.name })]));
+    b.appendChild(el("div", { "class": "muted", text: staged.ok ? "Passed the syntax gate \u2014 staged for review. Nothing persists until it survives Test & activate in the Forge." : "Rejected by the gate: " + staged.check.errors.join("; ") }));
+    if (staged.ok) b.appendChild(el("button", { "class": "primary", style: "margin-top:6px", text: "Review in Forge", onclick: function () { location.hash = "forge"; } }));
+    log.appendChild(b);
+    log.scrollTop = log.scrollHeight;
+  }
+  async function send() {
+    var q = qIn.value.replace(/^\s+|\s+$/g, "");
+    if (!q || busy) return;
+    qIn.value = "";
+    bubble("user", q);
+    var hints = A.match(q), i;
+    var content = q;
+    if (hints.length) {
+      var hl = [];
+      for (i = 0; i < hints.length && i < 3; i++) hl.push(hints[i].ask + " -> " + hints[i].compose);
+      content += "\n\n[Recipe hints]\n" + hl.join("\n");
+    }
+    msgs.push({ role: "user", content: content });
+    busy = true;
+    statusEl.textContent = "thinking\u2026";
+    var ep = Lantern.store.get("assist.endpoint", "http://127.0.0.1:11434/v1/chat/completions");
+    var md = Lantern.store.get("assist.model", "qwen2.5:3b-instruct");
+    try {
+      var rounds;
+      for (rounds = 0; rounds < 3; rounds++) {
+        var reply = await C.callChat(ep, md, msgs);
+        msgs.push({ role: "assistant", content: reply });
+        var props = C.parseProposals(reply), p;
+        var shown = reply.replace(/^PROPOSE MODULE:[\s\S]*?^END PROPOSAL[ \t]*$/gm, "").replace(/^\s+|\s+$/g, "");
+        var parsed = A.parseReply(shown);
+        if (shown) bubble("ai", shown, /^=/m.test(shown));
+        for (i = 0; i < props.length; i++) { p = props[i]; proposalBubble(p, F.stage(p.name, p.text, "proposed in chat")); }
+        if (parsed.exprText) {
+          var run = A.run(parsed.exprText);
+          var resultText = toolBubble(run);
+          if (!parsed.answer) { msgs.push({ role: "user", content: "TOOL RESULTS\n" + resultText + "\nNow reply with the ANSWER: line only." }); continue; }
+        }
+        if (parsed.answer) answerBubble(parsed.answer);
+        break;
+      }
+    } catch (e) {
+      bubble("ai", "Could not reach the model: " + (e.message || e) + " \u2014 check the endpoint fields above and that the server allows browser origins (see the ? guide).");
+    }
+    busy = false;
+    statusEl.textContent = "";
+  }
+  C.callChat = async function (endpoint, model, messages) {
+    var body = JSON.stringify({ model: model || "", stream: false, temperature: 0,
+      messages: [{ role: "system", content: C.buildSystem() }].concat(messages) });
+    var res = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: body });
+    if (!res.ok) throw new Error("Server said " + res.status + " " + res.statusText);
+    var data = await res.json();
+    if (data.choices && data.choices[0] && data.choices[0].message) return data.choices[0].message.content || "";
+    if (data.message && data.message.content) return data.message.content;
+    throw new Error("Unrecognised server reply shape");
+  };
+  Lantern.register("chat", {
+    name: "Chat", glyph: "\u00bb", color: "#0d9488",
+    desc: "Talk to your AI, on your terms",
+    mount: function (ws) {
+      var wrap = el("div", { "class": "wrap", style: "max-width:760px;display:flex;flex-direction:column;min-height:70vh" });
+      var ep = el("input", { value: Lantern.store.get("assist.endpoint", "http://127.0.0.1:11434/v1/chat/completions"), style: "flex:2;min-width:200px", "aria-label": "Server endpoint" });
+      var md = el("input", { value: Lantern.store.get("assist.model", "qwen2.5:3b-instruct"), style: "flex:1;min-width:110px", "aria-label": "Model name" });
+      function saveCfg() { Lantern.store.set("assist.endpoint", ep.value); Lantern.store.set("assist.model", md.value); }
+      ep.onchange = saveCfg; md.onchange = saveCfg;
+      wrap.appendChild(el("div", { "class": "row", style: "flex-wrap:wrap" }, [ep, md]));
+      log = el("div", { style: "flex:1;overflow-y:auto;display:flex;flex-direction:column;padding:6px 0", "aria-label": "Conversation" });
+      wrap.appendChild(log);
+      bubble("ai", "Offline chat, with Lantern as my hands: I reason, the formula engine computes, every step shows. Ask something \u2014 the ISS question, a molar mass, a battery runtime \u2014 or ask me to draft a new recipe card and send it to the Forge.");
+      statusEl = el("div", { "class": "muted", style: "min-height:18px" });
+      wrap.appendChild(statusEl);
+      qIn = el("input", { placeholder: "Ask\u2026", style: "flex:1", "aria-label": "Message" });
+      qIn.addEventListener("keydown", function (e) { if (e.key === "Enter") send(); });
+      wrap.appendChild(el("div", { "class": "row" }, [qIn, el("button", { "class": "primary", text: "Send", onclick: send })]));
+      ws.appendChild(wrap);
+    }
+  });
+})();
+// ===========================================================================
+// MODULE: ASSIST_CHAT - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: GUIDE_AI - START
+// Depends: GUIDE, ASSIST_CHAT, FORGE_APP
+// Exports: (none) -- registers the "chat" and "forge" help guides
+// ===========================================================================
+(function () {
+  Lantern.guide.add("chat", "Chat \u2014 an AI with Lantern as its hands", [
+    ["The inversion", "<p>Assist starts from a question; Chat starts from a conversation. You talk to a model running on YOUR device or network, and the model drives Lantern: its <code>=<\u002Fcode> lines run on the real formula engine, the results go back to it automatically, and its final <code>ANSWER:<\u002Fcode> sits next to the verified arithmetic. The model proposes; Lantern disposes; you audit.<\u002Fp>"],
+    ["Setup", "<p>Same endpoint as Assist's server mode (they share the setting): Ollama with <code>OLLAMA_ORIGINS=\"*\" ollama serve<\u002Fcode> and a small instruct model, or llama.cpp's <code>llama-server<\u002Fcode>. A 2\u20134B model is enough for recipe-class questions; the harder the question, the more the recipe hints and the tool loop carry it.<\u002Fp>"],
+    ["Self-improvement, gated", "<p>The model can also propose module edits \u2014 a new recipe card, a new cell function \u2014 using a <code>PROPOSE MODULE<\u002Fcode> block. Proposals are never applied from chat: they pass a syntax gate, land in the <b>Forge<\u002Fb> as <i>staged<\u002Fi>, and only persist if they survive <b>Test &amp; activate<\u002Fb> there. That is the whole learning loop: frozen model, growing toolbox, every growth step tested.<\u002Fp>"]
+  ]);
+  Lantern.guide.add("forge", "Forge \u2014 where modules grow", [
+    ["Overlays", "<p>The suite's built-in modules live in the file and never change at runtime. An <b>overlay<\u002Fb> is your (or your AI's) replacement text for one module, stored with Lantern's documents \u2014 so it rides Backup \u2014 and applied after every built-in module on each boot: last writer wins. Open any module from the list (the text shown is exactly what is running), edit, and <b>Test &amp; activate<\u002Fb>.<\u002Fp>"],
+    ["The gate", "<p>Activation is propose \u2192 test \u2192 persist, never propose \u2192 persist. The gate checks markers and syntax, evaluates the module, then runs the whole selftest registry \u2014 ground-truth checks on the formula engine, the astronomy functions, chemistry, RF, the recipe deck. Fail anything and the overlay is marked FAILED and will not apply on boot. Deactivate, roll back (one previous version is always kept), or remove; a reload returns to a clean state, and opening the suite with <code>?safe=1<\u002Fcode> skips every overlay if one ever misbehaves.<\u002Fp>"],
+    ["From overlay to permanent", "<p>Overlays persist per browser. To make them permanent for everyone, <b>Export overlays<\u002Fb> produces a module bundle; merge it into the suite file with the project-context tool (each overlay is a complete, marker-bounded module, so the merge is mechanical), or hand the bundle to another copy of the suite via <b>Import<\u002Fb>. New modules \u2014 not just edits \u2014 work the same way: a proposal named for a module that does not exist yet simply becomes one.<\u002Fp>"],
+    ["Writing selftests", "<p>Any module (built-in or overlay) may call <code>Lantern.selftest.add(name, fn)<\u002Fcode>; the function throws or returns false to fail. Every test ever added runs on every activation, so each new capability makes the gate stricter for the next one. If you let an AI edit modules, start it on the data modules \u2014 ASSIST_CARDS, ASSIST_CATALOG, guides \u2014 and widen its reach as its proposals keep passing.<\u002Fp>"]
+  ]);
+})();
+// ===========================================================================
+// MODULE: GUIDE_AI - END
+// ===========================================================================
 </script>
 
 
