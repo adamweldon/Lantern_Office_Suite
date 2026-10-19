@@ -11,6 +11,8 @@ low-end hardware. Public domain (CC0).
 | `src/lantern.inner.html` | The decoded inner suite: every `// MODULE: NAME - START/END` block. Edit and diff here; Project Context Studio ingests this directly. |
 | `tools/bundle.js` | Byte-faithful decode / encode between the two. |
 | `tests/` | Every check the suite must pass before a commit (`npm test`). |
+| `docs/Lantern_v1_6_Review.pdf` | How v1.6 was rebuilt from session history, what was fixed, what is still missing. |
+| `CHANGELOG.md` | Version history. |
 
 ## Working on it
 
