@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.5.0
+// LANTERN OFFICE SUITE -- v1.5.1 (paper sizes + page setup update)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -60,9 +60,24 @@
 //      make(x, y, color, size)}]}] -- Draw schematic modes (pulldown),
 //    Lantern.drawTools = [{label, title, run(api)}] -- Draw action buttons;
 //      api = {getStyle, setStyle, add, scene, persist, render, canvas},
-//    Lantern.guide.append(id, sections) -- extend an app's help guide, and
+//    Lantern.guide.append(id, sections) -- extend an app's help guide,
 //    Lantern.sheetTools = [{label, run(api)}] where api.values("A1:A5")
-//    returns computed cell values. Prefer a hook over editing a big module.
+//    returns computed cell values,
+//    Lantern.writerEditHooks = [fn(api)] -- run each time a Writer document
+//      opens (same api object as writerTools; for persistent editor
+//      features like paper layout),
+//    Lantern.writerSerialize = [fn(html) -> html] -- filters document HTML
+//      on every save/export (strip UI-only helper nodes before storage), and
+//    Lantern.sheetEditHooks = [fn(api)] -- run each time a sheet opens;
+//      api = {doc, put, gridwrap, table, values, used, refresh, COLS, ROWS}.
+//    Prefer a hook over editing a big module.
+// 11. ISOLATION: every extension module must be droppable. Open with
+//    var L = window.Lantern; if (!L || !L.el) return; -- feature-detect every
+//    hook you touch, create hook arrays with the (window.Lantern.x =
+//    window.Lantern.x || []) pattern, own your CSS in a <style> tag created
+//    by the module itself, and never reach into another module's internals.
+//    Each module runs entirely at its own START/END boundary: removing or
+//    replacing any one of them must leave everything else fully working.
 // ===========================================================================
 // ===========================================================================
 // MODULE: CORE - START
@@ -71,7 +86,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.5.0",
+  version: "1.5.1",
   apps: {},
   order: []
 };
@@ -1083,7 +1098,9 @@ Lantern.formula = (function () {
 // MODULE: WRITER - START
 // Depends: CORE, STORAGE, SHELL
 // Exports: (registers "writer" app; renders the Lantern.writerTools,
-//          Lantern.writerLibTools and Lantern.writerTemplates hooks)
+//          Lantern.writerLibTools and Lantern.writerTemplates hooks; runs
+//          Lantern.writerEditHooks when a document opens and filters saved
+//          or exported HTML through Lantern.writerSerialize)
 // ===========================================================================
 // document.execCommand is deprecated in spec but universally implemented,
 // including the old browsers on the hardware this suite targets. That is a
@@ -1149,16 +1166,30 @@ Lantern.formula = (function () {
     return function () { page.focus(); document.execCommand(name, false, val || null); scheduleSave(); };
   }
   function words() {
-    var t = page.textContent.replace(/\s+/g, " ").trim();
+    // innerText keeps a break between paragraphs (textContent runs
+    // "world</p><p>Second" together as one word); fall back where absent.
+    var raw = page.innerText != null ? page.innerText : page.textContent;
+    var t = raw.replace(/\s+/g, " ").trim();
     return t ? t.split(" ").length : 0;
   }
   function scheduleSave() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(save, 600);
   }
+  // cleanHtml() -- document HTML with Lantern.writerSerialize filters
+  // applied, so UI-only helper nodes (e.g. WRITER_PAGES gutters) are never
+  // stored or exported.
+  function cleanHtml() {
+    var html = page.innerHTML;
+    var fx = window.Lantern.writerSerialize || [];
+    for (var i = 0; i < fx.length; i++) {
+      try { html = fx[i](html) || html; } catch (e) {}
+    }
+    return html;
+  }
   function save() {
     if (!doc) return;
-    doc.html = page.innerHTML;
+    doc.html = cleanHtml();
     doc.words = words();
     col.put(doc);
     if (countEl) countEl.textContent = doc.words + " words \u00b7 saved";
@@ -1178,7 +1209,7 @@ Lantern.formula = (function () {
   }
 
   function exportHtml() {
-    var body = "<h1>" + Lantern.esc(doc.title || "Untitled") + "</h1>" + page.innerHTML;
+    var body = "<h1>" + Lantern.esc(doc.title || "Untitled") + "</h1>" + cleanHtml();
     var html = "<!DOCTYPE html><html><head><meta charset='utf-8'><title>" +
       Lantern.esc(doc.title || "Untitled") + "</title></head><body style='max-width:720px;margin:24px auto;" +
       "font-family:Georgia,serif;line-height:1.6;padding:0 16px'>" + body + "</body></html>";
@@ -1232,6 +1263,13 @@ Lantern.formula = (function () {
     ws.appendChild(page);
     ws.appendChild(countEl);
     page.focus();
+    // Hook: persistent editor features that live for the whole edit session
+    // (see WRITER_PAGES). Each hook is isolated so one failing cannot break
+    // the editor or the other hooks.
+    var eh = window.Lantern.writerEditHooks || [];
+    for (var hi = 0; hi < eh.length; hi++) {
+      try { eh[hi](toolApi()); } catch (e) {}
+    }
   }
 
   Lantern.register("writer", {
@@ -1247,7 +1285,8 @@ Lantern.formula = (function () {
 // ===========================================================================
 // MODULE: SHEET - START
 // Depends: CORE, STORAGE, SHELL, FORMULA
-// Exports: (registers "sheet" app)
+// Exports: (registers "sheet" app; runs Lantern.sheetEditHooks when a
+//          sheet opens so grid features like page setup can bind)
 // ===========================================================================
 // 26 columns x 100 rows, plain <table> built once (light DOM for weak CPUs).
 // One shared formula bar edits the selected cell -- no per-cell inputs.
@@ -1348,32 +1387,8 @@ Lantern.formula = (function () {
     }
     return any ? { c: maxC, r: maxR } : null;
   }
-  function exportCsv() {
-    var u = usedRange();
-    if (!u) return alert("Sheet is empty.");
-    var out = computeAll(doc.cells), rows = [];
-    for (var r = 0; r <= u.r; r++) {
-      var row = [];
-      for (var c = 0; c <= u.c; c++) {
-        var v = out[refOf(c, r)];
-        row.push(v == null ? "" : (typeof v === "number" ? Lantern.fmtNum(v) : v));
-      }
-      rows.push(row);
-    }
-    Lantern.download((doc.title || "sheet") + ".csv", Lantern.csv.stringify(rows), "text/csv");
-  }
-  function importCsv(file) {
-    var reader = new FileReader();
-    reader.onload = function () {
-      var rows = Lantern.csv.parse(String(reader.result));
-      for (var r = 0; r < Math.min(rows.length, ROWS); r++)
-        for (var c = 0; c < Math.min(rows[r].length, COLS); c++)
-          if (rows[r][c] !== "") doc.cells[refOf(c, r)] = rows[r][c];
-      col.put(doc);
-      repaint();
-    };
-    reader.readAsText(file);
-  }
+  // CSV import/export moved to the SHEET_CSV module (size-gate split,
+  // rule 4): it rebuilds the same buttons through Lantern.sheetEditHooks.
 
   function buildGrid() {
     tds = {}; shown = {};
@@ -1427,8 +1442,6 @@ Lantern.formula = (function () {
       value: doc.title || "", placeholder: "Sheet name", style: "flex:1;min-width:120px;font-weight:600;",
       oninput: function () { doc.title = titleIn.value; col.put(doc); }
     });
-    var fileIn = Lantern.el("input", { type: "file", accept: ".csv,text/csv", style: "display:none",
-      onchange: function () { if (fileIn.files[0]) importCsv(fileIn.files[0]); fileIn.value = ""; } });
     // Hook: tools from other modules (see SHEET_CHART). rangeVals("A1:A5")
     // returns computed values, so tools see what the user sees.
     function rangeVals(spec) {
@@ -1444,10 +1457,7 @@ Lantern.formula = (function () {
     var tbKids = [
       Lantern.el("button", { "class": "ghost", text: "\u2190 Sheets", onclick: libView }),
       titleIn,
-      Lantern.el("span", { "class": "sp" }),
-      Lantern.el("button", { text: "Import CSV", onclick: function () { fileIn.click(); } }),
-      Lantern.el("button", { text: "Export CSV", onclick: exportCsv }),
-      fileIn
+      Lantern.el("span", { "class": "sp" })
     ];
     var tools = window.Lantern.sheetTools || [];
     for (var ti = 0; ti < tools.length; ti++) (function (t) {
@@ -1474,6 +1484,24 @@ Lantern.formula = (function () {
     sel = "A1";
     repaint();
     select("A1");
+    // Hook: persistent grid features that live for the whole edit session
+    // (see SHEET_PAGES / SHEET_PRINT). Isolated so one failing hook cannot
+    // break the grid or the other hooks.
+    var eh = window.Lantern.sheetEditHooks || [];
+    for (var hi = 0; hi < eh.length; hi++) {
+      try {
+        eh[hi]({
+          doc: doc,
+          put: function () { col.put(doc); },
+          gridwrap: gridwrap,
+          table: gridwrap.firstChild,
+          values: rangeVals,
+          used: usedRange,
+          refresh: repaint,
+          COLS: COLS, ROWS: ROWS
+        });
+      } catch (e) {}
+    }
   }
 
   function libView() {
@@ -11956,6 +11984,745 @@ Lantern.chem = (function () {
 })();
 // ===========================================================================
 // MODULE: LOCALE_WORLD - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: WRITER_PAGES - START
+// Depends: (none) -- self-guarded per rule 11; binds to WRITER only through
+//          the documented writerEditHooks / writerSerialize hooks, and is
+//          inert (safely removable) if WRITER is absent or changes.
+// Exports: (none)
+// ===========================================================================
+// Real paper while editing: pick Letter, Legal, A4 or A5 and the document is
+// laid out on pages of that size. When text reaches the bottom margin it
+// continues at the top of page 2, like Word. Page gutters are non-editable
+// .lp-gap spacers inserted between blocks; they contain no text (labels are
+// CSS content), so word count, find/replace, stats and outline are
+// untouched, and a writerSerialize filter strips them from every save and
+// export. Print emits a matching @page rule and turns each gutter into a
+// real page break, so paper output matches the screen. One single block
+// taller than a whole page stretches that page on screen; print still
+// splits it correctly. "Continuous" restores the original pageless editor.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.el) return;
+  var GUT = 26; // gray gutter between pages, px
+  var SIZES = { // [css px wide, css px tall, @page size, label] at 96px/inch
+    letter: [816, 1056, "8.5in 11in", "Letter 8.5\u00d711"],
+    legal: [816, 1344, "8.5in 14in", "Legal 8.5\u00d714"],
+    a4: [794, 1123, "210mm 297mm", "A4"],
+    a5: [559, 794, "148mm 210mm", "A5"],
+    none: [0, 0, "auto", "Continuous"]
+  };
+  var MARGINS = [[48, "0.5in", "Narrow 0.5\u2033"], [72, "0.75in", "Moderate 0.75\u2033"],
+    [96, "1in", "Normal 1\u2033"], [120, "1.25in", "Wide 1.25\u2033"]];
+  var ctx = null, obs = null, timer = null, busy = false, pageTag = null;
+
+  // Module-owned CSS (rule 11): removing this module removes its styling.
+  var css = document.createElement("style");
+  css.appendChild(document.createTextNode([
+    ".lp-gap{box-sizing:content-box;height:" + GUT + "px;background-color:#d8d6cb;",
+    "background-clip:content-box;display:flex;align-items:center;justify-content:center;",
+    "-webkit-user-select:none;user-select:none;cursor:default;}",
+    ".lp-gap::after{content:attr(data-label);font:11px/1 system-ui,sans-serif;",
+    "color:#6b7280;letter-spacing:.05em;}",
+    ".lp-paged{box-shadow:0 1px 5px rgba(0,0,0,.09);}",
+    ".lp-wpsep{width:1px;height:24px;background:var(--line);margin:0 2px;}",
+    "@media print{",
+    ".lp-gap{display:block;height:0!important;padding:0!important;margin:0!important;",
+    "background:none!important;break-after:page;page-break-after:always;}",
+    ".lp-gap::after{content:none!important;}",
+    ".lp-paged{width:auto!important;max-width:none!important;min-height:0!important;",
+    "padding:0!important;margin:0!important;border:none!important;box-shadow:none!important;",
+    "transform:none!important;}}"
+  ].join("\n")));
+  document.head.appendChild(css);
+
+  function cfgOf(doc) {
+    if (!doc.paper) doc.paper = { size: "letter", orient: "p", margin: 96, zoom: "100" };
+    return doc.paper;
+  }
+  function dims(cfg) {
+    var s = SIZES[cfg.size] || SIZES.letter;
+    var w = s[0], h = s[1];
+    if (cfg.orient === "l") { var t = w; w = h; h = t; }
+    return { w: w, h: h };
+  }
+  function setPageRule() {
+    if (!pageTag) pageTag = document.createElement("style");
+    var out = "";
+    if (ctx && ctx.cfg.size !== "none") {
+      var s = SIZES[ctx.cfg.size] || SIZES.letter;
+      var size = s[2];
+      if (ctx.cfg.orient === "l") size = size.split(" ").reverse().join(" ");
+      var mIn = "1in";
+      for (var i = 0; i < MARGINS.length; i++)
+        if (MARGINS[i][0] === ctx.cfg.margin) mIn = MARGINS[i][1];
+      out = "@page{size:" + size + ";margin:" + mIn + ";}";
+    }
+    pageTag.textContent = out;
+    document.head.appendChild(pageTag); // re-append so the last @page rule wins
+  }
+  function mkGap(n, fill, m) {
+    var g = document.createElement("div");
+    g.className = "lp-gap";
+    g.setAttribute("contenteditable", "false");
+    g.setAttribute("data-label", "Page " + n);
+    g.setAttribute("aria-hidden", "true");
+    g.style.padding = fill + "px 0 " + m + "px"; // white: unused page + top margin
+    g.style.margin = "0 -" + m + "px";           // bleed across the side margins
+    return g;
+  }
+  function clearGaps(pg) {
+    var g = pg.querySelectorAll(".lp-gap");
+    for (var i = g.length; i--;) g[i].parentNode.removeChild(g[i]);
+  }
+  function applyStyle() {
+    var pg = ctx.page, cfg = ctx.cfg;
+    if (cfg.size === "none") {
+      pg.classList.remove("lp-paged");
+      pg.style.width = ""; pg.style.maxWidth = ""; pg.style.minHeight = "";
+      pg.style.padding = ""; pg.style.position = "";
+      pg.style.transform = ""; pg.style.marginBottom = "";
+      return;
+    }
+    var d = dims(cfg), m = cfg.margin;
+    pg.classList.add("lp-paged");
+    pg.style.width = d.w + "px";
+    pg.style.maxWidth = "none";
+    pg.style.minHeight = d.h + "px";
+    pg.style.padding = m + "px";
+    pg.style.position = "relative"; // children offsetTop measured from page
+  }
+  function applyZoom() {
+    var pg = ctx.page, cfg = ctx.cfg, z = 1;
+    if (cfg.size === "none") { pg.style.transform = ""; pg.style.marginBottom = ""; return; }
+    if (cfg.zoom === "fit") {
+      var avail = (pg.parentNode ? pg.parentNode.clientWidth : 0) - 20;
+      z = avail > 0 ? Math.min(1, avail / dims(cfg).w) : 1;
+    } else z = (parseInt(cfg.zoom, 10) || 100) / 100;
+    if (z >= 0.999) { pg.style.transform = ""; pg.style.marginBottom = ""; return; }
+    pg.style.transformOrigin = "top center";
+    pg.style.transform = "scale(" + z + ")";
+    pg.style.marginBottom = Math.round(-pg.offsetHeight * (1 - z) + 14) + "px";
+  }
+  function paginate() {
+    if (!ctx || !document.contains(ctx.page)) return;
+    busy = true;
+    if (obs) obs.disconnect();
+    var pg = ctx.page, cfg = ctx.cfg, n = 1;
+    clearGaps(pg);
+    applyStyle();
+    if (cfg.size !== "none") {
+      var d = dims(cfg), m = cfg.margin, contentH = d.h - 2 * m;
+      if (contentH > 40) {
+        var top = m, limit = m + contentH;
+        var kids = pg.children, i, b, bt, bb;
+        for (i = 0; i < kids.length; i++) {
+          b = kids[i];
+          bt = b.offsetTop; bb = bt + b.offsetHeight;
+          if (bb - limit > 1) {
+            if (bt - top > 1) { // page has content above b: break before b
+              n++;
+              // fill = unused content + page 1's bottom margin; the gap's
+              // own bottom padding is page 2's top margin.
+              pg.insertBefore(mkGap(n, Math.max(0, limit - bt) + m, m), b);
+              i++;              // skip the gap we just inserted
+              bt = b.offsetTop; // b has moved down; re-anchor the new page
+              top = bt; limit = bt + contentH;
+              if (bt + b.offsetHeight > limit) limit = bt + b.offsetHeight;
+            } else {            // one block taller than a page: let it run
+              limit = bb;       // and break right after it
+            }
+          }
+        }
+      }
+    }
+    ctx.pages = n;
+    if (ctx.countEl) ctx.countEl.textContent =
+      cfg.size === "none" ? "" : n + (n === 1 ? " page" : " pages");
+    applyZoom();
+    busy = false;
+    startObs();
+  }
+  function startObs() {
+    if (obs && ctx && document.contains(ctx.page))
+      obs.observe(ctx.page, { childList: true, subtree: true, characterData: true });
+  }
+  function schedule() { clearTimeout(timer); timer = setTimeout(paginate, 250); }
+
+  function mkSel(opts, val, title, onchange) {
+    var html = "";
+    for (var i = 0; i < opts.length; i++)
+      html += "<option value='" + opts[i][0] + "'" +
+        (String(opts[i][0]) === String(val) ? " selected" : "") + ">" +
+        opts[i][1] + "</option>";
+    return L.el("select", { html: html, title: title, "aria-label": title,
+      onchange: function () { onchange(this.value); } });
+  }
+  function changed() { setPageRule(); paginate(); if (ctx.save) ctx.save(); }
+
+  function mount(api) {
+    ctx = { page: api.page, doc: api.doc, save: api.scheduleSave,
+      cfg: cfgOf(api.doc), pages: 1, countEl: null };
+    var ws = api.page.parentNode;
+    if (ws) ws.style.overflowX = "auto"; // full-width paper on small screens
+    var tb = ws ? ws.firstChild : null;
+    if (tb && tb.appendChild) {
+      var cfg = ctx.cfg;
+      var sizeOpts = [], k;
+      for (k in SIZES) sizeOpts.push([k, SIZES[k][3]]);
+      tb.appendChild(L.el("span", { "class": "lp-wpsep", "aria-hidden": "true" }));
+      tb.appendChild(mkSel(sizeOpts, cfg.size, "Paper size", function (v) {
+        cfg.size = v; changed();
+      }));
+      tb.appendChild(mkSel([["p", "Portrait"], ["l", "Landscape"]], cfg.orient,
+        "Page orientation", function (v) { cfg.orient = v; changed(); }));
+      var mOpts = [];
+      for (k = 0; k < MARGINS.length; k++) mOpts.push([MARGINS[k][0], MARGINS[k][2]]);
+      tb.appendChild(mkSel(mOpts, cfg.margin, "Page margins", function (v) {
+        cfg.margin = parseInt(v, 10) || 96; changed();
+      }));
+      tb.appendChild(mkSel([["100", "100%"], ["90", "90%"], ["80", "80%"],
+        ["fit", "Fit width"]], cfg.zoom, "Zoom (screen only)", function (v) {
+        cfg.zoom = v; changed();
+      }));
+      ctx.countEl = L.el("span", { "class": "muted", style: "white-space:nowrap" });
+      tb.appendChild(ctx.countEl);
+    }
+    if (!obs && window.MutationObserver)
+      obs = new MutationObserver(function () { if (!busy) schedule(); });
+    else if (obs) obs.disconnect();
+    setPageRule();
+    paginate();
+  }
+
+  (window.Lantern.writerEditHooks = window.Lantern.writerEditHooks || []).push(mount);
+  // Strip gutters from saved / exported HTML (WRITER calls this on save).
+  (window.Lantern.writerSerialize = window.Lantern.writerSerialize || [])
+    .push(function (html) {
+      if (String(html).indexOf("lp-gap") < 0) return html;
+      var d = document.createElement("div");
+      d.innerHTML = html;
+      var g = d.querySelectorAll(".lp-gap");
+      for (var i = g.length; i--;) g[i].parentNode.removeChild(g[i]);
+      return d.innerHTML;
+    });
+  window.addEventListener("resize", function () {
+    if (ctx && ctx.cfg.zoom === "fit" && document.contains(ctx.page)) schedule();
+  });
+})();
+// ===========================================================================
+// MODULE: WRITER_PAGES - END
+// ===========================================================================
+
+
+// ===========================================================================
+// MODULE: SHEET_CSV - START
+// Depends: (none) -- self-guarded per rule 11; split out of SHEET at the
+//          size gate (rule 4). Binds only through Lantern.sheetEditHooks
+//          and CORE's csv/download helpers, all feature-detected.
+// Exports: (none)
+// ===========================================================================
+// The Import CSV / Export CSV buttons that used to live inside SHEET.
+// Behavior is identical: export writes the computed values of the used
+// range; import fills cells from row 1 / column A, skipping blanks.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.el || !L.csv || !L.download) return;
+  function ref(c, r) { return String.fromCharCode(65 + c) + (r + 1); }
+  function exportCsv(api) {
+    var u = api.used();
+    if (!u) return window.alert("Sheet is empty.");
+    var nc = u.c + 1;
+    var flat = api.values("A1:" + ref(u.c, u.r)) || [];
+    var rows = [], r, c, v;
+    for (r = 0; r <= u.r; r++) {
+      var row = [];
+      for (c = 0; c < nc; c++) {
+        v = flat[r * nc + c];
+        row.push(v == null ? "" : (typeof v === "number" ? L.fmtNum(v) : v));
+      }
+      rows.push(row);
+    }
+    L.download((api.doc.title || "sheet") + ".csv", L.csv.stringify(rows), "text/csv");
+  }
+  function importCsv(api, file) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      var rows = L.csv.parse(String(reader.result));
+      for (var r = 0; r < Math.min(rows.length, api.ROWS); r++)
+        for (var c = 0; c < Math.min(rows[r].length, api.COLS); c++)
+          if (rows[r][c] !== "") api.doc.cells[ref(c, r)] = rows[r][c];
+      api.put();
+      api.refresh();
+    };
+    reader.readAsText(file);
+  }
+  function mount(api) {
+    var tb = api.gridwrap.parentNode.firstChild;
+    if (!tb || !tb.appendChild) return;
+    var fileIn = L.el("input", { type: "file", accept: ".csv,text/csv",
+      style: "display:none", "aria-label": "Choose a CSV file",
+      onchange: function () {
+        if (fileIn.files[0]) importCsv(api, fileIn.files[0]);
+        fileIn.value = "";
+      } });
+    tb.appendChild(L.el("button", { text: "Import CSV",
+      title: "Load a .csv file into this sheet",
+      onclick: function () { fileIn.click(); } }));
+    tb.appendChild(L.el("button", { text: "Export CSV",
+      title: "Save the used range as a .csv file",
+      onclick: function () { exportCsv(api); } }));
+    tb.appendChild(fileIn);
+  }
+  (window.Lantern.sheetEditHooks = window.Lantern.sheetEditHooks || []).push(mount);
+})();
+// ===========================================================================
+// MODULE: SHEET_CSV - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SHEET_PAGES - START
+// Depends: (none) -- self-guarded per rule 11; binds to SHEET only through
+//          the documented sheetEditHooks hook and is inert without it.
+// Exports: (none)
+// ===========================================================================
+// Page setup for Sheets: choose a paper size, orientation, margins and print
+// scale, and dashed blue guides show exactly where each printed page ends,
+// straight over the live grid (like a page-break preview). The first guide
+// on each axis can be dragged: drop it on a column or row edge and the
+// print scale is recalculated so one page holds exactly that much -- this
+// is the "drag the paper size" control. Settings persist per sheet in
+// doc.paper and are read by SHEET_PRINT, which stays independent: either
+// module works without the other (printing just uses defaults).
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.el) return;
+  var SIZES = { letter: [8.5, 11, "Letter"], legal: [8.5, 14, "Legal"],
+    tabloid: [11, 17, "Tabloid"], a4: [8.27, 11.69, "A4"], a3: [11.69, 16.54, "A3"] };
+  var ctx = null, ov = null, obs = null, timer = null;
+
+  var css = document.createElement("style"); // module-owned CSS (rule 11)
+  css.appendChild(document.createTextNode([
+    ".lp-shov{position:absolute;left:0;top:0;pointer-events:none;z-index:1;}",
+    ".lp-shln{position:absolute;}",
+    ".lp-shln.v{top:0;width:0;border-left:2px dashed #2563eb;}",
+    ".lp-shln.h{left:0;height:0;border-top:2px dashed #2563eb;}",
+    ".lp-shln.drag{pointer-events:auto;border:none;background:transparent;}",
+    ".lp-shln.v.drag{width:14px;margin-left:-7px;cursor:col-resize;}",
+    ".lp-shln.h.drag{height:14px;margin-top:-7px;cursor:row-resize;}",
+    ".lp-shcore{position:absolute;}",
+    ".v .lp-shcore{left:6px;top:0;bottom:0;width:0;border-left:2px dashed #1d4ed8;}",
+    ".h .lp-shcore{top:6px;left:0;right:0;height:0;border-top:2px dashed #1d4ed8;}",
+    ".lp-shpanel{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:6px 12px;",
+    "background:#fff;border-bottom:1px solid var(--line);font-size:13px;}",
+    ".lp-shpanel label{display:flex;gap:4px;align-items:center;color:#374151;}",
+    ".lp-shpanel input[type=number]{width:76px;}",
+    ".lp-shpanel .lp-shstat{color:#6b7280;}",
+    "@media print{.lp-shov,.lp-shpanel{display:none!important;}}"
+  ].join("\n")));
+  document.head.appendChild(css);
+
+  function cfgOf(doc) {
+    if (!doc.paper) doc.paper = { size: "letter", orient: "l", margin: 0.5, scale: 100, show: 1 };
+    return doc.paper;
+  }
+  function budget(cfg) { // printable px per page at the current scale
+    var s = SIZES[cfg.size] || SIZES.letter, w = s[0], h = s[1];
+    if (cfg.orient === "l") { var t = w; w = h; h = t; }
+    var sc = Math.max(25, Math.min(400, cfg.scale || 100));
+    return { w: Math.max(60, (w - 2 * cfg.margin) * 96 * 100 / sc),
+      h: Math.max(60, (h - 2 * cfg.margin) * 96 * 100 / sc),
+      baseW: (w - 2 * cfg.margin) * 96, baseH: (h - 2 * cfg.margin) * 96 };
+  }
+  function measure() {
+    var t = ctx.table;
+    if (!t || !t.tBodies || !t.tBodies.length || !t.tBodies[0].rows.length) return null;
+    var body = t.tBodies[0], r0 = body.rows[0], i;
+    if (!t.offsetWidth) return null;
+    var m = { hdrW: r0.cells[0].offsetWidth, cols: [], rows: [],
+      hdrH: (t.tHead && t.tHead.rows.length) ? t.tHead.rows[0].offsetHeight : 0,
+      W: t.offsetWidth, H: t.offsetHeight };
+    for (i = 1; i < r0.cells.length; i++)
+      m.cols.push({ x: r0.cells[i].offsetLeft, w: r0.cells[i].offsetWidth });
+    for (i = 0; i < body.rows.length; i++)
+      m.rows.push({ y: body.rows[i].offsetTop, h: body.rows[i].offsetHeight });
+    return m;
+  }
+  function breaks(items, hdr, max) { // indices of items that start a new page
+    var out = [], acc = hdr, i, s;
+    for (i = 0; i < items.length; i++) {
+      s = items[i].w != null ? items[i].w : items[i].h;
+      if (acc + s > max && acc > hdr) { out.push(i); acc = hdr + s; }
+      else acc += s;
+    }
+    return out;
+  }
+  function pt(ev) {
+    var t = ev.touches && ev.touches.length ? ev.touches[0] : ev;
+    return { x: t.clientX, y: t.clientY };
+  }
+  function makeDrag(ln, axis, m) {
+    function start(ev) {
+      ev.preventDefault();
+      var rect = ov.getBoundingClientRect();
+      function move(e2) {
+        var p = pt(e2);
+        if (axis === "v") ln.style.left = Math.max(m.hdrW, p.x - rect.left) - 7 + "px";
+        else ln.style.top = Math.max(m.hdrH, p.y - rect.top) - 7 + "px";
+        e2.preventDefault();
+      }
+      function up(e2) {
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        document.removeEventListener("touchmove", move);
+        document.removeEventListener("touchend", up);
+        var p = pt(e2.changedTouches && e2.changedTouches.length ? e2.changedTouches[0] : e2);
+        var drop = axis === "v" ? p.x - rect.left : p.y - rect.top;
+        // Nearest column/row edge; page 1 must keep at least one of them.
+        var items = axis === "v" ? m.cols : m.rows, edges = [], i;
+        for (i = 1; i < items.length; i++)
+          edges.push(axis === "v" ? items[i].x : items[i].y);
+        edges.push(axis === "v" ? m.W : m.H);
+        var best = edges[0], bd = Math.abs(edges[0] - drop);
+        for (i = 1; i < edges.length; i++)
+          if (Math.abs(edges[i] - drop) < bd) { bd = Math.abs(edges[i] - drop); best = edges[i]; }
+        var b = budget(ctx.cfg);
+        var sc = Math.round((axis === "v" ? b.baseW : b.baseH) * 100 / best);
+        ctx.cfg.scale = Math.max(25, Math.min(400, sc));
+        if (ctx.scaleIn) ctx.scaleIn.value = ctx.cfg.scale;
+        ctx.put();
+        redraw();
+      }
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+      document.addEventListener("touchmove", move, { passive: false });
+      document.addEventListener("touchend", up);
+    }
+    ln.addEventListener("mousedown", start);
+    ln.addEventListener("touchstart", start, { passive: false });
+  }
+  function redraw() {
+    if (!ctx || !document.contains(ctx.gridwrap)) return;
+    if (ov && ov.parentNode) ov.parentNode.removeChild(ov);
+    ov = null;
+    var cfg = ctx.cfg;
+    if (!cfg.show) { status(""); return; }
+    var m = measure();
+    if (!m) { status(""); return; }
+    var b = budget(cfg);
+    var vb = breaks(m.cols, m.hdrW, b.w);
+    var hb = breaks(m.rows, m.hdrH, b.h);
+    ov = L.el("div", { "class": "lp-shov",
+      style: "width:" + m.W + "px;height:" + m.H + "px" });
+    var i, ln;
+    for (i = 0; i < vb.length; i++) {
+      ln = L.el("div", { "class": "lp-shln v" + (i === 0 ? " drag" : ""),
+        title: i === 0 ? "Page edge \u2014 drag to fit more or fewer columns per page (sets scale)" : "",
+        style: (i === 0 ? "left:" + (m.cols[vb[i]].x - 7) : "left:" + (m.cols[vb[i]].x - 1)) +
+          "px;height:" + m.H + "px" });
+      if (i === 0) { ln.appendChild(L.el("i", { "class": "lp-shcore" })); makeDrag(ln, "v", m); }
+      ov.appendChild(ln);
+    }
+    for (i = 0; i < hb.length; i++) {
+      ln = L.el("div", { "class": "lp-shln h" + (i === 0 ? " drag" : ""),
+        title: i === 0 ? "Page edge \u2014 drag to fit more or fewer rows per page (sets scale)" : "",
+        style: (i === 0 ? "top:" + (m.rows[hb[i]].y - 7) : "top:" + (m.rows[hb[i]].y - 1)) +
+          "px;width:" + m.W + "px" });
+      if (i === 0) { ln.appendChild(L.el("i", { "class": "lp-shcore" })); makeDrag(ln, "h", m); }
+      ov.appendChild(ln);
+    }
+    ctx.gridwrap.appendChild(ov);
+    status((vb.length + 1) + " across \u00d7 " + (hb.length + 1) + " down at " +
+      (cfg.scale || 100) + "%");
+  }
+  function status(t) { if (ctx && ctx.statEl) ctx.statEl.textContent = t; }
+  function mkSel(opts, val, title, onchange) {
+    var html = "";
+    for (var i = 0; i < opts.length; i++)
+      html += "<option value='" + opts[i][0] + "'" +
+        (String(opts[i][0]) === String(val) ? " selected" : "") + ">" +
+        opts[i][1] + "</option>";
+    return L.el("select", { html: html, title: title, "aria-label": title,
+      onchange: function () { onchange(this.value); } });
+  }
+  function changed() { ctx.put(); redraw(); }
+
+  function mount(api) {
+    ctx = { gridwrap: api.gridwrap, table: api.table, doc: api.doc,
+      put: api.put, used: api.used, cfg: cfgOf(api.doc), statEl: null, scaleIn: null };
+    api.gridwrap.style.position = "relative";
+    var cfg = ctx.cfg, k, sizeOpts = [];
+    for (k in SIZES) sizeOpts.push([k, SIZES[k][2]]);
+    ctx.scaleIn = L.el("input", { type: "number", min: "25", max: "400", step: "5",
+      value: cfg.scale || 100, "aria-label": "Print scale percent",
+      onchange: function () {
+        cfg.scale = Math.max(25, Math.min(400, parseInt(this.value, 10) || 100));
+        this.value = cfg.scale; changed();
+      } });
+    var showChk = L.el("input", { type: "checkbox", "aria-label": "Show page lines",
+      onchange: function () { cfg.show = this.checked ? 1 : 0; changed(); } });
+    showChk.checked = !!cfg.show;
+    ctx.statEl = L.el("span", { "class": "lp-shstat" });
+    var panel = L.el("div", { "class": "lp-shpanel" }, [
+      L.el("label", {}, [L.el("span", { text: "Paper" }),
+        mkSel(sizeOpts, cfg.size, "Paper size", function (v) { cfg.size = v; changed(); })]),
+      mkSel([["p", "Portrait"], ["l", "Landscape"]], cfg.orient, "Orientation",
+        function (v) { cfg.orient = v; changed(); }),
+      mkSel([["0.25", "\u00bc\u2033 margins"], ["0.5", "\u00bd\u2033 margins"],
+        ["0.75", "\u00be\u2033 margins"], ["1", "1\u2033 margins"]], cfg.margin,
+        "Page margins", function (v) { cfg.margin = parseFloat(v) || 0.5; changed(); }),
+      L.el("label", {}, [L.el("span", { text: "Scale %" }), ctx.scaleIn]),
+      L.el("button", { text: "Fit width", title: "Scale so all used columns fit one page wide",
+        onclick: function () {
+          var u = ctx.used(), m = measure();
+          if (!u || !m) return status("Nothing to fit yet.");
+          var edge = m.cols[u.c].x + m.cols[u.c].w;
+          cfg.scale = Math.max(25, Math.min(400, Math.floor(budget(cfg).baseW * 100 / edge)));
+          ctx.scaleIn.value = cfg.scale; changed();
+        } }),
+      L.el("label", {}, [showChk, L.el("span", { text: "Page lines" })]),
+      ctx.statEl
+    ]);
+    panel.style.display = cfg.show ? "" : "none";
+    api.gridwrap.parentNode.insertBefore(panel, api.gridwrap);
+    var tb = api.gridwrap.parentNode.firstChild;
+    if (tb && tb.appendChild) tb.appendChild(L.el("button", { text: "Page setup",
+      title: "Paper size, margins, scale and page lines", onclick: function () {
+        panel.style.display = panel.style.display === "none" ? "" : "none";
+      } }));
+    if (obs) obs.disconnect();
+    if (window.MutationObserver) {
+      obs = new MutationObserver(function () {
+        clearTimeout(timer); timer = setTimeout(redraw, 200);
+      });
+      obs.observe(api.table, { childList: true, subtree: true, characterData: true });
+    }
+    redraw();
+  }
+  (window.Lantern.sheetEditHooks = window.Lantern.sheetEditHooks || []).push(mount);
+})();
+// ===========================================================================
+// MODULE: SHEET_PAGES - END
+// ===========================================================================
+
+// ===========================================================================
+// MODULE: SHEET_PRINT - START
+// Depends: (none) -- self-guarded per rule 11; binds to SHEET only through
+//          the documented sheetEditHooks hook. Reads doc.paper when
+//          SHEET_PAGES has set one, but works alone with Letter defaults;
+//          neither module needs the other.
+// Exports: (none)
+// ===========================================================================
+// Real printing for Sheets: the used range is split into paper-sized chunks
+// (matching the page lines SHEET_PAGES previews), each printed page repeats
+// the column letters and row numbers, values are the computed results the
+// user sees, and an @page rule sets the paper size, orientation and
+// margins. Works from the Print button or plain Ctrl+P while a sheet is
+// open. Pages are labelled "title -- page i of n".
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.el) return;
+  var SIZES = { letter: [8.5, 11], legal: [8.5, 14], tabloid: [11, 17],
+    a4: [8.27, 11.69], a3: [11.69, 16.54] };
+  var ctx = null, pageTag = null;
+
+  var css = document.createElement("style"); // module-owned CSS (rule 11)
+  css.appendChild(document.createTextNode([
+    ".lp-shprint{display:none;}",
+    "@media print{",
+    ".lp-shprint{display:block;}",
+    ".lp-shprint .cap{font:12px system-ui,sans-serif;color:#444;margin:0 0 6px;}",
+    ".lp-shprint table{border-collapse:collapse;table-layout:fixed;}",
+    ".lp-shprint th,.lp-shprint td{border:1px solid #999;padding:2px 6px;",
+    "overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:left;}",
+    ".lp-shprint th{background:#eee;font-weight:600;}",
+    ".lp-shprint td.num{text-align:right;font-variant-numeric:tabular-nums;}",
+    ".lp-shbrk{break-after:page;page-break-after:always;}}"
+  ].join("\n")));
+  document.head.appendChild(css);
+
+  function cfg() {
+    var p = (ctx && ctx.doc && ctx.doc.paper) || {};
+    return { size: SIZES[p.size] ? p.size : "letter",
+      orient: p.orient === "p" ? "p" : "l",
+      margin: p.margin > 0 ? p.margin : 0.5,
+      scale: Math.max(25, Math.min(400, p.scale || 100)) };
+  }
+  function geom(c) {
+    var s = SIZES[c.size], w = s[0], h = s[1];
+    if (c.orient === "l") { var t = w; w = h; h = t; }
+    return { wIn: w, hIn: h,
+      pxW: Math.max(60, (w - 2 * c.margin) * 96 * 100 / c.scale),
+      pxH: Math.max(60, (h - 2 * c.margin) * 96 * 100 / c.scale) };
+  }
+  function measure(nc, nr) { // live grid metrics, or a synthetic fallback
+    var t = ctx.table, i;
+    if (t && t.tBodies && t.tBodies.length && t.tBodies[0].rows.length && t.offsetWidth) {
+      var r0 = t.tBodies[0].rows[0];
+      var m = { hdrW: r0.cells[0].offsetWidth, cols: [], rows: [],
+        hdrH: (t.tHead && t.tHead.rows.length) ? t.tHead.rows[0].offsetHeight : 26 };
+      for (i = 1; i < r0.cells.length; i++) m.cols.push(r0.cells[i].offsetWidth);
+      for (i = 0; i < t.tBodies[0].rows.length; i++)
+        m.rows.push(t.tBodies[0].rows[i].offsetHeight);
+      return m;
+    }
+    var f = { hdrW: 40, hdrH: 26, cols: [], rows: [] };
+    for (i = 0; i < nc; i++) f.cols.push(90);
+    for (i = 0; i < nr; i++) f.rows.push(31);
+    return f;
+  }
+  function groups(sizes, hdr, max) { // [{start, end}] page chunks
+    var out = [], start = 0, acc = hdr, i;
+    for (i = 0; i < sizes.length; i++) {
+      if (acc + sizes[i] > max && acc > hdr) {
+        out.push({ start: start, end: i - 1 });
+        start = i; acc = hdr + sizes[i];
+      } else acc += sizes[i];
+    }
+    out.push({ start: start, end: sizes.length - 1 });
+    return out;
+  }
+  function cell(v) {
+    if (v == null) return { t: "", n: false };
+    if (typeof v === "number") return { t: L.fmtNum ? L.fmtNum(v) : String(v), n: true };
+    return { t: String(v), n: /^#/.test(String(v)) };
+  }
+  function build() {
+    if (!ctx) return null;
+    var u = ctx.used();
+    if (!u) { window.alert("Sheet is empty \u2014 nothing to print."); return null; }
+    var nc = u.c + 1, nr = u.r + 1;
+    var flat = ctx.values("A1:" + String.fromCharCode(65 + u.c) + nr) || [];
+    var c = cfg(), g = geom(c), m = measure(nc, nr), f = c.scale / 100;
+    var cg = groups(m.cols.slice(0, nc), m.hdrW, g.pxW);
+    var rg = groups(m.rows.slice(0, nr), m.hdrH, g.pxH);
+    var total = cg.length * rg.length, page = 0;
+    var box = L.el("div", { "class": "print-area lp-shprint" });
+    var title = ctx.doc.title || "Sheet";
+    for (var ri = 0; ri < rg.length; ri++) {
+      for (var ci = 0; ci < cg.length; ci++) {
+        page++;
+        var head = [L.el("th", { text: "", style: "width:" + Math.round(m.hdrW * f) + "px" })];
+        var cc, rr;
+        for (cc = cg[ci].start; cc <= cg[ci].end; cc++)
+          head.push(L.el("th", { text: String.fromCharCode(65 + cc),
+            style: "width:" + Math.round(m.cols[cc] * f) + "px;text-align:center" }));
+        var body = L.el("tbody", {});
+        for (rr = rg[ri].start; rr <= rg[ri].end; rr++) {
+          var tr = L.el("tr", {}, [L.el("th", { text: String(rr + 1) })]);
+          for (cc = cg[ci].start; cc <= cg[ci].end; cc++) {
+            var v = cell(flat[rr * nc + cc]);
+            tr.appendChild(L.el("td", { text: v.t, "class": v.n ? "num" : "" }));
+          }
+          body.appendChild(tr);
+        }
+        box.appendChild(L.el("div", {
+          "class": page < total ? "lp-shbrk" : "" }, [
+          L.el("p", { "class": "cap", text: title + " \u2014 page " + page + " of " + total }),
+          L.el("table", { style: "font-size:" + Math.round(13 * f * 10) / 10 + "px" },
+            [L.el("thead", {}, [L.el("tr", {}, head)]), body])
+        ]));
+      }
+    }
+    if (!pageTag) pageTag = document.createElement("style");
+    pageTag.textContent = "@page{size:" + g.wIn + "in " + g.hIn + "in;margin:" +
+      c.margin + "in;}";
+    document.head.appendChild(pageTag); // last @page rule wins
+    document.body.appendChild(box);
+    return box;
+  }
+  function cleanup() {
+    var old = document.querySelectorAll(".lp-shprint");
+    for (var i = old.length; i--;) old[i].parentNode.removeChild(old[i]);
+  }
+  function doPrint() {
+    cleanup();
+    if (build()) {
+      window.print();
+      setTimeout(cleanup, 1500); // afterprint fallback
+    }
+  }
+  function active() { return ctx && document.contains(ctx.gridwrap); }
+  window.addEventListener("beforeprint", function () { // plain Ctrl+P support
+    if (active() && !document.querySelector(".lp-shprint")) build();
+  });
+  window.addEventListener("afterprint", cleanup);
+
+  function mount(api) {
+    ctx = { doc: api.doc, gridwrap: api.gridwrap, table: api.table,
+      used: api.used, values: api.values };
+    var tb = api.gridwrap.parentNode.firstChild;
+    if (tb && tb.appendChild)
+      tb.appendChild(L.el("button", { text: "Print / PDF",
+        title: "Print the used range, one paper page at a time",
+        onclick: doPrint }));
+  }
+  (window.Lantern.sheetEditHooks = window.Lantern.sheetEditHooks || []).push(mount);
+})();
+// ===========================================================================
+// MODULE: SHEET_PRINT - END
+// ===========================================================================
+
+// ===========================================================================
+// MODULE: GUIDE_PAGES - START
+// Depends: (none) -- self-guarded per rule 11; appends help through
+//          Lantern.guide.append if the GUIDE module is present.
+// Exports: (none)
+// ===========================================================================
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.guide || !L.guide.append) return;
+  L.guide.append("writer", [
+    ["Paper sizes and page breaks", [
+      "<p>The toolbar has four paper controls (added by WRITER_PAGES): " +
+      "<b>paper size</b> (Letter, Legal, A4, A5, or Continuous), " +
+      "<b>orientation</b> (Portrait / Landscape), <b>margins</b> " +
+      "(\u00bd\u2033 to 1\u00bc\u2033) and <b>zoom</b> (screen only \u2014 " +
+      "<i>Fit width</i> shrinks the paper to your screen without changing " +
+      "what prints). The page count shows at the end of the toolbar.</p>",
+      "<p>With a paper size chosen, the document behaves like a stack of " +
+      "real pages: when your writing reaches the bottom margin of page 1 it " +
+      "continues at the top of page 2, and a gray gutter labelled " +
+      "<i>Page 2</i> separates them. The gutters are display only \u2014 " +
+      "they hold no text, they are never saved into the document or its " +
+      ".html/.txt exports, and word counts, Find, Stats and Outline ignore " +
+      "them completely.</p>",
+      "<p><b>Print / PDF</b> uses the same paper size, orientation and " +
+      "margins, and breaks pages exactly where the gutters are, so paper " +
+      "output matches the screen. Choose <b>Continuous</b> to go back to " +
+      "one long page with no breaks (the original editor). Each document " +
+      "remembers its own paper settings.</p>",
+      "<p>One note: a single block taller than a whole page (a very long " +
+      "table, for example) stretches that page on screen; when printed it " +
+      "still splits across pages correctly.</p>"].join("")]
+  ]);
+  L.guide.append("sheet", [
+    ["Page setup and page lines", [
+      "<p><b>Page setup</b> in the toolbar opens a panel (added by " +
+      "SHEET_PAGES) with <b>paper size</b> (Letter, Legal, Tabloid, A4, " +
+      "A3), <b>orientation</b>, <b>margins</b> and a <b>scale %</b>. With " +
+      "<b>Page lines</b> on, dashed blue guides are drawn over the grid " +
+      "showing exactly where each printed page ends, and the status shows " +
+      "the page count, e.g. <code>2 across \u00d7 3 down at 100%</code>. " +
+      "Each sheet remembers its own settings.</p>",
+      "<p><b>Drag the paper size:</b> the first guide on each axis is " +
+      "darker and draggable. Drop it on a column (or row) edge and the " +
+      "scale is recalculated so one page holds exactly that many columns " +
+      "(or rows) \u2014 drag outward to fit more on a page, inward to fit " +
+      "less, larger. <b>Fit width</b> does the common case in one tap: it " +
+      "scales the sheet so every used column fits one page wide.</p>"].join("")],
+    ["Printing a sheet", [
+      "<p><b>Print / PDF</b> (added by SHEET_PRINT) prints the used range " +
+      "one paper page at a time, matching the page lines. Every printed " +
+      "page repeats the column letters and row numbers so a stack of pages " +
+      "stays readable, shows the computed values you see on screen, and is " +
+      "labelled <code>sheet name \u2014 page 2 of 6</code>. Plain " +
+      "<kbd>Ctrl</kbd>+<kbd>P</kbd> while a sheet is open works too. To " +
+      "make a PDF, choose <i>Save as PDF</i> as the printer.</p>"].join("")]
+  ]);
+})();
+// ===========================================================================
+// MODULE: GUIDE_PAGES - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: RF_MATH - START
