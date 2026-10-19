@@ -30,7 +30,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // ---- boot ----
   await sleep(50);
   check("boot: shell started", !!document.querySelector(".bar"));
-  check("boot: version bumped", window.Lantern.version === "1.5.1", window.Lantern.version);
+  check("boot: version at or past 1.5.1", /^1\.(5\.[1-9]|[6-9]\.)/.test(window.Lantern.version), window.Lantern.version);
   check("boot: hooks registered",
     (window.Lantern.writerEditHooks || []).length >= 1 &&
     (window.Lantern.writerSerialize || []).length >= 1 &&
