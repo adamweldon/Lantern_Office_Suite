@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.7.0 — Compose: a complete writing suite (2026-10-19)
+
+Lantern now teaches and supports **writing composition**, not just typing:
+the letters, CVs, essays, reports, notices and forms that change what
+happens to people. Everything runs offline on the same single file. 32 new
+modules (188 to 220), all under the size gate and each removable on its own
+(rule 11).
+
+- **Compose app** (new, second on the home screen). Four tabs:
+  - *Write*: 18 guided tasks (request, complaint and job-application letters,
+    CV, thank-you letter, argument essay, story, summary, report,
+    description, speech, personal statement, community notice, SMS, meeting
+    minutes, funding proposal, incident report, news story). One part at a
+    time, with a tip, help text and tap-to-insert sentence starters. Drafts
+    save as you type; Preview shows reading level and suggestion count;
+    *Open in Writer* builds the finished document.
+  - *Practice*: 60 prompts at three levels and six kinds, word goal, timer,
+    *Check my writing*, daily streak.
+  - *Mail merge*: a Writer letter with `{{Name}}` gaps plus a Sheets list
+    gives one printable document or separate documents. *Try an example*
+    builds a sample.
+  - *Learn*: 18 writing lessons, opened by the checker's *Why?* buttons.
+- **Writer: Check.** Offline checker for spelling (412 common misspellings),
+  grammar and confused words (39 rules: *should of, your welcome, a apple,
+  bigger then* ...), punctuation and spacing, and style (long sentences,
+  wordy phrases, passive voice, *very*). Show / Change to / Ignore / Why?;
+  *Fix all safe* applies only the certain fixes. Live reading-level line
+  (grade and ease) while you type. Headings, list items, all-bold
+  subject lines and dialogue tags (*"Run!" shouted Ama.*) are not flagged.
+- **Writer: Aa Words** (189-headword thesaurus; choices come back in the
+  selected word's form: *walked* gives *strolled*, *quickly* gives *rapidly*,
+  *things* gives *objects*; every choice for 845 test words is a dictionary
+  word), **Read aloud** (sentence-by-sentence with
+  highlighting, device voices), and **26 new templates** (30 in all).
+- **Cards**: three writing decks (spelling, confused words, punctuation).
+- **Guide**: Compose help plus new Writer sections. **Locale**: Compose
+  labels in the 8 installed languages.
+- **Host hooks**: `Lantern.writerDocs` (list/get/create/open) and
+  `Lantern.sheetDocs` (list/values/create), documented in rule 10.
+- **Forge self-tests**: 9 Compose tests, registered only when the modules
+  they need are present.
+- **Tests**: `npm test` now 13 checks, adding Compose engine (81),
+  Compose app end to end (47) and per-module isolation for all 32 modules.
+  Also verified in real Chromium at phone and desktop sizes: 42 apps, no
+  page errors.
+
 ## 1.6.0 — v1.6 rebuilt from session history (2026-10-19)
 
 The original `Lantern_Office_Suite_v1_6_STANDALONE.html` (Aug 2026, 252

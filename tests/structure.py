@@ -22,6 +22,9 @@ print("optional chaining ?. :", mods_with(r'\?\.[A-Za-z_$\[(]'))
 print("nullish ?? :", mods_with(r'\?\?'))
 print("arrow => :", mods_with(r'\)\s*=>|\b\w+\s*=>'))
 print("template literals:", mods_with(r'`'))
+print("regex lookbehind / named groups (ES2018):", mods_with(r'\(\?<[=!A-Za-z]'))
+modern = [mods_with(p) for p in (r'\?\.[A-Za-z_$\[(]', r'\?\?', r'\)\s*=>|\b\w+\s*=>', r'`', r'(?m)^\s*(let|const)\s', r'\(\?<[=!A-Za-z]')]
+rule6 = sorted({n for lst in modern for n in lst})
 print("let/const:", mods_with(r'^\s*(let|const)\s', ) if False else mods_with(r'(?m)^\s*(let|const)\s'))
 # rule 5 / 11: style tags
 print("modules creating <style>:", mods_with(r'createElement\("style"\)|<style'))
@@ -32,3 +35,7 @@ print("BOOT index:", names.index('BOOT') if 'BOOT' in names else None, "of", len
 fd, p = tempfile.mkstemp(suffix='.js'); os.write(fd, js.encode()); os.close(fd)
 r = subprocess.run(['node', '--check', p], capture_output=True, text=True)
 print("node --check:", "OK" if r.returncode == 0 else r.stderr[:400]); os.unlink(p)
+bad = (sorted(starts) != sorted(ends)) or r.returncode != 0 or rule6 or outside
+if rule6: print("RULE 6 VIOLATION in:", rule6)
+print("STRUCTURE FAIL" if bad else "STRUCTURE OK")
+sys.exit(1 if bad else 0)

@@ -3,6 +3,11 @@
 Single-file, offline-first, zero-dependency office and education suite for
 low-end hardware. Public domain (CC0).
 
+Since v1.7 it includes **Compose**, a complete offline writing suite: guided
+letters, CVs, essays and reports; a writing checker and live reading level in
+Writer; a thesaurus; read-aloud proofreading; writing practice; mail merge;
+and 18 writing lessons. See `docs/Lantern_Compose_Guide.pdf`.
+
 ## Layout
 
 | Path | What it is |
@@ -11,6 +16,7 @@ low-end hardware. Public domain (CC0).
 | `src/lantern.inner.html` | The decoded inner suite: every `// MODULE: NAME - START/END` block. Edit and diff here; Project Context Studio ingests this directly. |
 | `tools/bundle.js` | Byte-faithful decode / encode between the two. |
 | `tests/` | Every check the suite must pass before a commit (`npm test`). |
+| `docs/Lantern_Compose_Guide.pdf` | What the Compose writing suite does, how to use it, and how it is built. |
 | `docs/Lantern_v1_6_Review.pdf` | How v1.6 was rebuilt from session history, what was fixed, what is still missing. |
 | `CHANGELOG.md` | Version history. |
 
@@ -41,3 +47,6 @@ npm test
 - **regex quotes**: no quote characters inside regex literals (they desync string-blind lexers such as Project Context Studio's gate)
 - **boot tour**: boots the inner script the way the self-unpacking bundle does (after DOMContentLoaded), requires every app on the first home paint, then opens every app and fails on any exception
 - **recovered session suites**: the July 13 page-size smoke + pagination geometry tests and the July 20 Deckplate, Assist/Astro and Forge/Chat suites, regenerated from those chats
+- **compose engine**: the checker against correct and incorrect sentences (including clean text that must raise no alarms), readability maths, spelling and thesaurus data
+- **compose app**: Compose and Writer driven end to end (tasks, Preview, Open in Writer, Check, Fix all safe, Words, Read aloud, Practice, Mail merge, lessons, self-tests)
+- **compose isolation**: removes each of the 32 Compose modules in turn and requires the rest of the suite to boot and run without errors (rule 11)
