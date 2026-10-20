@@ -80,3 +80,4 @@ npm test
 - **compose isolation**: removes each of the 32 Compose modules in turn and requires the rest of the suite to boot and run without errors (rule 11)
 - **AI layer**: engine routing, same-origin server detection, Assist and Chat through `Lantern.aiRoute`, the AI app and its panels, Lantern Bench graded against a perfect and a bad fake model, safety rules, answer-sentence checks, unit words, the everyday recipe cards, Earth-radius checks, checks of each formula against its question and the one correction turn
 - **AI isolation**: removes each of the 17 AI modules in turn (rule 11)
+- **kit offer**: the USB kit's model choice and "bigger model" offer, run against a stand-in for Hugging Face (redirects to download links that refuse HEAD requests), with a fake llama-server: memory tiers, FAT32, low space, no connection, missing file, N remembered, download through the redirect; `setup-kit.ps1` too when PowerShell is installed

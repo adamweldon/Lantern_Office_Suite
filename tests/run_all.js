@@ -17,7 +17,8 @@ var steps = [
   ["Compose app end to end", "node", ["tests/compose_app.js"], /ALL COMPOSE APP TESTS PASS/],
   ["Compose modules isolated (rule 11)", "node", ["tests/compose_isolation.js"], /COMPOSE MODULES ISOLATED/],
   ["AI layer (routing, app, bench)", "node", ["tests/ai_layer.js"], /ALL AI LAYER TESTS PASS/],
-  ["AI modules isolated (rule 11)", "node", ["tests/ai_isolation.js"], /AI MODULES ISOLATED/]
+  ["AI modules isolated (rule 11)", "node", ["tests/ai_isolation.js"], /AI MODULES ISOLATED/],
+  ["Kit: model choice and bigger-model offer", "python3", ["tests/kit_offer.py"], /KIT OFFER TESTS PASS/]
 ];
 var failed = 0;
 steps.forEach(function (s) {

@@ -109,18 +109,56 @@ ask() {  # prints yes / no / nothing (no keyboard)
   if command -v bash >/dev/null 2>&1; then a=$(bash -c 'read -r -t 30 a; echo "$a"'); else read -r a; fi
   case "$a" in n*|N*) echo no ;; *) echo yes ;; esac
 }
-offer() {  # inline: 1 = download here, else in the background
-  [ "${LANTERN_AUTO_DOWNLOAD:-}" = 0 ] && return 0
+# reach: prints why the model site cannot give this file, or nothing. It does
+# NOT follow the redirect: Hugging Face sends large files from signed storage
+# links that answer only a real download, so a check that followed it with a
+# HEAD request failed and the kit wrongly thought it was offline (1.8.5).
+reach() {
+  code=$(curl -s -o /dev/null -I --max-time 15 -w '%{http_code}' "$HF_BASE/$T_REPO/resolve/main/$T_FILE" 2>/dev/null || true)
+  case "$code" in
+    2??|3??) ;;
+    ""|000) echo "no connection to $(echo "$HF_BASE" | sed 's#^[a-z]*://##; s#/.*##')" ;;
+    *) echo "the model site answered $code for $T_FILE" ;;
+  esac
+}
+# plan: what to offer. Sets P_ID (model to offer, or empty), P_WHY (why
+# nothing), P_OFFLINE, and P_NOTES (bigger models passed over, one a line).
+plan() {
+  P_ID=""; P_WHY="nothing more suits this computer"; P_NOTES=""; P_OFFLINE=""
   mem=$(mem_mb)
   for id in $TIERS; do
     tier "$id"
     [ "$mem" -ge "$T_MEM" ] || continue
-    have "$T_PAT" && return 0
-    if busy "$T_ID"; then echo "  $T_NAME is still downloading (see models/download-$T_ID.log)."; return 0; fi
-    [ -f "$MODELS/.skip-$T_ID" ] && continue
+    if have "$T_PAT"; then P_WHY="the kit already has $T_NAME"; return 0; fi
+    if busy "$T_ID"; then P_WHY="$T_NAME is still downloading (see models/download-$T_ID.log)"; return 0; fi
+    if [ -f "$MODELS/.skip-$T_ID" ]; then
+      P_NOTES="$P_NOTES$T_NAME: you answered N before (delete models/.skip-$T_ID to be asked again)
+"; continue
+    fi
     why=$(no_room)
-    if [ -n "$why" ]; then echo "  $T_NAME would suit this computer, but $why."; continue; fi
-    curl -sfIL --max-time 8 -o /dev/null "$HF_BASE/$T_REPO/resolve/main/$T_FILE" 2>/dev/null || return 0
+    if [ -n "$why" ]; then P_NOTES="$P_NOTES$T_NAME would suit this computer, but $why
+"; continue; fi
+    net=$(reach)
+    if [ -n "$net" ]; then P_WHY="could not check for $T_NAME: $net"; P_OFFLINE=1; return 0; fi
+    P_ID=$T_ID; P_WHY=""; return 0
+  done
+}
+offer() {  # inline: 1 = download here, else in the background
+  [ "${LANTERN_AUTO_DOWNLOAD:-}" = 0 ] && return 0
+  shown=""
+  while :; do
+    plan
+    old_ifs=$IFS; IFS='
+'
+    for n in $P_NOTES; do
+      case "$shown" in *"[$n]"*) ;; *) echo "  $n."; shown="$shown[$n]" ;; esac
+    done
+    IFS=$old_ifs
+    if [ -z "$P_ID" ]; then
+      [ -n "$P_OFFLINE" ] && echo "  ($P_WHY; starting with the model the kit has.)"
+      return 0
+    fi
+    tier "$P_ID"; mem=$(mem_mb)
     echo ""
     echo "  This computer has $(( mem / 1024 )) GB of memory: it can run $T_NAME ($T_GB GB download),"
     echo "  a stronger model than any in this kit. $T_NOTE"
@@ -128,6 +166,7 @@ offer() {  # inline: 1 = download here, else in the background
     [ -n "$ans" ] || return 0
     if [ "$ans" = no ]; then
       : > "$MODELS/.skip-$T_ID"
+      shown="$shown[$T_NAME: you answered N before (delete models/.skip-$T_ID to be asked again)]"
       echo "  Not asking again. To get it later: ./setup-kit.sh $T_ID"; continue
     fi
     if [ "${1:-}" = 1 ]; then get_tier "$T_ID"; return 0; fi
@@ -141,12 +180,18 @@ check() {
   mem=$(mem_mb)
   echo "Memory: $(awk -v m="$mem" 'BEGIN { printf "%.1f", m / 1024 }') GB"
   echo "Drive: $(fs_type), $(free_gb) GB free"
+  echo "Kit folder: $DIR"
   for id in $TIERS; do
     tier "$id"
     if [ "$mem" -ge "$T_MEM" ]; then fits="runs here"; else fits="needs $(( T_MEM / 1024 )) GB memory"; fi
     if have "$T_PAT"; then h="in kit"; else h="not in kit"; fi
     printf "  %-17s%-9s%-22s%s\n" "$T_NAME" "$T_GB GB" "$fits" "$h"
   done
+  plan
+  printf '%s' "$P_NOTES" | sed 's/^/  /; s/$/./'
+  if [ "${LANTERN_AUTO_DOWNLOAD:-}" = 0 ]; then echo "Next start: offers nothing (LANTERN_AUTO_DOWNLOAD=0)."
+  elif [ -n "$P_ID" ]; then tier "$P_ID"; echo "Next start: will offer $T_NAME ($T_GB GB). Or fetch it now: ./setup-kit.sh $T_ID"
+  else echo "Next start: offers nothing: $P_WHY."; fi
 }
 
 GPU=""; SETS=""

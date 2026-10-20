@@ -41,7 +41,9 @@ Folder layout
    log in models/) while Lantern starts with the model it has; the next start
    uses the bigger one. Interrupted downloads resume. Answer N and it won't
    ask about that model again (delete models/.skip-xl etc. to be asked again).
-   With no internet it just starts. "start-lantern nodownload" skips the check.
+   With no internet it just starts (and says it could not check).
+   "start-lantern nodownload" skips the check. "setup-kit check" shows the
+   memory, drive, models in the kit, and what the next start will offer or why not.
    Pick a model by hand: start-lantern 35b | 9b | 4b | 2b | 0.8b
 
 3. Share with phones (classroom)

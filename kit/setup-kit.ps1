@@ -49,7 +49,7 @@ function Fetch($url, $dest) {
   $part = "$dest.part"
   if ($Curl) {
     # curl shows progress and resumes a download that was interrupted.
-    & $Curl.Source -L --fail --retry 5 --retry-delay 3 -C - -o $part $url
+    & $Curl.Path -L --fail --retry 5 --retry-delay 3 -C - -o $part $url
     if ($LASTEXITCODE -ne 0) { throw "download failed (curl $LASTEXITCODE): $url" }
   } else {
     Invoke-WebRequest -Uri $url -OutFile $part -UseBasicParsing
@@ -96,9 +96,24 @@ function Drive {
   if (-not $d -and -not $env:LANTERN_FS -and -not $env:LANTERN_FREE_GB) { return $null }
   [pscustomobject]@{ Name = $(if ($d) { $d.Name } else { "" }); DriveFormat = $fmt; AvailableFreeSpace = $free }
 }
-function Online($t) {
-  try { Invoke-WebRequest -Uri "$HfBase/$($t.repo)/resolve/main/$($t.file)" -Method Head -TimeoutSec 8 -UseBasicParsing | Out-Null; return $true }
-  catch { return $false }
+# Reach -> "" when the model site has the file, else why not. It does NOT
+# follow the redirect: Hugging Face sends large files from signed storage
+# links that answer only a real download (GET), so a HEAD check that
+# followed the redirect failed there and the kit wrongly thought it was
+# offline (1.8.5).
+function Reach($t) {
+  $url = "$HfBase/$($t.repo)/resolve/main/$($t.file)"
+  $code = 0
+  try {
+    $r = [System.Net.HttpWebRequest]::Create($url)
+    $r.Method = "HEAD"; $r.AllowAutoRedirect = $false; $r.Timeout = 15000; $r.UserAgent = "lantern-kit"
+    $resp = $r.GetResponse(); $code = [int]$resp.StatusCode; $resp.Close()
+  } catch [System.Net.WebException] {
+    if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
+    else { return "no connection to " + ([uri]$HfBase).Host + " (" + $_.Exception.Status + ")" }
+  } catch { return "no connection to " + ([uri]$HfBase).Host + " (" + $_.Exception.Message + ")" }
+  if ($code -ge 200 -and $code -lt 400) { return "" }
+  return ([uri]$HfBase).Host + " answered " + $code + " for " + $t.file
 }
 function Busy($t) {   # a download of this model already running in another window?
   $lock = Join-Path $Models ".downloading-$($t.id)"
@@ -137,18 +152,38 @@ function Ask($secs) {
   } catch { Write-Host "(no keyboard here, so not now)"; return "" }
   Write-Host "Y"; return "yes"
 }
-# The best model this computer can run that the kit lacks and the drive can
-# hold; ask once; download it (here, or in its own window while Lantern runs).
+# Plan -> what to offer: @{ t = model or $null; why = reason when nothing;
+# notes = bigger models passed over, and why }. Walks the models this
+# computer's memory can run, best first.
+function Plan {
+  $mem = MemMB; $drive = Drive; $notes = @()
+  foreach ($t in @($Tiers | Where-Object { $mem -ge $_.mem })) {
+    if (Have $t) { return @{ t = $null; notes = $notes; why = "the kit already has $($t.name)" } }
+    if (Busy $t) { return @{ t = $null; notes = $notes; why = "$($t.name) is still downloading in another window" } }
+    if (Test-Path (Join-Path $Models ".skip-$($t.id)")) {
+      $notes += "$($t.name): you answered N before (delete models\.skip-$($t.id) to be asked again)"; continue
+    }
+    $room = NoRoom $t $drive
+    if ($room) { $notes += "$($t.name) would suit this computer, but $room"; continue }
+    $net = Reach $t
+    if ($net) { return @{ t = $null; notes = $notes; why = "could not check for $($t.name): $net"; offline = $true } }
+    return @{ t = $t; notes = $notes; why = "" }
+  }
+  return @{ t = $null; notes = $notes; why = "nothing more suits this computer" }
+}
+# Offer the best model the kit lacks; ask; download it (here, or in its own
+# window while Lantern runs).
 function Offer([bool]$inline) {
   if ($env:LANTERN_AUTO_DOWNLOAD -eq "0") { return }
-  $mem = MemMB; $drive = Drive
-  foreach ($t in @($Tiers | Where-Object { $mem -ge $_.mem })) {
-    if (Have $t) { return }                       # the kit already has the best it can use
-    if (Busy $t) { Write-Host "  $($t.name) is still downloading in another window."; return }
-    if (Test-Path (Join-Path $Models ".skip-$($t.id)")) { continue }
-    $why = NoRoom $t $drive
-    if ($why) { Write-Host "  $($t.name) would suit this computer, but $why."; continue }
-    if (-not (Online $t)) { return }              # no internet: carry on with what the kit has
+  $mem = MemMB; $shown = @{}
+  while ($true) {
+    $p = Plan
+    foreach ($n in $p.notes) { if (-not $shown.ContainsKey($n)) { Write-Host "  $n."; $shown[$n] = 1 } }
+    if (-not $p.t) {
+      if ($p.offline) { Write-Host "  ($($p.why); starting with the model the kit has.)" }
+      return
+    }
+    $t = $p.t
     Write-Host ""
     Write-Host ("  This computer has " + [math]::Round($mem / 1024) + " GB of memory: it can run " + $t.name + " (" + $t.gb + " GB download),")
     Write-Host "  a stronger model than any in this kit. $($t.note)"
@@ -157,6 +192,7 @@ function Offer([bool]$inline) {
     if ($ans -eq "no") {
       New-Item -ItemType File -Force -Path (Join-Path $Models ".skip-$($t.id)") | Out-Null
       Write-Host "  Not asking again. To get it later: setup-kit.bat $($t.id)"
+      $shown["$($t.name): you answered N before (delete models\.skip-$($t.id) to be asked again)"] = 1
       continue
     }
     if ($inline) { GetTier $t; return }
@@ -171,11 +207,17 @@ function Check {
   $mem = MemMB; $drive = Drive
   Write-Host ("Memory: " + [math]::Round($mem / 1024, 1) + " GB")
   if ($drive) { Write-Host ("Drive: " + $drive.Name + " " + $drive.DriveFormat + ", " + [math]::Round($drive.AvailableFreeSpace / 1GB, 1) + " GB free") }
+  Write-Host ("Kit folder: " + $Dir)
   foreach ($t in $Tiers) {
     $fits = if ($mem -ge $t.mem) { "runs here" } else { "needs " + [math]::Round($t.mem / 1024) + " GB memory" }
     $has = if (Have $t) { "in kit" } else { "not in kit" }
     Write-Host ("  " + $t.name.PadRight(17) + ("" + $t.gb + " GB").PadRight(9) + $fits.PadRight(22) + $has)
   }
+  $p = Plan
+  foreach ($n in $p.notes) { Write-Host "  $n." }
+  if ($env:LANTERN_AUTO_DOWNLOAD -eq "0") { Write-Host "Next start: offers nothing (LANTERN_AUTO_DOWNLOAD=0)." }
+  elseif ($p.t) { Write-Host "Next start: will offer $($p.t.name) ($($p.t.gb) GB). Or fetch it now: setup-kit.bat $($p.t.id)" }
+  else { Write-Host "Next start: offers nothing: $($p.why)." }
 }
 
 $gpu = $Sets -contains "gpu"

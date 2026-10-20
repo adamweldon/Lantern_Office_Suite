@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.8.6 — Kit fix: the 35B-A3B was never offered (2026-10-20)
+
+Adam: "it does not download the 35b model for some reason?"
+
+- **Cause (most likely, reproduced):** before offering a model, the kit
+  checked that it could reach the file with a HEAD request that followed
+  Hugging Face's redirect. Large files are served from signed storage links
+  that can refuse a HEAD request (they answer a real download only), so the
+  check failed, the kit concluded it was offline, and it said nothing. A
+  stand-in server that behaves that way reproduces the silence with 1.8.5
+  (16 test failures) and passes with 1.8.6.
+- The check now stops at the redirect (a 302 from huggingface.co is
+  enough); the download itself still follows it, as before.
+- **Never silent again:** when it cannot check, it says why (no connection,
+  or the status the site gave); `setup-kit check` now ends with what the next
+  start will offer, or why not (already has it, answered N before, not
+  enough room, FAT32, cannot reach the site), and shows the kit folder.
+- New test `tests/kit_offer.py` (in `npm test`): the offer and model choice
+  end to end against that stand-in, for `setup-kit.sh`, `start-lantern.sh`,
+  and `setup-kit.ps1` when PowerShell is installed.
+- Windows PowerShell 5.1: curl.exe is called by `.Path` (not `.Source`).
+
 ## 1.8.5 — The kit picks and fetches the biggest model a computer can run; run 4 checks (2026-10-20)
 
 **Kit: automatic model size.** Asked by Adam: "couldn't it look at the
