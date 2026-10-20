@@ -145,6 +145,13 @@ function firstSentence(body, n) {
   var r3 = await A.solve("What is ocean acidification?", { call: call });
   ok("solve: an invented quote is questioned and fixed on the correction turn", r3.kind === "questioned" && r3.fixed && r3.rounds === 3 &&
     !r3.flags.length && /not in passage 1/.test(r3.rejected), r3);
+  modelReplies = [function () { return "LOOKUP: methane emissions"; },
+    function (m) { return "=360000000*1000\nANSWER: Human activities released about {result} kg of methane in 2019 [1].\nQUOTE [1]: " +
+      firstSentence({ messages: m }, 1).replace(/^.*?(During 2019)/, "$1"); }];
+  var rm = await A.solve("How many kilograms of methane did human activities release in 2019?", { call: call });
+  ok("solve: a fact plus a calculation uses the passage's numbers and keeps its citation", rm.sources && rm.run.value === 360000000000 &&
+    !rm.kind && !rm.flags.length && /\[1\]/.test(rm.parsed.answer), { kind: rm.kind, flags: rm.flags, v: rm.run.value });
+  ok("reading prompt explains a calculation from passages", /add = lines that use numbers from the passages/.test(rm.sources && L.library.prompt("q", rm.sources, "x")));
   modelReplies = [function () { return "=2*3\nANSWER: {result}"; }];
   var r4 = await A.solve("What is 2 times 3?", { call: call });
   ok("solve: calculations never touch the library", !r4.sources && r4.rounds === 1 && r4.run.value === 6);

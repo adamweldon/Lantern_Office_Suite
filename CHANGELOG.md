@@ -26,7 +26,9 @@ encyclopedia, with citations Lantern checks.
   replies `LOOKUP: <words>` -- a new verb in the prompt when a library is
   attached -- or says "Not in my library", Lantern searches and gives it up
   to three numbered passages. It answers with [n] after each fact and
-  `QUOTE [n]:` lines. Calculations never touch the library; the safety
+  `QUOTE [n]:` lines; a fact plus a calculation ("how tall is Everest in
+  feet?") may add `=` lines using the passages' numbers, which the number
+  checks accept as given. Calculations never touch the library; the safety
   rules still answer dose questions before any lookup.
 - **LIBRARY_CHECKS:** every cited passage needs a QUOTE; each quote must
   really be in its passage (copied, allowing punctuation and a word or
@@ -43,7 +45,7 @@ encyclopedia, with citations Lantern checks.
 - Limits of the pilot: the check proves a quote is real and the numbers
   match, not that the quote supports every word of the answer; search
   quality decides what the model can read.
-- Tests: new `tests/library.js` (39 checks, against a stand-in kiwix-serve
+- Tests: new `tests/library.js` (41 checks, against a stand-in kiwix-serve
   built from real replies); kit test covers the library download and start;
   checked in real Chromium against a real kiwix-serve (cross-origin search
   and reading, Assist with a verified quote, the panel).
