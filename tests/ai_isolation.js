@@ -1,0 +1,61 @@
+// Rule 11 proof for the AI layer: remove each AI module in turn, boot the
+// suite (bundle timing), open the AI app (every section), Assist in AI-model
+// mode and Chat, and run every selftest. Any exception fails the test.
+"use strict";
+var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
+var fs = require("fs"), path = require("path");
+var inner = fs.readFileSync(process.argv[2] || path.join(__dirname, "..", "src", "lantern.inner.html"), "utf8");
+var MODS = ["AI_ENGINE", "AI_DEVICE", "AI_BENCH_DATA", "AI_BENCH", "AI_APP", "AI_PANEL_DEVICE", "AI_PANEL_SERVER",
+  "AI_PANEL_BENCH", "PWA_SITE", "GUIDE_AI_SETUP", "AI_SELFTEST", "ASSIST_CHAT"];
+function without(src, name) {
+  var a = src.indexOf("// MODULE: " + name + " - START"), b = src.indexOf("// MODULE: " + name + " - END");
+  if (a < 0 || b < 0) throw new Error("missing " + name);
+  return src.slice(0, a) + "// (removed " + name + ")\n" + src.slice(b + ("// MODULE: " + name + " - END").length);
+}
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+async function run(variant) {
+  var js = variant.match(/<script>\n([\s\S]*?)\n<\/script>/)[1];
+  var vc = new VirtualConsole(), errs = [];
+  vc.on("jsdomError", function (e) { if (!/Not implemented/.test(String(e.message))) errs.push(String(e.message).slice(0, 160)); });
+  var dom = new JSDOM("<!DOCTYPE html><html><head></head><body></body></html>",
+    { url: "http://localhost/", runScripts: "outside-only", pretendToBeVisual: true, virtualConsole: vc });
+  var w = dom.window, d = w.document;
+  w.alert = function () {}; w.confirm = function () { return true; }; w.print = function () {}; w.scrollTo = function () {};
+  w.HTMLElement.prototype.scrollIntoView = function () {}; w.HTMLCanvasElement.prototype.getContext = function () { return null; };
+  w.addEventListener("error", function (e) { errs.push("window.error: " + e.message); });
+  function fire(el, t) { var e = d.createEvent("Event"); e.initEvent(t, true, true); el.dispatchEvent(e); }
+  function go(h) { w.location.hash = h; fire(w, "hashchange"); }
+  try { w.eval(js); } catch (e) { errs.push("eval: " + e.message); }
+  await sleep(30);
+  var L = w.Lantern;
+  w.fetch = function () { return Promise.resolve({ ok: true, json: function () {
+    return Promise.resolve({ choices: [{ message: { content: "=2+2\nANSWER: 4" } }] }); } }); };
+  ["ai", "assist", "chat"].forEach(function (h) { if (L.apps[h]) { go(h); } });
+  await sleep(10);
+  if (L.apps.ai) {
+    go("ai"); await sleep(10);
+    Array.prototype.slice.call(d.querySelectorAll(".la-choice button")).forEach(function (b) { b.click(); });
+    var q = Array.prototype.filter.call(d.querySelectorAll("button"), function (b) { return /^Quick run/.test(b.textContent); })[0];
+    if (q) { q.click(); await sleep(60); }
+  }
+  if (L.apps.assist) {
+    go("assist"); await sleep(10);
+    var m = d.querySelector("select[aria-label=\"Mode\"]");
+    if (m) { m.value = "server"; var ev = d.createEvent("Event"); ev.initEvent("change", true, true); m.dispatchEvent(ev); await sleep(5); }
+  }
+  if (L.selftest) { var r = L.selftest.run(); r.fail.forEach(function (f) { errs.push("selftest " + f.name); }); }
+  w.close();
+  return { errs: errs, apps: L.order.length };
+}
+
+(async function () {
+  var fails = 0, base = await run(inner);
+  if (base.errs.length) { console.log("FAIL baseline", base.errs); fails++; }
+  for (var i = 0; i < MODS.length; i++) {
+    var r = await run(without(inner, MODS[i]));
+    if (r.errs.length) { fails++; console.log("FAIL without " + MODS[i] + ": " + r.errs.slice(0, 3).join(" | ")); }
+  }
+  console.log(fails ? fails + " ISOLATION FAILURES" : "ALL " + MODS.length + " AI MODULES ISOLATED");
+  process.exit(fails ? 1 : 0);
+})();

@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.8.0 — On-device AI test build (2026-10-19)
+
+Phase 1 of the Lantern Edge AI Plan (`docs/Lantern_Edge_AI_Plan.pdf`): a
+small language model that uses Lantern's tools as its source of truth,
+running on a phone inside the page, or on a laptop / USB stick through
+llama.cpp. 12 new modules (220 to 231); every one removable on its own.
+
+- **One route for every model call** (`AI_ENGINE`, `Lantern.ai`,
+  `Lantern.aiRoute`). Assist and Chat now send model calls through it.
+  Engines: *server* (OpenAI-compatible; found automatically when
+  llama-server serves Lantern itself) and *device* (in the page). Choice:
+  Automatic / On this device / Server.
+- **On-device engine** (`AI_DEVICE`): llama.cpp compiled to WebAssembly
+  (wllama 3.8.1, MIT, vendored in `site/ai`), WebGPU where available,
+  compatibility build for Safari and older browsers, all self-hosted so it
+  works offline. Models: Qwen3.5 0.8B (533 MB) and 2B (1.28 GB), downloaded
+  once into the browser's file store, or loaded from a `.gguf` copied onto
+  the phone (with an option to keep a copy).
+- **AI app** (`AI_APP` + panels): engine status and choice, device
+  capabilities (GPU, engine build, threads, memory, storage), model
+  download / load / delete, server settings with a connection test, a
+  *Try it* box with timing and speed, offline / install status.
+- **Lantern Bench** (`AI_BENCH_DATA`, `AI_BENCH`, `AI_PANEL_BENCH`): 30
+  questions (tool, multi-step, unknown, safety); answers are proved on the
+  formula engine at run time; quick (9) and full runs; JSON / CSV export.
+- **Grounding rule in the Assist prompt:** questions the tools cannot
+  answer (facts, news, people, prices, medicine doses, dangerous work) get
+  "ANSWER: Not in my library."
+- **Fixed AI tool catalog units** (the model was told the wrong units):
+  `WAVELEN` takes MHz (was documented as Hz, a factor of a million),
+  `FRES` takes nH and pF and returns MHz, `MATCHSER`/`MATCHSH` take
+  (r, x[, z0, sign]) and return ohms / siemens.
+- **Website build** (`site/`, `tools/build_site.py`): Lantern served as a
+  plain page plus offline worker (`lantern-sw.js`), install manifest,
+  icons, and optional cross-origin isolation for multi-threading.
+- **Laptop / USB kit** (`kit/`): `setup-kit` fetches llama.cpp b11435 and
+  Qwen3.5 models; `start-lantern` picks the model by memory, runs
+  `llama-server --path site`, opens the browser; `share` serves phones on
+  the local network.
+- **Tests:** `npm test` 15 checks: adds AI layer (37: routing, same-origin
+  detection, Assist/Chat through the route, app, bench grading with a
+  perfect and a bad fake model) and isolation for the 12 AI modules.
+  Verified for real against llama-server built from source with a GGUF
+  model, and the in-browser engine in Chromium.
+
 ## 1.7.0 — Compose: a complete writing suite (2026-10-19)
 
 Lantern now teaches and supports **writing composition**, not just typing:

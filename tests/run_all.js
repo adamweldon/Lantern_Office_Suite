@@ -15,7 +15,9 @@ var steps = [
   ["July 20 Forge + Chat", "node", ["tests/jul20_forge_chat.js"], /ALL FORGE \+ CHAT TESTS PASS/],
   ["Compose engine (checker, readability, data)", "node", ["tests/compose_engine.js"], /ALL COMPOSE ENGINE TESTS PASS/],
   ["Compose app end to end", "node", ["tests/compose_app.js"], /ALL COMPOSE APP TESTS PASS/],
-  ["Compose modules isolated (rule 11)", "node", ["tests/compose_isolation.js"], /COMPOSE MODULES ISOLATED/]
+  ["Compose modules isolated (rule 11)", "node", ["tests/compose_isolation.js"], /COMPOSE MODULES ISOLATED/],
+  ["AI layer (routing, app, bench)", "node", ["tests/ai_layer.js"], /ALL AI LAYER TESTS PASS/],
+  ["AI modules isolated (rule 11)", "node", ["tests/ai_isolation.js"], /AI MODULES ISOLATED/]
 ];
 var failed = 0;
 steps.forEach(function (s) {
