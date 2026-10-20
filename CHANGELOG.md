@@ -43,7 +43,7 @@ and gave confident wrong numbers; three checks added to `AI_CHECKS`:
   question asked for hours but the formula divided by 60.
 - *Times one*: "=60*1/1000" for a battery size nobody gave.
 - Replayed over all 163 real replies from the four runs, the checks flag
-  only answers that were wrong (7), never a correct one.
+  only answers that were wrong (8 replies), never a correct one.
 - Tests: AI layer 112 checks.
 
 ## 1.8.4 — Third bench run: 44/47; formulas checked against the question (2026-10-20)
