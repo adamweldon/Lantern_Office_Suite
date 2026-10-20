@@ -2,7 +2,8 @@
 # setup-kit.sh -- fetch the AI engine (llama.cpp) and models into this kit.
 # Needs internet once; afterwards the kit works offline and can be copied.
 #   ./setup-kit.sh              engine + the 4B model, then offers a bigger model
-#                               when this computer can run one
+#                               when this computer can run one, then the offline
+#                               encyclopedia -- everything in one go
 #   ./setup-kit.sh phone        the two phone models (0.8B, 2B) -- to copy onto phones
 #   ./setup-kit.sh laptop       Qwen3.5 4B   (8 GB computers)
 #   ./setup-kit.sh big          Qwen3.5 9B   (16 GB computers)
@@ -86,7 +87,7 @@ libinfo() {
 }
 listing() { curl -sL --fail --max-time 30 "$1"; }
 latest_zim() {  # folder base -> newest dated file name, e.g. wikipedia_en_all_mini_2026-06.zim
-  listing "$KIWIX_BASE/zim/$1/" | grep -o "href=\"$2_[0-9]\{4\}-[0-9]\{2\}\.zim\"" | sed 's/^href="//; s/"$//' | sort -u | tail -n 1
+  listing "$KIWIX_BASE/zim/$1/" | grep -o "href=\"[^\"]*$2_[0-9]\{4\}-[0-9]\{2\}\.zim\"" | sed 's/^href="//; s/"$//; s#.*/##' | sort -u | tail -n 1
 }
 have_library() { ls "$LIBRARY"/*.zim >/dev/null 2>&1; }
 kiwix_plat() {
@@ -100,9 +101,9 @@ kiwix_tools() {
   kt="$DIR/engine/$kos/kiwix"
   if [ -x "$kt/kiwix-serve" ]; then echo "  have kiwix-serve"; return 0; fi
   plat=$(kiwix_plat); list=$(listing "$KIWIX_BASE/release/kiwix-tools/") || { echo "  could not list $KIWIX_BASE/release/kiwix-tools/"; return 1; }
-  asset=$(printf '%s' "$list" | grep -o "href=\"kiwix-tools_$plat-[0-9][0-9.-]*\.tar\.gz\"" | sed 's/^href="//; s/"$//' | sort -u | sort -V | tail -n 1)
+  asset=$(printf '%s' "$list" | grep -o "href=\"[^\"]*kiwix-tools_$plat-[0-9][0-9.-]*\.tar\.gz\"" | sed 's/^href="//; s/"$//; s#.*/##' | sort -u | sort -V | tail -n 1)
   if [ -z "$asset" ] && [ "$plat" = macos-arm64 ]; then
-    asset=$(printf '%s' "$list" | grep -o "href=\"kiwix-tools_macos-x86_64-[0-9][0-9.-]*\.tar\.gz\"" | sed 's/^href="//; s/"$//' | sort -u | sort -V | tail -n 1)
+    asset=$(printf '%s' "$list" | grep -o "href=\"[^\"]*kiwix-tools_macos-x86_64-[0-9][0-9.-]*\.tar\.gz\"" | sed 's/^href="//; s/"$//; s#.*/##' | sort -u | sort -V | tail -n 1)
   fi
   if [ -z "$asset" ]; then echo "  no kiwix-tools for $plat at $KIWIX_BASE/release/kiwix-tools/"; return 1; fi
   tmp=$(mktemp -d)
@@ -250,7 +251,11 @@ offer() {  # inline: 1 = download here, else in the background
       shown="$shown[$T_NAME: you answered N before (delete models/.skip-$T_ID to be asked again)]"
       echo "  Not asking again. To get it later: ./setup-kit.sh $T_ID"; continue
     fi
-    if [ "${1:-}" = 1 ]; then get_tier "$T_ID"; return 0; fi
+    if [ "${1:-}" = 1 ]; then   # setup: download it here, then look again (the library comes next)
+      get_tier "$T_ID"
+      if ! have "$T_PAT"; then echo "  $T_NAME did not download properly; run ./setup-kit.sh $T_ID to try again."; return 0; fi
+      continue
+    fi
     nohup "$DIR/setup-kit.sh" get "$T_ID" > "$MODELS/download-$T_ID.log" 2>&1 &
     echo "  Downloading in the background (progress: models/download-$T_ID.log)."
     echo "  Lantern starts now with the model it has; start it again when the download is done."

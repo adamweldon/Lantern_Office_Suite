@@ -1,7 +1,8 @@
 # setup-kit.ps1 -- fetch the AI engine (llama.cpp) and models into this kit (Windows).
 # Needs internet once; afterwards the kit works offline and can be copied.
 #   setup-kit.bat              engine + the 4B model, then offers a bigger model
-#                              when this computer can run one
+#                              when this computer can run one, then the offline
+#                              encyclopedia -- everything in one go
 #   setup-kit.bat phone        the two phone models (0.8B, 2B) -- to copy onto phones
 #   setup-kit.bat laptop       Qwen3.5 4B   (8 GB computers)
 #   setup-kit.bat big          Qwen3.5 9B   (16 GB computers)
@@ -101,7 +102,7 @@ function VersionKey($name) { (@([regex]::Matches($name, '\d+') | ForEach-Object 
 # Latest dated file for a Kiwix name, e.g. wikipedia_en_all_mini -> wikipedia_en_all_mini_2026-06.zim
 function LatestZim($folder, $base) {
   $html = Listing "$KiwixBase/zim/$folder/"
-  $names = @([regex]::Matches($html, ('href="(' + [regex]::Escape($base) + '_\d{4}-\d{2}\.zim)"')) | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+  $names = @([regex]::Matches($html, ('href="(?:[^"]*/)?(' + [regex]::Escape($base) + '_\d{4}-\d{2}\.zim)"')) | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
   if (-not $names.Count) { throw "no $base file listed at $KiwixBase/zim/$folder/" }
   return ($names | Sort-Object | Select-Object -Last 1)
 }
@@ -110,7 +111,10 @@ function KiwixTools {
   $target = Join-Path $Dir "engine\windows\kiwix"
   if (Test-Path (Join-Path $target "kiwix-serve.exe")) { Write-Host "  have kiwix-serve"; return }
   $html = Listing "$KiwixBase/release/kiwix-tools/"
-  $zips = @([regex]::Matches($html, 'href="(kiwix-tools_win-x86_64-[0-9][0-9.\-]*\.zip)"') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+  $zips = @([regex]::Matches($html, 'href="(?:[^"]*/)?(kiwix-tools_win-x86_64-[0-9][0-9.\-]*\.zip)"') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+  if (-not $zips.Count) {   # older releases were 32-bit only
+    $zips = @([regex]::Matches($html, 'href="(?:[^"]*/)?(kiwix-tools_win-i686-[0-9][0-9.\-]*\.zip)"') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+  }
   if (-not $zips.Count) { throw "no Windows kiwix-tools listed at $KiwixBase/release/kiwix-tools/" }
   $asset = $zips | Sort-Object { VersionKey $_ } | Select-Object -Last 1
   $tmp = Join-Path (TempRoot) ("lantern-" + [guid]::NewGuid())
@@ -279,7 +283,11 @@ function Offer([bool]$inline) {
       $shown["$($t.name): you answered N before (delete models\.skip-$($t.id) to be asked again)"] = 1
       continue
     }
-    if ($inline) { GetTier $t; return }
+    if ($inline) {   # setup: download it here, then look again (the library comes next)
+      GetTier $t
+      if (-not (Have $t)) { Write-Host "  $($t.name) did not download properly; run setup-kit.bat $($t.id) to try again."; return }
+      continue
+    }
     $ps = (Get-Process -Id $PID).Path
     Start-Process -FilePath $ps -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ('"' + $PSCommandPath + '"'), "get", $t.id) | Out-Null
     Write-Host "  Downloading in a separate window. Lantern starts now with the model it has;"

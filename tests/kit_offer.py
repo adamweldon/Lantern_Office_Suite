@@ -116,6 +116,16 @@ def zim(name, good=True):
     open(os.path.join(zw, name + ".sha256"), "w").write(h + "  " + name + "\n")
 zim("wikipedia_en_all_mini_2026-03.zim"); zim("wikipedia_en_all_mini_2026-06.zim"); zim("wikipedia_en_simple_all_maxi_2026-01.zim")
 zim("wikipedia_en_medicine_maxi_2026-05.zim", good=False)
+# This folder's listing uses absolute links, as some mirrors do.
+open(os.path.join(zw, "index.html"), "w").write("<html><body>" + "".join(
+    '<a href="/zim/wikipedia/%s">%s</a><br>' % (f, f) for f in sorted(os.listdir(zw)) if f != "index.html") + "</body></html>")
+# llama.cpp release stand-ins, for a whole setup run
+lr = os.path.join(kx, "llama"); os.makedirs(lr)
+with tarfile.open(os.path.join(lr, "llama-b11435-bin-ubuntu-x64.tar.gz"), "w:gz") as t:
+    data = b"#!/bin/sh\necho llama\n"; ti = tarfile.TarInfo("build/bin/llama-server"); ti.size = len(data); ti.mode = 0o755
+    t.addfile(ti, io.BytesIO(data))
+with zipfile.ZipFile(os.path.join(lr, "llama-b11435-bin-win-cpu-x64.zip"), "w") as z:
+    z.writestr("llama-server.exe", "MZ llama")
 kport = free_port()
 ksrv = subprocess.Popen([sys.executable, "-m", "http.server", str(kport), "--bind", "127.0.0.1", "--directory", kx],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -156,6 +166,21 @@ out = run(k, ["offer"], kenv({"LANTERN_MEM_MB": "8000", "LANTERN_FREE_GB": "50",
 ok("library offer yes: downloads in the background", wait_file(os.path.join(k, "library", "wikipedia_en_all_mini_2026-06.zim")), out)
 time.sleep(1)
 ok("then the library is not offered again", "library: the kit has a library" in run(k, ["check"], kenv({"LANTERN_MEM_MB": "8000"})))
+
+# One double-click of setup on an empty stick: engine, 4B, the bigger model, the library
+LL = {"LLAMA_BASE": "http://127.0.0.1:%d/llama" % kport, "LANTERN_AUTO_DOWNLOAD": "1", "LANTERN_MEM_MB": "32000", "LANTERN_FREE_GB": "60"}
+def whole(label, cmd_for, engine_file):
+    k = make_kit(label, [])
+    shutil.rmtree(os.path.join(k, "engine"))
+    out = run(k, [], kenv(LL), cmd_for(k))
+    have = lambda *p: os.path.exists(os.path.join(k, *p))
+    ok(label + ": one setup run fetches the engine, the 4B, the 35B-A3B and the encyclopedia",
+       have(*engine_file) and have("models", "Qwen3.5-4B-Q4_K_M.gguf") and have("models", "Qwen3.5-35B-A3B-UD-IQ4_XS.gguf") and
+       have("library", "wikipedia_en_all_mini_2026-06.zim"), out[-1500:])
+    return k
+whole("whole-sh", lambda k: [os.path.join(k, "setup-kit.sh")], ("engine", "linux", "llama-server"))
+if pw:
+    whole("whole-ps1", lambda k: [pw, "-NoProfile", "-File", os.path.join(k, "setup-kit.ps1")], ("engine", "windows", "llama-server.exe"))
 
 if pw:
     k = make_kit("lib-ps1", ["Qwen3.5-4B-Q4_K_M.gguf"])

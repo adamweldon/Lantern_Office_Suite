@@ -17,9 +17,12 @@ Folder layout
 1. Set up (needs internet once)
    Windows: double-click setup-kit.bat
    Mac/Linux: ./setup-kit.sh
-   This fetches llama.cpp (build b11435) for this computer and Qwen3.5 4B
-   (2.7 GB) with 8 GB of memory or more, otherwise the phone models. If the
-   computer can run a bigger model, it then offers that too (see 2). Options:
+   This fetches, in one go: llama.cpp (build b11435) for this computer;
+   Qwen3.5 4B (2.7 GB) with 8 GB of memory or more, otherwise the phone
+   models; then, if the computer can run a bigger model, it offers that
+   (Y/N, yes after 30 s); then the offline encyclopedia (Y/N): English
+   Wikipedia lead sections (about 12 GB), or Simple English (about 2.5 GB)
+   if the drive has no room for the full one. Options:
      phone    Qwen3.5 0.8B (533 MB) and 2B (1.3 GB) -- also for copying onto phones
      laptop   Qwen3.5 4B (2.7 GB)       for 8 GB computers
      big      Qwen3.5 9B (5.7 GB)       for 16 GB computers

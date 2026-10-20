@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.9.1 — One setup run fills an empty stick, library included (2026-10-20)
+
+Adam: "if I extract the most recent zip into an empty USB on a different
+laptop and double click setup-kit.bat, will it download everything,
+including the wiki?" Not quite, in 1.9.0:
+
+- Setup asked about the encyclopedia only when it had not just fetched a
+  bigger model, so on a 16 or 32 GB laptop the library came on a later
+  start, in the background. Now one setup run asks both questions (yes
+  after 30 s each) and downloads the engine, the 4B, the bigger model and
+  the encyclopedia in one go; a model that did not download properly stops
+  the run with a message instead of being asked for again.
+- The 1.9.0 update zip held only the changed site files. A fresh stick
+  needs the whole site folder (offline-install files and the phone AI
+  engine), so the delivery is now a complete kit zip.
+- Kiwix listings: links with a path in front of the file name are
+  accepted (some mirrors list them that way); Windows kiwix-tools falls
+  back to the 32-bit build when there is no 64-bit one.
+- Test: one setup run on an empty kit (sh and PowerShell) ends with the
+  engine, 4B, 35B-A3B and English Wikipedia in place.
+
 ## 1.9.0 — Offline library: the AI reads an encyclopedia (2026-10-20)
 
 Pilot of the next step after the bench runs: facts the model would
