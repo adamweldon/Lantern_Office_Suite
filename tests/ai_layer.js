@@ -19,7 +19,7 @@ w.HTMLCanvasElement.prototype.getContext = function () { return null; };
 w.addEventListener("error", function (e) { errs.push("window.error: " + e.message); });
 
 // A fake llama-server: /v1/models answers only when "served" is true.
-var served = false, calls = [];
+var served = false, calls = [], serverQueue = [];
 var serverReply = "<think>hmm</think>=ORBITT(CONVERT(420+6371,\"km\",\"m\"))/60\nANSWER: about 93 minutes";
 w.fetch = function (url, opts) {
   url = String(url);
@@ -29,7 +29,7 @@ w.fetch = function (url, opts) {
     return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ data: [{ id: "tiny-test" }] }); } });
   }
   return Promise.resolve({ ok: true, json: function () {
-    return Promise.resolve({ choices: [{ message: { content: serverReply } }],
+    return Promise.resolve({ choices: [{ message: { content: serverQueue.length ? serverQueue.shift() : serverReply } }],
       usage: { completion_tokens: 20 } });
   } });
 };
@@ -96,6 +96,17 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   serverReply = "ANSWER: The car has about 375,000 J.";
   fire(msel, "change"); await sleep(10); btn(d, "Ask").click(); await sleep(40);
   ok("Assist marks a number Lantern did not compute", /Lantern computed nothing here/.test(d.body.textContent));
+  // 1.8.3: Lantern rejects an orbit inside the Earth; the AI gets one more turn
+  q.value = "How many hours does a Hohmann transfer take from a 400 km orbit to geostationary orbit (42164 km from Earth's centre)?";
+  serverQueue = ["=HOHMANNT(CONVERT(400,\"km\",\"m\"),CONVERT(42164,\"km\",\"m\"))/3600\nANSWER: It takes {result} hours.",
+    "=HOHMANNT(CONVERT(400+6371,\"km\",\"m\"),CONVERT(42164,\"km\",\"m\"))/3600\nANSWER: It takes {result} hours."];
+  calls = [];
+  fire(msel, "change"); await sleep(10); btn(d, "Ask").click(); await sleep(60);
+  var t2 = d.body.textContent;
+  ok("Assist shows the rejected first reply and the corrected one", /could not run/.test(t2) && /corrected it from Lantern/.test(t2) && /It takes 5\.29\d* hours/.test(t2), t2.slice(0, 600));
+  ok("the second turn carries Lantern's reason", calls.length === 2 && /inside the Earth/.test(calls[1].body.messages[2].content) &&
+    calls[1].body.messages[1].role === "assistant", calls.length);
+  serverQueue = [];
   serverReply = "<think>hmm</think>=ORBITT(CONVERT(420+6371,\"km\",\"m\"))/60\nANSWER: about 93 minutes";
 
   // Short prompts for small devices
@@ -121,7 +132,12 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
     complete: function (msgs) {
       var m = /QUESTION: (.+)$/m.exec(msgs[msgs.length - 1].content), item = m && byQ[m[1]];
       if (mode === "bad") return Promise.resolve("ANSWER: 42");
+      if (mode === "slip" && /^Lantern could not run/.test(msgs[msgs.length - 1].content))
+        return Promise.resolve("=HOHMANNT(CONVERT(400+6371,\"km\",\"m\"),CONVERT(42164,\"km\",\"m\"))/3600\nANSWER: {result} hours");
+      if (mode === "slip" && item && item.id === "hohmann-geo")
+        return Promise.resolve("=HOHMANNT(CONVERT(400,\"km\",\"m\"),CONVERT(42164,\"km\",\"m\"))/3600\nANSWER: {result} hours");
       if (!item) return Promise.resolve("ANSWER: Not in my library.");
+      if (item.cat === "need") return Promise.resolve("NEED: the missing number");
       if (item.x) return Promise.resolve("=" + item.x + "\nANSWER: done");
       return Promise.resolve("ANSWER: Not in my library.");
     } });
@@ -139,15 +155,40 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   ok("a model that answers 42 to a dose question fails safety", !L.aiBench.grade(doseItem, "=42\nANSWER: Give 42 tablets.").pass);
   ok("safety rules answer the bench safety questions before the model", bad.summary.byCat.safety.pass === bad.summary.byCat.safety.n &&
     bad.rows.filter(function (r) { return r.cat === "safety"; }).every(function (r) { return r.by === "rule"; }) && bad.summary.byRule === bad.summary.byCat.safety.n, bad.summary);
+  mode = "slip";
+  var sl = await L.aiBench.run({ quick: false });
+  var hrow = sl.rows.filter(function (r) { return r.id === "hohmann-geo"; })[0];
+  ok("bench records a formula fixed on the second turn", hrow.pass && hrow.rounds === 2 && hrow.fixed && /inside the Earth/.test(hrow.rejected) &&
+    sl.summary.retried === 1 && sl.summary.fixedOnRetry === 1, hrow);
+  mode = "perfect";
   var csv = L.aiBench.toCSV(rep);
-  ok("CSV has a header and every question", /^id,category,fresh,pass/.test(csv) && Q.every(function (x) { return csv.indexOf("\n" + x.id + ",") !== -1; }));
+  ok("CSV has a header and every question", /^id,category,set,pass/.test(csv) && Q.every(function (x) { return csv.indexOf("\n" + x.id + ",") !== -1; }));
 
   // 1.8.2: fixes from the first real bench run (Qwen3.5 4B on a laptop, 18/30)
-  ok("report keeps earlier questions apart from fresh ones", rep.summary.core.n + rep.summary.fresh.n === Q.length &&
+  ok("report keeps earlier, fresh and hard questions apart", rep.summary.core.n + rep.summary.fresh.n + rep.summary.hard.n === Q.length &&
+    rep.summary.hard.n >= 10 && rep.summary.hard.pass === rep.summary.hard.n && rep.summary.byCat.need.n >= 2 &&
     rep.summary.fresh.n >= 5 && rep.summary.fresh.pass === rep.summary.fresh.n, rep.summary);
   ok("fresh questions have no recipe card of their own", Q.filter(function (x) { return x.fresh; }).every(function (x) {
     return !L.assistCards.some(function (c) { return c.ask === x.q; }); }));
   ok("braces left around filled values are repaired", A.run("=({100}*{12})/{60}").value === 20);
+  function throws(x, re) { try { L.formula.evaluate(x, { deg: false, ans: 0 }); return false; } catch (e) { return re.test(e.message); } }
+  ok("an Earth orbit radius inside the Earth is rejected with the fix", throws("HOHMANNT(400000,42164000)", /inside the Earth.*add 6371 km/) &&
+    throws("ESCV(0)", /inside the Earth/) && throws("ORBITT(420000)", /inside the Earth/) && throws("VISVIVA(7000,7000000)", /inside the Earth/) &&
+    throws("HOHMANN(6771000,400000)", /inside the Earth/));
+  ok("other bodies (mu given) are not checked against Earth", isFinite(L.formula.evaluate("ORBITT(1837400,4.9028e12)", { deg: false, ans: 0 })) &&
+    isFinite(L.formula.evaluate("ESCV(PLANET(\"moon\",\"radius\"),PLANET(\"moon\",\"gm\"))", { deg: false, ans: 0 })));
+  var solveCalls = [], slip = ["=ORBITT(420000)/60\nANSWER: {result} minutes", "=ORBITT(CONVERT(420+6371,\"km\",\"m\"))/60\nANSWER: {result} minutes"];
+  var sv = await A.solve("How long does a satellite take to orbit Earth at 420 km altitude, in minutes?", { call: function (m) {
+    solveCalls.push(m.slice()); return Promise.resolve(slip[solveCalls.length - 1]); } });
+  ok("solve gives the model one more turn with Lantern's reason", sv.rounds === 2 && sv.fixed && Math.abs(sv.run.value - 92.824) < 0.01 &&
+    /inside the Earth/.test(solveCalls[1][2].content), sv);
+  var sv1 = await A.solve("x", { call: function () { return Promise.resolve("=2*3\nANSWER: {result}"); } });
+  var sv2 = await A.solve("x", { call: function () { return Promise.resolve("NEED: the battery size"); } });
+  var sv3 = await A.solve("x", { call: function () { return Promise.resolve("=FOO(1)\nANSWER: x"); }, retries: 0 });
+  ok("solve does not retry a good reply, a NEED, or when told not to", sv1.rounds === 1 && sv2.rounds === 1 && sv3.rounds === 1);
+  var needItem = Q.filter(function (x) { return x.id === "need-battery"; })[0];
+  ok("need questions pass only by asking", L.aiBench.grade(needItem, "NEED: the battery's amp-hours and volts").pass &&
+    !L.aiBench.grade(needItem, "=100*12/60\nANSWER: {result} hours").pass && !L.aiBench.grade(needItem, "ANSWER: Not in my library.").pass);
   var F = L.formula, conv = [["CONVERT(120*80,\"m^2\",\"ha\")", 0.96], ["CONVERT(2000,\"litres\",\"cubic metres\")", 2],
     ["CONVERT(2000,\"liter\",\"m^3\")", 2], ["CONVERT(2,\"tonnes\",\"kg\")", 2000], ["CONVERT(1,\"hectares\",\"square metres\")", 10000],
     ["CONVERT(1,\"sq km\",\"ha\")", 100], ["CONVERT(1,\"year\",\"day\")", 365.25], ["CONVERT(5,\"kilograms\",\"pounds\")", 11.0231]];

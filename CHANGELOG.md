@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.8.3 — Second bench run: 36/37, and a harder bench (2026-10-20)
+
+Adam's re-run on the same laptop and model (Qwen3.5 4B, full prompt) with
+1.8.2 scored **36/37**: the questions from before 1.8.2 went from 18/30 to
+29/30 (31/32 with the two planet questions), the five fresh questions
+5/5, every computed answer used `{result}` (no sentence disagreed), and
+the mayor question now declines. One failure: the Hohmann transfer "from a
+400 km orbit", where the model again used 400 km as the radius.
+
+- **Lantern rejects an orbit inside the Earth.** ORBITT, ORBITV, ESCV,
+  VISVIVA, HOHMANN and HOHMANNT, when using Earth's default GM, now refuse
+  a radius below Earth's surface with the fix in the message ("radius 400
+  km is inside the Earth: radii are from Earth's centre, so add 6371 km to
+  an altitude") instead of returning a confident wrong number. Other
+  bodies (GM given) are not checked against Earth.
+- **One correction turn** (`Lantern.assist.solve`). When Lantern rejects
+  a formula and nothing was computed, the model gets one more turn with
+  Lantern's reason, the way Chat already works. Assist shows the rejected
+  reply and the corrected one; the bench records `rounds`, `fixed` and the
+  rejected line, and the summary counts fixes on the second turn.
+- The Hohmann recipe cards spell out that "a 400 km orbit" is an altitude;
+  the transfer-time card no longer matches every question containing
+  "hours".
+- **Harder bench (v2, 47 questions).** The 4B model now passes almost
+  everything, so the bench gains ten **hard** questions with no recipe
+  aimed at them: distractor numbers (a 12 V pump's amp-hours), two-step
+  rates (days a tank lasts a family, fuel for a trip), unit traps (miles at
+  km/h, an orbit period in hours), a second altitude-vs-radius Hohmann
+  question, and a new **need** category: two questions that leave out a
+  number, which pass only by asking for it. Earlier, fresh and hard
+  questions are reported apart.
+- Tests: AI layer 99 checks.
+
 ## 1.8.2 — Fixes from the first Lantern Bench run (2026-10-20)
 
 Adam's full bench on the USB kit (Qwen3.5 4B, llama-server, full prompt)
