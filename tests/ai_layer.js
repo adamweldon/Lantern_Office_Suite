@@ -222,6 +222,17 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
     !CK.unexplained("A family of five uses 40 litres each a day. How many days does 2000 litres last?", "=2000/200").length &&
     !CK.unexplained("How many hours to drive 26 miles at 40 km/h?", "=26*1.60934/40").length &&
     CK.unexplained("How long will my battery run a 60 W light?", "=1200/60").join() === "1200");
+  // 1.8.5: three more slips from bench run 4 that ran and gave wrong numbers
+  ok("check: a worked step the last line ignores", /=40\*5 \(200\) is worked out but not used/.test(flagsFor(
+    "A family of 5 uses 40 litres of water per person per day. How many days does a 2000 litre tank last?", "=40*5\n=2000/2000\nANSWER: {result} days").join("")) &&
+    !CK.unusedSteps("=40*5\n=2000/200").length && !CK.unusedSteps("=40*5\n=2000/ANS").length && !CK.unusedSteps("=0.15*30\n=0.15*30*(60*5/1000)").length);
+  ok("check: seconds turned into the wrong time unit", /divide by 3600 \(the formula divides by 60\)/.test(flagsFor(
+    "A satellite orbits 35786 km above the equator. How long is one orbit, in hours?",
+    "=ORBITT(PLANET(\"Earth\",\"radius\")+CONVERT(35786,\"km\",\"m\"),PLANET(\"Earth\",\"gm\"))/60\nANSWER: {result} hours").join("")) &&
+    !CK.timeUnit("in hours?", "=ORBITT(7000000)\n=ANS/3600") && !CK.timeUnit("in hours?", "=ORBITT(7000000)/60/60") &&
+    !!CK.timeUnit("How long, in minutes?", "=ORBITT(7000000)") && !CK.timeUnit("How long is it?", "=ORBITT(7000000)"));
+  ok("check: multiplying by 1 stands in for a missing number", CK.timesOne("=60*1/1000") && CK.timesOne("=1*60") &&
+    !CK.timesOne("=(1-VELDIL(3e7))*86400") && !CK.timesOne("=12*15") && !CK.timesOne("=60*1.5"));
   var qs2 = [], sq = await A.solve("How much feed do my goats need for 30 days?", { call: function (m) { qs2.push(m.slice());
     return Promise.resolve(qs2.length === 1 ? "=FEEDKG(2,30,800)\nANSWER: {result} kg" : "NEED: How many goats, and how many grams each a day?"); } });
   ok("solve: a questioned formula goes back with Lantern's reason, and a NEED is kept", sq.rounds === 2 && sq.kind === "questioned" && sq.fixed &&

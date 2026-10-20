@@ -19,7 +19,7 @@ llama.cpp on a laptop or USB stick, with no internet after setup. See
 |---|---|
 | Any device, no AI | Open `Lantern_Office_Suite.html` (one file, works offline). |
 | Phone or any browser, with AI | The website build in `site/`, published with GitHub Pages: open it, Add to Home Screen, download a model once in the **AI** app. |
-| Laptop / USB stick, with AI | `kit/`: run `setup-kit` once, then `start-lantern` (see `kit/README.txt`). Phones on the same Wi-Fi can share the laptop's model. |
+| Laptop / USB stick, with AI | `kit/`: run `setup-kit` once, then `start-lantern` (see `kit/README.txt`). It uses the biggest model the computer's memory can run and offers to download a bigger one when the kit lacks it. Phones on the same Wi-Fi can share the laptop's model. |
 
 ### Publishing the website (GitHub Pages)
 

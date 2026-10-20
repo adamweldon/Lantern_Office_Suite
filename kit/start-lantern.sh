@@ -5,7 +5,12 @@
 #   ./start-lantern.sh          this computer only
 #   ./start-lantern.sh share    also phones on the same Wi-Fi or hotspot
 #   ./start-lantern.sh gpu      use the graphics card (Linux; Macs always do)
-#   MODEL=/path/x.gguf ./start-lantern.sh   use a particular model
+#   ./start-lantern.sh 9b       use a particular model from models/ (35b 9b 4b 2b 0.8b)
+#   ./start-lantern.sh nodownload   do not offer a bigger model
+#   MODEL=/path/x.gguf ./start-lantern.sh   use a particular model file
+# When this computer could run a better model than the kit has (and there is
+# internet and room on the drive), it asks once and downloads it in the
+# background while Lantern starts; the next start uses it.
 # Folder layout (USB stick or this repository):
 #   site/  engine/linux/ or engine/mac/  models/*.gguf  start-lantern.sh
 set -u
@@ -13,31 +18,52 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 SITE="$DIR/site"; [ -d "$SITE" ] || SITE="$DIR/../site"
 MODELS="$DIR/models"; [ -d "$MODELS" ] || MODELS="$DIR/../models"
 PORT="${PORT:-8080}"
-HOST=127.0.0.1; GPU=""
+HOST=127.0.0.1; GPU=""; AUTO=1; FORCE=""
 for a in "$@"; do
   case "$a" in
     share) HOST=0.0.0.0 ;;
     gpu) GPU=1 ;;
+    nodownload) AUTO="" ;;
+    35b|35B) FORCE=35B-A3B ;;
+    9b|9B) FORCE=9B ;;
+    4b|4B) FORCE=4B ;;
+    2b|2B) FORCE=2B ;;
+    0.8b|0.8B) FORCE=0.8B ;;
   esac
 done
+[ "${LANTERN_AUTO_DOWNLOAD:-}" = 0 ] && AUTO=""
+[ -n "${MODEL:-}" ] && AUTO=""
+[ -n "$FORCE" ] && AUTO=""
 
 case "$(uname -s)" in
   Darwin) OS=mac;   MEM=$(( $(sysctl -n hw.memsize) / 1048576 )) ;;
   *)      OS=linux; MEM=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo) ;;
 esac
+[ -n "${LANTERN_MEM_MB:-}" ] && MEM=$LANTERN_MEM_MB   # pretend, for testing
 BIN="$DIR/engine/$OS/llama-server"
 [ -x "$BIN" ] || BIN="$(command -v llama-server 2>/dev/null || true)"
 if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
   echo "llama-server not found. Run ./setup-kit.sh first (needs internet once)."; exit 1
 fi
 
-# Largest model that fits: about a third of memory for the model file.
+# A bigger model for this computer? (asks once; downloads in the background)
+if [ -n "$AUTO" ] && [ -x "$DIR/setup-kit.sh" ]; then "$DIR/setup-kit.sh" offer || true; fi
+
+# Largest model this computer's memory runs well.
 pick() { for p in "$@"; do f=$(ls "$MODELS"/*"$p"*.gguf 2>/dev/null | grep -v -i mmproj | head -n 1); [ -n "$f" ] && { echo "$f"; return 0; }; done; return 1; }
+M=""
 if [ -n "${MODEL:-}" ]; then M="$MODEL"
-elif [ "$MEM" -ge 15000 ]; then M=$(pick 9B 4B 2B 0.8B "")
-elif [ "$MEM" -ge 7000 ]; then M=$(pick 4B 2B 0.8B "")
-elif [ "$MEM" -ge 5000 ]; then M=$(pick 2B 0.8B "")
-else M=$(pick 0.8B 2B "")
+elif [ -n "$FORCE" ] && M=$(pick "$FORCE"); then :
+else
+  [ -n "$FORCE" ] && echo "No $FORCE model in $MODELS, so using the best one there instead."
+  M=""
+fi
+if [ -n "$M" ]; then :
+elif [ "$MEM" -ge 28000 ]; then M=$(pick 35B-A3B 9B 4B 2B 0.8B "")
+elif [ "$MEM" -ge 15000 ]; then M=$(pick 9B 4B 2B 0.8B 35B-A3B "")
+elif [ "$MEM" -ge 7000 ]; then M=$(pick 4B 2B 0.8B 9B 35B-A3B "")
+elif [ "$MEM" -ge 5000 ]; then M=$(pick 2B 0.8B 4B 9B 35B-A3B "")
+else M=$(pick 0.8B 2B 4B 9B 35B-A3B "")
 fi
 if [ -z "${M:-}" ] || [ ! -f "$M" ]; then
   echo "No model in $MODELS. Run ./setup-kit.sh, or copy a .gguf file there."; exit 1

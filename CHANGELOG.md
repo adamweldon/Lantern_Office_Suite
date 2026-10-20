@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.8.5 — The kit picks and fetches the biggest model a computer can run; run 4 checks (2026-10-20)
+
+**Kit: automatic model size.** Asked by Adam: "couldn't it look at the
+system it is on and automatically download the bigger model if it can run
+it? This laptop has 32 GB."
+
+- `start-lantern` (Windows, Mac, Linux) now checks, before starting, what
+  this computer can run: 28 GB of memory or more Qwen3.5 35B-A3B, 16 GB 9B,
+  8 GB 4B, 5 GB 2B, else 0.8B. If that is better than anything in the
+  kit, the drive has room, and there is internet, it says so and asks once
+  (Y, or N = don't ask again; yes after 30 s). The download runs in its own
+  window (Mac/Linux: in the background with a log) while Lantern starts with
+  the model it has; the next start uses the new one. Downloads resume after
+  an interruption, a second start never begins a second download of the
+  same file, and with no internet it starts quietly.
+- It will not try to put a file over 4 GB on a FAT32 stick, or a model on a
+  drive without room for it plus 1 GB; it says why and offers the next
+  model that fits.
+- **New top tier: Qwen3.5 35B-A3B** (unsloth `UD-IQ4_XS`, 17.5 GB,
+  Apache-2.0): a mixture-of-experts model with about 3B parameters active
+  per token, so it should run near the 4B's speed on a CPU with far more
+  knowledge. Not yet run in Lantern Bench: run it on the 32 GB laptop.
+- `start-lantern 35b|9b|4b|2b|0.8b` picks a model by hand; `nodownload`
+  skips the check; `setup-kit check` lists what fits and what the kit has;
+  `setup-kit xl` fetches the 35B-A3B. On a small computer the smallest model
+  in the kit is used, never the biggest. `LANTERN_AUTO_DOWNLOAD=0` turns the
+  offer off, `=1` downloads without asking (unattended set-ups).
+- Tested with PowerShell 7 and sh against a local mirror: memory tiers,
+  FAT32, low space, offline, already downloading, answering N and Y with
+  a keyboard, and no keyboard (then nothing is downloaded or remembered).
+  Not run on Windows itself yet.
+
+**Bench run 4** (1.8.4, Qwen3.5 4B): 44/47 again, but the earlier
+failures were fixed (the second-height Hohmann question on Lantern's
+questioning, the goats question now asks with NEED). Three new slips ran
+and gave confident wrong numbers; three checks added to `AI_CHECKS`:
+
+- *Unused step*: "=40*5" then "=2000/2000" (the 200 was meant as the
+  divisor): a worked step the last line never uses.
+- *Seconds to the wrong unit*: ORBITT and HOHMANNT give seconds; the
+  question asked for hours but the formula divided by 60.
+- *Times one*: "=60*1/1000" for a battery size nobody gave.
+- Replayed over all 163 real replies from the four runs, the checks flag
+  only answers that were wrong (7), never a correct one.
+- Tests: AI layer 112 checks.
+
 ## 1.8.4 — Third bench run: 44/47; formulas checked against the question (2026-10-20)
 
 Adam's run on 1.8.3 (Qwen3.5 4B, full prompt): **44/47**. Earlier questions

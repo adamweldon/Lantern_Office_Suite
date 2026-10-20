@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.8.4 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.8.5 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -107,7 +107,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.8.4",
+  version: "1.8.5",
   apps: {},
   order: []
 };
@@ -20879,7 +20879,8 @@ Lantern.RFB = (function () {
 // Depends: ASSIST_CORE (Lantern.assist.solve reads Lantern.assistChecks),
 //          ASSIST_CARDS (fixed numbers in recipe formulas) -- feature-detected
 // Exports: Lantern.assistChecks (array of fn(question, exprText, run) -> reason
-//          or null); Lantern.aiChecks (numbersIn, unexplained, heights)
+//          or null); Lantern.aiChecks (numbersIn, unexplained, heights,
+//          heightAsRadius, unusedSteps, timeUnit, timesOne)
 // ===========================================================================
 // Checks that a model's formula is grounded in the question, before the
 // person sees the number. Written after Lantern Bench run 3 (Qwen3.5 4B,
@@ -20980,7 +20981,54 @@ Lantern.RFB = (function () {
       return any && !adjusted;
     });
   }
-  L.aiChecks = { numbersIn: numbersIn, unexplained: unexplained, heights: heights, heightAsRadius: heightAsRadius };
+  // --- added after bench run 4 (1.8.4, 44/47): three more slips that ran ---
+  function lines(expr) {
+    return String(expr || "").split("\n").map(function (l) { return l.replace(/^\s+|\s+$/g, ""); })
+      .filter(function (l) { return l.charAt(0) === "="; }).map(function (l) { return l.slice(1).replace(/\s+/g, ""); });
+  }
+  // unusedSteps(expr) -> worked steps whose result the last line never uses
+  // ("=40*5" then "=2000/2000": the 200 was meant to be the divisor). Only
+  // steps with arithmetic count; scratch lookups are left alone, and a last
+  // line that uses ANS is trusted.
+  function unusedSteps(expr) {
+    var ls = lines(expr), out = [], i;
+    if (ls.length < 2) return out;
+    var last = ls[ls.length - 1], lastNums = numbersIn(last);
+    if (/ANS/i.test(last)) return out;
+    for (i = 0; i < ls.length - 1; i++) {
+      var l = ls[i], v = null;
+      if (!/[0-9)][-+*\/][0-9(A-Z]/i.test(l.replace(/\x22[^\x22]*\x22/g, ""))) continue;
+      if (last.indexOf(l) !== -1) continue;
+      try { v = L.formula.evaluate(l, { deg: false, ans: 0 }); } catch (e) { continue; }
+      if (lastNums.some(function (x) { return same(x, v); })) continue;
+      out.push({ step: l, value: v });
+    }
+    return out;
+  }
+  // timeUnit(question, expr) -> {asked, divisor, want} when a function that
+  // returns SECONDS (ORBITT, HOHMANNT) is turned into a unit other than the
+  // one the question asks for ("in hours" but divided by 60).
+  var SECS = /\b(ORBITT|HOHMANNT)\s*\(/i, UNIT = { second: 1, minute: 60, hour: 3600, day: 86400 };
+  function timeUnit(question, expr) {
+    var m, asked = null, re = /\b(?:in|how many)\s+(second|minute|hour|day)s?\b/gi;
+    while ((m = re.exec(String(question || "")))) asked = m[1].toLowerCase();
+    if (!asked) return null;
+    var ls = lines(expr), i, from = -1;
+    for (i = 0; i < ls.length; i++) if (SECS.test(ls[i])) from = i;
+    if (from < 0) return null;
+    var tail = ls.slice(from).join(" ").replace(/\x22[^\x22]*\x22/g, ""), d = 1, dm, dre = /\/\s*\(?\s*(60|3600|86400|24)(?![0-9.])/g;
+    while ((dm = dre.exec(tail))) d *= parseFloat(dm[1]);
+    var want = UNIT[asked];
+    return d === want ? null : { asked: asked, divisor: d, want: want };
+  }
+  // timesOne(expr) -> true when the formula multiplies by 1: it changes
+  // nothing and usually stands in for a number the question did not give.
+  function timesOne(expr) {
+    var t = String(expr || "").replace(/\x22[^\x22]*\x22/g, "\x22\x22");
+    return /(^|[^0-9.])1\s*\*/.test(t.replace(/\^\s*1/g, "")) || /\*\s*1(?![0-9.e])/.test(t);
+  }
+  L.aiChecks = { numbersIn: numbersIn, unexplained: unexplained, heights: heights, heightAsRadius: heightAsRadius,
+    unusedSteps: unusedSteps, timeUnit: timeUnit, timesOne: timesOne };
   function add(id, fn) { if (CHK.some(function (c) { return c.id === id; })) return; fn.id = id; CHK.push(fn); }
   add("height-as-radius", function (question, expr) {
     var h = heightAsRadius(question, expr);
@@ -20988,6 +21036,22 @@ Lantern.RFB = (function () {
     return h.map(function (n) { return n + " km"; }).join(" and ") + (h.length > 1 ? " are heights" : " is a height") +
       " above the surface in the question, but the formula uses " + (h.length > 1 ? "them as radii" : "it as a radius") +
       ": orbit radii are from Earth's centre, so add 6371 km to every height";
+  });
+  add("seconds-to-unit", function (question, expr) {
+    var t = timeUnit(question, expr);
+    if (!t) return null;
+    return "ORBITT and HOHMANNT give seconds and the question asks for " + t.asked + "s, so the last step should divide by " +
+      t.want + (t.divisor === 1 ? " (the formula does not divide)" : " (the formula divides by " + t.divisor + ")");
+  });
+  add("unused-step", function (question, expr) {
+    var u = unusedSteps(expr);
+    if (!u.length) return null;
+    return u.map(function (x) { return "=" + x.step + " (" + (Math.round(x.value * 1e6) / 1e6) + ")"; }).join(" and ") +
+      (u.length > 1 ? " are" : " is") + " worked out but not used in the last line; check the arithmetic";
+  });
+  add("times-one", function (question, expr) {
+    return timesOne(expr) ? "the formula multiplies by 1, which changes nothing; it usually stands in for a number " +
+      "the question does not give (ask with NEED)" : null;
   });
   add("number-not-in-question", function (question, expr) {
     var u = unexplained(question, expr);
@@ -21477,7 +21541,11 @@ Lantern.RFB = (function () {
       "<p>No download? Copy a <code>.gguf</code> model file onto the phone from a USB stick or a laptop and use <b>Load file</b>.</p>"],
     ["On a laptop (USB kit)", "<p>Run <b>start-lantern</b> from the kit. It starts the model server, opens Lantern at " +
       "<code>http://127.0.0.1:8080</code>, and Lantern finds the model by itself. Add <code>share</code> to let phones on the same " +
-      "Wi-Fi or hotspot use the laptop's model: they open the address the launcher prints.</p>"],
+      "Wi-Fi or hotspot use the laptop's model: they open the address the launcher prints.</p>" +
+      "<p>It uses the best model in the kit that the computer's memory can run (28 GB or more: Qwen3.5 35B-A3B; 16 GB: 9B; " +
+      "8 GB: 4B; less: 2B or 0.8B). When the computer could run a stronger model than the kit has, and there is internet and room " +
+      "on the drive, it asks once and downloads it in its own window while Lantern starts; the next start uses it. " +
+      "<code>start-lantern 9b</code> (or 35b, 4b, 2b, 0.8b) picks one by hand; <code>setup-kit check</code> shows what fits.</p>"],
     ["Which AI answers", "<p><b>Automatic</b> uses the server that served this page if there is one, then a server you set up, then a " +
       "model on this device. <b>On this device</b> and <b>Server</b> force one. The choice is shared by Assist and Chat.</p>"],
     ["Lantern Bench", "<p>Real questions whose answers Lantern proves on its formula engine. A pass needs the right computed value, or " +
