@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.9.1 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.9.2 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -114,7 +114,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.9.1",
+  version: "1.9.2",
   apps: {},
   order: []
 };
@@ -16050,8 +16050,10 @@ Lantern.RFB = (function () {
     async function turn() { out.rounds++; return await opts.call(msgs); }
     var text = await turn(), p = A.parseReply(text), run = A.run(p.exprText);
     out.first = text;
+    // A safety rule answered (Lantern.ai.lastGuard): nothing to look up.
+    var guarded = !!(window.Lantern.ai && Lantern.ai.lastGuard);
     // Reading turn: the offline library, when the model asks or declines.
-    if (look && opts.lookup !== false && !p.exprText && !p.need && (p.lookup || A.isDecline(p.answer))) {
+    if (look && !guarded && opts.lookup !== false && !p.exprText && !p.need && (p.lookup || A.isDecline(p.answer))) {
       var lk = null;
       try { lk = await look(question, p.lookup || ""); } catch (e) { lk = null; }
       if (lk && lk.sources && lk.sources.length) {
@@ -20876,10 +20878,10 @@ Lantern.RFB = (function () {
   // stated a number while Lantern computed nothing (Lantern flags both).
   B.summary = function (rows) {
     var by = {}, pass = 0, parsed = 0, ms = 0, tps = [], i;
-    var core = { n: 0, pass: 0 }, fresh = { n: 0, pass: 0 }, hard = { n: 0, pass: 0 };
+    var core = { n: 0, pass: 0 }, fresh = { n: 0, pass: 0 }, hard = { n: 0, pass: 0 }, facts = { n: 0, pass: 0 };
     var byRule = 0, disagree = 0, unchecked = 0, retried = 0, fixed = 0, flagged = 0;
     for (i = 0; i < rows.length; i++) {
-      var r = rows[i], c = by[r.cat] = by[r.cat] || { n: 0, pass: 0 }, f = r.hard ? hard : (r.fresh ? fresh : core);
+      var r = rows[i], c = by[r.cat] = by[r.cat] || { n: 0, pass: 0 }, f = r.cat === "fact" ? facts : (r.hard ? hard : (r.fresh ? fresh : core));
       if (r.retry) { retried++; if (r.fixed && r.pass) fixed++; }
       if (r.flags && r.flags.length) flagged++;
       c.n++; f.n++; if (r.pass) { c.pass++; f.pass++; pass++; }
@@ -20891,7 +20893,7 @@ Lantern.RFB = (function () {
     }
     tps.sort(function (a, b) { return a - b; });
     return { n: rows.length, pass: pass, score: rows.length ? Math.round(pass / rows.length * 100) : 0,
-      core: core, fresh: fresh, hard: hard, byRule: byRule, disagree: disagree, unchecked: unchecked,
+      core: core, fresh: fresh, hard: hard, library: facts, byRule: byRule, disagree: disagree, unchecked: unchecked,
       retried: retried, fixedOnRetry: fixed, stillQuestioned: flagged,
       parsedPct: rows.length ? Math.round(parsed / rows.length * 100) : 0, byCat: by,
       avgSeconds: rows.length ? Math.round(ms / rows.length / 100) / 10 : 0,
@@ -21097,24 +21099,49 @@ Lantern.RFB = (function () {
     return String(expr || "").split("\n").map(function (l) { return l.replace(/^\s+|\s+$/g, ""); })
       .filter(function (l) { return l.charAt(0) === "="; }).map(function (l) { return l.slice(1).replace(/\s+/g, ""); });
   }
-  // unusedSteps(expr) -> worked steps whose result the last line never uses
-  // ("=40*5" then "=2000/2000": the 200 was meant to be the divisor). Only
-  // steps with arithmetic count; scratch lookups are left alone, and a last
-  // line that uses ANS is trusted.
+  // unusedSteps(expr) -> worked steps whose result nothing later uses
+  // ("=40*5" then "=2000/2000": the 200 was meant to be the divisor; or
+  // "=60*5/1000", "=100*5/1000", "=ANS+ANS": ANS is only the line just
+  // before, so the first step is lost). A step is used when the next line
+  // takes ANS, or a later line repeats it or its number. Only steps with
+  // arithmetic count; scratch lookups are left alone. (Run 4, run 5.)
   function unusedSteps(expr) {
     var ls = lines(expr), out = [], i;
     if (ls.length < 2) return out;
-    var last = ls[ls.length - 1], lastNums = numbersIn(last);
-    if (/ANS/i.test(last)) return out;
     for (i = 0; i < ls.length - 1; i++) {
-      var l = ls[i], v = null;
+      var l = ls[i], v = null, later = ls.slice(i + 1).join(" ");
       if (!/[0-9)][-+*\/][0-9(A-Z]/i.test(l.replace(/\x22[^\x22]*\x22/g, ""))) continue;
-      if (last.indexOf(l) !== -1) continue;
+      if (/ANS/i.test(ls[i + 1])) continue;
+      if (later.indexOf(l) !== -1) continue;
       try { v = L.formula.evaluate(l, { deg: false, ans: 0 }); } catch (e) { continue; }
-      if (lastNums.some(function (x) { return same(x, v); })) continue;
+      if (numbersIn(later).some(function (x) { return same(x, v); })) continue;
       out.push({ step: l, value: v });
     }
     return out;
+  }
+  // repeatedStep(expr) -> a line that uses ANS written twice in a row: the
+  // second one works on the first one's result ("=420/ANS" twice). (Run 5.)
+  function repeatedStep(expr) {
+    var ls = lines(expr), i;
+    for (i = 1; i < ls.length; i++) if (ls[i] === ls[i - 1] && /ANS/i.test(ls[i])) return ls[i];
+    return "";
+  }
+  // extraTimeStep(question, expr) -> a time factor (24, 60, 3600, 86400) the
+  // formula applies although the question's rate is already per the unit it
+  // asks for ("40 km/h ... how many hours" then "/24"). (Run 5.)
+  var RATE = { hour: /\b(per|an|a|each|every)\s+hour\b|\/\s*h(r|our)?\b|\bkm\/h\b|\bkph\b|\bmph\b/i,
+    minute: /\b(per|a|each|every)\s+minute\b|\/\s*min\b/i, second: /\b(per|a|each|every)\s+second\b|\/\s*s\b/i,
+    day: /\b(per|a|each|every)\s+day\b|\/\s*day\b/i };
+  function extraTimeStep(question, expr) {
+    var m, asked = null, re = /\b(?:in|how many)\s+(second|minute|hour|day)s?\b/gi;
+    while ((m = re.exec(String(question || "")))) asked = m[1].toLowerCase();
+    if (!asked || !RATE[asked].test(String(question || ""))) return null;
+    var given = questionNumbers(question), t = String(expr || "").replace(/\x22[^\x22]*\x22/g, ""), fm, fre = /[*\/]\s*\(?\s*(24|60|3600|86400)(?![0-9.])/g;
+    while ((fm = fre.exec(t))) {
+      var f = parseFloat(fm[1]);
+      if (!given.some(function (g) { return same(g, f); })) return { asked: asked, factor: f };
+    }
+    return null;
   }
   // timeUnit(question, expr) -> {asked, divisor, want} when a function that
   // returns SECONDS (ORBITT, HOHMANNT) is turned into a unit other than the
@@ -21139,7 +21166,7 @@ Lantern.RFB = (function () {
     return /(^|[^0-9.])1\s*\*/.test(t.replace(/\^\s*1/g, "")) || /\*\s*1(?![0-9.e])/.test(t);
   }
   L.aiChecks = { numbersIn: numbersIn, unexplained: unexplained, heights: heights, heightAsRadius: heightAsRadius,
-    unusedSteps: unusedSteps, timeUnit: timeUnit, timesOne: timesOne };
+    unusedSteps: unusedSteps, timeUnit: timeUnit, timesOne: timesOne, repeatedStep: repeatedStep, extraTimeStep: extraTimeStep };
   function add(id, fn) { if (CHK.some(function (c) { return c.id === id; })) return; fn.id = id; CHK.push(fn); }
   add("height-as-radius", function (question, expr) {
     var h = heightAsRadius(question, expr);
@@ -21158,7 +21185,16 @@ Lantern.RFB = (function () {
     var u = unusedSteps(expr);
     if (!u.length) return null;
     return u.map(function (x) { return "=" + x.step + " (" + (Math.round(x.value * 1e6) / 1e6) + ")"; }).join(" and ") +
-      (u.length > 1 ? " are" : " is") + " worked out but not used in the last line; check the arithmetic";
+      (u.length > 1 ? " are" : " is") + " worked out but never used afterwards (ANS is only the line just before); check the arithmetic";
+  });
+  add("repeated-step", function (question, expr) {
+    var r = repeatedStep(expr);
+    return r ? "the line =" + r + " is written twice, so the second one works on the first one's result" : null;
+  });
+  add("extra-time-step", function (question, expr) {
+    var t = extraTimeStep(question, expr);
+    return t ? "the question gives a rate per " + t.asked + " and asks for " + t.asked + "s, so no time conversion is needed, but the formula " +
+      "uses " + t.factor + " (that changes the unit)" : null;
   });
   add("times-one", function (question, expr) {
     return timesOne(expr) ? "the formula multiplies by 1, which changes nothing; it usually stands in for a number " +
@@ -21479,7 +21515,8 @@ Lantern.RFB = (function () {
     var s = rep.summary, parts = [];
     for (var k in s.byCat) parts.push(k + " " + s.byCat[k].pass + "/" + s.byCat[k].n);
     var extra = (s.fresh && (s.fresh.n || (s.hard && s.hard.n)) ? " \u00b7 earlier questions " + s.core.pass + "/" + s.core.n +
-        (s.fresh.n ? ", fresh " + s.fresh.pass + "/" + s.fresh.n : "") + (s.hard && s.hard.n ? ", hard " + s.hard.pass + "/" + s.hard.n : "") : "") +
+        (s.fresh.n ? ", fresh " + s.fresh.pass + "/" + s.fresh.n : "") + (s.hard && s.hard.n ? ", hard " + s.hard.pass + "/" + s.hard.n : "") +
+        (s.library && s.library.n ? ", library facts " + s.library.pass + "/" + s.library.n : "") : "") +
       (s.retried ? " \u00b7 " + s.fixedOnRetry + " of " + s.retried + " fixed after Lantern rejected or questioned a formula" : "") +
       (s.stillQuestioned ? " \u00b7 " + s.stillQuestioned + " still questioned" : "") +
       (s.disagree ? " \u00b7 " + s.disagree + " sentence" + (s.disagree === 1 ? "" : "s") + " disagreed with Lantern" : "") +
@@ -21828,7 +21865,8 @@ Lantern.RFB = (function () {
   ("a an the of in on at to for from by with and or not is are was were be been being am do does did done what which who whom " +
    "whose when where why how many much it its this that these those there here their they them my your our his her as about into " +
    "than then can could would should will shall may might must tell me please explain give list name i you we he she us " +
-   "some any all one ones get got has have had also very more most such so if out up use used using known called").split(" ")
+   "some any all one ones get got has have had also very more most such so if out up use used using known called after before " +
+   "usually often still ever").split(" ")
     .forEach(function (w) { STOP[w] = 1; });
   // keywords(text) -> search words: lower case, no question words, max 6.
   LIB.keywords = function (text) {
@@ -21854,7 +21892,7 @@ Lantern.RFB = (function () {
     return get(ep + "search?books.name=" + enc(book.id) + "&pattern=" + enc(words.join(" ")) + "&format=xml&pageLength=" + n, 10000)
       .then(function (t) { return parseHits(t, book); });
   }
-  function titleMatch(book, word) {   // an article whose title is exactly this word or phrase
+  function titleMatch(book, word) {   // articles whose title is exactly this word or phrase
     var ep = LIB.endpoint();
     return get(ep + "suggest?content=" + enc(book.id) + "&term=" + enc(word) + "&count=5", 6000).then(function (t) {
       var arr = []; try { arr = JSON.parse(t); } catch (e) { arr = []; }
@@ -21868,43 +21906,58 @@ Lantern.RFB = (function () {
     stems.forEach(function (k) { if (tw.indexOf(k) >= 0) s++; });
     return s;
   }
-  // search(query, n) -> Promise<[{book, path, title, snippet, bookTitle}]>.
-  // Per book: an article titled exactly like the query (or one of its long
-  // words) comes first; then a pool of full-text results for all the words
-  // and for the words minus one (questions carry words the article lacks),
-  // re-ranked by how many query words (stems: oceans~ocean, acidic~
-  // acidification) the title shares, then by search rank.
+  // Words too general to be an article's subject on their own.
+  var GENERIC = {};
+  ("cause causes caused year years unit units name named main component components type types kind part parts list history " +
+   "definition meaning height size number people person first new old large small high highest low lowest best called time " +
+   "date day days way ways thing things example official word words").split(" ").forEach(function (w) { GENERIC[w] = 1; });
+  // search(query, n) -> Promise<[{book, path, title, snippet, bookTitle,
+  // exact, words, pos}]>: candidate articles, in this order --
+  //  1. articles titled exactly like a run of the query's words, longest
+  //     first ("mount everest" before "mount"); single words only when
+  //     specific (not "cause", "unit", "year"), also as singular;
+  //  2. full-text results for all the words, then for the words minus one
+  //     (a question carries words its article lacks).
+  // Disambiguation pages are skipped. lookup() re-ranks by reading them.
   LIB.search = async function (query, n) {
     n = n || 3;
-    var words = LIB.keywords(query), stems = words.map(stem), out = [], seen = {}, b, i;
+    var words = LIB.keywords(query), out = [], seen = {}, b, i, len;
     if (!words.length || !LIB.ready()) return out;
-    function add(h) { var k = h.book + "/" + h.path; if (!seen[k]) { seen[k] = 1; out.push(h); } }
+    function add(h) {
+      var k = h.book + "/" + h.path;
+      if (seen[k] || /\(disambiguation\)/i.test(h.title)) return;
+      seen[k] = 1; h.pos = out.length; out.push(h);
+    }
     var books = state.books.slice(0, 4);
     for (b = 0; b < books.length; b++) {
-      var exact = await titleMatch(books[b], words.join(" "));
-      for (i = 0; i < words.length && !exact.length; i++) if (words[i].length > 3) exact = exact.concat(await titleMatch(books[b], words[i]));
-      exact.slice(0, 2).forEach(add);
-      var sets = [words], pool = [], have = {};
-      if (words.length > 1) for (i = 0; i < words.length && sets.length < 5; i++) sets.push(words.filter(function (w, j) { return j !== i; }));
-      for (i = 0; i < sets.length && pool.length < 24; i++) {
-        var hits = [];
-        try { hits = await fullText(books[b], sets[i], 12); } catch (e) { hits = []; }
-        hits.forEach(function (h, r) {
-          var k = h.path;
-          if (have[k]) { have[k].score += 0.5; return; }
-          h.score = 4 * titleScore(h.title, stems) + (i === 0 ? 3 : 1) - r * 0.05;
-          have[k] = h; pool.push(h);
-        });
+      var phrases = [];
+      for (len = Math.min(3, words.length); len >= 2; len--)
+        for (i = 0; i + len <= words.length; i++) phrases.push(words.slice(i, i + len).join(" "));
+      words.forEach(function (w) {
+        if (w.length < 3 || GENERIC[w] || /^\d+$/.test(w)) return;
+        phrases.push(w);
+        if (/[^s]s$/.test(w) && w.length > 4) phrases.push(w.slice(0, -1));
+      });
+      var exact = 0;
+      for (i = 0; i < phrases.length && exact < 3; i++) {
+        var m = await titleMatch(books[b], phrases[i]);
+        m.forEach(function (h) { h.exact = true; h.words = phrases[i].split(" ").length; add(h); exact++; });
       }
-      if (!pool.length) {   // nothing for any set: one word at a time, longest first
+      var sets = [words];
+      if (words.length > 1) for (i = 0; i < words.length && sets.length < 5; i++) sets.push(words.filter(function (w, j) { return j !== i; }));
+      for (i = 0; i < sets.length && out.length < n + 8; i++) {
+        var hits = [];
+        try { hits = await fullText(books[b], sets[i], 8); } catch (e) { hits = []; }
+        hits.forEach(add);
+      }
+      if (!out.length) {   // nothing for any set: one word at a time, longest first
         var single = words.slice().sort(function (x, y) { return y.length - x.length; });
-        for (i = 0; i < single.length && !pool.length; i++) {
-          try { pool = await fullText(books[b], [single[i]], n + 2); } catch (e) { pool = []; }
+        for (i = 0; i < single.length && !out.length; i++) {
+          try { (await fullText(books[b], [single[i]], n + 2)).forEach(add); } catch (e) { }
         }
       }
-      pool.sort(function (x, y) { return (y.score || 0) - (x.score || 0); }).forEach(add);
     }
-    return out.slice(0, n);
+    return out.slice(0, Math.max(n, 12));
   };
   var DROP = "script,style,table,figure,sup,.thumb,.infobox,.navbox,.reference,.references,.reflist,.mw-ref,.noprint," +
     ".hatnote,.mw-editsection,.gallery,.metadata,.PieChartTemplate,.mw-empty-elt,link,meta,noscript";
@@ -21924,27 +21977,51 @@ Lantern.RFB = (function () {
       return { title: String(title).replace(/^\s+|\s+$/g, ""), paras: paras.slice(0, 80) };
     });
   };
-  // passage(doc, words, max) -> the lead paragraph plus the paragraphs that
-  // share the most words with the question, in article order, cut at a
-  // sentence end near max characters.
+  // sentences(doc) -> [{text, para}] in article order.
+  function sentences(doc) {
+    var out = [];
+    (doc.paras || []).forEach(function (p, pi) {
+      p.replace(/([.!?])\s+(?=[A-Z0-9\x22\x27(\u201c])/g, "$1\n").split("\n").forEach(function (t) {
+        t = t.replace(/^\s+|\s+$/g, "");
+        if (t) out.push({ text: t, para: pi });
+      });
+    });
+    return out;
+  }
+  function hitsIn(text, keys) {
+    var low = text.toLowerCase(), s = 0;
+    keys.forEach(function (k) { if (low.indexOf(k) >= 0) s++; });
+    return s;
+  }
+  // passage(doc, words, max) -> the article's first sentence plus the
+  // sentences that share the most words with the question, then the rest of
+  // the article from the top while there is room; in article order, under
+  // max characters. Sentences, not paragraphs, so the one sentence that
+  // answers is kept even in a long lead.
   LIB.passage = function (doc, words, max) {
-    max = max || 900;
-    var paras = doc.paras || [], keys = words.map(stem), i;
-    if (!paras.length) return "";
-    var scored = paras.map(function (p, i) {
-      var low = p.toLowerCase(), s = 0;
-      keys.forEach(function (k) { if (low.indexOf(k) >= 0) s++; });
-      return { i: i, s: i === 0 ? 1e6 : s };
-    }).filter(function (x) { return x.s > 0; }).sort(function (a, b) { return b.s - a.s || a.i - b.i; });
+    max = max || 1000;
+    var ss = sentences(doc), keys = words.map(stem), i;
+    if (!ss.length) return "";
+    // first sentence, then sentences sharing words (most first), then the
+    // rest of the lead in order while there is room
+    var order = ss.map(function (x, i) { return { i: i, s: i === 0 ? 1e6 : hitsIn(x.text, keys) * 1000 - i }; })
+      .sort(function (a, b) { return b.s - a.s; });
     var pick = [], len = 0;
-    for (i = 0; i < scored.length && len < max; i++) { pick.push(scored[i].i); len += paras[scored[i].i].length; }
-    pick.sort(function (a, b) { return a - b; });
-    var text = pick.map(function (k) { return paras[k]; }).join(" ");
-    if (text.length > max) {
-      var cut = text.slice(0, max), end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("; "));
-      text = end > max * 0.5 ? cut.slice(0, end + 1) : cut + "\u2026";
+    for (i = 0; i < order.length; i++) {
+      var t = ss[order[i].i].text;
+      if (len + t.length > max && pick.length) continue;
+      pick.push(order[i].i); len += t.length + 1;
     }
+    pick.sort(function (a, b) { return a - b; });
+    var text = pick.map(function (k) { return ss[k].text; }).join(" ");
+    if (text.length > max) text = text.slice(0, max) + "\u2026";
     return text;
+  };
+  // relevance(doc, keys) -> how many question words the best sentence holds.
+  LIB.relevance = function (doc, keys) {
+    var best = 0;
+    sentences(doc).forEach(function (x) { var h = hitsIn(x.text, keys); if (h > best) best = h; });
+    return best;
   };
   LIB.prompt = function (question, sources, query) {
     var out = ["LIBRARY: passages from the offline encyclopedia" + (query ? " (searched for: " + query + ")" : ""), ""];
@@ -21961,19 +22038,35 @@ Lantern.RFB = (function () {
   };
   // lookup(question, query) -> Promise<{query, sources:[{n, title, book,
   // bookTitle, path, url, text}], prompt}>. query = the model's LOOKUP words.
+  // Candidates come from the model's words and from the question; up to 10
+  // are read and ranked by their best sentence (how many of the question's
+  // words it holds), then exact titles, title words and search order. The 3
+  // best become the numbered passages.
   LIB.lookup = async function (question, query) {
     if (!LIB.ready()) return null;
-    var q = query && /\w/.test(query) ? query : question;
-    var hits = await LIB.search(q, 3);
-    if (!hits.length && q !== question) { hits = await LIB.search(question, 3); q = question; }
-    var words = LIB.keywords(q + " " + question), sources = [], i;
-    for (i = 0; i < hits.length && sources.length < 3; i++) {
+    var q = query && /\w/.test(query) ? query : question, i;
+    var cands = await LIB.search(q, 10), seen = {};
+    cands.forEach(function (h) { seen[h.book + "/" + h.path] = 1; });
+    if (q !== question) (await LIB.search(question, 4)).forEach(function (h) {
+      var k = h.book + "/" + h.path;
+      if (!seen[k] && cands.length < 14) { seen[k] = 1; h.pos = cands.length; h.fromQuestion = true; cands.push(h); }
+    });
+    var words = LIB.keywords(q + " " + question), keys = words.map(stem), qstems = LIB.keywords(q).map(stem), read = [];
+    for (i = 0; i < cands.length && read.length < 10; i++) {
       try {
-        var doc = await LIB.read(hits[i]), text = LIB.passage(doc, words, 900);
-        if (text) sources.push({ n: sources.length + 1, title: doc.title || hits[i].title, book: hits[i].book, bookTitle: hits[i].bookTitle,
-          path: hits[i].path, url: LIB.endpoint() + "content/" + hits[i].book + "/" + hits[i].path, text: text });
+        var doc = await LIB.read(cands[i]), text = LIB.passage(doc, words, 1000);
+        if (!text) continue;
+        var h = cands[i];
+        h.rank = LIB.relevance(doc, keys) * 10 + (h.exact ? (h.words > 1 ? 15 : 6) : 0) + titleScore(doc.title || h.title, qstems) * 4 -
+          (h.pos || 0) * 0.3;
+        read.push({ h: h, doc: doc, text: text });
       } catch (e) { }
     }
+    read.sort(function (a, b) { return b.h.rank - a.h.rank; });
+    var sources = read.slice(0, 3).map(function (r, k) {
+      return { n: k + 1, title: r.doc.title || r.h.title, book: r.h.book, bookTitle: r.h.bookTitle, path: r.h.path,
+        url: LIB.endpoint() + "content/" + r.h.book + "/" + r.h.path, text: r.text };
+    });
     return { query: q, sources: sources, prompt: sources.length ? LIB.prompt(question, sources, q) : "" };
   };
   window.Lantern.assistLookup = function (question, query) {
@@ -22187,7 +22280,7 @@ Lantern.RFB = (function () {
     { id: "kenya-capital", quick: 1, q: "What is the capital of Kenya?", want: "nairobi" },
     { id: "malaria-cause", quick: 1, q: "What causes malaria?", want: "plasmodium|parasit" },
     { id: "everest-height", q: "How tall is Mount Everest?", want: "8,?849|8,?848" },
-    { id: "polio-vaccine", q: "Who developed the first successful polio vaccine?", want: "salk" },
+    { id: "polio-vaccine", q: "Who developed the first successful polio vaccine?", want: "salk|koprowski" },   // Wikipedia credits Koprowski (1950) and Salk (1955)
     { id: "chernobyl-year", q: "In what year did the Chernobyl disaster happen?", want: "1986" },
     { id: "tb-cause", q: "What causes tuberculosis?", want: "mycobacterium" },
     { id: "things-fall-apart", q: "Who wrote the novel Things Fall Apart?", want: "achebe" },

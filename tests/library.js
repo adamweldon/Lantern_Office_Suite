@@ -14,6 +14,31 @@ fs.readdirSync(FX).filter(function (f) { return /\.html$/.test(f); }).forEach(fu
   var html = fs.readFileSync(path.join(FX, f), "utf8"), p = f.replace(/\.html$/, "");
   ARTICLES[p] = { title: p.replace(/_/g, " "), html: html, text: html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").toLowerCase() };
 });
+// A second book: stand-ins for the articles bench run 5 (35B, English
+// Wikipedia mini) failed to reach, next to the decoys its search found.
+var BOOK2 = "wikipedia_en_all_mini_2026-09", SYN = {
+  "Mount": "Mount or Mt. is a word used in the names of mountains and hills, and for a stand that holds a camera or a lens.",
+  "Mount_Everest": "Mount Everest is Earth's highest mountain above sea level, in the Mahalangur Himal sub-range of the Himalayas. Its elevation of 8,849 metres was set in 2020 by the Chinese and Nepali authorities.",
+  "1952_Swiss_Mount_Everest_expedition": "The 1952 Swiss Mount Everest expedition was the first serious attempt on the mountain from Nepal. Its climbers reached a height of about 8,595 metres on Mount Everest.",
+  "UNIT": "UNIT is a fictional military organisation in a television series; the unit fights alien threats on Earth and is named after its task.",
+  "Ohm": "The ohm (symbol \u03a9) is the unit of electrical resistance in the International System of Units. It is named after German physicist Georg Ohm.",
+  "Open_Insulin_Project": "The Open Insulin Project is a community of researchers who want to produce insulin cheaply with open protocols for people with diabetes.",
+  "Insulin": "Insulin is a peptide hormone produced by beta cells of the pancreatic islets in the pancreas. It regulates the metabolism of carbohydrates, fats and protein.",
+  "Electrical_resistivity_and_conductivity": "Electrical resistivity is a property of a material that measures its electrical resistance; electrical conductivity is its reciprocal and measures how well a material conducts current.",
+  "Electrically_conducting_yarn": "Electrically conducting yarn is yarn with metal fibres or a metal coating, whose electrical conductivity lets clothes carry signals; the highest grades use silver plating.",
+  "Silver": "Silver is a chemical element with the symbol Ag. A soft, white and lustrous transition metal, it has the highest electrical conductivity, thermal conductivity and reflectivity of any metal.",
+  "Moon_(disambiguation)": "Moon most commonly refers to the Moon, the natural satellite of Earth, and may also refer to many other things listed on this page.",
+  "Moon_landing": "A Moon landing is the arrival of a spacecraft on the surface of the Moon. The first crewed Moon landing was Apollo 11 on 20 July 1969, and the last was in 1972.",
+  "Season": "A season is a division of the year based on changes in weather and daylight. Seasons result from Earth's orbit around the Sun and Earth's axial tilt relative to the ecliptic plane.",
+  "Causality": "Causality is an influence by which one event or process, a cause, contributes to the production of another, an effect."
+};
+Object.keys(SYN).forEach(function (k) {
+  var t = k.replace(/_/g, " ");
+  ARTICLES[BOOK2 + "/" + k] = { book: BOOK2, path: k, title: t, text: (t + " " + SYN[k]).toLowerCase(),
+    html: "<html><head><title>" + t + "</title></head><body><div id=\"mw-content-text\"><p>" + SYN[k] + "</p></div></body></html>" };
+});
+Object.keys(ARTICLES).forEach(function (k) { if (!ARTICLES[k].book) { ARTICLES[k].book = BOOK; ARTICLES[k].path = k; } });
+var twoBooks = false;
 var vc = new VirtualConsole(), errs = [];
 vc.on("jsdomError", function (e) { if (!/Not implemented/.test(String(e.message))) errs.push(String(e.message).slice(0, 200)); });
 var dom = new JSDOM("<!DOCTYPE html><html><head></head><body></body></html>",
@@ -36,25 +61,32 @@ w.fetch = function (url, opts) {
   if (u.port === "8081") {
     libCalls.push(url);
     if (!libraryUp) return Promise.reject(new TypeError("Failed to fetch"));
-    if (u.pathname === "/catalog/v2/entries") return resp(200, fs.readFileSync(path.join(FX, "catalog.xml"), "utf8"), "application/atom+xml");
+    if (u.pathname === "/catalog/v2/entries") {
+      var cat = fs.readFileSync(path.join(FX, "catalog.xml"), "utf8");
+      if (twoBooks) cat = cat.replace("</feed>", "<entry><title>Wikipedia</title><language>eng</language><name>wikipedia_en_all</name>" +
+        "<tags>_ftindex:yes</tags><articleCount>6900000</articleCount><link type=\"text/html\" href=\"/content/" + BOOK2 + "\" /></entry></feed>");
+      return resp(200, cat, "application/atom+xml");
+    }
     if (u.pathname === "/search") {
-      if (u.searchParams.get("books.name") !== BOOK) return resp(400, "<error>No such book</error>", "application/xml");
+      var bn = u.searchParams.get("books.name");
+      if (bn !== BOOK && !(twoBooks && bn === BOOK2)) return resp(400, "<error>No such book</error>", "application/xml");
       var words = (u.searchParams.get("pattern") || "").toLowerCase().split(/\s+/).filter(Boolean);
-      var hits = Object.keys(ARTICLES).filter(function (k) { return words.every(function (wd) { return ARTICLES[k].text.indexOf(wd) >= 0; }); });
+      var hits = Object.keys(ARTICLES).filter(function (k) { return ARTICLES[k].book === bn && words.every(function (wd) { return ARTICLES[k].text.indexOf(wd) >= 0; }); });
       var items = hits.slice(0, +u.searchParams.get("pageLength") || 25).map(function (k) {
-        return "<item><title>" + esc(ARTICLES[k].title) + "</title><link>/content/" + BOOK + "/" + k + "</link><description>..." +
+        return "<item><title>" + esc(ARTICLES[k].title) + "</title><link>/content/" + bn + "/" + ARTICLES[k].path + "</link><description>..." +
           esc(ARTICLES[k].text.slice(0, 120)) + "...</description><book><title>Climate change by Wikipedia</title></book><wordCount>300</wordCount></item>";
       }).join("");
       return resp(200, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><rss version=\"2.0\"><channel><title>Search</title>" + items + "</channel></rss>", "application/rss+xml");
     }
     if (u.pathname === "/suggest") {
-      var term = (u.searchParams.get("term") || "").toLowerCase();
-      var sug = Object.keys(ARTICLES).filter(function (k) { return ARTICLES[k].title.toLowerCase().indexOf(term) === 0; })
-        .map(function (k) { return { value: ARTICLES[k].title, label: ARTICLES[k].title, kind: "path", path: k }; });
+      var term = (u.searchParams.get("term") || "").toLowerCase(), sb = u.searchParams.get("content");
+      var sug = Object.keys(ARTICLES).filter(function (k) { return ARTICLES[k].book === sb && ARTICLES[k].title.toLowerCase().indexOf(term) === 0; })
+        .map(function (k) { return { value: ARTICLES[k].title, label: ARTICLES[k].title, kind: "path", path: ARTICLES[k].path }; });
       return resp(200, JSON.stringify(sug), "application/json");
     }
     var m = /^\/raw\/([^\/]+)\/content\/(.+)$/.exec(u.pathname);
     if (m && m[1] === BOOK && ARTICLES[m[2]]) return resp(200, ARTICLES[m[2]].html, "text/html");
+    if (m && twoBooks && m[1] === BOOK2 && ARTICLES[BOOK2 + "/" + m[2]]) return resp(200, ARTICLES[BOOK2 + "/" + m[2]].html, "text/html");
     return resp(404, "not found", "text/html");
   }
   // the model (same-origin llama-server stand-in)
@@ -162,6 +194,10 @@ function firstSentence(body, n) {
   ok("guard still answers dose questions before any lookup", /Not in my library/.test(await L.ai.complete([{ role: "user", content: A.buildPrompt("How many paracetamol tablets can I give my 2 year old?", []) }])) &&
     libCalls.length === 0);
 
+  libCalls = [];
+  var rg = await A.solve("How many paracetamol tablets can I give my 2 year old?", { call: function (m) { return L.ai.complete(m); } });
+  ok("a safety-rule reply is not followed by a library lookup", !rg.sources && rg.rounds === 1 && libCalls.length === 0, { rounds: rg.rounds, calls: libCalls.length });
+
   // bench grading for fact questions
   var item = { id: "t", cat: "fact", q: "What is ocean acidification?", want: "\\bpH\\b" };
   var resGood = { sources: src }, txt = "ANSWER: The decrease in the pH of the oceans [1].\nQUOTE [1]: " + s1;
@@ -205,6 +241,27 @@ function firstSentence(body, n) {
   sq.value = "methane emissions";
   btn(sq.parentNode, "Search").click(); await sleep(80);
   ok("library panel search shows the passages the AI would get", /The AI would be given these passages/.test(d.body.textContent) && /\[1\] Methane emissions/.test(d.body.textContent));
+
+  // Bench run 5 misses: the article named by the words must reach the AI
+  twoBooks = true; await LIB.detect();
+  ok("two books listed", LIB.state.books.length === 2, LIB.state.books);
+  async function top(qn, words) { var r = await LIB.lookup(qn, words); return r.sources.map(function (x) { return x.title; }); }
+  var cases = [
+    ["How tall is Mount Everest?", "Mount Everest height", "Mount Everest", 1],
+    ["Who is the ohm, the unit of resistance, named after?", "ohm unit named after", "Ohm", 1],
+    ["Which organ produces insulin?", "organ produces insulin", "Insulin", 1],
+    ["In what year did people first land on the Moon?", "Moon landing year", "Moon landing", 1],
+    ["What causes the seasons on Earth?", "cause of seasons Earth", "Season", 1],
+    ["Which metal has the highest electrical conductivity?", "metal highest electrical conductivity", "Silver", 3]
+  ];
+  for (var ci = 0; ci < cases.length; ci++) {
+    var got = await top(cases[ci][0], cases[ci][1]);
+    ok("run-5 miss fixed: " + cases[ci][1] + " -> " + cases[ci][2] + " in the first " + cases[ci][3], got.slice(0, cases[ci][3]).indexOf(cases[ci][2]) >= 0, got);
+  }
+  var evp = (await LIB.lookup("How tall is Mount Everest?", "Mount Everest height")).sources[0].text;
+  ok("passage keeps the sentence that answers", /8,849 metres/.test(evp), evp);
+  ok("disambiguation pages are never passages", (await top("Tell me about the Moon", "Moon")).indexOf("Moon (disambiguation)") < 0);
+  twoBooks = false; await LIB.detect();
 
   // library gone: no LOOKUP rule, no reading turn
   libraryUp = false;

@@ -224,7 +224,7 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
     !CK.unexplained("How many hours to drive 26 miles at 40 km/h?", "=26*1.60934/40").length &&
     CK.unexplained("How long will my battery run a 60 W light?", "=1200/60").join() === "1200");
   // 1.8.5: three more slips from bench run 4 that ran and gave wrong numbers
-  ok("check: a worked step the last line ignores", /=40\*5 \(200\) is worked out but not used/.test(flagsFor(
+  ok("check: a worked step the last line ignores", /=40\*5 \(200\) is worked out but never used afterwards/.test(flagsFor(
     "A family of 5 uses 40 litres of water per person per day. How many days does a 2000 litre tank last?", "=40*5\n=2000/2000\nANSWER: {result} days").join("")) &&
     !CK.unusedSteps("=40*5\n=2000/200").length && !CK.unusedSteps("=40*5\n=2000/ANS").length && !CK.unusedSteps("=0.15*30\n=0.15*30*(60*5/1000)").length);
   ok("check: seconds turned into the wrong time unit", /divide by 3600 \(the formula divides by 60\)/.test(flagsFor(
@@ -232,6 +232,18 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
     "=ORBITT(PLANET(\"Earth\",\"radius\")+CONVERT(35786,\"km\",\"m\"),PLANET(\"Earth\",\"gm\"))/60\nANSWER: {result} hours").join("")) &&
     !CK.timeUnit("in hours?", "=ORBITT(7000000)\n=ANS/3600") && !CK.timeUnit("in hours?", "=ORBITT(7000000)/60/60") &&
     !!CK.timeUnit("How long, in minutes?", "=ORBITT(7000000)") && !CK.timeUnit("How long is it?", "=ORBITT(7000000)"));
+  // 1.9.2: three chain slips from bench run 5 (35B)
+  ok("check: a step lost because ANS is only the line before", CK.unusedSteps("=60*5/1000\n=100*5/1000\n=ANS+ANS\n=ANS*30\n=ANS*0.15").length === 1 &&
+    CK.unusedSteps("=60*5/1000\n=100*5/1000\n=ANS+ANS\n=ANS*30\n=ANS*0.15")[0].step === "60*5/1000" &&
+    !CK.unusedSteps("=5*3\n=ANS*7").length && !CK.unusedSteps("=2000/15\n=ANS/60").length);
+  ok("check: a line with ANS written twice", CK.repeatedStep("=150/10\n=420/ANS\n=420/ANS") === "420/ANS" && !CK.repeatedStep("=150/10\n=420/ANS"));
+  ok("check: a time conversion the question's rate does not need", !!CK.extraTimeStep("How many hours does it take to drive 26 miles at 40 km/h?",
+      "=CONVERT(26,\"mile\",\"km\")\n=ANS/40\n=ANS/24") &&
+    !CK.extraTimeStep("A tank holds 2000 litres and water flows in at 15 litres per minute. How many hours to fill it?", "=2000/15/60") &&
+    !CK.extraTimeStep("A bus travels 180 km at 60 km/h. How many hours does the trip take?", "=180/60") &&
+    !CK.extraTimeStep("A 2 kW heater runs 3 hours a day for 30 days. How many kWh does it use?", "=2*3*30"));
+  ok("bench summary keeps library facts apart", (function () { var sm = L.aiBench.summary([{ cat: "fact", pass: true, ms: 1 }, { cat: "tool", pass: true, ms: 1 }]);
+    return sm.library.n === 1 && sm.core.n === 1; })());
   ok("check: multiplying by 1 stands in for a missing number", CK.timesOne("=60*1/1000") && CK.timesOne("=1*60") &&
     !CK.timesOne("=(1-VELDIL(3e7))*86400") && !CK.timesOne("=12*15") && !CK.timesOne("=60*1.5"));
   var qs2 = [], sq = await A.solve("How much feed do my goats need for 30 days?", { call: function (m) { qs2.push(m.slice());

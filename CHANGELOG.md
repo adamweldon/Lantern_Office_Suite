@@ -1,5 +1,46 @@
 # Changelog
 
+## 1.9.2 — Run 5: the 35B with English Wikipedia (2026-10-20)
+
+Adam built a fresh stick on another laptop (one setup run: engine, 4B,
+35B-A3B, English Wikipedia mini 2026-09) and ran the full bench: **57/67**.
+Earlier questions 32/32, fresh 5/5, hard 7/10, library facts 13/20,
+every computed or cited answer verified; two formulas fixed on the
+correction turn; about 12 s a question (3.4 tokens/s on that laptop).
+
+All 7 fact misses were "Not in my library" after the search handed the
+model the wrong articles ("Mount" and two expeditions instead of "Mount
+Everest"; "UNIT" for the ohm; "Moon (disambiguation)"; "Causality" for the
+seasons). No wrong fact got through. Fixes:
+
+- **Search:** exact titles are tried for runs of the query's words,
+  longest first ("mount everest" before "mount"), singular forms too, and
+  never for words too general to be a subject ("cause", "unit", "year");
+  disambiguation pages are skipped.
+- **Ranking by reading:** up to 10 candidate articles (from the model's
+  words and the question's) are read and ranked by the sentence that holds
+  most of the question's words, then exact titles and title words; the 3
+  best become the passages.
+- **Passages by sentence:** the first sentence, then the sentences sharing
+  the question's words, then the rest of the lead while there is room
+  (1000 characters), so the answering sentence survives a long lead.
+- A safety-rule reply is no longer followed by a pointless library lookup.
+- Bench: the polio question also accepts Koprowski (Wikipedia credits
+  Koprowski 1950 and Salk 1955); library facts are reported as their own
+  set instead of inside "earlier questions".
+
+Three calculation slips ran and gave wrong numbers; three checks added:
+
+- *Step lost*: "=60*5/1000", "=100*5/1000", "=ANS+ANS" (ANS is only the
+  line just before, so the 0.3 is lost) -- the unused-step check now
+  follows each step through the chain.
+- *Repeated step*: "=420/ANS" written twice.
+- *Extra time conversion*: "40 km/h ... how many hours" then "/24".
+- Replayed over all 258 real replies from the five runs, the checks flag
+  only wrong answers.
+- Tests: AI layer 117 checks; library 51 (a second stand-in book
+  reproducing run 5's misses and decoys).
+
 ## 1.9.1 — One setup run fills an empty stick, library included (2026-10-20)
 
 Adam: "if I extract the most recent zip into an empty USB on a different
