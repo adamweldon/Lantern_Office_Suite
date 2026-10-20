@@ -43,7 +43,7 @@ for multi-threading).
 | `site/` | The website build: Lantern + offline worker + install manifest + on-device AI engine (`site/ai`, wllama 3.8.1, MIT). Rebuilt by `tools/build_site.py`. |
 | `kit/` | Laptop / USB launchers and setup scripts for llama.cpp `llama-server`. |
 | `docs/Lantern_Edge_AI_Plan.pdf` | The plan: model size per device, architecture, distribution, phases, Lantern Bench. |
-| `docs/Lantern_AI_Test_Guide.pdf` | Phase 1 test steps for phones and laptops, and what to send back. |
+| `docs/Lantern_AI_Test_Guide.pdf` | Phase 1 test steps for phones and laptops, what to send back, and what was verified before release. |
 | `docs/Lantern_Compose_Guide.pdf` | What the Compose writing suite does, how to use it, and how it is built. |
 | `docs/Lantern_v1_6_Review.pdf` | How v1.6 was rebuilt from session history, what was fixed, what is still missing. |
 | `CHANGELOG.md` | Version history. |
@@ -79,4 +79,4 @@ npm test
 - **compose app**: Compose and Writer driven end to end (tasks, Preview, Open in Writer, Check, Fix all safe, Words, Read aloud, Practice, Mail merge, lessons, self-tests)
 - **compose isolation**: removes each of the 32 Compose modules in turn and requires the rest of the suite to boot and run without errors (rule 11)
 - **AI layer**: engine routing, same-origin server detection, Assist and Chat through `Lantern.aiRoute`, the AI app and its panels, and Lantern Bench graded against a perfect and a bad fake model
-- **AI isolation**: removes each of the 12 AI modules in turn (rule 11)
+- **AI isolation**: removes each of the 13 AI modules in turn (rule 11)

@@ -5,7 +5,7 @@
 Phase 1 of the Lantern Edge AI Plan (`docs/Lantern_Edge_AI_Plan.pdf`): a
 small language model that uses Lantern's tools as its source of truth,
 running on a phone inside the page, or on a laptop / USB stick through
-llama.cpp. 12 new modules (220 to 231); every one removable on its own.
+llama.cpp. 13 new modules (220 to 232); every one removable on its own.
 
 - **One route for every model call** (`AI_ENGINE`, `Lantern.ai`,
   `Lantern.aiRoute`). Assist and Chat now send model calls through it.
@@ -25,6 +25,11 @@ llama.cpp. 12 new modules (220 to 231); every one removable on its own.
 - **Lantern Bench** (`AI_BENCH_DATA`, `AI_BENCH`, `AI_PANEL_BENCH`): 30
   questions (tool, multi-step, unknown, safety); answers are proved on the
   formula engine at run time; quick (9) and full runs; JSON / CSV export.
+- **Short prompts for small devices** (`AI_PROMPT`, hook
+  `Lantern.assistToolFilter`): on the device engine Assist lists only the
+  functions the question needs (about 400 tokens instead of about 950);
+  Automatic / Short / Full, recorded in every bench report. Repeated
+  prompt prefixes are reused (prompt cache).
 - **Grounding rule in the Assist prompt:** questions the tools cannot
   answer (facts, news, people, prices, medicine doses, dangerous work) get
   "ANSWER: Not in my library."
@@ -39,11 +44,14 @@ llama.cpp. 12 new modules (220 to 231); every one removable on its own.
   Qwen3.5 models; `start-lantern` picks the model by memory, runs
   `llama-server --path site`, opens the browser; `share` serves phones on
   the local network.
-- **Tests:** `npm test` 15 checks: adds AI layer (37: routing, same-origin
-  detection, Assist/Chat through the route, app, bench grading with a
-  perfect and a bad fake model) and isolation for the 12 AI modules.
+- **Tests:** `npm test` 15 checks: adds AI layer (42: routing, same-origin
+  detection, Assist/Chat through the route, short prompts, app, bench
+  grading with a perfect and a bad fake model) and isolation for the 13 AI
+  modules.
   Verified for real against llama-server built from source with a GGUF
-  model, and the in-browser engine in Chromium.
+  model (kit, Assist, Chat, Bench, offline reopen), and the in-browser
+  engine in Chromium (fast and Safari-compat builds, kept copy reloaded
+  after restart, queued requests, multi-threading via the worker switch).
 
 ## 1.7.0 — Compose: a complete writing suite (2026-10-19)
 

@@ -85,6 +85,19 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   btn(d, "Ask").click(); await sleep(40);
   ok("Assist computes 92.8 from the routed reply", /92\.8/.test(d.body.textContent));
 
+  // Short prompts for small devices
+  L.aiPrompt.setMode("short");
+  var full = A.buildPrompt("What is the wavelength of a 100 MHz radio signal, in metres?", A.match("What is the wavelength of a 100 MHz radio signal, in metres?"));
+  ok("short prompt keeps the function the question needs", /WAVELEN\(f_MHz/.test(full) && /CONVERT/.test(full) && !/PERIPREC/.test(full), full.slice(0, 1200));
+  var bat = "A 100 Ah 12 V battery runs a 60 W light. How many hours will it last?";
+  var shortLen = A.buildPrompt(bat, A.match(bat)).length;
+  L.aiPrompt.setMode("full");
+  var fullLen = A.buildPrompt(bat, A.match(bat)).length;
+  ok("short prompt is under half the full one", shortLen < fullLen / 2, [shortLen, fullLen]);
+  ok("Chat's system prompt keeps the full tool list", /PERIPREC/.test(L.CHAT.buildSystem()));
+  L.aiPrompt.setMode("auto");
+  ok("auto is full on a server", L.aiPrompt.active() === "full");
+
   // A fake on-device engine: a perfect model and a bad one
   served = false; AI.server.sameOrigin = false;
   var Q = L.aiBenchQuestions, byQ = {};
@@ -100,11 +113,12 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
       return Promise.resolve("ANSWER: Not in my library.");
     } });
   ok("auto picks the device when it can run", AI.resolve() === "device" && /on this device: fake/.test(AI.describe()));
+  ok("auto prompt is short on the device", L.aiPrompt.active() === "short");
   ok("bench has every category in quick", ["tool", "multi", "unknown", "safety"].every(function (c) {
     return Q.some(function (x) { return x.quick && x.cat === c; }); }));
   var rep = await L.aiBench.run({ quick: false });
   ok("perfect model scores 100%", rep.summary.score === 100 && rep.summary.n === Q.length, rep.summary);
-  ok("report carries device and engine", rep.engine === "device" && rep.device && rep.rows[0].expected != null);
+  ok("report carries device, engine and prompt size", rep.engine === "device" && rep.prompt === "short" && rep.device && rep.rows[0].expected != null);
   mode = "bad";
   var bad = await L.aiBench.run({ quick: true });
   ok("bad model fails tools and unknowns", bad.summary.byCat.tool.pass === 0 && bad.summary.byCat.multi.pass === 0 && bad.summary.byCat.unknown.pass === 0, bad.summary.byCat);
@@ -118,7 +132,7 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   L.download = function (name, text) { saved.push({ name: name, text: text }); };
   go("ai"); await sleep(20);
   ok("AI app shows the engine in use", /Answers come from: on this device: fake perfect/.test(d.body.textContent));
-  ok("panels render in order", ["On this device", "Offline and install", "Server", "Try it", "Lantern Bench"].every(function (t) {
+  ok("panels render in order", ["On this device", "Offline and install", "Server", "Try it", "Prompt size", "Lantern Bench"].every(function (t) {
     return Array.prototype.some.call(d.querySelectorAll(".la-sec h3"), function (h) { return h.textContent.indexOf(t) === 0; }); }));
   ok("device panel explains it needs a web address here", /needs Lantern opened from a web address/.test(d.body.textContent));
   btn(d, "Server").click(); await sleep(5);

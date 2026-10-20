@@ -83,7 +83,9 @@
 //      instead of their own fetch; Lantern.ai holds the engines (device,
 //      server), Lantern.aiModels the on-device model catalog,
 //      Lantern.aiPanels = [{id, title, render(el)}] the AI app's sections,
-//      and Lantern.aiBenchQuestions the Lantern Bench question set.
+//      and Lantern.aiBenchQuestions the Lantern Bench question set;
+//    Lantern.assistToolFilter = fn(question, cards) -> [catalog entries] --
+//      when set, Assist's prompt lists only these functions (short prompts).
 //    Prefer a hook over editing a big module.
 // 11. ISOLATION: every extension module must be droppable. Open with
 //    var L = window.Lantern; if (!L || !L.el) return; -- feature-detect every
@@ -15845,8 +15847,15 @@ Lantern.RFB = (function () {
     }
     return { steps: steps, value: steps.length && steps[steps.length - 1].ok ? last : null };
   };
-  A.toolCard = function () {
+  // toolCard(question, cards) -- the FUNCTIONS list. When the rule-10 hook
+  // Lantern.assistToolFilter(question, cards) returns a list (AI_PROMPT does,
+  // to keep prompts short for small on-device models), only those entries.
+  A.toolCard = function (question, cards) {
     var cat = window.Lantern.assistCatalog || [], out = [], i;
+    if (question != null && window.Lantern.assistToolFilter) {
+      var sub = window.Lantern.assistToolFilter(question, cards || []);
+      if (sub && sub.length) cat = sub;
+    }
     out.push("Built-in: " + window.Lantern.assistBuiltins);
     for (i = 0; i < cat.length; i++) out.push(cat[i].n + cat[i].s + " - " + cat[i].d);
     return out.join("\n");
@@ -15865,7 +15874,7 @@ Lantern.RFB = (function () {
     out.push("No other text.");
     out.push("");
     out.push("FUNCTIONS");
-    out.push(A.toolCard());
+    out.push(A.toolCard(question, cards));
     if (cards && cards.length) {
       out.push("");
       out.push("RECIPES (use one when it fits; fill the placeholders)");
@@ -16049,7 +16058,8 @@ Lantern.RFB = (function () {
           if (p.need) { out.innerHTML = ""; out.appendChild(top); out.appendChild(el("p", { "class": "physresult", text: "It needs: " + p.need })); return; }
           showRun(A.run(p.exprText), "", top);
         }).catch(function (e) {
-          status.textContent = "Could not reach the model: " + e.message + " \u2014 check the endpoint, and that the server allows browser origins (see guide).";
+          status.textContent = "Could not reach the model: " + e.message + (Lantern.ai && Lantern.ai.resolve() === "device" ? "" :
+            " \u2014 check the endpoint, and that the server allows browser origins (see guide).");
         });
       } })
     ]));
@@ -16521,7 +16531,8 @@ Lantern.RFB = (function () {
         break;
       }
     } catch (e) {
-      bubble("ai", "Could not reach the model: " + (e.message || e) + " \u2014 check the endpoint fields above and that the server allows browser origins (see the ? guide).");
+      bubble("ai", "Could not reach the model: " + (e.message || e) + (Lantern.ai && Lantern.ai.resolve() === "device" ? "" :
+        " \u2014 check the endpoint fields above and that the server allows browser origins (see the ? guide)."));
     }
     busy = false;
     statusEl.textContent = "";
@@ -19945,7 +19956,7 @@ Lantern.RFB = (function () {
       url: "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf", license: "Apache-2.0" }
   ].forEach(function (m) { if (!MODELS.some(function (x) { return x.id === m.id; })) MODELS.push(m); });
 
-  var st = { lib: null, w: null, label: null, loading: false, progress: 0, err: null, busy: false };
+  var st = { lib: null, w: null, label: null, loading: false, progress: 0, err: null, busy: false, note: null };
   var D = window.Lantern.aiDevice = {};
   function notify() { AI.listeners.forEach(function (fn) { try { fn(); } catch (e) {} }); }
   function base() { return location.href.replace(/[#?].*$/, "").replace(/[^\/]*$/, "") + "ai/"; }
@@ -20025,12 +20036,28 @@ Lantern.RFB = (function () {
     return guarded(async function () {
       if (!files.length) throw new Error("Choose a .gguf model file.");
       await D.unload();
-      var w = await instance(), names = [], i;
+      var w = await instance(), names = [], i, total = 0;
+      files.forEach(function (f) { total += f.size; });
+      st.note = null;
+      if (keep) {   // keep a copy only if the browser will give us room for it
+        var est = await D.storage();
+        if (est && est.quota && est.quota - (est.usage || 0) < total * 1.05) {
+          keep = false;
+          st.note = "Not enough browser storage to keep a copy; loaded for this session only.";
+        }
+      }
       if (keep) for (i = 0; i < files.length; i++) {
         if (onProgress) onProgress(i, files.length);
-        await w.cacheManager.write(localName(files[i]), files[i].stream(),
-          { etag: "local-" + files[i].size, originalSize: files[i].size, originalURL: "local:" + files[i].name });
-        names.push(localName(files[i]));
+        try {
+          await w.cacheManager.write(localName(files[i]), files[i].stream(),
+            { etag: "local-" + files[i].size, originalSize: files[i].size, originalURL: "local:" + files[i].name });
+          names.push(localName(files[i]));
+        } catch (e) {
+          for (var j = 0; j <= i; j++) { try { await w.cacheManager.delete(localName(files[j])); } catch (e2) {} }
+          names = []; keep = false;
+          st.note = "Could not keep a copy (" + ((e && e.message) || e) + "); loaded for this session only.";
+          break;
+        }
       }
       await w.loadModel(files, params());
       st.label = files[0].name.replace(/(-0+1-of-\d+)?\.gguf$/i, "");
@@ -20098,7 +20125,7 @@ Lantern.RFB = (function () {
   D.info = function () {
     var last = L.store.get("ai.device.last", null), w = st.w, on = !!(w && w.isModelLoaded());
     return { available: D.available(), caps: D.caps(), loaded: on, label: st.label, last: last,
-      loading: st.loading, progress: st.progress, error: st.err,
+      loading: st.loading, progress: st.progress, error: st.err, note: st.note,
       threads: on ? w.getNumThreads() : null, multithread: on ? w.isMultithread() : null };
   };
   AI.register("device", {
@@ -20248,6 +20275,7 @@ Lantern.RFB = (function () {
     return {
       bench: "Lantern Bench v0", when: new Date().toISOString(), lantern: L.version,
       engine: L.ai.resolve(), model: L.ai.describe(), quick: !!opts.quick,
+      prompt: L.aiPrompt ? L.aiPrompt.active() : "full",
       device: { ua: navigator.userAgent, cores: navigator.hardwareConcurrency || null, memoryGB: navigator.deviceMemory || null,
         gpu: dev ? dev.caps.gpu : null, fastEngine: dev ? dev.caps.fast : null, threads: dev ? dev.threads : null },
       loadSeconds: loadSeconds, seconds: Math.round((Date.now() - started) / 100) / 10, summary: B.summary(rows), rows: rows
@@ -20278,6 +20306,81 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: AI_BENCH - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_PROMPT - START
+// Depends: ASSIST_CATALOG, ASSIST_CARDS (data), AI_ENGINE (Lantern.ai) --
+//          feature-detected
+// Exports: Lantern.aiPrompt (mode, setMode, pick), Lantern.assistToolFilter
+//          (rule-10 hook read by ASSIST_CORE.toolCard)
+// ===========================================================================
+// Short prompts for small devices. Assist's full tool list is about 700
+// tokens; a phone running the model on its CPU reads only a few tokens a
+// second, so that alone can take minutes. In short mode the prompt lists
+// just the functions the matched recipe cards use, CONVERT, and the few
+// whose names or descriptions share words with the question (at most 10).
+// Modes: auto (short when the model runs on this device, full on a server),
+// short, full. Lantern Bench records the mode, so the two can be compared.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.store) return;
+  var STOP = {};
+  ("the a an and or of to in on at for with from by is are was be how what which who much many does do can " +
+    "it its this that into per my your i we you give find get value number").split(" ").forEach(function (w) { STOP[w] = 1; });
+  var P = window.Lantern.aiPrompt = {};
+  P.mode = function () { return L.store.get("ai.prompt", "auto"); };
+  P.setMode = function (m) { L.store.set("ai.prompt", m); };
+  P.active = function () {
+    var m = P.mode();
+    if (m === "auto") return L.ai && L.ai.resolve() === "device" ? "short" : "full";
+    return m;
+  };
+  function words(t) {
+    return String(t || "").toLowerCase().split(/[^a-z0-9]+/).filter(function (w) { return w.length > 2 && !STOP[w]; });
+  }
+  // pick(question, cards) -> catalog entries for a short prompt
+  P.pick = function (question, cards) {
+    var cat = window.Lantern.assistCatalog || [], keep = {}, out = [], i;
+    var compose = (cards || []).map(function (c) { return c.compose; }).join(" ").toUpperCase();
+    var qw = words(question), scored = [];
+    for (i = 0; i < cat.length; i++) {
+      var e = cat[i];
+      if (e.n === "CONVERT" || compose.indexOf(e.n + "(") !== -1) { keep[e.n] = 1; out.push(e); continue; }
+      var ew = words(e.n + " " + e.d), s = 0;
+      qw.forEach(function (w) {
+        ew.forEach(function (x) { if (x === w || (w.length > 4 && x.indexOf(w.slice(0, 5)) === 0)) s++; });
+      });
+      if (s > 0) scored.push({ e: e, s: s });
+    }
+    scored.sort(function (a, b) { return b.s - a.s; });
+    for (i = 0; i < scored.length && out.length < 10; i++) if (!keep[scored[i].e.n]) out.push(scored[i].e);
+    return out;
+  };
+  window.Lantern.assistToolFilter = function (question, cards) {
+    return P.active() === "short" ? P.pick(question, cards) : null;
+  };
+
+  if (!L.el || !L.assist) return;
+  var Pn = window.Lantern.aiPanels = window.Lantern.aiPanels || [];
+  var el = L.el;
+  Pn.push({ id: "prompt", title: "Prompt size", order: 35, render: function (box) {
+    var sel = el("select", { "aria-label": "Prompt size", html: "<option value=\"auto\">Automatic (short on this device)</option>" +
+      "<option value=\"short\">Short (only tools that fit the question)</option><option value=\"full\">Full (every tool)</option>" });
+    var info = el("p", { "class": "muted" });
+    sel.value = P.mode();
+    function paint() {
+      var q = "A 100 Ah 12 V battery runs a 60 W light. How many hours?", A = L.assist;
+      var n = Math.round(A.buildPrompt(q, A.match(q)).length / 4);
+      info.textContent = "Now: " + P.active() + " \u2014 about " + n + " tokens for a typical question. Fewer tokens answer faster on phones; the bench shows whether accuracy holds.";
+    }
+    sel.onchange = function () { P.setMode(sel.value); paint(); };
+    box.appendChild(el("div", { "class": "row" }, [sel]));
+    box.appendChild(info);
+    paint();
+  } });
+})();
+// ===========================================================================
+// MODULE: AI_PROMPT - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: AI_APP - START
@@ -20424,7 +20527,7 @@ Lantern.RFB = (function () {
       setBar(0, label + "\u2026");
       return p(function (done, total) {
         if (total) setBar(done / total, label + " " + mb(done) + " of " + mb(total));
-      }).then(function () { setBar(null, "Ready. Ask in Assist or Chat, or try it below."); paintInfo(); refresh(); },
+      }).then(function () { var n = D.info().note; setBar(null, "Ready. Ask in Assist or Chat, or try it below." + (n ? " " + n : "")); paintInfo(); refresh(); },
         function (e) { setBar(null, "Could not load: " + ((e && e.message) || e)); paintInfo(); refresh(); });
     }
     function refresh() {
@@ -20582,7 +20685,7 @@ Lantern.RFB = (function () {
     var s = rep.summary, parts = [];
     for (var k in s.byCat) parts.push(k + " " + s.byCat[k].pass + "/" + s.byCat[k].n);
     return "Lantern Bench " + (rep.quick ? "quick" : "full") + ": " + s.pass + "/" + s.n + " (" + s.score + "%) \u00b7 " + parts.join(", ") +
-      " \u00b7 avg " + s.avgSeconds + " s/question" + (s.medianTps ? " \u00b7 ~" + s.medianTps + " tokens/s" : "") + " \u00b7 " + rep.model;
+      " \u00b7 avg " + s.avgSeconds + " s/question" + (rep.prompt ? " \u00b7 " + rep.prompt + " prompt" : "") + (s.medianTps ? " \u00b7 ~" + s.medianTps + " tokens/s" : "") + " \u00b7 " + rep.model;
   }
   P.push({ id: "bench", title: "Lantern Bench", order: 40, render: function (box) {
     var n = (window.Lantern.aiBenchQuestions || []).length;
