@@ -106,6 +106,21 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   ok("Assist shows the rejected first reply and the corrected one", /could not run/.test(t2) && /corrected it from Lantern/.test(t2) && /It takes 5\.29\d* hours/.test(t2), t2.slice(0, 600));
   ok("the second turn carries Lantern's reason", calls.length === 2 && /inside the Earth/.test(calls[1].body.messages[2].content) &&
     calls[1].body.messages[1].role === "assistant", calls.length);
+  q.value = "How much feed do my goats need for 30 days?";
+  serverQueue = ["=FEEDKG(2,30,800)\nANSWER: The goats need {result} kg.", "=FEEDKG(2,30,800)\nANSWER: The goats need {result} kg."];
+  fire(msel, "change"); await sleep(10); btn(d, "Ask").click(); await sleep(60);
+  ok("Assist shows a questioned reply and keeps warning when the AI insists", /Lantern questioned it/.test(d.body.textContent) &&
+    /Lantern still questions this answer/.test(d.body.textContent), d.body.textContent.slice(0, 500));
+  serverQueue = [];
+  // Chat gets the same one extra turn when Lantern questions a formula
+  go("chat"); await sleep(30);
+  var cin = d.querySelector("input[aria-label=\"Message\"]");
+  cin.value = "How much feed do my goats need for 30 days?";
+  serverQueue = ["=FEEDKG(2,30,800)\nANSWER: The goats need {result} kg.", "NEED: How many goats, and how many grams each a day?"];
+  calls = [];
+  btn(d, "Send").click(); await sleep(80);
+  ok("Chat questions an invented number and the AI asks instead", calls.length === 2 && /Lantern questioned this/.test(d.body.textContent) &&
+    /How many goats, and how many grams/.test(d.body.textContent) && /800/.test(calls[1].body.messages[calls[1].body.messages.length - 1].content), calls.length);
   serverQueue = [];
   serverReply = "<think>hmm</think>=ORBITT(CONVERT(420+6371,\"km\",\"m\"))/60\nANSWER: about 93 minutes";
 
@@ -182,10 +197,37 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
     solveCalls.push(m.slice()); return Promise.resolve(slip[solveCalls.length - 1]); } });
   ok("solve gives the model one more turn with Lantern's reason", sv.rounds === 2 && sv.fixed && Math.abs(sv.run.value - 92.824) < 0.01 &&
     /inside the Earth/.test(solveCalls[1][2].content), sv);
-  var sv1 = await A.solve("x", { call: function () { return Promise.resolve("=2*3\nANSWER: {result}"); } });
+  var sv1 = await A.solve("What is 2 times 3?", { call: function () { return Promise.resolve("=2*3\nANSWER: {result}"); } });
   var sv2 = await A.solve("x", { call: function () { return Promise.resolve("NEED: the battery size"); } });
   var sv3 = await A.solve("x", { call: function () { return Promise.resolve("=FOO(1)\nANSWER: x"); }, retries: 0 });
   ok("solve does not retry a good reply, a NEED, or when told not to", sv1.rounds === 1 && sv2.rounds === 1 && sv3.rounds === 1);
+  // 1.8.4: checks that ground a formula in its question (from bench run 3)
+  var CK = L.aiChecks;
+  function flagsFor(q, reply) { var pp = A.parseReply(reply), rr = A.run(pp.exprText);
+    return L.assistChecks.map(function (c) { return c(q, pp.exprText, rr); }).filter(Boolean); }
+  var qAlt2 = "How many hours does a Hohmann transfer take from a 300 km orbit to a 35786 km orbit?";
+  ok("check: a second height used as a radius is questioned", /35786 km is a height/.test(flagsFor(qAlt2,
+    "=HOHMANNT(CONVERT(300+6371,\"km\",\"m\"),CONVERT(35786,\"km\",\"m\"))/3600\nANSWER: {result} hours").join("")));
+  ok("check: a number the question never gave is questioned", /800, which is not in the question/.test(flagsFor(
+    "How much feed do my goats need for 30 days?", "=FEEDKG(2,30,800)\nANSWER: {result} kg").join("")));
+  ok("check: no check questions any of the bench's own correct formulas", Q.filter(function (x) { return x.x; }).every(function (x) {
+    var f = flagsFor(x.q, "=" + x.x + "\nANSWER: {result}"); if (f.length) console.log("  flagged:", x.id, f); return !f.length; }));
+  ok("check: heights skip distances from the centre and other bodies", CK.heights("from a 400 km orbit to GEO (42164 km from Earth's centre)").join() === "400" &&
+    CK.heights("a 100 km orbit around the Moon").length === 0 && CK.heights("orbit Earth at 420 km altitude").join() === "420");
+  ok("check: Earth's radius added in any common way counts", ["=ORBITT(CONVERT(420,\"km\",\"m\")+6371000)/60", "=ORBITT((420+6371)*1000)/60",
+    "=ORBITT(PLANET(\"Earth\",\"radius\")+CONVERT(420,\"km\",\"m\"))/60", "=ORBITT(CONVERT(6371+420,\"km\",\"m\"))/60",
+    "=CONVERT(420,\"km\",\"m\")\n=ORBITT(ANS+6371000)/60"].every(function (r) {
+      return !CK.heightAsRadius("How long does a satellite take to orbit Earth at 420 km altitude?", A.parseReply(r).exprText).length; }));
+  ok("check: unit factors, word numbers and pre-computed steps are fine", !CK.unexplained("Eggs cost 12 shillings each. How much do 3 dozen cost?", "=12*36").length &&
+    !CK.unexplained("A family of five uses 40 litres each a day. How many days does 2000 litres last?", "=2000/200").length &&
+    !CK.unexplained("How many hours to drive 26 miles at 40 km/h?", "=26*1.60934/40").length &&
+    CK.unexplained("How long will my battery run a 60 W light?", "=1200/60").join() === "1200");
+  var qs2 = [], sq = await A.solve("How much feed do my goats need for 30 days?", { call: function (m) { qs2.push(m.slice());
+    return Promise.resolve(qs2.length === 1 ? "=FEEDKG(2,30,800)\nANSWER: {result} kg" : "NEED: How many goats, and how many grams each a day?"); } });
+  ok("solve: a questioned formula goes back with Lantern's reason, and a NEED is kept", sq.rounds === 2 && sq.kind === "questioned" && sq.fixed &&
+    !!sq.parsed.need && /800/.test(qs2[1][2].content) && /NEED/.test(qs2[1][2].content), sq);
+  var sq2 = await A.solve(qAlt2, { call: function () { return Promise.resolve("=HOHMANNT(CONVERT(300+6371,\"km\",\"m\"),CONVERT(35786,\"km\",\"m\"))/3600\nANSWER: {result} h"); } });
+  ok("solve: when the second try is questioned too, the doubt is kept for the person", sq2.rounds === 2 && !sq2.fixed && sq2.flags.length === 1, sq2);
   var needItem = Q.filter(function (x) { return x.id === "need-battery"; })[0];
   ok("need questions pass only by asking", L.aiBench.grade(needItem, "NEED: the battery's amp-hours and volts").pass &&
     !L.aiBench.grade(needItem, "=100*12/60\nANSWER: {result} hours").pass && !L.aiBench.grade(needItem, "ANSWER: Not in my library.").pass);
@@ -274,7 +316,7 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   ok("PLANET is in the AI tool list and recipe cards", /PLANET\(/.test(A.toolCard()) && A.match("escape velocity from mars").some(function (c) { return c.id === "planet-escape"; }));
 
   var st = L.selftest.run();
-  ok("selftests pass (incl. AI)", st.fail.length === 0 && L.selftest.tests.filter(function (t) { return /^ai: /.test(t.name); }).length === 6, st.fail);
+  ok("selftests pass (incl. AI)", st.fail.length === 0 && L.selftest.tests.filter(function (t) { return /^ai: /.test(t.name); }).length === 7, st.fail);
   ok("no errors at the end", errs.length === 0, errs);
   console.log(fails ? fails + " AI LAYER FAILURES (" + passes + " passed)" : "ALL AI LAYER TESTS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);

@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.8.4 — Third bench run: 44/47; formulas checked against the question (2026-10-20)
+
+Adam's run on 1.8.3 (Qwen3.5 4B, full prompt): **44/47**. Earlier questions
+32/32, fresh 5/5, hard 7/10. The new correction turn worked live: the
+"400 km orbit" Hohmann question was rejected ("radius 400 km is inside the
+Earth"), the model fixed it on its second turn, and it passed. The three
+failures all ran and gave confident wrong numbers:
+
+- Hohmann "from a 300 km orbit to a 35786 km orbit": Earth's radius added
+  to the first height but not the second (35786 km is a valid radius, so
+  the inside-the-Earth check could not catch it).
+- "How much feed do my goats need for 30 days?": `FEEDKG(2,30,800)`, with
+  2 goats invented and 800 g taken from the recipe's example.
+- "How many hours will my battery run a 60 W light?": `=60*1/60`, a battery
+  size invented.
+
+Changes:
+
+- **Formulas are checked against the question** (`AI_CHECKS`, hook
+  `Lantern.assistChecks`). *Number not in the question*: every number in
+  the formula must be in the question, a unit factor or constant, a recipe
+  constant, or one simple step from the question's numbers (pre-computed
+  products, plus Earth's radius). *Height used as a radius*: a height the
+  question gives ("a 300 km orbit", "420 km altitude", "35786 km above")
+  used in an orbit formula with no Earth radius added. Replayed over all
+  115 real replies from the three runs, the checks flag exactly the two
+  failures they target and nothing else; they also pass every bench
+  ground-truth formula.
+- A questioned formula goes back to the model for its one correction turn
+  with Lantern's reason (`Lantern.assist.solve`, kind "questioned"), in
+  Assist, the bench and now Chat. If the second reply is still
+  questioned, the person sees "Lantern still questions this answer".
+- Prompt: every number must come from the question; a missing one is
+  asked for with NEED, never guessed or copied from a recipe example; a
+  worked NEED example (filling a tank, not a bench question).
+- Bench rows record `retry` (rejected / questioned) and `flags`; summary
+  counts `stillQuestioned`.
+- Tests: AI layer 109 checks, 17 AI modules isolated, 7 AI self-tests.
+
 ## 1.8.3 — Second bench run: 36/37, and a harder bench (2026-10-20)
 
 Adam's re-run on the same laptop and model (Qwen3.5 4B, full prompt) with

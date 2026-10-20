@@ -5,7 +5,7 @@
 var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
 var fs = require("fs"), path = require("path");
 var inner = fs.readFileSync(process.argv[2] || path.join(__dirname, "..", "src", "lantern.inner.html"), "utf8");
-var MODS = ["PLANET_DATA", "AI_RECIPES", "AI_ENGINE", "AI_GUARD", "AI_DEVICE", "AI_BENCH_DATA", "AI_BENCH", "AI_PROMPT", "AI_APP", "AI_PANEL_DEVICE", "AI_PANEL_SERVER",
+var MODS = ["PLANET_DATA", "AI_RECIPES", "AI_ENGINE", "AI_GUARD", "AI_CHECKS", "AI_DEVICE", "AI_BENCH_DATA", "AI_BENCH", "AI_PROMPT", "AI_APP", "AI_PANEL_DEVICE", "AI_PANEL_SERVER",
   "AI_PANEL_BENCH", "PWA_SITE", "GUIDE_AI_SETUP", "AI_SELFTEST", "ASSIST_CHAT"];
 function without(src, name) {
   var a = src.indexOf("// MODULE: " + name + " - START"), b = src.indexOf("// MODULE: " + name + " - END");
