@@ -6,12 +6,18 @@
 #   setup-kit.bat laptop       Qwen3.5 4B   (8 GB computers)
 #   setup-kit.bat big          Qwen3.5 9B   (16 GB computers)
 #   setup-kit.bat xl           Qwen3.5 35B-A3B (32 GB computers; 17.5 GB file)
+#   setup-kit.bat library      an offline encyclopedia: kiwix-serve + English Wikipedia
+#                              (lead sections, ~12 GB; Simple English ~2.5 GB if
+#                              the drive is small or FAT32)
+#   setup-kit.bat library-simple   Simple English Wikipedia (~2.5 GB)
+#   setup-kit.bat zim NAME     any Kiwix file by name (e.g. wikipedia_en_medicine_maxi)
+#                              or full URL, into library\
 #   setup-kit.bat check        show what this computer can run and what the kit has
 #   add "gpu" for the Vulkan engine build (graphics card)
 # start-lantern.bat runs "setup-kit.ps1 offer": when this computer can run a
 # bigger model than the kit has, and there is room and internet, it asks
 # once and downloads it in a separate window while Lantern starts.
-# Overrides: LLAMA_BUILD, LLAMA_BASE, HF_BASE (mirrors); LANTERN_AUTO_DOWNLOAD=0
+# Overrides: LLAMA_BUILD, LLAMA_BASE, HF_BASE, KIWIX_BASE (mirrors); LANTERN_AUTO_DOWNLOAD=0
 # never offer, =1 download without asking (unattended set-ups); for testing:
 # LANTERN_MEM_MB, LANTERN_FS, LANTERN_FREE_GB pretend memory, drive format, free space.
 param([Parameter(ValueFromRemainingArguments = $true)] [string[]] $Sets)
@@ -22,8 +28,10 @@ $Dir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Build = if ($env:LLAMA_BUILD) { $env:LLAMA_BUILD } else { "b11435" }
 $LlamaBase = if ($env:LLAMA_BASE) { $env:LLAMA_BASE } else { "https://github.com/ggml-org/llama.cpp/releases/download/$Build" }
 $HfBase = if ($env:HF_BASE) { $env:HF_BASE } else { "https://huggingface.co" }
+$KiwixBase = if ($env:KIWIX_BASE) { $env:KIWIX_BASE } else { "https://download.kiwix.org" }
 $Models = Join-Path $Dir "models"
 New-Item -ItemType Directory -Force -Path $Models | Out-Null
+$Library = Join-Path $Dir "library"
 $Curl = Get-Command curl.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $Curl) { $Curl = Get-Command curl -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1 }
 
@@ -63,10 +71,11 @@ function Model($repo, $file) {
   if ([System.Text.Encoding]::ASCII.GetString($b) -ne "GGUF") { Write-Host "  $file is not a GGUF file; deleted"; Remove-Item $dest }
 }
 function GetTier($t) { Model $t.repo $t.file }
+function TempRoot { if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() } }
 function Engine($asset) {
   $target = Join-Path $Dir "engine\windows"
   if (Test-Path (Join-Path $target "llama-server.exe")) { Write-Host "  have engine"; return }
-  $tmp = Join-Path $env:TEMP ("lantern-" + [guid]::NewGuid())
+  $tmp = Join-Path (TempRoot) ("lantern-" + [guid]::NewGuid())
   New-Item -ItemType Directory -Force -Path $tmp | Out-Null
   $zip = Join-Path $tmp $asset
   Fetch "$LlamaBase/$asset" $zip
@@ -77,6 +86,80 @@ function Engine($asset) {
   Copy-Item -Recurse -Force (Join-Path $bin.DirectoryName "*") $target
   Remove-Item -Recurse -Force $tmp
   Write-Host "  engine ready"
+}
+
+# --- the offline library (Kiwix) -------------------------------------------------
+$Libs = @(
+  [pscustomobject]@{ id = "library"; name = "English Wikipedia (lead section of every article)"; folder = "wikipedia"; base = "wikipedia_en_all_mini"; gb = 12 },
+  [pscustomobject]@{ id = "library-simple"; name = "Simple English Wikipedia"; folder = "wikipedia"; base = "wikipedia_en_simple_all_maxi"; gb = 2.5 }
+)
+function Listing($url) {
+  if ($Curl) { $t = & $Curl.Path -sL --fail --max-time 30 $url; if ($LASTEXITCODE -ne 0) { throw "could not list $url" }; return ($t -join "`n") }
+  return (Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 30).Content
+}
+function VersionKey($name) { (@([regex]::Matches($name, '\d+') | ForEach-Object { $_.Value.PadLeft(8, '0') }) -join '.') }
+# Latest dated file for a Kiwix name, e.g. wikipedia_en_all_mini -> wikipedia_en_all_mini_2026-06.zim
+function LatestZim($folder, $base) {
+  $html = Listing "$KiwixBase/zim/$folder/"
+  $names = @([regex]::Matches($html, ('href="(' + [regex]::Escape($base) + '_\d{4}-\d{2}\.zim)"')) | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+  if (-not $names.Count) { throw "no $base file listed at $KiwixBase/zim/$folder/" }
+  return ($names | Sort-Object | Select-Object -Last 1)
+}
+function HaveLibrary { @(Get-ChildItem -Path $Library -Filter "*.zim" -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 0 }).Count -gt 0 }
+function KiwixTools {
+  $target = Join-Path $Dir "engine\windows\kiwix"
+  if (Test-Path (Join-Path $target "kiwix-serve.exe")) { Write-Host "  have kiwix-serve"; return }
+  $html = Listing "$KiwixBase/release/kiwix-tools/"
+  $zips = @([regex]::Matches($html, 'href="(kiwix-tools_win-x86_64-[0-9][0-9.\-]*\.zip)"') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+  if (-not $zips.Count) { throw "no Windows kiwix-tools listed at $KiwixBase/release/kiwix-tools/" }
+  $asset = $zips | Sort-Object { VersionKey $_ } | Select-Object -Last 1
+  $tmp = Join-Path (TempRoot) ("lantern-" + [guid]::NewGuid())
+  New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+  $zip = Join-Path $tmp $asset
+  Fetch "$KiwixBase/release/kiwix-tools/$asset" $zip
+  Expand-Archive -Path $zip -DestinationPath (Join-Path $tmp "x") -Force
+  $bin = Get-ChildItem -Recurse -Path (Join-Path $tmp "x") -Filter "kiwix-serve.exe" | Select-Object -First 1
+  if (-not $bin) { throw "no kiwix-serve.exe inside $asset" }
+  New-Item -ItemType Directory -Force -Path $target | Out-Null
+  Copy-Item -Recurse -Force (Join-Path $bin.DirectoryName "*") $target
+  Remove-Item -Recurse -Force $tmp
+  Write-Host "  kiwix-serve ready ($asset)"
+}
+# Fetch one Kiwix file into library\ and check it against the published SHA-256.
+function GetZim($url) {
+  New-Item -ItemType Directory -Force -Path $Library | Out-Null
+  $file = ($url -split '/')[-1]; $dest = Join-Path $Library $file
+  $fresh = -not (Test-Path $dest)
+  Fetch $url $dest
+  if (-not $fresh) { return }
+  $want = ""
+  try { $want = ((Listing "$url.sha256") -split '\s+')[0].ToLower() } catch { }
+  if ($want -match '^[0-9a-f]{64}$') {
+    Write-Host "  checking $file (SHA-256)..."
+    $got = (Get-FileHash -Algorithm SHA256 -Path $dest).Hash.ToLower()
+    if ($got -ne $want) { Remove-Item -Force $dest; throw "$file is damaged (checksum differs); deleted -- run setup again" }
+    Write-Host "  checksum OK"
+  } else { Write-Host "  (no published checksum for $file)" }
+}
+function LibFor($id) { $Libs | Where-Object { $_.id -eq $id } | Select-Object -First 1 }
+# The encyclopedia that fits this drive: full English leads, else Simple English.
+function PickLib {
+  $drive = Drive
+  foreach ($l in $Libs) { if (-not (NoRoom $l $drive)) { return $l } }
+  return $null
+}
+function GetLibrary($l) {
+  KiwixTools
+  $name = LatestZim $l.folder $l.base
+  Write-Host "  $($l.name): $name"
+  GetZim "$KiwixBase/zim/$($l.folder)/$name"
+}
+function GetZimByName($arg) {
+  KiwixTools
+  if ($arg -match '^https?://') { GetZim $arg; return }
+  $folder = ($arg -split '_')[0]
+  $name = LatestZim $folder ($arg -replace '_\d{4}-\d{2}(\.zim)?$', '')
+  GetZim "$KiwixBase/zim/$folder/$name"
 }
 
 # --- what this computer can run ---------------------------------------------
@@ -159,7 +242,7 @@ function Plan {
   $mem = MemMB; $drive = Drive; $notes = @()
   foreach ($t in @($Tiers | Where-Object { $mem -ge $_.mem })) {
     if (Have $t) { return @{ t = $null; notes = $notes; why = "the kit already has $($t.name)" } }
-    if (Busy $t) { return @{ t = $null; notes = $notes; why = "$($t.name) is still downloading in another window" } }
+    if (Busy $t) { return @{ t = $null; notes = $notes; why = "$($t.name) is still downloading in another window"; busy = $true } }
     if (Test-Path (Join-Path $Models ".skip-$($t.id)")) {
       $notes += "$($t.name): you answered N before (delete models\.skip-$($t.id) to be asked again)"; continue
     }
@@ -180,7 +263,8 @@ function Offer([bool]$inline) {
     $p = Plan
     foreach ($n in $p.notes) { if (-not $shown.ContainsKey($n)) { Write-Host "  $n."; $shown[$n] = 1 } }
     if (-not $p.t) {
-      if ($p.offline) { Write-Host "  ($($p.why); starting with the model the kit has.)" }
+      if ($p.offline) { Write-Host "  ($($p.why); starting with the model the kit has.)"; return }
+      if (-not $p.busy) { OfferLibrary $inline }
       return
     }
     $t = $p.t
@@ -203,6 +287,35 @@ function Offer([bool]$inline) {
     return
   }
 }
+# Once the kit has the right model: offer the encyclopedia (asked once).
+function LibraryPlan {
+  if (HaveLibrary) { return @{ l = $null; why = "the kit has a library" } }
+  if (Test-Path (Join-Path $Models ".skip-library")) { return @{ l = $null; why = "you answered N before (delete models\.skip-library to be asked again)" } }
+  if (Busy ([pscustomobject]@{ id = "library" })) { return @{ l = $null; why = "the library is still downloading in another window" } }
+  $l = PickLib
+  if (-not $l) { return @{ l = $null; why = "there is no room on this drive for an encyclopedia" } }
+  return @{ l = $l; why = "" }
+}
+function OfferLibrary([bool]$inline) {
+  $p = LibraryPlan
+  if (-not $p.l) { if ($p.why -match "downloading") { Write-Host "  The $($p.why)." }; return }
+  $l = $p.l
+  try { [void](Listing "$KiwixBase/zim/$($l.folder)/") } catch { return }   # no internet: say nothing
+  Write-Host ""
+  Write-Host "  Lantern can also keep an offline encyclopedia for the AI to read: $($l.name),"
+  Write-Host "  about $($l.gb) GB. Fact questions are then answered from it, with quotes Lantern checks."
+  $ans = Ask 30
+  if ($ans -eq "") { return }
+  if ($ans -eq "no") {
+    New-Item -ItemType File -Force -Path (Join-Path $Models ".skip-library") | Out-Null
+    Write-Host "  Not asking again. To get it later: setup-kit.bat library"
+    return
+  }
+  if ($inline) { GetLibrary $l; return }
+  $ps = (Get-Process -Id $PID).Path
+  Start-Process -FilePath $ps -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ('"' + $PSCommandPath + '"'), "get", $l.id) | Out-Null
+  Write-Host "  Downloading in a separate window. Start Lantern again when it is done to use the library."
+}
 function Check {
   $mem = MemMB; $drive = Drive
   Write-Host ("Memory: " + [math]::Round($mem / 1024, 1) + " GB")
@@ -215,9 +328,18 @@ function Check {
   }
   $p = Plan
   foreach ($n in $p.notes) { Write-Host "  $n." }
+  $zims = @(Get-ChildItem -Path $Library -Filter "*.zim" -ErrorAction SilentlyContinue)
+  $ks = Test-Path (Join-Path $Dir "engine\windows\kiwix\kiwix-serve.exe")
+  if ($zims.Count) { foreach ($z in $zims) { Write-Host ("Library: " + $z.Name + " (" + [math]::Round($z.Length / 1GB, 1) + " GB)" + $(if ($ks) { "" } else { " -- kiwix-serve missing: setup-kit.bat library" })) } }
+  else { Write-Host "Library: none (setup-kit.bat library adds an offline encyclopedia)" }
   if ($env:LANTERN_AUTO_DOWNLOAD -eq "0") { Write-Host "Next start: offers nothing (LANTERN_AUTO_DOWNLOAD=0)." }
   elseif ($p.t) { Write-Host "Next start: will offer $($p.t.name) ($($p.t.gb) GB). Or fetch it now: setup-kit.bat $($p.t.id)" }
-  else { Write-Host "Next start: offers nothing: $($p.why)." }
+  elseif ($p.offline -or $p.busy) { Write-Host "Next start: offers nothing: $($p.why)." }
+  else {
+    $lp = LibraryPlan
+    if ($lp.l) { Write-Host "Next start: will offer the encyclopedia ($($lp.l.name), about $($lp.l.gb) GB). Or fetch it now: setup-kit.bat library" }
+    else { Write-Host "Next start: offers nothing: $($p.why); library: $($lp.why)." }
+  }
 }
 
 $gpu = $Sets -contains "gpu"
@@ -227,18 +349,20 @@ if ($Sets.Count -gt 0 -and $Sets[0] -eq "offer") {
   exit 0
 }
 if ($Sets.Count -gt 0 -and $Sets[0] -eq "check") { Check; exit 0 }
-if ($Sets.Count -gt 1 -and $Sets[0] -eq "get") {   # one model, in its own window (from Offer)
+if ($Sets.Count -gt 1 -and $Sets[0] -eq "get") {   # one model or library, in its own window (from Offer)
   $t = Tier $Sets[1]
+  $lib = LibFor $Sets[1]
+  if ($lib) { $t = [pscustomobject]@{ id = $lib.id; name = $lib.name; gb = $lib.gb } }
   $lock = Join-Path $Models ".downloading-$($t.id)"
   try {
     try { $Host.UI.RawUI.WindowTitle = "Lantern: downloading $($t.name)" } catch { }
     Set-Content -Path $lock -Value $PID
     Write-Host "Downloading $($t.name) ($($t.gb) GB) into the kit. Lantern keeps working meanwhile."
-    GetTier $t
+    if ($lib) { Set-Content -Path (Join-Path $Models ".downloading-library") -Value $PID; GetLibrary $lib } else { GetTier $t }
     Write-Host ""
     Write-Host "Done. Close Lantern's window and start it again to use $($t.name)."
   } catch { Write-Host "Download stopped: $($_.Exception.Message). Start Lantern again later to resume it." }
-  finally { Remove-Item -Force $lock -ErrorAction SilentlyContinue }
+  finally { Remove-Item -Force $lock -ErrorAction SilentlyContinue; Remove-Item -Force (Join-Path $Models ".downloading-library") -ErrorAction SilentlyContinue }
   if (-not $env:LANTERN_NO_PAUSE) { Read-Host "Press Enter to close this window" | Out-Null }
   exit 0
 }
@@ -250,10 +374,16 @@ if ($Sets.Count -eq 0) {
   if ((MemMB) -ge 7000) { GetTier (Tier "laptop") } else { GetTier (Tier "0.8b"); GetTier (Tier "2b") }
   Offer $true
 }
+$zimArg = ""
+for ($i = 0; $i -lt $Sets.Count; $i++) { if ($Sets[$i] -eq "zim" -and $i + 1 -lt $Sets.Count) { $zimArg = $Sets[$i + 1]; $Sets[$i + 1] = "zim" } }
+if ($zimArg) { GetZimByName $zimArg }
 foreach ($s in $Sets) {
   switch ($s) {
     "phone" { GetTier (Tier "0.8b"); GetTier (Tier "2b") }
     "engine" { Engine $asset }
+    "library" { $l = PickLib; if ($l) { GetLibrary $l } else { Write-Host "  No room for an encyclopedia on this drive." } }
+    "library-simple" { GetLibrary (LibFor "library-simple") }
+    "zim" { }
     default {
       $t = Tier $s
       if ($t) { GetTier $t } else { Write-Host "unknown option: $s" }

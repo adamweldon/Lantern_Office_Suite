@@ -8,12 +8,18 @@
 #   ./setup-kit.sh big          Qwen3.5 9B   (16 GB computers)
 #   ./setup-kit.sh xl           Qwen3.5 35B-A3B (32 GB computers; 17.5 GB file)
 #   ./setup-kit.sh usb          engines for Windows, Mac and Linux + 0.8B, 2B, 4B, 9B (~10 GB)
+#   ./setup-kit.sh library      an offline encyclopedia: kiwix-serve + English Wikipedia
+#                               (lead sections, ~12 GB; Simple English ~2.5 GB if the
+#                               drive is small or FAT32)
+#   ./setup-kit.sh library-simple   Simple English Wikipedia (~2.5 GB)
+#   ./setup-kit.sh zim NAME     any Kiwix file by name (e.g. wikipedia_en_medicine_maxi)
+#                               or full URL, into library/
 #   ./setup-kit.sh check        what this computer can run and what the kit has
 #   add "gpu" for the Vulkan engine builds (graphics card) on Windows/Linux
 # start-lantern.sh runs "setup-kit.sh offer": when this computer can run a
 # bigger model than the kit has, and there is room and internet, it asks once
 # and downloads it in the background while Lantern starts.
-# Overrides: LLAMA_BUILD (default b11435), LLAMA_BASE, HF_BASE (mirrors);
+# Overrides: LLAMA_BUILD (default b11435), LLAMA_BASE, HF_BASE, KIWIX_BASE (mirrors);
 # LANTERN_AUTO_DOWNLOAD=0 never offer, =1 download without asking; for
 # testing: LANTERN_MEM_MB, LANTERN_FS, LANTERN_FREE_GB.
 set -eu
@@ -21,7 +27,9 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD="${LLAMA_BUILD:-b11435}"
 LLAMA_BASE="${LLAMA_BASE:-https://github.com/ggml-org/llama.cpp/releases/download/$BUILD}"
 HF_BASE="${HF_BASE:-https://huggingface.co}"
+KIWIX_BASE="${KIWIX_BASE:-https://download.kiwix.org}"
 MODELS="$DIR/models"; mkdir -p "$MODELS"
+LIBRARY="$DIR/library"
 
 fetch() {  # url dest -- resumes an interrupted download
   if [ -s "$2" ]; then echo "  have $(basename "$2")"; return 0; fi
@@ -66,6 +74,78 @@ tier() {
 }
 get_tier() { tier "$1" && model "$T_REPO" "$T_FILE"; }
 phone()  { get_tier 0.8b; get_tier 2b; }
+
+# --- the offline library (Kiwix) -------------------------------------------------
+LIBS="library library-simple"
+libinfo() {
+  case "$1" in
+    library) L_ID=library; L_NAME="English Wikipedia (lead section of every article)"; L_FOLDER=wikipedia; L_BASE=wikipedia_en_all_mini; T_GB=12 ;;
+    library-simple) L_ID=library-simple; L_NAME="Simple English Wikipedia"; L_FOLDER=wikipedia; L_BASE=wikipedia_en_simple_all_maxi; T_GB=2.5 ;;
+    *) return 1 ;;
+  esac
+}
+listing() { curl -sL --fail --max-time 30 "$1"; }
+latest_zim() {  # folder base -> newest dated file name, e.g. wikipedia_en_all_mini_2026-06.zim
+  listing "$KIWIX_BASE/zim/$1/" | grep -o "href=\"$2_[0-9]\{4\}-[0-9]\{2\}\.zim\"" | sed 's/^href="//; s/"$//' | sort -u | tail -n 1
+}
+have_library() { ls "$LIBRARY"/*.zim >/dev/null 2>&1; }
+kiwix_plat() {
+  case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64) echo macos-arm64 ;; Darwin-*) echo macos-x86_64 ;;
+    *-aarch64|*-arm64) echo linux-aarch64 ;; *) echo linux-x86_64 ;;
+  esac
+}
+kiwix_tools() {
+  case "$(uname -s)" in Darwin) kos=mac ;; *) kos=linux ;; esac
+  kt="$DIR/engine/$kos/kiwix"
+  if [ -x "$kt/kiwix-serve" ]; then echo "  have kiwix-serve"; return 0; fi
+  plat=$(kiwix_plat); list=$(listing "$KIWIX_BASE/release/kiwix-tools/") || { echo "  could not list $KIWIX_BASE/release/kiwix-tools/"; return 1; }
+  asset=$(printf '%s' "$list" | grep -o "href=\"kiwix-tools_$plat-[0-9][0-9.-]*\.tar\.gz\"" | sed 's/^href="//; s/"$//' | sort -u | sort -V | tail -n 1)
+  if [ -z "$asset" ] && [ "$plat" = macos-arm64 ]; then
+    asset=$(printf '%s' "$list" | grep -o "href=\"kiwix-tools_macos-x86_64-[0-9][0-9.-]*\.tar\.gz\"" | sed 's/^href="//; s/"$//' | sort -u | sort -V | tail -n 1)
+  fi
+  if [ -z "$asset" ]; then echo "  no kiwix-tools for $plat at $KIWIX_BASE/release/kiwix-tools/"; return 1; fi
+  tmp=$(mktemp -d)
+  fetch "$KIWIX_BASE/release/kiwix-tools/$asset" "$tmp/$asset"
+  tar -xzf "$tmp/$asset" -C "$tmp"
+  bin=$(find "$tmp" -type f -name kiwix-serve | head -n 1)
+  if [ -z "$bin" ]; then echo "  no kiwix-serve inside $asset"; rm -rf "$tmp"; return 1; fi
+  mkdir -p "$kt"; cp -R "$(dirname "$bin")"/. "$kt/"; chmod +x "$kt"/kiwix-* 2>/dev/null || true
+  rm -rf "$tmp"
+  echo "  kiwix-serve ready ($asset)"
+}
+get_zim() {  # url -- into library/, checked against the published SHA-256
+  mkdir -p "$LIBRARY"; f=$(basename "$1"); dest="$LIBRARY/$f"; fresh=1
+  [ -s "$dest" ] && fresh=""
+  fetch "$1" "$dest"
+  [ -n "$fresh" ] || return 0
+  want=$(listing "$1.sha256" 2>/dev/null | awk '{ print tolower($1); exit }') || want=""
+  if printf '%s' "$want" | grep -qE '^[0-9a-f]{64}$'; then
+    echo "  checking $f (SHA-256)..."
+    if command -v sha256sum >/dev/null 2>&1; then got=$(sha256sum "$dest" | awk '{print $1}'); else got=$(shasum -a 256 "$dest" | awk '{print $1}'); fi
+    if [ "$got" != "$want" ]; then rm -f "$dest"; echo "  $f is damaged (checksum differs); deleted -- run setup again"; return 1; fi
+    echo "  checksum OK"
+  else echo "  (no published checksum for $f)"; fi
+}
+pick_lib() { for id in $LIBS; do libinfo "$id"; if [ -z "$(no_room)" ]; then echo "$id"; return 0; fi; done; return 1; }
+get_library() {
+  libinfo "$1" || return 1
+  kiwix_tools
+  name=$(latest_zim "$L_FOLDER" "$L_BASE")
+  if [ -z "$name" ]; then echo "  no $L_BASE file listed at $KIWIX_BASE/zim/$L_FOLDER/"; return 1; fi
+  echo "  $L_NAME: $name"
+  get_zim "$KIWIX_BASE/zim/$L_FOLDER/$name"
+}
+get_zim_name() {
+  kiwix_tools
+  case "$1" in
+    http://*|https://*) get_zim "$1" ;;
+    *) folder=${1%%_*}; base=$(printf '%s' "$1" | sed 's/_[0-9]\{4\}-[0-9]\{2\}\(\.zim\)\{0,1\}$//')
+       name=$(latest_zim "$folder" "$base")
+       if [ -z "$name" ]; then echo "  no $base file listed at $KIWIX_BASE/zim/$folder/"; return 1; fi
+       get_zim "$KIWIX_BASE/zim/$folder/$name" ;;
+  esac
+}
 
 # --- what this computer can run ---------------------------------------------
 mem_mb() {
@@ -124,13 +204,13 @@ reach() {
 # plan: what to offer. Sets P_ID (model to offer, or empty), P_WHY (why
 # nothing), P_OFFLINE, and P_NOTES (bigger models passed over, one a line).
 plan() {
-  P_ID=""; P_WHY="nothing more suits this computer"; P_NOTES=""; P_OFFLINE=""
+  P_ID=""; P_WHY="nothing more suits this computer"; P_NOTES=""; P_OFFLINE=""; P_BUSY=""
   mem=$(mem_mb)
   for id in $TIERS; do
     tier "$id"
     [ "$mem" -ge "$T_MEM" ] || continue
     if have "$T_PAT"; then P_WHY="the kit already has $T_NAME"; return 0; fi
-    if busy "$T_ID"; then P_WHY="$T_NAME is still downloading (see models/download-$T_ID.log)"; return 0; fi
+    if busy "$T_ID"; then P_WHY="$T_NAME is still downloading (see models/download-$T_ID.log)"; P_BUSY=1; return 0; fi
     if [ -f "$MODELS/.skip-$T_ID" ]; then
       P_NOTES="$P_NOTES$T_NAME: you answered N before (delete models/.skip-$T_ID to be asked again)
 "; continue
@@ -155,7 +235,8 @@ offer() {  # inline: 1 = download here, else in the background
     done
     IFS=$old_ifs
     if [ -z "$P_ID" ]; then
-      [ -n "$P_OFFLINE" ] && echo "  ($P_WHY; starting with the model the kit has.)"
+      if [ -n "$P_OFFLINE" ]; then echo "  ($P_WHY; starting with the model the kit has.)"; return 0; fi
+      [ -n "$P_BUSY" ] || offer_library "${1:-}"
       return 0
     fi
     tier "$P_ID"; mem=$(mem_mb)
@@ -176,6 +257,31 @@ offer() {  # inline: 1 = download here, else in the background
     return 0
   done
 }
+# library_plan: once the kit has the right model, the encyclopedia (asked once).
+library_plan() {
+  LP_ID=""
+  if have_library; then LP_WHY="the kit has a library"; return 0; fi
+  if [ -f "$MODELS/.skip-library" ]; then LP_WHY="you answered N before (delete models/.skip-library to be asked again)"; return 0; fi
+  if busy library; then LP_WHY="the library is still downloading (see models/download-library.log)"; return 0; fi
+  LP_ID=$(pick_lib) || { LP_ID=""; LP_WHY="there is no room on this drive for an encyclopedia"; return 0; }
+  LP_WHY=""
+}
+offer_library() {
+  library_plan
+  if [ -z "$LP_ID" ]; then case "$LP_WHY" in *downloading*) echo "  The $LP_WHY." ;; esac; return 0; fi
+  libinfo "$LP_ID"
+  listing "$KIWIX_BASE/zim/$L_FOLDER/" >/dev/null 2>&1 || return 0
+  echo ""
+  echo "  Lantern can also keep an offline encyclopedia for the AI to read: $L_NAME,"
+  echo "  about $T_GB GB. Fact questions are then answered from it, with quotes Lantern checks."
+  ans=$(ask)
+  [ -n "$ans" ] || return 0
+  if [ "$ans" = no ]; then : > "$MODELS/.skip-library"; echo "  Not asking again. To get it later: ./setup-kit.sh library"; return 0; fi
+  if [ "${1:-}" = 1 ]; then get_library "$LP_ID"; return 0; fi
+  nohup "$DIR/setup-kit.sh" get "$LP_ID" > "$MODELS/download-library.log" 2>&1 &
+  echo "  Downloading in the background (progress: models/download-library.log)."
+  echo "  Start Lantern again when it is done to use the library."
+}
 check() {
   mem=$(mem_mb)
   echo "Memory: $(awk -v m="$mem" 'BEGIN { printf "%.1f", m / 1024 }') GB"
@@ -189,9 +295,20 @@ check() {
   done
   plan
   printf '%s' "$P_NOTES" | sed 's/^/  /; s/$/./'
+  case "$(uname -s)" in Darwin) kos=mac ;; *) kos=linux ;; esac
+  if have_library; then
+    for z in "$LIBRARY"/*.zim; do
+      printf 'Library: %s (%s)%s\n' "$(basename "$z")" "$(du -h "$z" | awk '{print $1}')" "$([ -x "$DIR/engine/$kos/kiwix/kiwix-serve" ] || echo ' -- kiwix-serve missing: ./setup-kit.sh library')"
+    done
+  else echo "Library: none (./setup-kit.sh library adds an offline encyclopedia)"; fi
   if [ "${LANTERN_AUTO_DOWNLOAD:-}" = 0 ]; then echo "Next start: offers nothing (LANTERN_AUTO_DOWNLOAD=0)."
   elif [ -n "$P_ID" ]; then tier "$P_ID"; echo "Next start: will offer $T_NAME ($T_GB GB). Or fetch it now: ./setup-kit.sh $T_ID"
-  else echo "Next start: offers nothing: $P_WHY."; fi
+  elif [ -n "$P_OFFLINE" ] || [ -n "$P_BUSY" ]; then echo "Next start: offers nothing: $P_WHY."
+  else
+    library_plan
+    if [ -n "$LP_ID" ]; then libinfo "$LP_ID"; echo "Next start: will offer the encyclopedia ($L_NAME, about $T_GB GB). Or fetch it now: ./setup-kit.sh library"
+    else echo "Next start: offers nothing: $P_WHY; library: $LP_WHY."; fi
+  fi
 }
 
 GPU=""; SETS=""
@@ -200,7 +317,15 @@ set -- $SETS
 case "${1:-}" in
   offer) offer 0 || true; exit 0 ;;
   check) check; exit 0 ;;
-  get)   # one model, in the background (from offer)
+  get)   # one model or the library, in the background (from offer)
+    if libinfo "${2:-}"; then
+      echo $$ > "$MODELS/.downloading-library"
+      trap 'rm -f "$MODELS/.downloading-library"' EXIT
+      echo "Downloading $L_NAME (about $T_GB GB) into the kit. Lantern keeps working meanwhile."
+      get_library "$L_ID"
+      echo "Done. Stop Lantern (Ctrl+C) and start it again to use the library."
+      exit 0
+    fi
     tier "${2:-}" || exit 1
     echo $$ > "$MODELS/.downloading-$T_ID"
     trap 'rm -f "$MODELS/.downloading-$T_ID"' EXIT
@@ -224,8 +349,13 @@ if [ -z "$SETS" ]; then
   if [ "$(mem_mb)" -ge 7000 ]; then get_tier laptop; else phone; fi
   offer 1 || true
 fi
+ZIMNEXT=""
 for s in $SETS; do
+  if [ -n "$ZIMNEXT" ]; then ZIMNEXT=""; get_zim_name "$s"; continue; fi
   case "$s" in
+    zim) ZIMNEXT=1 ;;
+    library) if lid=$(pick_lib); then get_library "$lid"; else echo "  No room for an encyclopedia on this drive."; fi ;;
+    library-simple) get_library library-simple ;;
     phone) phone ;;
     usb) engine linux "$LNX"; engine windows "$WIN"; engine mac "llama-$BUILD-bin-macos-arm64.tar.gz"; phone; get_tier laptop; get_tier big ;;
     engine) engine "$OS" "$THIS" ;;

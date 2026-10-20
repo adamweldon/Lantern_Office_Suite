@@ -80,7 +80,7 @@ def suite(label, cmd_for):
     ok(label + ": yes downloads the 35B-A3B through the redirect", got, out)
     time.sleep(1)
     out = run(k, ["check"], cmd=cmd_for(k))
-    ok(label + ": then nothing more is offered", "already has Qwen3.5 35B-A3B" in out, out)
+    ok(label + ": then no other model is offered", "will offer Qwen3.5" not in out and "will offer the encyclopedia" in out, out)
     out = run(k, ["offer"], {"LANTERN_AUTO_DOWNLOAD": "0", "LANTERN_MEM_MB": "8000"}, cmd_for(k))
     ok(label + ": AUTO_DOWNLOAD=0 is silent", out.strip() == "", out)
 
@@ -96,6 +96,78 @@ for mem, want in (("32000", "35B-A3B"), ("16000", "9B"), ("8000", "4B"), ("4000"
     ok("start-lantern %s MB uses the %s" % (mem, want), "FAKE model=Qwen3.5-%s" % want in out, out)
 out = run(k, ["9b"], {}, [os.path.join(k, "start-lantern.sh")])
 ok("start-lantern 9b picks by hand", "FAKE model=Qwen3.5-9B" in out, out)
+# --- the offline library: kiwix-tools + a Kiwix file, from a stand-in for
+# download.kiwix.org (plain directory listings, as its mirrors serve them)
+import hashlib, io, tarfile, zipfile
+kx = os.path.join(tmp, "kiwix"); rel = os.path.join(kx, "release", "kiwix-tools"); zw = os.path.join(kx, "zim", "wikipedia")
+os.makedirs(rel); os.makedirs(zw)
+fake_kiwix = "#!" + sys.executable + "\nimport sys, os, time\nopen(os.environ.get('KIWIX_ARGS_OUT', '/dev/null'), 'w').write(' '.join(sys.argv[1:]))\ntime.sleep(20)\n"
+for ver in ("3.7.0-2", "3.8.1"):
+    with tarfile.open(os.path.join(rel, "kiwix-tools_linux-x86_64-%s.tar.gz" % ver), "w:gz") as t:
+        data = fake_kiwix.encode() if ver == "3.8.1" else b"#!/bin/sh\necho OLD\n"
+        ti = tarfile.TarInfo("kiwix-tools_linux-x86_64-%s/kiwix-serve" % ver); ti.size = len(data); ti.mode = 0o755
+        t.addfile(ti, io.BytesIO(data))
+    with zipfile.ZipFile(os.path.join(rel, "kiwix-tools_win-x86_64-%s.zip" % ver), "w") as z:
+        z.writestr("kiwix-tools_win-x86_64-%s/kiwix-serve.exe" % ver, "MZ" + ver)
+def zim(name, good=True):
+    data = b"ZIM\x04" + os.urandom(3000)
+    open(os.path.join(zw, name), "wb").write(data)
+    h = hashlib.sha256(data if good else b"other").hexdigest()
+    open(os.path.join(zw, name + ".sha256"), "w").write(h + "  " + name + "\n")
+zim("wikipedia_en_all_mini_2026-03.zim"); zim("wikipedia_en_all_mini_2026-06.zim"); zim("wikipedia_en_simple_all_maxi_2026-01.zim")
+zim("wikipedia_en_medicine_maxi_2026-05.zim", good=False)
+kport = free_port()
+ksrv = subprocess.Popen([sys.executable, "-m", "http.server", str(kport), "--bind", "127.0.0.1", "--directory", kx],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+time.sleep(0.8)
+KX = {"KIWIX_BASE": "http://127.0.0.1:%d" % kport}
+def kenv(extra=None):
+    e = dict(KX); e.update(extra or {}); return e
+
+k = make_kit("lib-sh", ["Qwen3.5-4B-Q4_K_M.gguf"])
+out = run(k, ["library"], kenv({"LANTERN_FREE_GB": "50"}))
+ks = os.path.join(k, "engine", "linux", "kiwix", "kiwix-serve")
+ok("library: newest kiwix-tools installed", os.path.exists(ks) and "OLD" not in open(ks).read() and "3.8.1" in out, out)
+ok("library: newest English Wikipedia file, checksum checked", os.path.exists(os.path.join(k, "library", "wikipedia_en_all_mini_2026-06.zim")) and
+   not os.path.exists(os.path.join(k, "library", "wikipedia_en_all_mini_2026-03.zim")) and "checksum OK" in out, out)
+out = run(k, ["check"], kenv({"LANTERN_MEM_MB": "8000"}))
+ok("check lists the library", "Library: wikipedia_en_all_mini_2026-06.zim" in out and "kiwix-serve missing" not in out, out)
+out = run(k, ["zim", "wikipedia_en_medicine_maxi"], kenv())
+ok("zim NAME: a damaged file is deleted, not kept", "damaged" in out and not os.path.exists(os.path.join(k, "library", "wikipedia_en_medicine_maxi_2026-05.zim")), out)
+argsf = os.path.join(tmp, "kiwix-args.txt")
+out = run(k, ["nodownload"], {"LANTERN_MEM_MB": "8000", "KIWIX_ARGS_OUT": argsf}, [os.path.join(k, "start-lantern.sh")])
+time.sleep(0.5)
+got = open(argsf).read() if os.path.exists(argsf) else ""
+ok("start-lantern starts kiwix-serve on 8081 with the library", "--port 8081 --address 127.0.0.1 -z " in got and got.endswith("wikipedia_en_all_mini_2026-06.zim") and
+   "Library: wikipedia_en_all_mini_2026-06.zim" in out, (got, out))
+out = run(k, ["share", "nodownload"], {"LANTERN_MEM_MB": "8000", "KIWIX_ARGS_OUT": argsf}, [os.path.join(k, "start-lantern.sh")])
+time.sleep(0.5)
+ok("share: the library listens for phones too", "--address 0.0.0.0" in open(argsf).read())
+
+k = make_kit("lib-fat", ["Qwen3.5-4B-Q4_K_M.gguf"])
+out = run(k, ["library"], kenv({"LANTERN_FS": "msdos"}))
+ok("library on FAT32: Simple English instead (under 4 GB)", os.path.exists(os.path.join(k, "library", "wikipedia_en_simple_all_maxi_2026-01.zim")), out)
+k = make_kit("lib-offer", ["Qwen3.5-4B-Q4_K_M.gguf"])
+out = run(k, ["check"], kenv({"LANTERN_MEM_MB": "8000", "LANTERN_FREE_GB": "50"}))
+ok("with the right model, the next start offers the encyclopedia", "will offer the encyclopedia (English Wikipedia" in out, out)
+out = run(k, ["offer"], kenv({"LANTERN_MEM_MB": "8000", "LANTERN_FREE_GB": "50"}))
+ok("library offer with no keyboard downloads nothing", "offline encyclopedia" in out and "no keyboard" in out and not os.path.exists(os.path.join(k, "library")), out)
+out = run(k, ["offer"], kenv({"LANTERN_MEM_MB": "8000", "LANTERN_FREE_GB": "50", "LANTERN_AUTO_DOWNLOAD": "1"}))
+ok("library offer yes: downloads in the background", wait_file(os.path.join(k, "library", "wikipedia_en_all_mini_2026-06.zim")), out)
+time.sleep(1)
+ok("then the library is not offered again", "library: the kit has a library" in run(k, ["check"], kenv({"LANTERN_MEM_MB": "8000"})))
+
+if pw:
+    k = make_kit("lib-ps1", ["Qwen3.5-4B-Q4_K_M.gguf"])
+    out = run(k, ["library"], kenv({"LANTERN_FREE_GB": "50"}), [pw, "-NoProfile", "-File", os.path.join(k, "setup-kit.ps1")])
+    exe = [os.path.join(r, f) for r, ds, fs in os.walk(os.path.join(k)) for f in fs if f == "kiwix-serve.exe"]
+    ok("ps1 library: newest Windows kiwix-tools and the newest file, checked", exe and "3.8.1" in open(exe[0]).read() and
+       os.path.exists(os.path.join(k, "library", "wikipedia_en_all_mini_2026-06.zim")) and "checksum OK" in out, out)
+    out = run(k, ["zim", "wikipedia_en_medicine_maxi"], kenv(), [pw, "-NoProfile", "-File", os.path.join(k, "setup-kit.ps1")])
+    ok("ps1 zim NAME: a damaged file is deleted", "damaged" in out and not os.path.exists(os.path.join(k, "library", "wikipedia_en_medicine_maxi_2026-05.zim")), out)
+    out = run(k, ["check"], kenv({"LANTERN_MEM_MB": "8000"}), [pw, "-NoProfile", "-File", os.path.join(k, "setup-kit.ps1")])
+    ok("ps1 check lists the library", "Library: wikipedia_en_all_mini_2026-06.zim" in out, out)
+ksrv.terminate()
 srv.terminate(); shutil.rmtree(tmp, ignore_errors=True)
 print("KIT OFFER TESTS PASS" if not fails else "%d KIT OFFER FAILURES" % len(fails))
 sys.exit(1 if fails else 0)

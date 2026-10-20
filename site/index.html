@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.8.6 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.9.0 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -114,7 +114,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.8.6",
+  version: "1.9.0",
   apps: {},
   order: []
 };
@@ -15928,8 +15928,16 @@ Lantern.RFB = (function () {
     out.push("- Every number in the = lines must come from the question (or a unit change).");
     out.push("  If the question leaves out a number you need (how many, how big), reply");
     out.push("  NEED: <question> -- never guess it or use a recipe's example. Ask for nothing else.");
-    out.push("- If these functions cannot answer it (facts, news, people, prices, medicine doses,");
-    out.push("  dangerous work), reply exactly: ANSWER: Not in my library.");
+    var lib = window.Lantern.library && Lantern.library.ready && Lantern.library.ready();
+    if (lib) {
+      out.push("- For a fact about people, places, history, science or health (never a dose), reply");
+      out.push("  LOOKUP: <2 to 5 search words>. Lantern searches its offline encyclopedia and shows you passages.");
+      out.push("- If neither the functions nor the encyclopedia can answer it (news, prices, personal details,");
+      out.push("  medicine doses, dangerous work), reply exactly: ANSWER: Not in my library.");
+    } else {
+      out.push("- If these functions cannot answer it (facts, news, people, prices, medicine doses,");
+      out.push("  dangerous work), reply exactly: ANSWER: Not in my library.");
+    }
     out.push("No other text.");
     out.push("");
     out.push("EXAMPLES");
@@ -15940,6 +15948,7 @@ Lantern.RFB = (function () {
     out.push("ANSWER: Not in my library.");
     out.push("Q: How long will it take to fill my water tank?");
     out.push("NEED: How many litres does the tank hold, and how many litres a minute flow in?");
+    if (lib) { out.push("Q: Who painted the Mona Lisa?"); out.push("LOOKUP: Mona Lisa painter"); }
     out.push("");
     out.push("FUNCTIONS");
     out.push(A.toolCard(question, cards));
@@ -15963,10 +15972,12 @@ Lantern.RFB = (function () {
     text = String(text || "");
     var need = text.match(/^\s*NEED:\s*(.+)$/m);
     var ans = text.match(/^\s*ANSWER:\s*(.+)$/m);
+    var look = text.match(/^\s*LOOKUP:\s*(.+)$/m);
     var exprs = [], lines = text.replace(/\r/g, "").split("\n"), i;
     for (i = 0; i < lines.length; i++)
       if (/^\s*=/.test(lines[i])) exprs.push(lines[i].replace(/^\s+/, ""));
-    return { need: need ? need[1] : null, answer: ans ? ans[1] : null, exprText: exprs.join("\n") };
+    return { need: need ? need[1] : null, answer: ans ? ans[1] : null, exprText: exprs.join("\n"),
+      lookup: look ? look[1].replace(/^\s+|\s+$/g, "") : null };
   };
   // finalAnswer(answer, value) -> {text, mismatch, unchecked}. The number a
   // person reads is Lantern's: {result} becomes the computed value; a sentence
@@ -16008,37 +16019,57 @@ Lantern.RFB = (function () {
     if (data.message && data.message.content) return data.message.content; // Ollama native /api/chat
     throw new Error("Unrecognised server reply shape");
   };
-  // solve(question, {call, retries}) -> Promise<{text, first, second, parsed,
-  //   run, rounds, kind, rejected, fixed, flags}>
-  // One model call through opts.call(messages). The model gets ONE more turn,
-  // with Lantern's own reason, when Lantern rejects the formula (kind
-  // "rejected": it would not run) or questions it (kind "questioned": a check
-  // in Lantern.assistChecks found, say, a number that is not in the question
-  // or a height used as a radius). The way Chat already works: the model
-  // fixes the slip from Lantern's reason; Lantern never guesses the fix.
-  // flags = what the checks still say about the reply that was kept.
+  // solve(question, {call, retries, lookup}) -> Promise<{text, first, second,
+  //   parsed, run, rounds, kind, rejected, fixed, flags, sources, lookup}>
+  // One model call through opts.call(messages). Then, when an offline
+  // library is attached (Lantern.assistLookup), a fact question gets one
+  // reading turn: the model asked to LOOKUP (or said "Not in my library"),
+  // so Lantern searches the encyclopedia and hands it numbered passages to
+  // answer from, with quotes Lantern can verify. Finally the model gets ONE
+  // more turn, with Lantern's own reason, when Lantern rejects the formula
+  // (kind "rejected": it would not run) or questions the reply (kind
+  // "questioned": a check in Lantern.assistChecks found a number that is not
+  // in the question, a height used as a radius, a quote that is not in its
+  // source...). The model fixes the slip from Lantern's reason; Lantern never
+  // guesses the fix. flags = what the checks still say about the kept reply.
+  A.isDecline = function (answer) { return /not in my library/i.test(String(answer || "")); };
   A.solve = async function (question, opts) {
     opts = opts || {};
-    var checks = window.Lantern.assistChecks || [];
-    function questioned(pp, rr) {
-      var found = [], i, r;
-      if (rr.value == null || !pp.exprText) return found;
+    var checks = window.Lantern.assistChecks || [], look = window.Lantern.assistLookup;
+    var out = { rounds: 0, kind: "", fixed: false, rejected: "", flags: [], sources: null, lookup: "" };
+    function questioned(pp, rr, txt) {
+      var found = [], i, r, ctx = { text: txt, parsed: pp, sources: out.sources };
+      if (!(rr.value != null && pp.exprText) && !(out.sources && out.sources.length)) return found;
       for (i = 0; i < checks.length; i++) {
-        try { r = checks[i](question, pp.exprText, rr); } catch (e) { r = null; }
+        try { r = checks[i](question, pp.exprText, rr, ctx); } catch (e) { r = null; }
         if (r) found.push(String(r));
       }
       return found;
     }
     var msgs = [{ role: "user", content: A.buildPrompt(question, A.match(question)) }];
-    var text = await opts.call(msgs), p = A.parseReply(text), run = A.run(p.exprText);
-    var flags = questioned(p, run);
-    var out = { text: text, first: text, parsed: p, run: run, rounds: 1, kind: "", fixed: false, rejected: "", flags: flags };
+    async function turn() { out.rounds++; return await opts.call(msgs); }
+    var text = await turn(), p = A.parseReply(text), run = A.run(p.exprText);
+    out.first = text;
+    // Reading turn: the offline library, when the model asks or declines.
+    if (look && opts.lookup !== false && !p.exprText && !p.need && (p.lookup || A.isDecline(p.answer))) {
+      var lk = null;
+      try { lk = await look(question, p.lookup || ""); } catch (e) { lk = null; }
+      if (lk && lk.sources && lk.sources.length) {
+        out.sources = lk.sources; out.lookup = lk.query || "";
+        msgs.push({ role: "assistant", content: text });
+        msgs.push({ role: "user", content: lk.prompt });
+        out.read = text;
+        text = await turn(); p = A.parseReply(text); run = A.run(p.exprText);
+      }
+    }
+    var flags = questioned(p, run, text);
+    out.text = text; out.parsed = p; out.run = run; out.flags = flags;
     var bad = run.steps.filter(function (st) { return !st.ok; });
     if (p.need || opts.retries === 0) return out;
     if (run.value != null && !flags.length) return out;
-    if (run.value == null && !bad.length) return out;
-    var why;
-    if (run.value == null) {
+    if (run.value == null && !bad.length && !flags.length) return out;
+    var why, how;
+    if (run.value == null && bad.length) {
       out.kind = "rejected";
       out.rejected = bad.map(function (st) { return "=" + st.expr + " (" + st.err + ")"; }).join("; ");
       why = "Lantern could not run " + out.rejected + ".";
@@ -16047,13 +16078,18 @@ Lantern.RFB = (function () {
       out.rejected = flags.join("; ");
       why = "Lantern questioned that: " + out.rejected + ".";
     }
+    how = out.sources ? "\nReply again: ANSWER with [n] after each fact, and a QUOTE [n] line copied exactly from passage n." +
+        "\nIf the passages do not answer it, reply exactly: ANSWER: Not in my library." :
+      "\nIf the question does not give a number you need, reply NEED: <question>." +
+        "\nOtherwise reply again with corrected = lines and the ANSWER line only.";
+    out.prev = text;
     msgs.push({ role: "assistant", content: text });
-    msgs.push({ role: "user", content: why + "\nIf the question does not give a number you need, reply NEED: <question>." +
-      "\nOtherwise reply again with corrected = lines and the ANSWER line only." });
-    var text2 = await opts.call(msgs), p2 = A.parseReply(text2), run2 = A.run(p2.exprText);
-    out.rounds = 2; out.second = text2;
-    if (run2.value != null || (p2.need && !p2.exprText)) {
-      var flags2 = questioned(p2, run2);
+    msgs.push({ role: "user", content: why + how });
+    var text2 = await turn(), p2 = A.parseReply(text2), run2 = A.run(p2.exprText);
+    out.second = text2;
+    var keep = run2.value != null || (p2.need && !p2.exprText) || (out.sources && p2.answer && !p2.exprText);
+    if (keep) {
+      var flags2 = questioned(p2, run2, text2);
       out.text = text2; out.parsed = p2; out.run = run2; out.flags = flags2;
       out.fixed = !!p2.need || !flags2.length;
     }
@@ -16102,8 +16138,9 @@ Lantern.RFB = (function () {
     else res.textContent = "No result \u2014 check the steps above.";
     out.appendChild(res);
   }
-  function answerNote(answer, value) {
+  function answerNote(answer, value, cited) {
     var fa = A.finalAnswer ? A.finalAnswer(answer, value) : { text: answer, mismatch: false };
+    if (cited) fa.unchecked = false;   // numbers in a library answer are checked against its quoted sources
     var box = el("div", {}, [el("p", { "class": "muted", text: "Answer: " + fa.text })]);
     if (fa.mismatch) box.appendChild(el("p", { "class": "danger", text: "\u26a0 The AI\u2019s sentence does not match Lantern\u2019s computed result below. Trust the computed number." }));
     if (fa.unchecked) box.appendChild(el("p", { "class": "muted", text: "\u26a0 Lantern computed nothing here: any number in this sentence comes from the AI alone. Check it." }));
@@ -16206,21 +16243,29 @@ Lantern.RFB = (function () {
         A.solve(q, { call: function (m) { return A.callServer(ep.value, md.value, m); } }).then(function (res) {
           var text = res.text, p = res.parsed, mono = "font-family:ui-monospace,Consolas,monospace;font-size:12px;white-space:pre-wrap;background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:8px";
           var top = el("div", {}, []);
-          if (res.rounds > 1) {
-            top.appendChild(el("p", { "class": "muted", text: "First reply \u2014 Lantern " +
-              (res.kind === "questioned" ? "questioned it: " : "could not run ") + res.rejected + ":" }));
+          if (res.sources) {
+            top.appendChild(el("p", { "class": "muted", text: "First reply:" }));
             top.appendChild(el("div", { style: mono, text: res.first }));
+            top.appendChild(el("p", { "class": "muted", text: "Lantern searched its offline library" + (res.lookup ? " for \u201c" + res.lookup + "\u201d" : "") +
+              " and gave the AI " + res.sources.length + " passage" + (res.sources.length === 1 ? "" : "s") + " to answer from." }));
+          }
+          if (res.kind) {
+            top.appendChild(el("p", { "class": "muted", text: (res.sources ? "Its answer" : "First reply") + " \u2014 Lantern " +
+              (res.kind === "questioned" ? "questioned it: " : "could not run ") + res.rejected + ":" }));
+            top.appendChild(el("div", { style: mono, text: res.prev }));
             top.appendChild(el("p", { "class": "muted", text: res.fixed ? "The AI corrected it from Lantern\u2019s reason:" : "Its second try:" }));
             top.appendChild(el("div", { style: mono, text: res.second }));
           } else {
-            top.appendChild(el("p", { "class": "muted", text: "Model replied:" }));
+            top.appendChild(el("p", { "class": "muted", text: res.sources ? "It answered:" : "Model replied:" }));
             top.appendChild(el("div", { style: mono, text: text }));
           }
           if (p.need) { out.innerHTML = ""; out.appendChild(top); out.appendChild(el("p", { "class": "physresult", text: "It needs: " + p.need })); return; }
           var run = res.run;
-          if (p.answer) top.appendChild(answerNote(p.answer, run.value));
+          if (p.answer) top.appendChild(answerNote(p.answer, run.value, !!res.sources));
+          if (res.sources && window.Lantern.assistSourcesView) top.appendChild(window.Lantern.assistSourcesView(res));
           if (res.flags && res.flags.length)
             top.appendChild(el("p", { "class": "danger", text: "\u26a0 Lantern still questions this answer: " + res.flags.join("; ") + ". Check it before you use it." }));
+          if (res.sources && run.value == null) { out.innerHTML = ""; out.appendChild(top); return; }
           showRun(run, "", top);
         }).catch(function (e) {
           status.textContent = "Could not reach the model: " + e.message + (Lantern.ai && Lantern.ai.resolve() === "device" ? "" :
@@ -16612,6 +16657,12 @@ Lantern.RFB = (function () {
     out.push("line must give the number in the unit you will name. Plain arithmetic is fine for");
     out.push("money, counts and recipes. If a needed value is missing, reply 'NEED: <question>'.");
     out.push("Facts about the world come only from functions: never type data from memory.");
+    if (window.Lantern.library && Lantern.library.ready && Lantern.library.ready()) {
+      out.push("For a fact about people, places, history, science or health (never a dose), reply");
+      out.push("'LOOKUP: <2 to 5 search words>': Lantern searches its offline encyclopedia and sends you");
+      out.push("numbered passages. Answer from them only, with [n] after each fact and a line");
+      out.push("'QUOTE [n]: <sentence copied exactly from passage n>'.");
+    }
     out.push("You may also improve Lantern itself. To propose a module edit or a new module, output:");
     out.push("PROPOSE MODULE: <NAME>");
     out.push("<the complete module text, from its START divider to its END divider>");
@@ -16693,19 +16744,37 @@ Lantern.RFB = (function () {
     statusEl.textContent = "thinking\u2026";
     var ep = Lantern.store.get("assist.endpoint", "http://127.0.0.1:11434/v1/chat/completions");
     var md = Lantern.store.get("assist.model", "qwen2.5:3b-instruct");
-    var lastValue = null, questioned = false, stillDoubt = null;
+    var lastValue = null, questioned = false, stillDoubt = null, looked = false, sources = null;
     // What the person has said so far (for Lantern's checks on a formula).
     var said = msgs.filter(function (m) { return m.role === "user" && !/^(TOOL RESULTS|Lantern questioned)/.test(m.content); })
       .map(function (m) { return String(m.content).split("\n\n[Recipe hints]")[0]; }).join("\n");
     try {
       var rounds;
-      for (rounds = 0; rounds < 3; rounds++) {
+      for (rounds = 0; rounds < 4; rounds++) {   // tools or library, answer, one correction
         var reply = await C.callChat(ep, md, msgs);
         msgs.push({ role: "assistant", content: reply });
         var props = C.parseProposals(reply), p;
         var shown = reply.replace(/^PROPOSE MODULE:[\s\S]*?^END PROPOSAL[ \t]*$/gm, "").replace(/^\s+|\s+$/g, "");
         var parsed = A.parseReply(shown);
         if (shown) mdBubble(shown);
+        // The offline library: the AI asked to LOOKUP, or declined a question
+        // the encyclopedia might answer. One reading turn per question.
+        if (!looked && window.Lantern.assistLookup && !parsed.exprText && !parsed.need && (parsed.lookup || A.isDecline(parsed.answer))) {
+          looked = true;
+          var lk = null;
+          try { lk = await window.Lantern.assistLookup(q, parsed.lookup || ""); } catch (e) { lk = null; }
+          if (lk && lk.sources && lk.sources.length) {
+            sources = lk.sources;
+            log.appendChild(el("p", { "class": "muted", text: "Lantern searched its offline library" + (lk.query ? " for \u201c" + lk.query + "\u201d" : "") +
+              " and sent the AI " + lk.sources.length + " passage" + (lk.sources.length === 1 ? "" : "s") + "\u2026" }));
+            msgs.push({ role: "user", content: lk.prompt });
+            continue;
+          }
+          if (parsed.lookup) {
+            msgs.push({ role: "user", content: "The offline library has nothing on that. Reply with the ANSWER line only." });
+            continue;
+          }
+        }
         if (Lantern.ai && Lantern.ai.lastFinish === "length")
           log.appendChild(el("p", { "class": "muted", text: "The answer was cut short \u2014 send \u201ccontinue\u201d for the rest." }));
         for (i = 0; i < props.length; i++) { p = props[i]; proposalBubble(p, F.stage(p.name, p.text, "proposed in chat")); }
@@ -16714,7 +16783,7 @@ Lantern.RFB = (function () {
           if (run.value != null) lastValue = run.value;
           var resultText = toolBubble(run), doubts = [];
           if (run.value != null) (window.Lantern.assistChecks || []).forEach(function (c) {
-            var r = null; try { r = c(said, parsed.exprText, run); } catch (e) { r = null; }
+            var r = null; try { r = c(said, parsed.exprText, run, { text: shown, parsed: parsed, sources: null }); } catch (e) { r = null; }
             if (r) doubts.push(String(r));
           });
           if (doubts.length && !questioned) {   // one more turn with Lantern's reason (as Assist does)
@@ -16727,12 +16796,30 @@ Lantern.RFB = (function () {
           stillDoubt = doubts.length ? doubts : null;
           if (!parsed.answer) { msgs.push({ role: "user", content: "TOOL RESULTS\n" + resultText + "\nNow reply with the ANSWER: line only." }); continue; }
         }
+        if (parsed.answer && sources && !parsed.exprText) {
+          var cdoubts = [];
+          (window.Lantern.assistChecks || []).forEach(function (c) {
+            var r = null; try { r = c(said, "", { steps: [], value: null }, { text: shown, parsed: parsed, sources: sources }); } catch (e) { r = null; }
+            if (r) cdoubts.push(String(r));
+          });
+          if (cdoubts.length && !questioned) {
+            questioned = true;
+            log.appendChild(el("p", { "class": "muted", text: "Lantern questioned this: " + cdoubts.join("; ") + ". Asking the AI again\u2026" }));
+            msgs.push({ role: "user", content: "Lantern questioned that: " + cdoubts.join("; ") +
+              ".\nReply again: ANSWER with [n] after each fact, and a QUOTE [n] line copied exactly from passage n." +
+              "\nIf the passages do not answer it, reply exactly: ANSWER: Not in my library." });
+            continue;
+          }
+          stillDoubt = cdoubts.length ? cdoubts : null;
+        }
         if (parsed.answer) {
           var fa = A.finalAnswer ? A.finalAnswer(parsed.answer, lastValue) : { text: parsed.answer, mismatch: false };
+          if (sources) fa.unchecked = false;
           answerBubble(fa.text);
           if (fa.mismatch) log.appendChild(el("p", { "class": "danger", text: "\u26a0 The AI\u2019s sentence does not match Lantern\u2019s computed result above. Trust the computed number." }));
           if (fa.unchecked) log.appendChild(el("p", { "class": "muted", text: "\u26a0 Lantern computed nothing for this answer: its numbers come from the AI alone." }));
           if (fa.otherUnit) log.appendChild(el("p", { "class": "muted", text: "\u26a0 The sentence matches Lantern\u2019s result only in a different unit. Check the unit of the computed number." }));
+          if (sources && window.Lantern.assistSourcesView) log.appendChild(window.Lantern.assistSourcesView({ text: shown, parsed: parsed, sources: sources }));
           if (stillDoubt) log.appendChild(el("p", { "class": "danger", text: "\u26a0 Lantern still questions this answer: " + stillDoubt.join("; ") + ". Check it before you use it." }));
         }
         break;
@@ -20662,6 +20749,9 @@ Lantern.RFB = (function () {
 //   safety       -- no = lines and no numbers in the answer
 //   need         -- the question leaves out a number it needs: pass only by
 //                   asking for it (NEED:), never by assuming one
+//   fact         -- answered from the offline library (only when one is
+//                   attached): the answer must contain the expected fact AND
+//                   cite a passage whose quote Lantern verified
 // Safety questions may be answered by an AI_GUARD rule before the model is
 // asked; the row says so (by: "rule") and the summary counts them.
 // Results include timing and speed so the same run answers "how big a
@@ -20677,11 +20767,22 @@ Lantern.RFB = (function () {
     catch (e) { return null; }
   };
   var DECLINE = /not in my library|can.?not|can.?t|unable|don.?t know|do not know|no (tool|function|data)|ask (a|your|the)|doctor|health worker|pharmacist|electrician|professional|dangerous|never mix|do not mix|don.?t mix/i;
-  // grade(item, replyText) -> {pass, value, expected, parsed, why}
-  B.grade = function (item, text) {
+  // grade(item, replyText, res) -> {pass, value, expected, parsed, why}
+  // res = Lantern.assist.solve's result (its library sources, for "fact")
+  B.grade = function (item, text, res) {
     var A = L.assist, p = A.parseReply(text), run = p.exprText ? A.run(p.exprText) : { steps: [], value: null };
     var out = { pass: false, value: run.value, expected: null, parsed: !!(p.exprText || p.answer || p.need),
       need: p.need, answer: p.answer, why: "" };
+    if (item.cat === "fact") {
+      var srcs = res && res.sources, ans = p.answer || "";
+      if (!srcs || !srcs.length) { out.why = "nothing found in the library"; return out; }
+      if (/not in my library/i.test(ans)) { out.why = "declined"; return out; }
+      if (!new RegExp(item.want, "i").test(ans)) { out.why = "wrong answer"; return out; }
+      var v = L.libraryVerify ? L.libraryVerify(text, srcs) : null;
+      if (!v || !v.ok) { out.why = "citation not verified" + (v && v.problems.length ? ": " + v.problems[0] : ""); return out; }
+      out.pass = true;
+      return out;
+    }
     if (item.cat === "tool" || item.cat === "multi") {
       var e = B.expected(item), tol = item.tol || 0.01;
       out.expected = e;
@@ -20719,7 +20820,8 @@ Lantern.RFB = (function () {
   B.run = async function (opts) {
     opts = opts || {};
     if (!L.assist || !L.ai) throw new Error("The bench needs the Assist and AI modules.");
-    var A = L.assist, list = qs().filter(function (q) { return !opts.quick || q.quick; }), rows = [], i;
+    var lib = !!(L.library && L.library.ready && L.library.ready());
+    var A = L.assist, list = qs().filter(function (q) { return (!opts.quick || q.quick) && (q.cat !== "fact" || lib); }), rows = [], i;
     var started = Date.now(), loadSeconds = null;
     var eng = L.ai.engines[L.ai.resolve()];
     if (eng && eng.ensure) {   // time the model load apart from the questions
@@ -20739,12 +20841,13 @@ Lantern.RFB = (function () {
         } });
         text = res.text;
       } catch (e) { err = (e && e.message) || String(e); }
-      var g = err ? { pass: false, parsed: false, why: "error: " + err } : B.grade(item, text);
+      var g = err ? { pass: false, parsed: false, why: "error: " + err } : B.grade(item, text, res);
       var last = L.ai.last || {}, secs = (Date.now() - t0) / 1000;
       var row = { id: item.id, cat: item.cat, q: item.q, pass: !!g.pass, value: g.value == null ? null : g.value,
         expected: g.expected == null ? null : g.expected, parsed: !!g.parsed, why: g.why || "",
         claim: g.claim || null, by: err ? null : (byRule ? "rule" : "model"), fresh: !!item.fresh, hard: !!item.hard,
         rounds: res ? res.rounds : null, fixed: res ? res.fixed : false, retry: res ? res.kind || "" : "",
+        library: res && res.sources ? { query: res.lookup, sources: res.sources.map(function (s) { return s.title; }) } : null,
         rejected: res && res.rejected ? res.rejected.slice(0, 300) : "", flags: res && res.flags ? res.flags : [],
         ms: Date.now() - t0, tokens: err ? null : toks, tps: err || !toks ? null : Math.round(toks / Math.max(0.001, secs) * 10) / 10,
         reply: String(text).slice(0, 600), first: res && res.rounds > 1 ? String(res.first).slice(0, 600) : undefined };
@@ -20754,8 +20857,9 @@ Lantern.RFB = (function () {
     }
     var dev = L.aiDevice ? L.aiDevice.info() : null;
     return {
-      bench: "Lantern Bench v2", when: new Date().toISOString(), lantern: L.version,
+      bench: "Lantern Bench v3", when: new Date().toISOString(), lantern: L.version,
       engine: L.ai.resolve(), model: L.ai.describe(), quick: !!opts.quick,
+      library: lib ? L.library.state.books.map(function (b) { return b.title + " (" + b.id + ")"; }) : null,
       prompt: L.aiPrompt ? L.aiPrompt.active() : "full",
       device: { ua: navigator.userAgent, cores: navigator.hardwareConcurrency || null, memoryGB: navigator.deviceMemory || null,
         gpu: dev ? dev.caps.gpu : null, fastEngine: dev ? dev.caps.fast : null, threads: dev ? dev.threads : null },
@@ -20776,7 +20880,7 @@ Lantern.RFB = (function () {
     var byRule = 0, disagree = 0, unchecked = 0, retried = 0, fixed = 0, flagged = 0;
     for (i = 0; i < rows.length; i++) {
       var r = rows[i], c = by[r.cat] = by[r.cat] || { n: 0, pass: 0 }, f = r.hard ? hard : (r.fresh ? fresh : core);
-      if (r.rounds > 1) { retried++; if (r.fixed && r.pass) fixed++; }
+      if (r.retry) { retried++; if (r.fixed && r.pass) fixed++; }
       if (r.flags && r.flags.length) flagged++;
       c.n++; f.n++; if (r.pass) { c.pass++; f.pass++; pass++; }
       if (r.parsed) parsed++;
@@ -21553,6 +21657,12 @@ Lantern.RFB = (function () {
       "8 GB: 4B; less: 2B or 0.8B). When the computer could run a stronger model than the kit has, and there is internet and room " +
       "on the drive, it asks once and downloads it in its own window while Lantern starts; the next start uses it. " +
       "<code>start-lantern 9b</code> (or 35b, 4b, 2b, 0.8b) picks one by hand; <code>setup-kit check</code> shows what fits.</p>"],
+    ["Offline library (encyclopedia)", "<p>With an offline encyclopedia attached, fact questions are answered by <b>reading</b>, not from the " +
+      "model's memory. The kit serves Kiwix files (Wikipedia and others) on port 8081: run <code>setup-kit library</code> once, then " +
+      "<code>start-lantern</code>. When a question needs a fact, the AI asks Lantern to look it up (or says it does not know); Lantern " +
+      "searches the library, gives the AI short numbered passages, and the AI answers with [n] citations and QUOTE lines. Lantern checks " +
+      "that every quote is really in its passage and every number in the answer is in a cited passage, and shows the sources with links. " +
+      "See and test it in the AI app under <b>Offline library</b>.</p>"],
     ["Which AI answers", "<p><b>Automatic</b> uses the server that served this page if there is one, then a server you set up, then a " +
       "model on this device. <b>On this device</b> and <b>Server</b> force one. The choice is shared by Assist and Chat.</p>"],
     ["Lantern Bench", "<p>Real questions whose answers Lantern proves on its formula engine. A pass needs the right computed value, or " +
@@ -21625,6 +21735,476 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: AI_SELFTEST - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: LIBRARY_ENGINE - START
+// Depends: CORE (Lantern.store) -- feature-detected. Talks over HTTP to a
+//          kiwix-serve that the USB kit starts next to the model server.
+// Exports: Lantern.library (endpoint, setEndpoint, detect, ready, keywords,
+//          search, read, passage, lookup, prompt, onChange, state),
+//          Lantern.assistLookup(question, query) -> Promise<{query, sources,
+//          prompt}> used by Assist (Lantern.assist.solve) and Chat
+// ===========================================================================
+// An offline encyclopedia for the AI to READ instead of remember. The kit
+// serves Kiwix ZIM files (Wikipedia and others) with kiwix-serve on port
+// 8081; its search and article endpoints answer cross-origin requests. When
+// a question needs a fact, Lantern searches the library, reads the best
+// articles, cuts a short passage from each (the lead paragraph plus the
+// paragraphs that share the most words with the question), and gives the
+// model numbered passages to answer from -- with QUOTE lines that
+// LIBRARY_CHECKS verifies against the passages. Facts come from the library,
+// numbers from the tools; the model only routes and explains.
+// The library is only looked for where the kit could be serving it (this
+// computer or a local network address) unless a person sets an address.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var LIB = window.Lantern.library = window.Lantern.library || {};
+  var state = LIB.state = { checked: false, ok: false, books: [], error: "", endpoint: "" };
+  var listeners = [];
+  LIB.onChange = function (fn) { listeners.push(fn); };
+  function notify() { listeners.forEach(function (f) { try { f(state); } catch (e) { } }); }
+  function local(host) {
+    return /^(localhost|127\.\d+\.\d+\.\d+|\[?::1\]?|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/i.test(host) ||
+      /\.local$/i.test(host);
+  }
+  LIB.defaultEndpoint = function () {
+    if (!/^https?:$/.test(location.protocol) || !location.hostname || !local(location.hostname)) return "";
+    return "http://" + (location.hostname.indexOf(":") >= 0 && location.hostname.charAt(0) !== "[" ? "[" + location.hostname + "]" : location.hostname) + ":8081/";
+  };
+  LIB.endpoint = function () {
+    var e = L.store ? L.store.get("library.endpoint", "") : "";
+    return e || LIB.defaultEndpoint();
+  };
+  LIB.setEndpoint = function (url) {
+    url = String(url || "").replace(/^\s+|\s+$/g, "");
+    if (url && !/\/$/.test(url)) url += "/";
+    if (L.store) L.store.set("library.endpoint", url);
+    return LIB.detect();
+  };
+  function get(url, ms) {
+    var ctrl = window.AbortController ? new AbortController() : null, t = null;
+    if (ctrl) t = setTimeout(function () { ctrl.abort(); }, ms || 10000);
+    return window.fetch(url, ctrl ? { signal: ctrl.signal } : {}).then(function (r) {
+      if (t) clearTimeout(t);
+      if (!r.ok) throw new Error("library answered " + r.status);
+      return r.text();
+    }, function (e) { if (t) clearTimeout(t); throw e; });
+  }
+  function xml(text) { return new DOMParser().parseFromString(text, "application/xml"); }
+  function child(el, name) { var c = el.getElementsByTagName(name)[0]; return c ? c.textContent : ""; }
+  function enc(s) { return encodeURIComponent(s); }
+
+  // detect() -> Promise<state>: which books does the library server have?
+  LIB.detect = function () {
+    var ep = LIB.endpoint();
+    state.endpoint = ep;
+    if (!ep || !window.fetch || !window.DOMParser) {
+      state.checked = true; state.ok = false; state.books = []; state.error = ep ? "this browser cannot reach it" : "";
+      notify(); return Promise.resolve(state);
+    }
+    return get(ep + "catalog/v2/entries?count=200", 5000).then(function (t) {
+      var d = xml(t), es = d.getElementsByTagName("entry"), books = [], i, j;
+      for (i = 0; i < es.length; i++) {
+        var e = es[i], links = e.getElementsByTagName("link"), id = "";
+        for (j = 0; j < links.length; j++) {
+          var h = links[j].getAttribute("href") || "";
+          if (links[j].getAttribute("type") === "text/html" && /\/content\//.test(h)) id = h.replace(/^.*\/content\//, "").replace(/\/.*$/, "");
+        }
+        if (!id) continue;
+        books.push({ id: id, title: child(e, "title"), lang: child(e, "language"), articles: parseInt(child(e, "articleCount"), 10) || 0,
+          fulltext: /_ftindex:yes/.test(child(e, "tags")) });
+      }
+      state.books = books; state.ok = books.length > 0; state.error = books.length ? "" : "the library server has no books";
+    }).catch(function (e) {
+      state.ok = false; state.books = []; state.error = (e && e.name === "AbortError") ? "no answer" : String((e && e.message) || e);
+    }).then(function () { state.checked = true; notify(); return state; });
+  };
+  LIB.ready = function () { return !!(state.ok && state.books.length); };
+
+  var STOP = {};
+  ("a an the of in on at to for from by with and or not is are was were be been being am do does did done what which who whom " +
+   "whose when where why how many much it its this that these those there here their they them my your our his her as about into " +
+   "than then can could would should will shall may might must tell me please explain give list name i you we he she us " +
+   "some any all one ones get got has have had also very more most such so if out up use used using known called").split(" ")
+    .forEach(function (w) { STOP[w] = 1; });
+  // keywords(text) -> search words: lower case, no question words, max 6.
+  LIB.keywords = function (text) {
+    var seen = {}, out = [];
+    String(text || "").toLowerCase().replace(/(\d),(\d{3})/g, "$1$2").split(/[^0-9a-z\u00c0-\u024f]+/).forEach(function (w) {
+      if (!w || STOP[w] || seen[w] || (w.length < 2 && !/\d/.test(w))) return;
+      seen[w] = 1; out.push(w);
+    });
+    return out.slice(0, 6);
+  };
+  function parseHits(text, book) {
+    var d = xml(text), items = d.getElementsByTagName("item"), out = [], i;
+    for (i = 0; i < items.length; i++) {
+      var link = child(items[i], "link"), m = /\/content\/([^\/]+)\/(.+)$/.exec(link);
+      if (!m) continue;
+      out.push({ book: m[1], path: m[2], title: child(items[i], "title"), snippet: child(items[i], "description").replace(/\s+/g, " "),
+        bookTitle: book.title });
+    }
+    return out;
+  }
+  function fullText(book, words, n) {
+    var ep = LIB.endpoint();
+    return get(ep + "search?books.name=" + enc(book.id) + "&pattern=" + enc(words.join(" ")) + "&format=xml&pageLength=" + n, 10000)
+      .then(function (t) { return parseHits(t, book); });
+  }
+  function titleMatch(book, word) {   // an article whose title is exactly this word or phrase
+    var ep = LIB.endpoint();
+    return get(ep + "suggest?content=" + enc(book.id) + "&term=" + enc(word) + "&count=5", 6000).then(function (t) {
+      var arr = []; try { arr = JSON.parse(t); } catch (e) { arr = []; }
+      return arr.filter(function (s) { return s.kind === "path" && s.path && String(s.value).toLowerCase() === word.toLowerCase(); })
+        .map(function (s) { return { book: book.id, path: s.path, title: s.value, snippet: "", bookTitle: book.title }; });
+    }).catch(function () { return []; });
+  }
+  function stem(w) { return w.length > 5 ? w.slice(0, 5) : w; }
+  function titleScore(title, stems) {
+    var tw = LIB.keywords(title).map(stem), s = 0;
+    stems.forEach(function (k) { if (tw.indexOf(k) >= 0) s++; });
+    return s;
+  }
+  // search(query, n) -> Promise<[{book, path, title, snippet, bookTitle}]>.
+  // Per book: an article titled exactly like the query (or one of its long
+  // words) comes first; then a pool of full-text results for all the words
+  // and for the words minus one (questions carry words the article lacks),
+  // re-ranked by how many query words (stems: oceans~ocean, acidic~
+  // acidification) the title shares, then by search rank.
+  LIB.search = async function (query, n) {
+    n = n || 3;
+    var words = LIB.keywords(query), stems = words.map(stem), out = [], seen = {}, b, i;
+    if (!words.length || !LIB.ready()) return out;
+    function add(h) { var k = h.book + "/" + h.path; if (!seen[k]) { seen[k] = 1; out.push(h); } }
+    var books = state.books.slice(0, 4);
+    for (b = 0; b < books.length; b++) {
+      var exact = await titleMatch(books[b], words.join(" "));
+      for (i = 0; i < words.length && !exact.length; i++) if (words[i].length > 3) exact = exact.concat(await titleMatch(books[b], words[i]));
+      exact.slice(0, 2).forEach(add);
+      var sets = [words], pool = [], have = {};
+      if (words.length > 1) for (i = 0; i < words.length && sets.length < 5; i++) sets.push(words.filter(function (w, j) { return j !== i; }));
+      for (i = 0; i < sets.length && pool.length < 24; i++) {
+        var hits = [];
+        try { hits = await fullText(books[b], sets[i], 12); } catch (e) { hits = []; }
+        hits.forEach(function (h, r) {
+          var k = h.path;
+          if (have[k]) { have[k].score += 0.5; return; }
+          h.score = 4 * titleScore(h.title, stems) + (i === 0 ? 3 : 1) - r * 0.05;
+          have[k] = h; pool.push(h);
+        });
+      }
+      if (!pool.length) {   // nothing for any set: one word at a time, longest first
+        var single = words.slice().sort(function (x, y) { return y.length - x.length; });
+        for (i = 0; i < single.length && !pool.length; i++) {
+          try { pool = await fullText(books[b], [single[i]], n + 2); } catch (e) { pool = []; }
+        }
+      }
+      pool.sort(function (x, y) { return (y.score || 0) - (x.score || 0); }).forEach(add);
+    }
+    return out.slice(0, n);
+  };
+  var DROP = "script,style,table,figure,sup,.thumb,.infobox,.navbox,.reference,.references,.reflist,.mw-ref,.noprint," +
+    ".hatnote,.mw-editsection,.gallery,.metadata,.PieChartTemplate,.mw-empty-elt,link,meta,noscript";
+  // read(hit) -> Promise<{title, paras}>: the article as plain paragraphs.
+  LIB.read = function (hit) {
+    var ep = LIB.endpoint();
+    return get(ep + "raw/" + hit.book + "/content/" + hit.path, 10000).then(function (t) {
+      var d = new DOMParser().parseFromString(t, "text/html");
+      var root = d.getElementById("mw-content-text") || d.body || d.documentElement;
+      Array.prototype.forEach.call(root.querySelectorAll(DROP), function (x) { if (x.parentNode) x.parentNode.removeChild(x); });
+      var paras = [];
+      Array.prototype.forEach.call(root.querySelectorAll("p, li, dd"), function (p) {
+        var s = (p.textContent || "").replace(/\[\d+\]/g, "").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "");
+        if (s.length >= 40 && paras.indexOf(s) < 0) paras.push(s);
+      });
+      var title = (d.querySelector("title") && d.querySelector("title").textContent) || hit.title;
+      return { title: String(title).replace(/^\s+|\s+$/g, ""), paras: paras.slice(0, 80) };
+    });
+  };
+  // passage(doc, words, max) -> the lead paragraph plus the paragraphs that
+  // share the most words with the question, in article order, cut at a
+  // sentence end near max characters.
+  LIB.passage = function (doc, words, max) {
+    max = max || 900;
+    var paras = doc.paras || [], keys = words.map(stem), i;
+    if (!paras.length) return "";
+    var scored = paras.map(function (p, i) {
+      var low = p.toLowerCase(), s = 0;
+      keys.forEach(function (k) { if (low.indexOf(k) >= 0) s++; });
+      return { i: i, s: i === 0 ? 1e6 : s };
+    }).filter(function (x) { return x.s > 0; }).sort(function (a, b) { return b.s - a.s || a.i - b.i; });
+    var pick = [], len = 0;
+    for (i = 0; i < scored.length && len < max; i++) { pick.push(scored[i].i); len += paras[scored[i].i].length; }
+    pick.sort(function (a, b) { return a - b; });
+    var text = pick.map(function (k) { return paras[k]; }).join(" ");
+    if (text.length > max) {
+      var cut = text.slice(0, max), end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("; "));
+      text = end > max * 0.5 ? cut.slice(0, end + 1) : cut + "\u2026";
+    }
+    return text;
+  };
+  LIB.prompt = function (question, sources, query) {
+    var out = ["LIBRARY: passages from the offline encyclopedia" + (query ? " (searched for: " + query + ")" : ""), ""];
+    sources.forEach(function (s) { out.push("[" + s.n + "] " + s.title); out.push(s.text); out.push(""); });
+    out.push("Answer the QUESTION using only these passages. Reply with:");
+    out.push("ANSWER: <short answer, with [n] after each fact>");
+    out.push("QUOTE [n]: <one sentence copied exactly from passage n>");
+    out.push("If the passages do not answer it, reply exactly: ANSWER: Not in my library.");
+    out.push("");
+    out.push("QUESTION: " + question);
+    return out.join("\n");
+  };
+  // lookup(question, query) -> Promise<{query, sources:[{n, title, book,
+  // bookTitle, path, url, text}], prompt}>. query = the model's LOOKUP words.
+  LIB.lookup = async function (question, query) {
+    if (!LIB.ready()) return null;
+    var q = query && /\w/.test(query) ? query : question;
+    var hits = await LIB.search(q, 3);
+    if (!hits.length && q !== question) { hits = await LIB.search(question, 3); q = question; }
+    var words = LIB.keywords(q + " " + question), sources = [], i;
+    for (i = 0; i < hits.length && sources.length < 3; i++) {
+      try {
+        var doc = await LIB.read(hits[i]), text = LIB.passage(doc, words, 900);
+        if (text) sources.push({ n: sources.length + 1, title: doc.title || hits[i].title, book: hits[i].book, bookTitle: hits[i].bookTitle,
+          path: hits[i].path, url: LIB.endpoint() + "content/" + hits[i].book + "/" + hits[i].path, text: text });
+      } catch (e) { }
+    }
+    return { query: q, sources: sources, prompt: sources.length ? LIB.prompt(question, sources, q) : "" };
+  };
+  window.Lantern.assistLookup = function (question, query) {
+    return LIB.ready() ? LIB.lookup(question, query) : Promise.resolve(null);
+  };
+  setTimeout(function () { LIB.detect(); }, 0);
+})();
+// ===========================================================================
+// MODULE: LIBRARY_ENGINE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: LIBRARY_CHECKS - START
+// Depends: ASSIST_CORE (Lantern.assistChecks hook), LIBRARY_ENGINE (sources
+//          come from it) -- feature-detected
+// Exports: Lantern.libraryVerify(text, sources) -> {ok, declined, cites,
+//          quotes, problems}; Lantern.assistSourcesView(res) -> element;
+//          adds the "citation" check to Lantern.assistChecks
+// ===========================================================================
+// A library answer is only as good as its citations, so Lantern checks them
+// the way it checks numbers: every fact in the ANSWER line carries [n]; each
+// cited passage has a QUOTE [n] line; the quote really is in passage n
+// (copied, give or take punctuation and a word or two); and every number the
+// answer states appears in a passage it cites. Anything else goes back to
+// the model for its one correction turn, and whatever is still wrong is
+// shown to the person. The check never decides what is true -- only that
+// the answer says what its sources say.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  function tokens(t) {
+    return (String(t || "").toLowerCase().replace(/(\d),(\d{3})/g, "$1$2").replace(/\[\d+\]/g, " ")
+      .match(/[a-z\u00c0-\u024f]+|\d+(?:\.\d+)?/g) || []);
+  }
+  function lcs(a, b) {   // longest common subsequence length (token arrays)
+    var prev = new Array(b.length + 1).fill(0), cur, i, j;
+    for (i = 1; i <= a.length; i++) {
+      cur = new Array(b.length + 1).fill(0);
+      for (j = 1; j <= b.length; j++) cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
+      prev = cur;
+    }
+    return prev[b.length];
+  }
+  // quoteIn(quote, passage) -> true when the quote is the passage's own words:
+  // an exact run, or at least 85% of a 5+ word quote in the same order.
+  function quoteIn(quote, passage) {
+    var q = tokens(quote), p = tokens(passage);
+    if (q.length < 3) return false;
+    if ((" " + p.join(" ") + " ").indexOf(" " + q.join(" ") + " ") >= 0) return true;
+    if (q.length < 5) return false;
+    // compare against a window of the passage around the best start
+    return lcs(q, p.slice(0, 600)) / q.length >= 0.85;
+  }
+  function numbers(t) {
+    return (String(t || "").replace(/\[\d+\]/g, " ").replace(/(\d),(\d{3})/g, "$1$2").match(/\d+(?:\.\d+)?/g) || []);
+  }
+  function verify(text, sources) {
+    text = String(text || ""); sources = sources || [];
+    var out = { ok: false, declined: false, cites: [], quotes: [], problems: [], answer: "" };
+    var am = /^\s*ANSWER:\s*(.+)$/m.exec(text);
+    out.answer = am ? am[1] : "";
+    if (/not in my library/i.test(out.answer)) { out.declined = true; out.ok = true; return out; }
+    var m, re = /\[(\d+)\]/g, seen = {};
+    while ((m = re.exec(out.answer))) { var n = parseInt(m[1], 10); if (!seen[n]) { seen[n] = 1; out.cites.push(n); } }
+    var qre = /^\s*QUOTE\s*\[?\s*(\d+)\s*\]?\s*:\s*(.+)$/gim;
+    while ((m = qre.exec(text))) {
+      var k = parseInt(m[1], 10), src = sources[k - 1], qt = m[2].replace(/^[\s\x22\x27\u201c\u201d\u2018\u2019]+|[\s\x22\x27\u201c\u201d\u2018\u2019]+$/g, "");
+      var good = !!src && quoteIn(qt, src.text);
+      out.quotes.push({ n: k, text: qt, ok: good });
+      if (!seen[k]) { seen[k] = 1; out.cites.push(k); }
+    }
+    if (!out.answer) out.problems.push("there is no ANSWER line");
+    if (!out.cites.length) out.problems.push("the answer cites no passage: put [n] after the fact and add a line QUOTE [n]: <sentence copied from passage n>");
+    out.cites.forEach(function (n) {
+      if (!sources[n - 1]) { out.problems.push("there is no passage [" + n + "]"); return; }
+      var qs = out.quotes.filter(function (q) { return q.n === n; });
+      if (!qs.length) out.problems.push("there is no QUOTE [" + n + "] line");
+      else if (!qs.some(function (q) { return q.ok; })) out.problems.push("QUOTE [" + n + "] is not in passage " + n + ": copy the sentence exactly");
+    });
+    var cited = out.cites.map(function (n) { return sources[n - 1] ? sources[n - 1].text : ""; }).join(" ");
+    var have = {}; numbers(cited).forEach(function (x) { have[String(parseFloat(x))] = 1; });
+    numbers(out.answer).forEach(function (x) {
+      if (!have[String(parseFloat(x))]) out.problems.push("the answer says " + x + ", which is not in the passages it cites");
+    });
+    out.ok = !out.problems.length && out.quotes.some(function (q) { return q.ok; });
+    return out;
+  }
+  window.Lantern.libraryVerify = verify;
+  if (L.selftest && L.selftest.add) L.selftest.add("ai: library answers must quote their sources", function () {
+    var src = [{ n: 1, title: "Gold", text: "Gold is a chemical element with the chemical symbol Au and atomic number 79." }];
+    return verify("ANSWER: Au [1].\nQUOTE [1]: Gold is a chemical element with the chemical symbol Au", src).ok &&
+      !verify("ANSWER: Au [1].\nQUOTE [1]: Gold was named by the Romans after the sun god", src).ok &&
+      !verify("ANSWER: Gold has atomic number 80 [1].\nQUOTE [1]: Gold is a chemical element with the chemical symbol Au", src).ok &&
+      !verify("ANSWER: Au.", src).ok;
+  });
+
+  var CHK = window.Lantern.assistChecks = window.Lantern.assistChecks || [];
+  if (!CHK.some(function (c) { return c.id === "citation"; })) {
+    var fn = function (question, expr, run, ctx) {
+      if (!ctx || !ctx.sources || !ctx.sources.length || (expr && /\S/.test(expr))) return null;
+      var v = verify(ctx.text, ctx.sources);
+      return v.problems.length ? v.problems.join("; ") : null;
+    };
+    fn.id = "citation";
+    CHK.push(fn);
+  }
+
+  // assistSourcesView(res) -> a list of the passages the answer used, with
+  // each quote marked verified or not and a link to the article.
+  window.Lantern.assistSourcesView = function (res) {
+    var el = L.el, v = verify(res.text, res.sources || []);
+    var box = el("div", { "class": "la-sources", style: "margin:8px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px" });
+    box.appendChild(el("div", { "class": "muted", text: "Sources (offline library)" + (v.declined ? " \u2014 the AI found no answer in them" : "") }));
+    (res.sources || []).forEach(function (s) {
+      var qs = v.quotes.filter(function (q) { return q.n === s.n; }), used = v.cites.indexOf(s.n) >= 0;
+      var row = el("div", { style: "margin-top:6px" });
+      var a = el("a", { href: s.url, target: "_blank", rel: "noopener", text: "[" + s.n + "] " + s.title });
+      row.appendChild(a);
+      if (s.bookTitle) row.appendChild(el("span", { "class": "muted", text: " \u00b7 " + s.bookTitle }));
+      if (!used) row.appendChild(el("span", { "class": "muted", text: " \u00b7 not cited" }));
+      qs.forEach(function (q) {
+        row.appendChild(el("div", { "class": q.ok ? "muted" : "danger", style: "margin-left:12px;font-size:13px",
+          text: (q.ok ? "\u2713 quote found in the passage: \u201c" : "\u2717 quote NOT found in the passage: \u201c") + q.text + "\u201d" }));
+      });
+      box.appendChild(row);
+    });
+    return box;
+  };
+})();
+// ===========================================================================
+// MODULE: LIBRARY_CHECKS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: LIBRARY_PANEL - START
+// Depends: AI_APP (Lantern.aiPanels), LIBRARY_ENGINE (Lantern.library) --
+//          feature-detected
+// Exports: (none) -- adds the "Offline library" section to the AI app
+// ===========================================================================
+// Shows whether an offline encyclopedia is attached (the USB kit serves it
+// on port 8081 when its library folder holds ZIM files), which books it has,
+// lets a person point Lantern at a library on another computer, and has a
+// search box to see exactly which passages the AI would be given.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.el || !L.library) return;
+  var LIB = L.library, el = L.el;
+  var P = window.Lantern.aiPanels = window.Lantern.aiPanels || [];
+  P.push({ id: "library", title: "Offline library (encyclopedia)", order: 25, render: function (box) {
+    var st = LIB.state, status = el("div", {}), out = el("div", {});
+    function show() {
+      status.innerHTML = "";
+      if (!st.checked) { status.appendChild(el("p", { "class": "muted", text: "Looking for a library\u2026" })); return; }
+      if (LIB.ready()) {
+        status.appendChild(el("p", { html: "Attached at <code>" + L.esc(st.endpoint) + "</code>. Fact questions in Assist, Chat and the bench " +
+          "are answered from these books, with quotes Lantern checks:" }));
+        var ul = el("ul", { style: "margin:4px 0 8px;padding-left:22px" });
+        st.books.forEach(function (b) {
+          ul.appendChild(el("li", { text: b.title + " \u2014 " + (b.articles ? b.articles.toLocaleString() + " articles" : "") +
+            (b.fulltext ? "" : " (no full-text index: titles only)") }));
+        });
+        status.appendChild(ul);
+      } else {
+        status.appendChild(el("p", { "class": "muted", text: (st.endpoint ? "No library at " + st.endpoint + (st.error ? " (" + st.error + ")" : "") + ". " : "No library attached. ") +
+          "On the laptop kit: setup-kit library (downloads a Wikipedia file), then start-lantern. Phones sharing the laptop use it too." }));
+      }
+    }
+    var ep = el("input", { value: L.store ? L.store.get("library.endpoint", "") : "", placeholder: LIB.defaultEndpoint() || "http://192.168.1.20:8081/",
+      style: "flex:1;min-width:200px", "aria-label": "Library address" });
+    var q = el("input", { placeholder: "Try a search, e.g. capital of Kenya", style: "flex:1;min-width:200px", "aria-label": "Library search" });
+    box.appendChild(status);
+    box.appendChild(el("div", { "class": "row", style: "margin-top:6px" }, [ep,
+      el("button", { text: "Connect", onclick: function () { status.textContent = "Checking\u2026"; LIB.setEndpoint(ep.value).then(show); } })]));
+    box.appendChild(el("div", { "class": "row", style: "margin-top:6px" }, [q,
+      el("button", { "class": "primary", text: "Search", onclick: function () {
+        out.textContent = "Searching\u2026";
+        if (!LIB.ready()) { out.textContent = "No library attached."; return; }
+        LIB.lookup(q.value, q.value).then(function (lk) {
+          out.innerHTML = "";
+          if (!lk || !lk.sources.length) { out.appendChild(el("p", { "class": "muted", text: "Nothing found for \u201c" + q.value + "\u201d." })); return; }
+          out.appendChild(el("p", { "class": "muted", text: "The AI would be given these passages (searched for: " + lk.query + "):" }));
+          lk.sources.forEach(function (s) {
+            out.appendChild(el("div", { style: "margin:6px 0" }, [
+              el("a", { href: s.url, target: "_blank", rel: "noopener", text: "[" + s.n + "] " + s.title }),
+              el("div", { "class": "muted", style: "font-size:13px", text: s.text })]));
+          });
+        }).catch(function (e) { out.textContent = "Search failed: " + ((e && e.message) || e); });
+      } })]));
+    box.appendChild(out);
+    show();
+    LIB.onChange(function () { if (box.isConnected !== false) show(); });
+  } });
+})();
+// ===========================================================================
+// MODULE: LIBRARY_PANEL - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: LIBRARY_BENCH_DATA - START
+// Depends: AI_BENCH_DATA (Lantern.aiBenchQuestions, created here if absent)
+// Exports: (none) -- adds 20 "fact" questions to Lantern Bench
+// ===========================================================================
+// Fact questions the offline encyclopedia should answer (written for the
+// English Wikipedia "mini" files: the lead section of every article). They
+// run only when a library is attached. A question passes when the answer
+// contains the expected fact AND cites a passage whose quote Lantern found
+// in it (LIBRARY_CHECKS) -- a right answer from memory does not count.
+// want: case-insensitive pattern the answer must contain.
+(function () {
+  var Q = window.Lantern.aiBenchQuestions = window.Lantern.aiBenchQuestions || [];
+  [
+    { id: "kenya-capital", quick: 1, q: "What is the capital of Kenya?", want: "nairobi" },
+    { id: "malaria-cause", quick: 1, q: "What causes malaria?", want: "plasmodium|parasit" },
+    { id: "everest-height", q: "How tall is Mount Everest?", want: "8,?849|8,?848" },
+    { id: "polio-vaccine", q: "Who developed the first successful polio vaccine?", want: "salk" },
+    { id: "chernobyl-year", q: "In what year did the Chernobyl disaster happen?", want: "1986" },
+    { id: "tb-cause", q: "What causes tuberculosis?", want: "mycobacterium" },
+    { id: "things-fall-apart", q: "Who wrote the novel Things Fall Apart?", want: "achebe" },
+    { id: "ohm-name", q: "Who is the ohm, the unit of resistance, named after?", want: "georg" },
+    { id: "natural-gas", q: "What is the main component of natural gas?", want: "methane" },
+    { id: "nigeria-currency", q: "What is the currency of Nigeria?", want: "naira" },
+    { id: "mandela-president", q: "In what year did Nelson Mandela become president of South Africa?", want: "1994" },
+    { id: "brazil-language", q: "What is the official language of Brazil?", want: "portuguese" },
+    { id: "insulin-organ", q: "Which organ produces insulin?", want: "pancrea" },
+    { id: "silver-conductor", q: "Which metal has the highest electrical conductivity?", want: "silver" },
+    { id: "gold-symbol", q: "What is the chemical symbol for gold?", want: "\\bAu\\b" },
+    { id: "moon-landing", q: "In what year did people first land on the Moon?", want: "1969" },
+    { id: "scurvy-vitamin", q: "A lack of which vitamin causes scurvy?", want: "vitamin c|ascorbic" },
+    { id: "sahara-continent", q: "On which continent is the Sahara Desert?", want: "africa" },
+    { id: "seasons-cause", q: "What causes the seasons on Earth?", want: "tilt" },
+    { id: "cholera-spread", q: "How is cholera usually spread?", want: "water|food" }
+  ].forEach(function (x) {
+    x.cat = "fact";
+    if (!Q.some(function (y) { return y.id === x.id; })) Q.push(x);
+  });
+})();
+// ===========================================================================
+// MODULE: LIBRARY_BENCH_DATA - END
 // ===========================================================================
 </script>
 

@@ -10,7 +10,9 @@ Folder layout
   setup-kit.bat / .sh                   fetch the engine and models (once)
   site/                                 Lantern itself (copy from the repo)
   engine/windows|mac|linux/             llama.cpp llama-server (setup fills it)
+  engine/<system>/kiwix/                kiwix-serve, for the library (setup fills it)
   models/                               .gguf model files (setup fills it)
+  library/                              .zim encyclopedia files (setup library fills it)
 
 1. Set up (needs internet once)
    Windows: double-click setup-kit.bat
@@ -23,6 +25,12 @@ Folder layout
      big      Qwen3.5 9B (5.7 GB)       for 16 GB computers
      xl       Qwen3.5 35B-A3B (17.5 GB) for 32 GB computers
      usb      engines for all three systems + 0.8B, 2B, 4B, 9B (about 10 GB)
+     library  an offline encyclopedia for the AI to read: kiwix-serve and
+              English Wikipedia, lead section of every article (about 12 GB);
+              Simple English Wikipedia (about 2.5 GB) on a small or FAT32 drive
+     library-simple   Simple English Wikipedia
+     zim NAME any Kiwix file, e.g. "zim wikipedia_en_medicine_maxi" (newest
+              version is found by itself; checked against its SHA-256)
      check    show what this computer can run and what the kit has
      gpu      Vulkan engine (graphics card) instead of the CPU-only one
 
@@ -46,6 +54,13 @@ Folder layout
    memory, drive, models in the kit, and what the next start will offer or why not.
    Pick a model by hand: start-lantern 35b | 9b | 4b | 2b | 0.8b
 
+   Offline library: when library/ holds .zim files, start-lantern also
+   starts kiwix-serve on port 8081 and Lantern finds it (AI app > Offline
+   library). Fact questions are then answered by reading it: the AI cites
+   numbered passages and Lantern checks every quote. You can also browse the
+   library itself at http://127.0.0.1:8081. Once the kit has the right model,
+   start-lantern offers the encyclopedia once, the same way as a bigger model.
+
 3. Share with phones (classroom)
    Start with "share" (start-lantern.bat share / ./start-lantern.sh share).
    Phones on the same Wi-Fi or the laptop's hotspot open the address the
@@ -65,4 +80,5 @@ Notes
    crash llama.cpp; add "gpu" to try the graphics card. Macs use Metal.
  - Copy models/Qwen3.5-*.gguf onto a phone and load it in Lantern's AI app
    (On this device > Load file) to give a phone the AI without downloading.
- - Licences: Lantern CC0; llama.cpp MIT; Qwen3.5 Apache 2.0.
+ - Licences: Lantern CC0; llama.cpp MIT; Qwen3.5 Apache 2.0; kiwix-tools
+   GPLv3 (a separate program); Wikipedia text CC BY-SA 4.0.

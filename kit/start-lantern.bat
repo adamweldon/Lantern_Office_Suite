@@ -15,6 +15,9 @@ set "SITE=%DIR%site"
 if not exist "%SITE%\index.html" set "SITE=%DIR%..\site"
 set "MODELS=%DIR%models"
 if not exist "%MODELS%" set "MODELS=%DIR%..\models"
+set "LIBRARY=%DIR%library"
+if not exist "%LIBRARY%" set "LIBRARY=%DIR%..\library"
+if "%LIBRARY_PORT%"=="" set LIBRARY_PORT=8081
 if "%PORT%"=="" set PORT=8080
 set HOST=127.0.0.1
 set NGL=-ngl 0
@@ -69,6 +72,19 @@ if "%HOST%"=="0.0.0.0" (
     set "ip=%%i"
     set "ip=!ip: =!"
     echo Phones on this network: http://!ip!:%PORT%/
+  )
+)
+rem The offline library: kiwix-serve on port 8081 with every ZIM in library\.
+rem Lantern finds it there by itself (AI app, Offline library).
+set "KIWIX=%DIR%engine\windows\kiwix\kiwix-serve.exe"
+set "ZIMS="
+for %%z in ("%LIBRARY%\*.zim") do set ZIMS=!ZIMS! "%%~fz"
+if defined ZIMS (
+  if exist "!KIWIX!" (
+    start "Lantern library" /b "!KIWIX!" --port !LIBRARY_PORT! --address !HOST! -z !ZIMS!
+    echo Library: !ZIMS! ^(http://127.0.0.1:!LIBRARY_PORT!/^)
+  ) else (
+    echo Library files found, but not kiwix-serve: run setup-kit.bat library
   )
 )
 start "" /b cmd /c "timeout /t 8 >nul & start http://127.0.0.1:%PORT%/"

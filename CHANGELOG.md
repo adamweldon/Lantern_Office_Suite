@@ -1,5 +1,53 @@
 # Changelog
 
+## 1.9.0 — Offline library: the AI reads an encyclopedia (2026-10-20)
+
+Pilot of the next step after the bench runs: facts the model would
+otherwise have to remember (or decline) are read from an offline
+encyclopedia, with citations Lantern checks.
+
+- **Kit:** `setup-kit library` installs kiwix-serve (kiwix-tools, GPLv3,
+  newest release found from the download listing) and the newest English
+  Wikipedia "mini" file (the lead section of every article, about 12 GB;
+  Simple English Wikipedia, about 2.5 GB, when the drive is small or
+  FAT32). `setup-kit zim NAME` adds any Kiwix file. Files are checked
+  against their published SHA-256; a damaged one is deleted.
+  `start-lantern` starts kiwix-serve on port 8081 with every file in
+  `library/` (also for phones in share mode), and once the kit has the right
+  model it offers the encyclopedia once, like a bigger model.
+- **LIBRARY_ENGINE** (`Lantern.library`): finds the library on this computer
+  or local network (never probes from a public web address), lists its
+  books, searches (exact-title articles first, then full-text results for
+  the question's words and for the words minus one, re-ranked by title
+  words), reads articles as clean paragraphs, and cuts a passage per article
+  (the lead plus the paragraphs sharing most words with the question,
+  under 900 characters).
+- **The reading turn** (`Lantern.assist.solve`, Chat): when the model
+  replies `LOOKUP: <words>` -- a new verb in the prompt when a library is
+  attached -- or says "Not in my library", Lantern searches and gives it up
+  to three numbered passages. It answers with [n] after each fact and
+  `QUOTE [n]:` lines. Calculations never touch the library; the safety
+  rules still answer dose questions before any lookup.
+- **LIBRARY_CHECKS:** every cited passage needs a QUOTE; each quote must
+  really be in its passage (copied, allowing punctuation and a word or
+  two); every number in the answer must be in a passage it cites. Failures
+  get the one correction turn; what is still wrong is shown. Assist and
+  Chat show the sources with links into the library and each quote marked
+  found or not found.
+- **AI app > Offline library:** status, books, address (to use a library on
+  another computer), and a search box showing exactly which passages the AI
+  would get.
+- **Bench v3:** 20 fact questions (category `fact`, 2 in the quick run),
+  run only when a library is attached. A fact passes only with the expected
+  fact AND a verified quote: a right answer from memory does not count.
+- Limits of the pilot: the check proves a quote is real and the numbers
+  match, not that the quote supports every word of the answer; search
+  quality decides what the model can read.
+- Tests: new `tests/library.js` (39 checks, against a stand-in kiwix-serve
+  built from real replies); kit test covers the library download and start;
+  checked in real Chromium against a real kiwix-serve (cross-origin search
+  and reading, Assist with a verified quote, the panel).
+
 ## 1.8.6 — Kit fix: the 35B-A3B was never offered (2026-10-20)
 
 Adam: "it does not download the 35b model for some reason?"

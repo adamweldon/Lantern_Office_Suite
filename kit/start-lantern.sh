@@ -17,6 +17,8 @@ set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 SITE="$DIR/site"; [ -d "$SITE" ] || SITE="$DIR/../site"
 MODELS="$DIR/models"; [ -d "$MODELS" ] || MODELS="$DIR/../models"
+LIBRARY="$DIR/library"; [ -d "$LIBRARY" ] || LIBRARY="$DIR/../library"
+LIBRARY_PORT="${LIBRARY_PORT:-8081}"
 PORT="${PORT:-8080}"
 HOST=127.0.0.1; GPU=""; AUTO=1; FORCE=""
 for a in "$@"; do
@@ -79,6 +81,20 @@ if [ "$HOST" = 0.0.0.0 ]; then
   for ip in $IPS; do echo "Phones on this network: http://$ip:$PORT/"; done
 fi
 
+# The offline library: kiwix-serve on port 8081 with every ZIM in library/.
+# Lantern finds it there by itself (AI app > Offline library).
+KIWIX="$DIR/engine/$OS/kiwix/kiwix-serve"; [ -x "$KIWIX" ] || KIWIX="$(command -v kiwix-serve 2>/dev/null || true)"
+KPID=""
+if ls "$LIBRARY"/*.zim >/dev/null 2>&1; then
+  if [ -n "$KIWIX" ] && [ -x "$KIWIX" ]; then
+    "$KIWIX" --port "$LIBRARY_PORT" --address "$HOST" -z "$LIBRARY"/*.zim > /dev/null 2>&1 &
+    KPID=$!
+    echo "Library: $(cd "$LIBRARY" && ls *.zim | tr '\n' ' ')(http://127.0.0.1:$LIBRARY_PORT/)"
+  else
+    echo "Library files found, but not kiwix-serve: run ./setup-kit.sh library"
+  fi
+fi
+
 cd "$(dirname "$BIN")" || exit 1
 # Engine libraries sit next to the binary.
 LD_LIBRARY_PATH="$(pwd)${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; export LD_LIBRARY_PATH
@@ -86,7 +102,7 @@ DYLD_LIBRARY_PATH="$(pwd)${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"; export DYLD
 # shellcheck disable=SC2086
 "$BIN" -m "$M" --path "$SITE" --host "$HOST" --port "$PORT" -c 8192 $NGL &
 PID=$!
-trap 'kill $PID 2>/dev/null' INT TERM EXIT
+trap 'kill $PID $KPID 2>/dev/null' INT TERM EXIT
 i=0
 while [ $i -lt 120 ]; do
   if curl -s "http://127.0.0.1:$PORT/health" 2>/dev/null | grep -q ok; then break; fi

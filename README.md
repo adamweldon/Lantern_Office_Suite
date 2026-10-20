@@ -41,7 +41,7 @@ for multi-threading).
 | `tools/bundle.js` | Byte-faithful decode / encode between the two. |
 | `tests/` | Every check the suite must pass before a commit (`npm test`). |
 | `site/` | The website build: Lantern + offline worker + install manifest + on-device AI engine (`site/ai`, wllama 3.8.1, MIT). Rebuilt by `tools/build_site.py`. |
-| `kit/` | Laptop / USB launchers and setup scripts for llama.cpp `llama-server`. |
+| `kit/` | Laptop / USB launchers and setup scripts for llama.cpp `llama-server`, and kiwix-serve for the offline library (Kiwix ZIM files in `kit/library/`). |
 | `docs/Lantern_Edge_AI_Plan.pdf` | The plan: model size per device, architecture, distribution, phases, Lantern Bench. |
 | `docs/Lantern_AI_Test_Guide.pdf` | Phase 1 test steps for phones and laptops, what to send back, and what was verified before release. |
 | `docs/Lantern_Compose_Guide.pdf` | What the Compose writing suite does, how to use it, and how it is built. |
@@ -79,5 +79,6 @@ npm test
 - **compose app**: Compose and Writer driven end to end (tasks, Preview, Open in Writer, Check, Fix all safe, Words, Read aloud, Practice, Mail merge, lessons, self-tests)
 - **compose isolation**: removes each of the 32 Compose modules in turn and requires the rest of the suite to boot and run without errors (rule 11)
 - **AI layer**: engine routing, same-origin server detection, Assist and Chat through `Lantern.aiRoute`, the AI app and its panels, Lantern Bench graded against a perfect and a bad fake model, safety rules, answer-sentence checks, unit words, the everyday recipe cards, Earth-radius checks, checks of each formula against its question and the one correction turn
-- **AI isolation**: removes each of the 17 AI modules in turn (rule 11)
-- **kit offer**: the USB kit's model choice and "bigger model" offer, run against a stand-in for Hugging Face (redirects to download links that refuse HEAD requests), with a fake llama-server: memory tiers, FAT32, low space, no connection, missing file, N remembered, download through the redirect; `setup-kit.ps1` too when PowerShell is installed
+- **offline library**: search, read and passage-cutting against a stand-in kiwix-serve built from real kiwix-serve replies (five Wikipedia lead sections, CC BY-SA), the citation check (quotes must be in their passage, numbers in the cited passages), the reading turn in Assist and Chat, fact grading in the bench, the library panel, and no probing from public web addresses
+- **AI isolation**: removes each of the 21 AI and library modules in turn (rule 11)
+- **kit offer**: the USB kit's model choice and "bigger model" offer, run against a stand-in for Hugging Face (redirects to download links that refuse HEAD requests), with a fake llama-server: memory tiers, FAT32, low space, no connection, missing file, N remembered, download through the redirect; the library download (newest kiwix-tools and Kiwix file from directory listings, SHA-256 checked, damaged files deleted, Simple English on FAT32) and kiwix-serve started on port 8081; `setup-kit.ps1` too when PowerShell is installed

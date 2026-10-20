@@ -47,7 +47,7 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   await sleep(40);
   var L = w.Lantern, AI = L.ai, A = L.assist;
   ok("boot clean", errs.length === 0, errs);
-  ok("version 1.8", /^1\.8\./.test(L.version), L.version);
+  ok("version 1.9", /^1\.9\./.test(L.version), L.version);
   ok("ai app registered after compose", L.order[L.order.indexOf("compose") + 1] === "ai", L.order.slice(0, 5));
   ok("aiRoute installed", typeof L.aiRoute === "function");
   ok("no server on GitHub-Pages-like path", AI.server.checked && !AI.server.sameOrigin);
@@ -139,7 +139,8 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
 
   // A fake on-device engine: a perfect model and a bad one
   served = false; AI.server.sameOrigin = false;
-  var Q = L.aiBenchQuestions, byQ = {};
+  var Q = L.aiBenchQuestions.filter(function (x) { return x.cat !== "fact"; }), byQ = {};   // fact questions need a library
+  ok("fact questions are skipped when no library is attached", L.aiBenchQuestions.filter(function (x) { return x.cat === "fact"; }).length === 20 && !L.library.ready());
   Q.forEach(function (x) { byQ[x.q] = x; });
   var mode = "perfect";
   AI.register("device", { available: function () { return true; }, chosen: function () { return true; },
@@ -327,7 +328,7 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   ok("PLANET is in the AI tool list and recipe cards", /PLANET\(/.test(A.toolCard()) && A.match("escape velocity from mars").some(function (c) { return c.id === "planet-escape"; }));
 
   var st = L.selftest.run();
-  ok("selftests pass (incl. AI)", st.fail.length === 0 && L.selftest.tests.filter(function (t) { return /^ai: /.test(t.name); }).length === 7, st.fail);
+  ok("selftests pass (incl. AI)", st.fail.length === 0 && L.selftest.tests.filter(function (t) { return /^ai: /.test(t.name); }).length === 8, st.fail);
   ok("no errors at the end", errs.length === 0, errs);
   console.log(fails ? fails + " AI LAYER FAILURES (" + passes + " passed)" : "ALL AI LAYER TESTS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);
