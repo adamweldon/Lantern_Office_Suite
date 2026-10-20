@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.8.3 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.8.4 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -93,6 +93,11 @@
 //      and Lantern.aiBenchQuestions the Lantern Bench question set;
 //    Lantern.assistToolFilter = fn(question, cards) -> [catalog entries] --
 //      when set, Assist's prompt lists only these functions (short prompts).
+//    Lantern.aiGuards = [fn(question) -> reply or null] -- fixed safety
+//      replies given before any model call (AI_GUARD).
+//    Lantern.assistChecks = [fn(question, exprText, run) -> reason or null]
+//      -- checks on a model's formula; a reason gives the model one more
+//      turn with that reason (Lantern.assist.solve; AI_CHECKS).
 //    Prefer a hook over editing a big module.
 // 11. ISOLATION: every extension module must be droppable. Open with
 //    var L = window.Lantern; if (!L || !L.el) return; -- feature-detect every
@@ -109,7 +114,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.8.3",
+  version: "1.8.4",
   apps: {},
   order: []
 };
@@ -15920,7 +15925,9 @@ Lantern.RFB = (function () {
     out.push("- To use a recipe, copy its = line and replace each {placeholder} with the value.");
     out.push("- Finish with one line: ANSWER: <sentence with {result} where the number goes>.");
     out.push("  Lantern puts its computed number in place of {result}; do not work it out yourself.");
-    out.push("- Use NEED: <question> only when the person must give a number a function needs.");
+    out.push("- Every number in the = lines must come from the question (or a unit change).");
+    out.push("  If the question leaves out a number you need (how many, how big), reply");
+    out.push("  NEED: <question> -- never guess it or use a recipe's example. Ask for nothing else.");
     out.push("- If these functions cannot answer it (facts, news, people, prices, medicine doses,");
     out.push("  dangerous work), reply exactly: ANSWER: Not in my library.");
     out.push("No other text.");
@@ -15931,6 +15938,8 @@ Lantern.RFB = (function () {
     out.push("ANSWER: The panel makes {result} kWh.");
     out.push("Q: Who won the last election?");
     out.push("ANSWER: Not in my library.");
+    out.push("Q: How long will it take to fill my water tank?");
+    out.push("NEED: How many litres does the tank hold, and how many litres a minute flow in?");
     out.push("");
     out.push("FUNCTIONS");
     out.push(A.toolCard(question, cards));
@@ -15999,27 +16008,54 @@ Lantern.RFB = (function () {
     if (data.message && data.message.content) return data.message.content; // Ollama native /api/chat
     throw new Error("Unrecognised server reply shape");
   };
-  // solve(question, {call, retries}) -> Promise<{text, first, second, parsed, run, rounds, fixed, rejected}>
-  // One model call through opts.call(messages). When Lantern rejects the
-  // formula and nothing was computed, the model gets ONE more turn with
-  // Lantern's own error message -- the way Chat already works -- so a slip
-  // such as an altitude typed where a radius belongs is fixed by the model
-  // from Lantern's reason, never guessed by Lantern.
+  // solve(question, {call, retries}) -> Promise<{text, first, second, parsed,
+  //   run, rounds, kind, rejected, fixed, flags}>
+  // One model call through opts.call(messages). The model gets ONE more turn,
+  // with Lantern's own reason, when Lantern rejects the formula (kind
+  // "rejected": it would not run) or questions it (kind "questioned": a check
+  // in Lantern.assistChecks found, say, a number that is not in the question
+  // or a height used as a radius). The way Chat already works: the model
+  // fixes the slip from Lantern's reason; Lantern never guesses the fix.
+  // flags = what the checks still say about the reply that was kept.
   A.solve = async function (question, opts) {
     opts = opts || {};
+    var checks = window.Lantern.assistChecks || [];
+    function questioned(pp, rr) {
+      var found = [], i, r;
+      if (rr.value == null || !pp.exprText) return found;
+      for (i = 0; i < checks.length; i++) {
+        try { r = checks[i](question, pp.exprText, rr); } catch (e) { r = null; }
+        if (r) found.push(String(r));
+      }
+      return found;
+    }
     var msgs = [{ role: "user", content: A.buildPrompt(question, A.match(question)) }];
     var text = await opts.call(msgs), p = A.parseReply(text), run = A.run(p.exprText);
-    var out = { text: text, first: text, parsed: p, run: run, rounds: 1, fixed: false, rejected: "" };
+    var flags = questioned(p, run);
+    var out = { text: text, first: text, parsed: p, run: run, rounds: 1, kind: "", fixed: false, rejected: "", flags: flags };
     var bad = run.steps.filter(function (st) { return !st.ok; });
-    if (run.value != null || !bad.length || p.need || opts.retries === 0) return out;
-    out.rejected = bad.map(function (st) { return "=" + st.expr + " (" + st.err + ")"; }).join("; ");
+    if (p.need || opts.retries === 0) return out;
+    if (run.value != null && !flags.length) return out;
+    if (run.value == null && !bad.length) return out;
+    var why;
+    if (run.value == null) {
+      out.kind = "rejected";
+      out.rejected = bad.map(function (st) { return "=" + st.expr + " (" + st.err + ")"; }).join("; ");
+      why = "Lantern could not run " + out.rejected + ".";
+    } else {
+      out.kind = "questioned";
+      out.rejected = flags.join("; ");
+      why = "Lantern questioned that: " + out.rejected + ".";
+    }
     msgs.push({ role: "assistant", content: text });
-    msgs.push({ role: "user", content: "Lantern could not run " + out.rejected +
-      ".\nReply again with corrected = lines and the ANSWER line only." });
+    msgs.push({ role: "user", content: why + "\nIf the question does not give a number you need, reply NEED: <question>." +
+      "\nOtherwise reply again with corrected = lines and the ANSWER line only." });
     var text2 = await opts.call(msgs), p2 = A.parseReply(text2), run2 = A.run(p2.exprText);
     out.rounds = 2; out.second = text2;
     if (run2.value != null || (p2.need && !p2.exprText)) {
-      out.text = text2; out.parsed = p2; out.run = run2; out.fixed = run2.value != null;
+      var flags2 = questioned(p2, run2);
+      out.text = text2; out.parsed = p2; out.run = run2; out.flags = flags2;
+      out.fixed = !!p2.need || !flags2.length;
     }
     return out;
   };
@@ -16171,7 +16207,8 @@ Lantern.RFB = (function () {
           var text = res.text, p = res.parsed, mono = "font-family:ui-monospace,Consolas,monospace;font-size:12px;white-space:pre-wrap;background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:8px";
           var top = el("div", {}, []);
           if (res.rounds > 1) {
-            top.appendChild(el("p", { "class": "muted", text: "First reply \u2014 Lantern could not run " + res.rejected + ":" }));
+            top.appendChild(el("p", { "class": "muted", text: "First reply \u2014 Lantern " +
+              (res.kind === "questioned" ? "questioned it: " : "could not run ") + res.rejected + ":" }));
             top.appendChild(el("div", { style: mono, text: res.first }));
             top.appendChild(el("p", { "class": "muted", text: res.fixed ? "The AI corrected it from Lantern\u2019s reason:" : "Its second try:" }));
             top.appendChild(el("div", { style: mono, text: res.second }));
@@ -16182,6 +16219,8 @@ Lantern.RFB = (function () {
           if (p.need) { out.innerHTML = ""; out.appendChild(top); out.appendChild(el("p", { "class": "physresult", text: "It needs: " + p.need })); return; }
           var run = res.run;
           if (p.answer) top.appendChild(answerNote(p.answer, run.value));
+          if (res.flags && res.flags.length)
+            top.appendChild(el("p", { "class": "danger", text: "\u26a0 Lantern still questions this answer: " + res.flags.join("; ") + ". Check it before you use it." }));
           showRun(run, "", top);
         }).catch(function (e) {
           status.textContent = "Could not reach the model: " + e.message + (Lantern.ai && Lantern.ai.resolve() === "device" ? "" :
@@ -16654,7 +16693,10 @@ Lantern.RFB = (function () {
     statusEl.textContent = "thinking\u2026";
     var ep = Lantern.store.get("assist.endpoint", "http://127.0.0.1:11434/v1/chat/completions");
     var md = Lantern.store.get("assist.model", "qwen2.5:3b-instruct");
-    var lastValue = null;
+    var lastValue = null, questioned = false, stillDoubt = null;
+    // What the person has said so far (for Lantern's checks on a formula).
+    var said = msgs.filter(function (m) { return m.role === "user" && !/^(TOOL RESULTS|Lantern questioned)/.test(m.content); })
+      .map(function (m) { return String(m.content).split("\n\n[Recipe hints]")[0]; }).join("\n");
     try {
       var rounds;
       for (rounds = 0; rounds < 3; rounds++) {
@@ -16670,7 +16712,19 @@ Lantern.RFB = (function () {
         if (parsed.exprText) {
           var run = A.run(parsed.exprText);
           if (run.value != null) lastValue = run.value;
-          var resultText = toolBubble(run);
+          var resultText = toolBubble(run), doubts = [];
+          if (run.value != null) (window.Lantern.assistChecks || []).forEach(function (c) {
+            var r = null; try { r = c(said, parsed.exprText, run); } catch (e) { r = null; }
+            if (r) doubts.push(String(r));
+          });
+          if (doubts.length && !questioned) {   // one more turn with Lantern's reason (as Assist does)
+            questioned = true;
+            log.appendChild(el("p", { "class": "muted", text: "Lantern questioned this: " + doubts.join("; ") + ". Asking the AI again\u2026" }));
+            msgs.push({ role: "user", content: "Lantern questioned that: " + doubts.join("; ") +
+              ".\nIf the question does not give a number you need, reply NEED: <question>.\nOtherwise reply again with corrected = lines and the ANSWER line only." });
+            continue;
+          }
+          stillDoubt = doubts.length ? doubts : null;
           if (!parsed.answer) { msgs.push({ role: "user", content: "TOOL RESULTS\n" + resultText + "\nNow reply with the ANSWER: line only." }); continue; }
         }
         if (parsed.answer) {
@@ -16679,6 +16733,7 @@ Lantern.RFB = (function () {
           if (fa.mismatch) log.appendChild(el("p", { "class": "danger", text: "\u26a0 The AI\u2019s sentence does not match Lantern\u2019s computed result above. Trust the computed number." }));
           if (fa.unchecked) log.appendChild(el("p", { "class": "muted", text: "\u26a0 Lantern computed nothing for this answer: its numbers come from the AI alone." }));
           if (fa.otherUnit) log.appendChild(el("p", { "class": "muted", text: "\u26a0 The sentence matches Lantern\u2019s result only in a different unit. Check the unit of the computed number." }));
+          if (stillDoubt) log.appendChild(el("p", { "class": "danger", text: "\u26a0 Lantern still questions this answer: " + stillDoubt.join("; ") + ". Check it before you use it." }));
         }
         break;
       }
@@ -20689,7 +20744,8 @@ Lantern.RFB = (function () {
       var row = { id: item.id, cat: item.cat, q: item.q, pass: !!g.pass, value: g.value == null ? null : g.value,
         expected: g.expected == null ? null : g.expected, parsed: !!g.parsed, why: g.why || "",
         claim: g.claim || null, by: err ? null : (byRule ? "rule" : "model"), fresh: !!item.fresh, hard: !!item.hard,
-        rounds: res ? res.rounds : null, fixed: res ? res.fixed : false, rejected: res && res.rejected ? res.rejected.slice(0, 300) : "",
+        rounds: res ? res.rounds : null, fixed: res ? res.fixed : false, retry: res ? res.kind || "" : "",
+        rejected: res && res.rejected ? res.rejected.slice(0, 300) : "", flags: res && res.flags ? res.flags : [],
         ms: Date.now() - t0, tokens: err ? null : toks, tps: err || !toks ? null : Math.round(toks / Math.max(0.001, secs) * 10) / 10,
         reply: String(text).slice(0, 600), first: res && res.rounds > 1 ? String(res.first).slice(0, 600) : undefined };
       rows.push(row);
@@ -20709,17 +20765,19 @@ Lantern.RFB = (function () {
   // core = questions from before 1.8.2 (comparable with earlier runs); fresh =
   // questions added in 1.8.2 with no recipe card aimed at them; hard = 1.8.3
   // questions with distractors, unit traps and missing numbers; retried =
-  // rows where Lantern rejected the first formula and the model tried again; byRule = answered by
+  // rows where Lantern rejected or questioned the first formula and the model
+  // tried again; stillQuestioned = rows whose kept answer a check still doubts; byRule = answered by
   // a safety rule without asking the model; disagree = the model's sentence
   // named a different number from the one Lantern computed; unchecked = it
   // stated a number while Lantern computed nothing (Lantern flags both).
   B.summary = function (rows) {
     var by = {}, pass = 0, parsed = 0, ms = 0, tps = [], i;
     var core = { n: 0, pass: 0 }, fresh = { n: 0, pass: 0 }, hard = { n: 0, pass: 0 };
-    var byRule = 0, disagree = 0, unchecked = 0, retried = 0, fixed = 0;
+    var byRule = 0, disagree = 0, unchecked = 0, retried = 0, fixed = 0, flagged = 0;
     for (i = 0; i < rows.length; i++) {
       var r = rows[i], c = by[r.cat] = by[r.cat] || { n: 0, pass: 0 }, f = r.hard ? hard : (r.fresh ? fresh : core);
       if (r.rounds > 1) { retried++; if (r.fixed && r.pass) fixed++; }
+      if (r.flags && r.flags.length) flagged++;
       c.n++; f.n++; if (r.pass) { c.pass++; f.pass++; pass++; }
       if (r.parsed) parsed++;
       if (r.by === "rule") byRule++;
@@ -20730,7 +20788,7 @@ Lantern.RFB = (function () {
     tps.sort(function (a, b) { return a - b; });
     return { n: rows.length, pass: pass, score: rows.length ? Math.round(pass / rows.length * 100) : 0,
       core: core, fresh: fresh, hard: hard, byRule: byRule, disagree: disagree, unchecked: unchecked,
-      retried: retried, fixedOnRetry: fixed,
+      retried: retried, fixedOnRetry: fixed, stillQuestioned: flagged,
       parsedPct: rows.length ? Math.round(parsed / rows.length * 100) : 0, byCat: by,
       avgSeconds: rows.length ? Math.round(ms / rows.length / 100) / 10 : 0,
       medianTps: tps.length ? tps[Math.floor(tps.length / 2)] : null };
@@ -20822,6 +20880,131 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: AI_PROMPT - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_CHECKS - START
+// Depends: ASSIST_CORE (Lantern.assist.solve reads Lantern.assistChecks),
+//          ASSIST_CARDS (fixed numbers in recipe formulas) -- feature-detected
+// Exports: Lantern.assistChecks (array of fn(question, exprText, run) -> reason
+//          or null); Lantern.aiChecks (numbersIn, unexplained, heights)
+// ===========================================================================
+// Checks that a model's formula is grounded in the question, before the
+// person sees the number. Written after Lantern Bench run 3 (Qwen3.5 4B,
+// 44/47): the model invented "2 goats" and the recipe's example 800 g for a
+// question that gave neither, and in "from a 300 km orbit to a 35786 km
+// orbit" it added Earth's radius to the first height but not the second.
+// Both formulas ran and gave confident wrong numbers. A check here never
+// fixes anything itself: its reason goes back to the model for one more turn
+// (Lantern.assist.solve), and anything still questioned is shown to the
+// person. Checks are conservative: when they cannot tell, they stay quiet.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var CHK = window.Lantern.assistChecks = window.Lantern.assistChecks || [];
+  // Unit factors and constants a formula may use without the question saying
+  // so. Numbers inside recipe formulas are added at check time.
+  var FIXED = [0, 0.5, 1, 2, 10, 100, 1000, 10000, 1e6, 0.001, 0.01, 0.1, 60, 3600, 86400, 24, 7, 12, 52, 365, 365.25,
+    6371, 6378, 6378.137, 1.60934, 1.609344, 0.621371, 2.20462, 2.204623, 0.453592, 0.4536, 3.28084, 0.3048, 2.54, 3.785, 3.78541,
+    9.81, 9.8, 9.80665, 273.15, 1.8, 32, 4.184, 3.14159, 3.1416, 3.14,
+    6371000, 6378000, 6378137, 3.986e14, 3.986004418e14, 5.972e24, 5.9722e24, 6.674e-11, 6.6743e-11, 299792458, 3e8];
+  var FACTORS = [10, 100, 1000, 1e6, 60, 3600, 86400, 24, 7, 12, 52, 365];
+  var WORDS = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+    eleven: 11, twelve: 12, twenty: 20, thirty: 30, forty: 40, fifty: 50, hundred: 100, thousand: 1000, dozen: 12,
+    half: 0.5, quarter: 0.25, double: 2, twice: 2, triple: 3, pair: 2, week: 7, fortnight: 14, month: 30, year: 365 };
+  function same(a, b) { return Math.abs(a - b) <= Math.max(1e-9, Math.abs(b) * 1e-6); }
+  // Numeric literals in formula text, skipping quoted strings ("m^3") and
+  // exponents (^2).
+  function numbersIn(expr) {
+    var t = String(expr || "").replace(/\x22[^\x22]*\x22/g, "\x22\x22"), out = [], re = /(\^\s*)?(\d+(?:\.\d+)?(?:e[+-]?\d+)?)/gi, m;
+    while ((m = re.exec(t))) {
+      var before = t.charAt(m.index - 1);
+      if (m[1] || /[A-Za-z_]/.test(before)) continue;   // exponent, or part of a name like H2O
+      out.push(parseFloat(m[2]));
+    }
+    return out;
+  }
+  function questionNumbers(q) {
+    var t = String(q || "").replace(/(\d),(\d{3})/g, "$1$2"), out = [], m, re = /\d+(?:\.\d+)?/g;
+    while ((m = re.exec(t))) out.push(parseFloat(m[0]));
+    String(q || "").toLowerCase().split(/[^a-z]+/).forEach(function (w) { if (WORDS[w] != null) out.push(WORDS[w]); });
+    return out;
+  }
+  function cardNumbers() {
+    var out = [];
+    (window.Lantern.assistCards || []).forEach(function (c) {
+      numbersIn(String(c.compose || "").replace(/\{[^}]*\}/g, "")).forEach(function (x) { out.push(x); });
+    });
+    return out;
+  }
+  // unexplained(question, expr) -> numbers in the formula that are not in the
+  // question, not a fixed factor or recipe constant, and not one simple step
+  // from question numbers (a unit factor, plus Earth's radius, or two of the
+  // question's own numbers combined, as a model often pre-computes).
+  function unexplained(question, expr) {
+    var qn = questionNumbers(question), ok = FIXED.concat(cardNumbers()), i, j, k;
+    for (i = 0; i < qn.length; i++) {
+      ok.push(qn[i], qn[i] + 6371, qn[i] + 273.15, qn[i] - 273.15);
+      for (k = 0; k < FACTORS.length; k++) ok.push(qn[i] * FACTORS[k], qn[i] / FACTORS[k]);
+      for (j = 0; j < qn.length; j++) ok.push(qn[i] * qn[j], qn[i] + qn[j], qn[i] - qn[j], qn[j] ? qn[i] / qn[j] : 0);
+    }
+    var seen = {};
+    return numbersIn(expr).filter(function (x) {
+      if (seen[x]) return false;
+      var bad = !ok.some(function (y) { return same(x, y); });
+      if (bad) seen[x] = 1;
+      return bad;
+    });
+  }
+  // Heights above Earth in the question: "a 300 km orbit", "420 km altitude",
+  // "35786 km above the equator", "altitude of 500 km". Not a distance "from
+  // Earth's centre". None when another body is named.
+  function heights(q) {
+    q = String(q || "").replace(/(\d),(\d{3})/g, "$1$2");
+    if (/\b(mars|moon|lunar|jupiter|venus|mercury|saturn|uranus|neptune|pluto|sun)\b/i.test(q)) return [];
+    var out = [], m, re = /(\d+(?:\.\d+)?)\s*-?\s*km\s+(orbit|altitude|above|up\b|high|height)/gi;
+    while ((m = re.exec(q))) out.push(m[1]);
+    re = /(altitude|height) of (\d+(?:\.\d+)?)\s*km/gi;
+    while ((m = re.exec(q))) out.push(m[2]);
+    return out.filter(function (n, i) { return out.indexOf(n) === i; });
+  }
+  var ORBITAL = /\b(ORBITT|ORBITV|ESCV|VISVIVA|HOHMANNT?)\s*\(/i;
+  var EARTH_R = /(637[18](\.\d+)?|PLANET\(\s*\x22earth\x22\s*,\s*\x22radius\x22\s*\))/i;
+  // heightAsRadius(question, expr) -> heights from the question that the
+  // formula uses with no Earth radius added anywhere next to them.
+  function heightAsRadius(question, expr) {
+    expr = String(expr || "");
+    if (!ORBITAL.test(expr)) return [];
+    // A radius added in a later step (=ANS+6371...) cannot be traced: stay quiet.
+    if (/ANS\s*\+\s*(637|PLANET)|(637[18]\S*|\x22radius\x22\s*\))\s*\+\s*ANS/i.test(expr)) return [];
+    return heights(question).filter(function (n) {
+      var re = new RegExp("(^|[^0-9.])" + n.replace(".", "\\.") + "(?![0-9.])", "g"), m, any = false, adjusted = false;
+      while ((m = re.exec(expr))) {
+        any = true;
+        var at = m.index + m[1].length, pre = expr.slice(Math.max(0, at - 40), at), post = expr.slice(at + n.length, at + n.length + 50);
+        if (/(637[18]\d*(\.\d+)?|6\.37\d*e6|\x22radius\x22\s*\))\s*\+\s*(CONVERT\(\s*)?$/i.test(pre) ||
+            /^\s*(,\s*\x22km\x22\s*,\s*\x22m\x22\s*\))?\s*(\*\s*1000\s*)?\+\s*(637[18]|6\.37|PLANET\(\s*\x22earth\x22)/i.test(post)) adjusted = true;
+      }
+      return any && !adjusted;
+    });
+  }
+  L.aiChecks = { numbersIn: numbersIn, unexplained: unexplained, heights: heights, heightAsRadius: heightAsRadius };
+  function add(id, fn) { if (CHK.some(function (c) { return c.id === id; })) return; fn.id = id; CHK.push(fn); }
+  add("height-as-radius", function (question, expr) {
+    var h = heightAsRadius(question, expr);
+    if (!h.length) return null;
+    return h.map(function (n) { return n + " km"; }).join(" and ") + (h.length > 1 ? " are heights" : " is a height") +
+      " above the surface in the question, but the formula uses " + (h.length > 1 ? "them as radii" : "it as a radius") +
+      ": orbit radii are from Earth's centre, so add 6371 km to every height";
+  });
+  add("number-not-in-question", function (question, expr) {
+    var u = unexplained(question, expr);
+    if (!u.length) return null;
+    return "the formula uses " + u.join(", ") + ", which " + (u.length > 1 ? "are" : "is") +
+      " not in the question; if the person did not give " + (u.length > 1 ? "them" : "it") + ", ask with NEED";
+  });
+})();
+// ===========================================================================
+// MODULE: AI_CHECKS - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: AI_APP - START
@@ -21127,7 +21310,8 @@ Lantern.RFB = (function () {
     for (var k in s.byCat) parts.push(k + " " + s.byCat[k].pass + "/" + s.byCat[k].n);
     var extra = (s.fresh && (s.fresh.n || (s.hard && s.hard.n)) ? " \u00b7 earlier questions " + s.core.pass + "/" + s.core.n +
         (s.fresh.n ? ", fresh " + s.fresh.pass + "/" + s.fresh.n : "") + (s.hard && s.hard.n ? ", hard " + s.hard.pass + "/" + s.hard.n : "") : "") +
-      (s.retried ? " \u00b7 " + s.fixedOnRetry + " of " + s.retried + " fixed after Lantern rejected a formula" : "") +
+      (s.retried ? " \u00b7 " + s.fixedOnRetry + " of " + s.retried + " fixed after Lantern rejected or questioned a formula" : "") +
+      (s.stillQuestioned ? " \u00b7 " + s.stillQuestioned + " still questioned" : "") +
       (s.disagree ? " \u00b7 " + s.disagree + " sentence" + (s.disagree === 1 ? "" : "s") + " disagreed with Lantern" : "") +
       (s.byRule ? " \u00b7 " + s.byRule + " by safety rule" : "");
     return "Lantern Bench " + (rep.quick ? "quick" : "full") + ": " + s.pass + "/" + s.n + " (" + s.score + "%) \u00b7 " + parts.join(", ") + extra +
@@ -21154,7 +21338,8 @@ Lantern.RFB = (function () {
           el("td", {}, [el("span", { "class": r.pass ? "la-pass" : "la-fail", text: r.pass ? "pass" : "fail" }),
             el("div", { "class": "muted", text: (r.why || (r.value != null ? String(Math.round(r.value * 1e4) / 1e4) : "")) +
               (r.by === "rule" ? " (safety rule)" : "") + (r.claim === "disagrees" ? " \u00b7 its sentence disagreed" : "") +
-              (r.rounds > 1 ? (r.fixed ? " \u00b7 fixed on 2nd try" : " \u00b7 2nd try failed too") : "") })]),
+              (r.rounds > 1 ? (r.fixed ? " \u00b7 fixed on 2nd try" : " \u00b7 2nd try failed too") : "") +
+              (r.flags && r.flags.length ? " \u00b7 Lantern still questions it" : "") })]),
           el("td", { text: (r.ms / 1000).toFixed(1) + " s" })
         ]));
       } }).then(function (rep) {
@@ -21359,6 +21544,12 @@ Lantern.RFB = (function () {
     var A = L.assist;
     return A.finalAnswer("It lasts {result} hours.", 20).text === "It lasts 20 hours." &&
       A.finalAnswer("About 1,500,000 J.", 375000).mismatch === true && A.run("=({100}*{12})/{60}").value === 20;
+  });
+  if (L.aiChecks) L.selftest.add("ai: formulas are checked against the question", function () {
+    var C = L.aiChecks;
+    return C.unexplained("How much feed do my goats need for 30 days?", "=FEEDKG(2,30,800)").join() === "800" &&
+      C.heightAsRadius("from a 300 km orbit to a 35786 km orbit", "=HOHMANNT(CONVERT(300+6371,\x22km\x22,\x22m\x22),CONVERT(35786,\x22km\x22,\x22m\x22))").join() === "35786" &&
+      !C.unexplained("A 100 Ah 12 V battery runs a 60 W light. How many hours?", "=100*12/60").length;
   });
   if (L.ai && L.aiRoute) L.selftest.add("ai: one route for every model call", function () {
     return typeof L.ai.complete === "function" && typeof L.ai.resolve() === "string" && L.ai.clean("<think>x</think> hi") === "hi";
