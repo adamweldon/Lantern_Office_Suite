@@ -147,6 +147,17 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   ok("results saved as JSON", saved.length === 1 && /\.json$/.test(saved[0].name) && JSON.parse(saved[0].text).summary.score === 100);
   go("chat"); await sleep(20);
   ok("Chat shows which AI answers", /Using on this device: fake perfect/.test(d.body.textContent));
+  // Chat renders a model's markdown readably and says when an answer was cut short
+  AI.register("device", { available: function () { return true; }, label: function () { return "fake md"; },
+    complete: function () { AI.lastFinish = "length"; return Promise.resolve("**Mars** has `PLANET` data\n# Steps\n=PLANET(\"Mars\",\"escape\")\nANSWER: about 5.03 km/s"); } });
+  var mi = d.querySelector("input[aria-label=\"Message\"]");
+  mi.value = "escape velocity from Mars"; btn(d, "Send").click(); await sleep(60);
+  var logEl = d.querySelector("[aria-label=\"Conversation\"]");
+  ok("markdown shown as bold and code, not stars", logEl.querySelector("b") && /Mars/.test(logEl.querySelector("b").textContent) &&
+    logEl.querySelector("code") && logEl.textContent.indexOf("**") === -1, logEl.innerHTML.slice(-600));
+  ok("Lantern computes the escape velocity from NASA data", /5,?027/.test(logEl.textContent), logEl.textContent.slice(-300));
+  ok("cut-short answers say so", /cut short/.test(logEl.textContent));
+  ok("PLANET is in the AI tool list and recipe cards", /PLANET\(/.test(A.toolCard()) && A.match("escape velocity from mars").some(function (c) { return c.id === "planet-escape"; }));
 
   var st = L.selftest.run();
   ok("selftests pass (incl. AI)", st.fail.length === 0 && L.selftest.tests.filter(function (t) { return /^ai: /.test(t.name); }).length === 4, st.fail);

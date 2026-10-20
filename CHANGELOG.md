@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.8.1 — Fixes from the first laptop test (2026-10-20)
+
+From Adam's screenshot of Chat on the USB kit (Qwen3.5 4B):
+
+- **Answers were cut off mid-sentence.** Chat now allows 1536 tokens per
+  reply (was 512) and says when an answer was cut short ("send continue").
+- **Raw markdown** (`**bold**`, backticks) showed as symbols. Chat now
+  renders bold, inline code, headings and `=` lines, escaped first.
+- **Planet data came from the model's memory** (it typed Mars's mass and
+  radius). New `PLANET_DATA` module: `PLANET("Mars","escape")` and friends
+  from NASA NSSDCA fact sheets (Sun, Mercury to Neptune, Moon, Pluto: mass,
+  GM, radius, equatorial radius, gravity, escape velocity, distance,
+  period), in the AI tool list with three recipe cards (escape velocity,
+  weight on another body, orbit period around another body), two bench
+  questions and a self-test.
+- Tests: AI layer 46 checks, 14 AI modules isolated.
+
 ## 1.8.0 — On-device AI test build (2026-10-19)
 
 Phase 1 of the Lantern Edge AI Plan (`docs/Lantern_Edge_AI_Plan.pdf`): a
