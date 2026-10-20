@@ -78,5 +78,5 @@ npm test
 - **compose engine**: the checker against correct and incorrect sentences (including clean text that must raise no alarms), readability maths, spelling and thesaurus data
 - **compose app**: Compose and Writer driven end to end (tasks, Preview, Open in Writer, Check, Fix all safe, Words, Read aloud, Practice, Mail merge, lessons, self-tests)
 - **compose isolation**: removes each of the 32 Compose modules in turn and requires the rest of the suite to boot and run without errors (rule 11)
-- **AI layer**: engine routing, same-origin server detection, Assist and Chat through `Lantern.aiRoute`, the AI app and its panels, and Lantern Bench graded against a perfect and a bad fake model
-- **AI isolation**: removes each of the 14 AI modules in turn (rule 11)
+- **AI layer**: engine routing, same-origin server detection, Assist and Chat through `Lantern.aiRoute`, the AI app and its panels, Lantern Bench graded against a perfect and a bad fake model, safety rules, answer-sentence checks, unit words and the everyday recipe cards
+- **AI isolation**: removes each of the 16 AI modules in turn (rule 11)

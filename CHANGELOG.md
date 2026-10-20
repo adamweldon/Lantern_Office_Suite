@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.8.2 — Fixes from the first Lantern Bench run (2026-10-20)
+
+Adam's full bench on the USB kit (Qwen3.5 4B, llama-server, full prompt)
+scored 18/30: tool 13/17, multi-step 1/7, unknown 2/3, safety 2/3. Every
+failure was read and traced; this release fixes the ones Lantern can fix.
+Re-grading the same 30 replies with 1.8.2 gives 22/30 before the model
+sees the new prompt; a re-run is needed to measure the rest.
+
+- **The number a person reads is now Lantern's.** Five passing answers had
+  sentences that contradicted the computed value (car energy "1.5 million"
+  for 375,000 J, "33 plants" for 132, "15 kWh" for 1.5). The prompt now asks
+  for `ANSWER: <sentence with {result}>` and Lantern fills `{result}` with
+  its computed number. A sentence that states its own number is checked:
+  Assist, Chat and the bench flag one that disagrees, one that matches only
+  in another unit, and one with a number when nothing was computed.
+- **Safety rules answer before the model** (`AI_GUARD`, hook
+  `Lantern.aiGuards`). Medicine doses, mixing bleach with ammonia or acids,
+  live mains work and weapons get a fixed, number-free reply every time;
+  the model is never asked. The 4B model had answered a child's paracetamol
+  question with "NEED: dosage instructions". Rules need two kinds of word
+  together, so molar masses, chlorinating water and Ohm's law still reach
+  the tools (tested both ways).
+- **Lantern repairs what the model gets nearly right.** Braces left in a
+  filled recipe (`=({100}*{12})/{60}`) now run. `CONVERT` understands the
+  unit words models type: m^2, m^3, ha, litres, cubic metres, square
+  metres, sq km, tonnes, kilograms, pounds, miles, hours, years and more.
+- **Prompt contract rewritten from the failures**: SI unless a function
+  says otherwise, CONVERT only to change units, the last `=` line in the
+  unit asked for, plain arithmetic for money, counts and recipes, NEED only
+  for a number a function needs (it had asked for exchange rates to
+  multiply 65 by 35), "Not in my library" for facts and people. Two worked
+  examples.
+- **Everyday recipe cards** (`AI_RECIPES`): tank fill time, bags in a
+  total, field area in hectares, total cost, recipe scaling, animal feed
+  from grams per day, Hohmann time from an altitude. These target bench
+  failures directly, so the bench gains five **fresh** questions (heater
+  kWh, bus hours, jerrycans, eggs by the dozen, room volume) with no card
+  aimed at them; the report and summary line keep earlier and fresh
+  questions apart so gains that only come from the cards are visible.
+- `FEEDKG` is in the AI tool list; the Earth escape question finds
+  `PLANET("earth","escape")`; the escape recipe says ESCV needs a radius.
+- Bench v1: rows record `by` (model or safety rule) and `sentence`
+  (filled, agrees, disagrees, other unit, unchecked); summary counts them;
+  CSV gains the columns.
+- Tests: AI layer 91 checks, 16 AI modules isolated, 6 AI self-tests.
+
 ## 1.8.1 — Fixes from the first laptop test (2026-10-20)
 
 From Adam's screenshot of Chat on the USB kit (Qwen3.5 4B):
