@@ -25,7 +25,8 @@ measure against it.
   - **Clean the page.** Evens out lighting, inverts dark-mode screenshots,
     straightens tilted scans, turns pages that are sideways or upside down,
     stands italic print upright, and removes ruled lines and frames.
-  - **Find the layout.** Columns, lines, letters and words. A gap counts as
+  - **Find the layout.** Columns, paragraphs (cut only at a blank line),
+    lines, letters and words. A gap counts as
     a space only beyond what the font itself leaves between those two
     letters, so the wide gap after a "1" is not a space.
   - **Recognise letters.** The browser draws every letter of the fonts
@@ -41,7 +42,7 @@ measure against it.
 
   | Test set | Lantern 1.10.0 | Tesseract (default settings) |
   |---|---|---|
-  | 20 pages (scans, screenshots, unseen fonts, rotated, noisy, dark mode, two columns) | 0.41% | 0.24% |
+  | 20 pages (scans, screenshots, unseen fonts, rotated, noisy, dark mode, two columns) | 0.40% | 0.24% |
   | 19 held-out pages (new text, browser screenshots, nameplates, a shaded photo, italic, typewriter) | 0.31% | 5.71% |
 
   These are synthetic pages. Real photos with perspective or curved pages
