@@ -87,6 +87,17 @@ function good(last) {
     if (/how is reasoning possible/i.test(last)) return "LOOKUP: large language model reasoning";
     return "LOOKUP: none";
   }
+  if (/DOCUMENT: passages/.test(last)) {   // quotes the manual's sentence for the question, else declines
+    var Qd = [[/oil be changed/, "Change the compressor oil every 500 hours with ISO VG 100 oil; the sump holds 1.8 litres."],
+      [/E-11/, "E-11: discharge temperature above 110 degrees C; clean the cooling fins and check the room ventilation."],
+      [/E-17/, "E-17: motor overload; check the supply voltage and the belt tension."],
+      [/belt deflect/, "Check the drive belt tension monthly: it should deflect 10 to 15 mm at the middle of its longest span."]];
+    var qline = (/QUESTION: ([^\n]*)/.exec(last) || [])[1] || "", hit = Qd.filter(function (x) { return x[0].test(qline); })[0];
+    if (!hit) return "ANSWER: Not in the document.";
+    var blocks = last.split(/\n\[(\d)\] /), nn = 0;
+    for (var bi = 1; bi < blocks.length; bi += 2) if (blocks[bi + 1].indexOf(hit[1]) >= 0) nn = +blocks[bi];
+    return nn ? "ANSWER: " + hit[1].replace(/\.$/, "") + " [" + nn + "].\nQUOTE [" + nn + "]: " + hit[1] : "ANSWER: Not in the document.";
+  }
   if (/LIBRARY: passages/.test(last)) {
     var s = firstPassageSentence(last);
     return s.replace(/\.$/, "") + " [1].\nQUOTE [1]: " + s;
@@ -193,10 +204,13 @@ function good(last) {
   ok("C.converse runs a conversation with no page", conv.turns.length === 2 && conv.turns[0].searches.length === 1 && conv.turns[1].searches.length === 0 &&
     conv.turns[1].self && /Kenya/.test(conv.text), conv.turns.map(function (x) { return [x.searches, x.self, x.final]; }));
   var Q = L.aiBenchQuestions.filter(function (x) { return x.cat === "chat"; });
-  ok("eight conversations in the bench, one quick", Q.length === 8 && Q.filter(function (x) { return x.quick; }).length === 1);
+  ok("eight conversations in the bench, one quick, and four about a document", Q.filter(function (x) { return !x.doc; }).length === 8 && Q.filter(function (x) { return x.quick; }).length === 1 &&
+    Q.filter(function (x) { return x.doc; }).length === 4);
   var rep = await L.aiBench.run({ quick: false, skip: ["tool", "multi", "need", "unknown", "safety", "fact", "make", "reason", "alone"] });
   var failed = rep.rows.filter(function (r) { return !r.pass; }).map(function (r) { return r.id + ": " + r.why; });
-  ok("a model that behaves well passes every conversation", rep.rows.length === 8 && !failed.length && rep.summary.chat.pass === 8, failed);
+  ok("a model that behaves well passes every conversation", rep.rows.length === 12 && !failed.length && rep.summary.chat.pass === 12, failed);
+  ok("document conversations: the bench handed Chat the manual, and took it back", rep.rows.filter(function (r) { return /^doc-/.test(r.id); }).every(function (r) { return r.chat.some(function (t) { return t.searches.some(function (s) { return s.how === "document"; }); }) || r.id === "doc-not-covered"; }) &&
+    !(L.textReader && L.textReader.attached));
   ok("rows record each turn's searches", rep.rows.filter(function (r) { return r.id === "chat-follow-up-search"; })[0].chat[1].searches[0].how === "asked");
   // the 1.9.4 behaviour, replayed: searching the literal follow-up fails
   var lit = Q.filter(function (x) { return x.id === "chat-follow-up-search"; })[0];

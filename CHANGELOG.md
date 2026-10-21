@@ -1,5 +1,107 @@
 # Changelog
 
+## 1.10.0 — Text Reader: printed text from pictures, scans and PDFs (2026-10-21)
+
+Lantern can now read. Pictures of pages, photos of labels and nameplates,
+screenshots and scanned PDFs become text the person can search, correct and
+save, and the AI can answer from. It is plain JavaScript with no font files,
+no training data and no download. The idea came from the sheet music reader
+built for the music studio: find the structure printed on the page and
+measure against it.
+
+- **Text Reader tile.** Open pictures or a PDF, take a photo, drop files, or
+  paste a screenshot (Ctrl+V).
+  - Long documents are read in sections (5, 10, 20 or 50 pages), so a whole
+    manual can be worked through on a small device.
+  - Each page shows the picture with a box round every word: green when
+    sure, amber when fairly sure, red when guessing.
+  - Corrections are learnt and remembered.
+  - Save as text, open in Writer, save as a **searchable PDF**, or save every
+    word with its position (JSON).
+  - **Second reader.** When the AI in use can see pictures, it reads the page
+    on its own; Lantern lines the two readings up word by word and marks
+    every difference for the person to settle.
+- **How it reads** (one module per step):
+  - **Clean the page.** Evens out lighting, inverts dark-mode screenshots,
+    straightens tilted scans, turns pages that are sideways or upside down,
+    stands italic print upright, and removes ruled lines and frames.
+  - **Find the layout.** Columns, lines, letters and words. A gap counts as
+    a space only beyond what the font itself leaves between those two
+    letters, so the wide gap after a "1" is not a space.
+  - **Recognise letters.** The browser draws every letter of the fonts
+    installed on the computer. Lantern compares shape, position on the line,
+    width and holes, then learns the page's own letters as it goes, so a
+    font it does not have still reads well. Touching letters (rn, ti, ff)
+    are cut apart, and letters broken by a thin stroke are joined; the word
+    step decides which of these readings to keep.
+  - **Choose words.** A word model learnt from Lantern's own text, plus
+    numbers, units (kW, psi, ft-lb), codes (E-11), abbreviations (ISO),
+    capitals after a full stop, and commas before small letters.
+- **Accuracy on test pages.** The share of characters read wrong:
+
+  | Test set | Lantern 1.10.0 | Tesseract (default settings) |
+  |---|---|---|
+  | 20 pages (scans, screenshots, unseen fonts, rotated, noisy, dark mode, two columns) | 0.41% | 0.24% |
+  | 19 held-out pages (new text, browser screenshots, nameplates, a shaded photo, italic, typewriter) | 0.31% | 5.71% |
+
+  These are synthetic pages. Real photos with perspective or curved pages
+  will read worse.
+- **PDF in.** Scanned PDFs are opened with no library. Supported picture
+  formats:
+  - JPEG.
+  - zlib with PNG predictors.
+  - LZW, ASCIIHex, ASCII85 and RunLength.
+  - CCITT fax Group 3 and 4.
+  - Grey, RGB, CMYK and palette colour, 1–16 bits.
+  - Several picture strips on one page.
+
+  Object streams, inherited resources and turned pages are handled. Pages
+  that carry their own words (made on a computer, or scanned and read
+  before) use those words: exact, with ToUnicode maps, encodings and glyph
+  names. JBIG2 and JPEG 2000 pictures are reported as not readable yet.
+- **PDF out.** A searchable PDF keeps each page as its picture, with
+  invisible Helvetica words placed over each word. It was checked with qpdf
+  and pdftotext.
+- **Chat.** The 📄 button (or "Ask Chat about it" in the tile) gives Chat a
+  document.
+  - Each question then gets the document's most relevant passages, numbered
+    like library passages ("DOCUMENT: passages from ...").
+  - The AI's quotes and sentences are checked against the document.
+  - "Not in the document" is a decline.
+  - Naming a page reads that part first.
+  - A picture of sheet music is read as notes.
+- **Sheet Music Reader** in the Music tile. A rewrite of
+  sheet_music_reader_v7:
+  - Staff lines are removed where nothing crosses them; each note head's own
+    centre gives its pitch.
+  - Filled and open heads, chords and ledger lines are read, and tilted
+    photos are levelled.
+  - Treble, bass or piano staves; a chosen key signature.
+  - Playback, MIDI and JSON export; "Ask Chat about it".
+  - Pitches are read, not note lengths.
+- **Handwriting** has its own module, `HANDWRITING_READER`, which is a stub
+  for now. Text Reader hands it pages where most words are guesses.
+- **Hooks**:
+  - `Lantern.chatTools`: buttons beside Chat's Send.
+  - `Lantern.chatContext`: passages from an attached document.
+  - `Lantern.musicCards`: cards in the Music tile.
+  - `Lantern.textReader`, `Lantern.pdf`, `Lantern.sheetMusic` and
+    `Lantern.handwritingReader`.
+- **Lantern Bench.** Four conversations about a compressor manual handed to
+  Chat: an oil figure, a fault code, a follow-up, and a question the manual
+  does not answer, which must be declined.
+- **Tests:**
+  - `tests/text_reader.js` (39 checks): the word model, layout on drawn
+    bitmaps, glyph features, a fax G4 picture decoded pixel for pixel from a
+    PDF with object streams, a page's own words with an embedded font,
+    document passages, Chat answering from a document (made-up quotes
+    caught), the second reader's word-by-word comparison, and the music
+    staff finder, pitches and MIDI.
+  - `tests/browser/text_reader_e2e.py`: real-browser reading of fixture
+    pages with error limits, PDFs, a searchable PDF read back, and sheet
+    music note for note.
+  - The isolation test covers the 18 new modules, plus the new bench data.
+
 ## 1.9.9 — Lantern keeps track: puzzle tools for the AI (2026-10-21)
 
 Six puzzles given to the 35B in Chat (1.9.8): it solved the original cup

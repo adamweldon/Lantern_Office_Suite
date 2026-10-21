@@ -1,6 +1,6 @@
 // Rule 11 proof for the AI layer: remove each AI module in turn, boot the
 // suite (bundle timing), open the AI app (every section), Assist in AI-model
-// mode and Chat, and run every selftest. Any exception fails the test.
+// mode, Chat, Text Reader and Music, and run every selftest. Any exception fails the test.
 "use strict";
 var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
 var fs = require("fs"), path = require("path");
@@ -8,7 +8,10 @@ var inner = fs.readFileSync(process.argv[2] || path.join(__dirname, "..", "src",
 var MODS = ["PLANET_DATA", "AI_RECIPES", "AI_ENGINE", "AI_GUARD", "AI_CHECKS", "AI_DEVICE", "AI_BENCH_DATA", "AI_BENCH", "AI_PROMPT", "AI_APP", "AI_PANEL_DEVICE", "AI_PANEL_SERVER",
   "AI_PANEL_BENCH", "PWA_SITE", "GUIDE_AI_SETUP", "AI_SELFTEST", "ASSIST_CHAT",
   "LIBRARY_ENGINE", "LIBRARY_CHECKS", "LIBRARY_PANEL", "LIBRARY_BENCH_DATA", "AI_ACTIONS", "AI_SCHEMATIC", "AI_DRAW", "AI_SHEET", "AI_MAKE_BENCH_DATA", "AI_CHAT_BENCH_DATA",
-  "TEXT_FUNCS", "AI_PUZZLE", "AI_PUZZLE_TRACK", "AI_PUZZLE_TURN", "AI_PUZZLE_SOLVE", "AI_PUZZLE_BENCH_DATA"];
+  "TEXT_FUNCS", "AI_PUZZLE", "AI_PUZZLE_TRACK", "AI_PUZZLE_TURN", "AI_PUZZLE_SOLVE", "AI_PUZZLE_BENCH_DATA",
+  "TEXT_READER_IMAGE", "TEXT_READER_LAYOUT", "TEXT_READER_GLYPHS", "TEXT_READER_WORDS", "TEXT_READER", "PDF_PARSE", "PDF_CCITT", "PDF_PAGES", "PDF_TEXT",
+  "PDF_WRITE", "HANDWRITING_READER", "TEXT_READER_DOCS", "TEXT_READER_VIEW", "TEXT_READER_APP", "TEXT_READER_CHAT", "SHEET_MUSIC_ENGINE", "SHEET_MUSIC_APP",
+  "GUIDE_TEXT_READER", "TEXT_READER_BENCH_DATA"];
 function without(src, name) {
   var a = src.indexOf("// MODULE: " + name + " - START"), b = src.indexOf("// MODULE: " + name + " - END");
   if (a < 0 || b < 0) throw new Error("missing " + name);
@@ -33,7 +36,7 @@ async function run(variant) {
   var L = w.Lantern;
   w.fetch = function () { return Promise.resolve({ ok: true, json: function () {
     return Promise.resolve({ choices: [{ message: { content: "=2+2\nANSWER: 4" } }] }); } }); };
-  ["ai", "assist", "chat"].forEach(function (h) { if (L.apps[h]) { go(h); } });
+  ["ai", "assist", "chat", "reader", "music"].forEach(function (h) { if (L.apps[h]) { go(h); } });
   await sleep(10);
   if (L.apps.ai) {
     go("ai"); await sleep(10);
