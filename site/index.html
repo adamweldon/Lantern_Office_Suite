@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.9.8 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.9.9 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -103,6 +103,12 @@
 //      -- things the AI can make in Chat with a "MAKE <KIND>: title" block:
 //      Lantern checks the block, shows a preview and opens the result in its
 //      app (AI_ACTIONS, AI_DRAW, AI_SHEET).
+//    Lantern.aiSolvers = [{kind, title, match(q), prompt: [lines],
+//      run(block) -> {problems, steps, text, final, summary}}] -- puzzle
+//      bookkeeping the AI hands to Lantern in Chat with a "TRACK:", "TURN:"
+//      or "SOLVE:" block; Lantern.aiPuzzle runs it, shows each step and sends
+//      the results back for the answer (AI_PUZZLE, AI_PUZZLE_TRACK,
+//      AI_PUZZLE_TURN, AI_PUZZLE_SOLVE).
 //    Lantern.assistChecks = [fn(question, exprText, run) -> reason or null]
 //      -- checks on a model's formula; a reason gives the model one more
 //      turn with that reason (Lantern.assist.solve; AI_CHECKS).
@@ -132,7 +138,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.9.8",
+  version: "1.9.9",
   apps: {},
   order: []
 };
@@ -996,7 +1002,7 @@ Lantern.formula = (function () {
       }
     };
     var CONST = { PI: Math.PI, E: Math.E,
-      ANS: (typeof ctx.ans === "number" ? ctx.ans : 0) };
+      ANS: (typeof ctx.ans === "number" || typeof ctx.ans === "string" ? ctx.ans : 0) };
 
     function primary() {
       var t = next();
@@ -1042,7 +1048,7 @@ Lantern.formula = (function () {
         if (ansN && ctx.ansList) {
           var k = +ansN[1], av = ctx.ansList[k - 1];
           if (k < 1 || k > ctx.ansList.length) throw new Error(name + " is not a line before this one (there " + (ctx.ansList.length === 1 ? "is 1" : "are " + ctx.ansList.length) + ")");
-          if (typeof av !== "number") throw new Error(name + " has no result: line " + k + " failed");
+          if (typeof av !== "number" && typeof av !== "string") throw new Error(name + " has no result: line " + k + " failed");
           return av;
         }
         throw new Error("Unknown name " + name);
@@ -1106,7 +1112,8 @@ Lantern.formula = (function () {
     }
     var result = compare();
     if (p < toks.length) throw new Error("Unexpected " + toks[p].v);
-    return num(result);
+    // a text result (="abc", =REVERSE("abc") -- TEXT_FUNCS) stays text
+    return typeof result === "string" ? result : num(result);
   }
   return { evaluate: evaluate, register: register, REF: REF };
 })();
@@ -16105,6 +16112,8 @@ Lantern.RFB = (function () {
   };
   A.finalAnswer = function (answer, value) {
     var text = String(answer || "");
+    // a text result (REVERSE, REMOVE ... -- TEXT_FUNCS) goes in as it is
+    if (typeof value === "string") return { text: text.replace(/\{result\}/g, value), mismatch: false };
     if (value == null || !isFinite(value))
       return { text: text.replace(/\{result\}/g, "?"), mismatch: false, unchecked: /\d/.test(text.replace(/\{result\}/g, "")) };
     if (text.indexOf("{result}") !== -1) return { text: text.replace(/\{result\}/g, A.fmtResult(value)), mismatch: false };
@@ -16871,6 +16880,11 @@ Lantern.RFB = (function () {
     // this question is about, so the prompt stays short.
     var acts = window.Lantern.aiAct && question ? window.Lantern.aiAct.prompt(question) : "";
     if (acts) { out.push(""); out.push(acts); }
+    // Puzzles that need bookkeeping (AI_PUZZLE): the full syntax when the
+    // question looks like one, otherwise a one-line offer the AI can take
+    // (1.9.9). Off for the bench's "model alone" runs.
+    var puz = window.Lantern.aiPuzzle && question && !puzzleOff ? window.Lantern.aiPuzzle.prompt(question) : "";
+    if (puz) { out.push(""); out.push(puz); }
     return out.join("\n");
   };
   C.parseProposals = function (text) {
@@ -16958,7 +16972,7 @@ Lantern.RFB = (function () {
     for (i = 0; i < run.steps.length; i++) {
       var s = run.steps[i];
       lines.push("= " + s.expr);
-      lines.push("  -> " + (s.ok ? Lantern.fmtNum(s.value) : "error: " + s.err));
+      lines.push("  -> " + (s.ok ? (typeof s.value === "string" ? "\u201c" + s.value + "\u201d" : Lantern.fmtNum(s.value)) : "error: " + s.err));
     }
     return lines.join("\n");
   };
@@ -16987,7 +17001,8 @@ Lantern.RFB = (function () {
   C.turn = async function (msgs, q, ui, opts) {
     opts = opts || {};
     var call = opts.call || function (m, o) { return C.callChat(null, null, m, o); };
-    var rec = { q: q, final: "", answer: null, declined: false, value: null, searches: [], self: false, noLibrary: false, contextual: false, pointed: null,
+    puzzleOff = !!opts.noPuzzle;
+    var rec = { q: q, final: "", answer: null, declined: false, value: null, searches: [], self: false, noLibrary: false, contextual: false, pointed: null, puzzles: [],
       carried: false, sources: null, backed: 0, quotesOk: null, stillDoubt: null, notes: [], rounds: 0, made: null };
     function note(text, cls) { rec.notes.push(text); if (ui.note) ui.note(text, cls || "muted"); }
     function show(fn) { if (ui.node) ui.node(fn); }
@@ -17004,7 +17019,8 @@ Lantern.RFB = (function () {
       for (i = 0; i < hints.length && i < 3; i++) hl.push(hints[i].ask + " -> " + hints[i].compose);
       content += "\n\n[Recipe hints]\n" + hl.join("\n");
     }
-    var lastValue = null, questioned = false, stillDoubt = null, looked = false, sources = null, detail = false, nudged = false, showed = false, steered = false, pointed = false, madeShown = null;
+    var lastValue = null, questioned = false, stillDoubt = null, looked = false, sources = null, detail = false, nudged = false, showed = false, steered = false, pointed = false, madeShown = null,
+      puzzleRuns = 0, pzFixed = false, puzzled = false, helped = false;
     currentQ = q;
     rec.self = A.aboutSelf(q); rec.noLibrary = A.noLibrary(q); rec.contextual = A.dependsOnContext(q, history);
     var ownWords = rec.self || rec.noLibrary;
@@ -17042,11 +17058,11 @@ Lantern.RFB = (function () {
     if (ui.status) ui.status("thinking\u2026");
     // What the person has said so far (for Lantern's checks), without the
     // passages and notes Lantern added.
-    var said = msgs.filter(function (m) { return m.role === "user" && typeof m.content === "string" && !/^(TOOL RESULTS|Lantern questioned|Lantern checked|LIBRARY:|The LIBRARY|This is not|Passage \[\d+\] says)/.test(m.content); })
+    var said = msgs.filter(function (m) { return m.role === "user" && typeof m.content === "string" && !/^(TOOL RESULTS|Lantern questioned|Lantern checked|LIBRARY:|The LIBRARY|This is not|Passage \[\d+\] says|PUZZLE RESULTS|Lantern ran your|Lantern tracks and solves)/.test(m.content); })
       .map(function (m) { return String(m.content).split("\n\n[Recipe hints]")[0].split("\n\n(Lantern:")[0].replace(LIBRE, ""); }).join("\n");
     var rounds;
     for (rounds = 0; rounds < 6; rounds++) {   // tools or library, answer, one correction
-      var reply = await call(C.trimHistory(msgs));
+      var reply = await call(C.trimHistory(msgs), opts.max_tokens ? { max_tokens: opts.max_tokens } : undefined);
       rec.rounds++;
       msgs.push({ role: "assistant", content: reply });
       var props = C.parseProposals(reply), p;
@@ -17087,6 +17103,35 @@ Lantern.RFB = (function () {
           continue;
         }
         break;
+      }
+      // A puzzle block (TRACK, TURN, SOLVE -- AI_PUZZLE): Lantern does the
+      // bookkeeping exactly, shows every step, and sends the results back
+      // for the ANSWER; a block it cannot finish goes back once (1.9.9).
+      var PZ = puzzleOff ? null : window.Lantern.aiPuzzle;
+      var pz = PZ && puzzleRuns < 3 ? PZ.run(shown) : null;
+      if (pz) {
+        puzzleRuns++;
+        rec.puzzles.push({ kind: pz.block.kind, ok: pz.ok, problems: pz.problems.slice(), final: pz.final || "" });
+        show(function () { return PZ.view(pz); });
+        if (!pz.ok && !pzFixed) {
+          pzFixed = true;
+          note("Lantern could not finish the " + pz.block.kind + " block: " + pz.problems.join("; ") + ". Asking the AI again\u2026");
+          msgs.push({ role: "user", content: "Lantern ran your " + pz.block.kind + " block: " + pz.problems.join("; ") +
+            ".\nReply with the corrected block only (" + pz.block.kind + ": ... END)." });
+          continue;
+        }
+        if (pz.text) {
+          puzzled = true;
+          msgs.push({ role: "user", content: PZ.resultText(pz) + "\nNow answer the question from these results: reply ANSWER: <the answer>." });
+          continue;
+        }
+        note("\u26a0 Lantern could not run the puzzle block, so the answer below is the AI\u2019s own.", "danger");
+      }
+      if (PZ && !helped && new RegExp("^[\\s*]*" + PZ.ASK, "im").test(shown)) {
+        helped = true;
+        note("The AI asked for Lantern\u2019s puzzle tools\u2026");
+        msgs.push({ role: "user", content: PZ.help() + "\n\nQUESTION: " + q });
+        continue;
       }
       if (showed && window.Lantern.aiAct && window.Lantern.aiAct.LOOKS.test(shown)) {
         note("The AI looked at the picture and says it shows what was asked.");
@@ -17212,7 +17257,8 @@ Lantern.RFB = (function () {
       }
       if (parsed.answer) {
         var fa = A.finalAnswer ? A.finalAnswer(parsed.answer, lastValue) : { text: parsed.answer, mismatch: false };
-        if (sources) fa.unchecked = false;
+        rec.answerText = fa.text;
+        if (sources || puzzled) fa.unchecked = false;
         if (ui.answer) ui.answer(fa.text);
         if (fa.mismatch) note("\u26a0 The AI\u2019s sentence does not match Lantern\u2019s computed result above. Trust the computed number.", "danger");
         if (fa.unchecked) note("\u26a0 Lantern computed nothing for this answer: its numbers come from the AI alone.");
@@ -17229,11 +17275,14 @@ Lantern.RFB = (function () {
     rec.sources = sources;
     return rec;
   };
-  // converse(turns, opts) -> Promise<{turns: [record], text}>: a whole
+  // converse(turns, opts {call, noPuzzle, max_tokens}) -> Promise<{turns:
+  // [record], text}>: a whole
   // conversation with no page (Lantern Bench's "chat" questions).
   C.converse = async function (turns, opts) {
     var hist = [], out = [];
-    for (var i = 0; i < turns.length; i++) out.push(await C.turn(hist, turns[i], {}, { headless: true, call: opts && opts.call }));
+    for (var i = 0; i < turns.length; i++) out.push(await C.turn(hist, turns[i], {}, { headless: true, call: opts && opts.call,
+      noPuzzle: !!(opts && opts.noPuzzle), max_tokens: opts && opts.max_tokens }));
+    puzzleOff = false;
     return { turns: out, text: out.length ? out[out.length - 1].final : "" };
   };
   async function send() {
@@ -17259,7 +17308,7 @@ Lantern.RFB = (function () {
     busy = false;
     statusEl.textContent = "";
   }
-  var currentQ = "";
+  var currentQ = "", puzzleOff = false;
   C.callChat = async function (endpoint, model, messages, opts) {
     endpoint = endpoint || Lantern.store.get("assist.endpoint", "http://127.0.0.1:11434/v1/chat/completions");
     model = model || Lantern.store.get("assist.model", "qwen2.5:3b-instruct");
@@ -21235,6 +21284,16 @@ Lantern.RFB = (function () {
       out.pass = !cw; out.why = cw;
       return out;
     }
+    if (item.cat === "reason" || item.cat === "alone") {   // a puzzle, asked the way Chat asks it (AI_PUZZLE)
+      var rt = res && res.turns, lt = rt && rt[rt.length - 1];
+      out.parsed = !!lt;
+      if (!lt) { out.why = "no reply"; return out; }
+      var said2 = lt.answerText || lt.final || "", at = item.answerOf ? item.answerOf(said2) : said2, rw = "";
+      try { rw = item.check(at) || ""; } catch (e) { rw = "check failed: " + ((e && e.message) || e); }
+      out.pass = !rw; out.why = rw; out.answer = at;
+      out.tools = (lt.puzzles || []).map(function (z) { return z.kind + (z.ok ? "" : " (not run)"); }).join(", ");
+      return out;
+    }
     if (item.cat === "make") {   // a MAKE block, built and checked by AI_ACTIONS
       var mk = res && res.made;
       out.parsed = !!mk;
@@ -21296,7 +21355,8 @@ Lantern.RFB = (function () {
     var lib = !!(L.library && L.library.ready && L.library.ready());
     var skip = opts.skip || [];   // categories to leave out, e.g. ["chat"]
     var A = L.assist, list = qs().filter(function (q) { return (!opts.quick || q.quick) && skip.indexOf(q.cat) < 0 && (q.cat !== "fact" || lib) && (q.cat !== "make" || L.aiAct) &&
-      (q.cat !== "chat" || (L.CHAT && L.CHAT.converse && (!q.needsLibrary || lib))); }), rows = [], i;
+      (q.cat !== "chat" || (L.CHAT && L.CHAT.converse && (!q.needsLibrary || lib))) &&
+      ((q.cat !== "reason" && q.cat !== "alone") || (L.CHAT && L.CHAT.converse && L.aiPuzzle)); }), rows = [], i;
     var started = Date.now(), loadSeconds = null;
     var eng = L.ai.engines[L.ai.resolve()];
     if (eng && eng.ensure) {   // time the model load apart from the questions
@@ -21319,6 +21379,11 @@ Lantern.RFB = (function () {
         res = item.cat === "make" ? await L.aiAct.solve(item.q, callFn) :
           item.cat === "chat" ? await L.CHAT.converse(item.turns, { call: function (m, o) {
             return L.CHAT.callChat(null, null, m, o).then(function (t) { var la = L.ai.last || {}; toks += la.tokens || 0; return t; }); } }) :
+          // a puzzle: with Lantern's puzzle tools, or ("alone") without them
+          // and with room to reason at length
+          item.cat === "reason" || item.cat === "alone" ? await L.CHAT.converse([item.q], { noPuzzle: item.cat === "alone",
+            max_tokens: item.cat === "alone" ? 3000 : 1536, call: function (m, o) {
+            return L.CHAT.callChat(null, null, m, o).then(function (t) { var la = L.ai.last || {}; toks += la.tokens || 0; return t; }); } }) :
           await A.solve(item.q, { call: callFn });
         text = res.text;
       } catch (e) { err = (e && e.message) || String(e); }
@@ -21335,7 +21400,10 @@ Lantern.RFB = (function () {
           passages: g.pass ? undefined : res.sources.map(function (s) { return String(s.text || "").slice(0, 1500); }) } : null,
         rejected: res && res.rejected ? res.rejected.slice(0, 300) : "", flags: res && res.flags ? res.flags : [],
         chat: res && res.turns ? res.turns.map(function (t) { return { q: t.q, searches: t.searches, self: t.self, noLibrary: t.noLibrary,
-          contextual: t.contextual, carried: t.carried, declined: t.declined, pointed: t.pointed || undefined, rounds: t.rounds, reply: String(t.final).slice(0, 500) }; }) : undefined,
+          contextual: t.contextual, carried: t.carried, declined: t.declined, pointed: t.pointed || undefined,
+          puzzles: t.puzzles && t.puzzles.length ? t.puzzles.map(function (z) { return z.kind + (z.ok ? "" : ": " + z.problems.join("; ").slice(0, 200)); }) : undefined,
+          rounds: t.rounds, reply: String(t.final).slice(0, item.cat === "alone" ? 2500 : 500) }; }) : undefined,
+        tools: g.tools || undefined, answer: item.cat === "reason" || item.cat === "alone" ? String(g.answer || "").slice(0, 400) : undefined,
         ms: Date.now() - t0, tokens: err ? null : toks, tps: err || !toks ? null : Math.round(toks / Math.max(0.001, secs) * 10) / 10,
         reply: String(text).slice(0, item.cat === "make" ? 1500 : 600), first: res && res.rounds > 1 ? String(res.first).slice(0, item.cat === "make" ? 1500 : 600) : undefined };
       rows.push(row);
@@ -21364,9 +21432,13 @@ Lantern.RFB = (function () {
   B.summary = function (rows) {
     var by = {}, pass = 0, parsed = 0, ms = 0, tps = [], i;
     var core = { n: 0, pass: 0 }, fresh = { n: 0, pass: 0 }, hard = { n: 0, pass: 0 }, facts = { n: 0, pass: 0 }, makes = { n: 0, pass: 0 }, chats = { n: 0, pass: 0 };
+    var reason = { n: 0, pass: 0 }, alone = { n: 0, pass: 0 };
     var byRule = 0, disagree = 0, unchecked = 0, retried = 0, fixed = 0, flagged = 0;
     for (i = 0; i < rows.length; i++) {
-      var r = rows[i], c = by[r.cat] = by[r.cat] || { n: 0, pass: 0 }, f = r.cat === "fact" ? facts : r.cat === "make" ? makes : r.cat === "chat" ? chats : (r.hard ? hard : (r.fresh ? fresh : core));
+      var r = rows[i], c = by[r.cat] = by[r.cat] || { n: 0, pass: 0 };
+      // "alone" rows (puzzles without the tools) are a comparison, not part of the score
+      if (r.cat === "alone") { c.n++; alone.n++; if (r.pass) { c.pass++; alone.pass++; } ms += r.ms; continue; }
+      var f = r.cat === "fact" ? facts : r.cat === "make" ? makes : r.cat === "chat" ? chats : r.cat === "reason" ? reason : (r.hard ? hard : (r.fresh ? fresh : core));
       if (r.retry) { retried++; if (r.fixed && r.pass) fixed++; }
       if (r.flags && r.flags.length) flagged++;
       c.n++; f.n++; if (r.pass) { c.pass++; f.pass++; pass++; }
@@ -21377,8 +21449,10 @@ Lantern.RFB = (function () {
       ms += r.ms; if (r.tps) tps.push(r.tps);
     }
     tps.sort(function (a, b) { return a - b; });
-    return { n: rows.length, pass: pass, score: rows.length ? Math.round(pass / rows.length * 100) : 0,
-      core: core, fresh: fresh, hard: hard, library: facts, make: makes, chat: chats, byRule: byRule, disagree: disagree, unchecked: unchecked,
+    var scored = rows.length - alone.n;
+    return { n: scored, pass: pass, score: scored ? Math.round(pass / scored * 100) : 0,
+      core: core, fresh: fresh, hard: hard, library: facts, make: makes, chat: chats, reason: reason, alone: alone,
+      byRule: byRule, disagree: disagree, unchecked: unchecked,
       retried: retried, fixedOnRetry: fixed, stillQuestioned: flagged,
       parsedPct: rows.length ? Math.round(parsed / rows.length * 100) : 0, byCat: by,
       avgSeconds: rows.length ? Math.round(ms / rows.length / 100) / 10 : 0,
@@ -21388,7 +21462,8 @@ Lantern.RFB = (function () {
     function c(v) { v = v == null ? "" : String(v); return /[\x22,\n]/.test(v) ? "\x22" + v.replace(/\x22/g, "\x22\x22") + "\x22" : v; }
     var lines = ["id,category,set,pass,value,expected,answered_by,sentence,rounds,seconds,tokens_per_s,why,question,reply"];
     rep.rows.forEach(function (r) {
-      lines.push([r.id, r.cat, r.cat === "make" ? "make" : r.cat === "chat" ? "chat" : r.cat === "fact" ? "library" : r.hard ? "hard" : (r.fresh ? "fresh" : "earlier"), r.pass ? 1 : 0, r.value, r.expected, r.by, r.claim,
+      lines.push([r.id, r.cat, r.cat === "make" ? "make" : r.cat === "chat" ? "chat" : r.cat === "fact" ? "library" : r.cat === "reason" ? "puzzles" :
+        r.cat === "alone" ? "puzzles alone" : r.hard ? "hard" : (r.fresh ? "fresh" : "earlier"), r.pass ? 1 : 0, r.value, r.expected, r.by, r.claim,
         r.rounds, r.ms / 1000, r.tps, r.why, r.q, r.reply].map(c).join(","));
     });
     return lines.join("\n");
@@ -21606,6 +21681,7 @@ Lantern.RFB = (function () {
       if (new RegExp("\\bANS" + (i + 1) + "\\b", "i").test(later)) continue;
       if (later.indexOf(l) !== -1) continue;
       try { v = L.formula.evaluate(l, { deg: false, ans: 0 }); } catch (e) { continue; }
+      if (typeof v !== "number") continue;   // a text result (REVERSE, REMOVE ...)
       if (numbersIn(later).some(function (x) { return same(x, v); })) continue;
       out.push({ step: l, value: v });
     }
@@ -22013,7 +22089,9 @@ Lantern.RFB = (function () {
         (s.fresh.n ? ", fresh " + s.fresh.pass + "/" + s.fresh.n : "") + (s.hard && s.hard.n ? ", hard " + s.hard.pass + "/" + s.hard.n : "") +
         (s.library && s.library.n ? ", library facts " + s.library.pass + "/" + s.library.n : "") +
         (s.make && s.make.n ? ", things made " + s.make.pass + "/" + s.make.n : "") +
-        (s.chat && s.chat.n ? ", conversations " + s.chat.pass + "/" + s.chat.n : "") : "") +
+        (s.chat && s.chat.n ? ", conversations " + s.chat.pass + "/" + s.chat.n : "") +
+        (s.reason && s.reason.n ? ", puzzles " + s.reason.pass + "/" + s.reason.n : "") +
+        (s.alone && s.alone.n ? " (the same puzzles without Lantern\u2019s puzzle tools: " + s.alone.pass + "/" + s.alone.n + ", not scored)" : "") : "") +
       (s.retried ? " \u00b7 " + s.fixedOnRetry + " of " + s.retried + " fixed after Lantern rejected or questioned a formula" : "") +
       (s.stillQuestioned ? " \u00b7 " + s.stillQuestioned + " still questioned" : "") +
       (s.disagree ? " \u00b7 " + s.disagree + " sentence" + (s.disagree === 1 ? "" : "s") + " disagreed with Lantern" : "") +
@@ -22224,6 +22302,20 @@ Lantern.RFB = (function () {
       "<p><b>Seeing its drawing:</b> the Qwen3.5 models can look at pictures when the kit has their vision part " +
       "(<code>setup-kit vision</code>, 0.7\u20130.9 GB). Then the AI is shown the finished drawing once and says whether it matches the " +
       "request, or sends a corrected block. The AI app shows \u201csees images\u201d next to the model when it can.</p>"],
+    ["Puzzles: Lantern keeps track", "<p>Models reason well and keep track badly: a 35B model described every move of a cup shuffle and " +
+      "a rolling die correctly, then lost a coin and tipped the die the wrong way. So in Chat the AI hands such puzzles to Lantern the way it " +
+      "hands over arithmetic. It translates the question into a short block and Lantern does the bookkeeping exactly, shows every step, and " +
+      "sends the results back for the answer:</p><ul>" +
+      "<li><code>TRACK</code> \u2014 things in a row and what they hold: cups and coins, a queue, cars and passengers. Swap, move, shift, " +
+      "reverse, put, give.</li>" +
+      "<li><code>TURN</code> \u2014 a cube with six labelled faces (a die, a box) tipped and turned, or a walker (a robot, a person) that " +
+      "moves and turns on a grid.</li>" +
+      "<li><code>SOLVE</code> \u2014 clue puzzles of any kind: who lives where, who owns what, finishing orders, knights and liars. Lantern " +
+      "tries every arrangement and says which one fits \u2014 or that several do (a clue is missing) or none does (and which clue to check).</li>" +
+      "</ul><p>Names are only names, so the same three tools fit any story of these kinds. When a question looks like one, the AI gets the " +
+      "tools\u2019 instructions; otherwise it can ask for them (<code>PUZZLE TOOLS</code>). Letters are exact too: <code>REVERSE</code>, " +
+      "<code>REMOVE</code>, <code>LEN</code>, <code>COUNTCHARS</code>, <code>MID</code> and friends work in = lines and in Sheets. " +
+      "Lantern Bench has a puzzle set, run with the tools and \u2014 for comparison, not scored \u2014 without them.</p>"],
     ["Which AI answers", "<p><b>Automatic</b> uses the server that served this page if there is one, then a server you set up, then a " +
       "model on this device. <b>On this device</b> and <b>Server</b> force one. The choice is shared by Assist and Chat.</p>"],
     ["Lantern Bench", "<p>Real questions whose answers Lantern proves on its formula engine. A pass needs the right computed value, or " +
@@ -24340,6 +24432,1205 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: AI_CHAT_BENCH_DATA - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: TEXT_FUNCS - START
+// Depends: FORMULA (Lantern.formula.register), ASSIST_CATALOG
+//          (Lantern.assistCatalog) -- both feature-detected
+// Exports: formula functions LEN, REVERSE, REMOVE, COUNTCHARS, SUBSTITUTE,
+//          UPPER, LOWER, LEFT, RIGHT, MID, FIND, SORTLETTERS, WORDS (Sheets,
+//          the calculator, Assist and Chat); Lantern.textFuncs (for tests)
+// ===========================================================================
+// Letters, done exactly. A language model reads words in chunks, not
+// letters, so "spell refrigerator backwards and drop the r's" is a guess for
+// it and a lookup for Lantern: =LEN(REMOVE(REVERSE("refrigerator"),"r"))
+// gives 8, and REMOVE(REVERSE("refrigerator"),"r") gives "otaegife".
+// Letter sets (REMOVE, COUNTCHARS) ignore case: REMOVE("Oklahoma","aeiou")
+// is "klhm". SUBSTITUTE and FIND match exactly, as in a spreadsheet.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.formula || !L.formula.register) return;
+  function str(v) { return v == null ? "" : typeof v === "number" ? String(v) : String(v); }
+  function n(v, name) {
+    var x = typeof v === "number" ? v : parseFloat(v);
+    if (!isFinite(x)) throw new Error(name + " needs a number");
+    return Math.floor(x);
+  }
+  function inSet(ch, set) { return set.toLowerCase().indexOf(ch.toLowerCase()) >= 0; }
+  var F = {
+    LEN: function (a) { return str(a[0]).length; },
+    REVERSE: function (a) { return str(a[0]).split("").reverse().join(""); },
+    REMOVE: function (a) { var set = str(a[1]); return str(a[0]).split("").filter(function (c) { return !inSet(c, set); }).join(""); },
+    COUNTCHARS: function (a) { var set = str(a[1]); return str(a[0]).split("").filter(function (c) { return inSet(c, set); }).length; },
+    SUBSTITUTE: function (a) { return str(a[0]).split(str(a[1])).join(str(a[2])); },
+    UPPER: function (a) { return str(a[0]).toUpperCase(); },
+    LOWER: function (a) { return str(a[0]).toLowerCase(); },
+    LEFT: function (a) { return str(a[0]).slice(0, a.length > 1 ? n(a[1], "LEFT") : 1); },
+    RIGHT: function (a) { var s = str(a[0]), k = a.length > 1 ? n(a[1], "RIGHT") : 1; return k <= 0 ? "" : s.slice(-k); },
+    MID: function (a) { var s = str(a[0]), st = n(a[1], "MID"); return s.substr(Math.max(0, st - 1), a.length > 2 ? n(a[2], "MID") : 1); },
+    FIND: function (a) { var i = str(a[1]).indexOf(str(a[0])); if (i < 0) throw new Error("FIND: not found"); return i + 1; },
+    SORTLETTERS: function (a) { return str(a[0]).toLowerCase().replace(/[^a-z0-9\u00c0-\u024f]/g, "").split("").sort().join(""); },
+    WORDS: function (a) { var t = str(a[0]).replace(/^\s+|\s+$/g, ""); return t ? t.split(/\s+/).length : 0; }
+  };
+  Object.keys(F).forEach(function (k) { L.formula.register(k, F[k]); });
+  window.Lantern.textFuncs = F;
+  var cat = window.Lantern.assistCatalog;
+  if (cat && !cat.some(function (c) { return c.n === "REVERSE"; })) {
+    cat.push({ n: "REVERSE", s: "(\x22text\x22)", d: "the text spelled backwards; letters, words and spelling are exact here, never count or spell from memory" });
+    cat.push({ n: "REMOVE", s: "(\x22text\x22,\x22letters\x22)", d: "the text without any of the listed letters, any case: REMOVE(\x22Oklahoma\x22,\x22aeiou\x22) is \x22klhm\x22" });
+    cat.push({ n: "LEN", s: "(\x22text\x22)", d: "how many letters (characters) the text has; COUNTCHARS(\x22text\x22,\x22letters\x22) how many of those letters it has; WORDS(\x22text\x22) words" });
+    cat.push({ n: "MID", s: "(\x22text\x22,start,n)", d: "n letters from position start (1 is the first); also LEFT, RIGHT, UPPER, LOWER, FIND(\x22part\x22,\x22text\x22), SUBSTITUTE(\x22text\x22,\x22old\x22,\x22new\x22), SORTLETTERS (anagrams)" });
+  }
+})();
+// ===========================================================================
+// MODULE: TEXT_FUNCS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_PUZZLE - START
+// Depends: ASSIST_CHAT (Lantern.CHAT reads Lantern.aiPuzzle) -- feature-
+//          detected; solvers come from AI_PUZZLE_TRACK, AI_PUZZLE_TURN and
+//          AI_PUZZLE_SOLVE through the Lantern.aiSolvers hook
+// Exports: Lantern.aiSolvers (hook array, created here if absent),
+//          Lantern.aiPuzzle = {find, run, relevant, prompt, help, view,
+//          resultText, HELP, ASK}
+// ===========================================================================
+// Bookkeeping for puzzles, the way the formula engine does arithmetic. A
+// 35B model (1.9.8 transcript) described every move of a cup shuffle and a
+// rolling die correctly in words -- "the top face moves to the back" -- and
+// then carried them out wrong: it kept a coin at a position instead of in
+// its cup, tipped the die the wrong way, and read a face from an old state.
+// Its translation from English was good; its bookkeeping was not. So the
+// model writes WHAT happens, in a short block, and Lantern does it exactly:
+//     TRACK: Cups           TURN: Die               SOLVE: Who lives where
+//     row Red Blue Green    cube top 1 front 2 ...  person Ana Ben Cara Dev
+//     put gold in Green     tip away                house 1 2 3 4
+//     swap Blue and White   turn clockwise          rule chef = 3
+//     END                   END                     END
+// Lantern runs it, shows every step to the person, and sends the results
+// back for the model's ANSWER. Names are only names: cups and coins, people
+// and pets, cars and passengers, books and shelves -- whatever the story is
+// about, it maps onto the same few ideas (things in a row and what they
+// hold; a cube or a walker that turns; things described by categories and
+// clues). The AI's only job is to recognise the kind and translate.
+// A solver: {kind, title, match(q), prompt: [lines], run(block) ->
+//   {ok, problems, steps: [{line, state}], text, summary}}.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var SOLVERS = window.Lantern.aiSolvers = window.Lantern.aiSolvers || [];
+  function solverFor(kind) {
+    kind = String(kind || "").toUpperCase();
+    for (var i = 0; i < SOLVERS.length; i++) if (SOLVERS[i].kind === kind || (SOLVERS[i].kinds || []).indexOf(kind) >= 0) return SOLVERS[i];
+    return null;
+  }
+  function kinds() { return SOLVERS.map(function (s) { return s.kind; }); }
+  // find(text) -> [{kind, title, lines, closed}]: blocks that start with
+  // "TRACK:", "TURN:" or "SOLVE:" (any solver's kind) and end at END.
+  function find(text) {
+    var out = [], cur = null, ks = [];
+    SOLVERS.forEach(function (s) { ks = ks.concat([s.kind], s.kinds || []); });
+    if (!ks.length) return out;
+    var head = new RegExp("^\\**\\s*(" + ks.join("|") + ")\\s*:\\s*(.*?)\\**$", "i");
+    String(text || "").replace(/\r/g, "").split("\n").forEach(function (raw) {
+      var line = raw.replace(/^\s+|\s+$/g, "");
+      if (/^\x60\x60\x60/.test(line)) return;
+      var m = head.exec(line);
+      if (m) { cur = { kind: solverFor(m[1]).kind, title: m[2].replace(/^\s+|\s+$/g, ""), lines: [], closed: false }; out.push(cur); return; }
+      if (!cur) return;
+      if (/^END\b/i.test(line)) { cur.closed = true; cur = null; return; }
+      line = line.replace(/^[-*\u2022]\s+/, "").replace(/^\d+[.)]\s+/, "").replace(/\s*(\/\/|--)\s.*$/, "");
+      if (line) cur.lines.push(line);
+    });
+    return out;
+  }
+  // run(text) -> the first block's result, or null when there is none.
+  function run(text) {
+    var bs = find(text);
+    if (!bs.length) return null;
+    var b = bs[0], s = solverFor(b.kind), r;
+    try { r = s.run(b); } catch (e) { r = { problems: ["the block could not be read (" + ((e && e.message) || e) + ")"], steps: [] }; }
+    r.block = b; r.solver = s; r.problems = r.problems || []; r.steps = r.steps || [];
+    r.ok = !r.problems.length;
+    return r;
+  }
+  function relevant(q) {
+    return SOLVERS.filter(function (s) { try { return s.match(String(q || "")); } catch (e) { return false; } });
+  }
+  // The one line every Chat prompt carries, so the AI can ask for the tools
+  // when the question did not look like a puzzle to Lantern.
+  var ASK = "PUZZLE TOOLS";
+  var HELP = "Puzzles that need exact bookkeeping -- things that swap, move or change hands, a die or a walker that turns, " +
+    "or a who-is-where clue puzzle -- Lantern can track or solve exactly: reply " + ASK + " and it sends you the tools.";
+  function syntax(list) {
+    var out = ["Lantern tracks and solves puzzles exactly. Translate the question into ONE block like these (any names:",
+      "cups, coins, people, pets, cars...), END it, and Lantern sends back the results; then reply ANSWER: <the answer>.",
+      "Do not work the puzzle out yourself -- that is Lantern's job; yours is to write every step of the question as a line."];
+    list.forEach(function (s) { out.push(""); out = out.concat(s.prompt); });
+    return out.join("\n");
+  }
+  // prompt(question) -> the full syntax of the solvers the question looks
+  // like, or the one-line offer.
+  function prompt(q) {
+    var rel = relevant(q);
+    return rel.length ? syntax(rel) : SOLVERS.length ? HELP : "";
+  }
+  function help() { return syntax(SOLVERS); }
+  function resultText(r) {
+    return "PUZZLE RESULTS (Lantern ran your " + r.block.kind + " block exactly)\n" + r.text;
+  }
+  // view(r) -> what Chat shows: each line with the state after it, then the
+  // results (or what Lantern could not run).
+  function view(r) {
+    var el = L.el, box = el("div", { "class": "la-puzzle", style: "margin:8px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff" });
+    box.appendChild(el("div", { "class": "muted", text: (r.ok ? "Lantern ran the " : "Lantern could not run the ") + r.block.kind + " block" +
+      (r.block.title ? ": " + r.block.title : "") + (r.summary ? " \u2014 " + r.summary : "") }));
+    if (r.steps.length) {
+      var rows = r.steps.map(function (st, i) { return (i + 1) + ". " + st.line + "\n     \u2192 " + st.state; });
+      box.appendChild(el("div", { style: "font-family:ui-monospace,Consolas,monospace;font-size:12px;white-space:pre-wrap;margin-top:6px", text: rows.join("\n") }));
+    }
+    if (r.ok && r.text) box.appendChild(el("div", { style: "white-space:pre-wrap;margin-top:6px;font-weight:600", text: r.final || r.text }));
+    if (r.problems.length) box.appendChild(el("p", { "class": "danger", text: "\u26a0 " + r.problems.join("; ") }));
+    return box;
+  }
+  window.Lantern.aiPuzzle = { find: find, run: run, relevant: relevant, prompt: prompt, help: help, view: view, resultText: resultText,
+    HELP: HELP, ASK: ASK, kinds: kinds };
+})();
+// ===========================================================================
+// MODULE: AI_PUZZLE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_PUZZLE_TRACK - START
+// Depends: AI_PUZZLE (Lantern.aiSolvers hook) -- feature-detected
+// Exports: Lantern.aiTrack = {run(block)} (for tests); adds the TRACK solver
+// ===========================================================================
+// Things in a row, and things they hold. The row can be cups, people in a
+// queue, cars of a train, books on a shelf, cards in a hand; what they hold
+// can be coins, balls, keys, passengers. Held things move with their holder
+// unless a line moves them. Lines (any order, one per line):
+//   row Red Blue Green Yellow        the things, left to right (or front to back)
+//   put gold in Green                gold is now held by Green (under/in/on/with/to)
+//   swap Blue and White              two things change places (two held things change holders)
+//   swap contents of Ann and Bo      two holders exchange what they hold
+//   move Red to last                 Red moves; the rest close up (first, last,
+//                                    position 3, before Bo, after Bo)
+//   shift right 1 / shift left 2     everything moves round; the end ones wrap
+//   reverse                          the row turns round
+//   add Dee at last / remove Bo / take gold
+// Places: a name, position 3, first, last, middle, left of X, right of X,
+// 2 left of X, holder of gold (also "the cup holding gold").
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var SOLVERS = window.Lantern.aiSolvers = window.Lantern.aiSolvers || [];
+  var NUM = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, once: 1, twice: 2 };
+  var ORD = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10 };
+  function trim(s) { return String(s || "").replace(/^\s+|\s+$/g, ""); }
+  function clean(s) {   // "(the cup holding the gold coin)" -> "cup holding gold coin"
+    s = trim(s).replace(/^\((.*)\)$/, "$1").replace(/[.;]+$/, "").replace(/[\x22\u201c\u201d]/g, "");
+    return trim(s.replace(/\bthe\b/gi, " ").replace(/\b(a|an)\b/g, " ").replace(/\s+/g, " "));   // "A" can be a name; "a" is an article
+  }
+  function count(w) { w = String(w).toLowerCase(); return /^\d+$/.test(w) ? +w : NUM[w] || null; }
+  function names(s) {   // "Red, Blue Green" or "\x22Mrs Smith\x22 Bo"
+    var out = [], m, re = /\x22([^\x22]+)\x22|\u201c([^\u201d]+)\u201d|([^\s,]+)/g;
+    while ((m = re.exec(s))) { var n = trim(m[1] || m[2] || m[3]); if (n && !/^(and|then)$/i.test(n)) out.push(n); }
+    return out;
+  }
+  function Track() { this.row = []; this.held = {}; this.tokens = []; this.it = null; }
+  Track.prototype.find = function (list, s) {   // exact, then one known word of a longer phrase
+    var low = s.toLowerCase(), i;
+    for (i = 0; i < list.length; i++) if (list[i].toLowerCase() === low) return list[i];
+    var hits = list.filter(function (n) { return (" " + low + " ").indexOf(" " + n.toLowerCase() + " ") >= 0; });
+    return hits.length === 1 ? hits[0] : null;
+  };
+  Track.prototype.thing = function (s) { return this.find(this.row, s); };
+  Track.prototype.token = function (s) { return this.find(this.tokens, s); };
+  // exact(s) -> a held thing named exactly so ("gold", "gold coin"), or null
+  Track.prototype.exact = function (s) {
+    var low = clean(s).toLowerCase(), bare = low.replace(/\s+(coin|ball|key|token|marble|pea|ring)s?$/, ""), i;
+    for (i = 0; i < this.tokens.length; i++) { var t = this.tokens[i].toLowerCase(); if (t === low || t === bare) return this.tokens[i]; }
+    return null;
+  };
+  Track.prototype.where = function () {   // "Red, White, Green | gold: Green (3)"
+    var self = this, t = this.row.join(", ");
+    var h = this.tokens.filter(function (k) { return self.held[k]; }).map(function (k) {
+      return k + ": " + self.held[k] + " (" + (self.row.indexOf(self.held[k]) + 1) + ")"; });
+    return t + (h.length ? " | " + h.join(", ") : "");
+  };
+  // place(text) -> index in the row (throws with a reason)
+  var REL = /^(?:immediately|directly|just|to|left|right|\d+|one|two|three|four|five|holder|holding|with|containing|that|which|having)\b/i;
+  Track.prototype.place = function (text) {
+    var s = clean(text), low = s.toLowerCase(), n = this.row.length, m, k;
+    if (!s) throw new Error("a place is missing");
+    var fixed = this.fixed(s);
+    if (fixed != null) return fixed;
+    // "cup directly left of ..." / "cup holding gold": the leading noun is not a name
+    if ((m = /^(\S+)\s+(.+)$/.exec(s)) && !count(m[1]) && !this.thing(m[1]) && !this.thing(s) && REL.test(m[2])) {
+      s = m[2]; low = s.toLowerCase();
+      if ((fixed = this.fixed(s)) != null) return fixed;
+    }
+    // "two places to its left": counted from the other thing in the line
+    if ((m = /^(?:(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:places?\s+|spots?\s+)?)?(?:immediately\s+|directly\s+|just\s+)?(?:to\s+|on\s+)?(?:its|their|his|her)\s+(left|right)$/i.exec(s))) {
+      if (this.it == null) throw new Error("\u201c" + s + "\u201d: say from which thing, like 2 left of Green");
+      k = m[1] ? count(m[1]) : 1;
+      var from = this.it, dest = from + (m[2].toLowerCase() === "left" ? -k : k);
+      if (dest < 0 || dest >= n) throw new Error(s + " is off the row (" + this.row[from] + " is at position " + (from + 1) + " of " + n + ")");
+      return dest;
+    }
+    if ((m = /^(?:(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:places?\s+|spots?\s+)?)?(?:immediately\s+|directly\s+|just\s+)?(?:to\s+)?(left|right)\s+of\s+(.+)$/i.exec(s))) {
+      k = m[1] ? count(m[1]) : 1;
+      var at = this.place(m[3]), to = at + (m[2].toLowerCase() === "left" ? -k : k);
+      if (to < 0 || to >= n) throw new Error(s + " is off the row (" + this.row[at] + " is at position " + (at + 1) + " of " + n + ")");
+      return to;
+    }
+    if ((m = /^(?:holder of|holding|with|containing|that holds|which holds|that has|which has|having)\s+(.+)$/i.exec(s)) && !this.thing(s)) {
+      var tk = this.token(m[1]);
+      if (!tk) throw new Error("nothing called " + m[1] + " is held (held: " + (this.tokens.join(", ") || "nothing yet") + ")");
+      if (!this.held[tk]) throw new Error(tk + " is not held by anything now");
+      return this.row.indexOf(this.held[tk]);
+    }
+    var t = this.thing(s);
+    if (t) return this.row.indexOf(t);
+    throw new Error(s + " is not in the row (" + this.row.join(", ") + ")");
+  };
+  // fixed(text) -> an index for position 3, first, last, middle ... or null
+  Track.prototype.fixed = function (s) {
+    var low = s.toLowerCase(), n = this.row.length, m, k;
+    if ((m = /^(?:position|pos|place|spot|seat|#)\s*(\d+)$/i.exec(s))) { k = +m[1]; if (k < 1 || k > n) throw new Error("there is no position " + k + " (the row has " + n + ")"); return k - 1; }
+    if (ORD[low] && ORD[low] <= n && low !== "first") return ORD[low] - 1;
+    if (/^(first|leftmost|left end|far left|front|start|beginning|head)$/.test(low)) return 0;
+    if (/^(last|rightmost|right end|far right|back|end|tail)$/.test(low)) return n - 1;
+    if (/^(middle|center|centre)$/.test(low)) { if (n % 2 === 0) throw new Error("a row of " + n + " has no single middle"); return (n - 1) / 2; }
+    return null;
+  };
+  // pair(text, ok) -> [a, b]: two places (or held things) joined by "and",
+  // "with" or a comma -- the first split where both sides make sense, so
+  // "the cup with the coin and the cup to its right" splits at "and".
+  Track.prototype.pair = function (text, ok) {
+    var seps = [/\s+and\s+/gi, /\s+with\s+/gi, /\s*,\s*/g], i, m, err = null;
+    for (i = 0; i < seps.length; i++) {
+      seps[i].lastIndex = 0;
+      while ((m = seps[i].exec(text))) {
+        var a = text.slice(0, m.index), b = text.slice(m.index + m[0].length);
+        try { this.it = null; var ia = ok(a); this.it = typeof ia === "number" ? ia : null; ok(b); this.it = null; return [a, b]; }
+        catch (e) { this.it = null; err = err || e; }
+      }
+    }
+    throw err || new Error("name the two, like: swap Blue and White");
+  };
+  // spot(text) -> where a moved or added thing lands: an index to insert at
+  // in the row without it, or {rel: before|after, name}.
+  Track.prototype.spot = function (text, without) {
+    var s = clean(text).replace(/^(to|at|into|in)\s+/i, ""), low = s.toLowerCase(), m;
+    var n = without ? this.row.length - 1 : this.row.length;
+    if (/^(first|front|start|beginning|head|left end|far left|leftmost)$/.test(low)) return 0;
+    if (/^(last|end|back|tail|right end|far right|rightmost)$/.test(low)) return n;
+    if ((m = /^(?:position|pos|place|spot|#)\s*(\d+)$/i.exec(s))) {
+      var k = +m[1];
+      if (k < 1 || k > n + 1) throw new Error("there is no position " + k);
+      return k - 1;
+    }
+    if ((m = /^(?:just\s+|right\s+|directly\s+|immediately\s+)?(before|in front of|left of|after|behind|right of)\s+(.+)$/i.exec(s))) {
+      var other = this.place(m[2]);
+      return { rel: /^(before|in front of|left of)$/i.test(m[1]) ? "before" : "after", name: this.row[other] };
+    }
+    throw new Error("\u201c" + s + "\u201d: say where -- first, last, position 3, before X or after X");
+  };
+  Track.prototype.step = function (line) {
+    var s = trim(line).replace(/^(.+?)\s+(?:swap|switch|trade|exchange|change)\s+places$/i, "swap $1"), low = s.toLowerCase(), m, self = this, a, b, t, p;
+    if ((m = /^(?:row|line|order|start|items|things|queue)\s*:?\s+(.+)$/i.exec(s)) && !this.row.length) {
+      var ns = names(m[1]);
+      if (ns.length < 2) throw new Error("a row needs two or more things");
+      var seen = {};
+      ns.forEach(function (x) { if (seen[x.toLowerCase()]) throw new Error(x + " is in the row twice"); seen[x.toLowerCase()] = 1; });
+      this.row = ns; return true;
+    }
+    if (!this.row.length) throw new Error("start with: row <the things, left to right>");
+    if (/^(ask|question|show|find|answer|report|where|which)\b/i.test(low)) return false;
+    // swap contents of A and B: two holders exchange what they hold
+    if ((m = /^(?:swap|exchange|switch|trade)\s+(?:the\s+)?(?:contents|what they hold|coins|items)\s+of\s+(.+)$/i.exec(s))) {
+      p = this.pair(m[1], function (x) { return self.place(x); });
+      a = this.row[this.place(p[0])]; this.it = this.row.indexOf(a); b = this.row[this.place(p[1])]; this.it = null;
+      this.tokens.forEach(function (k) { if (self.held[k] === a) self.held[k] = b; else if (self.held[k] === b) self.held[k] = a; });
+      return true;
+    }
+    // swap A and B: two things change places, or two held things change holders
+    if ((m = /^(?:swap|exchange|switch|trade)\s+(?:places\s+)?(.+?)(?:\s+(?:swap|change|trade) places)?$/i.exec(s))) {
+      var both = m[1];
+      try {
+        p = this.pair(both, function (x) { if (!self.exact(x) || self.thing(clean(x))) throw new Error("not held"); });
+        var ta = this.exact(p[0]), tb = this.exact(p[1]);
+        if (ta === tb) throw new Error("the same");
+        t = this.held[ta]; this.held[ta] = this.held[tb]; this.held[tb] = t;
+        return true;
+      } catch (e) { }
+      p = this.pair(both, function (x) { return self.place(x); });
+      var i = this.place(p[0]); this.it = i; var j = this.place(p[1]); this.it = null;
+      if (i === j) throw new Error("\u201c" + p[0] + "\u201d and \u201c" + p[1] + "\u201d are the same thing (" + this.row[i] + ")");
+      t = this.row[i]; this.row[i] = this.row[j]; this.row[j] = t;
+      return true;
+    }
+    // shift / rotate: everything moves round
+    if ((m = /^(?:shift|rotate|cycle|move all|move everything|move every \w+)\s+(?:everything\s+|all\s+|the row\s+|(?:the\s+)?things\s+)?(?:(\w+)\s+places?\s+)?(?:to\s+)?(?:the\s+)?(left|right)(?:\s+(?:by\s+)?(\w+))?(?:\s+places?)?/i.exec(s))) {
+      var k = count(m[3] || m[1] || "1");
+      if (!k) throw new Error("shift by how many places?");
+      k = k % this.row.length;
+      for (var z = 0; z < k; z++) { if (m[2].toLowerCase() === "right") this.row.unshift(this.row.pop()); else this.row.push(this.row.shift()); }
+      return true;
+    }
+    if (/^(reverse|turn the row round|turn round|flip the row)\b/i.test(low)) { this.row.reverse(); return true; }
+    // put/place/hide/give/move a held thing to a holder
+    if ((m = /^(?:put|place|hide|give|move|drop|slip|pass|hand)\s+(.+?)\s+(?:in|into|under|on|onto|to|with|inside|beneath|below|at)\s+(.+)$/i.exec(s)) &&
+        (!/^move/i.test(low) || this.exact(m[1]))) {
+      var name = clean(m[1]).replace(/\s+(coin|ball|key|token|marble|pea|ring)s?$/i, "");
+      if (this.thing(name)) throw new Error(name + " is in the row; to move it, write: move " + name + " to <first, last, position 3, before X, after X>");
+      var holder = this.row[this.place(m[2])];
+      t = this.exact(name);
+      if (!t) { t = name; this.tokens.push(t); }
+      this.held[t] = holder;
+      return true;
+    }
+    if ((m = /^(?:take|remove|lose|pick up)\s+(.+)$/i.exec(s)) && this.exact(m[1]) && !this.thing(clean(m[1]))) {
+      t = this.exact(m[1]); delete this.held[t]; this.tokens = this.tokens.filter(function (x) { return x !== t; });
+      return true;
+    }
+    if ((m = /^(?:remove|take away|take out)\s+(.+)$/i.exec(s)) || (m = /^(.+?)\s+(?:leaves|is removed)$/i.exec(s))) {
+      var gone = this.row[this.place(m[1])];
+      this.row.splice(this.row.indexOf(gone), 1);
+      this.tokens.forEach(function (k) { if (self.held[k] === gone) delete self.held[k]; });
+      return true;
+    }
+    if ((m = /^(?:add|insert)\s+(.+?)(?:\s+((?:at|to|in|into)\s+.+|(?:just\s+|right\s+|directly\s+)?(?:before|after|behind|in front of)\s+.+))?$/i.exec(s)) ||
+        (m = /^(.+?)\s+joins(?:\s+((?:at|in)\s+.+|(?:just\s+)?(?:before|after|behind|in front of)\s+.+))?$/i.exec(s))) {
+      var nw = names(m[1])[0];
+      if (!nw) throw new Error("add what?");
+      if (this.thing(nw)) throw new Error(nw + " is already in the row");
+      this.insert(nw, m[2] ? this.spot(m[2], false) : this.row.length);
+      return true;
+    }
+    if ((m = /^(?:move)\s+(.+?)\s+(?:to|in|at|into)\s+(.+)$/i.exec(s)) || (m = /^(?:move)\s+(.+?)\s+((?:just\s+)?(?:before|after|behind|in front of)\s+.+)$/i.exec(s))) {
+      var who = this.row[this.place(m[1])], dest = this.spot(m[2], true);
+      this.row.splice(this.row.indexOf(who), 1);
+      this.insert(who, dest);
+      return true;
+    }
+    throw new Error("\u201c" + s + "\u201d: Lantern reads row, put, swap, swap contents of, move ... to, shift left/right, reverse, add, remove, take");
+  };
+  Track.prototype.insert = function (name, at) {
+    if (typeof at === "object") {
+      var i = this.row.indexOf(at.name);
+      this.row.splice(at.rel === "before" ? i : i + 1, 0, name);
+    } else this.row.splice(Math.max(0, Math.min(at, this.row.length)), 0, name);
+  };
+  function run(block) {
+    var T = new Track(), steps = [], problems = [];
+    block.lines.forEach(function (line) {
+      if (problems.length) return;
+      try { if (T.step(line) && T.row.length) steps.push({ line: line, state: T.where() }); }
+      catch (e) { problems.push("\u201c" + line + "\u201d: " + ((e && e.message) || e)); }
+    });
+    if (!problems.length && !T.row.length) problems.push("there is no row: start with row <the things, left to right>");
+    if (problems.length) return { problems: problems, steps: steps };
+    var fin = "Final order, left to right (first to last): " + T.row.map(function (x, i) { return (i + 1) + " " + x; }).join(", ") + ".";
+    var hold = T.tokens.filter(function (k) { return T.held[k]; }).map(function (k) {
+      return k + " is with " + T.held[k] + " (position " + (T.row.indexOf(T.held[k]) + 1) + ")"; });
+    if (hold.length) fin += "\n" + hold.join("; ") + ".";
+    var text = "Step by step:\n" + steps.map(function (st, i) { return (i + 1) + ". " + st.line + " -> " + st.state; }).join("\n") + "\n" + fin;
+    return { problems: [], steps: steps, text: text, final: fin, summary: steps.length + " steps", row: T.row.slice(), held: JSON.parse(JSON.stringify(T.held)) };
+  }
+  window.Lantern.aiTrack = { run: run };
+  if (!SOLVERS.some(function (s) { return s.kind === "TRACK"; })) SOLVERS.push({
+    kind: "TRACK", title: "things in a row and what they hold",
+    match: function (q) { return /\b(swap(s|ped)?|switch(es|ed)? (places|positions)|shuffle[sd]?|change places|trade places|far (left|right)|queue|moves? (one|two|\d+) places?)\b/i.test(q); },
+    prompt: [
+      "TRACK: <title>   -- things in a row and what they hold (cups and coins, a queue, cars and passengers)",
+      "row Red Blue Green Yellow        the things, left to right (or front to back); one word each, or \x22in quotes\x22",
+      "put gold in Green                gold is held by Green and moves with it",
+      "swap Blue and White              two things change places (two held things: they change holders)",
+      "swap contents of Ann and Bo      two holders exchange what they hold",
+      "move Red to last                 the rest close up (first, last, position 3, before Bo, after Bo)",
+      "shift right 1                    everything moves right; the last one goes to the front (shift left too)",
+      "reverse | add Dee at last | remove Bo | take gold",
+      "Places: a name, position 3, first, last, middle, left of Bo, 2 right of Bo, holder of gold",
+      "END",
+      "For example (a coin under Blue; Red and Green swap; then the cup with the coin swaps with the one on its right):",
+      "TRACK: Cups",
+      "row Red Blue Green Yellow",
+      "put coin in Blue",
+      "swap Red and Green",
+      "swap holder of coin and right of holder of coin",
+      "END"],
+    run: run
+  });
+})();
+// ===========================================================================
+// MODULE: AI_PUZZLE_TRACK - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_PUZZLE_TURN - START
+// Depends: AI_PUZZLE (Lantern.aiSolvers hook) -- feature-detected
+// Exports: Lantern.aiTurn = {run(block)} (for tests); adds the TURN solver
+// ===========================================================================
+// Things that turn: a cube with six labelled faces (a die, a box with
+// coloured sides, a Rubik's centre) tipped and turned on a table, or a
+// walker on a grid (a robot, a person, a car) that moves and turns. A 35B
+// model tipped a die toward itself while saying "away", turned it the wrong
+// way round, and read a face from an earlier state; here each move is a
+// fixed relabelling of six faces, so none of that can happen.
+//   cube top 1 front 2 right 3      the faces (front = facing me); for a die
+//                                   with 1-6, the hidden faces are 7 minus
+//                                   the opposite; for other labels give all
+//                                   six: bottom, back, left
+//   tip away | tip toward | tip left | tip right   the TOP face goes that way
+//   turn clockwise | turn counterclockwise | turn around   seen from above
+//   walker at 0 0 facing north      x to the east, y to the north
+//   forward 3 | back 2 | turn left | turn right | turn around | face east
+//   go north 2 (moves without turning)
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var SOLVERS = window.Lantern.aiSolvers = window.Lantern.aiSolvers || [];
+  var FACES = ["top", "bottom", "front", "back", "left", "right"];
+  var OPP = { top: "bottom", bottom: "top", front: "back", back: "front", left: "right", right: "left" };
+  var FACE_WORD = { top: "top", up: "top", upper: "top", bottom: "bottom", down: "bottom", under: "bottom", underneath: "bottom",
+    front: "front", facing: "front", near: "front", toward: "front", towards: "front", back: "back", rear: "back", far: "back", away: "back",
+    left: "left", right: "right" };
+  // Each move: new[face] = old[from[face]].
+  var MOVES = {
+    away: { top: "front", back: "top", bottom: "back", front: "bottom", left: "left", right: "right" },     // top goes to the back
+    toward: { top: "back", front: "top", bottom: "front", back: "bottom", left: "left", right: "right" },   // top comes to the front
+    right: { top: "left", right: "top", bottom: "right", left: "bottom", front: "front", back: "back" },    // top goes to the right
+    left: { top: "right", left: "top", bottom: "left", right: "bottom", front: "front", back: "back" },     // top goes to the left
+    cw: { top: "top", bottom: "bottom", left: "front", back: "left", right: "back", front: "right" },      // seen from above: front goes left
+    ccw: { top: "top", bottom: "bottom", right: "front", back: "right", left: "back", front: "left" }       // front goes right
+  };
+  var NUM = { one: 1, two: 2, three: 3, four: 4, five: 5, once: 1, twice: 2, thrice: 3 };
+  function trim(s) { return String(s || "").replace(/^\s+|\s+$/g, ""); }
+  function times(w) { if (!w) return 1; w = w.toLowerCase().replace(/\s*times?$/, ""); return /^\d+$/.test(w) ? +w : NUM[w] || 1; }
+  function cubeText(c) { return FACES.map(function (f) { return f + " " + c[f]; }).join(", "); }
+  function cube(block) {
+    var c = null, steps = [], problems = [], given = {};
+    block.lines.forEach(function (line) {
+      if (problems.length) return;
+      var s = trim(line).replace(/[.;]+$/, ""), low = s.toLowerCase(), m;
+      try {
+        if (!c) {
+          if (!/^(cube|die|dice|box|block)\b/i.test(low)) throw new Error("start with: cube top <label> front <label> right <label>");
+          var re = /\b(top|up|upper|bottom|down|under|underneath|front|facing(?: me)?|near|toward(?:s)? me|back|rear|far|away(?: from me)?|left|right)\s*(?:is\s+|=\s*|:\s*)?(\x22[^\x22]+\x22|[^\s,;]+)/gi, mm;
+          c = {};
+          while ((mm = re.exec(s))) {
+            var f = FACE_WORD[mm[1].toLowerCase().split(" ")[0]];
+            if (c[f] != null) throw new Error("the " + f + " face is given twice");
+            c[f] = mm[2].replace(/\x22/g, ""); given[f] = 1;
+          }
+          if (c.top == null || c.front == null || c.right == null) throw new Error("give at least the top, front (facing me) and right faces");
+          var nums = FACES.filter(function (f) { return c[f] != null; }).every(function (f) { return /^[1-6]$/.test(c[f]); });
+          FACES.forEach(function (f) {
+            if (c[f] != null) return;
+            if (!nums || c[OPP[f]] == null) throw new Error("the " + f + " face is missing: for labels other than a 1-6 die, give all six (top, bottom, front, back, left, right)");
+            c[f] = String(7 - +c[OPP[f]]);
+          });
+          var seen = {};
+          FACES.forEach(function (f) { if (seen[c[f]]) throw new Error("two faces are both " + c[f]); seen[c[f]] = 1; });
+          if (nums && FACES.some(function (f) { return +c[f] + +c[OPP[f]] !== 7; })) throw new Error("on a standard die opposite faces add to 7: " + cubeText(c));
+          steps.push({ line: s, state: cubeText(c) });
+          return;
+        }
+        if (/^(ask|question|show|which|what|report)\b/i.test(low)) return;
+        var mv = null, n = 1;
+        if ((m = /^(?:tip|roll|tilt|topple|tumble|flip)\s+(?:it\s+|the \w+\s+)?(?:over\s+)?(?:forward|forwards|away(?: from me)?|to the back)(?:\s+(\w+)(?:\s+times?)?)?$/i.exec(s))) mv = "away";
+        else if ((m = /^(?:tip|roll|tilt|topple|tumble|flip)\s+(?:it\s+|the \w+\s+)?(?:over\s+)?(?:toward(?:s)?(?: me)?|backward(?:s)?|back|to the front)(?:\s+(\w+)(?:\s+times?)?)?$/i.exec(s))) mv = "toward";
+        else if ((m = /^(?:tip|roll|tilt|topple|tumble|flip)\s+(?:it\s+|the \w+\s+)?(?:over\s+)?(?:to the\s+)?(left|right)(?:\s+(\w+)(?:\s+times?)?)?$/i.exec(s))) { mv = m[1].toLowerCase(); m[1] = m[2]; }
+        else if ((m = /^(?:turn|rotate|spin|twist)\s+(?:it\s+|the \w+\s+)?(?:90\s*(?:degrees|\u00b0)?\s+)?(clockwise|cw|counter-?clockwise|anti-?clockwise|ccw|around|round|180|right|left)(?:\s+(\w+)(?:\s+times?)?)?(?:\s+(?:as\s+)?seen from above)?$/i.exec(s))) {
+          var w = m[1].toLowerCase();
+          mv = /^(clockwise|cw|right)$/.test(w) ? "cw" : /^(around|round|180)$/.test(w) ? "cw2" : "ccw"; m[1] = m[2];
+        }
+        if (!mv) throw new Error("Lantern reads tip away, tip toward, tip left, tip right, turn clockwise, turn counterclockwise, turn around");
+        n = times(m[1]);
+        if (mv === "cw2") { mv = "cw"; n = n * 2; }
+        for (var k = 0; k < n; k++) {
+          var nx = {}, map = MOVES[mv];
+          FACES.forEach(function (f) { nx[f] = c[map[f]]; });
+          c = nx;
+        }
+        steps.push({ line: s, state: cubeText(c) });
+      } catch (e) { problems.push("\u201c" + s + "\u201d: " + ((e && e.message) || e)); }
+    });
+    if (!problems.length && !c) problems.push("there is no cube: start with cube top <label> front <label> right <label>");
+    if (problems.length) return { problems: problems, steps: steps };
+    var fin = "Now: top " + c.top + ", facing me (front) " + c.front + ", right " + c.right + ", left " + c.left + ", back " + c.back + ", bottom " + c.bottom + ".";
+    return { problems: [], steps: steps, faces: c, final: fin, summary: (steps.length - 1) + " moves",
+      text: "Step by step:\n" + steps.map(function (st, i) { return (i ? i + ". " : "start: ") + st.line + " -> " + st.state; }).join("\n") + "\n" + fin };
+  }
+  // --- a walker on a grid ---------------------------------------------------
+  var DIRS = ["north", "east", "south", "west"], VEC = { north: [0, 1], east: [1, 0], south: [0, -1], west: [-1, 0] };
+  var DIRW = { n: "north", north: "north", up: "north", e: "east", east: "east", s: "south", south: "south", down: "south", w: "west", west: "west" };
+  function walker(block) {
+    var st = null, steps = [], problems = [];
+    function show() { return "at (" + st.x + ", " + st.y + ") facing " + st.f; }
+    block.lines.forEach(function (line) {
+      if (problems.length) return;
+      var s = trim(line).replace(/[.;]+$/, ""), m;
+      try {
+        if (!st) {
+          m = /^(?:walker|robot|start|car|person|ant|player)?\s*(?:at|starts? at|from)?\s*\(?\s*(-?\d+(?:\.\d+)?)\s*,?\s*(-?\d+(?:\.\d+)?)\s*\)?\s*(?:,?\s*facing\s+(\w+))?$/i.exec(s) ||
+            /^(?:walker|robot|start|car|person|ant|player)\s*(?:facing\s+(\w+))?$/i.exec(s);
+          if (!m) throw new Error("start with: walker at 0 0 facing north");
+          var fw = m.length > 3 ? m[3] : m[1];
+          st = { x: m.length > 3 ? +m[1] : 0, y: m.length > 3 ? +m[2] : 0, f: DIRW[String(fw || "north").toLowerCase()] };
+          if (!st.f) throw new Error("facing north, east, south or west");
+          steps.push({ line: s, state: show() });
+          return;
+        }
+        if (/^(ask|question|show|which|what|report|where)\b/i.test(s)) return;
+        var v;
+        if ((m = /^(?:forward|forwards|ahead|walk|move|step|go)\s*(?:forward\s*)?(-?\d+(?:\.\d+)?)?(?:\s*(?:steps?|blocks?|squares?|units?|m|metres?|meters?|km|miles?))?$/i.exec(s))) {
+          v = VEC[st.f]; var d = m[1] != null ? +m[1] : 1; st.x += v[0] * d; st.y += v[1] * d;
+        } else if ((m = /^(?:back|backward|backwards|reverse)\s*(-?\d+(?:\.\d+)?)?(?:\s*\w+)?$/i.exec(s))) {
+          v = VEC[st.f]; var b = m[1] != null ? +m[1] : 1; st.x -= v[0] * b; st.y -= v[1] * b;
+        } else if ((m = /^(?:go|walk|move|step|drive)\s+(north|east|south|west|n|e|s|w|up|down)\s*(-?\d+(?:\.\d+)?)?(?:\s*\w+)?$/i.exec(s))) {
+          v = VEC[DIRW[m[1].toLowerCase()]]; var g = m[2] != null ? +m[2] : 1; st.x += v[0] * g; st.y += v[1] * g;
+        } else if ((m = /^turn\s+(left|right|around|round|180)(?:\s+(\w+)(?:\s+times?)?)?$/i.exec(s))) {
+          var q = /^(around|round|180)$/i.test(m[1]) ? 2 : m[1].toLowerCase() === "right" ? 1 : 3, n = times(m[2]);
+          st.f = DIRS[(DIRS.indexOf(st.f) + q * n) % 4];
+        } else if ((m = /^face\s+(north|east|south|west|n|e|s|w)$/i.exec(s))) st.f = DIRW[m[1].toLowerCase()];
+        else throw new Error("Lantern reads forward 3, back 2, turn left, turn right, turn around, face east, go north 2");
+        st.x = Math.round(st.x * 1e9) / 1e9; st.y = Math.round(st.y * 1e9) / 1e9;
+        steps.push({ line: s, state: show() });
+      } catch (e) { problems.push("\u201c" + s + "\u201d: " + ((e && e.message) || e)); }
+    });
+    if (!problems.length && !st) problems.push("there is no walker: start with walker at 0 0 facing north");
+    if (problems.length) return { problems: problems, steps: steps };
+    var x0 = steps.length ? +/\((-?[\d.]+), (-?[\d.]+)\)/.exec(steps[0].state)[1] : 0, y0 = steps.length ? +/\((-?[\d.]+), (-?[\d.]+)\)/.exec(steps[0].state)[2] : 0;
+    var dx = st.x - x0, dy = st.y - y0, straight = Math.round(Math.sqrt(dx * dx + dy * dy) * 1e6) / 1e6;
+    var fin = "Now " + show() + " (x to the east, y to the north). From the start: " + Math.abs(dx) + (dx >= 0 ? " east" : " west") + ", " +
+      Math.abs(dy) + (dy >= 0 ? " north" : " south") + "; " + (Math.abs(dx) + Math.abs(dy)) + " along the grid, " + straight + " in a straight line.";
+    return { problems: [], steps: steps, pos: { x: st.x, y: st.y, facing: st.f }, final: fin, summary: (steps.length - 1) + " moves",
+      text: "Step by step:\n" + steps.map(function (x, i) { return (i ? i + ". " : "start: ") + x.line + " -> " + x.state; }).join("\n") + "\n" + fin };
+  }
+  function run(block) {
+    var first = trim(block.lines[0] || "").toLowerCase();
+    if (/^(cube|die|dice|box|block)\b/.test(first)) return cube(block);
+    if (/^(walker|robot|start|car|person|ant|player|at|from|\(?-?\d)/.test(first)) return walker(block);
+    return { problems: ["start with cube top <label> front <label> right <label>, or walker at 0 0 facing north"], steps: [] };
+  }
+  window.Lantern.aiTurn = { run: run, MOVES: MOVES };
+  if (!SOLVERS.some(function (s) { return s.kind === "TURN"; })) SOLVERS.push({
+    kind: "TURN", title: "a cube or a walker that turns",
+    match: function (q) { return /\b(dice|(a|the|standard) die|cube|tip(s|ped)? (it|the)|roll(s|ed)? (it|the) (die|cube|dice|over)|clockwise|turns? (left|right|around)|facing (north|south|east|west)|robot)\b/i.test(q); },
+    prompt: [
+      "TURN: <title>   -- a cube with six faces (a die, a box) tipped and turned, or a walker that moves and turns",
+      "cube top 1 front 2 right 3       front = facing me; a 1-6 die needs only these three, other labels all six",
+      "tip away | tip toward | tip left | tip right       the TOP face goes that way (add 2 times to repeat)",
+      "turn clockwise | turn counterclockwise | turn around    seen from above",
+      "END",
+      "or",
+      "walker at 0 0 facing north       x to the east, y to the north",
+      "forward 3 | back 2 | turn left | turn right | turn around | face east | go north 2",
+      "END",
+      "For example:",
+      "TURN: Die",
+      "cube top 1 front 2 right 3",
+      "tip away",
+      "turn clockwise",
+      "END"],
+    run: run
+  });
+})();
+// ===========================================================================
+// MODULE: AI_PUZZLE_TURN - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_PUZZLE_SOLVE - START
+// Depends: AI_PUZZLE (Lantern.aiSolvers hook) -- feature-detected
+// Exports: Lantern.aiSolve = {run(block), parse(block)} (for tests); adds
+//          the SOLVE solver
+// ===========================================================================
+// Clue puzzles of any kind: who lives where, who owns what, who finished
+// third, which statements are true. Things are described by categories
+// (house 1-4, job, pet, nationality, kind: knight or liar ...) and clues;
+// Lantern tries every arrangement -- category by category, dropping an
+// arrangement as soon as a clue it can check fails -- and reports the one
+// that fits, or how many fit, or that none does and which clue to look at.
+// That last part matters: a model that mistranslates one clue gets told so,
+// instead of a confident wrong answer (the 35B's own working on a 4-house
+// puzzle skipped cases and only came right because it checked at the end).
+//   person Ana Ben Cara Dev           the first line: the things the clues describe
+//   house 1 2 3 4                     a category: each value used once ...
+//   kind knight liar (repeat)         ... or values that may repeat
+//   rule Cara = fish                  Cara has the fish (a value stands for its owner)
+//   rule teacher = bird               the teacher has the bird
+//   rule chef = 3                     the chef is in house 3
+//   rule pilot directly left of cat   left of, right of, next to, before, after
+//   rule nurse right of Dev           (somewhere right of) on the order category
+//   rule Ana in 1, 4                  one of these
+//   rule Ben != chef and Ben != dog   != not, and, or, not, if A then B, A iff B
+//   rule Ana.house + 1 = Ben.house    a thing's value in a category; + - * < > <= >=
+// The order category is the one marked (order), or the first with numbers.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var SOLVERS = window.Lantern.aiSolvers = window.Lantern.aiSolvers || [];
+  var MAXROWS = 8, MAXCATS = 8, MAXWORK = 4000000;
+  function trim(s) { return String(s || "").replace(/^\s+|\s+$/g, ""); }
+  function key(s) { return String(s).toLowerCase(); }
+  function vals(s) {
+    var out = [], m, re = /\x22([^\x22]+)\x22|\u201c([^\u201d]+)\u201d|([^\s,;]+)/g;
+    while ((m = re.exec(s))) { var v = trim(m[1] || m[2] || m[3]); if (v && !/^(and|or)$/i.test(v)) out.push(v); }
+    return out;
+  }
+  var RULE = /^(?:rule|clue|fact|constraint)\s*\d*\s*[:.)-]?\s*/i;
+  var OPWORD = /(=|<|>|!|\bnot\b|\bnext to\b|\bleft of\b|\bright of\b|\bbefore\b|\bafter\b|\bin\b|\bif\b|\biff\b|\bowns?\b|\bhas\b|\bis\b)/i;
+  // --- parse the block -------------------------------------------------------
+  function parse(block) {
+    var cats = [], rules = [], problems = [];
+    block.lines.forEach(function (line) {
+      var s = trim(line).replace(/[.;]+$/, "");
+      if (!s || /^(ask|question|find|answer|who|which|what)\b/i.test(s)) return;
+      if (RULE.test(s) && /^(rule|clue|fact|constraint)\b/i.test(s)) { rules.push(s.replace(RULE, "")); return; }
+      var m = /^([A-Za-z][\w-]*)\s*:?\s+(.+)$/.exec(s);
+      if (m && !OPWORD.test(m[2].replace(/\((repeat|order|repeats|ordered)\)/gi, ""))) {
+        var flags = m[2].match(/\((repeat|repeats|order|ordered)\)|\b(repeat|repeats)\s*$/gi) || [];
+        var list = vals(m[2].replace(/\((repeat|repeats|order|ordered)\)|\b(repeat|repeats)\s*$/gi, ""));
+        cats.push({ name: m[1], values: list, unique: !flags.some(function (f) { return /repeat/i.test(f); }),
+          order: flags.some(function (f) { return /order/i.test(f); }) });
+        return;
+      }
+      rules.push(s);   // a clue without "rule" in front
+    });
+    if (cats.length < 2) problems.push("give the things on the first line and at least one category, like: person Ana Ben / pet cat dog");
+    if (cats.length > MAXCATS) problems.push("keep it to " + MAXCATS + " categories");
+    if (problems.length) return { problems: problems };
+    var n = cats[0].values.length;
+    if (n < 2 || n > MAXROWS) problems.push("the first line needs 2 to " + MAXROWS + " things");
+    cats.forEach(function (c, i) {
+      c.idx = i;
+      c.numeric = c.values.every(function (v) { return /^-?\d+(\.\d+)?$/.test(v); });
+      c.num = c.values.map(function (v) { return c.numeric ? +v : null; });
+      if (i === 0) c.unique = true;
+      if (c.unique && c.values.length !== n) problems.push(c.name + " has " + c.values.length + " values but there are " + n + " " + cats[0].name +
+        " (add (repeat) if values may repeat)");
+      var seen = {};
+      c.values.forEach(function (v) { if (seen[key(v)]) problems.push(c.name + " lists " + v + " twice"); seen[key(v)] = 1; });
+    });
+    var ord = cats.filter(function (c) { return c.order; })[0] || cats.filter(function (c, i) { return i > 0 && c.numeric && c.unique; })[0] ||
+      (cats[0].numeric ? cats[0] : null);
+    if (ord) {   // positions: numeric order sorted, otherwise as listed
+      var ix = ord.values.map(function (v, i) { return i; });
+      if (ord.numeric) ix.sort(function (a, b) { return ord.num[a] - ord.num[b]; });
+      ord.pos = []; ix.forEach(function (vi, p) { ord.pos[vi] = p; });
+    }
+    // names: thing names, values, category names (cat:value for clashes)
+    var names = {};
+    cats.forEach(function (c) { c.values.forEach(function (v, vi) { (names[key(v)] = names[key(v)] || []).push({ c: c, v: vi }); }); });
+    var catBy = {}; cats.forEach(function (c) { catBy[key(c.name)] = c; catBy[key(c.name).replace(/s$/, "")] = c; });
+    if (problems.length) return { problems: problems };
+    var P = { cats: cats, n: n, ord: ord, names: names, catBy: catBy, rules: [] };
+    rules.forEach(function (r, i) {
+      try { P.rules.push(compile(r, P)); }
+      catch (e) { problems.push("rule " + (i + 1) + " \u201c" + r + "\u201d: " + ((e && e.message) || e)); }
+    });
+    if (!P.rules.length && !problems.length) problems.push("there are no rules: one clue a line, starting with rule");
+    P.problems = problems;
+    return P;
+  }
+  // --- rules: words -> tokens -> a tree --------------------------------------
+  // words that only join a clue's parts -- never one of the puzzle's own
+  // names ("A" can be a person in a knights-and-liars puzzle)
+  function wordRe(list, P) {
+    var keep = list.filter(function (w) { return !P.names[w] && !P.catBy[w]; });
+    return keep.length ? new RegExp("\\b(" + keep.join("|") + ")\\b", "gi") : /$^/;
+  }
+  function FILLER(P) { return wordRe(["the", "a", "an", "lives", "live", "sits", "sit", "stands", "stand", "person", "one", "who", "that"], P); }
+  function VERBS(P) { return wordRe(["is", "are", "owns", "own", "has", "have", "keeps", "keep", "drives", "drive", "drinks", "drink", "plays", "play",
+    "likes", "like", "wears", "wear", "eats", "eat", "works as", "in house", "lives in", "belongs to"], P); }
+  function normalise(s, P) {
+    var t = " " + s + " ";
+    // multi-word names first, as one token each
+    var multi = Object.keys(P.names).filter(function (k) { return /\s/.test(k); }).sort(function (a, b) { return b.length - a.length; });
+    multi.forEach(function (k, i) {
+      var re = new RegExp("\\b" + k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+") + "\\b", "gi");
+      t = t.replace(re, " \u0001" + i + " ");
+    });
+    t = t.replace(/\u2260/g, "!=").replace(/\u2264/g, "<=").replace(/\u2265/g, ">=").replace(/==/g, "=").replace(/<>/g, "!=")
+      .replace(/\bisn\x27?t\b|\bis not\b|\bare not\b|\bdoes not (own|have|keep|drive|drink|like|play|wear|eat)\b|\bdoesn\x27?t (own|have|keep|drive|drink|like|play|wear|eat)\b/gi, " isnot ")
+      .replace(/\b(?:the\s+)?(?:person|one|man|woman|someone|whoever|owner|resident)\s+(?:with|who\s+(?:has|owns|keeps|drinks|drives|plays|likes|smokes|wears|eats)|that\s+(?:has|owns|keeps)|owning|having|keeping)\s+/gi, " ")
+      .replace(FILLER(P), " ")
+      .replace(/\bto\s+(left|right)\b/gi, "$1")
+      .replace(/\b(immediately|just|right next|exactly)\s+(left|right)\b/gi, "directly $2")
+      .replace(/\b(immediately|just|right|exactly|directly)\s+(before|after|behind|ahead of)\b/gi, "directly $2")
+      .replace(/\b(beside|adjacent to|neighbou?rs?|next door to|neighbou?r of)\b/gi, "next to")
+      .replace(/\bsomewhere\s+/gi, "");
+    var rel = [["directly left of", "L1"], ["directly right of", "R1"], ["directly before", "L1"], ["directly after", "R1"],
+      ["directly ahead of", "L1"], ["directly behind", "R1"], ["left of", "LO"], ["right of", "RO"], ["next to", "NX"],
+      ["before", "LO"], ["after", "RO"], ["ahead of", "LO"], ["behind", "RO"], ["earlier than", "LO"], ["later than", "RO"]];
+    rel.forEach(function (r) {
+      var w = r[0].replace(/\s+/g, "\\s+");
+      t = t.replace(new RegExp("\\b(?:isnot|not)\\s+(?:is\\s+)?" + w + "\\b", "gi"), " ~" + r[1] + " ");
+      t = t.replace(new RegExp("\\b(?:is\\s+|comes\\s+|finished\\s+|finishes\\s+)?" + w + "\\b", "gi"), " " + r[1] + " ");
+    });
+    t = t.replace(/\bisnot\b/gi, " != ").replace(VERBS(P), " = ");
+    return { text: t, multi: multi };
+  }
+  function tokens(t, multi) {
+    var out = [], re = /\s*(\u0001\d+|~?[LR][1O]\b|~?NX\b|!=|<=|>=|[=<>+\-*(),.:]|\d+(?:\.\d+)?|\x22[^\x22]*\x22|[A-Za-z_][\w\x27]*)/g, m, last = 0;
+    while ((m = re.exec(t))) {
+      if (m.index !== last && trim(t.slice(last, m.index))) throw new Error("cannot read \u201c" + trim(t.slice(last, m.index)) + "\u201d");
+      var x = m[1]; last = re.lastIndex;
+      if (/^\u0001/.test(x)) out.push({ t: "name", v: multi[+x.slice(1)] });
+      else if (/^~?(L1|R1|LO|RO|NX)$/.test(x)) out.push({ t: "rel", v: x.replace("~", ""), neg: x.charAt(0) === "~" });
+      else if (/^\d/.test(x)) out.push({ t: "num", v: +x, raw: x });
+      else if (/^\x22/.test(x)) out.push({ t: "name", v: key(x.slice(1, -1)) });
+      else if (/^[A-Za-z_]/.test(x)) {
+        var lw = key(x);
+        if (/^(and|or|not|if|then|iff|in|abs|of|either|both)$/.test(lw)) out.push({ t: "kw", v: lw });
+        else out.push({ t: "name", v: lw, raw: x });
+      } else out.push({ t: "op", v: x });
+    }
+    if (trim(t.slice(last))) throw new Error("cannot read \u201c" + trim(t.slice(last)) + "\u201d");
+    return out;
+  }
+  function compile(src, P) {
+    var nt = normalise(src, P), toks = tokens(nt.text, nt.multi), p = 0, deps = {};
+    function peek(o) { return toks[p + (o || 0)]; }
+    function is(t, v) { var x = toks[p]; return x && x.t === t && (v == null || x.v === v); }
+    function next() { return toks[p++]; }
+    function need(t, v) { if (!is(t, v)) throw new Error("expected " + v + " " + (toks[p] ? "before \u201c" + toks[p].v + "\u201d" : "at the end")); return next(); }
+    function dep(c) { deps[c.idx] = 1; }
+    function iff() {
+      var a = ifthen();
+      while (is("kw", "iff")) { next(); var b = ifthen(); a = { k: "iff", a: a, b: b, bool: true }; }
+      return a;
+    }
+    function ifthen() {
+      if (is("kw", "if")) { next(); var a = or(); need("kw", "then"); var b = or(); return { k: "imp", a: a, b: b, bool: true }; }
+      return or();
+    }
+    function or() { if (is("kw", "either")) next(); var a = and(); while (is("kw", "or")) { next(); a = { k: "or", a: a, b: and(), bool: true }; } return a; }
+    function and() { if (is("kw", "both")) next(); var a = not(); while (is("kw", "and")) { next(); a = { k: "and", a: a, b: not(), bool: true }; } return a; }
+    function not() { if (is("kw", "not") && !(peek(1) && peek(1).t === "rel")) { next(); return { k: "not", a: not(), bool: true }; } return cmp(); }
+    function cmp() {
+      if (is("op", "(")) {   // a bracketed condition, or a bracketed term in a comparison
+        var save = p;
+        try { next(); var inner = iff(); need("op", ")"); if (inner.bool && !isCmpNext()) return inner; } catch (e) { }
+        p = save;
+      }
+      var a = sum();
+      if (is("rel")) { var r = next(), b = sum(); return { k: "rel", r: r.v, neg: r.neg, a: a, b: b, bool: true }; }
+      if (is("kw", "not") && peek(1) && peek(1).t === "rel") { next(); var r2 = next(), b2 = sum(); return { k: "rel", r: r2.v, neg: !r2.neg, a: a, b: b2, bool: true }; }
+      if (is("kw", "in")) {
+        next(); if (is("op", "(")) next();
+        var list = [sum()];
+        while (is("op", ",") || is("kw", "or")) { next(); list.push(sum()); }
+        if (is("op", ")")) next();
+        return { k: "in", a: a, list: list, bool: true };
+      }
+      if (is("op") && /^(=|!=|<|>|<=|>=)$/.test(peek().v)) {
+        var op = next().v, b3 = sum();
+        if (is("kw", "or") && op === "=" && peek(1) && peek(1).t !== "op" && !(peek(2) && (peek(2).t === "rel" || (peek(2).t === "op" && /^(=|!=|<|>|<=|>=|\.)$/.test(peek(2).v))))) {
+          var opts = [b3]; while (is("kw", "or") && !(peek(2) && (peek(2).t === "rel" || (peek(2).t === "op" && /^(=|!=|<|>|<=|>=|\.)$/.test(peek(2).v))))) { next(); opts.push(sum()); }
+          return { k: "in", a: a, list: opts, bool: true };   // "Ana = 1 or 4"
+        }
+        return { k: "cmp", op: op, a: a, b: b3, bool: true };
+      }
+      if (a.bool) return a;
+      throw new Error("a clue needs a comparison: =, !=, <, >, next to, left of, in ...");
+    }
+    function isCmpNext() { return is("rel") || (is("op") && /^(=|!=|<|>|<=|>=|\+|-|\*)$/.test(peek().v)); }
+    function sum() { var a = prod(); while (is("op", "+") || is("op", "-")) { var o = next().v; a = { k: "ar", op: o, a: a, b: prod() }; } return a; }
+    function prod() { var a = unary(); while (is("op", "*")) { next(); a = { k: "ar", op: "*", a: a, b: unary() }; } return a; }
+    function unary() { if (is("op", "-")) { next(); return { k: "ar", op: "-", a: { k: "num", x: 0 }, b: unary() }; } return post(); }
+    function post() {
+      var a = atom();
+      while (is("op", ".")) {
+        next(); var cn = next(); if (!cn || cn.t !== "name") throw new Error("a category name after .");
+        var c = P.catBy[cn.v]; if (!c) throw new Error(cn.v + " is not a category (" + P.cats.map(function (x) { return x.name; }).join(", ") + ")");
+        dep(c); a = { k: "attr", a: a, c: c };
+      }
+      return a;
+    }
+    function atom() {
+      var x = next();
+      if (!x) throw new Error("the clue ends too soon");
+      if (x.t === "op" && x.v === "(") { var e = sum(); need("op", ")"); return e; }
+      if (x.t === "kw" && x.v === "abs") { need("op", "("); var e2 = sum(); need("op", ")"); return { k: "abs", a: e2 }; }
+      if (x.t === "num") {
+        var cands = (P.names[key(x.raw)] || []).map(function (h) { return h.c; });
+        cands.forEach(dep);
+        return { k: "lit", x: x.v, raw: x.raw, cands: cands };
+      }
+      if (x.t === "name") {
+        // category value, written cat:value or "cat value"
+        var c = P.catBy[x.v];
+        if (c && (is("op", ":") || (is("name") || is("num")) && findIn(c, peek().t === "num" ? peek().raw : peek().v) >= 0)) {
+          if (is("op", ":")) next();
+          var y = next(), vi = findIn(c, y.t === "num" ? y.raw : y.v);
+          if (vi < 0) throw new Error((y.raw || y.v) + " is not a " + c.name + " (" + c.values.join(", ") + ")");
+          return valueNode(c, vi);
+        }
+        // the category of a thing: "house of Ana"
+        if (c && is("kw", "of")) { next(); var who = atom(); dep(c); return { k: "attr", a: who, c: c }; }
+        var hits = P.names[x.v];
+        if (!hits) throw new Error((x.raw || x.v) + " is not a name in the puzzle (" + P.cats.map(function (q) { return q.name + ": " + q.values.join(" "); }).join("; ") + ")");
+        if (hits.length > 1) throw new Error(x.v + " is a value of " + hits.map(function (h) { return h.c.name; }).join(" and ") + ": write " + hits[0].c.name + ":" + x.v);
+        return valueNode(hits[0].c, hits[0].v);
+      }
+      throw new Error("unexpected \u201c" + x.v + "\u201d");
+    }
+    function findIn(c, v) { for (var i = 0; i < c.values.length; i++) if (key(c.values[i]) === key(v)) return i; return -1; }
+    function valueNode(c, vi) {
+      if (c.idx === 0) return { k: "ent0", r: vi };
+      dep(c);
+      return c.unique ? { k: "uval", c: c, v: vi } : { k: "rval", c: c, v: vi };
+    }
+    var tree = iff();
+    if (p < toks.length) throw new Error("cannot read the end: \u201c" + toks.slice(p).map(function (x) { return x.raw || x.v; }).join(" ") + "\u201d");
+    if (!tree.bool && !/^(and|or|not|imp|iff)$/.test(tree.k)) throw new Error("a clue must say something that is true or false");
+    if (needsOrder(tree)) { if (!P.ord) throw new Error("left of, next to, before ... need an order: mark a category (order), like house 1 2 3 4 (order)"); deps[P.ord.idx] = 1; }
+    else if (P.ord && usesNumbers(tree)) deps[P.ord.idx] = 1;   // a thing used as a number is its place in the order
+    return { src: src, tree: tree, deps: Object.keys(deps).map(Number) };
+  }
+  function usesNumbers(t) {
+    if (!t || typeof t !== "object") return false;
+    if (t.k === "ar" || t.k === "abs" || (t.k === "cmp" && !/^(=|!=)$/.test(t.op))) return true;
+    return usesNumbers(t.a) || usesNumbers(t.b) || (t.list || []).some(usesNumbers);
+  }
+  function needsOrder(t) {
+    if (!t || typeof t !== "object") return false;
+    if (t.k === "rel") return true;
+    return needsOrder(t.a) || needsOrder(t.b) || (t.list || []).some(needsOrder);
+  }
+  // --- evaluation ------------------------------------------------------------
+  function evaluator(P, A) {   // A.asg[c][row] = value index; A.inv[c][value] = row
+    function term(t) {
+      switch (t.k) {
+        case "ent0": return { t: "ent", r: t.r };
+        case "uval": return { t: "ent", r: A.inv[t.c.idx][t.v] };
+        case "rval": return { t: "val", c: t.c, v: t.v };
+        case "lit": return { t: "lit", x: t.x, raw: t.raw, cands: t.cands };
+        case "num": return { t: "num", x: t.x };
+        case "attr":
+          var e = asEnt(term(t.a)), vi = A.asg[t.c.idx][e];
+          return t.c.numeric ? { t: "num", x: t.c.num[vi], c: t.c, v: vi } : { t: "val", c: t.c, v: vi };
+        case "ar": var a = num(term(t.a)), b = num(term(t.b)); return { t: "num", x: t.op === "+" ? a + b : t.op === "-" ? a - b : a * b };
+        case "abs": return { t: "num", x: Math.abs(num(term(t.a))) };
+      }
+      throw new Error("not a value");
+    }
+    function asEnt(x) {
+      if (x.t === "ent") return x.r;
+      if (x.t === "lit") { var c = litCat(x); if (c.unique) return A.inv[c.idx][litIdx(c, x)]; }
+      throw new Error("that is not one thing (a value that repeats names no single thing)");
+    }
+    function litCat(x) {
+      if (!x.cands.length) throw new Error(x.raw + " is not a value of any category");
+      if (x.cands.length > 1) throw new Error(x.raw + " is a value of " + x.cands.map(function (c) { return c.name; }).join(" and ") + ": write " + x.cands[0].name + ":" + x.raw);
+      return x.cands[0];
+    }
+    function litIdx(c, x) { for (var i = 0; i < c.values.length; i++) if (c.values[i] === x.raw || (c.numeric && c.num[i] === x.x)) return i; return -1; }
+    function num(x) {
+      if (x.t === "num" || x.t === "lit") return x.x;
+      if (x.t === "ent") { if (!P.ord) throw new Error("a thing is not a number: use thing.category"); return ordNum(x.r); }
+      if (x.t === "val" && x.c.numeric) return x.c.num[x.v];
+      throw new Error("that is not a number");
+    }
+    function ordNum(r) { var vi = A.asg[P.ord.idx][r]; return P.ord.numeric ? P.ord.num[vi] : vi + 1; }
+    function pos(x) {   // place in the order, 0 = first
+      if (x.t === "ent") return P.ord.pos[A.asg[P.ord.idx][x.r]];
+      if (x.t === "lit") { var i = litIdx(P.ord, x); if (i < 0) throw new Error(x.raw + " is not a " + P.ord.name); return P.ord.pos[i]; }
+      if (x.t === "val" && x.c === P.ord) return P.ord.pos[x.v];
+      if (x.t === "num") { var j = litIdx(P.ord, { raw: String(x.x), x: x.x }); if (j < 0) throw new Error(x.x + " is not a " + P.ord.name); return P.ord.pos[j]; }
+      throw new Error("left of, next to ... compare things or " + P.ord.name + " values");
+    }
+    function eq(a, b) {
+      if (a.t === "lit" && (b.t === "ent" || b.t === "val")) { var t = a; a = b; b = t; }
+      if (b.t === "lit" && (a.t === "ent" || a.t === "val")) {
+        var c = a.t === "val" ? a.c : litCat(b), vi = litIdx(c, b);
+        if (vi < 0) throw new Error(b.raw + " is not a " + c.name);
+        b = c.unique && a.t === "ent" ? { t: "ent", r: A.inv[c.idx][vi] } : { t: "val", c: c, v: vi };
+      }
+      if (a.t === "ent" && b.t === "ent") return a.r === b.r;
+      if (a.t === "ent" && b.t === "val") return A.asg[b.c.idx][a.r] === b.v;
+      if (a.t === "val" && b.t === "ent") return A.asg[a.c.idx][b.r] === a.v;
+      if (a.t === "val" && b.t === "val") {
+        if (a.c !== b.c) { if (a.c.numeric && b.c.numeric) return a.c.num[a.v] === b.c.num[b.v]; throw new Error("these are values of different categories"); }
+        return a.v === b.v;
+      }
+      return Math.abs(num(a) - num(b)) < 1e-9;
+    }
+    function test(t) {
+      switch (t.k) {
+        case "and": return test(t.a) && test(t.b);
+        case "or": return test(t.a) || test(t.b);
+        case "not": return !test(t.a);
+        case "imp": return !test(t.a) || test(t.b);
+        case "iff": return test(t.a) === test(t.b);
+        case "in": var a = term(t.a); return t.list.some(function (x) { return eq(a, term(x)); });
+        case "rel":
+          var pa = pos(term(t.a)), pb = pos(term(t.b)), r;
+          r = t.r === "L1" ? pa + 1 === pb : t.r === "R1" ? pa === pb + 1 : t.r === "LO" ? pa < pb : t.r === "RO" ? pa > pb : Math.abs(pa - pb) === 1;
+          return t.neg ? !r : r;
+        case "cmp":
+          var x = term(t.a), y = term(t.b);
+          if (t.op === "=") return eq(x, y);
+          if (t.op === "!=") return !eq(x, y);
+          var u = num(x), v = num(y);
+          return t.op === "<" ? u < v : t.op === ">" ? u > v : t.op === "<=" ? u <= v : u >= v;
+      }
+      throw new Error("not a condition");
+    }
+    return test;
+  }
+  // --- search ----------------------------------------------------------------
+  function perms(n) {
+    var out = [], a = [], used = [];
+    (function go() {
+      if (a.length === n) { out.push(a.slice()); return; }
+      for (var i = 0; i < n; i++) if (!used[i]) { used[i] = 1; a.push(i); go(); a.pop(); used[i] = 0; }
+    })();
+    return out;
+  }
+  function tuples(k, n) {
+    var out = [], a = [];
+    (function go() { if (a.length === n) { out.push(a.slice()); return; } for (var i = 0; i < k; i++) { a.push(i); go(); a.pop(); } })();
+    return out;
+  }
+  function search(P, skip, limit) {
+    var n = P.n, cats = P.cats, A = { asg: [], inv: [] }, test = evaluator(P, A), work = 0, sols = [];
+    A.asg[0] = []; A.inv[0] = [];
+    for (var r = 0; r < n; r++) { A.asg[0][r] = r; A.inv[0][r] = r; }
+    var rules = P.rules.filter(function (x, i) { return i !== skip; });
+    // order: each next category is the one that lets most clues be checked
+    var done = { 0: 1 }, order = [];
+    while (order.length < cats.length - 1) {
+      var best = null, bs = -1;
+      cats.forEach(function (c) {
+        if (done[c.idx]) return;
+        var sc = rules.filter(function (x) { return x.deps.indexOf(c.idx) >= 0 && x.deps.every(function (d) { return done[d] || d === c.idx; }); }).length;
+        if (sc > bs) { bs = sc; best = c; }
+      });
+      done[best.idx] = 1; order.push(best);
+    }
+    var at = {}, checks = order.map(function (c) {
+      at[c.idx] = 1;
+      return rules.filter(function (x) { return x.deps.indexOf(c.idx) >= 0 && x.deps.every(function (d) { return d === 0 || at[d]; }); });
+    });
+    var first = rules.filter(function (x) { return x.deps.every(function (d) { return d === 0; }); });
+    var P0 = perms(n), err = null, TU = {};
+    cats.forEach(function (c) { if (!c.unique) TU[c.idx] = tuples(c.values.length, n); });
+    function ok(list) {
+      for (var i = 0; i < list.length; i++) { work++; if (!test(list[i].tree)) return false; }
+      return true;
+    }
+    try {
+      if (!ok(first)) return { sols: [], work: work };
+      (function level(i) {
+        if (sols.length > limit || work > MAXWORK) return;
+        if (i === order.length) { sols.push(cats.map(function (c) { return A.asg[c.idx].slice(); })); return; }
+        var c = order[i], opts = c.unique ? P0 : TU[c.idx];
+        for (var k = 0; k < opts.length; k++) {
+          A.asg[c.idx] = opts[k];
+          if (c.unique) { var inv = []; for (var r2 = 0; r2 < n; r2++) inv[opts[k][r2]] = r2; A.inv[c.idx] = inv; }
+          if (ok(checks[i])) level(i + 1);
+          if (sols.length > limit || work > MAXWORK) return;
+        }
+      })(0);
+    } catch (e) { err = (e && e.message) || String(e); }
+    return { sols: sols, work: work, err: err, big: work > MAXWORK };
+  }
+  // --- results ---------------------------------------------------------------
+  function describe(P, sol) {
+    var rows = [], n = P.n, ord = P.ord;
+    for (var r = 0; r < n; r++) rows.push(r);
+    if (ord) rows.sort(function (a, b) { return ord.pos[sol[ord.idx][a]] - ord.pos[sol[ord.idx][b]]; });
+    return rows.map(function (r) {
+      var lead = ord && ord.idx !== 0 ? ord.name + " " + ord.values[sol[ord.idx][r]] + ": " : "";
+      var rest = P.cats.filter(function (c) { return c.idx !== 0 && c !== ord; }).map(function (c) { return c.name + " " + c.values[sol[c.idx][r]]; });
+      return lead + P.cats[0].values[r] + (rest.length ? " -- " + rest.join(", ") : "");
+    }).join("\n");
+  }
+  function differ(P, sols) {
+    var out = [];
+    for (var r = 0; r < P.n; r++) P.cats.forEach(function (c) {
+      if (c.idx === 0) return;
+      var seen = {}; sols.forEach(function (s) { seen[c.values[s[c.idx][r]]] = 1; });
+      var ks = Object.keys(seen);
+      if (ks.length > 1) out.push(P.cats[0].values[r] + "\u2019s " + c.name + " (" + ks.join(" or ") + ")");
+    });
+    return out;
+  }
+  function run(block) {
+    var P = parse(block);
+    if (P.problems && P.problems.length) return { problems: P.problems, steps: [] };
+    var steps = P.rules.map(function (x) { return { line: "rule " + x.src, state: "checks " + x.deps.filter(function (d) { return d; }).map(function (d) { return P.cats[d].name; }).join(", ") || "names only" }; });
+    var res = search(P, -1, 50);
+    if (res.err) return { problems: [res.err], steps: steps };
+    if (res.big) return { problems: ["too many possibilities to search (" + P.n + " things, " + P.cats.length + " categories): split the puzzle or add clues"], steps: steps };
+    var head = P.cats.map(function (c) { return c.name + " (" + c.values.join(", ") + (c.unique ? "" : "; may repeat") + ")"; }).join("; ");
+    var sum = "Lantern tried every arrangement of " + head + " against " + P.rules.length + " clues.\n";
+    var out = { steps: steps, problems: [], solutions: res.sols.length };
+    if (res.sols.length === 1) {
+      out.final = "Exactly one arrangement fits every clue:\n" + describe(P, res.sols[0]);
+      out.text = sum + out.final; out.summary = "one arrangement fits"; out.solution = res.sols[0]; out.P = P;
+      return out;
+    }
+    if (!res.sols.length) {
+      var hint = [];
+      for (var i = 0; i < P.rules.length && hint.length < 3; i++) {
+        var w = search(P, i, 9);
+        if (w.sols.length) hint.push("without clue " + (i + 1) + " (\u201c" + P.rules[i].src + "\u201d) " + (w.sols.length > 9 ? "10 or more" : w.sols.length) + " fit");
+      }
+      out.problems.push("no arrangement fits all " + P.rules.length + " clues" + (hint.length ? ": " + hint.join("; ") + ". Check that clue against the question" :
+        ": check the clues against the question"));
+      out.text = sum + out.problems[0]; out.summary = "nothing fits";
+      return out;
+    }
+    var many = res.sols.length > 50 ? "more than 50" : String(res.sols.length), d = differ(P, res.sols.slice(0, 50));
+    out.problems.push(many + " arrangements fit all the clues; they differ in " + d.slice(0, 6).join(", ") + (d.length > 6 ? " and more" : "") +
+      ". Check that every clue of the question is written, and written as the question says");
+    out.final = many + " arrangements fit. The first " + Math.min(3, res.sols.length) + ":\n" + res.sols.slice(0, 3).map(function (s, k) { return "(" + (k + 1) + ")\n" + describe(P, s); }).join("\n");
+    out.text = sum + out.problems[0] + "\n" + out.final; out.summary = many + " arrangements fit";
+    return out;
+  }
+  window.Lantern.aiSolve = { run: run, parse: parse };
+  if (!SOLVERS.some(function (s) { return s.kind === "SOLVE"; })) SOLVERS.push({
+    kind: "SOLVE", title: "clue puzzles",
+    match: function (q) { return /\b(each (has|have|owns?|lives?)|a different|who lives in|who owns the|who sits|who finished|which house|clues?|logic puzzle|knights?|knaves?|truth[- ]?tellers?|always lies|exactly one of|in houses? \d|not next to|directly (left|right) of|finish(es|ed)? (before|after))\b/i.test(q); },
+    prompt: [
+      "SOLVE: <title>   -- clue puzzles: Lantern tries every arrangement and says which one fits (or that several or none do)",
+      "person Ana Ben Cara Dev          first line: the things the clues describe",
+      "house 1 2 3 4                    a category, each value used once (one line each: job ..., pet ...)",
+      "kind knight liar (repeat)        values that may repeat",
+      "rule Cara = fish                 Cara has the fish (a value stands for whoever has it)",
+      "rule teacher = bird              the teacher has the bird;  rule chef = 3: the chef is in house 3",
+      "rule pilot directly left of cat  also: left of, right of, directly right of, next to, before, after",
+      "rule Ana in 1, 4 | rule Ben != chef and Ben != dog | rule not Cara next to Ana",
+      "rule if Ana = knight then Ben = liar | rule Ana = knight iff Ben = liar | rule Ana.house + 1 = Ben.house",
+      "END",
+      "Write every clue of the question as one rule, in the question's order. For example:",
+      "SOLVE: Pets",
+      "person Ana Ben Cy",
+      "house 1 2 3",
+      "pet cat dog fish",
+      "rule Ana directly left of dog",
+      "rule Cy = 3",
+      "rule Ben != fish and Ben != dog",
+      "END"],
+    run: run
+  });
+})();
+// ===========================================================================
+// MODULE: AI_PUZZLE_SOLVE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_PUZZLE_BENCH_DATA - START
+// Depends: AI_BENCH_DATA (Lantern.aiBenchQuestions, created here if absent),
+//          AI_PUZZLE -- the bench runs these only when AI_PUZZLE is there
+// Exports: (none) -- adds 10 "reason" questions (asked the way Chat asks
+//          them, with Lantern's puzzle tools) and 6 "alone" twins (the same
+//          puzzles with the tools switched off, so a run shows what the
+//          tools add)
+// ===========================================================================
+// Puzzles where keeping track is the hard part. The first six are the ones
+// a 35B model was given in October 2026: it solved four on its own and got
+// the two-coin shuffle and the rolling die wrong (bookkeeping slips, not
+// reasoning ones). Every answer here was worked out by a program, not by
+// hand -- the puzzle that started this had a wrong answer key. A question
+// passes when its last ANSWER (or the reply, when there is no ANSWER line)
+// says everything check() looks for. ideal: a reply using Lantern's tools,
+// and idealAnswer: the answer from their results (for the tests' perfect
+// model, and as a model answer for anyone reading the bench).
+(function () {
+  var Q = window.Lantern.aiBenchQuestions = window.Lantern.aiBenchQuestions || [];
+  function answerOf(text) {
+    var m = String(text || "").match(/^\s*\**ANSWER:?\**\s*(.+)$/gim);
+    return m ? m[m.length - 1].replace(/^\s*\**ANSWER:?\**\s*/i, "") : String(text || "");
+  }
+  // inOrder(text, names) -> "" when the names appear in this order (the
+  // final order the question asks for), else why not
+  function inOrder(t, names) {
+    var low = t.toLowerCase(), re = new RegExp(names.map(function (n) { return n.toLowerCase(); }).join("[^a-z]{1,12}"));
+    return re.test(low) ? "" : "the order is not " + names.join(", ");
+  }
+  // near(text, a, b) -> true when a and b are in the same clause
+  function near(t, a, b) {
+    return t.toLowerCase().split(/[.;\n,]|\band\b/).some(function (c) { return c.indexOf(a) >= 0 && c.indexOf(b) >= 0; });
+  }
+  function face(t, name, v) {   // "top is 5", "5 on top", "top: 5", "top face shows 5"
+    var low = t.toLowerCase();
+    return new RegExp("\\b" + name + "\\b[^0-9.;\\n]{0,24}\\b" + v + "\\b|\\b" + v + "\\b[^0-9.;\\n]{0,16}\\b" + name + "\\b").test(low);
+  }
+  var P = [
+    { id: "cups-four", ideal: "TRACK: Cups\nrow Red Blue Green Yellow\nput coin in Blue\nswap Red and Green\nswap first and last\nswap holder of coin and right of holder of coin\nEND", idealAnswer: "ANSWER: The coin is under the Blue cup, and the order from left to right is Yellow, Red, Blue, Green.", alone: 1, q: "There are four colored cups on a table in a straight row: Red, Blue, Green, and Yellow (in that order from left to right). " +
+      "A coin is placed under the Blue cup. 1. The Red cup and the Green cup swap positions. 2. The cup on the far left and the cup on the far right swap positions. " +
+      "3. The cup containing the coin and the cup immediately to its right swap positions. Under which cup is the coin, and what is the final order from left to right?",
+      check: function (t) { return inOrder(t, ["Yellow", "Red", "Blue", "Green"]) || (near(t, "coin", "blue") ? "" : "the coin is not under Blue"); } },
+    { id: "cups-two-coins", ideal: "TRACK: Two coins\nrow Red Blue Green Yellow White\nput gold in Green\nput silver in White\nswap Blue and White\nswap holder of gold and 2 left of holder of gold\nshift right 1\nput silver in left of holder of gold\nswap first and last\nswap middle and holder of silver\nEND", idealAnswer: "ANSWER: The order is Yellow, Green, Blue, Red, White; the gold coin is under Green and the silver coin is under Blue.", alone: 1, quick: 1, q: "Five cups stand in a row, left to right: Red, Blue, Green, Yellow, White. A gold coin is under Green and a silver coin is under White. " +
+      "Coins move with their cups unless I say otherwise. 1. Blue and White swap places. 2. The cup holding the gold coin swaps with the cup two places to its left. " +
+      "3. Every cup moves one place to the right, and the cup on the far right moves to the far left. 4. I take the silver coin out of its cup and put it under the cup " +
+      "directly to the left of the cup holding the gold coin. 5. The two end cups swap. 6. The middle cup swaps with the cup holding the silver coin. " +
+      "What is the final order, and which cup holds each coin?",
+      check: function (t) { return inOrder(t, ["Yellow", "Green", "Blue", "Red", "White"]) || (near(t, "gold", "green") ? "" : "gold is not with Green") ||
+        (near(t, "silver", "blue") ? "" : "silver is not with Blue"); } },
+    { id: "die-four-moves", ideal: "TURN: Die\ncube top 1 front 2 right 3\ntip away\ntip right\nturn clockwise\ntip toward\nEND", idealAnswer: "ANSWER: 5 is on top, 4 is facing you, and 1 is on the right.", alone: 1, quick: 1, q: "A standard die has opposite faces that add to 7. It sits with 1 on top, 2 facing me, and 3 on the right. I do four moves: " +
+      "1. Tip it away from me, so the top face ends up facing away. 2. Tip it to the right, so the top face ends up on the right. 3. Turn it 90 degrees clockwise " +
+      "as seen from above. 4. Tip it toward me, so the top face ends up facing me. Which numbers are now on top, facing me, and on the right?",
+      check: function (t) { return face(t, "top", 5) ? (face(t, "(?:facing|front)", 4) ? (face(t, "right", 1) ? "" : "right is not 1") : "facing me is not 4") : "top is not 5"; } },
+    { id: "houses-four", ideal: "SOLVE: Houses\nperson Ana Ben Cara Dev\nhouse 1 2 3 4\njob pilot nurse chef teacher\npet cat dog fish bird\nrule pilot directly left of cat\nrule Ana in 1, 4\nrule Ben != chef and Ben != dog\nrule nurse right of Dev\nrule Cara = fish and not Cara next to Ana\nrule teacher = bird\nrule chef = 3\nEND", idealAnswer: "ANSWER: House 1: Ben, teacher, bird; house 2: Cara, pilot, fish; house 3: Dev, chef, cat; house 4: Ana, nurse, dog.", alone: 1, q: "Four people (Ana, Ben, Cara, Dev) live in houses 1 to 4 in a row, left to right. Each has a different job (pilot, nurse, chef, teacher) " +
+      "and a different pet (cat, dog, fish, bird). 1. The pilot lives directly to the left of the person with the cat. 2. Ana lives in an end house. " +
+      "3. Ben is not the chef and does not own the dog. 4. The nurse lives somewhere to the right of Dev. 5. Cara owns the fish and does not live next to Ana. " +
+      "6. The teacher owns the bird. 7. The chef lives in house 3. Who lives in each house, with what job and pet?",
+      check: function (t) {
+        var want = { ben: ["1", "teacher", "bird"], cara: ["2", "pilot", "fish"], dev: ["3", "chef", "cat"], ana: ["4", "nurse", "dog"] }, low = t.toLowerCase();
+        var at = Object.keys(want).map(function (k) { return { k: k, i: low.indexOf(k) }; }).filter(function (x) { return x.i >= 0; }).sort(function (a, b) { return a.i - b.i; });
+        if (at.length < 4) return "not every person is placed";
+        for (var j = 0; j < at.length; j++) {   // job and pet after the name; the house before or after it
+          var after = low.slice(at[j].i, j + 1 < at.length ? at[j + 1].i : low.length), w = want[at[j].k];
+          var before = low.slice(j ? at[j - 1].i + at[j - 1].k.length : 0, at[j].i), hn = new RegExp("\\b" + w[0] + "\\b");
+          if (after.indexOf(w[1]) < 0 || after.indexOf(w[2]) < 0 || !(hn.test(after) || hn.test(before))) return at[j].k + " is not house " + w[0] + ", " + w[1] + ", " + w[2];
+        }
+        return "";
+      } },
+    { id: "doors-host-guesses", ideal: "=(1/6)/(1/6+1/6)\nANSWER: It makes no difference: door 1 and door 2 each have a {result} chance, because the host could have shown the car.", alone: 1, q: "A game show has three doors, one with a car. I pick door 1. The host does not know where the car is. He opens door 3 at random, " +
+      "and it happens to show a goat. Should I switch to door 2?",
+      check: function (t) {
+        if (/should switch|better to switch|always switch|2\s*\/\s*3|two.thirds|66/i.test(t)) return "it says switching helps (that is the host who knows)";
+        return /50|1\s*\/\s*2|half|equal|same|no (advantage|difference|benefit)|doesn.?t matter|does not matter|either/i.test(t) ? "" : "it does not say the chances are equal";
+      } },
+    { id: "letters-refrigerator", ideal: "=REMOVE(REVERSE(\x22refrigerator\x22),\x22r\x22)\n=LEN(ANS)", idealAnswer: "ANSWER: What is left is otaegife, which is 8 letters.", alone: 1, q: "Spell \x22refrigerator\x22 backwards, then remove every letter r. What is left, and how many letters is that?",
+      check: function (t) { return /otaegife/i.test(t) ? (/\b8\b|eight/i.test(t) ? "" : "not 8 letters") : "the letters are not otaegife"; } },
+    // reworded and new kinds -- with the tools only
+    { id: "queue-ball", ideal: "TRACK: Queue\nrow Ann Ben Cal Dee Eve\nput ball with Ben\nmove last to first\nswap holder of ball and right of holder of ball\ngive ball to first\nswap position 2 and position 4\nEND", idealAnswer: "ANSWER: From front to back: Eve, Ben, Cal, Ann, Dee. Eve holds the ball.", q: "Five people stand in a queue, front to back: Ann, Ben, Cal, Dee, Eve. Ben holds a ball. 1. The person at the back moves to the front. " +
+      "2. The person holding the ball swaps places with the person directly behind them. 3. Whoever holds the ball gives it to the person at the front. " +
+      "4. The second and fourth people in the queue swap places. What is the order of the queue from front to back, and who holds the ball?",
+      check: function (t) { return inOrder(t, ["Eve", "Ben", "Cal", "Ann", "Dee"]) || (near(t, "eve", "ball") ? "" : "Eve does not hold the ball"); } },
+    { id: "robot-walk", ideal: "TURN: Robot\nwalker at 0 0 facing north\nforward 3\nturn right\nforward 2\nturn right\nforward 5\nturn left\nback 1\nEND", idealAnswer: "ANSWER: The robot is at (1, -2) facing east, 2.24 squares from the start in a straight line.", q: "A robot starts at the point (0, 0) facing north. It moves forward 3 squares, turns right, moves forward 2, turns right, moves forward 5, " +
+      "turns left, and moves back 1 square without turning. Where is it now, which way does it face, and how far is it from the start in a straight line?",
+      check: function (t) {
+        var low = t.toLowerCase();
+        if (!/\(\s*1\s*,\s*-\s*2\s*\)|1\s*(square|unit|block)?s?\s*east[^.]*2\s*(square|unit|block)?s?\s*south/.test(low)) return "it is not at (1, -2)";
+        if (!/east/.test(low)) return "it does not face east";
+        return /2\.2[34]|\u221a5|sqrt\s*\(?5|root 5/.test(low) ? "" : "the straight-line distance is not 2.24";
+      } },
+    { id: "knights-three", ideal: "SOLVE: Knights and liars\nperson A B C\nkind knight liar (repeat)\nrule A = knight iff B = liar\nrule B = knight iff (A = knight and C = knight)\nrule C = knight iff B = knight\nEND", idealAnswer: "ANSWER: A is a knight, B is a liar, and C is a liar.", q: "On an island, knights always tell the truth and liars always lie. A says: \x22B is a liar.\x22 B says: \x22A and C are both knights.\x22 " +
+      "C says: \x22B is a knight.\x22 Who is a knight and who is a liar?",
+      check: function (t) {   // names are capitals, so the article "a" is never A
+        var kind = {}, m, re = /\b([ABC])\b\s*(?:is\s+(?:a\s+)?|:\s*|-\s*|\(\s*|=\s*|\u2014\s*)(knight|liar)/gi, re2 = /\b([ABC])\s+and\s+([ABC])\s+are\s+(?:both\s+)?(knight|liar)s/gi;
+        while ((m = re.exec(t))) if (/^[ABC]$/.test(m[1])) kind[m[1]] = m[2].toLowerCase();
+        while ((m = re2.exec(t))) if (/^[ABC]$/.test(m[1]) && /^[ABC]$/.test(m[2])) { kind[m[1]] = m[3].toLowerCase(); kind[m[2]] = m[3].toLowerCase(); }
+        return kind.A === "knight" ? (kind.B === "liar" ? (kind.C === "liar" ? "" : "C is not a liar") : "B is not a liar") : "A is not a knight";
+      } },
+    { id: "race-order", ideal: "SOLVE: Race\nrunner Ana Ben Cy Di Ed\nplace 1 2 3 4 5\nrule Ben before Ana\nrule Cy directly after Ana\nrule Di before Ben\nrule Ed before Di\nEND", idealAnswer: "ANSWER: They finished Ed, Di, Ben, Ana, Cy.", q: "Five runners, Ana, Ben, Cy, Di and Ed, finish a race with no ties. Ben finishes before Ana. Cy finishes directly after Ana. " +
+      "Di finishes before Ben. Ed finishes before Di. In what order did they finish?",
+      check: function (t) { return inOrder(t, ["Ed", "Di", "Ben", "Ana", "Cy"]); } }
+  ].forEach(function (x) {
+    x.cat = "reason"; x.answerOf = answerOf;
+    if (!Q.some(function (y) { return y.id === x.id; })) Q.push(x);
+    if (x.alone && !Q.some(function (y) { return y.id === x.id + "-alone"; }))
+      Q.push({ id: x.id + "-alone", cat: "alone", q: x.q, check: x.check, answerOf: answerOf });
+  });
+})();
+// ===========================================================================
+// MODULE: AI_PUZZLE_BENCH_DATA - END
 // ===========================================================================
 </script>
 

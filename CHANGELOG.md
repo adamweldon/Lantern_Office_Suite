@@ -1,5 +1,60 @@
 # Changelog
 
+## 1.9.9 — Lantern keeps track: puzzle tools for the AI (2026-10-21)
+
+Six puzzles given to the 35B in Chat (1.9.8): it solved the original cup
+shuffle, a four-house clue puzzle, a game-show door trap and a letters
+puzzle, and got two wrong -- a two-coin cup shuffle (it kept the silver
+coin at a place instead of in its cup) and a rolling die (it tipped toward
+itself while writing "away", turned the wrong way round, and read a face
+from an earlier state). Its translation of each move was right; its
+bookkeeping was not. So, as with arithmetic, the AI now says *what*
+happens and Lantern does the bookkeeping exactly.
+
+- **Three puzzle tools, for any names.** In Chat the AI writes a short
+  block and ends it with END; Lantern runs it, shows every step, and sends
+  the results back for the ANSWER:
+  - `TRACK:` things in a row and what they hold -- cups and coins, a queue,
+    cars and passengers: `row`, `put gold in Green`, `swap A and B`,
+    `swap contents of A and B`, `move A to last`, `shift right 1`,
+    `reverse`, `add`, `remove`, `take`; places by name, position, first,
+    last, middle, `2 left of X`, `holder of gold`, "two places to its left".
+  - `TURN:` a cube with six labelled faces (a die -- three faces are
+    enough -- or a box of colours) tipped away/toward/left/right and turned
+    clockwise/counterclockwise/around; or a walker on a grid (forward, back,
+    turn left/right/around, face east, go north 2) with its distance home.
+  - `SOLVE:` clue puzzles -- a line of things, one line per category
+    (`(repeat)` when values may repeat, `(order)` for an order), and one
+    `rule` per clue: `Cara = fish`, `chef = 3`, `pilot directly left of
+    cat`, `not Cara next to Ana`, `Ana in 1, 4`, `before`/`after`, `if ...
+    then`, `iff`, `Ana.house + 1 = Ben.house`, or plain words ("The nurse
+    lives somewhere to the right of Dev"). Lantern tries every arrangement,
+    category by category, and says which one fits; if several do, where
+    they differ (a clue is missing or mistranslated); if none does, which
+    clue to check. Einstein's five-house puzzle takes well under a second.
+- **The AI recognises the kind.** A question that looks like one of these
+  gets that tool's instructions; every Chat prompt carries one line
+  offering the tools (`PUZZLE TOOLS`), so the AI can ask when Lantern did
+  not see a puzzle. A block Lantern cannot finish goes back once with the
+  reason.
+- **Letters, exactly:** `REVERSE`, `REMOVE` (letters, any case), `LEN`,
+  `COUNTCHARS`, `SUBSTITUTE`, `UPPER`, `LOWER`, `LEFT`, `RIGHT`, `MID`,
+  `FIND`, `SORTLETTERS`, `WORDS` -- in = lines and in Sheets. Formulas may
+  now give text, and `ANS` / `ANS1` carry text too.
+- **Bench: a puzzle set.** Ten puzzles with the tools (the six above, a
+  queue with a ball handed on, a robot walk, knights and liars, a race
+  order) and the first six again *without* the tools, reported apart and
+  not scored, so a run shows what the tools add. Every answer was worked
+  out by a program. The 35B's real answers without the tools are a test
+  fixture: the graders pass its four right answers and fail the coin and
+  the die for the right reasons.
+
+Tested: puzzles 42 (all three tools on the bench puzzles written the way
+the questions say them, Einstein's puzzle, a missing clue, contradicting
+clues, every error message; Chat running a block, a correction, the tools
+on request; which questions are offered which tool; the bench), all 21
+suites pass; Chat in Chromium with a scripted model.
+
 ## 1.9.8 — A drawing stuck in a loop (2026-10-21)
 
 From a 35B Chat on 1.9.7: "draw a house on a hill at sunset". The model

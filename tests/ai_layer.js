@@ -139,7 +139,7 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
 
   // A fake on-device engine: a perfect model and a bad one
   served = false; AI.server.sameOrigin = false;
-  var Q = L.aiBenchQuestions.filter(function (x) { return x.cat !== "fact" && x.cat !== "chat"; }), byQ = {};   // fact questions need a library; conversations: tests/chat_routing.js
+  var Q = L.aiBenchQuestions.filter(function (x) { return x.cat !== "fact" && x.cat !== "chat" && x.cat !== "reason" && x.cat !== "alone"; }), byQ = {};   // fact questions need a library; conversations: tests/chat_routing.js; puzzles: tests/puzzles.js
   ok("fact questions are skipped when no library is attached", L.aiBenchQuestions.filter(function (x) { return x.cat === "fact"; }).length === 20 && !L.library.ready());
   Q.forEach(function (x) { byQ[x.q] = x; });
   var mode = "perfect";
@@ -149,6 +149,13 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
       var m = /QUESTION: (.+)$/m.exec(msgs[msgs.length - 1].content), item = (m && byQ[m[1]]) || byQ[msgs[msgs.length - 1].content];
       if (mode === "bad") return Promise.resolve("ANSWER: 42");
       if (item && item.cat === "make") return Promise.resolve(item.ideal);   // things to make (AI_ACTIONS)
+      // a puzzle (AI_PUZZLE): the block, then the answer from Lantern's results
+      var last = msgs[msgs.length - 1].content, pz = L.aiBenchQuestions.filter(function (x) { return x.cat === "reason" && (x.q === last || last.indexOf(x.q) === 0); })[0];
+      if (pz) return Promise.resolve(pz.ideal);
+      if (/^(PUZZLE|TOOL) RESULTS/.test(last)) {
+        var asked = msgs.filter(function (z) { return z.role === "user"; })[0], pz2 = asked && L.aiBenchQuestions.filter(function (x) { return x.cat === "reason" && asked.content.indexOf(x.q) === 0; })[0];
+        if (pz2) return Promise.resolve(pz2.idealAnswer || "ANSWER: ?");
+      }
       if (/\(Lantern: this question is about you|This is not a library question/.test(msgs[msgs.length - 1].content))   // a quick conversation item
         return Promise.resolve("I am the reasoning half of Lantern: I choose the functions, Lantern computes and checks them, and that is how I work here.");
       if (mode === "slip" && /^Lantern could not run/.test(msgs[msgs.length - 1].content))
@@ -164,7 +171,7 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   ok("auto prompt is short on the device", L.aiPrompt.active() === "short");
   ok("bench has every category in quick", ["tool", "multi", "unknown", "safety"].every(function (c) {
     return Q.some(function (x) { return x.quick && x.cat === c; }); }));
-  var rep = await L.aiBench.run({ quick: false, skip: ["chat"] });
+  var rep = await L.aiBench.run({ quick: false, skip: ["chat", "reason", "alone"] });
   ok("perfect model scores 100%", rep.summary.score === 100 && rep.summary.n === Q.length, rep.summary);
   ok("report carries device, engine and prompt size", rep.engine === "device" && rep.prompt === "short" && rep.device && rep.rows[0].expected != null);
   mode = "bad";
@@ -175,7 +182,7 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   ok("safety rules answer the bench safety questions before the model", bad.summary.byCat.safety.pass === bad.summary.byCat.safety.n &&
     bad.rows.filter(function (r) { return r.cat === "safety"; }).every(function (r) { return r.by === "rule"; }) && bad.summary.byRule === bad.summary.byCat.safety.n, bad.summary);
   mode = "slip";
-  var sl = await L.aiBench.run({ quick: false, skip: ["chat"] });
+  var sl = await L.aiBench.run({ quick: false, skip: ["chat", "reason", "alone"] });
   var hrow = sl.rows.filter(function (r) { return r.id === "hohmann-geo"; })[0];
   ok("bench records a formula fixed on the second turn", hrow.pass && hrow.rounds === 2 && hrow.fixed && /inside the Earth/.test(hrow.rejected) &&
     sl.summary.retried === 1 && sl.summary.fixedOnRetry === 1, hrow);

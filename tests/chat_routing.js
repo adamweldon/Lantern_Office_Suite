@@ -194,7 +194,7 @@ function good(last) {
     conv.turns[1].self && /Kenya/.test(conv.text), conv.turns.map(function (x) { return [x.searches, x.self, x.final]; }));
   var Q = L.aiBenchQuestions.filter(function (x) { return x.cat === "chat"; });
   ok("eight conversations in the bench, one quick", Q.length === 8 && Q.filter(function (x) { return x.quick; }).length === 1);
-  var rep = await L.aiBench.run({ quick: false, skip: ["tool", "multi", "need", "unknown", "safety", "fact", "make"] });
+  var rep = await L.aiBench.run({ quick: false, skip: ["tool", "multi", "need", "unknown", "safety", "fact", "make", "reason", "alone"] });
   var failed = rep.rows.filter(function (r) { return !r.pass; }).map(function (r) { return r.id + ": " + r.why; });
   ok("a model that behaves well passes every conversation", rep.rows.length === 8 && !failed.length && rep.summary.chat.pass === 8, failed);
   ok("rows record each turn's searches", rep.rows.filter(function (r) { return r.id === "chat-follow-up-search"; })[0].chat[1].searches[0].how === "asked");
