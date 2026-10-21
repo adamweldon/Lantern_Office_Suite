@@ -32,6 +32,11 @@ Folder layout
               English Wikipedia, lead section of every article (about 12 GB);
               Simple English Wikipedia (about 2.5 GB) on a small or FAT32 drive
      library-simple   Simple English Wikipedia
+     library-full     the full English Wikipedia: every article, text without
+              pictures (about 60 GB; the size is read from the server). Keep
+              the small one too: quick facts read the small file, explanation
+              questions in Chat read whole articles. Hours to download; an
+              interrupted download resumes.
      zim NAME any Kiwix file, e.g. "zim wikipedia_en_medicine_maxi" (newest
               version is found by itself; checked against its SHA-256)
      check    show what this computer can run and what the kit has
@@ -63,6 +68,12 @@ Folder layout
    numbered passages and Lantern checks every quote. You can also browse the
    library itself at http://127.0.0.1:8081. Once the kit has the right model,
    start-lantern offers the encyclopedia once, the same way as a bigger model.
+   Once it has the small encyclopedia, it also offers the full Wikipedia
+   (about 60 GB) -- but only Y downloads it: no answer means "not now".
+   With both files, Lantern uses the small one for quick facts and the full
+   one when you ask Chat to explain something ("explain", "in detail", "how
+   does"): it reads before the AI answers, then checks every sentence of the
+   answer against what it read and shows which sentences are the AI's own.
 
 3. Share with phones (classroom)
    Start with "share" (start-lantern.bat share / ./start-lantern.sh share).

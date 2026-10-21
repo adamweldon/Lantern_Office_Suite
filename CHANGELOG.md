@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.9.4 — Reading before reasoning, and the full Wikipedia (2026-10-21)
+
+From a Chat transcript on the 4B: asked to explain in detail how language
+models work, it answered from memory (with a real error: GPT-style models
+are not trained by masked language modelling), and when pressed it wrote
+"= LOOKUP("LLM", "architecture")" and two QUOTE lines with no library
+behind them, then claimed Lantern had verified them. Chat showed that
+without a warning. What changed:
+
+- **Read first.** An explanation question in Chat ("explain", "in detail",
+  "how does", "tell me about") is looked up before the model answers, so it
+  reasons with the passages in front of it. The search uses the subject
+  words, not "explain in detail".
+- **Bigger reading allowance for detail:** whole paragraphs (the sentences
+  around a fact), the lead first, then the paragraphs that share most
+  words, each marked with its section; about 2,200 characters a passage
+  instead of 1,000. Quick facts keep the short passages.
+- **Sentence-by-sentence check.** Each sentence of a detailed answer that
+  cites [n] must say what passage n says (its new words and numbers); if
+  not, the AI gets one turn to fix it. Sentences with no source are listed
+  as the AI's own reasoning, for the reader to weigh.
+- **Infobox facts.** The mini Wikipedia holds each article's infobox too,
+  and Lantern used to throw it away. Its rows are now read as facts
+  ("Molar mass: 44.009 g·mol^-1", "Elevation: ...") and offered in
+  passages, units' powers kept, catalogue numbers left out.
+- **Two Wikipedias side by side.** Books of the same Kiwix family are one
+  encyclopedia: quick facts search and read the small file, explanation
+  questions the full one. No article is given twice.
+- **Kit:** `setup-kit library-full` downloads the full English Wikipedia
+  (every article, text without pictures; the size is read from the server,
+  about 60 GB) next to the small one, with the free-space check counting a
+  resumed download. Once the small one is there, start-lantern offers it --
+  opt-in: only Y downloads; no answer means not now; never in unattended
+  setups. `setup-kit check` says whether it fits.
+- **Chat holes closed:** a "= LOOKUP(...)" line is a search request, not a
+  failed formula; a NEED asking for encyclopedia data searches the library;
+  QUOTE lines with no passages make Lantern search (or, with no library,
+  are flagged as unchecked); a model that asks to look up what it already
+  has is told to answer from it; passages from earlier questions are sent
+  as a short note and the oldest turns dropped from long conversations, so
+  requests stay inside the server's 8,192-token window.
+
+Tested: AI layer 119, library 76, kit (sh and PowerShell) with the full
+file, and end to end in Chromium against real kiwix-serve serving the real
+mini test file next to a full-articles file of the same family.
+
 ## 1.9.3 — Run 6: the 4B with English Wikipedia (2026-10-21)
 
 Adam ran the full bench on the 4B (Qwen3.5-4B-Q4_K_M) with English

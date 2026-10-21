@@ -13,6 +13,11 @@
 #                               (lead sections, ~12 GB; Simple English ~2.5 GB if the
 #                               drive is small or FAT32)
 #   ./setup-kit.sh library-simple   Simple English Wikipedia (~2.5 GB)
+#   ./setup-kit.sh library-full     the full English Wikipedia (every article, text
+#                               without pictures, ~60 GB): explanation questions in
+#                               Chat read whole articles; quick facts keep the small
+#                               file. Offered once the small one is there; never
+#                               downloaded unasked.
 #   ./setup-kit.sh zim NAME     any Kiwix file by name (e.g. wikipedia_en_medicine_maxi)
 #                               or full URL, into library/
 #   ./setup-kit.sh check        what this computer can run and what the kit has
@@ -82,6 +87,7 @@ libinfo() {
   case "$1" in
     library) L_ID=library; L_NAME="English Wikipedia (lead section of every article)"; L_FOLDER=wikipedia; L_BASE=wikipedia_en_all_mini; T_GB=12 ;;
     library-simple) L_ID=library-simple; L_NAME="Simple English Wikipedia"; L_FOLDER=wikipedia; L_BASE=wikipedia_en_simple_all_maxi; T_GB=2.5 ;;
+    library-full) L_ID=library-full; L_NAME="the full English Wikipedia (every article, text without pictures)"; L_FOLDER=wikipedia; L_BASE=wikipedia_en_all_nopic; T_GB=60 ;;
     *) return 1 ;;
   esac
 }
@@ -90,6 +96,18 @@ latest_zim() {  # folder base -> newest dated file name, e.g. wikipedia_en_all_m
   listing "$KIWIX_BASE/zim/$1/" | grep -o "href=\"[^\"]*$2_[0-9]\{4\}-[0-9]\{2\}\.zim\"" | sed 's/^href="//; s/"$//; s#.*/##' | sort -u | tail -n 1
 }
 have_library() { ls "$LIBRARY"/*.zim >/dev/null 2>&1; }
+have_full() { ls "$LIBRARY"/wikipedia_en_all_nopic_*.zim "$LIBRARY"/wikipedia_en_all_maxi_*.zim 2>/dev/null | grep -q .; }
+# remote_gb url fallback -- the file's size on the server in GB (the full
+# Wikipedia grows every release), or the fallback when it cannot be asked.
+remote_gb() {
+  g=$(curl -sIL --max-time 20 "$1" 2>/dev/null | tr -d '\r' | awk 'tolower($1) == "content-length:" { n = $2 } END { if (n > 0) printf "%.1f", n / 1073741824 }') || g=""
+  [ -n "$g" ] && echo "$g" || echo "$2"
+}
+left_gb() {  # name gb -- what is still to download (a stopped download resumes)
+  if [ -f "$LIBRARY/$1.part" ]; then
+    awk -v g="$2" -v p="$(wc -c < "$LIBRARY/$1.part")" 'BEGIN { l = g - p / 1073741824; if (l < 0.1) l = 0.1; printf "%.1f", l }'
+  else echo "$2"; fi
+}
 kiwix_plat() {
   case "$(uname -s)-$(uname -m)" in
     Darwin-arm64) echo macos-arm64 ;; Darwin-*) echo macos-x86_64 ;;
@@ -183,12 +201,14 @@ no_room() {  # prints why this model cannot go on this drive, or nothing
     echo "it needs $(awk -v g="$T_GB" 'BEGIN { print g + 1 }') GB free and this drive has $fr GB"
   fi
 }
-ask() {  # prints yes / no / nothing (no keyboard)
+ask() {  # prints yes / no / nothing (no keyboard). "ask optin": a very large
+  # download -- only Y says yes; no answer means not now (asked next time).
   if [ "${LANTERN_AUTO_DOWNLOAD:-}" = 1 ]; then echo yes; return; fi
   if [ ! -t 0 ]; then echo "  (no keyboard here, so not now)" >&2; return; fi
-  printf "  Download it now?  Y = yes   N = no, and don't ask again   (yes in 30 s) " >&2
+  if [ "${1:-}" = optin ]; then d="not now"; else d="yes"; fi
+  printf "  Download it now?  Y = yes   N = no, and don't ask again   (%s in 30 s) " "$d" >&2
   if command -v bash >/dev/null 2>&1; then a=$(bash -c 'read -r -t 30 a; echo "$a"'); else read -r a; fi
-  case "$a" in n*|N*) echo no ;; *) echo yes ;; esac
+  case "$a" in n*|N*) echo no ;; y*|Y*) echo yes ;; *) [ "${1:-}" = optin ] || echo yes ;; esac
 }
 # reach: prints why the model site cannot give this file, or nothing. It does
 # NOT follow the redirect: Hugging Face sends large files from signed storage
@@ -237,7 +257,7 @@ offer() {  # inline: 1 = download here, else in the background
     IFS=$old_ifs
     if [ -z "$P_ID" ]; then
       if [ -n "$P_OFFLINE" ]; then echo "  ($P_WHY; starting with the model the kit has.)"; return 0; fi
-      [ -n "$P_BUSY" ] || offer_library "${1:-}"
+      if [ -z "$P_BUSY" ]; then offer_library "${1:-}"; if have_library; then offer_full "${1:-}"; fi; fi
       return 0
     fi
     tier "$P_ID"; mem=$(mem_mb)
@@ -287,6 +307,50 @@ offer_library() {
   echo "  Downloading in the background (progress: models/download-library.log)."
   echo "  Start Lantern again when it is done to use the library."
 }
+# full_plan: the full Wikipedia, offered (opt-in) once the kit has the small
+# one. Sets FP_URL (empty when not offered), FP_GB, FP_WHY.
+full_plan() {
+  FP_URL=""; FP_GB=""; FP_WHY=""
+  libinfo library-full
+  if have_full; then FP_WHY="the kit has the full Wikipedia"; return 0; fi
+  if ! have_library; then FP_WHY="the small encyclopedia comes first"; return 0; fi
+  if [ -f "$MODELS/.skip-library-full" ]; then FP_WHY="you answered N before (delete models/.skip-library-full to be asked again)"; return 0; fi
+  if busy library-full; then FP_WHY="the full Wikipedia is still downloading (see models/download-library-full.log)"; return 0; fi
+  name=$(latest_zim "$L_FOLDER" "$L_BASE" 2>/dev/null) || name=""
+  if [ -z "$name" ]; then FP_WHY="could not reach $KIWIX_BASE"; return 0; fi
+  FP_GB=$(remote_gb "$KIWIX_BASE/zim/$L_FOLDER/$name" "$T_GB")
+  T_GB=$(left_gb "$name" "$FP_GB"); why=$(no_room)
+  if [ -n "$why" ]; then FP_WHY="the full Wikipedia ($FP_GB GB) would not fit: $why"; return 0; fi
+  FP_URL="$KIWIX_BASE/zim/$L_FOLDER/$name"
+}
+get_full() {
+  if have_full; then echo "  have the full Wikipedia"; return 0; fi
+  libinfo library-full
+  name=$(latest_zim "$L_FOLDER" "$L_BASE")
+  if [ -z "$name" ]; then echo "  no $L_BASE file listed at $KIWIX_BASE/zim/$L_FOLDER/"; return 1; fi
+  gb=$(remote_gb "$KIWIX_BASE/zim/$L_FOLDER/$name" "$T_GB")
+  T_GB=$(left_gb "$name" "$gb"); why=$(no_room)
+  if [ -n "$why" ]; then echo "  The full Wikipedia ($gb GB) would not fit: $why."; return 1; fi
+  kiwix_tools || return 1
+  echo "  The full English Wikipedia: $name ($gb GB; this takes hours -- an interrupted download resumes where it stopped)"
+  get_zim "$KIWIX_BASE/zim/$L_FOLDER/$name"
+}
+offer_full() {  # never unasked: not in unattended set-ups
+  case "${LANTERN_AUTO_DOWNLOAD:-}" in 0|1) return 0 ;; esac
+  full_plan
+  [ -n "$FP_URL" ] || return 0
+  echo ""
+  echo "  Lantern can also keep the FULL English Wikipedia: every article, text without pictures,"
+  echo "  about $FP_GB GB (a long download -- hours). Explanation questions in Chat (\"explain\","
+  echo "  \"in detail\", \"how does\") are then read from whole articles; quick facts keep the small file."
+  ans=$(ask optin)
+  [ -n "$ans" ] || return 0
+  if [ "$ans" = no ]; then : > "$MODELS/.skip-library-full"; echo "  Not asking again. To get it later: ./setup-kit.sh library-full"; return 0; fi
+  if [ "${1:-}" = 1 ]; then get_full; return 0; fi
+  nohup "$DIR/setup-kit.sh" get library-full > "$MODELS/download-library-full.log" 2>&1 &
+  echo "  Downloading in the background (progress: models/download-library-full.log; it resumes if stopped)."
+  echo "  Start Lantern again when it is done."
+}
 check() {
   mem=$(mem_mb)
   echo "Memory: $(awk -v m="$mem" 'BEGIN { printf "%.1f", m / 1024 }') GB"
@@ -314,6 +378,11 @@ check() {
     if [ -n "$LP_ID" ]; then libinfo "$LP_ID"; echo "Next start: will offer the encyclopedia ($L_NAME, about $T_GB GB). Or fetch it now: ./setup-kit.sh library"
     else echo "Next start: offers nothing: $P_WHY; library: $LP_WHY."; fi
   fi
+  if have_library && ! have_full; then
+    full_plan
+    if [ -n "$FP_URL" ]; then echo "Full Wikipedia: not in the kit; about $FP_GB GB and there is room. Get it: ./setup-kit.sh library-full"
+    else echo "Full Wikipedia: not in the kit ($FP_WHY)."; fi
+  fi
 }
 
 GPU=""; SETS=""
@@ -323,6 +392,13 @@ case "${1:-}" in
   offer) offer 0 || true; exit 0 ;;
   check) check; exit 0 ;;
   get)   # one model or the library, in the background (from offer)
+    if [ "${2:-}" = library-full ]; then
+      echo $$ > "$MODELS/.downloading-library-full"
+      trap 'rm -f "$MODELS/.downloading-library-full"' EXIT
+      get_full || true
+      echo "Done. Stop Lantern (Ctrl+C) and start it again to use the full Wikipedia."
+      exit 0
+    fi
     if libinfo "${2:-}"; then
       echo $$ > "$MODELS/.downloading-library"
       trap 'rm -f "$MODELS/.downloading-library"' EXIT
@@ -361,6 +437,7 @@ for s in $SETS; do
     zim) ZIMNEXT=1 ;;
     library) if lid=$(pick_lib); then get_library "$lid"; else echo "  No room for an encyclopedia on this drive."; fi ;;
     library-simple) get_library library-simple ;;
+    library-full) get_full || true ;;
     phone) phone ;;
     usb) engine linux "$LNX"; engine windows "$WIN"; engine mac "llama-$BUILD-bin-macos-arm64.tar.gz"; phone; get_tier laptop; get_tier big ;;
     engine) engine "$OS" "$THIS" ;;

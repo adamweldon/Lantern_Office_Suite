@@ -11,6 +11,11 @@
 #                              (lead sections, ~12 GB; Simple English ~2.5 GB if
 #                              the drive is small or FAT32)
 #   setup-kit.bat library-simple   Simple English Wikipedia (~2.5 GB)
+#   setup-kit.bat library-full     the full English Wikipedia (every article, text
+#                              without pictures, ~60 GB): explanation questions in
+#                              Chat read whole articles; quick facts keep the
+#                              small file. Offered once the small one is there;
+#                              never downloaded unasked.
 #   setup-kit.bat zim NAME     any Kiwix file by name (e.g. wikipedia_en_medicine_maxi)
 #                              or full URL, into library\
 #   setup-kit.bat check        show what this computer can run and what the kit has
@@ -91,8 +96,9 @@ function Engine($asset) {
 
 # --- the offline library (Kiwix) -------------------------------------------------
 $Libs = @(
-  [pscustomobject]@{ id = "library"; name = "English Wikipedia (lead section of every article)"; folder = "wikipedia"; base = "wikipedia_en_all_mini"; gb = 12 },
-  [pscustomobject]@{ id = "library-simple"; name = "Simple English Wikipedia"; folder = "wikipedia"; base = "wikipedia_en_simple_all_maxi"; gb = 2.5 }
+  [pscustomobject]@{ id = "library"; name = "English Wikipedia (lead section of every article)"; folder = "wikipedia"; base = "wikipedia_en_all_mini"; gb = 12; pick = $true },
+  [pscustomobject]@{ id = "library-simple"; name = "Simple English Wikipedia"; folder = "wikipedia"; base = "wikipedia_en_simple_all_maxi"; gb = 2.5; pick = $true },
+  [pscustomobject]@{ id = "library-full"; name = "the full English Wikipedia (every article, text without pictures)"; folder = "wikipedia"; base = "wikipedia_en_all_nopic"; gb = 60; pick = $false }
 )
 function Listing($url) {
   if ($Curl) { $t = & $Curl.Path -sL --fail --max-time 30 $url; if ($LASTEXITCODE -ne 0) { throw "could not list $url" }; return ($t -join "`n") }
@@ -107,6 +113,29 @@ function LatestZim($folder, $base) {
   return ($names | Sort-Object | Select-Object -Last 1)
 }
 function HaveLibrary { @(Get-ChildItem -Path $Library -Filter "*.zim" -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 0 }).Count -gt 0 }
+function HaveFull { @(Get-ChildItem -Path $Library -Filter "*.zim" -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 0 -and $_.Name -match '^wikipedia_en_all_(nopic|maxi)_' }).Count -gt 0 }
+# RemoteGB(url, fallback) -> the file's size on the server in GB (the full
+# Wikipedia grows every release), or the fallback when it cannot be asked.
+# LeftGB(name, gb) -> what is still to download (a stopped download resumes).
+function LeftGB($name, $gb) {
+  $part = Join-Path $Library "$name.part"
+  if (Test-Path $part) { return [math]::Max(0.1, [math]::Round($gb - (Get-Item $part).Length / 1GB, 1)) }
+  return $gb
+}
+function RemoteGB($url, $fallback) {
+  try {
+    if ($Curl) {
+      $h = & $Curl.Path -sIL --max-time 20 $url
+      $len = @($h | ForEach-Object { if ($_ -match '^content-length:\s*(\d+)') { $Matches[1] } }) | Select-Object -Last 1
+      if ($len) { return [math]::Round([double]$len / 1GB, 1) }
+    } else {
+      $r = [System.Net.HttpWebRequest]::Create($url); $r.Method = "HEAD"; $r.Timeout = 20000; $r.UserAgent = "lantern-kit"
+      $resp = $r.GetResponse(); $n = $resp.ContentLength; $resp.Close()
+      if ($n -gt 0) { return [math]::Round($n / 1GB, 1) }
+    }
+  } catch { }
+  return $fallback
+}
 function KiwixTools {
   $target = Join-Path $Dir "engine\windows\kiwix"
   if (Test-Path (Join-Path $target "kiwix-serve.exe")) { Write-Host "  have kiwix-serve"; return }
@@ -149,7 +178,7 @@ function LibFor($id) { $Libs | Where-Object { $_.id -eq $id } | Select-Object -F
 # The encyclopedia that fits this drive: full English leads, else Simple English.
 function PickLib {
   $drive = Drive
-  foreach ($l in $Libs) { if (-not (NoRoom $l $drive)) { return $l } }
+  foreach ($l in @($Libs | Where-Object { $_.pick })) { if (-not (NoRoom $l $drive)) { return $l } }
   return $null
 }
 function GetLibrary($l) {
@@ -223,20 +252,25 @@ function NoRoom($t, $drive) {
 }
 # Ask -> "yes", "no", or "" when there is no keyboard to ask (then nothing
 # is downloaded and nothing is remembered).
-function Ask($secs) {
+# optIn: a very large download -- nothing happens unless Y is pressed (no
+# answer = not now, asked again next time).
+function Ask($secs, [bool]$optIn = $false) {
   if ($env:LANTERN_AUTO_DOWNLOAD -eq "1") { return "yes" }
-  Write-Host -NoNewline "  Download it now?  Y = yes   N = no, and don't ask again   (yes in $secs s) "
+  Write-Host -NoNewline ("  Download it now?  Y = yes   N = no, and don't ask again   (" + $(if ($optIn) { "not now" } else { "yes" }) + " in $secs s) ")
   try {
     while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) }   # ignore keys pressed earlier
     $end = (Get-Date).AddSeconds($secs)
     while ((Get-Date) -lt $end) {
       if ([Console]::KeyAvailable) {
         $k = [Console]::ReadKey($true); Write-Host $k.KeyChar
-        if ($k.KeyChar -eq 'n' -or $k.KeyChar -eq 'N') { return "no" } else { return "yes" }
+        if ($k.KeyChar -eq 'n' -or $k.KeyChar -eq 'N') { return "no" }
+        if ($optIn -and $k.KeyChar -ne 'y' -and $k.KeyChar -ne 'Y') { return "" }
+        return "yes"
       }
       Start-Sleep -Milliseconds 200
     }
   } catch { Write-Host "(no keyboard here, so not now)"; return "" }
+  if ($optIn) { Write-Host "not now"; return "" }
   Write-Host "Y"; return "yes"
 }
 # Plan -> what to offer: @{ t = model or $null; why = reason when nothing;
@@ -268,7 +302,7 @@ function Offer([bool]$inline) {
     foreach ($n in $p.notes) { if (-not $shown.ContainsKey($n)) { Write-Host "  $n."; $shown[$n] = 1 } }
     if (-not $p.t) {
       if ($p.offline) { Write-Host "  ($($p.why); starting with the model the kit has.)"; return }
-      if (-not $p.busy) { OfferLibrary $inline }
+      if (-not $p.busy) { OfferLibrary $inline; if (HaveLibrary) { OfferFull $inline } }
       return
     }
     $t = $p.t
@@ -324,6 +358,52 @@ function OfferLibrary([bool]$inline) {
   Start-Process -FilePath $ps -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ('"' + $PSCommandPath + '"'), "get", $l.id) | Out-Null
   Write-Host "  Downloading in a separate window. Start Lantern again when it is done to use the library."
 }
+# The full Wikipedia: offered (opt-in) once the kit has the small one.
+# FullPlan -> @{ l; url; gb; why }
+function FullPlan {
+  $l = LibFor "library-full"
+  if (HaveFull) { return @{ l = $null; why = "the kit has the full Wikipedia" } }
+  if (-not (HaveLibrary)) { return @{ l = $null; why = "the small encyclopedia comes first" } }
+  if (Test-Path (Join-Path $Models ".skip-library-full")) { return @{ l = $null; why = "you answered N before (delete models\.skip-library-full to be asked again)" } }
+  if (Busy $l) { return @{ l = $null; why = "the full Wikipedia is still downloading in another window" } }
+  try { $name = LatestZim $l.folder $l.base } catch { return @{ l = $null; why = "could not reach $KiwixBase"; offline = $true } }
+  $url = "$KiwixBase/zim/$($l.folder)/$name"
+  $gb = RemoteGB $url $l.gb
+  $room = NoRoom ([pscustomobject]@{ gb = (LeftGB $name $gb) }) (Drive)
+  if ($room) { return @{ l = $null; gb = $gb; why = "the full Wikipedia ($gb GB) would not fit: $room" } }
+  return @{ l = $l; url = $url; gb = $gb; why = "" }
+}
+function GetFull {
+  if (HaveFull) { Write-Host "  have the full Wikipedia"; return }
+  $l = LibFor "library-full"
+  $name = LatestZim $l.folder $l.base; $url = "$KiwixBase/zim/$($l.folder)/$name"
+  $gb = RemoteGB $url $l.gb
+  $room = NoRoom ([pscustomobject]@{ gb = (LeftGB $name $gb) }) (Drive)
+  if ($room) { Write-Host "  The full Wikipedia ($gb GB) would not fit: $room."; return }
+  KiwixTools
+  Write-Host "  The full English Wikipedia: $name ($gb GB; this takes hours -- an interrupted download resumes where it stopped)"
+  GetZim $url
+}
+function OfferFull([bool]$inline) {
+  if ($env:LANTERN_AUTO_DOWNLOAD -eq "1" -or $env:LANTERN_AUTO_DOWNLOAD -eq "0") { return }   # never unasked
+  $p = FullPlan
+  if (-not $p.l) { return }
+  Write-Host ""
+  Write-Host "  Lantern can also keep the FULL English Wikipedia: every article, text without pictures,"
+  Write-Host "  about $($p.gb) GB (a long download -- hours). Explanation questions in Chat (`"explain`","
+  Write-Host "  `"in detail`", `"how does`") are then read from whole articles; quick facts keep the small file."
+  $ans = Ask 30 $true
+  if ($ans -eq "") { return }
+  if ($ans -eq "no") {
+    New-Item -ItemType File -Force -Path (Join-Path $Models ".skip-library-full") | Out-Null
+    Write-Host "  Not asking again. To get it later: setup-kit.bat library-full"
+    return
+  }
+  if ($inline) { GetFull; return }
+  $ps = (Get-Process -Id $PID).Path
+  Start-Process -FilePath $ps -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ('"' + $PSCommandPath + '"'), "get", "library-full") | Out-Null
+  Write-Host "  Downloading in a separate window (it resumes if stopped). Start Lantern again when it is done."
+}
 function Check {
   $mem = MemMB; $drive = Drive
   Write-Host ("Memory: " + [math]::Round($mem / 1024, 1) + " GB")
@@ -348,6 +428,11 @@ function Check {
     if ($lp.l) { Write-Host "Next start: will offer the encyclopedia ($($lp.l.name), about $($lp.l.gb) GB). Or fetch it now: setup-kit.bat library" }
     else { Write-Host "Next start: offers nothing: $($p.why); library: $($lp.why)." }
   }
+  if (HaveLibrary -and -not (HaveFull)) {
+    $fp = FullPlan
+    if ($fp.l) { Write-Host "Full Wikipedia: not in the kit; about $($fp.gb) GB and there is room. Get it: setup-kit.bat library-full" }
+    else { Write-Host "Full Wikipedia: not in the kit ($($fp.why))." }
+  }
 }
 
 $gpu = $Sets -contains "gpu"
@@ -366,7 +451,8 @@ if ($Sets.Count -gt 1 -and $Sets[0] -eq "get") {   # one model or library, in it
     try { $Host.UI.RawUI.WindowTitle = "Lantern: downloading $($t.name)" } catch { }
     Set-Content -Path $lock -Value $PID
     Write-Host "Downloading $($t.name) ($($t.gb) GB) into the kit. Lantern keeps working meanwhile."
-    if ($lib) { Set-Content -Path (Join-Path $Models ".downloading-library") -Value $PID; GetLibrary $lib } else { GetTier $t }
+    if ($lib -and $lib.id -eq "library-full") { GetFull }
+    elseif ($lib) { Set-Content -Path (Join-Path $Models ".downloading-library") -Value $PID; GetLibrary $lib } else { GetTier $t }
     Write-Host ""
     Write-Host "Done. Close Lantern's window and start it again to use $($t.name)."
   } catch { Write-Host "Download stopped: $($_.Exception.Message). Start Lantern again later to resume it." }
@@ -391,6 +477,7 @@ foreach ($s in $Sets) {
     "engine" { Engine $asset }
     "library" { $l = PickLib; if ($l) { GetLibrary $l } else { Write-Host "  No room for an encyclopedia on this drive." } }
     "library-simple" { GetLibrary (LibFor "library-simple") }
+    "library-full" { GetFull }
     "zim" { }
     default {
       $t = Tier $s

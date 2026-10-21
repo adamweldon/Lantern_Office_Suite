@@ -37,8 +37,24 @@ Object.keys(SYN).forEach(function (k) {
   ARTICLES[BOOK2 + "/" + k] = { book: BOOK2, path: k, title: t, text: (t + " " + SYN[k]).toLowerCase(),
     html: "<html><head><title>" + t + "</title></head><body><div id=\"mw-content-text\"><p>" + SYN[k] + "</p></div></body></html>" };
 });
+// A third book: the same encyclopedia in full ("nopic"), whole articles
+// with sections, for detail questions (1.9.4).
+var BOOK3 = "wikipedia_en_all_nopic_2026-09", FULL = {
+  "Mount_Everest": "<p>Mount Everest is Earth's highest mountain above sea level, in the Mahalangur Himal sub-range of the Himalayas. Its elevation of 8,849 metres was set in 2020 by the Chinese and Nepali authorities.</p>" +
+    "<h2>Climbing history</h2><p>The first recorded ascent was made on 29 May 1953 by Tenzing Norgay and Edmund Hillary, members of a British expedition led by John Hunt, by the southeast ridge route from Nepal.</p>" +
+    "<p>Earlier British expeditions in the 1920s tried the north ridge from Tibet; George Mallory and Andrew Irvine vanished near the summit in 1924.</p>" +
+    "<h2>Geology</h2><p>The summit is made of Ordovician limestone that formed on the floor of the Tethys Ocean and was lifted by the collision of the Indian and Eurasian plates.</p>" +
+    "<h2>References</h2><ul><li>Hunt, John (1953). The Ascent of Everest. Hodder and Stoughton, London, a book about the climb.</li></ul>",
+  "Season": "<p>A season is a division of the year based on changes in weather and daylight. Seasons result from Earth's orbit around the Sun and Earth's axial tilt relative to the ecliptic plane.</p>" +
+    "<h2>Cause</h2><p>Earth's axis is tilted by about 23.4 degrees, so for half of each orbit one hemisphere leans towards the Sun and receives more direct sunlight and longer days.</p>"
+};
+Object.keys(FULL).forEach(function (k) {
+  var t = k.replace(/_/g, " ");
+  ARTICLES[BOOK3 + "/" + k] = { book: BOOK3, path: k, title: t, text: (t + " " + FULL[k].replace(/<[^>]+>/g, " ")).toLowerCase(),
+    html: "<html><head><title>" + t + "</title></head><body><div id=\"mw-content-text\">" + FULL[k] + "</div></body></html>" };
+});
 Object.keys(ARTICLES).forEach(function (k) { if (!ARTICLES[k].book) { ARTICLES[k].book = BOOK; ARTICLES[k].path = k; } });
-var twoBooks = false;
+var twoBooks = false, threeBooks = false, searched = [];
 var vc = new VirtualConsole(), errs = [];
 vc.on("jsdomError", function (e) { if (!/Not implemented/.test(String(e.message))) errs.push(String(e.message).slice(0, 200)); });
 var dom = new JSDOM("<!DOCTYPE html><html><head></head><body></body></html>",
@@ -65,11 +81,14 @@ w.fetch = function (url, opts) {
       var cat = fs.readFileSync(path.join(FX, "catalog.xml"), "utf8");
       if (twoBooks) cat = cat.replace("</feed>", "<entry><title>Wikipedia</title><language>eng</language><name>wikipedia_en_all</name>" +
         "<tags>_ftindex:yes</tags><articleCount>6900000</articleCount><link type=\"text/html\" href=\"/content/" + BOOK2 + "\" /></entry></feed>");
+      if (threeBooks) cat = cat.replace("</feed>", "<entry><title>Wikipedia</title><language>eng</language><name>wikipedia_en_all</name><flavour>nopic</flavour>" +
+        "<tags>_ftindex:yes</tags><articleCount>6900000</articleCount><link type=\"text/html\" href=\"/content/" + BOOK3 + "\" /></entry></feed>");
       return resp(200, cat, "application/atom+xml");
     }
     if (u.pathname === "/search") {
       var bn = u.searchParams.get("books.name");
-      if (bn !== BOOK && !(twoBooks && bn === BOOK2)) return resp(400, "<error>No such book</error>", "application/xml");
+      if (bn !== BOOK && !(twoBooks && bn === BOOK2) && !(threeBooks && bn === BOOK3)) return resp(400, "<error>No such book</error>", "application/xml");
+      searched.push(bn);
       var words = (u.searchParams.get("pattern") || "").toLowerCase().split(/\s+/).filter(Boolean);
       var hits = Object.keys(ARTICLES).filter(function (k) { return ARTICLES[k].book === bn && words.every(function (wd) { return ARTICLES[k].text.indexOf(wd) >= 0; }); });
       var items = hits.slice(0, +u.searchParams.get("pageLength") || 25).map(function (k) {
@@ -87,6 +106,7 @@ w.fetch = function (url, opts) {
     var m = /^\/raw\/([^\/]+)\/content\/(.+)$/.exec(u.pathname);
     if (m && m[1] === BOOK && ARTICLES[m[2]]) return resp(200, ARTICLES[m[2]].html, "text/html");
     if (m && twoBooks && m[1] === BOOK2 && ARTICLES[BOOK2 + "/" + m[2]]) return resp(200, ARTICLES[BOOK2 + "/" + m[2]].html, "text/html");
+    if (m && threeBooks && m[1] === BOOK3 && ARTICLES[BOOK3 + "/" + m[2]]) return resp(200, ARTICLES[BOOK3 + "/" + m[2]].html, "text/html");
     return resp(404, "not found", "text/html");
   }
   // the model (same-origin llama-server stand-in)
@@ -152,6 +172,16 @@ function firstSentence(body, n) {
   ok("verify: a citation beyond the passages fails", /no passage \[9\]/.test(V("ANSWER: Yes [9].\nQUOTE [9]: something here to quote", src).problems.join(" ")));
   ok("verify: declining is fine", V("ANSWER: Not in my library.", src).declined === true);
   ok("verify: a quote with small changes still counts", V("ANSWER: Yes [1].\nQUOTE [1]: “" + s1.replace(/,/g, "").replace(/\.$/, "") + "”", src).ok);
+
+  // 1.9.4: infobox rows are facts
+  var co2 = await LIB.read({ book: BOOK, path: "Carbon_dioxide", title: "Carbon dioxide" });
+  ok("infobox rows are read as facts", co2.facts.some(function (f) { return /^Molar mass: 44\.009/.test(f); }) &&
+    co2.facts.some(function (f) { return /^Appearance: Colorless gas/.test(f); }) &&
+    !co2.facts.some(function (f) { return /^(CAS Number|ChEBI|PubChem|3D model)/.test(f); }), co2.facts);
+  var co2p = LIB.passage(co2, LIB.keywords("What is the molar mass of carbon dioxide?"), 1000);
+  ok("passages carry the infobox facts that match the question", /Facts from the infobox: .*Molar mass: 44\.009/.test(co2p), co2p.slice(-400));
+  ok("a quote from an infobox fact verifies", V("ANSWER: 44.009 g/mol [1].\nQUOTE [1]: Molar mass: 44.009", [{ n: 1, title: "Carbon dioxide", text: co2p }],
+    "What is the molar mass of carbon dioxide?").ok);
 
   // prompt: the LOOKUP rule appears only with a library
   ok("Assist prompt offers LOOKUP when a library is attached", /LOOKUP: <2 to 5 search words>/.test(A.buildPrompt("x", [])) &&
@@ -271,7 +301,7 @@ function firstSentence(body, n) {
   // Chat
   go("chat"); await sleep(30);
   var cin = d.querySelector("input[aria-label=\"Message\"]");
-  cin.value = "Why does coral bleach?";
+  cin.value = "What makes coral turn white?";
   modelReplies = ["LOOKUP: coral bleaching", function (body) {
     return "ANSWER: Corals turn white when they lose their symbiotic algae [1].\nQUOTE [1]: " + firstSentence(body, 1); }];
   modelCalls = [];
@@ -279,6 +309,56 @@ function firstSentence(body, n) {
   t = d.body.textContent;
   ok("Chat looks it up and shows checked sources", modelCalls.length === 2 && /LIBRARY:/.test(modelCalls[1].messages[modelCalls[1].messages.length - 1].content) &&
     /Lantern searched its offline library for “coral bleaching”/.test(t) && /✓ quote found/.test(t), { calls: modelCalls.length, t: t.slice(-600) });
+
+  // --- 1.9.4: an explanation question is read first, and each sentence of
+  // the answer is checked against the passages ---
+  function chatAsk(text) { cin = d.querySelector("input[aria-label=\"Message\"]"); cin.value = text; modelCalls = []; btn(d, "Send").click(); }
+  function logText() { return d.querySelector("[aria-label=\"Conversation\"]").textContent; }
+  var before = logText().length;
+  modelReplies = [function (body) {
+    var last = body.messages[body.messages.length - 1].content;
+    return /LIBRARY:/.test(last) ? "Coral bleaching is the process when corals become white due to loss of symbiotic algae [1]. " +
+      "I think reefs can recover if the water cools again in time.\nQUOTE [1]: " + firstSentence(body, 1) : "?";
+  }];
+  chatAsk("Explain in detail why coral bleaching happens"); await sleep(200);
+  t = logText().slice(before);
+  ok("Chat reads the library before answering an explanation question", modelCalls.length === 1 &&
+    /LIBRARY: passages/.test(modelCalls[0].messages[modelCalls[0].messages.length - 1].content) &&
+    /Answer the QUESTION in detail/.test(modelCalls[0].messages[modelCalls[0].messages.length - 1].content) && /Lantern read \d passage/.test(t), t.slice(0, 500));
+  ok("Chat checks each sentence: one backed, one the AI's own", /1 of 2 backed by the passage they cite/.test(t) &&
+    /own reasoning, not from the passages/.test(t) && /reefs can recover/.test(t) && /✓ quote found/.test(t), t.slice(-700));
+  before = logText().length;
+  modelReplies = [function () { return "Coral bleaching is caused by plastic bags floating over the reef [1].\nQUOTE [1]: Coral bleaching is caused by plastic."; },
+    function (body) { var last = body.messages[body.messages.length - 1].content;
+      return /Lantern checked each sentence/.test(last) && /plastic bags/.test(last) ?
+        "Coral bleaching is the process when corals become white due to loss of symbiotic algae [1].\nQUOTE [1]: " + firstSentence({ messages: body.messages.slice(0, -2) }, 1) : "?"; }];
+  chatAsk("Explain coral bleaching"); await sleep(250);
+  t = logText().slice(before);
+  ok("Chat: a sentence citing a passage that does not say it goes back to the AI, and the fix is checked", modelCalls.length === 2 &&
+    /cites \[1\] but no passage says it/.test(t) && /1 of 1 backed/.test(t) && !/still questions/.test(t), t.slice(-700));
+  ok("Chat sends earlier passages as a short note only", (function () {
+    var tr = L.CHAT.trimHistory([{ role: "user", content: "q1\n\nLIBRARY: passages from the offline encyclopedia\n[1] A\nlong text" }, { role: "assistant", content: "a1" },
+      { role: "user", content: "q2\n\nLIBRARY: passages from the offline encyclopedia\n[1] B\ntext" }]);
+    return tr.length === 3 && /^q1\n\n\[library passages from an earlier question/.test(tr[0].content) && /\[1\] B/.test(tr[2].content);
+  })());
+  ok("Chat drops the oldest turns of a long conversation", (function () {
+    var big = []; for (var k = 0; k < 30; k++) big.push({ role: k % 2 ? "assistant" : "user", content: new Array(1001).join("x") });
+    var tr = L.CHAT.trimHistory(big); return tr.length < 30 && tr[0].role === "user" && tr[tr.length - 1] === big[29];
+  })());
+  // the transcript holes: a fake =LOOKUP(...) line, invented QUOTE lines
+  ok("=LOOKUP(...) is read as a search request, not a formula", (function () {
+    var pr = A.parseReply("= LOOKUP(\"LLM\", \"architecture\")\nANSWER: x");
+    return pr.lookup === "LLM architecture" && pr.exprText === "";
+  })());
+  ok("a NEED for encyclopedia data asks the library", A.needLibrary("specific factual data from the offline encyclopedia regarding LLMs") &&
+    !A.needLibrary("How many goats do you have?"));
+  before = logText().length;
+  modelReplies = [function () { return "LLMs predict the next token.\nQUOTE [1]: Large language models are trained on text."; },
+    function (body) { var last = body.messages[body.messages.length - 1].content;
+      return /LIBRARY:/.test(last) ? "ANSWER: Coral bleaching is the process when corals become white [1].\nQUOTE [1]: " + firstSentence(body, 1) : "?"; }];
+  chatAsk("What makes coral turn white again?"); await sleep(200);
+  t = logText().slice(before);
+  ok("Chat: QUOTE lines without passages make Lantern search the library", modelCalls.length === 2 && /wrote quotes without any passages/.test(t) && /✓ quote found/.test(t), t.slice(-500));
 
   // AI app panel
   go("ai"); await sleep(30);
@@ -308,6 +388,26 @@ function firstSentence(body, n) {
   var evp = (await LIB.lookup("How tall is Mount Everest?", "Mount Everest height")).sources[0].text;
   ok("passage keeps the sentence that answers", /8,849 metres/.test(evp), evp);
   ok("disambiguation pages are never passages", (await top("Tell me about the Moon", "Moon")).indexOf("Moon (disambiguation)") < 0);
+  // --- 1.9.4: the small file and the full text, side by side ---
+  threeBooks = true; await LIB.detect();
+  var fams = LIB.families().filter(function (f) { return f.name === "wikipedia_en_all"; });
+  ok("mini and full Wikipedia are one family", LIB.state.books.length === 3 && fams.length === 1 && fams[0].lead.id === BOOK2 && fams[0].full.id === BOOK3,
+    LIB.state.books.map(function (b) { return b.id + ":" + b.flavour; }));
+  searched = [];
+  var quick = await LIB.lookup("How tall is Mount Everest?", "Mount Everest height");
+  ok("a quick fact searches and reads the small file", quick.sources[0].book === BOOK2 && searched.indexOf(BOOK3) < 0 && /lead sections/.test(quick.sources[0].bookTitle),
+    { s: quick.sources.map(function (x) { return x.book + "/" + x.path; }), searched: searched });
+  searched = [];
+  var deep = await LIB.lookup("Explain how Mount Everest was first climbed", "", { detail: true });
+  var ev = deep.sources.filter(function (x) { return x.path === "Mount_Everest"; })[0];
+  ok("a detail question reads the full article, with its sections", ev && ev.book === BOOK3 && /\(Climbing history\) The first recorded ascent/.test(ev.text) &&
+    /Tenzing Norgay/.test(ev.text) && !/Ascent of Everest\. Hodder/.test(ev.text) && searched.indexOf(BOOK2) < 0 && /full articles/.test(ev.bookTitle),
+    { s: deep.sources.map(function (x) { return x.book + "/" + x.path; }), t: ev && ev.text });
+  ok("no article is given twice", deep.sources.map(function (x) { return x.title; }).filter(function (x, i, a) { return a.indexOf(x) !== i; }).length === 0);
+  ok("explanation questions are told apart from quick facts", LIB.wantsDetail("Explain in detail how large language models work") &&
+    LIB.wantsDetail("How does a heat pump work?") && LIB.wantsDetail("Tell me about the Moon") && !LIB.wantsDetail("What is the capital of Kenya?") &&
+    !LIB.wantsDetail("How tall is Mount Everest?"));
+  threeBooks = false;
   twoBooks = false; await LIB.detect();
 
   // library gone: no LOOKUP rule, no reading turn

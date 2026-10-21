@@ -116,6 +116,7 @@ def zim(name, good=True):
     open(os.path.join(zw, name + ".sha256"), "w").write(h + "  " + name + "\n")
 zim("wikipedia_en_all_mini_2026-03.zim"); zim("wikipedia_en_all_mini_2026-06.zim"); zim("wikipedia_en_simple_all_maxi_2026-01.zim")
 zim("wikipedia_en_medicine_maxi_2026-05.zim", good=False)
+zim("wikipedia_en_all_nopic_2026-06.zim"); zim("wikipedia_en_all_nopic_2026-09.zim")
 # This folder's listing uses absolute links, as some mirrors do.
 open(os.path.join(zw, "index.html"), "w").write("<html><body>" + "".join(
     '<a href="/zim/wikipedia/%s">%s</a><br>' % (f, f) for f in sorted(os.listdir(zw)) if f != "index.html") + "</body></html>")
@@ -167,6 +168,30 @@ ok("library offer yes: downloads in the background", wait_file(os.path.join(k, "
 time.sleep(1)
 ok("then the library is not offered again", "library: the kit has a library" in run(k, ["check"], kenv({"LANTERN_MEM_MB": "8000"})))
 
+# --- the full Wikipedia (1.9.4): opt-in only, after the small one ---
+k = make_kit("lib-full", ["Qwen3.5-4B-Q4_K_M.gguf"])
+os.makedirs(os.path.join(k, "library")); shutil.copy(os.path.join(zw, "wikipedia_en_all_mini_2026-06.zim"), os.path.join(k, "library"))
+out = run(k, ["check"], kenv({"LANTERN_MEM_MB": "8000", "LANTERN_FREE_GB": "50"}))
+ok("check: the full Wikipedia is named, with room", "Full Wikipedia: not in the kit; about" in out and "library-full" in out, out)
+out = run(k, ["offer"], kenv({"LANTERN_MEM_MB": "8000", "LANTERN_FREE_GB": "50", "LANTERN_AUTO_DOWNLOAD": "1"}))
+time.sleep(1)
+ok("the full Wikipedia is never downloaded unasked", not [f for f in os.listdir(os.path.join(k, "library")) if "nopic" in f], out)
+out = run(k, ["offer"], kenv({"LANTERN_MEM_MB": "8000", "LANTERN_FREE_GB": "50"}))
+ok("offer with no keyboard: mentions it, downloads nothing", "FULL English Wikipedia" in out and "no keyboard" in out and
+   not [f for f in os.listdir(os.path.join(k, "library")) if "nopic" in f], out)
+out = run(k, ["library-full"], kenv({"LANTERN_FREE_GB": "0.5"}))
+ok("library-full: no room is said, nothing fetched", "would not fit" in out and not [f for f in os.listdir(os.path.join(k, "library")) if "nopic" in f], out)
+out = run(k, ["library-full"], kenv({"LANTERN_FREE_GB": "50"}))
+ok("library-full: the newest full file, checksum checked, next to the small one", os.path.exists(os.path.join(k, "library", "wikipedia_en_all_nopic_2026-09.zim")) and
+   not os.path.exists(os.path.join(k, "library", "wikipedia_en_all_nopic_2026-06.zim")) and "checksum OK" in out and
+   os.path.exists(os.path.join(k, "library", "wikipedia_en_all_mini_2026-06.zim")), out)
+out = run(k, ["check"], kenv({"LANTERN_MEM_MB": "8000"}))
+ok("check lists both files and offers nothing more", "Library: wikipedia_en_all_nopic_2026-09.zim" in out and "Full Wikipedia: not in" not in out, out)
+out = run(k, ["nodownload"], {"LANTERN_MEM_MB": "8000", "KIWIX_ARGS_OUT": argsf}, [os.path.join(k, "start-lantern.sh")])
+time.sleep(0.5)
+got = open(argsf).read() if os.path.exists(argsf) else ""
+ok("start-lantern serves both files", "wikipedia_en_all_mini_2026-06.zim" in got and "wikipedia_en_all_nopic_2026-09.zim" in got, got)
+
 # One double-click of setup on an empty stick: engine, 4B, the bigger model, the library
 LL = {"LLAMA_BASE": "http://127.0.0.1:%d/llama" % kport, "LANTERN_AUTO_DOWNLOAD": "1", "LANTERN_MEM_MB": "32000", "LANTERN_FREE_GB": "60"}
 def whole(label, cmd_for, engine_file):
@@ -177,6 +202,7 @@ def whole(label, cmd_for, engine_file):
     ok(label + ": one setup run fetches the engine, the 4B, the 35B-A3B and the encyclopedia",
        have(*engine_file) and have("models", "Qwen3.5-4B-Q4_K_M.gguf") and have("models", "Qwen3.5-35B-A3B-UD-IQ4_XS.gguf") and
        have("library", "wikipedia_en_all_mini_2026-06.zim"), out[-1500:])
+    ok(label + ": an unattended setup does not fetch the full Wikipedia", not [f for f in os.listdir(os.path.join(k, "library")) if "nopic" in f], out[-800:])
     return k
 whole("whole-sh", lambda k: [os.path.join(k, "setup-kit.sh")], ("engine", "linux", "llama-server"))
 if pw:
@@ -192,6 +218,15 @@ if pw:
     ok("ps1 zim NAME: a damaged file is deleted", "damaged" in out and not os.path.exists(os.path.join(k, "library", "wikipedia_en_medicine_maxi_2026-05.zim")), out)
     out = run(k, ["check"], kenv({"LANTERN_MEM_MB": "8000"}), [pw, "-NoProfile", "-File", os.path.join(k, "setup-kit.ps1")])
     ok("ps1 check lists the library", "Library: wikipedia_en_all_mini_2026-06.zim" in out, out)
+    ok("ps1 check: the full Wikipedia is named", "Full Wikipedia: not in the kit; about" in out and "library-full" in out, out)
+    ps1 = [pw, "-NoProfile", "-File", os.path.join(k, "setup-kit.ps1")]
+    out = run(k, ["offer"], kenv({"LANTERN_MEM_MB": "8000", "LANTERN_FREE_GB": "50", "LANTERN_AUTO_DOWNLOAD": "1"}), ps1)
+    ok("ps1: the full Wikipedia is never downloaded unasked", not [f for f in os.listdir(os.path.join(k, "library")) if "nopic" in f], out)
+    out = run(k, ["library-full"], kenv({"LANTERN_FREE_GB": "0.5"}), ps1)
+    ok("ps1 library-full: no room is said, nothing fetched", "would not fit" in out and not [f for f in os.listdir(os.path.join(k, "library")) if "nopic" in f], out)
+    out = run(k, ["library-full"], kenv({"LANTERN_FREE_GB": "50"}), ps1)
+    ok("ps1 library-full: the newest full file, checksum checked", os.path.exists(os.path.join(k, "library", "wikipedia_en_all_nopic_2026-09.zim")) and
+       "checksum OK" in out, out)
 ksrv.terminate()
 srv.terminate(); shutil.rmtree(tmp, ignore_errors=True)
 print("KIT OFFER TESTS PASS" if not fails else "%d KIT OFFER FAILURES" % len(fails))
