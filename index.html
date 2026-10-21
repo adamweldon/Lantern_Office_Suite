@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.9.4 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.9.5 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -78,8 +78,11 @@
 //    Lantern.sheetEditHooks = [fn(api)] -- run each time a sheet opens;
 //      api = {doc, put, gridwrap, table, values, used, refresh, COLS, ROWS},
 //    Lantern.writerDocs = {list, get(id), create(title, html) -> id, open(id)}
-//      and Lantern.sheetDocs = {list, values(id), create(title, cells) -> id}
-//      -- read/write documents without reaching into WRITER or SHEET,
+//      and Lantern.sheetDocs = {list, values(id), create(title, cells) -> id,
+//      compute(cells) -> values, open(id)} and Lantern.drawDocs = {open(scene,
+//      title)} -- read/write documents without reaching into WRITER, SHEET
+//      or DRAW (Draw keeps the person's drawing as "previous" when it opens
+//      one made for them),
 //    Lantern.composeTasks = [{id, group, title, blurb, tip, steps, out,
 //      docTitle}] -- guided writing tasks in the Compose app,
 //    Lantern.composeTabs = [{id, label, mount(el, api)}] -- extra Compose
@@ -95,6 +98,11 @@
 //      when set, Assist's prompt lists only these functions (short prompts).
 //    Lantern.aiGuards = [fn(question) -> reply or null] -- fixed safety
 //      replies given before any model call (AI_GUARD).
+//    Lantern.aiActions = [{id, kind, title, match(question), prompt,
+//      build(block, ctx) -> {ok, problems, plan, preview(), open(), png()}}]
+//      -- things the AI can make in Chat with a "MAKE <KIND>: title" block:
+//      Lantern checks the block, shows a preview and opens the result in its
+//      app (AI_ACTIONS, AI_DRAW, AI_SHEET).
 //    Lantern.assistChecks = [fn(question, exprText, run) -> reason or null]
 //      -- checks on a model's formula; a reason gives the model one more
 //      turn with that reason (Lantern.assist.solve; AI_CHECKS).
@@ -121,7 +129,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.9.4",
+  version: "1.9.5",
   apps: {},
   order: []
 };
@@ -1347,7 +1355,7 @@ Lantern.formula = (function () {
 // ===========================================================================
 // MODULE: SHEET - START
 // Depends: CORE, STORAGE, SHELL, FORMULA
-// Exports: Lantern.sheetDocs (list, values, create); (registers "sheet" app; runs Lantern.sheetEditHooks when a
+// Exports: Lantern.sheetDocs (list, values, create, compute, open); (registers "sheet" app; runs Lantern.sheetEditHooks when a
 //          sheet opens so grid features like page setup can bind)
 // ===========================================================================
 // 26 columns x 100 rows, plain <table> built once (light DOM for weak CPUs).
@@ -1404,7 +1412,13 @@ Lantern.formula = (function () {
   Lantern.sheetDocs = {
     list: function () { return col.all().map(function (d) { return { id: d.id, title: d.title || "" }; }); },
     values: function (id) { var d = col.get(id); return d ? computeAll(d.cells || {}) : null; },
-    create: function (title, cells) { return col.put({ id: Lantern.uid(), title: title || "", cells: cells || {} }).id; }
+    create: function (title, cells) { return col.put({ id: Lantern.uid(), title: title || "", cells: cells || {} }).id; },
+    compute: function (cells) { return computeAll(cells || {}); },
+    open: function (id) {
+      if (ws && document.contains(ws) && document.body.getAttribute("data-app") === "sheet") { editView(id); return; }
+      Lantern.sheetOpenRequest = id;
+      location.hash = "sheet";
+    }
   };
 
   function repaint() {
@@ -1616,7 +1630,12 @@ Lantern.formula = (function () {
   Lantern.register("sheet", {
     name: "Sheets", glyph: "\u25a6", color: "#16803c",
     desc: "Budgets, lists, calculations",
-    mount: function (el) { ws = el; libView(); }
+    mount: function (el) {
+      ws = el;
+      var want = Lantern.sheetOpenRequest;
+      Lantern.sheetOpenRequest = null;
+      if (want && col.get(want)) editView(want); else libView();
+    }
   });
 })();
 // ===========================================================================
@@ -2125,7 +2144,33 @@ Lantern.drawShapes = (function () {
     return false;
   }
 
-  return { render: render, hit: hit, sample: sample, dist: dist };
+  // bbox(o) -> [x0, y0, x1, y1]; transform(o, k, dx, dy) -> a copy scaled
+  // by k about the origin and moved (for fitting a drawing to the canvas).
+  function bbox(o) {
+    var b = [Infinity, Infinity, -Infinity, -Infinity];
+    function add(x, y) { if (x < b[0]) b[0] = x; if (y < b[1]) b[1] = y; if (x > b[2]) b[2] = x; if (y > b[3]) b[3] = y; }
+    (function walk(s) {
+      if (s.t === "group") { s.shapes.forEach(walk); return; }
+      var pad = (s.w || 0) / 2;
+      if (s.pts) s.pts.forEach(function (p) { add(p[0] - pad, p[1] - pad); add(p[0] + pad, p[1] + pad); });
+      else if (s.t === "rect") { add(s.x - pad, s.y - pad); add(s.x + s.rw + pad, s.y + s.rh + pad); }
+      else if (s.t === "circle") { add(s.cx - s.r - pad, s.cy - s.r - pad); add(s.cx + s.r + pad, s.cy + s.r + pad); }
+      else if (s.t === "text") { var fs = s.fs || 16, hw = String(s.s).length * fs * 0.32; add(s.x - hw, s.y - fs / 2); add(s.x + hw, s.y + fs / 2); }
+    })(o);
+    return b;
+  }
+  function transform(o, k, dx, dy) {
+    var c = {}, key;
+    for (key in o) c[key] = o[key];
+    if (o.t === "group") { c.shapes = o.shapes.map(function (s) { return transform(s, k, dx, dy); }); return c; }
+    if (o.pts) c.pts = o.pts.map(function (p) { return [p[0] * k + dx, p[1] * k + dy]; });
+    if (o.t === "rect") { c.x = o.x * k + dx; c.y = o.y * k + dy; c.rw = o.rw * k; c.rh = o.rh * k; }
+    if (o.t === "circle") { c.cx = o.cx * k + dx; c.cy = o.cy * k + dy; c.r = o.r * k; }
+    if (o.t === "text") { c.x = o.x * k + dx; c.y = o.y * k + dy; c.fs = Math.max(9, Math.round((o.fs || 16) * k)); }
+    if (k < 1 && o.w) c.w = Math.max(1, Math.round(o.w * Math.max(k, 0.6)));
+    return c;
+  }
+  return { render: render, hit: hit, sample: sample, dist: dist, bbox: bbox, transform: transform };
 })();
 // ===========================================================================
 // MODULE: DRAW_SHAPES - END
@@ -2133,8 +2178,9 @@ Lantern.drawShapes = (function () {
 // ===========================================================================
 // MODULE: DRAW - START
 // Depends: CORE, STORAGE, SHELL, DRAW_SHAPES
-// Exports: (registers "draw" app; renders the Lantern.drawModes and
-//          Lantern.drawTools hooks -- schematic modes and style tools)
+// Exports: Lantern.drawDocs (open); (registers "draw" app; renders the
+//          Lantern.drawModes and Lantern.drawTools hooks -- schematic modes
+//          and style tools)
 // ===========================================================================
 // A small vector drawing pad. The scene is a list of shapes (not baked
 // pixels), so each one can be selected and removed: drag the Eraser over a
@@ -2145,10 +2191,12 @@ Lantern.drawShapes = (function () {
     ["circle", "Circle"], ["tri", "Triangle"], ["curve", "Curve"], ["erase", "Eraser"]];
   var S = Lantern.drawShapes;
 
-  Lantern.register("draw", {
+  var drawWs = null;
+  var drawApp = {
     name: "Draw", glyph: "\u270e", color: "#e11d48",
     desc: "Sketch, shapes, diagrams",
     mount: function (ws) {
+      drawWs = ws;
       var color = COLORS[0], size = 7, tool = "pen", fill = false, alpha = 1;
       var mode = null, stamp = null;
       var scene = load();
@@ -2162,6 +2210,18 @@ Lantern.drawShapes = (function () {
       var hint = Lantern.el("div", { "class": "muted", style: "min-height:20px" });
 
       function load() { try { var s = Lantern.store.get("draw.scene", []); return (s && s.length) ? s : []; } catch (e) { return []; } }
+      function prevScene() { try { var s = Lantern.store.get("draw.scene.prev", []); return (s && s.length) ? s : null; } catch (e) { return null; } }
+      // fit(shapes, w, h): the whole drawing inside the canvas, scaled down
+      // when it is bigger (a drawing made for a wide screen on a phone).
+      function fit(shapes, w, h) {
+        var b = [Infinity, Infinity, -Infinity, -Infinity];
+        shapes.forEach(function (o) { var x = S.bbox(o); b = [Math.min(b[0], x[0]), Math.min(b[1], x[1]), Math.max(b[2], x[2]), Math.max(b[3], x[3])]; });
+        if (!isFinite(b[0])) return shapes;
+        var k = Math.min(1, (w - 20) / Math.max(1, b[2] - b[0]), (h - 20) / Math.max(1, b[3] - b[1]));
+        var dx = 10 - b[0] * k, dy = 10 - b[1] * k;
+        if (k === 1 && b[0] >= 0 && b[1] >= 0 && b[2] <= w && b[3] <= h) return shapes;
+        return shapes.map(function (o) { return S.transform(o, k, dx, dy); });
+      }
       function persist() { try { if (JSON.stringify(scene).length < 400000) Lantern.store.set("draw.scene", scene); } catch (e) {} }
 
       function render() {
@@ -2389,6 +2449,14 @@ Lantern.drawShapes = (function () {
           actRow.appendChild(Lantern.el("button", { "class": "primary", text: "Finish", onclick: function () { finishCurve(true); } }));
           actRow.appendChild(Lantern.el("button", { text: "Cancel", onclick: function () { finishCurve(false); } }));
         }
+        // A drawing made for the person (Lantern.drawDocs.open) kept theirs
+        // as "previous": one tap swaps them back (and again).
+        if (prevScene()) actRow.appendChild(Lantern.el("button", { text: "Restore previous drawing", title: "Swap back to the drawing you had before", onclick: function () {
+          var prev = prevScene();
+          if (!prev) return;
+          try { Lantern.store.set("draw.scene.prev", scene); } catch (e) {}
+          scene = prev; persist(); render(); paintAct();
+        } }));
         actRow.appendChild(Lantern.el("span", { style: "flex:1" }));
         actRow.appendChild(Lantern.el("button", { text: "Clear", onclick: function () {
           if (scene.length && !Lantern.confirmDel("this whole drawing")) return;
@@ -2410,9 +2478,27 @@ Lantern.drawShapes = (function () {
       var w = Math.min((wrap.clientWidth || 720) - 2, 920) || 720;
       cv.width = w;
       cv.height = Math.max(320, Math.round((window.innerHeight || 700) * 0.52));
+      var req = Lantern.drawOpenRequest;
+      Lantern.drawOpenRequest = null;
+      if (req && req.scene && req.scene.length) {
+        if (scene.length) { try { Lantern.store.set("draw.scene.prev", scene); } catch (e) {} }
+        scene = fit(req.scene, cv.width, cv.height);
+        persist(); paintAct();
+        hint.textContent = "Made for you: " + (req.title || "a drawing") + ". Edit it like any drawing; Save PNG exports it." +
+          (prevScene() ? " Your previous drawing is kept (Restore previous drawing)." : "");
+      }
       render();
     }
-  });
+  };
+  Lantern.register("draw", drawApp);
+  // Open a drawing made elsewhere (the AI's MAKE DRAWING / MAKE SCHEMATIC).
+  Lantern.drawDocs = {
+    open: function (shapes, title) {
+      Lantern.drawOpenRequest = { scene: shapes, title: title || "" };
+      if (drawWs && document.contains(drawWs) && document.body.getAttribute("data-app") === "draw") { drawWs.innerHTML = ""; drawApp.mount(drawWs); }
+      else location.hash = "draw";
+    }
+  };
 })();
 // ===========================================================================
 // MODULE: DRAW - END
@@ -16689,7 +16775,7 @@ Lantern.RFB = (function () {
   var C = window.Lantern.CHAT = {};
   var msgs = [], busy = false, log, qIn, statusEl;
   function el(t, a, k) { return Lantern.el(t, a, k); }
-  C.buildSystem = function () {
+  C.buildSystem = function (question) {
     var out = [];
     out.push("You are the reasoning half of an offline toolbench called Lantern. The person asks;");
     out.push("you decide; Lantern computes. Rules: use ONLY the functions listed. SI units, angles");
@@ -16717,6 +16803,10 @@ Lantern.RFB = (function () {
     out.push("");
     out.push("FUNCTIONS");
     out.push(A.toolCard());
+    // Things the AI can make in Lantern's apps (AI_ACTIONS): only the ones
+    // this question is about, so the prompt stays short.
+    var acts = window.Lantern.aiAct && question ? window.Lantern.aiAct.prompt(question) : "";
+    if (acts) { out.push(""); out.push(acts); }
     return out.join("\n");
   };
   C.parseProposals = function (text) {
@@ -16777,17 +16867,29 @@ Lantern.RFB = (function () {
   // long (the kit's server gives each request 8192 tokens). The person
   // still sees the whole conversation.
   var LIBRE = /\n?\n?LIBRARY: passages from the offline encyclopedia[\s\S]*$/;
+  function isParts(c) { return Object.prototype.toString.call(c) === "[object Array]"; }
+  function textOf(c) { return isParts(c) ? c.filter(function (x) { return x && x.type === "text"; }).map(function (x) { return x.text; }).join("\n") : String(c); }
   C.trimHistory = function (list, maxChars) {
     maxChars = maxChars || 16000;
-    var lastLib = -1, i, total = 0, start = list.length;
-    for (i = 0; i < list.length; i++) if (list[i].role === "user" && /LIBRARY: passages/.test(list[i].content)) lastLib = i;
+    var lastLib = -1, lastImg = -1, i, total = 0, start = list.length;
+    for (i = 0; i < list.length; i++) {
+      if (list[i].role === "user" && /LIBRARY: passages/.test(textOf(list[i].content))) lastLib = i;
+      if (list[i].role === "user") lastImg = isParts(list[i].content) ? i : -1;   // only a picture in the newest message goes
+    }
+    // a picture is sent once: older ones become a note (and all of them
+    // when the model answering cannot see)
+    var sees = !!(Lantern.ai && Lantern.ai.canSee && Lantern.ai.canSee());
+    list = list.map(function (m, k) {
+      if (!isParts(m.content) || (k === lastImg && sees)) return m;
+      return { role: m.role, content: textOf(m.content) + "\n[the picture Lantern showed here is not sent again]" };
+    });
     var out = list.map(function (m, k) {
       if (m.role !== "user" || k === lastLib || !/LIBRARY: passages/.test(m.content)) return m;
       var head = String(m.content).replace(LIBRE, "");
       return { role: m.role, content: (head ? head + "\n\n" : "") + "[library passages from an earlier question: removed to save room]" };
     });
     for (i = out.length - 1; i >= 0; i--) {
-      total += String(out[i].content).length;
+      total += isParts(out[i].content) ? textOf(out[i].content).length + 1500 : String(out[i].content).length;
       if (total > maxChars && i < out.length - 1) break;
       start = i;
     }
@@ -16803,6 +16905,9 @@ Lantern.RFB = (function () {
     bubble("user", q);
     var hints = A.match(q), i;
     var content = q;
+    // Asked to make something (a drawing, a table): recipe hints would only
+    // pull the model toward a calculation.
+    if (window.Lantern.aiAct && window.Lantern.aiAct.relevant(q).length) hints = [];
     if (hints.length) {
       var hl = [];
       for (i = 0; i < hints.length && i < 3; i++) hl.push(hints[i].ask + " -> " + hints[i].compose);
@@ -16811,7 +16916,8 @@ Lantern.RFB = (function () {
     busy = true;
     var ep = Lantern.store.get("assist.endpoint", "http://127.0.0.1:11434/v1/chat/completions");
     var md = Lantern.store.get("assist.model", "qwen2.5:3b-instruct");
-    var lastValue = null, questioned = false, stillDoubt = null, looked = false, sources = null, detail = false, nudged = false;
+    var lastValue = null, questioned = false, stillDoubt = null, looked = false, sources = null, detail = false, nudged = false, showed = false;
+    currentQ = q;
     // Explanation questions ("explain", "in detail", "how does"): Lantern
     // reads the library BEFORE the model answers, so the passages are in
     // front of it while it reasons (1.9.4). Not for safety-rule questions.
@@ -16844,6 +16950,33 @@ Lantern.RFB = (function () {
         var parsed = A.parseReply(shown);
         var quotes = /^\s*QUOTE\s*\[?\s*\d/im.test(shown);
         if (shown) mdBubble(shown);
+        // Something to MAKE (a schematic, a drawing, a table): Lantern checks
+        // the block (one corrected block when it finds problems), shows it,
+        // and -- when the model can see -- shows it the picture once.
+        var made = window.Lantern.aiAct ? window.Lantern.aiAct.build(shown, q) : null;
+        if (made) {
+          if (!made.ok && !questioned) {
+            questioned = true;
+            log.appendChild(el("p", { "class": "muted", text: "Lantern checked the MAKE " + made.block.kind + " block: " + made.problems.join("; ") + ". Asking the AI again\u2026" }));
+            msgs.push({ role: "user", content: "Lantern checked your MAKE " + made.block.kind + " block: " + made.problems.join("; ") +
+              ".\nReply with the corrected block only (MAKE ... END)." });
+            continue;
+          }
+          log.appendChild(window.Lantern.aiAct.view(made));
+          log.scrollTop = log.scrollHeight;
+          var png = made.ok && !showed && made.png && Lantern.ai && Lantern.ai.canSee && Lantern.ai.canSee() ? made.png() : null;
+          if (png) {
+            showed = true;
+            log.appendChild(el("p", { "class": "muted", text: "Lantern showed the AI the picture it made, so it can check it\u2026" }));
+            msgs.push({ role: "user", content: [{ type: "text", text: window.Lantern.aiAct.lookText(made, q) }, { type: "image_url", image_url: { url: png } }] });
+            continue;
+          }
+          break;
+        }
+        if (showed && window.Lantern.aiAct && window.Lantern.aiAct.LOOKS.test(shown)) {
+          log.appendChild(el("p", { "class": "muted", text: "The AI looked at the picture and says it shows what was asked." }));
+          break;
+        }
         // The offline library: the AI asked to LOOKUP (or wrote =LOOKUP(...)),
         // declined, asked for encyclopedia data, or wrote QUOTE lines with no
         // passages behind them. One reading turn per question.
@@ -16947,11 +17080,12 @@ Lantern.RFB = (function () {
     busy = false;
     statusEl.textContent = "";
   }
+  var currentQ = "";
   C.callChat = async function (endpoint, model, messages) {
     if (window.Lantern.aiRoute)
-      return window.Lantern.aiRoute([{ role: "system", content: C.buildSystem() }].concat(messages), { temperature: 0, max_tokens: 1536 });
+      return window.Lantern.aiRoute([{ role: "system", content: C.buildSystem(currentQ) }].concat(messages), { temperature: 0, max_tokens: 1536 });
     var body = JSON.stringify({ model: model || "", stream: false, temperature: 0,
-      messages: [{ role: "system", content: C.buildSystem() }].concat(messages) });
+      messages: [{ role: "system", content: C.buildSystem(currentQ) }].concat(messages) });
     var res = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: body });
     if (!res.ok) throw new Error("Server said " + res.status + " " + res.statusText);
     var data = await res.json();
@@ -16973,7 +17107,7 @@ Lantern.RFB = (function () {
       if (!AI || (AI.resolve() === "server" && !AI.server.sameOrigin)) wrap.appendChild(el("div", { "class": "row", style: "flex-wrap:wrap" }, [ep, md]));
       log = el("div", { style: "flex:1;overflow-y:auto;display:flex;flex-direction:column;padding:6px 0", "aria-label": "Conversation" });
       wrap.appendChild(log);
-      bubble("ai", "Offline chat, with Lantern as my hands: I reason, the formula engine computes, every step shows. Ask something \u2014 the ISS question, a molar mass, a battery runtime \u2014 or ask me to draft a new recipe card and send it to the Forge.");
+      bubble("ai", "Offline chat, with Lantern as my hands: I reason, the formula engine computes, every step shows. Ask something \u2014 the ISS question, a molar mass, a battery runtime \u2014 ask me to draw a circuit or a picture, or make a table, or to draft a new recipe card and send it to the Forge.");
       statusEl = el("div", { "class": "muted", style: "min-height:18px" });
       wrap.appendChild(statusEl);
       qIn = el("input", { placeholder: "Ask\u2026", style: "flex:1", "aria-label": "Message" });
@@ -20362,7 +20496,8 @@ Lantern.RFB = (function () {
 // MODULE: AI_ENGINE - START
 // Depends: CORE, STORAGE
 // Exports: Lantern.ai (engines, register, choice, setChoice, resolve,
-//          describe, complete, detect, server, onChange, last),
+//          describe, complete, detect, server, onChange, last, canSee,
+//          textOf),
 //          Lantern.aiRoute (host hook used by ASSIST_CORE and ASSIST_CHAT)
 // ===========================================================================
 // One door for every model call. Assist and Chat hand their messages to
@@ -20383,7 +20518,7 @@ Lantern.RFB = (function () {
   var AI = L.ai = L.ai || {};
   AI.engines = AI.engines || {};
   AI.listeners = AI.listeners || [];
-  AI.server = { checked: false, sameOrigin: false, endpoint: null, model: null, label: "" };
+  AI.server = { checked: false, sameOrigin: false, endpoint: null, model: null, label: "", vision: false };
   AI.last = null;
 
   function notify() {
@@ -20416,7 +20551,7 @@ Lantern.RFB = (function () {
     var r = AI.resolve(), dev = AI.engines.device;
     if (r === "device") return "on this device: " + ((dev && dev.label && dev.label()) || "no model loaded yet");
     if (AI.server.sameOrigin && AI.endpoint() === AI.server.endpoint)
-      return "the Lantern server on this computer" + (AI.server.label ? " (" + AI.server.label + ")" : "");
+      return "the Lantern server on this computer" + (AI.server.label ? " (" + AI.server.label + (AI.server.vision ? ", sees images" : "") + ")" : "");
     return "server " + AI.endpoint().replace(/^https?:\/\//, "").replace(/\/v1\/chat\/completions$/, "");
   };
 
@@ -20467,10 +20602,21 @@ Lantern.RFB = (function () {
   };
   // The person's own words: the last user message, or the part after
   // "QUESTION: " when it is an Assist prompt.
+  // textOf(content) -> the text of a message (content may be an array of
+  // parts when it carries an image: [{type:"text"}, {type:"image_url"}]).
+  AI.textOf = function (c) {
+    if (Object.prototype.toString.call(c) !== "[object Array]") return String(c == null ? "" : c);
+    return c.filter(function (x) { return x && x.type === "text"; }).map(function (x) { return x.text || ""; }).join("\n");
+  };
+  // canSee() -> true when the model answering can look at images: the kit's
+  // llama-server started with the model's vision part (--mmproj).
+  AI.canSee = function () {
+    return AI.resolve() === "server" && !!AI.server.vision && AI.server.sameOrigin && AI.endpoint() === AI.server.endpoint;
+  };
   AI.questionOf = function (messages) {
     for (var i = (messages || []).length - 1; i >= 0; i--) {
       if (!messages[i] || messages[i].role !== "user") continue;
-      var t = String(messages[i].content || ""), k = t.lastIndexOf("\nQUESTION: ");
+      var t = AI.textOf(messages[i].content), k = t.lastIndexOf("\nQUESTION: ");
       return k === -1 ? t : t.slice(k + 11);
     }
     return "";
@@ -20510,7 +20656,11 @@ Lantern.RFB = (function () {
         AI.server.endpoint = base + "v1/chat/completions";
         AI.server.model = j.data[0].id || "";
         AI.server.label = String(AI.server.model).split(/[\\\/]/).pop().replace(/\.gguf$/i, "");
+        // Can it see? llama-server reports the model's input kinds.
+        return window.fetch(base + "props", { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (pj) { AI.server.vision = !!(pj && pj.modalities && pj.modalities.vision); }, function () { AI.server.vision = false; });
       }
+    }).then(function () {
       AI.server.checked = true; notify(); return AI.server;
     }).catch(function () { AI.server.checked = true; notify(); return AI.server; });
   };
@@ -20895,6 +21045,17 @@ Lantern.RFB = (function () {
     var A = L.assist, p = A.parseReply(text), run = p.exprText ? A.run(p.exprText) : { steps: [], value: null };
     var out = { pass: false, value: run.value, expected: null, parsed: !!(p.exprText || p.answer || p.need),
       need: p.need, answer: p.answer, why: "" };
+    if (item.cat === "make") {   // a MAKE block, built and checked by AI_ACTIONS
+      var mk = res && res.made;
+      out.parsed = !!mk;
+      if (!mk) { out.why = "no MAKE block"; return out; }
+      if (item.kind && (!mk.action || mk.action.kind !== item.kind)) { out.why = "made " + (mk.action ? mk.action.title : "something unknown") + ", not " + item.kind.toLowerCase(); return out; }
+      if (!mk.ok) { out.why = "Lantern still questions it: " + (mk.problems[0] || ""); return out; }
+      var w = "";
+      try { w = item.check ? item.check(mk.plan) || "" : ""; } catch (e) { w = "check failed: " + ((e && e.message) || e); }
+      out.pass = !w; out.why = w;
+      return out;
+    }
     if (item.cat === "fact") {
       var srcs = res && res.sources, ans = p.answer || "";
       if (!srcs || !srcs.length) { out.why = "nothing found in the library"; return out; }
@@ -20943,7 +21104,7 @@ Lantern.RFB = (function () {
     opts = opts || {};
     if (!L.assist || !L.ai) throw new Error("The bench needs the Assist and AI modules.");
     var lib = !!(L.library && L.library.ready && L.library.ready());
-    var A = L.assist, list = qs().filter(function (q) { return (!opts.quick || q.quick) && (q.cat !== "fact" || lib); }), rows = [], i;
+    var A = L.assist, list = qs().filter(function (q) { return (!opts.quick || q.quick) && (q.cat !== "fact" || lib) && (q.cat !== "make" || L.aiAct); }), rows = [], i;
     var started = Date.now(), loadSeconds = null;
     var eng = L.ai.engines[L.ai.resolve()];
     if (eng && eng.ensure) {   // time the model load apart from the questions
@@ -20956,11 +21117,14 @@ Lantern.RFB = (function () {
       try {
         // Same path as Assist: one call, plus one correction turn when
         // Lantern rejects the formula (rows record it as rounds: 2).
-        res = await A.solve(item.q, { call: function (m) {
-          return L.ai.complete(m, { temperature: 0, max_tokens: opts.max_tokens || 256, signal: opts.signal }).then(function (t) {
+        var callFn = function (m) {
+          return L.ai.complete(m, { temperature: 0, max_tokens: item.cat === "make" ? 700 : (opts.max_tokens || 256), signal: opts.signal }).then(function (t) {
             var la = L.ai.last || {}; toks += la.tokens || 0; if (la.guard) byRule = true; return t;
           });
-        } });
+        };
+        // Things to make go the way Chat sends them (AI_ACTIONS); the rest
+        // the way Assist does.
+        res = item.cat === "make" ? await L.aiAct.solve(item.q, callFn) : await A.solve(item.q, { call: callFn });
         text = res.text;
       } catch (e) { err = (e && e.message) || String(e); }
       var g = err ? { pass: false, parsed: false, why: "error: " + err } : B.grade(item, text, res);
@@ -20972,7 +21136,7 @@ Lantern.RFB = (function () {
         library: res && res.sources ? { query: res.lookup, sources: res.sources.map(function (s) { return s.title; }) } : null,
         rejected: res && res.rejected ? res.rejected.slice(0, 300) : "", flags: res && res.flags ? res.flags : [],
         ms: Date.now() - t0, tokens: err ? null : toks, tps: err || !toks ? null : Math.round(toks / Math.max(0.001, secs) * 10) / 10,
-        reply: String(text).slice(0, 600), first: res && res.rounds > 1 ? String(res.first).slice(0, 600) : undefined };
+        reply: String(text).slice(0, item.cat === "make" ? 1500 : 600), first: res && res.rounds > 1 ? String(res.first).slice(0, item.cat === "make" ? 1500 : 600) : undefined };
       rows.push(row);
       if (opts.onItem) opts.onItem(i + 1, list.length, row);
       if (err && /No AI model|Open Lantern from/.test(err)) break;
@@ -20998,10 +21162,10 @@ Lantern.RFB = (function () {
   // stated a number while Lantern computed nothing (Lantern flags both).
   B.summary = function (rows) {
     var by = {}, pass = 0, parsed = 0, ms = 0, tps = [], i;
-    var core = { n: 0, pass: 0 }, fresh = { n: 0, pass: 0 }, hard = { n: 0, pass: 0 }, facts = { n: 0, pass: 0 };
+    var core = { n: 0, pass: 0 }, fresh = { n: 0, pass: 0 }, hard = { n: 0, pass: 0 }, facts = { n: 0, pass: 0 }, makes = { n: 0, pass: 0 };
     var byRule = 0, disagree = 0, unchecked = 0, retried = 0, fixed = 0, flagged = 0;
     for (i = 0; i < rows.length; i++) {
-      var r = rows[i], c = by[r.cat] = by[r.cat] || { n: 0, pass: 0 }, f = r.cat === "fact" ? facts : (r.hard ? hard : (r.fresh ? fresh : core));
+      var r = rows[i], c = by[r.cat] = by[r.cat] || { n: 0, pass: 0 }, f = r.cat === "fact" ? facts : r.cat === "make" ? makes : (r.hard ? hard : (r.fresh ? fresh : core));
       if (r.retry) { retried++; if (r.fixed && r.pass) fixed++; }
       if (r.flags && r.flags.length) flagged++;
       c.n++; f.n++; if (r.pass) { c.pass++; f.pass++; pass++; }
@@ -21013,7 +21177,7 @@ Lantern.RFB = (function () {
     }
     tps.sort(function (a, b) { return a - b; });
     return { n: rows.length, pass: pass, score: rows.length ? Math.round(pass / rows.length * 100) : 0,
-      core: core, fresh: fresh, hard: hard, library: facts, byRule: byRule, disagree: disagree, unchecked: unchecked,
+      core: core, fresh: fresh, hard: hard, library: facts, make: makes, byRule: byRule, disagree: disagree, unchecked: unchecked,
       retried: retried, fixedOnRetry: fixed, stillQuestioned: flagged,
       parsedPct: rows.length ? Math.round(parsed / rows.length * 100) : 0, byCat: by,
       avgSeconds: rows.length ? Math.round(ms / rows.length / 100) / 10 : 0,
@@ -21023,7 +21187,7 @@ Lantern.RFB = (function () {
     function c(v) { v = v == null ? "" : String(v); return /[\x22,\n]/.test(v) ? "\x22" + v.replace(/\x22/g, "\x22\x22") + "\x22" : v; }
     var lines = ["id,category,set,pass,value,expected,answered_by,sentence,rounds,seconds,tokens_per_s,why,question,reply"];
     rep.rows.forEach(function (r) {
-      lines.push([r.id, r.cat, r.hard ? "hard" : (r.fresh ? "fresh" : "earlier"), r.pass ? 1 : 0, r.value, r.expected, r.by, r.claim,
+      lines.push([r.id, r.cat, r.cat === "make" ? "make" : r.cat === "fact" ? "library" : r.hard ? "hard" : (r.fresh ? "fresh" : "earlier"), r.pass ? 1 : 0, r.value, r.expected, r.by, r.claim,
         r.rounds, r.ms / 1000, r.tps, r.why, r.q, r.reply].map(c).join(","));
     });
     return lines.join("\n");
@@ -21643,7 +21807,8 @@ Lantern.RFB = (function () {
     for (var k in s.byCat) parts.push(k + " " + s.byCat[k].pass + "/" + s.byCat[k].n);
     var extra = (s.fresh && (s.fresh.n || (s.hard && s.hard.n)) ? " \u00b7 earlier questions " + s.core.pass + "/" + s.core.n +
         (s.fresh.n ? ", fresh " + s.fresh.pass + "/" + s.fresh.n : "") + (s.hard && s.hard.n ? ", hard " + s.hard.pass + "/" + s.hard.n : "") +
-        (s.library && s.library.n ? ", library facts " + s.library.pass + "/" + s.library.n : "") : "") +
+        (s.library && s.library.n ? ", library facts " + s.library.pass + "/" + s.library.n : "") +
+        (s.make && s.make.n ? ", things made " + s.make.pass + "/" + s.make.n : "") : "") +
       (s.retried ? " \u00b7 " + s.fixedOnRetry + " of " + s.retried + " fixed after Lantern rejected or questioned a formula" : "") +
       (s.stillQuestioned ? " \u00b7 " + s.stillQuestioned + " still questioned" : "") +
       (s.disagree ? " \u00b7 " + s.disagree + " sentence" + (s.disagree === 1 ? "" : "s") + " disagreed with Lantern" : "") +
@@ -21836,6 +22001,15 @@ Lantern.RFB = (function () {
       "<p><b>Two Wikipedias:</b> the small file holds the lead section and infobox of every article (about 12 GB); " +
       "<code>setup-kit library-full</code> adds every article in full (text without pictures, about 60 GB). With both, quick facts read the " +
       "small file and explanation questions read the full articles.</p>"],
+    ["Making things in Chat", "<p>Ask Chat to <b>draw a circuit</b> (or a hydraulic or pneumatic diagram), <b>draw a picture</b>, or " +
+      "<b>make a table</b>. The AI writes a short <code>MAKE</code> block \u2014 the parts and wires, the shapes on a 20 \u00d7 12 grid, or " +
+      "the rows with their formulas \u2014 and Lantern does the rest: it places the symbols and draws square wires, scales the picture, " +
+      "or lets the sheet work out every formula. Lantern checks the block first (unknown parts, loose wires, a circuit that is not " +
+      "closed, a formula that fails or reads an empty cell) and gives the AI one turn to fix it. The result shows in Chat; " +
+      "<b>Open in Draw</b> or <b>Open in Sheets</b> keeps it, to edit and export (your own drawing is kept: Restore previous drawing).</p>" +
+      "<p><b>Seeing its drawing:</b> the Qwen3.5 models can look at pictures when the kit has their vision part " +
+      "(<code>setup-kit vision</code>, 0.7\u20130.9 GB). Then the AI is shown the finished drawing once and says whether it matches the " +
+      "request, or sends a corrected block. The AI app shows \u201csees images\u201d next to the model when it can.</p>"],
     ["Which AI answers", "<p><b>Automatic</b> uses the server that served this page if there is one, then a server you set up, then a " +
       "model on this device. <b>On this device</b> and <b>Server</b> force one. The choice is shared by Assist and Chat.</p>"],
     ["Lantern Bench", "<p>Real questions whose answers Lantern proves on its formula engine. A pass needs the right computed value, or " +
@@ -22722,6 +22896,945 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: LIBRARY_BENCH_DATA - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_ACTIONS - START
+// Depends: AI_ENGINE (Lantern.ai) -- feature-detected; actions come from
+//          AI_DRAW and AI_SHEET through the Lantern.aiActions hook
+// Exports: Lantern.aiActions (hook array, created here if absent),
+//          Lantern.aiAct = {find, relevant, prompt, build, solve, view,
+//          lookText, LOOKS}
+// ===========================================================================
+// The AI using Lantern's other apps, the way it already uses the formula
+// engine: it writes a short text block --
+//     MAKE SCHEMATIC: Lamp circuit        MAKE SHEET: Shopping
+//     part B1 battery "12 V"              Item | Qty | Price | Cost
+//     ...                                 Bread | 2 | 1.50 | =B2*C2
+//     END                                 END
+// -- and Lantern does the rest: it checks the block (unknown parts, loose
+// wires, formulas that fail), sends the reasons back for ONE corrected
+// block, builds the drawing or table, shows it in Chat, and opens it in
+// Draw or Sheets for the person to edit and export. The model says WHAT;
+// Lantern does WHERE and HOW MUCH (layout, routing, arithmetic), because a
+// small model that cannot see its output is bad at coordinates and sums.
+// When the model can see (the kit's llama-server started with the model's
+// vision part), Chat shows it the finished drawing once (lookText).
+// Each action: {id, kind, kinds: ["SCHEMATIC", ...], title, match(q),
+//   prompt: [lines], build(block, ctx) -> {ok, problems, plan, summary,
+//   preview() -> element, open(), openLabel, png() -> data URL or null}}
+// block = {kind, title, lines: [string]}.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var ACTS = window.Lantern.aiActions = window.Lantern.aiActions || [];
+  function actionFor(kind) {
+    kind = String(kind || "").toUpperCase().replace(/\s+/g, " ");
+    for (var i = 0; i < ACTS.length; i++) if ((ACTS[i].kinds || [ACTS[i].kind]).indexOf(kind) >= 0) return ACTS[i];
+    return null;
+  }
+  // find(text) -> [{kind, title, lines, action}] -- MAKE blocks in a reply.
+  // A block ends at END (or at the next MAKE, or the end of the reply);
+  // code fences around it are ignored.
+  function find(text) {
+    var out = [], cur = null;
+    String(text || "").replace(/\r/g, "").split("\n").forEach(function (raw) {
+      var line = raw.replace(/^\s+|\s+$/g, "");
+      if (/^\x60\x60\x60/.test(line)) return;   // a code fence
+      var m = /^\**\s*MAKE\s+([A-Za-z][A-Za-z ]{1,20}?)\s*:\s*(.*?)\**$/i.exec(line);
+      if (m) { cur = { kind: m[1].toUpperCase(), title: m[2].replace(/^\s+|\s+$/g, ""), lines: [], action: actionFor(m[1]) }; out.push(cur); return; }
+      if (!cur) return;
+      if (/^END\b/i.test(line)) { cur = null; return; }
+      if (line) cur.lines.push(line);
+    });
+    return out;
+  }
+  function relevant(q) {
+    return ACTS.filter(function (a) { try { return a.match(String(q || "")); } catch (e) { return false; } });
+  }
+  // prompt(question) -> lines for Chat's instructions: only the actions the
+  // question is about, so a small model's prompt stays short.
+  function prompt(q) {
+    var acts = relevant(q);
+    if (!acts.length) return "";
+    var out = ["Lantern can also MAKE things in its apps. Reply with ONE block like this (Lantern lays it out and checks it;",
+      "you never give pixel positions). Put a short sentence before the block if you like."];
+    acts.forEach(function (a) { out.push(""); out = out.concat(a.prompt); });
+    return out.join("\n");
+  }
+  // build(text, question) -> the first MAKE block, built and checked, or null.
+  function build(text, q) {
+    var bs = find(text);
+    if (!bs.length) return null;
+    var b = bs[0];
+    if (!b.action) {
+      var kinds = [];
+      ACTS.forEach(function (a) { kinds = kinds.concat((a.kinds || [a.kind]).slice(0, 1)); });
+      return { ok: false, block: b, problems: ["Lantern cannot make a " + b.kind.toLowerCase() + "; it can make: " + kinds.join(", ").toLowerCase()], plan: null };
+    }
+    var r;
+    try { r = b.action.build(b, { question: q }); } catch (e) { r = { ok: false, problems: ["the block could not be read (" + ((e && e.message) || e) + ")"] }; }
+    r.block = b; r.action = b.action; r.problems = r.problems || [];
+    r.ok = !r.problems.length;
+    return r;
+  }
+  // The look turn: what the model is told along with the picture.
+  var LOOKS = /\bLOOKS RIGHT\b/i;
+  function lookText(res, q) {
+    return "This is the picture Lantern drew from your MAKE " + res.block.kind + " block" + (q ? " (the request was: " + q + ")" : "") + ".\n" +
+      "Look at it. If it shows what was asked, reply LOOKS RIGHT and one sentence on what you see.\n" +
+      "If something is missing or wrong, reply with a corrected MAKE block only.";
+  }
+  // solve(question, call) -> Promise<{text, first, made, rounds, kind, fixed,
+  // rejected}> -- the bench's path: Chat's instructions, one call, and one
+  // corrected block when Lantern finds problems.
+  async function solve(q, call) {
+    var sys = L.CHAT && L.CHAT.buildSystem ? L.CHAT.buildSystem(q) : prompt(q);
+    var msgs = [{ role: "system", content: sys }, { role: "user", content: q }];
+    var out = { rounds: 0, kind: "", fixed: false, rejected: "" };
+    var text = await call(msgs); out.rounds++;
+    out.first = text; out.text = text;
+    var made = build(text, q);
+    if (made && !made.ok) {
+      out.kind = "questioned"; out.rejected = made.problems.join("; ");
+      msgs.push({ role: "assistant", content: text });
+      msgs.push({ role: "user", content: "Lantern checked your MAKE " + made.block.kind + " block: " + out.rejected +
+        ".\nReply with the corrected block only (MAKE ... END)." });
+      var text2 = await call(msgs); out.rounds++;
+      var made2 = build(text2, q);
+      if (made2) { made = made2; out.text = text2; out.fixed = made2.ok; }
+    }
+    out.made = made;
+    return out;
+  }
+  // view(res) -> what Chat shows: the preview, any problems left, and the
+  // button that opens the result in its app.
+  function view(res) {
+    var el = L.el, box = el("div", { "class": "la-make", style: "margin:8px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff" });
+    box.appendChild(el("div", { "class": "muted", text: "Lantern made " + (res.action ? res.action.title : "it") + (res.block && res.block.title ? ": " + res.block.title : "") +
+      (res.summary ? " \u2014 " + res.summary : "") }));
+    if (res.preview) { try { var pv = res.preview(); if (pv) box.appendChild(pv); } catch (e) { } }
+    if (res.problems && res.problems.length)
+      box.appendChild(el("p", { "class": "danger", text: "\u26a0 Lantern still questions this: " + res.problems.join("; ") + ". Check it before you use it." }));
+    if (res.open && res.plan) box.appendChild(el("div", { "class": "row", style: "margin-top:6px" }, [
+      el("button", { "class": "primary", text: res.openLabel || "Open", onclick: function () { res.open(); } })]));
+    return box;
+  }
+  window.Lantern.aiAct = { find: find, relevant: relevant, prompt: prompt, build: build, solve: solve, view: view, lookText: lookText, LOOKS: LOOKS };
+})();
+// ===========================================================================
+// MODULE: AI_ACTIONS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_SCHEMATIC - START
+// Depends: AI_ACTIONS (Lantern.aiActions hook), AI_DRAW (Lantern.aiDraw.result:
+//          preview, PNG, open in Draw), DRAW_ELECTRICAL / DRAW_HYDRAULIC /
+//          DRAW_PNEUMATIC (Lantern.drawModes symbols) -- feature-detected
+// Exports: Lantern.aiSchematic = {schematic(block), parse(block), norm(type)};
+//          adds the SCHEMATIC action to Lantern.aiActions
+// ===========================================================================
+// MAKE SCHEMATIC: parts and wires only -- the model says WHAT is connected,
+// Lantern does WHERE. Each part's symbol comes from Draw's Electrical,
+// Hydraulics or Pneumatics mode; a closed chain goes round a rectangle (top
+// row left to right, bottom row back), a part in parallel with a chain part
+// hangs below it like a ladder rung, one-terminal parts (ground, tank,
+// gauge) hang under their terminal, and the wires run square on Draw's
+// 20 px grid. Checked before anything is drawn: known parts, nothing left
+// unconnected, wires to parts that exist, and a closed loop through the
+// battery or source (or the pump reaching the tank).
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var ACTS = window.Lantern.aiActions = window.Lantern.aiActions || [];
+  var INK = "#1b2430", WIRE = "#1b2430", NOTE = "#334155";
+
+  // --- schematic parts ----------------------------------------------------
+  // type -> {mode, label (Draw symbol), ports: [[dx, dy, side]], polar}
+  var LR = function (w) { return [[-w, 0, "L"], [w, 0, "R"]]; };
+  var PARTS = {
+    electrical: {
+      battery: { label: "Battery", ports: LR(40), polar: true }, source: { label: "Source", ports: LR(40), polar: true },
+      resistor: { label: "Resistor", ports: LR(40) }, capacitor: { label: "Capacitor", ports: LR(40) },
+      inductor: { label: "Inductor", ports: LR(40) }, diode: { label: "Diode", ports: LR(40), polar: true },
+      switch: { label: "Switch", ports: LR(40) }, lamp: { label: "Lamp", ports: LR(40) }, motor: { label: "Motor", ports: LR(40) },
+      ground: { label: "Ground", ports: [[0, -20, "T"]] }, junction: { label: "Junction", ports: [[0, 0, "C"]] }
+    },
+    hydraulic: {
+      pump: { label: "Pump", ports: LR(16) }, motor: { label: "Motor", ports: LR(16) },
+      cylinder: { label: "Cylinder", ports: [[-30, 0, "L"], [18, -12, "T"]] }, tank: { label: "Tank", ports: [[0, -12, "T"]] },
+      valve: { label: "Valve", ports: LR(16) }, filter: { label: "Filter", ports: LR(16) }, gauge: { label: "Gauge", ports: [[0, 18, "B"]] },
+      flow: { label: "Flow", ports: LR(24) }
+    },
+    pneumatic: {
+      compressor: { label: "Compressor", ports: LR(16) }, reservoir: { label: "Reservoir", ports: LR(24) },
+      valve: { label: "Valve 3/2", ports: LR(24) }, cylinder: { label: "Cylinder", ports: [[-30, 0, "L"]] },
+      exhaust: { label: "Exhaust", ports: [[0, -10, "T"]] }, gauge: { label: "Gauge", ports: [[0, 18, "B"]] }, flow: { label: "Flow", ports: LR(24) }
+    }
+  };
+  var SYN = {
+    bulb: "lamp", light: "lamp", "light bulb": "lamp", globe: "lamp", cell: "battery", batt: "battery",
+    "power supply": "source", supply: "source", "dc source": "source", "ac source": "source", "voltage source": "source", generator: "source",
+    earth: "ground", gnd: "ground", led: "diode", "light emitting diode": "diode", coil: "inductor", choke: "inductor",
+    cap: "capacitor", res: "resistor", "push button": "switch", pushbutton: "switch", button: "switch", sw: "switch", "relay contact": "switch",
+    node: "junction", dot: "junction", "hydraulic pump": "pump", "hydraulic motor": "motor", ram: "cylinder", actuator: "cylinder",
+    "directional valve": "valve", "control valve": "valve", "relief valve": "valve", "check valve": "valve", "3/2 valve": "valve",
+    "solenoid valve": "valve", "pressure gauge": "gauge", strainer: "filter", "air compressor": "compressor", receiver: "reservoir",
+    "air tank": "reservoir", silencer: "exhaust", muffler: "exhaust", vent: "exhaust", "flow arrow": "flow", arrow: "flow"
+  };
+  var FLUID = { pump: "hydraulic", tank: "hydraulic", filter: "hydraulic", compressor: "pneumatic", reservoir: "pneumatic", exhaust: "pneumatic" };
+  function norm(t) {
+    t = String(t || "").toLowerCase().replace(/[^a-z0-9\/ ]+/g, " ").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "");
+    if (SYN[t]) return SYN[t];
+    if (/s$/.test(t) && !/ss$/.test(t) && (SYN[t.slice(0, -1)] || anyMode(t.slice(0, -1)))) t = t.slice(0, -1);
+    if (SYN[t]) return SYN[t];
+    if (anyMode(t)) return t;
+    var w = t.split(" "), last = w[w.length - 1];
+    return SYN[last] || last;
+  }
+  function anyMode(t) { return !!(PARTS.electrical[t] || PARTS.hydraulic[t] || PARTS.pneumatic[t]); }
+  function symbolMaker(mode, label) {
+    var m = (window.Lantern.drawModes || []).filter(function (x) { return x.id === mode; })[0];
+    if (!m) return null;
+    var s = m.symbols.filter(function (x) { return x.label && x.label.toLowerCase().indexOf(label.toLowerCase()) === 0; })[0];
+    return s ? s.make : null;
+  }
+  function words(line) {   // split, keeping "quoted text" as one word
+    var out = [], re = /\x22([^\x22]*)\x22|\u201c([^\u201d]*)\u201d|(\S+)/g, m;
+    while ((m = re.exec(line))) out.push(m[1] != null ? { q: m[1] } : m[2] != null ? { q: m[2] } : { w: m[3] });
+    return out;
+  }
+  // "B1+", "B1.2", "B1:out" -> {id, port}
+  function end(tok) {
+    var m = /^([A-Za-z][A-Za-z0-9_]*)(?:[.:]?(\+|-|\u2212|1|2|in|out|a|b|k|p|t|left|right))?$/i.exec(tok || "");
+    if (!m) return null;
+    var p = m[2] ? m[2].toLowerCase() : "", idx = /^(\+|1|in|a|p|left)$/.test(p) ? 0 : p ? 1 : -1;
+    return { id: m[1].toUpperCase(), port: idx, raw: tok };
+  }
+
+  function parseSchematic(block) {
+    var parts = [], byId = {}, wires = [], problems = [], mode = "";
+    block.lines.forEach(function (line) {
+      var ws = words(line), head = ws[0] && ws[0].w ? ws[0].w.toLowerCase() : "";
+      if (head === "mode") { mode = (ws[1] && ws[1].w || "").toLowerCase().replace(/s$/, "").replace(/^hydraulics$/, "hydraulic"); return; }
+      if (head === "part") {
+        if (!ws[1] || !ws[1].w) { problems.push("\u201c" + line + "\u201d: a part needs an ID and a type, like: part R1 resistor \x22220 ohm\x22"); return; }
+        var id = ws[1].w.toUpperCase(), typeWords = [], label = "", i;
+        for (i = 2; i < ws.length; i++) { if (ws[i].q != null) { label = ws[i].q; break; } typeWords.push(ws[i].w); }
+        if (!typeWords.length) { problems.push("part " + id + " has no type"); return; }
+        if (byId[id]) { problems.push("there are two parts called " + id); return; }
+        var p = { id: id, said: typeWords.join(" "), type: norm(typeWords.join(" ")), label: label };
+        byId[id] = p; parts.push(p); return;
+      }
+      if (head === "wire" || head === "pipe" || head === "connect") {
+        var ends = ws.slice(1).filter(function (x) { return x.w && !/^(to|and|-+>?|\u2192)$/i.test(x.w); }).map(function (x) { return end(x.w); });
+        if (ends.length < 2 || ends.some(function (e) { return !e; })) { problems.push("\u201c" + line + "\u201d: a wire joins two part IDs, like: wire R1 D1"); return; }
+        for (var k = 0; k + 1 < ends.length; k++) wires.push([ends[k], ends[k + 1]]);
+        return;
+      }
+      problems.push("\u201c" + line + "\u201d is not a part or wire line");
+    });
+    if (!mode) mode = parts.some(function (p) { return FLUID[p.type] === "pneumatic"; }) ? "pneumatic" :
+      parts.some(function (p) { return FLUID[p.type] === "hydraulic"; }) ? "hydraulic" : "electrical";
+    if (!PARTS[mode]) { problems.push("mode must be electrical, hydraulic or pneumatic"); mode = "electrical"; }
+    var known = PARTS[mode];
+    parts.forEach(function (p) {
+      if (!known[p.type]) problems.push("there is no " + mode + " part called \u201c" + p.said + "\u201d (" + mode + " parts: " + Object.keys(known).join(", ") + ")");
+    });
+    wires.forEach(function (w) {
+      [0, 1].forEach(function (j) { if (!byId[w[j].id]) problems.push("wire " + w[0].raw + " " + w[1].raw + ": there is no part " + w[j].id); });
+      if (w[0].id === w[1].id) problems.push("wire " + w[0].raw + " " + w[1].raw + " joins a part to itself");
+    });
+    if (!parts.length) problems.push("there are no parts: add lines like: part B1 battery \x2212 V\x22");
+    if (parts.length > 16) problems.push("keep it to 16 parts or fewer");
+    var deg = {};
+    wires.forEach(function (w) { deg[w[0].id] = (deg[w[0].id] || 0) + 1; deg[w[1].id] = (deg[w[1].id] || 0) + 1; });
+    parts.forEach(function (p) { if (!deg[p.id] && parts.length > 1) problems.push(p.id + " is not connected to anything"); });
+    // A circuit must be closed: the battery or source on a loop.
+    var src = parts.filter(function (p) { return p.type === "battery" || p.type === "source"; })[0];
+    var loop = src ? onLoop(src.id, wires) : null;
+    if (mode === "electrical" && src && !problems.length && !loop)
+      problems.push("the circuit is not closed: there is no path from " + src.id + " through the parts and back to " + src.id + " (add the wire that returns to it)");
+    if (mode === "hydraulic") {
+      var pump = parts.filter(function (p) { return p.type === "pump"; })[0], tank = parts.filter(function (p) { return p.type === "tank"; })[0];
+      if (pump && tank && !problems.length && !reach(pump.id, tank.id, wires)) problems.push("the pump is not connected to the tank");
+    }
+    return { mode: mode, parts: parts, byId: byId, wires: wires, problems: problems, loop: !!loop };
+  }
+  function reach(a, b, wires, skip) {
+    var seen = {}, stack = [a];
+    seen[a] = 1;
+    while (stack.length) {
+      var x = stack.pop();
+      if (x === b) return true;
+      wires.forEach(function (w, i) {
+        if (i === skip) return;
+        var y = w[0].id === x ? w[1].id : w[1].id === x ? w[0].id : null;
+        if (y && !seen[y]) { seen[y] = 1; stack.push(y); }
+      });
+    }
+    return false;
+  }
+  function onLoop(id, wires) {   // is some wire at id on a cycle?
+    for (var i = 0; i < wires.length; i++) {
+      var w = wires[i];
+      if (w[0].id !== id && w[1].id !== id) continue;
+      var other = w[0].id === id ? w[1].id : w[0].id;
+      if (reach(other, id, wires, i)) return true;
+    }
+    return false;
+  }
+
+  // --- layout ---------------------------------------------------------------
+  // The chain: from the source (or first part), follow the wires in the order
+  // written. A closed chain goes round a rectangle (top row left to right,
+  // bottom row back); parts off the chain go below. Wires are read in flow
+  // order ("wire FROM TO"), so a branch leaves a part from the side its
+  // current goes out of and joins a part on the side current comes in.
+  function layout(sc, title) {
+    var parts = sc.parts, wires = sc.wires, byId = sc.byId, P = PARTS[sc.mode];
+    var start = parts.filter(function (p) { return /^(battery|source|pump|compressor)$/.test(p.type); })[0] || parts[0];
+    var chain = [start.id], inChain = {}, used = {}, cur = start.id, chainWires = [];
+    inChain[cur] = 1;
+    function ports(id) { return P[byId[id].type].ports; }
+    for (;;) {
+      var next = null;
+      for (var i = 0; i < wires.length && !next; i++) {
+        var w = wires[i];
+        if (used[i]) continue;
+        var o = w[0].id === cur ? w[1].id : w[1].id === cur ? w[0].id : null;
+        if (o && !inChain[o] && ports(o).length > 1) { next = o; used[i] = 1; chainWires.push(i); }
+      }
+      if (!next) break;
+      chain.push(next); inChain[next] = 1; cur = next;
+    }
+    var closing = -1;
+    if (chain.length > 1) for (var c = 0; c < wires.length; c++) {
+      if (used[c]) continue;
+      var ww = wires[c];
+      if ((ww[0].id === cur && ww[1].id === start.id) || (ww[1].id === cur && ww[0].id === start.id)) { closing = c; used[c] = 1; break; }
+    }
+    // on Draw's 20 px grid, so wires drawn by hand later meet the terminals
+    var n = chain.length, loop = closing >= 0, top = loop ? Math.ceil(n / 2) : n, GAP = 180, X0 = 120, Y0 = 120;
+    var pos = {}, flip = {}, flipV = {};
+    chain.forEach(function (id, i) {
+      if (!loop) { var r = Math.floor(i / 4), k = i % 4; pos[id] = { x: X0 + (r % 2 ? 3 - k : k) * GAP, y: Y0 + r * 160, row: r, dir: r % 2 ? -1 : 1 }; return; }
+      if (i < top) pos[id] = { x: X0 + i * GAP, y: Y0, row: 0, dir: 1 };
+      else pos[id] = { x: X0 + (top - 1 - (i - top)) * GAP, y: Y0 + 180, row: 1, dir: -1 };
+    });
+    function sideIdx(id, side) {
+      var ps = ports(id);
+      for (var k = 0; k < ps.length; k++) if (ps[k][2] === side) return k;
+      return 0;
+    }
+    // terminals of the chain wires; inP/outP = where current enters/leaves
+    var portOf = {}, inP = {}, outP = {};
+    chainWires.forEach(function (k, j) {
+      var a = chain[j], b = chain[j + 1], pa = pos[a], pb = pos[b];
+      var sa = pa.row === pb.row ? (pa.dir > 0 ? "R" : "L") : (pa.dir > 0 ? "R" : "L");
+      var sb = pa.row === pb.row ? (pb.dir > 0 ? "L" : "R") : (pa.dir > 0 ? "R" : "L");
+      outP[a] = sideIdx(a, sa); inP[b] = sideIdx(b, sb);
+      portOf[k] = wires[k][0].id === a ? [outP[a], inP[b]] : [inP[b], outP[a]];
+    });
+    if (loop) {
+      outP[cur] = sideIdx(cur, pos[cur].dir > 0 ? "R" : "L"); inP[start.id] = sideIdx(start.id, "L");
+      portOf[closing] = wires[closing][0].id === cur ? [outP[cur], inP[start.id]] : [inP[start.id], outP[cur]];
+    }
+    if (outP[start.id] == null) outP[start.id] = sideIdx(start.id, "R");
+    if (inP[start.id] == null) inP[start.id] = sideIdx(start.id, "L");
+    // polarity: a wire that names a terminal ("B1+") the layout put on the
+    // other side mirrors that symbol, so the + sits where the wire meets it
+    Object.keys(portOf).forEach(function (k) {
+      var w = wires[k];
+      [0, 1].forEach(function (e) {
+        var id = w[e].id;
+        if (w[e].port >= 0 && P[byId[id].type].polar && portOf[k][e] !== w[e].port) flip[id] = true;
+      });
+    });
+    // a mirrored part keeps its sides: terminal 0 is now on the right
+    Object.keys(flip).forEach(function (id) {
+      Object.keys(portOf).forEach(function (k) { [0, 1].forEach(function (e) { if (wires[k][e].id === id) portOf[k][e] = 1 - portOf[k][e]; }); });
+      if (inP[id] != null) inP[id] = 1 - inP[id];
+      if (outP[id] != null) outP[id] = 1 - outP[id];
+    });
+    // the other wires: FROM leaves by its out side, TO joins by its in side
+    var taken = {};
+    wires.forEach(function (w, i) {
+      if (portOf[i]) return;
+      portOf[i] = [0, 1].map(function (e) {
+        var id = w[e].id, ps = ports(id), side = e === 0 ? outP : inP;
+        if (w[e].port >= 0 && w[e].port < ps.length) return w[e].port;
+        if (side[id] != null) return side[id];
+        if (ps.length === 1) return 0;
+        for (var q = 0; q < ps.length; q++) if (!taken[id + ":" + q]) { taken[id + ":" + q] = 1; return q; }
+        return 0;
+      });
+    });
+    function pt(id, idx) {
+      var p = pos[id], d = ports(id)[idx], dx = flip[id] ? -d[0] : d[0], dy = flipV[id] ? -d[1] : d[1], side = d[2];
+      if (flip[id]) side = side === "L" ? "R" : side === "R" ? "L" : side;
+      if (flipV[id]) side = side === "T" ? "B" : side === "B" ? "T" : side;
+      return { x: p.x + dx, y: p.y + dy, side: side };
+    }
+    // Electrical nodes: terminals joined by wires. A part off the chain
+    // whose two terminals sit on the same two nodes as a chain part is in
+    // parallel with it: it goes straight below that part, like a ladder rung,
+    // joined to it by two short drops (the same nodes, so the same circuit).
+    var parent = {};
+    function find(k) { while (parent[k] && parent[k] !== k) k = parent[k]; return k; }
+    function unite(a, b) { a = find(a); b = find(b); if (a !== b) parent[a] = b; }
+    wires.forEach(function (w, i) { unite(w[0].id + ":" + portOf[i][0], w[1].id + ":" + portOf[i][1]); });
+    var twin = {}, rungs = {};
+    parts.forEach(function (p) {
+      if (pos[p.id] || ports(p.id).length !== 2) return;
+      var n0 = find(p.id + ":0"), n1 = find(p.id + ":1");
+      if (n0 === n1) return;
+      for (var j = 0; j < chain.length; j++) {
+        var y = chain[j];
+        if (ports(y).length !== 2) continue;
+        var y0 = find(y + ":0"), y1 = find(y + ":1");
+        if (!((y0 === n0 && y1 === n1) || (y0 === n1 && y1 === n0))) continue;
+        var py = pos[y], k = (rungs[y] || 0) + 1;
+        if (k > 1 && loop && py.row === 0) continue;   // only one fits between the two rows
+        rungs[y] = k;
+        twin[p.id] = y;
+        pos[p.id] = { x: py.x, y: py.y + 90 * k, row: py.row + 0.5, dir: py.dir };
+        flip[p.id] = y0 === n0 ? !!flip[y] : !flip[y];
+        break;
+      }
+    });
+    // parts off the chain: under the terminal they join (one-terminal parts
+    // like ground or a tank), or under the middle of their two neighbours
+    var bottom = 0, spots = {};
+    Object.keys(pos).forEach(function (id) { bottom = Math.max(bottom, pos[id].y); });
+    var extraY = bottom + 120;
+    function free(x) {   // exactly under its terminal when that spot is free
+      var near = function (v) { return Object.keys(spots).some(function (k) { return Math.abs(+k - v) < 80; }); };
+      while (near(x)) x += 100;
+      spots[x] = 1; return x;
+    }
+    parts.forEach(function (p) {
+      if (pos[p.id]) return;
+      var xs = [];
+      wires.forEach(function (w, i) {
+        [0, 1].forEach(function (e) {
+          var o = w[1 - e];
+          if (w[e].id === p.id && pos[o.id]) xs.push(pt(o.id, portOf[i][1 - e]).x);
+        });
+      });
+      var single = ports(p.id).length === 1, d = ports(p.id)[0];
+      var x = xs.length ? (single ? xs[0] : (Math.min.apply(null, xs) + Math.max.apply(null, xs)) / 2) : X0;
+      // a part whose terminal is at its bottom (a gauge) hangs upside down,
+      // terminal up, toward the line it reads
+      if (single && d[2] === "B") flipV[p.id] = true;
+      pos[p.id] = { x: free(x - (single ? d[0] : 0)), y: extraY, row: 2, dir: 1 };
+    });
+    // --- draw ---
+    var shapes = [], maxY = 0, maxX = 0, lane = 0;
+    parts.forEach(function (p) {
+      var make = symbolMaker(sc.mode, P[p.type].label), q = pos[p.id];
+      if (!make) return;
+      var g = make(q.x, q.y, INK);
+      if (flip[p.id]) g = mirror(g, q.x);
+      if (flipV[p.id]) g = mirrorV(g, q.y);
+      shapes.push(g);
+      var lab = p.id + (p.label ? " (" + p.label + ")" : ""), single = ports(p.id).length === 1;
+      shapes.push({ t: "text", c: NOTE, x: single ? q.x + 30 + lab.length * 3.5 : q.x, y: single ? q.y + 4 : q.y - 34, s: lab, fs: 13 });
+      maxY = Math.max(maxY, q.y + 40); maxX = Math.max(maxX, q.x + 60);
+    });
+    var ends = {};
+    function hit(p) { var k = Math.round(p.x) + "," + Math.round(p.y); ends[k] = (ends[k] || 0) + 1; }
+    var rungDone = {};
+    wires.forEach(function (w, i) {
+      var a = pt(w[0].id, portOf[i][0]), b = pt(w[1].id, portOf[i][1]), pts;
+      // a rung: drop from its terminal to the matching terminal of its twin
+      var tw = twin[w[0].id] && !twin[w[1].id] ? 0 : twin[w[1].id] && !twin[w[0].id] ? 1 : -1;
+      if (tw >= 0) {
+        var xid = w[tw].id, xi = portOf[i][tw], yid = twin[xid], key = xid + ":" + xi;
+        if (rungDone[key]) return;
+        rungDone[key] = 1;
+        var yi = find(yid + ":0") === find(key) ? 0 : 1, xp = pt(xid, xi), yp = pt(yid, yi), my = (xp.y + yp.y) / 2;
+        hit(xp); hit(yp);
+        shapes.push({ t: "path", c: WIRE, w: 3, pts: Math.abs(xp.x - yp.x) < 1 ? [[xp.x, xp.y], [yp.x, yp.y]] : [[xp.x, xp.y], [xp.x, my], [yp.x, my], [yp.x, yp.y]] });
+        return;
+      }
+      hit(a); hit(b);
+      var flat = Math.abs(a.y - b.y) < 1;
+      if (flat && ((a.side === "R" && b.side === "L" && a.x <= b.x) || (a.side === "L" && b.side === "R" && a.x >= b.x))) pts = [[a.x, a.y], [b.x, b.y]];
+      else if (a.side === "R" && b.side === "R") { var xr = Math.max(a.x, b.x) + 40; pts = [[a.x, a.y], [xr, a.y], [xr, b.y], [b.x, b.y]]; }
+      else if (a.side === "L" && b.side === "L") { var xl = Math.min(a.x, b.x) - 40; pts = [[a.x, a.y], [xl, a.y], [xl, b.y], [b.x, b.y]]; }
+      else if (Math.abs(a.x - b.x) < 1) pts = [[a.x, a.y], [b.x, b.y]];
+      else if (/[TB]/.test(a.side) || /[TB]/.test(b.side)) {
+        // a one-terminal part (tank, ground, gauge): straight down when it
+        // hangs under this terminal; otherwise out to the side, down past
+        // the parts, across, and into it from above (or below)
+        var v = /[TB]/.test(a.side) ? a : b, h = v === a ? b : a, sx = h.side === "L" ? h.x - 20 : h.side === "R" ? h.x + 20 : h.x;
+        var vy = v.side === "T" ? v.y - 24 - (lane % 3) * 8 : v.y + 24 + (lane % 3) * 8;
+        lane++;
+        pts = [[h.x, h.y], [sx, h.y], [sx, vy], [v.x, vy], [v.x, v.y]];
+        if (v === a) pts.reverse();
+      } else {   // round the bottom, each in its own lane
+        var ly = Math.max(maxY, a.y, b.y) + 30 + (lane++) * 20, ox = a.side === "L" ? -20 : 20, oy = b.side === "L" ? -20 : 20;
+        pts = [[a.x, a.y], [a.x + ox, a.y], [a.x + ox, ly], [b.x + oy, ly], [b.x + oy, b.y], [b.x, b.y]];
+        maxY = Math.max(maxY, ly);
+      }
+      shapes.push({ t: "path", c: WIRE, w: 3, pts: pts });
+    });
+    // a dot where wires join at a terminal (three or more ends)
+    Object.keys(ends).forEach(function (k) {
+      if (ends[k] < 2) return;
+      var xy = k.split(",");
+      shapes.push({ t: "circle", c: WIRE, w: 2, cx: +xy[0], cy: +xy[1], r: 4, f: true });
+    });
+    if (title) shapes.unshift({ t: "text", c: INK, x: Math.max(200, (X0 - 60 + maxX) / 2), y: 40, s: title, fs: 18 });
+    return { shapes: shapes, chain: chain, loop: loop };
+  }
+  function mirrorV(o, cy) {
+    var c = {}, key;
+    for (key in o) c[key] = o[key];
+    if (o.t === "group") { c.shapes = o.shapes.map(function (s) { return mirrorV(s, cy); }); return c; }
+    if (o.pts) c.pts = o.pts.map(function (p) { return [p[0], 2 * cy - p[1]]; });
+    if (o.t === "rect") c.y = 2 * cy - o.y - o.rh;
+    if (o.t === "circle") c.cy = 2 * cy - o.cy;
+    return c;
+  }
+  function mirror(o, cx) {
+    var c = {}, key;
+    for (key in o) c[key] = o[key];
+    if (o.t === "group") { c.shapes = o.shapes.map(function (s) { return mirror(s, cx); }); return c; }
+    if (o.pts) c.pts = o.pts.map(function (p) { return [2 * cx - p[0], p[1]]; });
+    if (o.t === "rect") c.x = 2 * cx - o.x - o.rw;
+    if (o.t === "circle") c.cx = 2 * cx - o.cx;
+    if (o.t === "text") c.x = 2 * cx - o.x;
+    return c;
+  }
+
+  function schematic(block) {
+    var sc = parseSchematic(block);
+    if (sc.problems.length) return { problems: sc.problems, plan: null };
+    if (!L.aiDraw || !L.aiDraw.result) return { problems: ["Lantern\u2019s drawing part (AI_DRAW) is missing"], plan: null };
+    var lay = layout(sc, block.title);
+    var plan = { mode: sc.mode, parts: sc.parts.map(function (p) { return { id: p.id, type: p.type, label: p.label }; }),
+      wires: sc.wires.map(function (w) { return [w[0].id, w[1].id]; }), loop: sc.loop };
+    return L.aiDraw.result(lay.shapes, plan, sc.parts.length + " parts, " + sc.wires.length + " connections" + (sc.loop ? ", a closed loop" : ""), block.title, []);
+  }
+  window.Lantern.aiSchematic = { schematic: schematic, parse: parseSchematic, norm: norm };
+
+  if (!ACTS.some(function (a) { return a.id === "schematic"; })) ACTS.push({
+    id: "schematic", kind: "SCHEMATIC", kinds: ["SCHEMATIC", "CIRCUIT", "DIAGRAM", "WIRING", "WIRING DIAGRAM", "CIRCUIT DIAGRAM"], title: "a schematic",
+    match: function (q) { return /\b(circuit|schematic|wiring|wire up|diagram|hydraulic|pneumatic|battery|resistor|capacitor|switch|lamp|bulb|diode|led|pump|cylinder|valve|compressor)\b/i.test(q) && /\b(draw|sketch|show|make|diagram|schematic|circuit)\b/i.test(q); },
+    prompt: [
+      "MAKE SCHEMATIC: <title>   -- a circuit or a hydraulic / pneumatic diagram",
+      "mode electrical            (or hydraulic, or pneumatic)",
+      "part <ID> <type> \x22<value or name>\x22   one line per part",
+      "wire <ID> <ID>             one line per connection, in the order the current (or fluid) flows; close the loop",
+      "END",
+      "Electrical types: battery, source, resistor, capacitor, inductor, diode, switch, lamp, motor, ground, junction.",
+      "Hydraulic: pump, motor, cylinder, tank, valve, filter, gauge. Pneumatic: compressor, reservoir, valve, cylinder, exhaust, gauge.",
+      "For example:",
+      "MAKE SCHEMATIC: LED with resistor",
+      "mode electrical",
+      "part V1 source \x225 V\x22",
+      "part R1 resistor \x22220 ohm\x22",
+      "part D1 diode \x22LED\x22",
+      "wire V1 R1",
+      "wire R1 D1",
+      "wire D1 V1",
+      "END"],
+    build: function (block) { return schematic(block); }
+  });
+})();
+// ===========================================================================
+// MODULE: AI_SCHEMATIC - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_DRAW - START
+// Depends: AI_ACTIONS (Lantern.aiActions hook), DRAW (Lantern.drawDocs,
+//          Lantern.drawShapes) -- feature-detected
+// Exports: Lantern.aiDraw = {picture(block), result(shapes, plan, summary,
+//          title, problems)} -- result() is shared with AI_SCHEMATIC; adds
+//          the DRAWING action to Lantern.aiActions
+// ===========================================================================
+// MAKE DRAWING: a simple picture from shapes on a 20 x 12 grid -- whole
+// numbers a small model can handle -- scaled up by Lantern (36 px a cell).
+// Fill and outline colours by name. result() is what every drawing action
+// returns: a preview for Chat, a PNG for a model that can see, and Open in
+// Draw (as ordinary shapes: movable, erasable, Save PNG).
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var ACTS = window.Lantern.aiActions = window.Lantern.aiActions || [];
+  var INK = "#1b2430";
+
+  // --- pictures on a grid ---------------------------------------------------
+  var GW = 20, GH = 12, CELL = 36;
+  var COLORS = { red: "#dc2626", orange: "#f97316", yellow: "#facc15", green: "#16a34a", "dark green": "#166534", lime: "#84cc16",
+    blue: "#2563eb", "dark blue": "#1e3a8a", sky: "#7dd3fc", "light blue": "#7dd3fc", cyan: "#06b6d4", purple: "#7c3aed", pink: "#ec4899",
+    brown: "#92400e", tan: "#d6b38a", beige: "#e7d7b1", black: "#111827", gray: "#6b7280", grey: "#6b7280", "light gray": "#d1d5db",
+    "light grey": "#d1d5db", white: "#ffffff", gold: "#d4a017", silver: "#c0c0c0", navy: "#1e3a8a", teal: "#0d9488", sand: "#e9d8a6" };
+  function colour(words, at) {   // colour name (one or two words) or #hex starting at words[at]
+    var a = (words[at] || "").toLowerCase(), b = (words[at + 1] || "").toLowerCase();
+    if (/^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(a)) return { c: a, n: 1 };
+    if (COLORS[a + " " + b]) return { c: COLORS[a + " " + b], n: 2 };
+    if (COLORS[a]) return { c: COLORS[a], n: 1 };
+    return null;
+  }
+  var NEED = { rect: 4, square: 3, circle: 3, tri: 6, triangle: 6, line: 4, curve: 4, text: 2, oval: 4, ellipse: 4 };
+  function parsePicture(block) {
+    var shapes = [], problems = [];
+    block.lines.forEach(function (line) {
+      var qm = /\x22([^\x22]*)\x22|\u201c([^\u201d]*)\u201d/.exec(line), quoted = qm ? (qm[1] != null ? qm[1] : qm[2]) : null;
+      var rest = qm ? line.replace(qm[0], " ") : line;
+      var toks = rest.replace(/(\d)\s*[x\u00d7]\s*(\d)/gi, "$1 $2").replace(/,/g, " ").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "").split(" ");
+      var kind = (toks[0] || "").toLowerCase(), nums = [], i = 1, o = { kind: kind };
+      if (!NEED[kind]) { problems.push("\u201c" + line + "\u201d: shapes are rect, circle, tri, line, curve, text"); return; }
+      while (i < toks.length && /^-?\d+(\.\d+)?$/.test(toks[i])) nums.push(parseFloat(toks[i++]));
+      while (i < toks.length) {
+        var key = toks[i].toLowerCase();
+        if (key === "fill" || key === "color" || key === "colour" || key === "outline" || key === "stroke") {
+          var col = colour(toks, i + 1);
+          if (!col) { problems.push("\u201c" + line + "\u201d: unknown colour \u201c" + (toks[i + 1] || "") + "\u201d (use " + Object.keys(COLORS).slice(0, 18).join(", ") + ", or #hex)"); return; }
+          if (key === "fill") o.fill = col.c; else o.color = col.c;
+          i += 1 + col.n; continue;
+        }
+        if ((key === "width" || key === "size" || key === "thick") && /^\d+(\.\d+)?$/.test(toks[i + 1] || "")) { o[key === "size" ? "size" : "width"] = parseFloat(toks[i + 1]); i += 2; continue; }
+        var bare = colour(toks, i);   // "rect 1 2 3 4 red" -> fill
+        if (bare) { o.fill = o.fill || bare.c; i += bare.n; continue; }
+        i++;
+      }
+      var need = NEED[kind];
+      if (kind === "line" || kind === "curve") { if (nums.length < 4 || nums.length % 2) { problems.push("\u201c" + line + "\u201d: a " + kind + " needs pairs of numbers X Y X Y ..."); return; } }
+      else if (nums.length !== need) { problems.push("\u201c" + line + "\u201d: a " + kind + " needs " + need + " numbers"); return; }
+      if (kind === "text" && !quoted) { problems.push("\u201c" + line + "\u201d: text needs its words in quotes"); return; }
+      var bad = nums.filter(function (v, k) { var lim = (kind === "rect" || kind === "oval" || kind === "ellipse") && k >= 2 ? Math.max(GW, GH) : (k % 2 ? GH : GW); return v < -1 || v > lim + 1; });
+      if (kind === "circle" || kind === "square") bad = nums.slice(0, 2).filter(function (v, k) { return v < -1 || v > (k ? GH : GW) + 1; });
+      if (bad.length) { problems.push("\u201c" + line + "\u201d is off the grid (x 0 to " + GW + ", y 0 to " + GH + ")"); return; }
+      o.nums = nums; o.text = quoted; shapes.push(o);
+    });
+    if (!shapes.length && !problems.length) problems.push("the drawing has no shapes: add lines like: rect 4 6 12 5 fill brown");
+    if (shapes.length > 60) problems.push("keep it to 60 shapes or fewer");
+    return { shapes: shapes, problems: problems };
+  }
+  function pictureShapes(pic) {
+    var out = [];
+    pic.shapes.forEach(function (o) {
+      var n = o.nums.map(function (v) { return v * CELL; }), stroke = o.color || (o.fill ? null : INK), w = o.width || 3;
+      function both(base) {
+        if (o.fill) { var f = {}, k; for (k in base) f[k] = base[k]; f.c = o.fill; f.f = true; f.w = w; out.push(f); }
+        if (stroke) { var s = {}, k2; for (k2 in base) s[k2] = base[k2]; s.c = stroke; s.f = false; s.w = w; out.push(s); }
+      }
+      if (o.kind === "rect") both({ t: "rect", x: n[0], y: n[1], rw: n[2], rh: n[3] });
+      else if (o.kind === "square") both({ t: "rect", x: n[0], y: n[1], rw: n[2], rh: n[2] });
+      else if (o.kind === "oval" || o.kind === "ellipse") {   // a fan of triangles (filled) and its outline
+        var cx = n[0] + n[2] / 2, cy = n[1] + n[3] / 2, rx = n[2] / 2, ry = n[3] / 2, pts = [], a;
+        for (a = 0; a <= 32; a++) pts.push([cx + rx * Math.cos(a / 32 * 2 * Math.PI), cy + ry * Math.sin(a / 32 * 2 * Math.PI)]);
+        if (o.fill) {
+          var fan = [];
+          for (a = 0; a < 32; a++) fan.push({ t: "tri", c: o.fill, w: 1, f: true, pts: [[cx, cy], pts[a], pts[Math.min(32, a + 2)]] });   // overlapping, so no seams
+          out.push({ t: "group", shapes: fan.concat([{ t: "path", c: o.fill, w: 2, pts: pts }]) });
+        }
+        if (stroke) out.push({ t: "path", c: stroke, w: w, pts: pts });
+      }
+      else if (o.kind === "circle") both({ t: "circle", cx: n[0], cy: n[1], r: n[2] });
+      else if (o.kind === "tri" || o.kind === "triangle") both({ t: "tri", pts: [[n[0], n[1]], [n[2], n[3]], [n[4], n[5]]] });
+      else if (o.kind === "line" || o.kind === "curve") {
+        var ps = [];
+        for (var k = 0; k + 1 < n.length; k += 2) ps.push([n[k], n[k + 1]]);
+        out.push({ t: o.kind === "curve" ? "curve" : "path", c: o.color || o.fill || INK, w: w, pts: ps });
+      }
+      else if (o.kind === "text") out.push({ t: "text", c: o.color || o.fill || INK, x: n[0], y: n[1], s: o.text, fs: o.size || 20 });
+    });
+    return out;
+  }
+
+  // --- shared: preview, PNG, open in Draw -----------------------------------
+  function paint(shapes, w, h, k) {
+    var cv = document.createElement("canvas");
+    cv.width = w; cv.height = h;
+    var ctx = cv.getContext ? cv.getContext("2d") : null;
+    if (!ctx || !L.drawShapes) return null;
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, w, h);
+    ctx.save(); ctx.scale(k, k);
+    shapes.forEach(function (s) { L.drawShapes.render(ctx, s); });
+    ctx.restore();
+    return cv;
+  }
+  function extent(shapes) {
+    var b = [0, 0, 720, 432];
+    if (L.drawShapes && L.drawShapes.bbox) shapes.forEach(function (s) { var x = L.drawShapes.bbox(s); b[2] = Math.max(b[2], x[2] + 20); b[3] = Math.max(b[3], x[3] + 20); });
+    return b;
+  }
+  function result(shapes, plan, summary, title, problems) {
+    var ex = extent(shapes);
+    return {
+      problems: problems, plan: plan, summary: summary, openLabel: "Open in Draw",
+      preview: function () {
+        var k = Math.min(1, 640 / ex[2]), cv = paint(shapes, Math.round(ex[2] * k), Math.round(ex[3] * k), k);
+        if (!cv) return L.el("p", { "class": "muted", text: shapes.length + " shapes (open in Draw to see them)" });
+        cv.style.cssText = "max-width:100%;height:auto;border:1px solid var(--line);border-radius:6px;margin-top:6px;display:block";
+        cv.setAttribute("aria-label", "Preview: " + (title || "drawing"));
+        return cv;
+      },
+      png: function () {
+        var k = Math.min(1, 720 / ex[2]), cv = paint(shapes, Math.round(ex[2] * k), Math.round(ex[3] * k), k);
+        try { return cv && cv.toDataURL ? cv.toDataURL("image/png") : null; } catch (e) { return null; }
+      },
+      open: function () { if (L.drawDocs) L.drawDocs.open(shapes, title); },
+      shapes: shapes
+    };
+  }
+  function picture(block) {
+    var pic = parsePicture(block);
+    if (pic.problems.length) return { problems: pic.problems, plan: null };
+    var plan = { shapes: pic.shapes.map(function (o) { return { kind: o.kind, nums: o.nums, fill: o.fill || null, color: o.color || null, text: o.text || null }; }) };
+    return result(pictureShapes(pic), plan, pic.shapes.length + " shapes", block.title, []);
+  }
+  window.Lantern.aiDraw = { picture: picture, result: result };
+
+  if (!ACTS.some(function (a) { return a.id === "drawing"; })) ACTS.push({
+    id: "drawing", kind: "DRAWING", kinds: ["DRAWING", "PICTURE", "SKETCH", "IMAGE", "ILLUSTRATION"], title: "a drawing",
+    match: function (q) { return /\b(draw|drawing|sketch|picture|illustrat|paint|doodle)\w*/i.test(q) && !/\b(circuit|schematic|wiring|hydraulic|pneumatic)\b/i.test(q); },
+    prompt: [
+      "MAKE DRAWING: <title>   -- a simple picture on a grid " + GW + " wide and " + GH + " high (x 0-" + GW + " left to right, y 0-" + GH + " top to bottom)",
+      "One shape per line, back to front (the first line is behind the others):",
+      "rect X Y W H  |  circle X Y R  |  tri X1 Y1 X2 Y2 X3 Y3  |  line X1 Y1 X2 Y2 ...  |  curve X1 Y1 X2 Y2 X3 Y3 ...  |  text X Y \x22words\x22",
+      "then: fill <colour> (solid) and/or color <colour> (outline), width <n>. Colours: red, orange, yellow, green, dark green, blue, sky,",
+      "purple, pink, brown, tan, black, gray, white, gold.",
+      "END",
+      "For example:",
+      "MAKE DRAWING: Tree on a hill",
+      "curve 0 11 6 9 14 9 20 11 color green width 4",
+      "rect 9 6 2 4 fill brown",
+      "circle 10 5 3 fill green",
+      "END"],
+    build: function (block) { return picture(block); }
+  });
+})();
+// ===========================================================================
+// MODULE: AI_DRAW - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_SHEET - START
+// Depends: AI_ACTIONS (Lantern.aiActions hook), SHEET (Lantern.sheetDocs:
+//          compute, create, open) -- feature-detected
+// Exports: Lantern.aiSheet = {table(block)} (for tests); adds the SHEET
+//          action to Lantern.aiActions
+// ===========================================================================
+// MAKE SHEET: the AI writes a table, one row a line, cells split by | ,
+// formulas starting with = (=B2*C2, =SUM(D2:D4)). The sheet engine does the
+// arithmetic -- the same engine the person uses -- so the numbers are right
+// by construction; Lantern checks what can still go wrong: a formula that
+// fails, one that reads an empty cell (usually an off-by-one row), or a
+// result that is not a number. The person opens it in Sheets to keep it.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var ACTS = window.Lantern.aiActions = window.Lantern.aiActions || [];
+  var MAXR = 60, MAXC = 12;
+  function colName(i) { return String.fromCharCode(65 + i); }
+  // "1,500" -> 1500; "$1.50" -> 1.50; "12%" stays text (the model should
+  // write 0.12); anything else stays as written.
+  function cellValue(t) {
+    t = String(t).replace(/^\s+|\s+$/g, "").replace(/^\*\*(.*)\*\*$/, "$1");
+    if (/^=/.test(t)) return t.replace(/\s+/g, "");
+    var m = /^[\$\u20ac\u00a3\u20a6]?\s*(-?\d{1,3}(,\d{3})+(\.\d+)?|-?\d+(\.\d+)?)$/.exec(t);
+    if (m) return m[1].replace(/,/g, "");
+    return t;
+  }
+  function refsIn(f) {
+    var out = [], re = /\$?([A-Z])\$?(\d{1,3})(?::\$?([A-Z])\$?(\d{1,3}))?/g, m;
+    var body = f.replace(/\x22[^\x22]*\x22/g, "");
+    while ((m = re.exec(body))) {
+      if (/[A-Za-z_]/.test(body.charAt(m.index - 1) || "") || /[a-z(]/.test(body.charAt(m.index + m[0].length) || "")) continue;   // part of a name like LOG10(
+      if (m[3]) {
+        for (var r = Math.min(+m[2], +m[4]); r <= Math.max(+m[2], +m[4]); r++)
+          for (var c = Math.min(m[1].charCodeAt(0), m[3].charCodeAt(0)); c <= Math.max(m[1].charCodeAt(0), m[3].charCodeAt(0)); c++)
+            out.push({ ref: String.fromCharCode(c) + r, range: true });
+      } else out.push({ ref: m[1] + m[2], range: false });
+    }
+    return out;
+  }
+  function table(block) {
+    var rows = [], problems = [];
+    block.lines.forEach(function (line) {
+      if (/^\|?\s*:?-{2,}/.test(line)) return;   // a markdown rule line
+      var t = line.replace(/^\s*\|/, "").replace(/\|\s*$/, "");
+      var cells = t.indexOf("|") >= 0 ? t.split("|") : t.indexOf("\t") >= 0 ? t.split("\t") : [t];
+      rows.push(cells.map(function (x) { return x.replace(/^\s+|\s+$/g, ""); }));
+    });
+    if (!rows.length) return { problems: ["the table is empty: one row a line, cells split by |"], plan: null };
+    var ncol = Math.max.apply(null, rows.map(function (r) { return r.length; }));
+    if (rows.length > MAXR) problems.push("keep it to " + MAXR + " rows or fewer");
+    if (ncol > MAXC) problems.push("keep it to " + MAXC + " columns or fewer");
+    if (ncol < 2 && rows.length > 1) problems.push("split the cells with | , like: Bread | 2 | 1.50");
+    var cells = {}, formulas = [];
+    rows.forEach(function (r, i) {
+      r.forEach(function (raw, j) {
+        if (raw === "" || j >= MAXC) return;
+        var ref = colName(j) + (i + 1), v = cellValue(raw);
+        cells[ref] = v;
+        if (/^=/.test(v)) formulas.push(ref);
+      });
+    });
+    var values = L.sheetDocs && L.sheetDocs.compute ? L.sheetDocs.compute(cells) : {};
+    formulas.forEach(function (ref) {
+      var v = values[ref], f = cells[ref];
+      if (v === "#ERR" || v === "#CYCLE" || (typeof v === "number" && !isFinite(v)) || (typeof v !== "number" && v != null && /^#/.test(String(v))))
+        problems.push(ref + " (" + f + ") gives " + (v === "#CYCLE" ? "a loop: it depends on itself" : "an error"));
+      else if (typeof v !== "number") problems.push(ref + " (" + f + ") does not give a number");
+      refsIn(f.slice(1)).forEach(function (x) {
+        if (!x.range && (cells[x.ref] == null || cells[x.ref] === "")) problems.push(ref + " (" + f + ") uses " + x.ref + ", which is empty");
+        else if (!x.range && typeof values[x.ref] !== "number" && values[x.ref] != null && !/^=/.test(cells[x.ref]))
+          problems.push(ref + " (" + f + ") uses " + x.ref + ", which is text (\u201c" + cells[x.ref] + "\u201d), not a number");
+      });
+    });
+    var uniq = [];
+    problems.forEach(function (p) { if (uniq.indexOf(p) < 0) uniq.push(p); });
+    problems = uniq.slice(0, 6);
+    var plan = { cells: cells, values: values, rows: rows.length, cols: Math.min(ncol, MAXC), formulas: formulas.length };
+    var title = block.title || "Table";
+    return {
+      problems: problems, plan: plan, summary: rows.length + " rows, " + formulas.length + " formula" + (formulas.length === 1 ? "" : "s") + " worked out by the sheet",
+      openLabel: "Open in Sheets",
+      preview: function () {
+        var el = L.el, tb = el("table", { style: "border-collapse:collapse;margin-top:6px;font-size:14px" });
+        for (var i = 0; i < Math.min(rows.length, 30); i++) {
+          var tr = el("tr", {});
+          for (var j = 0; j < plan.cols; j++) {
+            var ref = colName(j) + (i + 1), v = values[ref], raw = cells[ref];
+            var shown = v == null ? "" : typeof v === "number" ? (L.fmtNum ? L.fmtNum(Number(v.toPrecision(10))) : String(v)) : String(v);
+            tr.appendChild(el(i === 0 ? "th" : "td", { text: shown, title: raw && /^=/.test(raw) ? ref + ": " + raw : ref,
+              style: "border:1px solid var(--line);padding:3px 8px;" + (typeof v === "number" ? "text-align:right;" : "") +
+                (raw && /^=/.test(raw) ? "background:#f0f9ff;" : "") }));
+          }
+          tb.appendChild(tr);
+        }
+        var wrap = el("div", { style: "overflow-x:auto" }, [tb]);
+        if (formulas.length) wrap.appendChild(el("div", { "class": "muted", style: "font-size:12px;margin-top:4px", text: "Shaded cells are formulas, worked out by the sheet (hover to see them)." }));
+        return wrap;
+      },
+      png: null,
+      open: function () { if (L.sheetDocs && L.sheetDocs.create) L.sheetDocs.open(L.sheetDocs.create(title, cells)); }
+    };
+  }
+  window.Lantern.aiSheet = { table: table };
+  if (!ACTS.some(function (a) { return a.id === "sheet"; })) ACTS.push({
+    id: "sheet", kind: "SHEET", kinds: ["SHEET", "TABLE", "SPREADSHEET"], title: "a table",
+    match: function (q) { return /\b(table|sheet|spreadsheet|budget|list\b.*\b(total|cost|price|sum)|totals?\b.*\b(each|list|items?)|column)/i.test(q); },
+    prompt: [
+      "MAKE SHEET: <title>   -- a table; the sheet works out every formula",
+      "One row a line, cells split by | . Row 1 is the header. Plain numbers, no units in number cells.",
+      "A formula starts with = and uses cell names (column letter and row number): =B2*C2, =SUM(D2:D4), =ROUND(B2/3,2).",
+      "END",
+      "For example:",
+      "MAKE SHEET: Paint for two rooms",
+      "Room | Wall area m2 | Litres per m2 | Litres",
+      "Hall | 24 | 0.1 | =B2*C2",
+      "Kitchen | 30 | 0.1 | =B3*C3",
+      "Total | | | =SUM(D2:D3)",
+      "END"],
+    build: function (block) { return table(block); }
+  });
+})();
+// ===========================================================================
+// MODULE: AI_SHEET - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_MAKE_BENCH_DATA - START
+// Depends: AI_BENCH_DATA (Lantern.aiBenchQuestions, created here if absent),
+//          AI_ACTIONS -- the bench runs these only when AI_ACTIONS is there
+// Exports: (none) -- adds 7 "make" questions to Lantern Bench
+// ===========================================================================
+// Things the AI is asked to make. A question passes when the model writes a
+// MAKE block of the right kind, Lantern's checks pass (after at most one
+// corrected block), and the result has what was asked: the right parts in a
+// closed loop, a red roof, a total of 6.99... check(plan) -> "" or why not.
+// ideal: a reply that passes (for the tests' perfect model, and as a model
+// answer for anyone reading the bench).
+(function () {
+  var Q = window.Lantern.aiBenchQuestions = window.Lantern.aiBenchQuestions || [];
+  function types(plan) { return plan.parts.map(function (p) { return p.type; }); }
+  function count(arr, t) { return arr.filter(function (x) { return x === t; }).length; }
+  function wired(plan, a, b) { return plan.wires.some(function (w) { return (w[0] === a && w[1] === b) || (w[0] === b && w[1] === a); }); }
+  function linked(plan) {   // every part reachable from the first
+    if (!plan.parts.length) return false;
+    var seen = {}, stack = [plan.parts[0].id];
+    seen[stack[0]] = 1;
+    while (stack.length) {
+      var x = stack.pop();
+      plan.wires.forEach(function (w) {
+        var y = w[0] === x ? w[1] : w[1] === x ? w[0] : null;
+        if (y && !seen[y]) { seen[y] = 1; stack.push(y); }
+      });
+    }
+    return plan.parts.every(function (p) { return seen[p.id]; });
+  }
+  function nums(plan) {
+    var out = [];
+    Object.keys(plan.values || {}).forEach(function (k) { if (typeof plan.values[k] === "number") out.push(plan.values[k]); });
+    return out;
+  }
+  function has(arr, v) { return arr.some(function (x) { return Math.abs(x - v) < 0.006; }); }
+  var RED = /^#(dc2626|b91c1c|ef4444|f00|ff0000|e11d48)$/i, YELLOW = /^#(facc15|ffff00|ff0|eab308|fde047|d4a017)$/i, BLUE = /^#(2563eb|1e3a8a|7dd3fc|06b6d4|00f|0000ff|3b82f6|0d9488)$/i;
+  [
+    { id: "make-lamp-circuit", ideal: "MAKE SCHEMATIC: Lamp with switch\npart B1 battery \x2212 V\x22\npart S1 switch\npart L1 lamp\nwire B1 S1\nwire S1 L1\nwire L1 B1\nEND", quick: 1, kind: "SCHEMATIC", q: "Draw a circuit with a 12 V battery, a switch and a lamp in series.",
+      check: function (p) {
+        var t = types(p);
+        if (p.mode !== "electrical") return "not an electrical circuit";
+        if (!count(t, "battery") && !count(t, "source")) return "no battery";
+        if (!count(t, "switch")) return "no switch";
+        if (!count(t, "lamp")) return "no lamp";
+        return p.loop ? "" : "the circuit is not closed";
+      } },
+    { id: "make-parallel-lamps", ideal: "MAKE SCHEMATIC: Two lamps in parallel\npart B1 battery\npart L1 lamp\npart L2 lamp\nwire B1 L1\nwire L1 B1\nwire B1 L2\nwire L2 B1\nEND", kind: "SCHEMATIC", q: "Draw a circuit in which one battery lights two lamps connected in parallel.",
+      check: function (p) {
+        var t = types(p), lamps = p.parts.filter(function (x) { return x.type === "lamp"; });
+        if (!count(t, "battery") && !count(t, "source")) return "no battery";
+        if (lamps.length !== 2) return "not two lamps";
+        if (wired(p, lamps[0].id, lamps[1].id)) return "the lamps are wired to each other (series), not in parallel";
+        return p.loop && linked(p) ? "" : "the circuit is not closed";
+      } },
+    { id: "make-hydraulic", ideal: "MAKE SCHEMATIC: Pump, valve and cylinder\nmode hydraulic\npart T1 tank\npart P1 pump\npart V1 valve\npart C1 cylinder\nwire T1 P1\nwire P1 V1\nwire V1 C1\nwire V1 T1\nEND", kind: "SCHEMATIC", q: "Draw a hydraulic circuit: a pump takes oil from a tank and feeds a cylinder through a valve, and the oil returns to the tank.",
+      check: function (p) {
+        var t = types(p);
+        if (p.mode !== "hydraulic") return "not a hydraulic diagram";
+        var miss = ["pump", "tank", "valve", "cylinder"].filter(function (x) { return !count(t, x); });
+        if (miss.length) return "missing: " + miss.join(", ");
+        return linked(p) ? "" : "not all parts are connected";
+      } },
+    { id: "make-house", ideal: "MAKE DRAWING: House\nrect 5 6 10 5 fill tan\ntri 4 6 10 2 16 6 fill red\nrect 9 8 2 3 fill brown\nEND", kind: "DRAWING", q: "Draw a simple house with a red roof and a door.",
+      check: function (p) {
+        if (p.shapes.length < 3) return "fewer than 3 shapes";
+        if (!p.shapes.some(function (s) { return /^(tri|triangle)$/.test(s.kind) && (RED.test(s.fill || "") || RED.test(s.color || "")); })) return "no red roof (a red triangle)";
+        return p.shapes.some(function (s) { return /^(rect|square)$/.test(s.kind); }) ? "" : "no rectangle for the house or door";
+      } },
+    { id: "make-sun-sea", ideal: "MAKE DRAWING: Sun over the sea\nrect 0 8 20 4 fill blue\ncircle 10 4 2 fill yellow\nEND", kind: "DRAWING", q: "Draw a yellow sun above a blue sea.",
+      check: function (p) {
+        var sun = p.shapes.filter(function (s) { return s.kind === "circle" && (YELLOW.test(s.fill || "") || YELLOW.test(s.color || "")); })[0];
+        if (!sun) return "no yellow sun (a yellow circle)";
+        var sea = p.shapes.filter(function (s) { return s.kind !== "text" && (BLUE.test(s.fill || "") || BLUE.test(s.color || "")); })[0];
+        if (!sea) return "no blue sea";
+        var seaTop = sea.kind === "circle" ? sea.nums[1] - sea.nums[2] : Math.min.apply(null, sea.nums.filter(function (v, i) { return i % 2 === 1 && (sea.kind !== "rect" || i === 1); }));
+        return sun.nums[1] < seaTop ? "" : "the sun is not above the sea";
+      } },
+    { id: "make-shopping", ideal: "MAKE SHEET: Shopping\nItem | Qty | Price | Cost\nBread | 2 | 1.50 | =B2*C2\nMilk | 1 | 0.99 | =B3*C3\nEggs | 12 | 0.25 | =B4*C4\nTotal | | | =SUM(D2:D4)\nEND", quick: 1, kind: "SHEET", q: "Make a table of my shopping: 2 loaves of bread at 1.50 each, 1 milk at 0.99, and 12 eggs at 0.25 each, with the cost of each line and a total.",
+      check: function (p) {
+        if (!p.formulas) return "no formulas: the sheet should work out the costs";
+        var v = nums(p);
+        if (!has(v, 3) || !has(v, 0.99)) return "the line costs are not there (3, 0.99, 3)";
+        return has(v, 6.99) ? "" : "no total of 6.99";
+      } },
+    { id: "make-temperatures", ideal: "MAKE SHEET: Celsius to Fahrenheit\nCelsius | Fahrenheit\n0 | =A2*9/5+32\n10 | =A3*9/5+32\n20 | =A4*9/5+32\n30 | =A5*9/5+32\n40 | =A6*9/5+32\nEND", kind: "SHEET", q: "Make a table converting 0, 10, 20, 30 and 40 degrees Celsius to Fahrenheit.",
+      check: function (p) {
+        if (!p.formulas) return "no formulas: the sheet should work out the conversions";
+        var v = nums(p), miss = [32, 50, 68, 86, 104].filter(function (x) { return !has(v, x); });
+        return miss.length ? "missing " + miss.join(", ") + " \u00b0F" : "";
+      } }
+  ].forEach(function (x) {
+    x.cat = "make";
+    if (!Q.some(function (y) { return y.id === x.id; })) Q.push(x);
+  });
+})();
+// ===========================================================================
+// MODULE: AI_MAKE_BENCH_DATA - END
 // ===========================================================================
 </script>
 
