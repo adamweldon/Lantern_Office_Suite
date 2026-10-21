@@ -253,6 +253,24 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   // and a conversion worked out and then done backwards by hand
   ok("check: dividing by 1 stands in for a missing number too", CK.timesOne("=60/1") && CK.timesOne("=ANS/1") &&
     !CK.timesOne("=60/10") && !CK.timesOne("=60/1000") && !CK.timesOne("=60/1.5"));
+  // 1.9.7: bench run 7 (35B): =ANS1+ANS2 for two separate results
+  var pb = "=60*5/1000\n=100*5/1000\n=ANS1+ANS2\n=ANS3*30\n=ANS4*0.15";
+  ok("ANS1, ANS2 ... name earlier lines' results", Math.abs(A.run(pb).value - 3.6) < 1e-9 && A.run(pb).steps.every(function (x) { return x.ok; }) &&
+    A.run("=2\n=3\n=ANS1*10+ANS").value === 23);
+  ok("ANSn says what is wrong: a line not yet worked out, or one that failed", /ANS3 is not a line before this one \(there are 2\)/.test(A.run("=2\n=3\n=ANS3").steps[2].err) &&
+    /ANS1 has no result: line 1 failed/.test(A.run("=FOO(1)\n=ANS1*2").steps[1].err) &&
+    /Unknown name ANS1/.test((function () { try { L.formula.evaluate("ANS1+1", { ans: 0 }); return ""; } catch (e) { return e.message; } })()));
+  ok("the prompts tell the AI about ANS1 and ANS2", /ANS1 the first line's, ANS2 the second's/.test(A.buildPrompt("q", [])) &&
+    /ANS1 the first line's, ANS2/.test(L.CHAT.buildSystem("A 12 V pump draws 5 A. How many watts?")));
+  ok("check: a line named by ANSn is used; a numbered ANS written twice is not a slip", !CK.unusedSteps(pb).length &&
+    CK.unusedSteps("=60*5/1000\n=100*5/1000\n=ANS2*30").length === 1 && !CK.repeatedStep("=5\n=ANS1*2\n=ANS1*2") &&
+    CK.repeatedStep("=150/10\n=420/ANS\n=420/ANS") === "420/ANS");
+  ok("a recipe's blanks left in say so", /the recipe's blanks \{ah\}, \{v\}, \{w\} were left in/.test(A.run("=({ah}*{v})/{w}").steps[0].err) &&
+    A.run("=({100}*{12})/{60}").value === 20);
+  var pq = "A 60 W bulb and a 100 W TV each run 5 hours a day. Electricity costs 0.15 dollars per kWh. What does that cost over 30 days, in dollars?";
+  var pr = await A.solve(pq, { call: function () { return Promise.resolve(pb + "\nANSWER: The cost over 30 days is {result} dollars."); } });
+  ok("run 7's power-bill reply now runs, unquestioned, in one round", pr.rounds === 1 && Math.abs(pr.run.value - 3.6) < 1e-9 && !pr.flags.length && !pr.kind &&
+    L.aiBench.grade(L.aiBenchQuestions.filter(function (x) { return x.id === "power-bill"; })[0], pr.text, pr).pass, pr);
   var mq = "How many hours does it take to drive 26 miles at 40 km/h?";
   ok("check: a conversion of a given number that nothing uses", CK.unusedSteps("=CONVERT(26,\"mile\",\"km\")\n=26/1.609344\n=26/1.609344/40", mq).length === 1 &&
     !CK.unusedSteps("=CONVERT(26,\"mile\",\"km\")\n=ANS/40", mq).length &&

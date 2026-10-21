@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.9.6 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.9.7 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -105,7 +105,10 @@
 //      for explanation questions; Lantern.libraryGround(text, sources,
 //      question) -> sentence-by-sentence check of a prose answer, with
 //      Lantern.libraryGroundView(g); Lantern.libraryRenumber, libraryVerify,
-//      assistSourcesView (LIBRARY_ENGINE, LIBRARY_CHECKS).
+//      assistSourcesView; Lantern.libraryPointer(question, sources) ->
+//      {n, text, prompt}|null -- the passage sentence that looks like the
+//      answer, shown to the AI once when it declines with passages in front
+//      of it (LIBRARY_ENGINE, LIBRARY_CHECKS).
 //    Prefer a hook over editing a big module.
 // 11. ISOLATION: every extension module must be droppable. Open with
 //    var L = window.Lantern; if (!L || !L.el) return; -- feature-detect every
@@ -122,7 +125,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.9.6",
+  version: "1.9.7",
   apps: {},
   order: []
 };
@@ -1025,6 +1028,16 @@ Lantern.formula = (function () {
           return cv == null || cv === "" ? 0 : num(cv);
         }
         if (name in CONST) return CONST[name];
+        // ANS1, ANS2 ... = the result of the 1st, 2nd ... line of a worked
+        // answer (Assist and Chat pass ctx.ansList; the 35B wrote
+        // =ANS1+ANS2 for two separate results in bench run 7).
+        var ansN = /^ANS(\d{1,2})$/.exec(name);
+        if (ansN && ctx.ansList) {
+          var k = +ansN[1], av = ctx.ansList[k - 1];
+          if (k < 1 || k > ctx.ansList.length) throw new Error(name + " is not a line before this one (there " + (ctx.ansList.length === 1 ? "is 1" : "are " + ctx.ansList.length) + ")");
+          if (typeof av !== "number") throw new Error(name + " has no result: line " + k + " failed");
+          return av;
+        }
         throw new Error("Unknown name " + name);
       }
       throw new Error("Unexpected " + t.v);
@@ -15970,18 +15983,21 @@ Lantern.RFB = (function () {
   };
   A.run = function (text) {
     var lines = String(text || "").replace(/\r/g, "").split("\n");
-    var steps = [], last = 0, i;
+    var steps = [], last = 0, vals = [], i;
     for (i = 0; i < lines.length; i++) {
       var t = lines[i].replace(/^\s+|\s+$/g, "");
       if (t.charAt(0) !== "=") continue;
       // Small models sometimes keep a recipe's {braces}: ({100}*{12}) -> (100*12).
+      // Braces around names ({ah}*{v}) mean the blanks were never filled in.
+      var blanks = t.match(/\{\s*[A-Za-z_][A-Za-z_ ]*\}/g);
       var expr = t.slice(1).replace(/\{\s*([^{}]*?)\s*\}/g, "$1");
       try {
-        var v = Lantern.formula.evaluate(expr, { deg: false, ans: last });
+        var v = Lantern.formula.evaluate(expr, { deg: false, ans: last, ansList: vals.slice() });
         steps.push({ expr: expr, ok: true, value: v });
-        last = v;
+        last = v; vals.push(v);
       } catch (e) {
-        steps.push({ expr: expr, ok: false, err: e.message || "error" });
+        steps.push({ expr: expr, ok: false, err: blanks ? "the recipe's blanks " + blanks.join(", ") + " were left in: put the question's numbers in their place" : e.message || "error" });
+        vals.push(null);
       }
     }
     return { steps: steps, value: steps.length && steps[steps.length - 1].ok ? last : null };
@@ -16006,7 +16022,8 @@ Lantern.RFB = (function () {
     out.push("- Use ONLY the functions listed below. Their units are SI (metres, kilograms, seconds)");
     out.push("  and angles RADIANS unless a function says otherwise. Use CONVERT only to change units.");
     out.push("- Write each step on its own line starting with = (run in order; ANS is the previous");
-    out.push("  result). The LAST = line must give the number in the unit the question asks for.");
+    out.push("  result, ANS1 the first line's, ANS2 the second's). The LAST = line must give the");
+    out.push("  number in the unit the question asks for.");
     out.push("- Plain arithmetic is right for money, counts, recipes and rates, e.g. =65*35");
     out.push("- To use a recipe, copy its = line and replace each {placeholder} with the value.");
     out.push("- Finish with one line: ANSWER: <sentence with {result} where the number goes>.");
@@ -16216,6 +16233,15 @@ Lantern.RFB = (function () {
         msgs.push({ role: "user", content: lk.prompt });
         out.read = text;
         text = relabel(await turn()); p = A.parseReply(text); run = A.run(p.exprText);
+        // Declined with the passages in front of it: Lantern points at the
+        // sentence that looks like the answer, once (1.9.7).
+        var pt = A.isDecline(p.answer) && !p.exprText && window.Lantern.libraryPointer ? window.Lantern.libraryPointer(question, lk.sources) : null;
+        if (pt) {
+          out.pointed = pt.n;
+          msgs.push({ role: "assistant", content: text });
+          msgs.push({ role: "user", content: pt.prompt });
+          text = relabel(await turn()); p = A.parseReply(text); run = A.run(p.exprText);
+        }
       }
     }
     var flags = questioned(p, run, text);
@@ -16808,7 +16834,8 @@ Lantern.RFB = (function () {
     out.push("You are the reasoning half of an offline toolbench called Lantern. The person asks;");
     out.push("you decide; Lantern computes. Rules: use ONLY the functions listed. SI units, angles");
     out.push("in RADIANS, CONVERT for units. To compute, reply with lines that START with =");
-    out.push("(evaluated in order; ANS holds the previous result). The results come back to you as");
+    out.push("(evaluated in order; ANS holds the previous result, ANS1 the first line's, ANS2 the");
+    out.push("second's). The results come back to you as");
     out.push("a TOOL RESULTS message; then reply with exactly one line 'ANSWER: <sentence with");
     out.push("{result} where the number goes>' -- Lantern puts its computed number there. The last =");
     out.push("line must give the number in the unit you will name. Plain arithmetic is fine for");
@@ -16953,7 +16980,7 @@ Lantern.RFB = (function () {
   C.turn = async function (msgs, q, ui, opts) {
     opts = opts || {};
     var call = opts.call || function (m, o) { return C.callChat(null, null, m, o); };
-    var rec = { q: q, final: "", answer: null, declined: false, value: null, searches: [], self: false, noLibrary: false, contextual: false,
+    var rec = { q: q, final: "", answer: null, declined: false, value: null, searches: [], self: false, noLibrary: false, contextual: false, pointed: null,
       carried: false, sources: null, backed: 0, quotesOk: null, stillDoubt: null, notes: [], rounds: 0, made: null };
     function note(text, cls) { rec.notes.push(text); if (ui.note) ui.note(text, cls || "muted"); }
     function show(fn) { if (ui.node) ui.node(fn); }
@@ -16970,7 +16997,7 @@ Lantern.RFB = (function () {
       for (i = 0; i < hints.length && i < 3; i++) hl.push(hints[i].ask + " -> " + hints[i].compose);
       content += "\n\n[Recipe hints]\n" + hl.join("\n");
     }
-    var lastValue = null, questioned = false, stillDoubt = null, looked = false, sources = null, detail = false, nudged = false, showed = false, steered = false;
+    var lastValue = null, questioned = false, stillDoubt = null, looked = false, sources = null, detail = false, nudged = false, showed = false, steered = false, pointed = false;
     currentQ = q;
     rec.self = A.aboutSelf(q); rec.noLibrary = A.noLibrary(q); rec.contextual = A.dependsOnContext(q, history);
     var ownWords = rec.self || rec.noLibrary;
@@ -17008,7 +17035,7 @@ Lantern.RFB = (function () {
     if (ui.status) ui.status("thinking\u2026");
     // What the person has said so far (for Lantern's checks), without the
     // passages and notes Lantern added.
-    var said = msgs.filter(function (m) { return m.role === "user" && typeof m.content === "string" && !/^(TOOL RESULTS|Lantern questioned|Lantern checked|LIBRARY:|The LIBRARY|This is not)/.test(m.content); })
+    var said = msgs.filter(function (m) { return m.role === "user" && typeof m.content === "string" && !/^(TOOL RESULTS|Lantern questioned|Lantern checked|LIBRARY:|The LIBRARY|This is not|Passage \[\d+\] says)/.test(m.content); })
       .map(function (m) { return String(m.content).split("\n\n[Recipe hints]")[0].split("\n\n(Lantern:")[0].replace(LIBRE, ""); }).join("\n");
     var rounds;
     for (rounds = 0; rounds < 6; rounds++) {   // tools or library, answer, one correction
@@ -17082,6 +17109,17 @@ Lantern.RFB = (function () {
         }
         if (parsed.lookup) {
           msgs.push({ role: "user", content: "The offline library has nothing on that. Reply with the ANSWER line only." });
+          continue;
+        }
+      }
+      // It declined with short passages in front of it, and one sentence
+      // there looks like the answer: Lantern points at it, once (1.9.7).
+      if (sources && !detail && !pointed && !parsed.exprText && A.isDecline(parsed.answer) && window.Lantern.libraryPointer) {
+        var pt = window.Lantern.libraryPointer(q, sources);
+        if (pt) {
+          pointed = true; rec.pointed = pt.n;
+          note("The AI said the library has nothing on this, but passage [" + pt.n + "] looks like the answer; Lantern pointed it out\u2026");
+          msgs.push({ role: "user", content: pt.prompt });
           continue;
         }
       }
@@ -21274,10 +21312,14 @@ Lantern.RFB = (function () {
         expected: g.expected == null ? null : g.expected, parsed: !!g.parsed, why: g.why || "",
         claim: g.claim || null, by: err ? null : (byRule ? "rule" : "model"), fresh: !!item.fresh, hard: !!item.hard,
         rounds: res ? res.rounds : null, fixed: res ? res.fixed : false, retry: res ? res.kind || "" : "",
-        library: res && res.sources ? { query: res.lookup, sources: res.sources.map(function (s) { return s.title; }) } : null,
+        library: res && res.sources ? { query: res.lookup, sources: res.sources.map(function (s) { return s.title; }),
+          pointed: res.pointed || undefined,
+          // what the AI read, kept when it got the question wrong, so a
+          // decline can be told apart from a passage without the answer (1.9.7)
+          passages: g.pass ? undefined : res.sources.map(function (s) { return String(s.text || "").slice(0, 1500); }) } : null,
         rejected: res && res.rejected ? res.rejected.slice(0, 300) : "", flags: res && res.flags ? res.flags : [],
         chat: res && res.turns ? res.turns.map(function (t) { return { q: t.q, searches: t.searches, self: t.self, noLibrary: t.noLibrary,
-          contextual: t.contextual, carried: t.carried, declined: t.declined, rounds: t.rounds, reply: String(t.final).slice(0, 500) }; }) : undefined,
+          contextual: t.contextual, carried: t.carried, declined: t.declined, pointed: t.pointed || undefined, rounds: t.rounds, reply: String(t.final).slice(0, 500) }; }) : undefined,
         ms: Date.now() - t0, tokens: err ? null : toks, tps: err || !toks ? null : Math.round(toks / Math.max(0.001, secs) * 10) / 10,
         reply: String(text).slice(0, item.cat === "make" ? 1500 : 600), first: res && res.rounds > 1 ? String(res.first).slice(0, item.cat === "make" ? 1500 : 600) : undefined };
       rows.push(row);
@@ -21530,7 +21572,8 @@ Lantern.RFB = (function () {
   // ("=40*5" then "=2000/2000": the 200 was meant to be the divisor; or
   // "=60*5/1000", "=100*5/1000", "=ANS+ANS": ANS is only the line just
   // before, so the first step is lost). A step is used when the next line
-  // takes ANS, or a later line repeats it or its number. Only steps with
+  // takes ANS, a later line names it (ANS1 for the first line, 1.9.7), or a
+  // later line repeats it or its number. Only steps with
   // arithmetic count, or a function applied to one of the question's own
   // numbers ("=CONVERT(26,"mile","km")" and then "=26/1.609344/40": the
   // conversion was worked out, then done backwards by hand -- run 6);
@@ -21543,7 +21586,8 @@ Lantern.RFB = (function () {
       var arith = /[0-9)][-+*\/][0-9(A-Z]/i.test(l.replace(/\x22[^\x22]*\x22/g, ""));
       var onGiven = /^[A-Z]+\(/i.test(l) && numbersIn(l).some(function (x) { return given.some(function (g) { return same(g, x); }); });
       if (!arith && !onGiven) continue;
-      if (/ANS/i.test(ls[i + 1])) continue;
+      if (/\bANS\b/i.test(ls[i + 1])) continue;
+      if (new RegExp("\\bANS" + (i + 1) + "\\b", "i").test(later)) continue;
       if (later.indexOf(l) !== -1) continue;
       try { v = L.formula.evaluate(l, { deg: false, ans: 0 }); } catch (e) { continue; }
       if (numbersIn(later).some(function (x) { return same(x, v); })) continue;
@@ -21553,9 +21597,10 @@ Lantern.RFB = (function () {
   }
   // repeatedStep(expr) -> a line that uses ANS written twice in a row: the
   // second one works on the first one's result ("=420/ANS" twice). (Run 5.)
+  // A numbered ANS1 names a fixed line, so repeating it changes nothing.
   function repeatedStep(expr) {
     var ls = lines(expr), i;
-    for (i = 1; i < ls.length; i++) if (ls[i] === ls[i - 1] && /ANS/i.test(ls[i])) return ls[i];
+    for (i = 1; i < ls.length; i++) if (ls[i] === ls[i - 1] && /\bANS\b/i.test(ls[i])) return ls[i];
     return "";
   }
   // extraTimeStep(question, expr) -> a time factor (24, 60, 3600, 86400) the
@@ -21619,7 +21664,7 @@ Lantern.RFB = (function () {
     var u = unusedSteps(expr, question);
     if (!u.length) return null;
     return u.map(function (x) { return "=" + x.step + " (" + (Math.round(x.value * 1e6) / 1e6) + ")"; }).join(" and ") +
-      (u.length > 1 ? " are" : " is") + " worked out but never used afterwards (ANS is only the line just before); check the arithmetic";
+      (u.length > 1 ? " are" : " is") + " worked out but never used afterwards (ANS is only the line just before; ANS1, ANS2 name earlier lines); check the arithmetic";
   });
   add("repeated-step", function (question, expr) {
     var r = repeatedStep(expr);
@@ -22137,6 +22182,8 @@ Lantern.RFB = (function () {
       "<code>start-lantern</code>. When a question needs a fact, the AI asks Lantern to look it up (or says it does not know); Lantern " +
       "searches the library, gives the AI short numbered passages, and the AI answers with [n] citations and QUOTE lines. Lantern checks " +
       "that every quote is really in its passage and every number in the answer is in a cited passage, and shows the sources with links. " +
+      "If the AI says <b>Not in my library</b> while a passage holds a sentence that fits (\u201cIts height was measured \u2026 as 8,848.86 m\u201d " +
+      "for \u201cHow tall is Mount Everest?\u201d), Lantern shows it that sentence once and lets it decide. " +
       "See and test it in the AI app under <b>Offline library</b>.</p>" +
       "<p><b>Explanation questions in Chat</b> (\u201cexplain\u201d, \u201cin detail\u201d, \u201chow does\u201d) are read <b>before</b> the AI " +
       "answers, with a bigger reading allowance, so it reasons with the passages in front of it. Lantern then checks the answer sentence by " +
@@ -22237,7 +22284,9 @@ Lantern.RFB = (function () {
 //          kiwix-serve that the USB kit starts next to the model server.
 // Exports: Lantern.library (endpoint, setEndpoint, detect, ready, keywords,
 //          search, read, passage, lookup, prompt, families, wantsDetail,
-//          onChange, state), Lantern.assistLookup(question, query) ->
+//          pointer, onChange, state), Lantern.libraryPointer(question,
+//          sources) -> {n, text, prompt}|null (the sentence that looks like
+//          the answer, for a decline), Lantern.assistLookup(question, query) ->
 //          Promise<{query, sources, prompt}> used by Assist
 //          (Lantern.assist.solve) and Chat; Lantern.chatReadFirst(question,
 //          query) -> Promise<{query, sources, prompt, detail, book}|null> (Chat
@@ -22528,6 +22577,36 @@ Lantern.RFB = (function () {
     keys.forEach(function (k) { if (low.indexOf(k) >= 0) s++; });
     return s;
   }
+  // Words that ask for a measure, and the words articles use for it.
+  var ASPECT = [
+    { q: ["tall", "high", "highe", "heigh", "eleva", "altit"], t: ["heigh", "eleva", "altit", "tall"] },
+    { q: ["long", "lengt"], t: ["lengt"] }, { q: ["far", "dista"], t: ["dista"] },
+    { q: ["deep", "depth"], t: ["depth", "deep"] }, { q: ["wide", "width"], t: ["width", "wide"] },
+    { q: ["big", "large", "area", "size"], t: ["area", "size"] }, { q: ["heavy", "weigh", "mass"], t: ["weigh", "mass"] },
+    { q: ["popul", "inhab"], t: ["popul", "inhab"] }, { q: ["hot", "cold", "tempe"], t: ["tempe", "\u00b0c", "\u00b0f"] },
+    { q: ["fast", "speed"], t: ["speed", "km/h", "mph"] }];
+  var QUANT = /\bhow (tall|high|long|far|deep|wide|big|large|heavy|old|many|much|hot|cold|fast)\b|\b(what|which) year\b|\bwhen (was|were|did|is|does)\b|\bwhat is the (height|length|population|area|distance|depth|width|weight|mass|elevation|temperature|speed|size|age)\b/i;
+  function subjectOf(title) { var sub = {}; LIB.keywords(title || "").forEach(function (w) { sub[stem(w)] = 1; }); return sub; }
+  // groups(keys, sub) -> [{t: [text stems], w: weight, subject}]: one group a
+  // question word (a measure word joins its group once).
+  function groups(keys, sub) {
+    var out = [], used = {};
+    keys.forEach(function (k) {
+      var a = null, j;
+      for (j = 0; j < ASPECT.length; j++) if (ASPECT[j].q.indexOf(k) >= 0) a = j;
+      if (a != null) { if (used[a]) return; used[a] = 1; out.push({ t: ASPECT[a].t.concat([k]), w: 1, subject: false }); return; }
+      out.push({ t: [k], w: sub[k] ? 0.25 : 1, subject: !!sub[k] });
+    });
+    return out;
+  }
+  function scorer(words, title, question) {
+    var gs = groups(words.map(stem), subjectOf(title)), num = QUANT.test(String(question || ""));
+    return function (text) {
+      var low = text.toLowerCase(), s = 0;
+      gs.forEach(function (g) { if (g.t.some(function (m) { return low.indexOf(m) >= 0; })) s += g.w; });
+      return s + (num && /\d/.test(text) ? 0.5 : 0);
+    };
+  }
   // passage(doc, words, max) -> the article's first sentence plus the
   // sentences that share the most words with the question, then the rest of
   // the article from the top while there is room; in article order, under
@@ -22538,15 +22617,21 @@ Lantern.RFB = (function () {
   // detail: whole paragraphs instead of sentences (an explanation needs the
   // sentences around a fact), the lead first, then the paragraphs that share
   // most words, each marked with its section.
-  LIB.passage = function (doc, words, max, detail) {
+  // Scores (1.9.7): a word of the article's own title counts a quarter --
+  // nearly every sentence of "Mount Everest" says Everest -- so the words
+  // that say WHAT about it ("tall") decide, together with the words an
+  // article uses for them (height, elevation), and a sentence with a number
+  // gains when the question asks for one.
+  LIB.passage = function (doc, words, max, detail, question) {
     max = max || 1000;
-    var ss = detail ? (doc.paras || []).map(function (p, i) { return { text: p, para: i }; }) : sentences(doc), keys = words.map(stem), i;
+    var ss = detail ? (doc.paras || []).map(function (p, i) { return { text: p, para: i }; }) : sentences(doc), i;
     if (!ss.length) return "";
+    var score = scorer(words, doc.title, question);
     var items = ss.map(function (x, i) {
       return { i: i, text: detail && x.text.length > 900 ? x.text.slice(0, 900).replace(/[^.!?]*$/, "") || x.text.slice(0, 900) : x.text,
-        s: i === 0 ? 1e6 : hitsIn(x.text, keys) * 1000 - i, sec: detail && doc.sec ? doc.sec[x.para] || "" : "" };
+        s: i === 0 ? 1e6 : score(x.text) * 1000 - i, sec: detail && doc.sec ? doc.sec[x.para] || "" : "" };
     });
-    (doc.facts || []).forEach(function (f, j) { items.push({ i: 1e5 + j, text: f + ".", s: hitsIn(f, keys) * 1000 - 500 - j, fact: true }); });
+    (doc.facts || []).forEach(function (f, j) { items.push({ i: 1e5 + j, text: f + ".", s: score(f) * 1000 - 500 - j, fact: true }); });
     items.sort(function (a, b) { return b.s - a.s; });
     // Sentences first, up to three quarters of the room when there are
     // facts; then the facts (at most 6, or 12 for detail); then more
@@ -22564,7 +22649,8 @@ Lantern.RFB = (function () {
     take(function (it) { return !it.fact; }, hasFacts ? Math.round(max * 0.75) : max);
     take(function (it) { return it.fact; }, max);
     take(function (it) { return !it.fact; }, max);
-    pick.sort(function (a, b) { return a.i - b.i; });
+    // sentences in article order; facts after them, the closest first
+    pick.sort(function (a, b) { return a.fact && b.fact ? b.s - a.s : a.i - b.i; });
     var text = "", lastSec = "", factsOn = false;
     pick.forEach(function (x) {
       var pre = "";
@@ -22596,7 +22682,8 @@ Lantern.RFB = (function () {
     out.push("Answer the QUESTION using only these passages. Reply with:");
     out.push("ANSWER: <short answer, with [n] after each fact>");
     out.push("QUOTE [n]: <one sentence copied exactly from passage n>");
-    out.push("If the question also needs a calculation, add = lines that use numbers from the passages,");
+    out.push("A number a passage states (a height, a year, a count) is a fact: write it in the ANSWER with [n].");
+    out.push("Only if the question needs a calculation, add = lines that use numbers from the passages,");
     out.push("and put {result} in the ANSWER where the computed number goes.");
     out.push("If the passages do not answer it, reply exactly: ANSWER: Not in my library.");
     out.push("");
@@ -22619,11 +22706,16 @@ Lantern.RFB = (function () {
       var k = h.book + "/" + h.path;
       if (!seen[k] && cands.length < 14) { seen[k] = 1; h.pos = cands.length; h.fromQuestion = true; cands.push(h); }
     });
-    var words = LIB.keywords(q + " " + question), keys = words.map(stem), qstems = LIB.keywords(q).map(stem), read = [];
+    var words = LIB.keywords(q + " " + question), keys = words.map(stem), qstems = LIB.keywords(q).map(stem), read = [], had = {};
     for (i = 0; i < cands.length && read.length < 10; i++) {
       try {
-        var doc = await LIB.read(cands[i]), text = LIB.passage(doc, words, max, detail);
+        var doc = await LIB.read(cands[i]), text = LIB.passage(doc, words, max, detail, question);
         if (!text) continue;
+        // One article reached by two names (a redirect: "Everest" and
+        // "Mount Everest", "Seasons" and "Season") is read once (run 7).
+        var same = String(doc.title || cands[i].title).toLowerCase() + "|" + String((doc.paras || [])[0] || "").slice(0, 120);
+        if (had[same]) continue;
+        had[same] = 1;
         var h = cands[i];
         h.rank = LIB.relevance(doc, keys) * 10 + (h.exact ? (h.words > 1 ? 15 : 6) : 0) + titleScore(doc.title || h.title, qstems) * 4 -
           (h.pos || 0) * 0.3;
@@ -22640,6 +22732,40 @@ Lantern.RFB = (function () {
     return { query: q, sources: sources, detail: detail, book: sources.length ? label[sources[0].book] || "" : "",
       prompt: sources.length ? LIB.prompt(question, sources, q, detail) : "" };
   };
+  // pointer(question, sources) -> {n, text, prompt} or null: the sentence
+  // (or infobox fact) in passage n that holds every word of the question
+  // beyond its subject -- "height" for "How tall is Mount Everest?" -- and
+  // a number when the question asks for one. Lantern shows it to the AI once
+  // when it declines with the passages in front of it (run 7: the 35B said
+  // "Not in my library" with Everest's height in passage 1). Never for a
+  // question about the person's own situation ("my town", "next month"),
+  // which no encyclopedia answers, nor for an explanation ("why", "how
+  // does"), whose answer is never one sentence.
+  var PERSONAL = /\b(my|our|your|me|nearest|near me|right now|today|tonight|tomorrow|currently|next (week|month|year)|this (week|month|year))\b/i;
+  LIB.pointer = function (question, sources) {
+    if (!sources || !sources.length || PERSONAL.test(String(question || "")) || LIB.wantsDetail(question)) return null;
+    var words = LIB.keywords(question), keys = words.map(stem), num = QUANT.test(String(question || "")), hit = null;
+    sources.forEach(function (src) {
+      if (hit) return;
+      var sub = subjectOf(src.title), gs = groups(keys, sub), want = gs.filter(function (g) { return !g.subject; });
+      if (!want.length || want.length === gs.length) return;   // nothing beyond the subject, or not about the subject
+      String(src.text || "").replace(/^Facts from the infobox:\s*/, "").replace(/\s+Facts from the infobox:\s*/, " ")
+        .replace(/([.!?])\s+(?=[A-Z0-9\x22\x27(\u201c])/g, "$1\n").split("\n").forEach(function (t) {
+          t = t.replace(/^\s*\([^)]{1,60}\)\s*/, "").replace(/^\s+|\s+$/g, "");
+          if (hit || t.length < 12) return;
+          var low = t.toLowerCase();
+          if (!want.every(function (g) { return g.t.some(function (m) { return low.indexOf(m) >= 0; }); })) return;
+          if (num && !/\d/.test(t)) return;
+          hit = { n: src.n, text: t };
+        });
+    });
+    if (!hit) return null;
+    hit.prompt = "Passage [" + hit.n + "] says: \u201c" + hit.text + "\u201d\n" +
+      "If that answers the QUESTION, reply with ANSWER: <short answer with [" + hit.n + "]> and a line QUOTE [" + hit.n + "]: <that sentence, copied exactly>.\n" +
+      "If it does not, reply exactly: ANSWER: Not in my library.\n\nQUESTION: " + question;
+    return hit;
+  };
+  window.Lantern.libraryPointer = function (question, sources) { return LIB.pointer(question, sources); };
   window.Lantern.assistLookup = function (question, query, opts) {
     return LIB.ready() ? LIB.lookup(question, query, opts) : Promise.resolve(null);
   };

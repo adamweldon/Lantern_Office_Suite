@@ -37,6 +37,11 @@ Object.keys(SYN).forEach(function (k) {
   ARTICLES[BOOK2 + "/" + k] = { book: BOOK2, path: k, title: t, text: (t + " " + SYN[k]).toLowerCase(),
     html: "<html><head><title>" + t + "</title></head><body><div id=\"mw-content-text\"><p>" + SYN[k] + "</p></div></body></html>" };
 });
+// A redirect: kiwix-serve gives the article for "Everest" under its own
+// path, so one article came back twice ("Mount Everest", "Mount Everest" --
+// run 7, 1.9.6).
+ARTICLES[BOOK2 + "/Everest"] = { book: BOOK2, path: "Everest", title: "Everest", text: ARTICLES[BOOK2 + "/Mount_Everest"].text,
+  html: ARTICLES[BOOK2 + "/Mount_Everest"].html };
 // A third book: the same encyclopedia in full ("nopic"), whole articles
 // with sections, for detail questions (1.9.4).
 var BOOK3 = "wikipedia_en_all_nopic_2026-09", FULL = {
@@ -385,8 +390,59 @@ function firstSentence(body, n) {
     var got = await top(cases[ci][0], cases[ci][1]);
     ok("run-5 miss fixed: " + cases[ci][1] + " -> " + cases[ci][2] + " in the first " + cases[ci][3], got.slice(0, cases[ci][3]).indexOf(cases[ci][2]) >= 0, got);
   }
-  var evp = (await LIB.lookup("How tall is Mount Everest?", "Mount Everest height")).sources[0].text;
+  libCalls = [];
+  var evl = await LIB.lookup("How tall is Mount Everest?", "Mount Everest height"), evp = evl.sources[0].text;
   ok("passage keeps the sentence that answers", /8,849 metres/.test(evp), evp);
+  ok("one article reached by two names (a redirect) is given once", libCalls.some(function (u) { return /\/content\/Everest$/.test(u); }) &&
+    evl.sources.filter(function (x) { return x.title === "Mount Everest"; }).length === 1, { s: evl.sources.map(function (x) { return x.title + " " + x.path; }) });
+
+  // --- 1.9.7: run 7 (35B, 1.9.6, 80/82) -- it declined Everest's height ---
+  var EV = { title: "Mount Everest", paras: [
+    "Mount Everest (known locally as Sagarmatha in Nepal and Qomolangma in Tibet) is Earth's highest mountain above sea level. It lies in the Mahalangur Himal sub-range of the Himalayas and marks part of the China-Nepal border at its summit. Its height was most recently measured in 2020 through a joint survey by Nepalese and Chinese authorities as 8,848.86 m (29,031 ft 8+1/2 in).",
+    "Mount Everest attracts many climbers, including highly experienced mountaineers. There are two main climbing routes, one approaching the summit from the southeast in Nepal (known as the standard route) and the other from the north in Tibet. While not posing substantial technical climbing challenges on the standard route, Everest presents dangers such as altitude sickness, weather, and wind, as well as hazards from avalanches and the Khumbu Icefall. As of May 2024, 340 people have died on Everest. Over 200 bodies remain on the mountain and have not been removed due to the dangerous conditions.",
+    "The first recorded efforts to reach Everest's summit were made by British mountaineers. As Nepal did not allow foreigners into the country at the time, the British made several attempts on the North Ridge route from the Tibetan side. The 1924 expedition resulted in one of the greatest mysteries on Everest to this day: George Mallory and Andrew Irvine made a final summit attempt on 8 June but never returned. Tenzing Norgay and Edmund Hillary made the first documented ascent of Everest in 1953, using the southeast ridge route. Mount Everest climbing permits from the Nepalese government cost mountaineers a large fee. Everest base camps on both sides of the mountain draw trekkers and mountaineers every spring."],
+    facts: ["Prominence: Ranked 1st (Special definition for Everest)", "Etymology: George Everest", "Native name: Sagarmatha (Nepali); Qomolangma (Tibetan)",
+      "Listing: Eight-thousander, Seven Summits, Country high point", "Isolation: n/a", "Countries: Nepal and China", "Elevation: 8,848.86 m (29,031.7 ft) Ranked 1st"] };
+  var evq = "How tall is Mount Everest?", evText = LIB.passage(EV, LIB.keywords("Mount Everest height " + evq), 1000, false, evq);
+  ok("passage: the words that say what about the subject decide, not the subject's own name", /Its height was most recently measured/.test(evText) &&
+    /Facts from the infobox: Elevation: 8,848\.86 m/.test(evText), evText.slice(500));
+  ok("passage: a quantity question prefers sentences with numbers", !/attracts many climbers/.test(evText) && /340 people/.test(evText), evText);
+  ok("prompt: a number a passage states is a fact, not a calculation", /A number a passage states \(a height, a year, a count\) is a fact/.test(L.library.prompt("q", [{ n: 1, title: "T", text: "x" }], "x")));
+  var evSrc = [{ n: 1, title: "Mount Everest", text: evText }, { n: 2, title: "1952 Swiss Mount Everest expedition", text: "The 1952 Swiss Mount Everest expedition reached 8,595 m." }];
+  var pt = L.libraryPointer(evq, evSrc);
+  ok("pointer: the sentence with the measure and a number", pt && pt.n === 1 && /^Its height was most recently measured/.test(pt.text) &&
+    /^Passage \[1\] says: \u201cIts height/.test(pt.prompt) && /QUESTION: How tall is Mount Everest\?$/.test(pt.prompt) && /Not in my library/.test(pt.prompt), pt);
+  ok("pointer: none for a person's own situation, an explanation, another subject, or a subject alone",
+    !L.libraryPointer("What will the price of rice be next month?", [{ n: 1, title: "Rice", text: "The price of rice rose next month in 2008." }]) &&
+    !L.libraryPointer("Who is the mayor of my town right now?", [{ n: 1, title: "Mayor", text: "A mayor leads the town council of a town, elected every 4 years." }]) &&
+    !L.libraryPointer("Why is Mount Everest so tall?", evSrc) &&
+    !L.libraryPointer("How tall is the Eiffel Tower?", evSrc) &&
+    !L.libraryPointer("What is Mount Everest?", evSrc));
+  ok("pointer: a fact from the infobox when no sentence has it", (function () {
+    var r = L.libraryPointer("How tall is Mount Everest?", [{ n: 1, title: "Mount Everest", text: "Mount Everest is Earth's highest mountain above sea level. Facts from the infobox: Etymology: George Everest. Elevation: 8,848.86 m (29,031.7 ft) Ranked 1st." }]);
+    return r && /^Elevation: 8,848\.86 m/.test(r.text);
+  })());
+  modelReplies = [function () { return "LOOKUP: Mount Everest height"; }, function () { return "ANSWER: Not in my library."; },
+    function (m) { var last = m[m.length - 1].content; return /^Passage \[1\] says: \u201cIts elevation of 8,849 metres/.test(last) ?
+      "ANSWER: Mount Everest is 8,849 metres tall [1].\nQUOTE [1]: Its elevation of 8,849 metres was set in 2020 by the Chinese and Nepali authorities." : "?"; }];
+  var rp = await A.solve(evq, { call: call });
+  ok("solve: a decline with the answer in front of it gets one pointer turn", rp.pointed === 1 && rp.rounds === 3 && /8,849 metres/.test(rp.parsed.answer) &&
+    !rp.flags.length && L.aiBench.grade(L.aiBenchQuestions.filter(function (x) { return x.id === "everest-height"; })[0], rp.text, rp).pass, rp);
+  modelReplies = [function () { return "LOOKUP: Mount Everest height"; }, function () { return "ANSWER: Not in my library."; }, function () { return "ANSWER: Not in my library."; }];
+  var rq = await A.solve(evq, { call: call });
+  ok("solve: the AI may still decline after the pointer; only one pointer", rq.pointed === 1 && rq.rounds === 3 && /not in my library/i.test(rq.parsed.answer), rq);
+  modelReplies = [function () { return "LOOKUP: Who is the mayor"; }, function () { return "ANSWER: Not in my library."; }];
+  var rr = await A.solve("Who is the mayor of my town right now?", { call: call });
+  ok("solve: no pointer for a question about the person's own place", !rr.pointed && rr.rounds <= 2, rr);
+  go("chat"); await sleep(30);
+  var cb = logText().length;
+  modelReplies = ["LOOKUP: Mount Everest height", "ANSWER: Not in my library.", function (body) {
+    var last = body.messages[body.messages.length - 1].content;
+    return /^Passage \[1\] says/.test(last) ? "ANSWER: Mount Everest is 8,849 metres tall [1].\nQUOTE [1]: Its elevation of 8,849 metres was set in 2020 by the Chinese and Nepali authorities." : "?"; }];
+  chatAsk(evq); await sleep(250);
+  var ct = logText().slice(cb);
+  ok("Chat: a decline with the answer in front of it gets one pointer turn", modelCalls.length === 3 && /passage \[1\] looks like the answer/.test(ct) &&
+    /8,849 metres tall/.test(ct) && /\u2713 quote found/.test(ct), { calls: modelCalls.length, t: ct.slice(-600) });
   ok("disambiguation pages are never passages", (await top("Tell me about the Moon", "Moon")).indexOf("Moon (disambiguation)") < 0);
   // --- 1.9.4: the small file and the full text, side by side ---
   threeBooks = true; await LIB.detect();

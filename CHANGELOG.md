@@ -1,5 +1,52 @@
 # Changelog
 
+## 1.9.7 — Run 7: two misses out of 82 (2026-10-21)
+
+Bench run 7 (Qwen3.5 35B-A3B, English Wikipedia mini, 1.9.6) scored
+**80 of 82 (98%)**: core 32/32, fresh 5/5, hard 9/10, library 19/20, things
+made 7/7, conversations 8/8. Both misses were fixable on Lantern's side.
+
+- **Power bill: `ANS1`, `ANS2` now work.** The model added two separate
+  results as `=ANS1+ANS2`, then `=ANS3*30`, `=ANS4*0.15` -- the right
+  working (3.6 dollars), rejected as "Unknown name ANS1", and written the
+  same way on the retry. In Assist and Chat, `ANS1` is now the first line's
+  result, `ANS2` the second's (`ANS` is still the line just before), and the
+  prompts say so. A reference to a line not yet worked out, or to one that
+  failed, says exactly that. In run 5 the same question failed as
+  `=ANS+ANS`; the check that caught it now also knows that a line named by
+  `ANSn` is used.
+- **Everest: a decline with the answer in front of it gets one pointer.**
+  The model said "Not in my library" with Everest's article as passage 1.
+  When a quick fact is declined after reading, and one sentence (or infobox
+  fact) in the passages holds the question's words beyond its subject --
+  "height" or "elevation" for "how tall" -- and a number when the question
+  asks for one, Lantern shows the AI that sentence once and lets it decide.
+  Never for questions about the person's own situation ("my town", "next
+  month"), which no encyclopedia answers, nor for explanations.
+- **Reading prompt:** a number a passage states (a height, a year, a count)
+  is a fact to write with [n]; = lines are only for a calculation. The
+  Assist rules ("every number in the = lines must come from the question")
+  may have made the model think it could not state a height.
+- **Passages:** a word of the article's own title counts a quarter (nearly
+  every sentence of "Mount Everest" says Everest), words that ask for a
+  measure match the words articles use ("tall" -> height, elevation), and a
+  sentence with a number gains when the question asks for one. The infobox
+  fact closest to the question comes first.
+- **One article, one passage.** "Mount Everest", "Season", "Sahara" and
+  "Polio vaccine" each came back twice -- the same article under a second
+  name (a redirect). It is now read once, leaving room for another article.
+- A recipe's blanks left in (`=({ah}*{v})/{w}`, battery-hours' first reply)
+  now say so: "put the question's numbers in their place".
+- **Bench:** a failed library row keeps the passages the AI read, so a
+  decline can be told apart from a passage without the answer; a pointer
+  turn is recorded.
+
+Tested: AI layer 125 (the run-7 power-bill reply runs in one round and
+passes), library 87 (a realistic Everest lead and infobox, a redirect that
+reproduces the duplicate, the pointer in Assist and Chat, and where it must
+stay quiet); every real reply from runs 1-7 replayed through the checks --
+only wrong answers flagged.
+
 ## 1.9.6 — Asking the library the right questions (2026-10-21)
 
 From a 1.9.4 Chat on the 35B with English Wikipedia: the first, clear
