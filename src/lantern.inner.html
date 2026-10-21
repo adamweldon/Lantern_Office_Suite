@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.9.7 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.9.8 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -125,7 +125,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.9.7",
+  version: "1.9.8",
   apps: {},
   order: []
 };
@@ -16997,7 +16997,7 @@ Lantern.RFB = (function () {
       for (i = 0; i < hints.length && i < 3; i++) hl.push(hints[i].ask + " -> " + hints[i].compose);
       content += "\n\n[Recipe hints]\n" + hl.join("\n");
     }
-    var lastValue = null, questioned = false, stillDoubt = null, looked = false, sources = null, detail = false, nudged = false, showed = false, steered = false, pointed = false;
+    var lastValue = null, questioned = false, stillDoubt = null, looked = false, sources = null, detail = false, nudged = false, showed = false, steered = false, pointed = false, madeShown = null;
     currentQ = q;
     rec.self = A.aboutSelf(q); rec.noLibrary = A.noLibrary(q); rec.contextual = A.dependsOnContext(q, history);
     var ownWords = rec.self || rec.noLibrary;
@@ -17048,12 +17048,21 @@ Lantern.RFB = (function () {
       var parsed = A.parseReply(shown);
       var quotes = /^\s*QUOTE\s*\[?\s*\d/im.test(shown);
       rec.final = shown;
-      if (shown && ui.reply) ui.reply(shown);
       // Something to MAKE (a schematic, a drawing, a table): Lantern checks
       // the block (one corrected block when it finds problems), shows it,
       // and -- when the model can see -- shows it the picture once.
       var made = window.Lantern.aiAct ? window.Lantern.aiAct.build(shown, q) : null;
+      // A reply stuck in a loop is shown, and kept for the model, without
+      // the repeats (1.9.8).
+      if (made && made.trimmed) msgs[msgs.length - 1].content = made.trimmed;
+      if (shown && ui.reply) ui.reply(made && made.trimmed ? made.trimmed : shown);
+      if (made && made.runaway) note("The AI\u2019s reply got stuck repeating one line (" + made.runaway.n + " times" +
+        (made.runaway.cut ? ", until it was cut off" : "") + "); Lantern left the repeats out.");
       if (made) {
+        // The corrected block may be worse than the first: keep the last
+        // one that could be drawn.
+        if (made.plan) madeShown = made;
+        else if (questioned && madeShown) { note("The corrected block could not be made either; here is what Lantern could make of the first one."); made = madeShown; }
         rec.made = made;
         if (!made.ok && !questioned) {
           questioned = true;
@@ -22201,7 +22210,10 @@ Lantern.RFB = (function () {
       "the rows with their formulas \u2014 and Lantern does the rest: it places the symbols and draws square wires, scales the picture, " +
       "or lets the sheet work out every formula. Lantern checks the block first (unknown parts, loose wires, a circuit that is not " +
       "closed, a formula that fails or reads an empty cell) and gives the AI one turn to fix it. The result shows in Chat; " +
-      "<b>Open in Draw</b> or <b>Open in Sheets</b> keeps it, to edit and export (your own drawing is kept: Restore previous drawing).</p>" +
+      "<b>Open in Draw</b> or <b>Open in Sheets</b> keeps it, to edit and export (your own drawing is kept: Restore previous drawing). " +
+      "A drawing with some bad lines is still drawn from the good ones, so there is something to open and finish by hand. If the AI " +
+      "gets stuck repeating one line (\u201crect 10 6 1 1\u201d, \u201crect 11 6 1 1\u201d \u2026), Lantern leaves the repeats out and " +
+      "tells it to paint an area as one big shape; if nothing could be drawn, Chat says so. Asking for fewer, bigger shapes helps.</p>" +
       "<p><b>Seeing its drawing:</b> the Qwen3.5 models can look at pictures when the kit has their vision part " +
       "(<code>setup-kit vision</code>, 0.7\u20130.9 GB). Then the AI is shown the finished drawing once and says whether it matches the " +
       "request, or sends a corrected block. The AI app shows \u201csees images\u201d next to the model when it can.</p>"],
@@ -23188,7 +23200,7 @@ Lantern.RFB = (function () {
 //          AI_DRAW and AI_SHEET through the Lantern.aiActions hook
 // Exports: Lantern.aiActions (hook array, created here if absent),
 //          Lantern.aiAct = {find, relevant, prompt, build, solve, view,
-//          lookText, LOOKS}
+//          lookText, LOOKS, runaway, compact}
 // ===========================================================================
 // The AI using Lantern's other apps, the way it already uses the formula
 // engine: it writes a short text block --
@@ -23207,7 +23219,13 @@ Lantern.RFB = (function () {
 // Each action: {id, kind, kinds: ["SCHEMATIC", ...], title, match(q),
 //   prompt: [lines], build(block, ctx) -> {ok, problems, plan, summary,
 //   preview() -> element, open(), openLabel, png() -> data URL or null}}
-// block = {kind, title, lines: [string]}.
+// block = {kind, title, lines: [string], closed (an END was found)}.
+// 1.9.8 (a 35B Chat): a model can get stuck writing the same line with one
+// number counting up ("rect 10 6 1 1 fill blue" ... "rect 119 ...") until
+// its reply is cut off. An action may report that run (runaway()); Lantern
+// then leaves it out, cuts it from the history the model sees again, lists
+// the problems compactly (compact()), and Chat says so plainly when nothing
+// could be made.
 (function () {
   var L = window.Lantern;
   if (!L) return;
@@ -23226,12 +23244,79 @@ Lantern.RFB = (function () {
       var line = raw.replace(/^\s+|\s+$/g, "");
       if (/^\x60\x60\x60/.test(line)) return;   // a code fence
       var m = /^\**\s*MAKE\s+([A-Za-z][A-Za-z ]{1,20}?)\s*:\s*(.*?)\**$/i.exec(line);
-      if (m) { cur = { kind: m[1].toUpperCase(), title: m[2].replace(/^\s+|\s+$/g, ""), lines: [], action: actionFor(m[1]) }; out.push(cur); return; }
+      if (m) { cur = { kind: m[1].toUpperCase(), title: m[2].replace(/^\s+|\s+$/g, ""), lines: [], closed: false, action: actionFor(m[1]) }; out.push(cur); return; }
       if (!cur) return;
-      if (/^END\b/i.test(line)) { cur = null; return; }
+      if (/^END\b/i.test(line)) { cur.closed = true; cur = null; return; }
       if (line) cur.lines.push(line);
     });
     return out;
+  }
+  // runaway(block, bad) -> {from, to, n, first, last, off, cut} or null: the
+  // longest run of 8 or more lines of one shape where a single number steps
+  // the same way each line ("rect 10 6 1 1 fill blue", "rect 11 6 1 1 fill
+  // blue", ... -- the colour may change on the way), or the same line again
+  // and again. A row of fence posts looks like that too, so the run counts
+  // only when the block was cut off (no END), or most of its lines are
+  // bad(line) (off the grid), or it is longer than 30 lines.
+  function numsOf(l) { return (String(l).match(/-?\d+(\.\d+)?/g) || []).map(Number); }
+  function wordOf(l) { return ((/^\s*([A-Za-z]+)/.exec(String(l)) || [])[1] || "").toLowerCase(); }
+  function stepOf(a, b) {   // -> "k:d" when one number moves (or "=" when none does), else null
+    var na = numsOf(a), nb = numsOf(b), diff = [], i;
+    if (!na.length || na.length !== nb.length || wordOf(a) !== wordOf(b)) return null;
+    for (i = 0; i < na.length; i++) if (na[i] !== nb[i]) diff.push(i);
+    if (!diff.length) return "=";
+    return diff.length === 1 ? diff[0] + ":" + (nb[diff[0]] - na[diff[0]]) : null;
+  }
+  function runaway(block, bad) {
+    var ls = block.lines || [], best = null, i = 0, j, st;
+    while (i < ls.length - 1) {
+      st = stepOf(ls[i], ls[i + 1]);
+      if (!st) { i++; continue; }
+      for (j = i + 1; j + 1 < ls.length && stepOf(ls[j], ls[j + 1]) === st; j++) { }
+      if (j - i + 1 >= 8 && (!best || j - i + 1 > best.n)) best = { from: i, to: j, n: j - i + 1 };
+      i = j;
+    }
+    if (!best) return null;
+    var run = ls.slice(best.from, best.to + 1);
+    best.off = bad ? run.filter(function (l) { try { return bad(l); } catch (e) { return false; } }).length : 0;
+    best.cut = !block.closed;
+    if (!best.cut && best.off * 2 <= best.n && best.n <= 30) return null;
+    best.first = run[0]; best.last = run[run.length - 1];
+    return best;
+  }
+  // runawayText(ra, advice) -> the one problem that replaces a run's many.
+  function runawayText(ra, advice) {
+    return "the reply ran away: \u201c" + ra.first + "\u201d was written " + ra.n + " times" +
+      (ra.first !== ra.last ? ", its numbers changing up to \u201c" + ra.last + "\u201d" : "") +
+      (ra.off ? ", " + ra.off + " of them off the grid" : "") + (ra.cut ? ", until the reply was cut off" : "") +
+      ". Lantern left those lines out" + (advice ? ". " + advice : "");
+  }
+  // compact(problems) -> at most 8: three or more lines with the same
+  // complaint ("\u201crect 22 6 1 1\u201d is off the grid", ...) become one entry.
+  function compact(problems) {
+    var groups = [], by = {}, out = [];
+    (problems || []).forEach(function (p) {
+      var m = /^\u201c([^\u201d]*)\u201d(.+)$/.exec(p), key = m ? m[2] : "\u0000" + p;
+      if (!by[key]) { by[key] = { key: key, items: [], quoted: !!m }; groups.push(by[key]); }
+      if (by[key].items.indexOf(m ? m[1] : p) < 0) by[key].items.push(m ? m[1] : p);
+    });
+    groups.forEach(function (g) {
+      if (!g.quoted) { out = out.concat(g.items); return; }
+      if (g.items.length < 3) { g.items.forEach(function (x) { out.push("\u201c" + x + "\u201d" + g.key); }); return; }
+      out.push(g.items.length + " lines, from \u201c" + g.items[0] + "\u201d to \u201c" + g.items[g.items.length - 1] + "\u201d" +
+        (/^:/.test(g.key) ? g.key : "," + g.key.replace(/^ is /, " are ")));
+    });
+    if (out.length > 8) out = out.slice(0, 7).concat(["and " + (out.length - 7) + " more problems like these"]);
+    return out;
+  }
+  // trimmed(text, block, ra) -> the reply without the run (and without a
+  // line cut off mid-way), for the history the model sees on its next turn
+  // and for what Chat shows -- a loop in front of the model tends to start
+  // the loop again.
+  function trimmed(text, b, ra) {
+    var at = String(text).search(/^[ \t]*\**[ \t]*MAKE\s+[A-Za-z]/im), pre = at > 0 ? String(text).slice(0, at) : "";
+    var kept = b.lines.filter(function (l, k) { return (k < ra.from || k > ra.to) && !(ra.cut && k === b.lines.length - 1 && k > ra.to); });
+    return pre + "MAKE " + b.kind + ": " + b.title + "\n" + kept.join("\n") + "\nEND";
   }
   function relevant(q) {
     return ACTS.filter(function (a) { try { return a.match(String(q || "")); } catch (e) { return false; } });
@@ -23258,8 +23343,9 @@ Lantern.RFB = (function () {
     }
     var r;
     try { r = b.action.build(b, { question: q }); } catch (e) { r = { ok: false, problems: ["the block could not be read (" + ((e && e.message) || e) + ")"] }; }
-    r.block = b; r.action = b.action; r.problems = r.problems || [];
+    r.block = b; r.action = b.action; r.problems = compact(r.problems || []);
     r.ok = !r.problems.length;
+    if (r.runaway) r.trimmed = trimmed(text, b, r.runaway);
     return r;
   }
   // The look turn: what the model is told along with the picture.
@@ -23281,7 +23367,7 @@ Lantern.RFB = (function () {
     var made = build(text, q);
     if (made && !made.ok) {
       out.kind = "questioned"; out.rejected = made.problems.join("; ");
-      msgs.push({ role: "assistant", content: text });
+      msgs.push({ role: "assistant", content: made.trimmed || text });
       msgs.push({ role: "user", content: "Lantern checked your MAKE " + made.block.kind + " block: " + out.rejected +
         ".\nReply with the corrected block only (MAKE ... END)." });
       var text2 = await call(msgs); out.rounds++;
@@ -23295,8 +23381,15 @@ Lantern.RFB = (function () {
   // button that opens the result in its app.
   function view(res) {
     var el = L.el, box = el("div", { "class": "la-make", style: "margin:8px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff" });
-    box.appendChild(el("div", { "class": "muted", text: "Lantern made " + (res.action ? res.action.title : "it") + (res.block && res.block.title ? ": " + res.block.title : "") +
-      (res.summary ? " \u2014 " + res.summary : "") }));
+    var what = (res.action ? res.action.title : "it") + (res.block && res.block.title ? ": " + res.block.title : "");
+    // Nothing to show (every line had a problem): say so, not "made".
+    if (!res.plan) {
+      box.appendChild(el("div", { "class": "muted", text: "Lantern could not make " + what }));
+      box.appendChild(el("p", { "class": "danger", text: "\u26a0 Nothing was made: " + (res.problems || []).join("; ") +
+        ". Ask again \u2014 fewer, bigger shapes or rows help." }));
+      return box;
+    }
+    box.appendChild(el("div", { "class": "muted", text: "Lantern made " + what + (res.summary ? " \u2014 " + res.summary : "") }));
     if (res.preview) { try { var pv = res.preview(); if (pv) box.appendChild(pv); } catch (e) { } }
     if (res.problems && res.problems.length)
       box.appendChild(el("p", { "class": "danger", text: "\u26a0 Lantern still questions this: " + res.problems.join("; ") + ". Check it before you use it." }));
@@ -23304,7 +23397,8 @@ Lantern.RFB = (function () {
       el("button", { "class": "primary", text: res.openLabel || "Open", onclick: function () { res.open(); } })]));
     return box;
   }
-  window.Lantern.aiAct = { find: find, relevant: relevant, prompt: prompt, build: build, solve: solve, view: view, lookText: lookText, LOOKS: LOOKS };
+  window.Lantern.aiAct = { find: find, relevant: relevant, prompt: prompt, build: build, solve: solve, view: view, lookText: lookText, LOOKS: LOOKS,
+    runaway: runaway, runawayText: runawayText, compact: compact };
 })();
 // ===========================================================================
 // MODULE: AI_ACTIONS - END
@@ -23866,11 +23960,28 @@ Lantern.RFB = (function () {
       shapes: shapes
     };
   }
+  // picture(block): the shapes Lantern can read are drawn even when other
+  // lines have problems (1.9.8) -- the person gets a picture to open and fix
+  // in Draw, the model gets the problems for one corrected block. A run of
+  // repeated lines (a model stuck in a loop: "rect 10 6 1 1 fill blue",
+  // "rect 11 6 1 1 ...", up to 119 and cut off) is left out as one problem.
+  function offGrid(line) { return parsePicture({ lines: [line] }).problems.some(function (p) { return /off the grid/.test(p); }); }
   function picture(block) {
-    var pic = parsePicture(block);
-    if (pic.problems.length) return { problems: pic.problems, plan: null };
+    var ra = L.aiAct && L.aiAct.runaway ? L.aiAct.runaway(block, offGrid) : null, lines = block.lines;
+    if (ra) lines = lines.filter(function (l, k) { return (k < ra.from || k > ra.to) && !(ra.cut && k === lines.length - 1 && k > ra.to); });
+    var pic = parsePicture({ lines: lines });
+    if (ra) {
+      pic.problems = pic.problems.filter(function (p) { return !/^keep it to 60 shapes/.test(p) && !/^the drawing has no shapes/.test(p); });
+      pic.problems.unshift(L.aiAct.runawayText(ra, "Paint an area (a sky, the ground, a wall) as ONE shape -- rect 0 0 " + GW + " 7 fill orange -- " +
+        "and keep the drawing to 30 shapes or fewer"));
+    }
+    if (!pic.shapes.length || pic.shapes.length > 60) return { problems: pic.problems, plan: null, runaway: ra };
     var plan = { shapes: pic.shapes.map(function (o) { return { kind: o.kind, nums: o.nums, fill: o.fill || null, color: o.color || null, text: o.text || null }; }) };
-    return result(pictureShapes(pic), plan, pic.shapes.length + " shapes", block.title, []);
+    var left = block.lines.length - pic.shapes.length;
+    var r = result(pictureShapes(pic), plan, pic.shapes.length + " shapes" + (pic.problems.length && left > 0 ? "; " + left + " line" + (left === 1 ? "" : "s") + " left out" : ""),
+      block.title, pic.problems);
+    r.runaway = ra;
+    return r;
   }
   window.Lantern.aiDraw = { picture: picture, result: result };
 
@@ -23879,16 +23990,20 @@ Lantern.RFB = (function () {
     match: function (q) { return /\b(draw|drawing|sketch|picture|illustrat|paint|doodle)\w*/i.test(q) && !/\b(circuit|schematic|wiring|hydraulic|pneumatic)\b/i.test(q); },
     prompt: [
       "MAKE DRAWING: <title>   -- a simple picture on a grid " + GW + " wide and " + GH + " high (x 0-" + GW + " left to right, y 0-" + GH + " top to bottom)",
-      "One shape per line, back to front (the first line is behind the others):",
+      "One shape per line, back to front (the first line is behind the others). Paint an area (a sky, the ground, a wall)",
+      "with ONE big shape, never rows of small squares; 30 shapes or fewer.",
       "rect X Y W H  |  circle X Y R  |  tri X1 Y1 X2 Y2 X3 Y3  |  line X1 Y1 X2 Y2 ...  |  curve X1 Y1 X2 Y2 X3 Y3 ...  |  text X Y \x22words\x22",
       "then: fill <colour> (solid) and/or color <colour> (outline), width <n>. Colours: red, orange, yellow, green, dark green, blue, sky,",
       "purple, pink, brown, tan, black, gray, white, gold.",
       "END",
       "For example:",
       "MAKE DRAWING: Tree on a hill",
-      "curve 0 11 6 9 14 9 20 11 color green width 4",
-      "rect 9 6 2 4 fill brown",
-      "circle 10 5 3 fill green",
+      "rect 0 0 " + GW + " " + GH + " fill sky",
+      "circle 16 2 1 fill yellow",
+      "curve 0 11 6 8 14 8 " + GW + " 11 color green width 4",
+      "rect 0 10 " + GW + " 2 fill green",
+      "rect 9 5 2 5 fill brown",
+      "circle 10 4 3 fill green",
       "END"],
     build: function (block) { return picture(block); }
   });
@@ -24026,7 +24141,7 @@ Lantern.RFB = (function () {
 // MODULE: AI_MAKE_BENCH_DATA - START
 // Depends: AI_BENCH_DATA (Lantern.aiBenchQuestions, created here if absent),
 //          AI_ACTIONS -- the bench runs these only when AI_ACTIONS is there
-// Exports: (none) -- adds 7 "make" questions to Lantern Bench
+// Exports: (none) -- adds 8 "make" questions to Lantern Bench
 // ===========================================================================
 // Things the AI is asked to make. A question passes when the model writes a
 // MAKE block of the right kind, Lantern's checks pass (after at most one
@@ -24058,6 +24173,7 @@ Lantern.RFB = (function () {
     return out;
   }
   function has(arr, v) { return arr.some(function (x) { return Math.abs(x - v) < 0.006; }); }
+  var WARM = /^#(f97316|dc2626|facc15|ec4899|7c3aed|d4a017|ea580c|fb923c|ef4444)$/i;
   var RED = /^#(dc2626|b91c1c|ef4444|f00|ff0000|e11d48)$/i, YELLOW = /^#(facc15|ffff00|ff0|eab308|fde047|d4a017)$/i, BLUE = /^#(2563eb|1e3a8a|7dd3fc|06b6d4|00f|0000ff|3b82f6|0d9488)$/i;
   [
     { id: "make-lamp-circuit", ideal: "MAKE SCHEMATIC: Lamp with switch\npart B1 battery \x2212 V\x22\npart S1 switch\npart L1 lamp\nwire B1 S1\nwire S1 L1\nwire L1 B1\nEND", quick: 1, kind: "SCHEMATIC", q: "Draw a circuit with a 12 V battery, a switch and a lamp in series.",
@@ -24099,6 +24215,16 @@ Lantern.RFB = (function () {
         if (!sea) return "no blue sea";
         var seaTop = sea.kind === "circle" ? sea.nums[1] - sea.nums[2] : Math.min.apply(null, sea.nums.filter(function (v, i) { return i % 2 === 1 && (sea.kind !== "rect" || i === 1); }));
         return sun.nums[1] < seaTop ? "" : "the sun is not above the sea";
+      } },
+    // 1.9.8: a 35B Chat got stuck painting this sky one square at a time.
+    { id: "make-sunset-house", ideal: "MAKE DRAWING: House on a hill at sunset\nrect 0 0 20 8 fill orange\ncircle 15 6 2 fill yellow\nrect 0 8 20 4 fill green\nrect 7 5 5 4 fill tan\ntri 6 5 9.5 2 13 5 fill red\nEND",
+      kind: "DRAWING", q: "Draw a house on a hill at sunset.",
+      check: function (p) {
+        if (p.shapes.length > 30) return "more than 30 shapes";
+        var sky = p.shapes.some(function (s) { return /^(rect|square)$/.test(s.kind) && s.nums[2] >= 10 && WARM.test(s.fill || ""); });
+        if (!sky) return "no sunset sky (one wide orange, red, pink, purple or yellow rect)";
+        var house = p.shapes.filter(function (s) { return /^(rect|square|tri|triangle)$/.test(s.kind) && !(s.kind === "rect" && s.nums[2] >= 10); }).length;
+        return house >= 2 ? "" : "no house (a rect with a roof)";
       } },
     { id: "make-shopping", ideal: "MAKE SHEET: Shopping\nItem | Qty | Price | Cost\nBread | 2 | 1.50 | =B2*C2\nMilk | 1 | 0.99 | =B3*C3\nEggs | 12 | 0.25 | =B4*C4\nTotal | | | =SUM(D2:D4)\nEND", quick: 1, kind: "SHEET", q: "Make a table of my shopping: 2 loaves of bread at 1.50 each, 1 milk at 0.99, and 12 eggs at 0.25 each, with the cost of each line and a total.",
       check: function (p) {

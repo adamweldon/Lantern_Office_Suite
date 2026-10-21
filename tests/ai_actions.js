@@ -115,6 +115,32 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   var oval = act.build(blk("DRAWING", "t", ["oval 2 2 6 3 fill sky"]), "");
   ok("a filled oval is one shape group (erasable as one)", oval.ok && oval.shapes[0].t === "group" && oval.shapes[0].shapes.length > 30);
 
+  // --- 1.9.8: a reply stuck in a loop (a real 35B Chat, fixtures/chat_runaway) ---
+  var RA = path.join(__dirname, "fixtures", "chat_runaway");
+  var ra1 = fs.readFileSync(path.join(RA, "reply1.txt"), "utf8"), ra2 = fs.readFileSync(path.join(RA, "reply2.txt"), "utf8");
+  var m1 = act.build(ra1, "draw a house on a hill at sunset");
+  ok("a loop is found and reported as ONE problem", m1 && !m1.ok && m1.runaway && m1.runaway.n === 110 && m1.runaway.cut && m1.problems.length === 1 &&
+    /^the reply ran away: \u201crect 10 6 1 1 fill blue\u201d was written 110 times, its numbers changing up to \u201crect 119 6 1 1 fill brown\u201d, 98 of them off the grid, until the reply was cut off/.test(m1.problems[0]) &&
+    /ONE shape -- rect 0 0 20 7 fill orange/.test(m1.problems[0]), m1 && m1.problems);
+  ok("what can be drawn is drawn: the hill, the house, its window", m1.plan && m1.plan.shapes.length === 3 && m1.preview && m1.open &&
+    m1.plan.shapes.map(function (x) { return x.kind; }).join() === "curve,rect,rect" && /3 shapes; 111 lines left out/.test(m1.summary), m1.summary);
+  ok("the loop is cut from what the model sees again", /^Here is a drawing/.test(m1.trimmed) && !/rect 10 6 1 1/.test(m1.trimmed) && !/rect 12$/m.test(m1.trimmed) &&
+    /rect 9 6 2 2 fill white\nEND$/.test(m1.trimmed), m1.trimmed);
+  var m2 = act.build(ra2, "draw a house on a hill at sunset");
+  ok("the retry's loop too (68 lines, cut off mid-line)", m2.runaway && m2.runaway.n === 68 && m2.problems.length === 1 && m2.plan.shapes.length === 3, m2.problems);
+  var fence = act.build(blk("DRAWING", "Fence", [1, 3, 5, 7, 9, 11, 13, 15, 17, 19].map(function (x) { return "rect " + x + " 8 0.5 3 fill brown"; })), "");
+  ok("a row of fence posts is not a loop", fence.ok && !fence.runaway && fence.plan.shapes.length === 10, fence.problems);
+  var dots = act.build(blk("DRAWING", "Dots", [], 0).replace("\nEND", "") + [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+    .map(function (x) { return "circle " + x + " 5 0.3 fill red"; }).join("\n") + "\nEND", "");
+  ok("a few lines off the grid: drawn without them, listed as one problem", !dots.runaway && dots.plan && dots.plan.shapes.length === 22 && dots.problems.length === 1 &&
+    /^4 lines, from \u201ccircle 22 5 0\.3 fill red\u201d to \u201ccircle 25 5 0\.3 fill red\u201d, are off the grid/.test(dots.problems[0]), dots.problems);
+  ok("many problems are listed as at most 8", act.compact(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]).length === 8 &&
+    /^and 3 more problems/.test(act.compact(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"])[7]) &&
+    /^3 lines, from \u201cx 1\u201d to \u201cx 3\u201d: a rect needs 4 numbers$/.test(act.compact(["\u201cx 1\u201d: a rect needs 4 numbers", "\u201cx 2\u201d: a rect needs 4 numbers", "\u201cx 3\u201d: a rect needs 4 numbers"])[0]));
+  ok("nothing drawable: no picture", !act.build(blk("DRAWING", "t", ["star 1 1 1", "moon 2 2 2"]), "").plan);
+  ok("the drawing prompt asks for one big shape per area", /Paint an area \(a sky, the ground, a wall\)/.test(L.CHAT.buildSystem("Draw a house at sunset")) &&
+    /with ONE big shape, never rows of small squares; 30 shapes or fewer/.test(L.CHAT.buildSystem("Draw a house at sunset")) && /rect 0 0 20 12 fill sky/.test(L.CHAT.buildSystem("Draw a house at sunset")));
+
   // --- tables ---
   var shop = act.build(blk("SHEET", "Shopping", ["Item | Qty | Price | Cost", "Bread | 2 | 1.50 | =B2*C2", "Milk | 1 | $0.99 | =B3*C3", "Eggs | 12 | 0.25 | =B4*C4", "Total | | | =SUM(D2:D4)"]), "");
   ok("a table: the sheet engine works out the formulas", shop.ok && shop.plan.values.D2 === 3 && Math.abs(shop.plan.values.D5 - 6.99) < 1e-9 && shop.plan.cells.C3 === "0.99" && shop.plan.formulas === 4,
@@ -190,13 +216,51 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   ok("a picture is sent once: later turns carry a note instead", typeof tr[0].content === "string" && /not sent again/.test(tr[0].content));
   vision = false; await L.ai.detect();
 
+  // --- 1.9.8: Chat with the real looping replies ---
+  go("chat"); await sleep(40);
+  modelReplies = [ra1, ra2];
+  before = logText().length;
+  chatAsk("draw a house on a hill at sunset"); await sleep(300);
+  t = logText().slice(before);
+  var retryMsg = modelCalls[1] && modelCalls[1].messages[modelCalls[1].messages.length - 1].content, seenReply = modelCalls[1] && modelCalls[1].messages[modelCalls[1].messages.length - 2].content;
+  ok("Chat: the retry gets one short reason, and the model does not see its loop again", modelCalls.length === 2 && retryMsg.length < 700 &&
+    /the reply ran away/.test(retryMsg) && !/rect 10 6 1 1/.test(seenReply) && /rect 9 6 2 2 fill white/.test(seenReply), { len: retryMsg && retryMsg.length, seen: seenReply });
+  ok("Chat: says the reply got stuck, and shows it without the repeats", /got stuck repeating one line \(110 times, until it was cut off\)/.test(t) &&
+    /got stuck repeating one line \(68 times/.test(t) && !/rect 30 6 1 1/.test(t) && (t.match(/off the grid/g) || []).length <= 4, t.slice(0, 800));
+  ok("Chat: the parts it could draw are shown, with Open in Draw", /Lantern made a drawing: House on a hill at sunset \u2014 3 shapes/.test(t) && /still questions this: the reply ran away/.test(t) &&
+    btn(d, "Open in Draw"), t.slice(-700));
+  btn(d, "Open in Draw").click(); await sleep(80);
+  ok("Open in Draw: the hill and the house, ready to finish by hand", w.location.hash === "#draw" && L.store.get("draw.scene", []).length >= 3 &&
+    /Made for you: House on a hill at sunset/.test(d.body.textContent));
+  go("chat"); await sleep(40);
+  modelReplies = [ra1, blk("DRAWING", "House on a hill at sunset", ["rect 0 0 20 7 fill orange", "circle 16 5 2 fill yellow", "rect 0 7 20 5 fill green", "rect 8 5 4 3 fill brown", "tri 7 5 10 3 13 5 fill red"])];
+  before = logText().length;
+  chatAsk("draw a house on a hill at sunset"); await sleep(300);
+  t = logText().slice(before);
+  ok("Chat: a loop, then a good block: the good one, unquestioned", modelCalls.length === 2 && /Lantern made a drawing: House on a hill at sunset \u2014 5 shapes/.test(t) &&
+    !/still questions/.test(t.slice(t.lastIndexOf("Lantern made a drawing"))), t.slice(-500));
+  modelReplies = [blk("DRAWING", "Sky", ["star 1 1 1", "moon 2 2 2"]), blk("DRAWING", "Sky", ["star 1 1 1"])];
+  before = logText().length;
+  chatAsk("draw the night sky"); await sleep(300);
+  t = logText().slice(before);
+  ok("Chat: when nothing can be drawn it says so -- not \u201cmade\u201d, no button", /Lantern could not make a drawing: Sky/.test(t) && /Nothing was made:/.test(t) &&
+    !/Lantern made a drawing/.test(t) && !Array.prototype.some.call(d.querySelectorAll(".la-make"), function (x) { return /could not make/.test(x.textContent) && x.querySelector("button"); }), t.slice(-500));
+  modelReplies = [ra1, blk("DRAWING", "House", ["star 1 1 1"])];
+  before = logText().length;
+  chatAsk("draw a house on a hill at sunset"); await sleep(300);
+  t = logText().slice(before);
+  ok("Chat: a worse correction keeps the first block's picture", /could not be made either; here is what Lantern could make of the first one/.test(t) &&
+    /Lantern made a drawing: House on a hill at sunset \u2014 3 shapes/.test(t), t.slice(-600));
+
   // --- the bench: make questions ---
   var Q = L.aiBenchQuestions.filter(function (q) { return q.cat === "make"; });
-  ok("seven make questions, two quick", Q.length === 7 && Q.filter(function (q) { return q.quick; }).length === 2);
+  ok("eight make questions, two quick", Q.length === 8 && Q.filter(function (q) { return q.quick; }).length === 2);
   function gradeWith(id, reply) {
     var item = Q.filter(function (q) { return q.id === id; })[0];
     return L.aiBench.grade(item, reply, { made: act.build(reply, item.q) });
   }
+  ok("bench: a sunset sky as one wide rect passes; the run-away reply fails", gradeWith("make-sunset-house", Q.filter(function (q) { return q.id === "make-sunset-house"; })[0].ideal).pass &&
+    !gradeWith("make-sunset-house", ra1).pass && /no sunset sky/.test(gradeWith("make-sunset-house", blk("DRAWING", "h", ["rect 0 8 20 4 fill green", "rect 7 5 5 4 fill tan", "tri 6 5 9.5 2 13 5 fill red"])).why));
   ok("bench: a closed lamp circuit passes", gradeWith("make-lamp-circuit", blk("SCHEMATIC", "c", ["part B1 battery", "part S1 switch", "part L1 lamp", "wire B1 S1", "wire S1 L1", "wire L1 B1"])).pass);
   ok("bench: lamps wired to each other are not parallel", /series/.test(gradeWith("make-parallel-lamps", blk("SCHEMATIC", "c", ["part B1 battery", "part L1 lamp", "part L2 lamp", "wire B1 L1", "wire L1 L2", "wire L2 B1"])).why));
   ok("bench: two lamps in parallel pass", gradeWith("make-parallel-lamps", blk("SCHEMATIC", "c", ["part B1 battery", "part L1 lamp", "part L2 lamp", "wire B1 L1", "wire L1 B1", "wire B1 L2", "wire L2 B1"])).pass);

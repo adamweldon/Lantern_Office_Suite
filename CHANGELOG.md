@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.9.8 — A drawing stuck in a loop (2026-10-21)
+
+From a 35B Chat on 1.9.7: "draw a house on a hill at sunset". The model
+began well -- a hill, a house, a window -- then wrote `rect 10 6 1 1 fill
+blue`, `rect 11 6 1 1 ...` up to 119 until its reply was cut off; the
+retry did the same up to 77. Lantern sent back all ~100 "off the grid"
+complaints, built nothing because a drawing with any problem was never
+built, and still said "Lantern made a drawing" -- with no picture and no
+Open in Draw button.
+
+- **A loop is found and left out.** A run of 8 or more lines of one shape
+  where a single number steps the same way each line (or the same line
+  again and again) counts as a loop when the block was cut off, most of it
+  is off the grid, or it is over 30 lines. A row of fence posts does not.
+  It becomes ONE problem: what repeated, how often, that it was cut off,
+  and what to do instead (paint an area as one shape, 30 shapes or fewer).
+- **The model does not see its loop again.** The looping lines are cut
+  from the reply in the history it gets for the retry (a loop in front of a
+  model tends to restart it), and from what Chat shows; Chat notes that
+  the reply got stuck.
+- **A drawing is drawn from the lines Lantern can read**, even when other
+  lines have problems, so there is a picture and an Open in Draw button to
+  finish it by hand. The problems still go back to the AI once.
+- **Problems are listed compactly:** three or more lines with the same
+  complaint become one entry ("16 lines, from ... to ..., are off the
+  grid"), at most 8 entries.
+- **Chat says plainly when nothing could be made** ("Lantern could not
+  make a drawing ... Nothing was made"), and if the correction is worse
+  than the first block, the first block's picture is kept.
+- **The drawing instructions** say to paint an area with ONE big shape,
+  never rows of small squares, 30 shapes or fewer; the example now has a
+  sky and ground as single rects.
+- **Bench:** an 8th thing to make, "Draw a house on a hill at sunset"
+  (passes with a wide warm sky rect and a house; the looping reply fails).
+
+Tested: AI actions 66 (both real looping replies from the transcript as
+fixtures, through the build and through Chat: one short reason, the loop
+cut from the history, 3 shapes drawn and opened in Draw; a loop then a good
+block; nothing drawable; a worse correction), all suites pass.
+
 ## 1.9.7 — Run 7: two misses out of 82 (2026-10-21)
 
 Bench run 7 (Qwen3.5 35B-A3B, English Wikipedia mini, 1.9.6) scored
