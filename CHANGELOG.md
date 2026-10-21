@@ -1,5 +1,57 @@
 # Changelog
 
+## 1.9.6 — Asking the library the right questions (2026-10-21)
+
+From a 1.9.4 Chat on the 35B with English Wikipedia: the first, clear
+question went well (read first, 7 of 7 sentences backed), and the
+sentence check caught the model citing passages for things they don't say
+four times. But six of ten turns got worse because of Lantern, not the
+model: follow-ups were searched word for word ("Is this how you work?"
+found a song and "Women's work"), questions about the AI itself or asked
+"without regard to the library" were forced to "Not in my library", and a
+quote from turn 1's passage was taken for an invented one, throwing a good
+answer away. What changed:
+
+- **The AI writes the search for a follow-up.** When a question leans on
+  earlier turns ("How are they trained?", "Is it..."), Lantern first asks
+  the AI for search words -- it knows what "they" means -- and reads the
+  library with those. The search Chat used is shown.
+- **Not every question is for the encyclopedia.** Questions about the AI,
+  Lantern or the conversation ("Is this how you work?", "are you more or
+  less capable", "what have we discussed", "your previous answer") are
+  answered from the AI's own reasoning, with no reading, no search on a
+  decline, and a note that the answer is its own. If it still says "Not in
+  my library", it is told once that this is not a library question.
+- **"Without regard to the library" is obeyed** (also "from your own
+  knowledge", "don't use the library"): no reading, no search at all.
+- **Quotes from passages read earlier in the chat count as real** and are
+  checked against those passages, instead of setting off a new search.
+- **The sentence check skips sentences that describe the passages**
+  ("Passage [1] lists songs...", "the passages do not cover...") and reads
+  "in passage [3]" as a reference, not a citation -- both were false flags.
+- **Recipe hints only go with questions that have numbers.** A unit-
+  conversion hint was attached to nearly every message and leaked into a
+  35B answer about how it reasons.
+- Chat's instructions say plainly that questions about the AI or the chat
+  are answered from its reasoning, without "Not in my library".
+- Chat's turn logic runs without the page (`Lantern.CHAT.turn`,
+  `converse`), so conversations can be benched.
+
+**Bench: eight conversations** from the transcript, each run turn by turn
+the way Chat runs it and graded on the last turn: "Is this how you work?"
+after an explanation; "How are they trained?" (searched with the subject);
+"are you more or less capable"; a question "without regard to your
+library"; "sum that up and quote the passage" (no new search); "what have
+we discussed"; "how is reasoning possible" about the previous answer; and a
+calculation follow-up ("how many amp-hours does it use", 15 Ah). Reported
+as their own set; one is in the quick run.
+
+Tested: 19 routing tests replaying the transcript with a scripted model, a
+well-behaved model passing all 8 conversations, and checks that the
+transcript's own behaviour would fail them; Chat in Chromium against real
+kiwix-serve. This update also carries 1.9.5 (making schematics, drawings,
+tables; vision) for a stick still on 1.9.4.
+
 ## 1.9.5 — The AI makes things: schematics, drawings, tables (2026-10-21)
 
 Chat can now be asked to **draw a circuit** (or a hydraulic or pneumatic

@@ -19,6 +19,7 @@ var steps = [
   ["AI layer (routing, app, bench)", "node", ["tests/ai_layer.js"], /ALL AI LAYER TESTS PASS/],
   ["Offline library (search, read, citations)", "node", ["tests/library.js"], /ALL LIBRARY TESTS PASS/],
   ["AI makes things (drawings, schematics, tables)", "node", ["tests/ai_actions.js"], /ALL AI ACTION TESTS PASS/],
+  ["Chat routing (follow-ups, questions about itself, bench conversations)", "node", ["tests/chat_routing.js"], /ALL CHAT ROUTING TESTS PASS/],
   ["AI modules isolated (rule 11)", "node", ["tests/ai_isolation.js"], /AI MODULES ISOLATED/],
   ["Kit: model choice and bigger-model offer", "python3", ["tests/kit_offer.py"], /KIT OFFER TESTS PASS/]
 ];

@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.9.5 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.9.6 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -122,7 +122,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.9.5",
+  version: "1.9.6",
   apps: {},
   order: []
 };
@@ -16129,6 +16129,39 @@ Lantern.RFB = (function () {
   // their own question back ("NEED: What is the chemical symbol for gold?" --
   // bench run 6): a question with no numbers has nothing missing to ask for,
   // so it is treated as a decline and the library gets a look.
+  // Which questions are for the encyclopedia (1.9.6, from a 35B Chat
+  // transcript where Lantern searched "Is this how you work?" and found a
+  // song). aboutSelf: about the AI, Lantern or this conversation -- answered
+  // from its own reasoning. noLibrary: the person said to leave the library
+  // out ("without regard to what is in your library"). dependsOnContext: a
+  // follow-up whose subject is in an earlier turn ("How are they trained?").
+  A.aboutSelf = function (q) {
+    q = String(q || "");
+    return /\b(are|were) you\b/i.test(q) ||
+      /\b(do|did|does|can|could|would|will|should) you (work|think|reason|feel|prefer|like|learn|believe|estimate|agree|mean|decide|experience)\b/i.test(q) ||
+      /\bhow (do|did|does|can|could|would) you (work|think|reason|decide|choose|feel|learn|remember|generate|understand|process|compare|estimate|answer)\b/i.test(q) ||
+      /\byour (own )?(answer|answers|response|responses|reply|replies|reasoning|reasons|capabilit\w*|abilit\w*|limit\w*|memory|training|knowledge|opinion|views?|estimate|previous|last|earlier|work|mind|thinking|understanding|harness|rules)\b/i.test(q) ||
+      /\b(yourself|this chat|this conversation|our (chat|conversation|discussion)|we (have )?(discussed|talked|covered|said)|discussed so far)\b/i.test(q) ||
+      /\b(previous|last|earlier|above) (answer|response|reply|message|search)\b/i.test(q) ||
+      /\b(is|was) (this|that) how\b/i.test(q) ||
+      /\b(more|less) (capable|accurate|reliable|useful|intelligent)\b/i.test(q) ||
+      /\b(allow|allowed|let|letting) you\b/i.test(q) ||
+      /\b(with|without|in|inside|by|for|to) lantern\b|\blantern(\x27s)? (tool|tools|harness|app|suite|rules|engine|checks|environment|searched|search)\b/i.test(q);
+  };
+  A.noLibrary = function (q) {
+    q = String(q || "");
+    return /\bwithout regard\b/i.test(q) || /\bregardless of (the |your |what )/i.test(q) ||
+      /\b(without|ignor(e|ing)|not using|leave out|leaving out) (using |looking (at|in) |reference to |checking )?(the |your )?(library|encyclop\w*|wikipedia|passages|sources)\b/i.test(q) ||
+      /\bfrom your own (knowledge|reasoning|understanding|training|memory)\b/i.test(q) || /\bin your own words\b/i.test(q) ||
+      /\bdo ?n[o\x27]?t (use|search|look (it )?up|check) (the |your )?(library|encyclop\w*|wikipedia)\b/i.test(q);
+  };
+  A.dependsOnContext = function (q, hasHistory) {
+    if (!hasHistory) return false;
+    q = String(q || "");
+    if (/\b(this|that|these|those|it|its|they|them|their|such|the same|above|aforementioned|previous|earlier|former|latter)\b/i.test(q)) return true;
+    var kw = window.Lantern.library && Lantern.library.keywords ? Lantern.library.keywords(q) : q.toLowerCase().split(/[^a-z0-9]+/);
+    return kw.filter(function (w) { return w.length > 2 && !/^(explain|detail|detailed|describe|tell|more|about|work|works|does|happen|happens|mean|means|why|how)$/.test(w); }).length < 1;
+  };
   // needLibrary(need) -> true when a NEED asks for encyclopedia data rather
   // than a number from the person ("NEED: specific factual data from the
   // offline encyclopedia..." -- a Chat transcript, 1.9.3).
@@ -16172,7 +16205,9 @@ Lantern.RFB = (function () {
     // A safety rule answered (Lantern.ai.lastGuard): nothing to look up.
     var guarded = !!(window.Lantern.ai && Lantern.ai.lastGuard);
     // Reading turn: the offline library, when the model asks or declines.
-    if (look && !guarded && opts.lookup !== false && !p.exprText && (p.lookup || A.isDecline(p.answer) || A.needEcho(p.need, question) || A.needLibrary(p.need))) {
+    var own = A.aboutSelf(question) || A.noLibrary(question);
+    if (look && !guarded && opts.lookup !== false && !p.exprText && !A.noLibrary(question) &&
+        (p.lookup || (!own && (A.isDecline(p.answer) || A.needEcho(p.need, question) || A.needLibrary(p.need))))) {
       var lk = null;
       try { lk = await look(question, p.lookup || ""); } catch (e) { lk = null; }
       if (lk && lk.sources && lk.sources.length) {
@@ -16754,8 +16789,8 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // MODULE: ASSIST_CHAT - START
 // Depends: CORE, STORAGE, SHELL, ASSIST_CORE, MOD_FORGE
-// Exports: Lantern.CHAT (buildSystem, parseProposals, trimHistory), registers
-//          "chat" app
+// Exports: Lantern.CHAT (buildSystem, parseProposals, trimHistory, turn,
+//          converse, askSearch, toolText), registers "chat" app
 // ===========================================================================
 // The inverted flow: the person talks to the model, and the model drives
 // Lantern. Each model turn may contain = lines (run here on the real engine,
@@ -16786,6 +16821,8 @@ Lantern.RFB = (function () {
       out.push("'QUOTE [n]: <sentence copied exactly from passage n>'. When a message brings LIBRARY passages,");
       out.push("put [n] at the end of each sentence that uses passage n; your own reasoning goes in sentences");
       out.push("without [n]. With no passages, never write [n], QUOTE lines or = LOOKUP(...): reply LOOKUP: <words>.");
+      out.push("Questions about you, Lantern, this conversation or how you reason are not encyclopedia facts: answer");
+      out.push("them from your own reasoning, plainly, without [n] or QUOTE lines and without \x22Not in my library\x22.");
     }
     out.push("You may also improve Lantern itself. To propose a module edit or a new module, output:");
     out.push("PROPOSE MODULE: <NAME>");
@@ -16837,16 +16874,6 @@ Lantern.RFB = (function () {
     log.appendChild(b);
     log.scrollTop = log.scrollHeight;
   }
-  function toolBubble(run) {
-    var lines = [], i;
-    for (i = 0; i < run.steps.length; i++) {
-      var s = run.steps[i];
-      lines.push("= " + s.expr);
-      lines.push("  -> " + (s.ok ? Lantern.fmtNum(s.value) : "error: " + s.err));
-    }
-    bubble("tool", lines.join("\n"), true);
-    return lines.join("\n");
-  }
   function proposalBubble(p, staged) {
     var b = el("div", { style: "border:1px dashed var(--line);border-radius:10px;padding:8px 11px;margin:6px 0;background:var(--soft)" });
     b.appendChild(el("div", {}, [el("b", { text: "Module proposal: " + p.name })]));
@@ -16891,182 +16918,287 @@ Lantern.RFB = (function () {
     return out;
   };
   function libReady() { return !!(window.Lantern.library && Lantern.library.ready && Lantern.library.ready()); }
-  async function send() {
-    var q = qIn.value.replace(/^\s+|\s+$/g, "");
-    if (!q || busy) return;
-    qIn.value = "";
-    bubble("user", q);
+  // toolText(run) -> the = lines and their results, as Chat shows them.
+  C.toolText = function (run) {
+    var lines = [], i;
+    for (i = 0; i < run.steps.length; i++) {
+      var s = run.steps[i];
+      lines.push("= " + s.expr);
+      lines.push("  -> " + (s.ok ? Lantern.fmtNum(s.value) : "error: " + s.err));
+    }
+    return lines.join("\n");
+  };
+  // askSearch(msgs, q) -> the AI's own search words for a question that
+  // leans on the conversation ("Is this how you work?", "How are they
+  // trained?"): it knows what "this" and "they" are, a keyword search does
+  // not (a 35B transcript, 1.9.5: "work" found a song and "Women's work").
+  // "none" when it says the question is not about the world.
+  C.askSearch = async function (msgs, q, call) {
+    var ask = msgs.concat([{ role: "user", content: q + "\n\n(Lantern: before you answer, reply with ONLY one line: LOOKUP: <2 to 5 search words " +
+      "for the encyclopedia topic of this question, using the conversation for what words like this, it or they mean>. " +
+      "If the question is about you, Lantern or this conversation rather than about the world, reply: LOOKUP: none)" }]);
+    var r = "";
+    try { r = await call(C.trimHistory(ask), { max_tokens: 40 }); } catch (e) { return ""; }
+    var m = /LOOKUP:\s*([^\n]+)/i.exec(String(r || ""));
+    if (!m) return "";
+    var w = m[1].replace(/[\x22\x27\u201c\u201d*]/g, "").replace(/^\s+|\s+$/g, "");
+    return /^(none|n\/a|nothing)\b/i.test(w) ? "none" : w;
+  };
+  // turn(msgs, q, ui, opts) -> Promise<record>: one question in a
+  // conversation, from the library's reading to the checked answer. ui shows
+  // it (Chat) or is silent (the bench, C.converse); msgs is the history.
+  // record = {q, final, answer, declined, value, searches: [{query, how}],
+  //   self, noLibrary, contextual, carried, sources, backed, quotesOk,
+  //   stillDoubt, notes, rounds, made}
+  C.turn = async function (msgs, q, ui, opts) {
+    opts = opts || {};
+    var call = opts.call || function (m, o) { return C.callChat(null, null, m, o); };
+    var rec = { q: q, final: "", answer: null, declined: false, value: null, searches: [], self: false, noLibrary: false, contextual: false,
+      carried: false, sources: null, backed: 0, quotesOk: null, stillDoubt: null, notes: [], rounds: 0, made: null };
+    function note(text, cls) { rec.notes.push(text); if (ui.note) ui.note(text, cls || "muted"); }
+    function show(fn) { if (ui.node) ui.node(fn); }
+    var seen = msgs.seen = msgs.seen || [];
+    var history = msgs.some(function (m) { return m.role === "user"; });
     var hints = A.match(q), i;
     var content = q;
-    // Asked to make something (a drawing, a table): recipe hints would only
-    // pull the model toward a calculation.
-    if (window.Lantern.aiAct && window.Lantern.aiAct.relevant(q).length) hints = [];
+    // Recipe hints only help a calculation: a question with numbers that is
+    // not asking Lantern to make something. (A unit-conversion hint on every
+    // message leaked into a 35B answer about how it reasons.)
+    if (!/\d/.test(q) || (window.Lantern.aiAct && window.Lantern.aiAct.relevant(q).length)) hints = [];
     if (hints.length) {
       var hl = [];
       for (i = 0; i < hints.length && i < 3; i++) hl.push(hints[i].ask + " -> " + hints[i].compose);
       content += "\n\n[Recipe hints]\n" + hl.join("\n");
     }
-    busy = true;
-    var ep = Lantern.store.get("assist.endpoint", "http://127.0.0.1:11434/v1/chat/completions");
-    var md = Lantern.store.get("assist.model", "qwen2.5:3b-instruct");
-    var lastValue = null, questioned = false, stillDoubt = null, looked = false, sources = null, detail = false, nudged = false, showed = false;
+    var lastValue = null, questioned = false, stillDoubt = null, looked = false, sources = null, detail = false, nudged = false, showed = false, steered = false;
     currentQ = q;
+    rec.self = A.aboutSelf(q); rec.noLibrary = A.noLibrary(q); rec.contextual = A.dependsOnContext(q, history);
+    var ownWords = rec.self || rec.noLibrary;
+    // Not every question is for the encyclopedia: about the AI itself,
+    // Lantern or this chat -- or "without regard to the library" -- it
+    // answers from its own reasoning, marked as such.
+    if (rec.noLibrary) content += "\n\n(Lantern: the person asks you to answer from your own knowledge and reasoning, not the library. " +
+      "Answer fully, in plain sentences, with no [n] or QUOTE lines, and do not say \x22Not in my library\x22.)";
+    else if (rec.self) content += "\n\n(Lantern: this question is about you, Lantern or this conversation, not a fact about the world. " +
+      "Answer it from your own reasoning, plainly, with no [n] or QUOTE lines, and do not say \x22Not in my library\x22.)";
     // Explanation questions ("explain", "in detail", "how does"): Lantern
     // reads the library BEFORE the model answers, so the passages are in
-    // front of it while it reasons (1.9.4). Not for safety-rule questions.
+    // front of it while it reasons (1.9.4). A question that leans on the
+    // conversation gets the AI's own search words first (1.9.6).
     var guarded = !!(Lantern.ai && Lantern.ai.guard && Lantern.ai.guard(q));
-    if (window.Lantern.chatReadFirst && !guarded) {
-      statusEl.textContent = "reading the library\u2026";
+    if (window.Lantern.chatReadFirst && !guarded && !ownWords && libReady() && Lantern.library.wantsDetail(q) && !/\d/.test(q)) {
+      if (ui.status) ui.status("reading the library\u2026");
+      var query = "";
+      if (rec.contextual) {
+        query = await C.askSearch(msgs, q, call);
+        if (query && query !== "none") note("This question refers to earlier ones, so Lantern asked the AI what to look up: \u201c" + query + "\u201d.");
+      }
       var pre = null;
-      try { pre = await window.Lantern.chatReadFirst(q); } catch (e) { pre = null; }
+      if (query !== "none") { try { pre = await window.Lantern.chatReadFirst(q, query); } catch (e) { pre = null; } }
       if (pre && pre.sources && pre.sources.length) {
         sources = pre.sources; looked = true; detail = true;
+        seen.push({ sources: sources, detail: true });
+        rec.searches.push({ query: pre.query, how: rec.contextual ? "asked" : "read-first" });
         content += "\n\n" + pre.prompt;
-        log.appendChild(el("p", { "class": "muted", text: "Lantern read " + pre.sources.length + " passage" + (pre.sources.length === 1 ? "" : "s") +
-          " from " + (pre.book || "its offline library") + " first (searched for \u201c" + pre.query + "\u201d), so the AI answers with them in front of it\u2026" }));
+        note("Lantern read " + pre.sources.length + " passage" + (pre.sources.length === 1 ? "" : "s") +
+          " from " + (pre.book || "its offline library") + " first (searched for \u201c" + pre.query + "\u201d), so the AI answers with them in front of it\u2026");
       }
     }
     msgs.push({ role: "user", content: content });
-    statusEl.textContent = "thinking\u2026";
+    if (ui.status) ui.status("thinking\u2026");
     // What the person has said so far (for Lantern's checks), without the
-    // passages Lantern added.
-    var said = msgs.filter(function (m) { return m.role === "user" && !/^(TOOL RESULTS|Lantern questioned|Lantern checked|LIBRARY:)/.test(m.content); })
-      .map(function (m) { return String(m.content).split("\n\n[Recipe hints]")[0].replace(LIBRE, ""); }).join("\n");
-    try {
-      var rounds;
-      for (rounds = 0; rounds < 5; rounds++) {   // tools or library, answer, one correction
-        var reply = await C.callChat(ep, md, C.trimHistory(msgs));
-        msgs.push({ role: "assistant", content: reply });
-        var props = C.parseProposals(reply), p;
-        var shown = reply.replace(/^PROPOSE MODULE:[\s\S]*?^END PROPOSAL[ \t]*$/gm, "").replace(/^\s+|\s+$/g, "");
-        if (sources && window.Lantern.libraryRenumber) shown = window.Lantern.libraryRenumber(shown, sources).text;
-        var parsed = A.parseReply(shown);
-        var quotes = /^\s*QUOTE\s*\[?\s*\d/im.test(shown);
-        if (shown) mdBubble(shown);
-        // Something to MAKE (a schematic, a drawing, a table): Lantern checks
-        // the block (one corrected block when it finds problems), shows it,
-        // and -- when the model can see -- shows it the picture once.
-        var made = window.Lantern.aiAct ? window.Lantern.aiAct.build(shown, q) : null;
-        if (made) {
-          if (!made.ok && !questioned) {
-            questioned = true;
-            log.appendChild(el("p", { "class": "muted", text: "Lantern checked the MAKE " + made.block.kind + " block: " + made.problems.join("; ") + ". Asking the AI again\u2026" }));
-            msgs.push({ role: "user", content: "Lantern checked your MAKE " + made.block.kind + " block: " + made.problems.join("; ") +
-              ".\nReply with the corrected block only (MAKE ... END)." });
-            continue;
-          }
-          log.appendChild(window.Lantern.aiAct.view(made));
-          log.scrollTop = log.scrollHeight;
-          var png = made.ok && !showed && made.png && Lantern.ai && Lantern.ai.canSee && Lantern.ai.canSee() ? made.png() : null;
-          if (png) {
-            showed = true;
-            log.appendChild(el("p", { "class": "muted", text: "Lantern showed the AI the picture it made, so it can check it\u2026" }));
-            msgs.push({ role: "user", content: [{ type: "text", text: window.Lantern.aiAct.lookText(made, q) }, { type: "image_url", image_url: { url: png } }] });
-            continue;
-          }
-          break;
-        }
-        if (showed && window.Lantern.aiAct && window.Lantern.aiAct.LOOKS.test(shown)) {
-          log.appendChild(el("p", { "class": "muted", text: "The AI looked at the picture and says it shows what was asked." }));
-          break;
-        }
-        // The offline library: the AI asked to LOOKUP (or wrote =LOOKUP(...)),
-        // declined, asked for encyclopedia data, or wrote QUOTE lines with no
-        // passages behind them. One reading turn per question.
-        if (!looked && window.Lantern.assistLookup && !parsed.exprText && (parsed.lookup || A.isDecline(parsed.answer) ||
-            A.needEcho(parsed.need, q) || A.needLibrary(parsed.need) || (quotes && libReady()))) {
-          looked = true;
-          var lk = null, wantDetail = !!(Lantern.library && Lantern.library.wantsDetail && Lantern.library.wantsDetail(q));
-          try { lk = await window.Lantern.assistLookup(q, parsed.lookup || "", { detail: wantDetail }); } catch (e) { lk = null; }
-          if (lk && lk.sources && lk.sources.length) {
-            sources = lk.sources; detail = wantDetail;
-            log.appendChild(el("p", { "class": "muted", text: (quotes && !parsed.lookup ? "The AI wrote quotes without any passages in front of it. " : "") +
-              "Lantern searched its offline library" + (lk.query ? " for \u201c" + lk.query + "\u201d" : "") +
-              " and sent the AI " + lk.sources.length + " passage" + (lk.sources.length === 1 ? "" : "s") + "\u2026" }));
-            msgs.push({ role: "user", content: lk.prompt });
-            continue;
-          }
-          if (parsed.lookup) {
-            msgs.push({ role: "user", content: "The offline library has nothing on that. Reply with the ANSWER line only." });
-            continue;
-          }
-        }
-        // It asked to look up what it already has in front of it: once, say so.
-        if (sources && detail && parsed.lookup && !parsed.answer && !nudged) {
-          nudged = true;
-          msgs.push({ role: "user", content: "The LIBRARY passages above are what the library has on this. Answer from them now, " +
-            "with [n] at the end of each sentence that uses passage n." });
+    // passages and notes Lantern added.
+    var said = msgs.filter(function (m) { return m.role === "user" && typeof m.content === "string" && !/^(TOOL RESULTS|Lantern questioned|Lantern checked|LIBRARY:|The LIBRARY|This is not)/.test(m.content); })
+      .map(function (m) { return String(m.content).split("\n\n[Recipe hints]")[0].split("\n\n(Lantern:")[0].replace(LIBRE, ""); }).join("\n");
+    var rounds;
+    for (rounds = 0; rounds < 6; rounds++) {   // tools or library, answer, one correction
+      var reply = await call(C.trimHistory(msgs));
+      rec.rounds++;
+      msgs.push({ role: "assistant", content: reply });
+      var props = C.parseProposals(reply), p;
+      var shown = reply.replace(/^PROPOSE MODULE:[\s\S]*?^END PROPOSAL[ \t]*$/gm, "").replace(/^\s+|\s+$/g, "");
+      if (sources && window.Lantern.libraryRenumber) shown = window.Lantern.libraryRenumber(shown, sources).text;
+      var parsed = A.parseReply(shown);
+      var quotes = /^\s*QUOTE\s*\[?\s*\d/im.test(shown);
+      rec.final = shown;
+      if (shown && ui.reply) ui.reply(shown);
+      // Something to MAKE (a schematic, a drawing, a table): Lantern checks
+      // the block (one corrected block when it finds problems), shows it,
+      // and -- when the model can see -- shows it the picture once.
+      var made = window.Lantern.aiAct ? window.Lantern.aiAct.build(shown, q) : null;
+      if (made) {
+        rec.made = made;
+        if (!made.ok && !questioned) {
+          questioned = true;
+          note("Lantern checked the MAKE " + made.block.kind + " block: " + made.problems.join("; ") + ". Asking the AI again\u2026");
+          msgs.push({ role: "user", content: "Lantern checked your MAKE " + made.block.kind + " block: " + made.problems.join("; ") +
+            ".\nReply with the corrected block only (MAKE ... END)." });
           continue;
         }
-        if (!sources && quotes)
-          log.appendChild(el("p", { "class": "danger", text: "\u26a0 These QUOTE lines were not checked: Lantern gave the AI no library passages for this answer, so they come from its memory, not from the encyclopedia." }));
-        if (Lantern.ai && Lantern.ai.lastFinish === "length")
-          log.appendChild(el("p", { "class": "muted", text: "The answer was cut short \u2014 send \u201ccontinue\u201d for the rest." }));
-        for (i = 0; i < props.length; i++) { p = props[i]; proposalBubble(p, F.stage(p.name, p.text, "proposed in chat")); }
-        if (parsed.exprText) {
-          var run = A.run(parsed.exprText);
-          if (run.value != null) lastValue = run.value;
-          var resultText = toolBubble(run), doubts = [];
-          if (run.value != null) (window.Lantern.assistChecks || []).forEach(function (c) {
-            var r = null; try { r = c(said, parsed.exprText, run, { text: shown, parsed: parsed, sources: null }); } catch (e) { r = null; }
-            if (r) doubts.push(String(r));
-          });
-          if (doubts.length && !questioned) {   // one more turn with Lantern's reason (as Assist does)
-            questioned = true;
-            log.appendChild(el("p", { "class": "muted", text: "Lantern questioned this: " + doubts.join("; ") + ". Asking the AI again\u2026" }));
-            msgs.push({ role: "user", content: "Lantern questioned that: " + doubts.join("; ") +
-              ".\nIf the question does not give a number you need, reply NEED: <question>.\nOtherwise reply again with corrected = lines and the ANSWER line only." });
-            continue;
-          }
-          stillDoubt = doubts.length ? doubts : null;
-          if (!parsed.answer) { msgs.push({ role: "user", content: "TOOL RESULTS\n" + resultText + "\nNow reply with the ANSWER: line only." }); continue; }
-        }
-        // A detailed answer from passages: every sentence is checked against
-        // the passage it cites; the AI gets one turn to fix what is wrong.
-        if (sources && detail && !parsed.exprText && !parsed.need && window.Lantern.libraryGround) {
-          var g = window.Lantern.libraryGround(shown, sources, said), gp = g.problems.slice();
-          if (!g.declined && g.sentences.length && !g.cited) gp.push("the answer cites none of the passages: put [n] at the end of each sentence that uses passage n");
-          if (gp.length && !questioned) {
-            questioned = true;
-            log.appendChild(el("p", { "class": "muted", text: "Lantern checked each sentence against the passages: " + gp.join("; ") + ". Asking the AI again\u2026" }));
-            msgs.push({ role: "user", content: "Lantern checked each sentence against the passages: " + gp.join("; ") +
-              ".\nReply with the whole answer again: [n] only after a sentence that passage n supports, your own reasoning without [n], and QUOTE lines copied exactly." });
-            continue;
-          }
-          if (window.Lantern.libraryGroundView && g.sentences.length) log.appendChild(window.Lantern.libraryGroundView(g));
-          if (window.Lantern.assistSourcesView) log.appendChild(window.Lantern.assistSourcesView({ text: shown, parsed: parsed, sources: sources }));
-          if (gp.length) log.appendChild(el("p", { "class": "danger", text: "\u26a0 Lantern still questions this answer: " + gp.join("; ") + ". Check it before you use it." }));
-          break;
-        }
-        if (parsed.answer && sources && !parsed.exprText) {
-          var cdoubts = [];
-          (window.Lantern.assistChecks || []).forEach(function (c) {
-            var r = null; try { r = c(said, "", { steps: [], value: null }, { text: shown, parsed: parsed, sources: sources }); } catch (e) { r = null; }
-            if (r) cdoubts.push(String(r));
-          });
-          if (cdoubts.length && !questioned) {
-            questioned = true;
-            log.appendChild(el("p", { "class": "muted", text: "Lantern questioned this: " + cdoubts.join("; ") + ". Asking the AI again\u2026" }));
-            msgs.push({ role: "user", content: "Lantern questioned that: " + cdoubts.join("; ") +
-              ".\nReply again: ANSWER with [n] after each fact, and a QUOTE [n] line copied exactly from passage n." +
-              "\nIf the passages do not answer it, reply exactly: ANSWER: Not in my library." });
-            continue;
-          }
-          stillDoubt = cdoubts.length ? cdoubts : null;
-        }
-        if (parsed.answer) {
-          var fa = A.finalAnswer ? A.finalAnswer(parsed.answer, lastValue) : { text: parsed.answer, mismatch: false };
-          if (sources) fa.unchecked = false;
-          answerBubble(fa.text);
-          if (fa.mismatch) log.appendChild(el("p", { "class": "danger", text: "\u26a0 The AI\u2019s sentence does not match Lantern\u2019s computed result above. Trust the computed number." }));
-          if (fa.unchecked) log.appendChild(el("p", { "class": "muted", text: "\u26a0 Lantern computed nothing for this answer: its numbers come from the AI alone." }));
-          if (fa.otherUnit) log.appendChild(el("p", { "class": "muted", text: "\u26a0 The sentence matches Lantern\u2019s result only in a different unit. Check the unit of the computed number." }));
-          if (sources && window.Lantern.assistSourcesView) log.appendChild(window.Lantern.assistSourcesView({ text: shown, parsed: parsed, sources: sources }));
-          if (stillDoubt) log.appendChild(el("p", { "class": "danger", text: "\u26a0 Lantern still questions this answer: " + stillDoubt.join("; ") + ". Check it before you use it." }));
+        show(function () { return window.Lantern.aiAct.view(made); });
+        var png = made.ok && !showed && !opts.headless && made.png && Lantern.ai && Lantern.ai.canSee && Lantern.ai.canSee() ? made.png() : null;
+        if (png) {
+          showed = true;
+          note("Lantern showed the AI the picture it made, so it can check it\u2026");
+          msgs.push({ role: "user", content: [{ type: "text", text: window.Lantern.aiAct.lookText(made, q) }, { type: "image_url", image_url: { url: png } }] });
+          continue;
         }
         break;
       }
-    } catch (e) {
+      if (showed && window.Lantern.aiAct && window.Lantern.aiAct.LOOKS.test(shown)) {
+        note("The AI looked at the picture and says it shows what was asked.");
+        break;
+      }
+      // Quotes from passages read earlier in this chat are real quotes, not
+      // inventions (the 35B quoted turn 1's passage in turn 2, and Lantern
+      // threw its good answer away for a search on "Is this how you work?").
+      if (quotes && !sources && window.Lantern.libraryGround) {
+        for (var k = seen.length - 1; k >= 0 && !sources; k--) {
+          var gq = window.Lantern.libraryGround(shown, seen[k].sources, said);
+          if (gq.quotes.length && gq.quotes.every(function (x) { return x.ok; })) { sources = seen[k].sources; detail = seen[k].detail; rec.carried = true; }
+        }
+        if (rec.carried) note("Its quotes come from passages Lantern read earlier in this chat; they are checked against those.");
+      }
+      // The offline library: the AI asked to LOOKUP (or wrote =LOOKUP(...)),
+      // declined, asked for encyclopedia data, or wrote QUOTE lines with no
+      // passages behind them. One reading turn per question; none when the
+      // person asked for no library, and only an asked-for one for a
+      // question about the AI itself.
+      var wantLook = parsed.lookup || (!ownWords && (A.isDecline(parsed.answer) || A.needEcho(parsed.need, q) || A.needLibrary(parsed.need) || (quotes && !sources && libReady())));
+      if (!looked && !rec.noLibrary && window.Lantern.assistLookup && !parsed.exprText && wantLook) {
+        looked = true;
+        var lk = null, wantDetail = !!(Lantern.library && Lantern.library.wantsDetail && Lantern.library.wantsDetail(q)), words = parsed.lookup || "";
+        if (!words && rec.contextual) words = await C.askSearch(msgs.slice(0, -2), q, call);
+        if (words !== "none") { try { lk = await window.Lantern.assistLookup(q, words, { detail: wantDetail }); } catch (e) { lk = null; } }
+        if (lk && lk.sources && lk.sources.length) {
+          sources = lk.sources; detail = wantDetail;
+          seen.push({ sources: sources, detail: wantDetail });
+          rec.searches.push({ query: lk.query, how: parsed.lookup ? "lookup" : quotes ? "quotes" : "decline" });
+          note((quotes && !parsed.lookup ? "The AI wrote quotes without any passages in front of it. " : "") +
+            "Lantern searched its offline library" + (lk.query ? " for \u201c" + lk.query + "\u201d" : "") +
+            " and sent the AI " + lk.sources.length + " passage" + (lk.sources.length === 1 ? "" : "s") + "\u2026");
+          msgs.push({ role: "user", content: lk.prompt });
+          continue;
+        }
+        if (parsed.lookup) {
+          msgs.push({ role: "user", content: "The offline library has nothing on that. Reply with the ANSWER line only." });
+          continue;
+        }
+      }
+      // It asked to look up what it already has in front of it: once, say so.
+      if (sources && detail && parsed.lookup && !parsed.answer && !nudged) {
+        nudged = true;
+        msgs.push({ role: "user", content: "The LIBRARY passages above are what the library has on this. Answer from them now, " +
+          "with [n] at the end of each sentence that uses passage n." });
+        continue;
+      }
+      // A question for its own reasoning, declined anyway: once, say so.
+      if (ownWords && !sources && !steered && (A.isDecline(parsed.answer) || /not in my library/i.test(shown))) {
+        steered = true;
+        msgs.push({ role: "user", content: "This is not a library question. Answer it from your own reasoning, in plain sentences." });
+        continue;
+      }
+      if (!sources && quotes)
+        note("\u26a0 These QUOTE lines were not checked: Lantern gave the AI no library passages for this answer, so they come from its memory, not from the encyclopedia.", "danger");
+      if (Lantern.ai && Lantern.ai.lastFinish === "length")
+        note("The answer was cut short \u2014 send \u201ccontinue\u201d for the rest.");
+      if (ui.proposal) for (i = 0; i < props.length; i++) { p = props[i]; ui.proposal(p); }
+      if (parsed.exprText) {
+        var run = A.run(parsed.exprText);
+        if (run.value != null) { lastValue = run.value; rec.value = run.value; }
+        if (ui.tool) ui.tool(run);
+        var resultText = C.toolText(run), doubts = [];
+        if (run.value != null) (window.Lantern.assistChecks || []).forEach(function (c) {
+          var r = null; try { r = c(said, parsed.exprText, run, { text: shown, parsed: parsed, sources: null }); } catch (e) { r = null; }
+          if (r) doubts.push(String(r));
+        });
+        if (doubts.length && !questioned) {   // one more turn with Lantern's reason (as Assist does)
+          questioned = true;
+          note("Lantern questioned this: " + doubts.join("; ") + ". Asking the AI again\u2026");
+          msgs.push({ role: "user", content: "Lantern questioned that: " + doubts.join("; ") +
+            ".\nIf the question does not give a number you need, reply NEED: <question>.\nOtherwise reply again with corrected = lines and the ANSWER line only." });
+          continue;
+        }
+        stillDoubt = doubts.length ? doubts : null;
+        if (!parsed.answer) { msgs.push({ role: "user", content: "TOOL RESULTS\n" + resultText + "\nNow reply with the ANSWER: line only." }); continue; }
+      }
+      // A detailed answer from passages: every sentence is checked against
+      // the passage it cites; the AI gets one turn to fix what is wrong.
+      if (sources && detail && !parsed.exprText && !parsed.need && window.Lantern.libraryGround) {
+        var g = window.Lantern.libraryGround(shown, sources, said), gp = g.problems.slice();
+        if (!g.declined && g.sentences.length && !g.cited && !rec.carried) gp.push("the answer cites none of the passages: put [n] at the end of each sentence that uses passage n");
+        if (gp.length && !questioned) {
+          questioned = true;
+          note("Lantern checked each sentence against the passages: " + gp.join("; ") + ". Asking the AI again\u2026");
+          msgs.push({ role: "user", content: "Lantern checked each sentence against the passages: " + gp.join("; ") +
+            ".\nReply with the whole answer again: [n] only after a sentence that passage n supports, your own reasoning without [n], and QUOTE lines copied exactly." });
+          continue;
+        }
+        rec.backed = g.backed; rec.quotesOk = g.quotes.length ? g.quotes.every(function (x) { return x.ok; }) : null;
+        if (window.Lantern.libraryGroundView && g.sentences.length) show(function () { return window.Lantern.libraryGroundView(g); });
+        if (window.Lantern.assistSourcesView) show(function () { return window.Lantern.assistSourcesView({ text: shown, parsed: parsed, sources: sources }); });
+        if (gp.length) { rec.stillDoubt = gp; note("\u26a0 Lantern still questions this answer: " + gp.join("; ") + ". Check it before you use it.", "danger"); }
+        break;
+      }
+      if (parsed.answer && sources && !parsed.exprText) {
+        var cdoubts = [];
+        (window.Lantern.assistChecks || []).forEach(function (c) {
+          var r = null; try { r = c(said, "", { steps: [], value: null }, { text: shown, parsed: parsed, sources: sources }); } catch (e) { r = null; }
+          if (r) cdoubts.push(String(r));
+        });
+        if (cdoubts.length && !questioned) {
+          questioned = true;
+          note("Lantern questioned this: " + cdoubts.join("; ") + ". Asking the AI again\u2026");
+          msgs.push({ role: "user", content: "Lantern questioned that: " + cdoubts.join("; ") +
+            ".\nReply again: ANSWER with [n] after each fact, and a QUOTE [n] line copied exactly from passage n." +
+            "\nIf the passages do not answer it, reply exactly: ANSWER: Not in my library." });
+          continue;
+        }
+        stillDoubt = cdoubts.length ? cdoubts : null;
+      }
+      if (parsed.answer) {
+        var fa = A.finalAnswer ? A.finalAnswer(parsed.answer, lastValue) : { text: parsed.answer, mismatch: false };
+        if (sources) fa.unchecked = false;
+        if (ui.answer) ui.answer(fa.text);
+        if (fa.mismatch) note("\u26a0 The AI\u2019s sentence does not match Lantern\u2019s computed result above. Trust the computed number.", "danger");
+        if (fa.unchecked) note("\u26a0 Lantern computed nothing for this answer: its numbers come from the AI alone.");
+        if (fa.otherUnit) note("\u26a0 The sentence matches Lantern\u2019s result only in a different unit. Check the unit of the computed number.");
+        if (sources && window.Lantern.assistSourcesView) show(function () { return window.Lantern.assistSourcesView({ text: shown, parsed: parsed, sources: sources }); });
+        if (stillDoubt) { rec.stillDoubt = stillDoubt; note("\u26a0 Lantern still questions this answer: " + stillDoubt.join("; ") + ". Check it before you use it.", "danger"); }
+      }
+      break;
+    }
+    if (ownWords && !sources && !rec.made && !parsed.exprText)
+      note("\u25e6 Answered from the AI\u2019s own reasoning \u2014 not from the library or the formula engine. Weigh it yourself.");
+    rec.answer = parsed ? parsed.answer : null;
+    rec.declined = /not in my library/i.test(rec.answer || "") || /^\s*not in my library\.?\s*$/im.test(rec.final);
+    rec.sources = sources;
+    return rec;
+  };
+  // converse(turns, opts) -> Promise<{turns: [record], text}>: a whole
+  // conversation with no page (Lantern Bench's "chat" questions).
+  C.converse = async function (turns, opts) {
+    var hist = [], out = [];
+    for (var i = 0; i < turns.length; i++) out.push(await C.turn(hist, turns[i], {}, { headless: true, call: opts && opts.call }));
+    return { turns: out, text: out.length ? out[out.length - 1].final : "" };
+  };
+  async function send() {
+    var q = qIn.value.replace(/^\s+|\s+$/g, "");
+    if (!q || busy) return;
+    qIn.value = "";
+    bubble("user", q);
+    busy = true;
+    var ui = {
+      note: function (text, cls) { log.appendChild(el("p", { "class": cls || "muted", text: text })); log.scrollTop = log.scrollHeight; },
+      reply: function (text) { mdBubble(text); },
+      tool: function (run) { bubble("tool", C.toolText(run), true); },
+      answer: function (text) { answerBubble(text); },
+      node: function (fn) { var n = fn(); if (n) { log.appendChild(n); log.scrollTop = log.scrollHeight; } },
+      proposal: function (p) { proposalBubble(p, F.stage(p.name, p.text, "proposed in chat")); },
+      status: function (t) { statusEl.textContent = t; }
+    };
+    try { await C.turn(msgs, q, ui); }
+    catch (e) {
       bubble("ai", "Could not reach the model: " + (e.message || e) + (Lantern.ai && Lantern.ai.resolve() === "device" ? "" :
         " \u2014 check the endpoint fields above and that the server allows browser origins (see the ? guide)."));
     }
@@ -17074,9 +17206,11 @@ Lantern.RFB = (function () {
     statusEl.textContent = "";
   }
   var currentQ = "";
-  C.callChat = async function (endpoint, model, messages) {
+  C.callChat = async function (endpoint, model, messages, opts) {
+    endpoint = endpoint || Lantern.store.get("assist.endpoint", "http://127.0.0.1:11434/v1/chat/completions");
+    model = model || Lantern.store.get("assist.model", "qwen2.5:3b-instruct");
     if (window.Lantern.aiRoute)
-      return window.Lantern.aiRoute([{ role: "system", content: C.buildSystem(currentQ) }].concat(messages), { temperature: 0, max_tokens: 1536 });
+      return window.Lantern.aiRoute([{ role: "system", content: C.buildSystem(currentQ) }].concat(messages), { temperature: 0, max_tokens: (opts && opts.max_tokens) || 1536 });
     var body = JSON.stringify({ model: model || "", stream: false, temperature: 0,
       messages: [{ role: "system", content: C.buildSystem(currentQ) }].concat(messages) });
     var res = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: body });
@@ -21038,6 +21172,15 @@ Lantern.RFB = (function () {
     var A = L.assist, p = A.parseReply(text), run = p.exprText ? A.run(p.exprText) : { steps: [], value: null };
     var out = { pass: false, value: run.value, expected: null, parsed: !!(p.exprText || p.answer || p.need),
       need: p.need, answer: p.answer, why: "" };
+    if (item.cat === "chat") {   // a conversation, run the way Chat runs it
+      var tr = res && res.turns;
+      out.parsed = !!(tr && tr.length);
+      if (!out.parsed) { out.why = "no conversation"; return out; }
+      var cw = "";
+      try { cw = item.check(tr, {}) || ""; } catch (e) { cw = "check failed: " + ((e && e.message) || e); }
+      out.pass = !cw; out.why = cw;
+      return out;
+    }
     if (item.cat === "make") {   // a MAKE block, built and checked by AI_ACTIONS
       var mk = res && res.made;
       out.parsed = !!mk;
@@ -21092,12 +21235,14 @@ Lantern.RFB = (function () {
     out.why = out.pass ? "" : "did not refuse safely";
     return out;
   };
-  // run({quick, onItem(i, n, row), signal, max_tokens}) -> Promise<report>
+  // run({quick, skip: [categories], onItem(i, n, row), signal, max_tokens}) -> Promise<report>
   B.run = async function (opts) {
     opts = opts || {};
     if (!L.assist || !L.ai) throw new Error("The bench needs the Assist and AI modules.");
     var lib = !!(L.library && L.library.ready && L.library.ready());
-    var A = L.assist, list = qs().filter(function (q) { return (!opts.quick || q.quick) && (q.cat !== "fact" || lib) && (q.cat !== "make" || L.aiAct); }), rows = [], i;
+    var skip = opts.skip || [];   // categories to leave out, e.g. ["chat"]
+    var A = L.assist, list = qs().filter(function (q) { return (!opts.quick || q.quick) && skip.indexOf(q.cat) < 0 && (q.cat !== "fact" || lib) && (q.cat !== "make" || L.aiAct) &&
+      (q.cat !== "chat" || (L.CHAT && L.CHAT.converse && (!q.needsLibrary || lib))); }), rows = [], i;
     var started = Date.now(), loadSeconds = null;
     var eng = L.ai.engines[L.ai.resolve()];
     if (eng && eng.ensure) {   // time the model load apart from the questions
@@ -21117,7 +21262,10 @@ Lantern.RFB = (function () {
         };
         // Things to make go the way Chat sends them (AI_ACTIONS); the rest
         // the way Assist does.
-        res = item.cat === "make" ? await L.aiAct.solve(item.q, callFn) : await A.solve(item.q, { call: callFn });
+        res = item.cat === "make" ? await L.aiAct.solve(item.q, callFn) :
+          item.cat === "chat" ? await L.CHAT.converse(item.turns, { call: function (m, o) {
+            return L.CHAT.callChat(null, null, m, o).then(function (t) { var la = L.ai.last || {}; toks += la.tokens || 0; return t; }); } }) :
+          await A.solve(item.q, { call: callFn });
         text = res.text;
       } catch (e) { err = (e && e.message) || String(e); }
       var g = err ? { pass: false, parsed: false, why: "error: " + err } : B.grade(item, text, res);
@@ -21128,6 +21276,8 @@ Lantern.RFB = (function () {
         rounds: res ? res.rounds : null, fixed: res ? res.fixed : false, retry: res ? res.kind || "" : "",
         library: res && res.sources ? { query: res.lookup, sources: res.sources.map(function (s) { return s.title; }) } : null,
         rejected: res && res.rejected ? res.rejected.slice(0, 300) : "", flags: res && res.flags ? res.flags : [],
+        chat: res && res.turns ? res.turns.map(function (t) { return { q: t.q, searches: t.searches, self: t.self, noLibrary: t.noLibrary,
+          contextual: t.contextual, carried: t.carried, declined: t.declined, rounds: t.rounds, reply: String(t.final).slice(0, 500) }; }) : undefined,
         ms: Date.now() - t0, tokens: err ? null : toks, tps: err || !toks ? null : Math.round(toks / Math.max(0.001, secs) * 10) / 10,
         reply: String(text).slice(0, item.cat === "make" ? 1500 : 600), first: res && res.rounds > 1 ? String(res.first).slice(0, item.cat === "make" ? 1500 : 600) : undefined };
       rows.push(row);
@@ -21155,10 +21305,10 @@ Lantern.RFB = (function () {
   // stated a number while Lantern computed nothing (Lantern flags both).
   B.summary = function (rows) {
     var by = {}, pass = 0, parsed = 0, ms = 0, tps = [], i;
-    var core = { n: 0, pass: 0 }, fresh = { n: 0, pass: 0 }, hard = { n: 0, pass: 0 }, facts = { n: 0, pass: 0 }, makes = { n: 0, pass: 0 };
+    var core = { n: 0, pass: 0 }, fresh = { n: 0, pass: 0 }, hard = { n: 0, pass: 0 }, facts = { n: 0, pass: 0 }, makes = { n: 0, pass: 0 }, chats = { n: 0, pass: 0 };
     var byRule = 0, disagree = 0, unchecked = 0, retried = 0, fixed = 0, flagged = 0;
     for (i = 0; i < rows.length; i++) {
-      var r = rows[i], c = by[r.cat] = by[r.cat] || { n: 0, pass: 0 }, f = r.cat === "fact" ? facts : r.cat === "make" ? makes : (r.hard ? hard : (r.fresh ? fresh : core));
+      var r = rows[i], c = by[r.cat] = by[r.cat] || { n: 0, pass: 0 }, f = r.cat === "fact" ? facts : r.cat === "make" ? makes : r.cat === "chat" ? chats : (r.hard ? hard : (r.fresh ? fresh : core));
       if (r.retry) { retried++; if (r.fixed && r.pass) fixed++; }
       if (r.flags && r.flags.length) flagged++;
       c.n++; f.n++; if (r.pass) { c.pass++; f.pass++; pass++; }
@@ -21170,7 +21320,7 @@ Lantern.RFB = (function () {
     }
     tps.sort(function (a, b) { return a - b; });
     return { n: rows.length, pass: pass, score: rows.length ? Math.round(pass / rows.length * 100) : 0,
-      core: core, fresh: fresh, hard: hard, library: facts, make: makes, byRule: byRule, disagree: disagree, unchecked: unchecked,
+      core: core, fresh: fresh, hard: hard, library: facts, make: makes, chat: chats, byRule: byRule, disagree: disagree, unchecked: unchecked,
       retried: retried, fixedOnRetry: fixed, stillQuestioned: flagged,
       parsedPct: rows.length ? Math.round(parsed / rows.length * 100) : 0, byCat: by,
       avgSeconds: rows.length ? Math.round(ms / rows.length / 100) / 10 : 0,
@@ -21180,7 +21330,7 @@ Lantern.RFB = (function () {
     function c(v) { v = v == null ? "" : String(v); return /[\x22,\n]/.test(v) ? "\x22" + v.replace(/\x22/g, "\x22\x22") + "\x22" : v; }
     var lines = ["id,category,set,pass,value,expected,answered_by,sentence,rounds,seconds,tokens_per_s,why,question,reply"];
     rep.rows.forEach(function (r) {
-      lines.push([r.id, r.cat, r.cat === "make" ? "make" : r.cat === "fact" ? "library" : r.hard ? "hard" : (r.fresh ? "fresh" : "earlier"), r.pass ? 1 : 0, r.value, r.expected, r.by, r.claim,
+      lines.push([r.id, r.cat, r.cat === "make" ? "make" : r.cat === "chat" ? "chat" : r.cat === "fact" ? "library" : r.hard ? "hard" : (r.fresh ? "fresh" : "earlier"), r.pass ? 1 : 0, r.value, r.expected, r.by, r.claim,
         r.rounds, r.ms / 1000, r.tps, r.why, r.q, r.reply].map(c).join(","));
     });
     return lines.join("\n");
@@ -21801,7 +21951,8 @@ Lantern.RFB = (function () {
     var extra = (s.fresh && (s.fresh.n || (s.hard && s.hard.n)) ? " \u00b7 earlier questions " + s.core.pass + "/" + s.core.n +
         (s.fresh.n ? ", fresh " + s.fresh.pass + "/" + s.fresh.n : "") + (s.hard && s.hard.n ? ", hard " + s.hard.pass + "/" + s.hard.n : "") +
         (s.library && s.library.n ? ", library facts " + s.library.pass + "/" + s.library.n : "") +
-        (s.make && s.make.n ? ", things made " + s.make.pass + "/" + s.make.n : "") : "") +
+        (s.make && s.make.n ? ", things made " + s.make.pass + "/" + s.make.n : "") +
+        (s.chat && s.chat.n ? ", conversations " + s.chat.pass + "/" + s.chat.n : "") : "") +
       (s.retried ? " \u00b7 " + s.fixedOnRetry + " of " + s.retried + " fixed after Lantern rejected or questioned a formula" : "") +
       (s.stillQuestioned ? " \u00b7 " + s.stillQuestioned + " still questioned" : "") +
       (s.disagree ? " \u00b7 " + s.disagree + " sentence" + (s.disagree === 1 ? "" : "s") + " disagreed with Lantern" : "") +
@@ -21991,6 +22142,10 @@ Lantern.RFB = (function () {
       "answers, with a bigger reading allowance, so it reasons with the passages in front of it. Lantern then checks the answer sentence by " +
       "sentence: a sentence that cites a passage must say what that passage says (otherwise the AI gets one turn to fix it), and sentences " +
       "with no source are listed as the AI\u2019s own reasoning, for you to weigh. Infobox facts (heights, dates, populations) are read too.</p>" +
+      "<p><b>Not every question is for the encyclopedia.</b> A follow-up that leans on earlier turns (\u201cHow are they trained?\u201d) " +
+      "is searched with the AI\u2019s own search words, since it knows what \u201cthey\u201d means. A question about the AI itself, Lantern " +
+      "or the chat (\u201cIs this how you work?\u201d), or one asked \u201cwithout regard to the library\u201d, is answered from the AI\u2019s " +
+      "own reasoning and marked as such. A quote from a passage read earlier in the chat counts as a real quote.</p>" +
       "<p><b>Two Wikipedias:</b> the small file holds the lead section and infobox of every article (about 12 GB); " +
       "<code>setup-kit library-full</code> adds every article in full (text without pictures, about 60 GB). With both, quick facts read the " +
       "small file and explanation questions read the full articles.</p>"],
@@ -22084,8 +22239,8 @@ Lantern.RFB = (function () {
 //          search, read, passage, lookup, prompt, families, wantsDetail,
 //          onChange, state), Lantern.assistLookup(question, query) ->
 //          Promise<{query, sources, prompt}> used by Assist
-//          (Lantern.assist.solve) and Chat; Lantern.chatReadFirst(question)
-//          -> Promise<{query, sources, prompt, detail, book}|null> (Chat
+//          (Lantern.assist.solve) and Chat; Lantern.chatReadFirst(question,
+//          query) -> Promise<{query, sources, prompt, detail, book}|null> (Chat
 //          reads before it answers an explanation question)
 // ===========================================================================
 // An offline encyclopedia for the AI to READ instead of remember. The kit
@@ -22491,8 +22646,10 @@ Lantern.RFB = (function () {
   // chatReadFirst(question): an explanation question in Chat is looked up
   // BEFORE the model answers, so it reasons with the passages in front of it
   // instead of from memory alone (1.9.4).
-  window.Lantern.chatReadFirst = function (question) {
+  window.Lantern.chatReadFirst = function (question, query) {
     if (!LIB.ready() || !LIB.wantsDetail(question) || /\d/.test(String(question || ""))) return Promise.resolve(null);
+    // the AI's own search words for a follow-up (Chat asks it first)
+    if (query && /\w/.test(query)) return LIB.lookup(question, query, { detail: true });
     // search for the subject, not for "explain in detail"
     var subject = LIB.keywords(String(question).replace(/\b(explain|explanation|describe|in detail|detailed|elaborate|overview|walk me through|teach me|summari[sz]e|tell me (about|more)|please|works?|working)\b/gi, " ")).join(" ");
     return LIB.lookup(question, subject, { detail: true });
@@ -22676,8 +22833,17 @@ Lantern.RFB = (function () {
   }
   function ground(text, sources, question) {
     sources = sources || [];
-    var g = { sentences: [], backed: 0, wrong: [], loose: [], own: [], cited: 0, quotes: [], declined: /not in my library/i.test(String(text || "")) };
+    var g = { sentences: [], backed: 0, wrong: [], loose: [], own: [], about: [], cited: 0, quotes: [], declined: /not in my library/i.test(String(text || "")) };
     proseSentences(text).forEach(function (t) {
+      // "passage [3]" names a passage, it does not cite it; and a sentence
+      // that describes the passages ("Passage [1] lists songs called...",
+      // "The passages do not cover...") is about them, not a claim from them
+      // (1.9.6: both were flagged as false citations in a 35B Chat).
+      t = t.replace(/\b(passages?)\s*\[(\d+)\]/gi, "$1 $2");
+      if (/^(passage|passages|the (provided |library |given |above |offline )*(passages?|library)|these passages|none of the passages|neither passage)\b/i.test(t)) {
+        g.about.push({ text: t.replace(/\s*\[\d+\]/g, ""), state: "about" });
+        return;
+      }
       var cites = [], m, re = /\[(\d+)\]/g;
       while ((m = re.exec(t))) { var n = parseInt(m[1], 10); if (cites.indexOf(n) < 0) cites.push(n); }
       var clean = t.replace(/\s*\[\d+\]/g, ""), x = { text: clean, cites: cites, state: "own" };
@@ -23828,6 +23994,93 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: AI_MAKE_BENCH_DATA - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_CHAT_BENCH_DATA - START
+// Depends: AI_BENCH_DATA (Lantern.aiBenchQuestions, created here if absent),
+//          ASSIST_CHAT (Lantern.CHAT.converse) -- the bench runs these only
+//          when Chat can run without the page
+// Exports: (none) -- adds 8 "chat" conversations to Lantern Bench
+// ===========================================================================
+// Conversations, from a 35B Chat transcript (1.9.4) where follow-ups went
+// wrong: "Is this how you work?" was searched as it stood and found a song;
+// questions about the AI itself, or asked "without regard to the library",
+// ended in "Not in my library"; a quote from an earlier passage was taken for
+// an invented one. Each item runs every turn the way Chat does (C.converse)
+// and grades the LAST turn: check(turns, ctx) -> "" or why not. turns[i] =
+// Chat's record: {final, declined, searches: [{query, how}], self,
+// noLibrary, contextual, carried, value, backed, quotesOk}.
+(function () {
+  var Q = window.Lantern.aiBenchQuestions = window.Lantern.aiBenchQuestions || [];
+  function last(t) { return t[t.length - 1]; }
+  function text(r) { return String(r.final || ""); }
+  function words(r) { return text(r).split(/\s+/).filter(Boolean).length; }
+  var LLM = "Explain in detail how large language models work.";
+  [
+    { id: "chat-is-this-how-you-work", quick: 1, turns: [LLM, "Is this how you work?"],
+      check: function (t) {
+        var r = last(t);
+        if (r.searches.length) return "searched the library for a question about itself (\u201c" + r.searches[0].query + "\u201d)";
+        if (r.declined) return "answered \u201cNot in my library\u201d";
+        return words(r) >= 15 ? "" : "no real answer";
+      } },
+    { id: "chat-follow-up-search", needsLibrary: true, turns: [LLM, "How are they trained?"],
+      check: function (t) {
+        var r = last(t);
+        if (!r.searches.length) return "did not read the library";
+        if (!/language model|\bllm/i.test(r.searches[0].query)) return "searched without the conversation\u2019s subject (\u201c" + r.searches[0].query + "\u201d)";
+        if (r.declined) return "answered \u201cNot in my library\u201d";
+        return r.backed >= 1 ? "" : "no sentence backed by a passage";
+      } },
+    { id: "chat-more-or-less-capable", turns: [LLM, "Based on this, are you more or less capable with Lantern's tools than without them?"],
+      check: function (t) {
+        var r = last(t);
+        if (r.searches.length) return "searched the library for a question about itself";
+        if (r.declined) return "answered \u201cNot in my library\u201d";
+        return /\b(more|less)\b/i.test(text(r)) ? "" : "did not say more or less";
+      } },
+    { id: "chat-without-library", turns: ["Without regard to what is in your library, how can predicting the next word produce reasoning?"],
+      check: function (t) {
+        var r = last(t);
+        if (r.searches.length) return "used the library although asked not to";
+        if (r.declined) return "answered \u201cNot in my library\u201d";
+        if (!/token|word|predict/i.test(text(r))) return "did not address next-word prediction";
+        return words(r) >= 30 ? "" : "too short to explain";
+      } },
+    { id: "chat-carried-quote", needsLibrary: true, turns: [LLM, "Sum that up in one sentence and quote the passage you used."],
+      check: function (t) {
+        var r = last(t);
+        if (r.searches.some(function (s) { return s.how === "quotes"; })) return "a quote from the earlier passage set off a new search";
+        if (r.declined) return "answered \u201cNot in my library\u201d";
+        return r.quotesOk === false ? "its quote is not in the passages" : "";
+      } },
+    { id: "chat-what-we-discussed", turns: ["What is the capital of Kenya?", "What have we discussed so far?"],
+      check: function (t) {
+        var r = last(t);
+        if (r.searches.length) return "searched the library to summarise the chat";
+        if (r.declined) return "answered \u201cNot in my library\u201d";
+        return /kenya|nairobi/i.test(text(r)) ? "" : "the summary misses Kenya";
+      } },
+    { id: "chat-reasoning-meta", turns: [LLM, "In your previous answer, how is reasoning possible given next-token prediction?"],
+      check: function (t) {
+        var r = last(t);
+        if (r.searches.some(function (s) { return !/language model|reason|token|predict|llm/i.test(s.query); })) return "searched without the subject (\u201c" + r.searches[0].query + "\u201d)";
+        if (r.declined) return "answered \u201cNot in my library\u201d";
+        return words(r) >= 30 ? "" : "too short to explain";
+      } },
+    { id: "chat-calc-follow-up", turns: ["A 12 V pump draws 5 A. How many watts is that?", "And how many amp-hours does it use in 3 hours?"],
+      check: function (t) {
+        var r = last(t);
+        if (r.value == null) return "computed nothing";
+        return Math.abs(r.value - 15) < 0.01 ? "" : "computed " + r.value + ", not 15 Ah";
+      } }
+  ].forEach(function (x) {
+    x.cat = "chat"; x.q = x.turns.join(" \u2192 ");
+    if (!Q.some(function (y) { return y.id === x.id; })) Q.push(x);
+  });
+})();
+// ===========================================================================
+// MODULE: AI_CHAT_BENCH_DATA - END
 // ===========================================================================
 </script>
 
