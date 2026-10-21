@@ -198,6 +198,39 @@ function firstSentence(body, n) {
   var rg = await A.solve("How many paracetamol tablets can I give my 2 year old?", { call: function (m) { return L.ai.complete(m); } });
   ok("a safety-rule reply is not followed by a library lookup", !rg.sources && rg.rounds === 1 && libCalls.length === 0, { rounds: rg.rounds, calls: libCalls.length });
 
+  // --- added after bench run 6 (1.9.2, Qwen3.5 4B, 61/67) ---
+  L.ai.lastGuard = null;   // the scripted calls below bypass L.ai.complete
+  // a real quote that does not say the answer's fact (natural gas: "methane"
+  // quoting a sentence about fossil fuels)
+  var unsup = V("ANSWER: Ocean acidification is caused by volcanoes [1].\nQUOTE [1]: " + s1, src, "What causes ocean acidification?");
+  ok("verify: a real quote that does not say the fact fails", !unsup.ok && /no quote says volcanoes/.test(unsup.problems.join(" ")), unsup.problems);
+  ok("verify: a quote that says the fact passes the support check",
+    V("ANSWER: It is the ongoing decrease in the pH of the oceans [1].\nQUOTE [1]: " + s1, src, "What is ocean acidification?").ok);
+  ok("verify: a number the quote states is support enough",
+    V("ANSWER: Everest became the highest in 1952 [1].\nQUOTE [1]: Everest was measured in 1952 by surveyors.",
+      [{ n: 1, title: "E", text: "Everest was measured in 1952 by surveyors." }], "In what year was Everest measured?").ok);
+  // a real quote labelled with the wrong passage number is relabelled
+  modelReplies = [function () { return "LOOKUP: ocean acidification"; },
+    function (m) { return "ANSWER: It is the ongoing decrease in the pH of the oceans [2].\nQUOTE [2]: " + firstSentence({ messages: m }, 1); }];
+  var rr = await A.solve("What is ocean acidification?", { call: call });
+  ok("solve: a quote from passage 1 labelled [2] is relabelled [1], not questioned", rr.sources && rr.sources.length >= 2 &&
+    rr.relabelled && rr.relabelled[0].from === 2 && rr.relabelled[0].to === 1 && /\[1\]/.test(rr.parsed.answer) && /QUOTE \[1\]/.test(rr.text) &&
+    !rr.kind && !rr.flags.length && rr.rounds === 2, { rel: rr.relabelled, kind: rr.kind, flags: rr.flags, n: rr.sources && rr.sources.length });
+  // a NEED that only repeats a question with no numbers gets the library
+  modelReplies = [function () { return "NEED: What is ocean acidification?"; },
+    function (m) { return "ANSWER: It is the ongoing decrease in the pH of the oceans [1].\nQUOTE [1]: " + firstSentence({ messages: m }, 1); }];
+  var rn = await A.solve("What is ocean acidification?", { call: call });
+  ok("solve: a NEED that repeats the question is treated as a decline and looked up", rn.sources && rn.rounds === 2 && !rn.parsed.need &&
+    !rn.flags.length, { rounds: rn.rounds, need: rn.parsed.need });
+  modelReplies = [function () { return "NEED: How many amp-hours is your battery?"; }];
+  libCalls = [];
+  var rb = await A.solve("How many hours will my battery run a 60 W light?", { call: call });
+  ok("solve: a real NEED (a number is missing) is kept and nothing is looked up", rb.parsed.need && rb.rounds === 1 && !rb.sources && libCalls.length === 0);
+  ok("needEcho: only an echo of a question without numbers",
+    A.needEcho("What is the chemical symbol for gold?", "What is the chemical symbol for gold?") &&
+    !A.needEcho("How many goats do you have, and how much feed does each goat need per day?", "How much feed do my goats need for 30 days?") &&
+    !A.needEcho("What are the length, width and height of your room?", "How much paint do I need for my room?"));
+
   // bench grading for fact questions
   var item = { id: "t", cat: "fact", q: "What is ocean acidification?", want: "\\bpH\\b" };
   var resGood = { sources: src }, txt = "ANSWER: The decrease in the pH of the oceans [1].\nQUOTE [1]: " + s1;
@@ -208,6 +241,20 @@ function firstSentence(body, n) {
 
   // Assist UI, through the same-origin model route
   await L.ai.detect();
+  // A request that never got an answer (bench run 6, Firefox NetworkError)
+  // is sent once more; a second failure is reported.
+  var realFetch = w.fetch, drops = 1, tries = 0;
+  w.fetch = function (url, opts) {
+    if (/chat\/completions/.test(String(url))) { tries++; if (drops > 0) { drops--; return Promise.reject(new TypeError("NetworkError when attempting to fetch resource.")); } }
+    return realFetch(url, opts);
+  };
+  modelReplies = ["ANSWER: hello"];
+  var got = await L.ai.complete([{ role: "user", content: "Say hello" }]);
+  ok("model call: a dropped request is sent once more", got === "ANSWER: hello" && tries === 2, { got: got, tries: tries });
+  drops = 2; tries = 0; var err = "";
+  try { await L.ai.complete([{ role: "user", content: "Say hello" }]); } catch (e) { err = String(e.message); }
+  ok("model call: a second drop is reported, not retried forever", /NetworkError/.test(err) && tries === 2, { err: err, tries: tries });
+  w.fetch = realFetch;
   go("assist"); await sleep(30);
   var q = d.querySelector("input[aria-label=\"Your question\"]");
   q.value = "What is ocean acidification?";
@@ -226,7 +273,7 @@ function firstSentence(body, n) {
   var cin = d.querySelector("input[aria-label=\"Message\"]");
   cin.value = "Why does coral bleach?";
   modelReplies = ["LOOKUP: coral bleaching", function (body) {
-    return "ANSWER: Warmer water makes corals expel their algae [1].\nQUOTE [1]: " + firstSentence(body, 1); }];
+    return "ANSWER: Corals turn white when they lose their symbiotic algae [1].\nQUOTE [1]: " + firstSentence(body, 1); }];
   modelCalls = [];
   btn(d, "Send").click(); await sleep(150);
   t = d.body.textContent;

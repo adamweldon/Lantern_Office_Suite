@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.9.2 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.9.3 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -107,7 +107,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.9.2",
+  version: "1.9.3",
   apps: {},
   order: []
 };
@@ -16013,7 +16013,8 @@ Lantern.RFB = (function () {
     throw new Error("Unrecognised server reply shape");
   };
   // solve(question, {call, retries, lookup}) -> Promise<{text, first, second,
-  //   parsed, run, rounds, kind, rejected, fixed, flags, sources, lookup}>
+  //   parsed, run, rounds, kind, rejected, fixed, flags, sources, lookup,
+  //   relabelled}>
   // One model call through opts.call(messages). Then, when an offline
   // library is attached (Lantern.assistLookup), a fact question gets one
   // reading turn: the model asked to LOOKUP (or said "Not in my library"),
@@ -16026,10 +16027,31 @@ Lantern.RFB = (function () {
   // source...). The model fixes the slip from Lantern's reason; Lantern never
   // guesses the fix. flags = what the checks still say about the kept reply.
   A.isDecline = function (answer) { return /not in my library/i.test(String(answer || "")); };
+  // needEcho(need, question) -> true when a NEED line just asks the person
+  // their own question back ("NEED: What is the chemical symbol for gold?" --
+  // bench run 6): a question with no numbers has nothing missing to ask for,
+  // so it is treated as a decline and the library gets a look.
+  A.needEcho = function (need, question) {
+    if (!need || /\d/.test(String(question || ""))) return false;
+    var weak = /^(the|and|for|what|which|who|whom|whose|how|many|much|does|did|you|your|are|was|were|this|that|with|from|have|has|can|could|would|should|will|tell|please|about|into|there|their|they|them|its|not)$/;
+    function words(t) { return (String(t || "").toLowerCase().match(/[a-z\u00c0-\u024f]{3,}/g) || []).filter(function (w) { return !weak.test(w); }); }
+    var qw = words(question), nw = words(need);
+    if (!qw.length) return false;
+    var hit = qw.filter(function (w) { return nw.indexOf(w) >= 0; }).length;
+    return hit / qw.length >= 0.75 && nw.length <= qw.length * 2 + 2;
+  };
   A.solve = async function (question, opts) {
     opts = opts || {};
     var checks = window.Lantern.assistChecks || [], look = window.Lantern.assistLookup;
     var out = { rounds: 0, kind: "", fixed: false, rejected: "", flags: [], sources: null, lookup: "" };
+    // A quote copied from one passage but labelled with another number is
+    // relabelled (Lantern.libraryRenumber) before anything is checked.
+    function relabel(t) {
+      if (!out.sources || !window.Lantern.libraryRenumber) return t;
+      var rn = window.Lantern.libraryRenumber(t, out.sources);
+      if (rn.moved.length) out.relabelled = (out.relabelled || []).concat(rn.moved);
+      return rn.text;
+    }
     function questioned(pp, rr, txt) {
       var found = [], i, r, ctx = { text: txt, parsed: pp, sources: out.sources };
       if (!(rr.value != null && pp.exprText) && !(out.sources && out.sources.length)) return found;
@@ -16046,7 +16068,7 @@ Lantern.RFB = (function () {
     // A safety rule answered (Lantern.ai.lastGuard): nothing to look up.
     var guarded = !!(window.Lantern.ai && Lantern.ai.lastGuard);
     // Reading turn: the offline library, when the model asks or declines.
-    if (look && !guarded && opts.lookup !== false && !p.exprText && !p.need && (p.lookup || A.isDecline(p.answer))) {
+    if (look && !guarded && opts.lookup !== false && !p.exprText && (p.lookup || A.isDecline(p.answer) || A.needEcho(p.need, question))) {
       var lk = null;
       try { lk = await look(question, p.lookup || ""); } catch (e) { lk = null; }
       if (lk && lk.sources && lk.sources.length) {
@@ -16054,7 +16076,7 @@ Lantern.RFB = (function () {
         msgs.push({ role: "assistant", content: text });
         msgs.push({ role: "user", content: lk.prompt });
         out.read = text;
-        text = await turn(); p = A.parseReply(text); run = A.run(p.exprText);
+        text = relabel(await turn()); p = A.parseReply(text); run = A.run(p.exprText);
       }
     }
     var flags = questioned(p, run, text);
@@ -16080,7 +16102,7 @@ Lantern.RFB = (function () {
     out.prev = text;
     msgs.push({ role: "assistant", content: text });
     msgs.push({ role: "user", content: why + how });
-    var text2 = await turn(), p2 = A.parseReply(text2), run2 = A.run(p2.exprText);
+    var text2 = relabel(await turn()), p2 = A.parseReply(text2), run2 = A.run(p2.exprText);
     out.second = text2;
     var keep = run2.value != null || (p2.need && !p2.exprText) || (out.sources && p2.answer && !p2.exprText);
     if (keep) {
@@ -16750,11 +16772,12 @@ Lantern.RFB = (function () {
         msgs.push({ role: "assistant", content: reply });
         var props = C.parseProposals(reply), p;
         var shown = reply.replace(/^PROPOSE MODULE:[\s\S]*?^END PROPOSAL[ \t]*$/gm, "").replace(/^\s+|\s+$/g, "");
+        if (sources && window.Lantern.libraryRenumber) shown = window.Lantern.libraryRenumber(shown, sources).text;
         var parsed = A.parseReply(shown);
         if (shown) mdBubble(shown);
         // The offline library: the AI asked to LOOKUP, or declined a question
         // the encyclopedia might answer. One reading turn per question.
-        if (!looked && window.Lantern.assistLookup && !parsed.exprText && !parsed.need && (parsed.lookup || A.isDecline(parsed.answer))) {
+        if (!looked && window.Lantern.assistLookup && !parsed.exprText && (parsed.lookup || A.isDecline(parsed.answer) || A.needEcho(parsed.need, q))) {
           looked = true;
           var lk = null;
           try { lk = await window.Lantern.assistLookup(q, parsed.lookup || ""); } catch (e) { lk = null; }
@@ -20313,10 +20336,16 @@ Lantern.RFB = (function () {
       max_tokens: opts.max_tokens || 512,
       chat_template_kwargs: { enable_thinking: false }
     };
-    var res = await window.fetch(AI.endpoint(), {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body), signal: opts.signal
-    });
+    var init = { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: opts.signal }, res;
+    // One quiet retry when the request never got an answer at all (bench
+    // run 6, Firefox: "NetworkError when attempting to fetch resource" once
+    // in 100 requests -- a kept-alive connection the server had just closed).
+    // A stopped request (AbortError) or a server error is not retried.
+    try { res = await window.fetch(AI.endpoint(), init); } catch (e) {
+      if (!e || e.name === "AbortError" || (opts.signal && opts.signal.aborted)) throw e;
+      await new Promise(function (r) { setTimeout(r, 400); });
+      res = await window.fetch(AI.endpoint(), init);
+    }
     if (!res.ok) throw new Error("Server said " + res.status + " " + (res.statusText || ""));
     var data = await res.json();
     var u = data.usage || {};
@@ -20773,7 +20802,7 @@ Lantern.RFB = (function () {
       if (!srcs || !srcs.length) { out.why = "nothing found in the library"; return out; }
       if (/not in my library/i.test(ans)) { out.why = "declined"; return out; }
       if (!new RegExp(item.want, "i").test(ans)) { out.why = "wrong answer"; return out; }
-      var v = L.libraryVerify ? L.libraryVerify(text, srcs) : null;
+      var v = L.libraryVerify ? L.libraryVerify(text, srcs, item.q) : null;
       if (!v || !v.ok) { out.why = "citation not verified" + (v && v.problems.length ? ": " + v.problems[0] : ""); return out; }
       out.pass = true;
       return out;
@@ -21097,13 +21126,18 @@ Lantern.RFB = (function () {
   // "=60*5/1000", "=100*5/1000", "=ANS+ANS": ANS is only the line just
   // before, so the first step is lost). A step is used when the next line
   // takes ANS, or a later line repeats it or its number. Only steps with
-  // arithmetic count; scratch lookups are left alone. (Run 4, run 5.)
-  function unusedSteps(expr) {
-    var ls = lines(expr), out = [], i;
+  // arithmetic count, or a function applied to one of the question's own
+  // numbers ("=CONVERT(26,"mile","km")" and then "=26/1.609344/40": the
+  // conversion was worked out, then done backwards by hand -- run 6);
+  // scratch lookups like =PLANET("Earth","radius") are left alone. (Runs 4-6.)
+  function unusedSteps(expr, question) {
+    var ls = lines(expr), out = [], i, given = question ? questionNumbers(question) : [];
     if (ls.length < 2) return out;
     for (i = 0; i < ls.length - 1; i++) {
       var l = ls[i], v = null, later = ls.slice(i + 1).join(" ");
-      if (!/[0-9)][-+*\/][0-9(A-Z]/i.test(l.replace(/\x22[^\x22]*\x22/g, ""))) continue;
+      var arith = /[0-9)][-+*\/][0-9(A-Z]/i.test(l.replace(/\x22[^\x22]*\x22/g, ""));
+      var onGiven = /^[A-Z]+\(/i.test(l) && numbersIn(l).some(function (x) { return given.some(function (g) { return same(g, x); }); });
+      if (!arith && !onGiven) continue;
       if (/ANS/i.test(ls[i + 1])) continue;
       if (later.indexOf(l) !== -1) continue;
       try { v = L.formula.evaluate(l, { deg: false, ans: 0 }); } catch (e) { continue; }
@@ -21152,11 +21186,13 @@ Lantern.RFB = (function () {
     var want = UNIT[asked];
     return d === want ? null : { asked: asked, divisor: d, want: want };
   }
-  // timesOne(expr) -> true when the formula multiplies by 1: it changes
-  // nothing and usually stands in for a number the question did not give.
+  // timesOne(expr) -> true when the formula multiplies or divides by 1: it
+  // changes nothing and usually stands in for a number the question did not
+  // give ("=60/1" for "how many hours will my battery run a 60 W light" --
+  // run 6).
   function timesOne(expr) {
     var t = String(expr || "").replace(/\x22[^\x22]*\x22/g, "\x22\x22");
-    return /(^|[^0-9.])1\s*\*/.test(t.replace(/\^\s*1/g, "")) || /\*\s*1(?![0-9.e])/.test(t);
+    return /(^|[^0-9.])1\s*\*/.test(t.replace(/\^\s*1/g, "")) || /[*\/]\s*1(?![0-9.e])/.test(t);
   }
   L.aiChecks = { numbersIn: numbersIn, unexplained: unexplained, heights: heights, heightAsRadius: heightAsRadius,
     unusedSteps: unusedSteps, timeUnit: timeUnit, timesOne: timesOne, repeatedStep: repeatedStep, extraTimeStep: extraTimeStep };
@@ -21175,7 +21211,7 @@ Lantern.RFB = (function () {
       t.want + (t.divisor === 1 ? " (the formula does not divide)" : " (the formula divides by " + t.divisor + ")");
   });
   add("unused-step", function (question, expr) {
-    var u = unusedSteps(expr);
+    var u = unusedSteps(expr, question);
     if (!u.length) return null;
     return u.map(function (x) { return "=" + x.step + " (" + (Math.round(x.value * 1e6) / 1e6) + ")"; }).join(" and ") +
       (u.length > 1 ? " are" : " is") + " worked out but never used afterwards (ANS is only the line just before); check the arithmetic";
@@ -21190,7 +21226,7 @@ Lantern.RFB = (function () {
       "uses " + t.factor + " (that changes the unit)" : null;
   });
   add("times-one", function (question, expr) {
-    return timesOne(expr) ? "the formula multiplies by 1, which changes nothing; it usually stands in for a number " +
+    return timesOne(expr) ? "the formula multiplies or divides by 1, which changes nothing; it usually stands in for a number " +
       "the question does not give (ask with NEED)" : null;
   });
   add("number-not-in-question", function (question, expr, run, ctx) {
@@ -22074,15 +22110,17 @@ Lantern.RFB = (function () {
 // MODULE: LIBRARY_CHECKS - START
 // Depends: ASSIST_CORE (Lantern.assistChecks hook), LIBRARY_ENGINE (sources
 //          come from it) -- feature-detected
-// Exports: Lantern.libraryVerify(text, sources) -> {ok, declined, cites,
-//          quotes, problems}; Lantern.assistSourcesView(res) -> element;
+// Exports: Lantern.libraryVerify(text, sources, question) -> {ok, declined,
+//          cites, quotes, problems}; Lantern.libraryRenumber(text, sources)
+//          -> {text, moved}; Lantern.assistSourcesView(res) -> element;
 //          adds the "citation" check to Lantern.assistChecks
 // ===========================================================================
 // A library answer is only as good as its citations, so Lantern checks them
 // the way it checks numbers: every fact in the ANSWER line carries [n]; each
 // cited passage has a QUOTE [n] line; the quote really is in passage n
-// (copied, give or take punctuation and a word or two); and every number the
-// answer states appears in a passage it cites. Anything else goes back to
+// (copied, give or take punctuation and a word or two); every number the
+// answer states appears in a passage it cites; and the words the answer adds
+// to the question (its fact) are in a quote. Anything else goes back to
 // the model for its one correction turn, and whatever is still wrong is
 // shown to the person. The check never decides what is true -- only that
 // the answer says what its sources say.
@@ -22115,7 +22153,65 @@ Lantern.RFB = (function () {
   function numbers(t) {
     return (String(t || "").replace(/\[\d+\]/g, " ").replace(/(\d),(\d{3})/g, "$1$2").match(/\d+(?:\.\d+)?/g) || []);
   }
-  function verify(text, sources) {
+  var QRE = /^(\s*QUOTE\s*\[?\s*)(\d+)(\s*\]?\s*:\s*)(.+)$/gim;
+  function bare(q) { return q.replace(/^[\s\x22\x27\u201c\u201d\u2018\u2019]+|[\s\x22\x27\u201c\u201d\u2018\u2019]+$/g, ""); }
+  // renumber(text, sources) -> {text, moved}: a quote copied from passage 1
+  // but labelled [3] (run 6, "Mandela ... became President") is a real quote
+  // with the wrong number. Lantern relabels it -- in the QUOTE line and the
+  // ANSWER's [n] -- so the link goes to the article it came from. A quote
+  // found in no passage stays as it is, for verify() to reject.
+  function renumber(text, sources) {
+    text = String(text || ""); sources = sources || [];
+    var map = {}, okFor = {}, moved = [], m;
+    QRE.lastIndex = 0;
+    while ((m = QRE.exec(text))) {
+      var k = parseInt(m[2], 10), qt = bare(m[4]);
+      if (sources[k - 1] && quoteIn(qt, sources[k - 1].text)) { okFor[k] = 1; continue; }
+      for (var j = 1; j <= sources.length; j++) if (j !== k && quoteIn(qt, sources[j - 1].text)) { map[k] = j; break; }
+    }
+    Object.keys(map).forEach(function (k) { if (okFor[k]) delete map[k]; });
+    if (!Object.keys(map).length) return { text: text, moved: moved };
+    Object.keys(map).forEach(function (k) { moved.push({ from: +k, to: map[k] }); });
+    function swap(s) { return s.replace(/\[(\d+)\]/g, function (all, n) { return map[n] ? "[\u0001" + map[n] + "]" : all; }); }
+    text = text.split("\n").map(function (line) {
+      var q = /^(\s*QUOTE\s*\[?\s*)(\d+)(\s*\]?\s*:\s*)(.*)$/i.exec(line);
+      if (q) return map[q[2]] ? q[1] + "\u0001" + map[q[2]] + q[3] + q[4] : line;
+      return /^\s*ANSWER:/i.test(line) ? swap(line) : line;
+    }).join("\n").replace(/\u0001/g, "");
+    return { text: text, moved: moved };
+  }
+  // Support: the words an answer adds to the question (the fact it states)
+  // must be in a verified quote. A real quote that does not say the fact
+  // ("main component ... methane" quoting a sentence about fossil fuels --
+  // run 6) is an answer from memory, not from the library.
+  var WEAK = {};
+  ("the a an of in on at to for from by with and or not is are was were be been it its this that these those there their they " +
+   "what which who whom whose when where why how many much do does did has have had can could would should will about also " +
+   "mostly mainly usually generally often some any all most more than then very approximately around roughly nearly called " +
+   "known named both each other such as into over under between during after before one two first " +
+   "became become becomes began begun happened occurred took place made held served located lies situated").split(" ")
+    .forEach(function (w) { WEAK[w] = 1; });
+  function akin(a, b) {   // same word, or one a short form of the other
+    if (a === b) return true;
+    var s = a.length < b.length ? a : b, l = s === a ? b : a;
+    return s.length >= 4 && (l.indexOf(s) === 0 || (s.length >= 5 && l.slice(0, 5) === s.slice(0, 5)));
+  }
+  function unsupported(answer, question, quotes) {
+    var qw = tokens(question), said = [];
+    quotes.forEach(function (q) { said = said.concat(tokens(q)); });
+    // A number the quotes state is the fact ("in 1994", "8,848.86 m").
+    var an = numbers(answer);
+    if (an.length && an.every(function (x) { return said.indexOf(String(parseFloat(x))) >= 0 || said.indexOf(x) >= 0; })) return [];
+    var adds = [];
+    tokens(answer).forEach(function (w) {
+      if (w.length < 3 || /^\d/.test(w) || WEAK[w] || adds.indexOf(w) >= 0) return;
+      if (qw.some(function (x) { return akin(w, x); })) return;
+      adds.push(w);
+    });
+    var missing = adds.filter(function (w) { return !said.some(function (x) { return akin(w, x); }); });
+    return missing.length > adds.length / 2 ? missing : [];
+  }
+  function verify(text, sources, question) {
     text = String(text || ""); sources = sources || [];
     var out = { ok: false, declined: false, cites: [], quotes: [], problems: [], answer: "" };
     var am = /^\s*ANSWER:\s*(.+)$/m.exec(text);
@@ -22123,9 +22219,9 @@ Lantern.RFB = (function () {
     if (/not in my library/i.test(out.answer)) { out.declined = true; out.ok = true; return out; }
     var m, re = /\[(\d+)\]/g, seen = {};
     while ((m = re.exec(out.answer))) { var n = parseInt(m[1], 10); if (!seen[n]) { seen[n] = 1; out.cites.push(n); } }
-    var qre = /^\s*QUOTE\s*\[?\s*(\d+)\s*\]?\s*:\s*(.+)$/gim;
-    while ((m = qre.exec(text))) {
-      var k = parseInt(m[1], 10), src = sources[k - 1], qt = m[2].replace(/^[\s\x22\x27\u201c\u201d\u2018\u2019]+|[\s\x22\x27\u201c\u201d\u2018\u2019]+$/g, "");
+    QRE.lastIndex = 0;
+    while ((m = QRE.exec(text))) {
+      var k = parseInt(m[2], 10), src = sources[k - 1], qt = bare(m[4]);
       var good = !!src && quoteIn(qt, src.text);
       out.quotes.push({ n: k, text: qt, ok: good });
       if (!seen[k]) { seen[k] = 1; out.cites.push(k); }
@@ -22143,16 +22239,26 @@ Lantern.RFB = (function () {
     numbers(out.answer).forEach(function (x) {
       if (!have[String(parseFloat(x))]) out.problems.push("the answer says " + x + ", which is not in the passages it cites");
     });
+    var said = out.quotes.filter(function (q) { return q.ok; }).map(function (q) { return q.text; });
+    if (question && said.length) {
+      var miss = unsupported(out.answer.replace(/\{result\}/g, " "), question, said);
+      if (miss.length) out.problems.push("no quote says " + miss.join(", ") + ": QUOTE the sentence from the passage that says it");
+    }
     out.ok = !out.problems.length && out.quotes.some(function (q) { return q.ok; });
     return out;
   }
   window.Lantern.libraryVerify = verify;
+  window.Lantern.libraryRenumber = renumber;
   if (L.selftest && L.selftest.add) L.selftest.add("ai: library answers must quote their sources", function () {
     var src = [{ n: 1, title: "Gold", text: "Gold is a chemical element with the chemical symbol Au and atomic number 79." }];
     return verify("ANSWER: Au [1].\nQUOTE [1]: Gold is a chemical element with the chemical symbol Au", src).ok &&
       !verify("ANSWER: Au [1].\nQUOTE [1]: Gold was named by the Romans after the sun god", src).ok &&
       !verify("ANSWER: Gold has atomic number 80 [1].\nQUOTE [1]: Gold is a chemical element with the chemical symbol Au", src).ok &&
-      !verify("ANSWER: Au.", src).ok;
+      !verify("ANSWER: Au.", src).ok &&
+      !verify("ANSWER: Gold is mined mostly in China [1].\nQUOTE [1]: Gold is a chemical element with the chemical symbol Au", src, "Where is gold mined?").ok &&
+      renumber("ANSWER: Au [2].\nQUOTE [2]: Gold is a chemical element with the chemical symbol Au",
+        src.concat([{ n: 2, title: "Silver", text: "Silver is a chemical element with the symbol Ag." }])).text ===
+        "ANSWER: Au [1].\nQUOTE [1]: Gold is a chemical element with the chemical symbol Au";
   });
 
   var CHK = window.Lantern.assistChecks = window.Lantern.assistChecks || [];
@@ -22161,7 +22267,7 @@ Lantern.RFB = (function () {
       if (!ctx || !ctx.sources || !ctx.sources.length) return null;
       // a calculation that cites nothing is checked by the number checks instead
       if (expr && /\S/.test(expr) && !/QUOTE|\[\d+\]/.test(String(ctx.text || ""))) return null;
-      var v = verify(ctx.text, ctx.sources);
+      var v = verify(ctx.text, ctx.sources, question);
       return v.problems.length ? v.problems.join("; ") : null;
     };
     fn.id = "citation";

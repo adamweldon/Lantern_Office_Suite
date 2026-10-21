@@ -246,6 +246,15 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
     return sm.library.n === 1 && sm.core.n === 1; })());
   ok("check: multiplying by 1 stands in for a missing number", CK.timesOne("=60*1/1000") && CK.timesOne("=1*60") &&
     !CK.timesOne("=(1-VELDIL(3e7))*86400") && !CK.timesOne("=12*15") && !CK.timesOne("=60*1.5"));
+  // added after bench run 6 (1.9.2, 4B): "=60/1" for a battery nobody sized,
+  // and a conversion worked out and then done backwards by hand
+  ok("check: dividing by 1 stands in for a missing number too", CK.timesOne("=60/1") && CK.timesOne("=ANS/1") &&
+    !CK.timesOne("=60/10") && !CK.timesOne("=60/1000") && !CK.timesOne("=60/1.5"));
+  var mq = "How many hours does it take to drive 26 miles at 40 km/h?";
+  ok("check: a conversion of a given number that nothing uses", CK.unusedSteps("=CONVERT(26,\"mile\",\"km\")\n=26/1.609344\n=26/1.609344/40", mq).length === 1 &&
+    !CK.unusedSteps("=CONVERT(26,\"mile\",\"km\")\n=ANS/40", mq).length &&
+    !CK.unusedSteps("=CONVERT(26,\"mile\",\"km\")\n=CONVERT(26,\"mile\",\"km\")/40", mq).length &&
+    !CK.unusedSteps("=PLANET(\"Earth\",\"radius\")\n=ORBITT(6371000+420000)/60", "How long is an orbit at 420 km, in minutes?").length);
   var qs2 = [], sq = await A.solve("How much feed do my goats need for 30 days?", { call: function (m) { qs2.push(m.slice());
     return Promise.resolve(qs2.length === 1 ? "=FEEDKG(2,30,800)\nANSWER: {result} kg" : "NEED: How many goats, and how many grams each a day?"); } });
   ok("solve: a questioned formula goes back with Lantern's reason, and a NEED is kept", sq.rounds === 2 && sq.kind === "questioned" && sq.fixed &&

@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.9.3 — Run 6: the 4B with English Wikipedia (2026-10-21)
+
+Adam ran the full bench on the 4B (Qwen3.5-4B-Q4_K_M) with English
+Wikipedia on the same 32 GB laptop as the 35B: **61/67** on 1.9.2.
+Earlier questions 32/32, fresh 5/5, hard 8/10, library facts 16/20,
+unknown 3/3, safety 3/3 by rule; four replies fixed on the correction
+turn; about 10 s a question (11.3 minutes for the whole bench).
+
+The 1.9.2 search did its job: every fact question got the right article.
+The six misses, and what changed:
+
+- **A dropped request** (Things Fall Apart): one model request in about
+  a hundred failed with Firefox's "NetworkError" (a kept-alive connection
+  the server had just closed). A request that never got an answer is now
+  sent once more; a stopped request or a server error is not.
+- **Right quote, wrong number** (Moon landing, Mandela): the quote was
+  copied word for word from passage 1 but labelled [2] or [3], so the
+  check said it was not in that passage. Lantern now relabels a quote
+  found in another passage (QUOTE line and the answer's [n]) before
+  checking, so the link goes to the article it came from.
+- **NEED that repeats the question** (gold symbol: "NEED: What is the
+  chemical symbol for gold?"): a NEED that only echoes a question with no
+  numbers is treated as a decline, so the library gets its look.
+- **Conversion done backwards** (26 miles at 40 km/h): the model worked
+  out CONVERT(26,"mile","km") and then divided 26 by 1.609344 by hand.
+  The unused-step check now also covers a function applied to one of the
+  question's own numbers whose result nothing uses.
+- **Divide by 1** (battery nobody sized: "=60/1"): the times-one check
+  covers /1 as well as *1.
+
+One more check, for answers that passed but should not have: the natural
+gas answer said "methane" and quoted a real sentence from the article that
+does not mention methane -- an answer from memory with a citation
+attached. **Support check:** the words an answer adds to the question
+must be in a verified quote (a number the quote states counts as support).
+
+Replayed over every recorded reply from the six runs (347 formula replies,
+31 cited fact answers), the new checks question only wrong or unsupported
+answers.
+
 ## 1.9.2 — Run 5: the 35B with English Wikipedia (2026-10-20)
 
 Adam built a fresh stick on another laptop (one setup run: engine, 4B,
