@@ -1,5 +1,54 @@
 # Changelog
 
+## 1.9.5 — The AI makes things: schematics, drawings, tables (2026-10-21)
+
+Chat can now be asked to **draw a circuit** (or a hydraulic or pneumatic
+diagram), **draw a picture**, or **make a table**. The AI does what small
+models are good at -- saying *what* -- and Lantern does *where* and *how
+much*, the way it already does arithmetic:
+
+- **MAKE SCHEMATIC**: parts and wires only (`part B1 battery "12 V"`,
+  `wire B1 S1`). Lantern takes each symbol from Draw's Electrical,
+  Hydraulics or Pneumatics mode, lays a loop round a rectangle, hangs a
+  part in parallel below its twin like a ladder rung, hangs ground, tanks
+  and gauges under their terminal, runs square wires on Draw's 20 px grid,
+  marks joins with dots, mirrors a battery or diode to match a named
+  terminal (`B1+`), and labels everything. Checked first: unknown parts
+  (it names the ones it has), loose parts, wires to missing parts, an open
+  circuit (no loop through the battery or source), a pump not reaching
+  its tank. Common names are understood (bulb, LED, earth, power supply).
+- **MAKE DRAWING**: shapes on a 20 x 12 grid -- whole numbers a small
+  model handles -- with fill and outline colours by name; scaled up by
+  Lantern. Off-grid shapes, unknown colours and wrong number counts are
+  sent back.
+- **MAKE SHEET**: rows with `|` between cells and `=` formulas; the sheet
+  engine works them out (the same engine the person uses). A formula that
+  fails, loops, reads an empty cell (an off-by-one row) or reads text is
+  sent back.
+- One corrected block when Lantern finds a problem, as with formulas. The
+  result shows in Chat with **Open in Draw** / **Open in Sheets**; Draw
+  keeps the person's own drawing ("Restore previous drawing") and fits a
+  wide drawing to a small screen. Only the actions a question is about are
+  described to the model, and recipe hints are left out of such requests.
+- **The AI can look at its drawing.** Qwen3.5 models see images with their
+  vision part (mmproj). The kit now fetches it with each laptop model
+  (4B, 9B, 35B: 0.7-0.9 GB; `setup-kit vision` for models already on the
+  stick) and start-lantern loads it (`--mmproj`; `novision` to skip).
+  Lantern reads llama-server's /props, shows "sees images" next to the
+  model, and when it can, shows the AI the finished picture once: it
+  replies LOOKS RIGHT or sends a corrected block. A picture is sent once,
+  not with every later turn.
+- **Bench:** seven "make" questions (a lamp circuit, two lamps in
+  parallel, a hydraulic press, a house with a red roof, a sun above the
+  sea, a shopping table totalling 6.99, Celsius to Fahrenheit), graded by
+  structure and by the sheet's numbers, reported as their own set.
+
+Tested: 49 action tests, the kit (sh and PowerShell: vision parts fetched
+and loaded), and in Chromium against a stand-in llama-server that reports
+vision: the picture Lantern sends is a real PNG of the schematic (checked by
+eye), the look turn, and Open in Draw. Not tested here: a real vision model
+looking at it -- that is the next bench run.
+
 ## 1.9.4 — Reading before reasoning, and the full Wikipedia (2026-10-21)
 
 From a Chat transcript on the 4B: asked to explain in detail how language

@@ -39,6 +39,9 @@ Folder layout
               interrupted download resumes.
      zim NAME any Kiwix file, e.g. "zim wikipedia_en_medicine_maxi" (newest
               version is found by itself; checked against its SHA-256)
+     vision   the vision part of each laptop model in the kit (0.7-0.9 GB
+              each; new 4B/9B/35B downloads bring theirs along): the AI can
+              then look at the drawings it makes in Chat
      check    show what this computer can run and what the kit has
      gpu      Vulkan engine (graphics card) instead of the CPU-only one
 
@@ -61,6 +64,10 @@ Folder layout
    "start-lantern nodownload" skips the check. "setup-kit check" shows the
    memory, drive, models in the kit, and what the next start will offer or why not.
    Pick a model by hand: start-lantern 35b | 9b | 4b | 2b | 0.8b
+   Vision: when models/ holds the model's vision part (mmproj-...-F16.gguf,
+   from setup-kit vision), start-lantern loads it and says "Vision: ...".
+   Chat can then show the AI the drawing it made, once, to check it.
+   "start-lantern novision" starts without it (a little less memory).
 
    Offline library: when library/ holds .zim files, start-lantern also
    starts kiwix-serve on port 8081 and Lantern finds it (AI app > Offline

@@ -1,0 +1,226 @@
+// ai_actions.js -- the AI making things in Lantern's apps (AI_ACTIONS,
+// AI_DRAW, AI_SHEET, AI_MAKE_BENCH_DATA): MAKE blocks parsed and checked,
+// schematic layout and circuit checks, pictures on the grid, tables computed
+// by the sheet engine, the Chat flow (one corrected block, preview, Open in
+// Draw / Sheets, the person's drawing kept), the look turn when the model
+// can see (llama-server /props), and bench grading. Scripted model.
+"use strict";
+var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
+var fs = require("fs"), path = require("path");
+var inner = fs.readFileSync(process.argv[2] || path.join(__dirname, "..", "src", "lantern.inner.html"), "utf8");
+var js = inner.match(/<script>\n([\s\S]*?)\n<\/script>/)[1];
+var vc = new VirtualConsole(), errs = [];
+vc.on("jsdomError", function (e) { if (!/Not implemented/.test(String(e.message))) errs.push(String(e.message).slice(0, 200)); });
+var dom = new JSDOM("<!DOCTYPE html><html><head></head><body></body></html>",
+  { url: "http://127.0.0.1:8080/", runScripts: "outside-only", pretendToBeVisual: true, virtualConsole: vc });
+var w = dom.window, d = w.document;
+w.alert = function () {}; w.confirm = function () { return true; }; w.scrollTo = function () {};
+w.HTMLElement.prototype.scrollIntoView = function () {};
+// A canvas that records drawing calls and hands back a small PNG.
+var painted = 0;
+w.HTMLCanvasElement.prototype.getContext = function () {
+  return new Proxy({}, { get: function (t, k) { if (k in t) return t[k]; return function () { painted++; }; }, set: function (t, k, v) { t[k] = v; return true; } });
+};
+w.HTMLCanvasElement.prototype.toDataURL = function () { return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="; };
+var vision = false, modelReplies = [], modelCalls = [];
+function resp(status, body) {
+  return Promise.resolve({ ok: status < 400, status: status, headers: { get: function () { return "application/json"; } },
+    text: function () { return Promise.resolve(body); }, json: function () { return Promise.resolve(JSON.parse(body)); } });
+}
+w.fetch = function (url, opts) {
+  url = String(url);
+  if (/:8081\//.test(url)) return Promise.reject(new TypeError("no library"));
+  if (/\/v1\/models$/.test(url)) return resp(200, JSON.stringify({ data: [{ id: "Qwen3.5-4B-Q4_K_M.gguf" }] }));
+  if (/\/props$/.test(url)) return resp(200, JSON.stringify({ modalities: { vision: vision, audio: false } }));
+  var body = opts && opts.body ? JSON.parse(opts.body) : null;
+  modelCalls.push(body);
+  var r = modelReplies.length ? modelReplies.shift() : "ANSWER: ok";
+  if (typeof r === "function") r = r(body);
+  return resp(200, JSON.stringify({ choices: [{ message: { content: r }, finish_reason: "stop" }], usage: { completion_tokens: 20 } }));
+};
+var fails = 0, passes = 0;
+function ok(name, cond, info) { if (cond) passes++; else { fails++; console.log("FAIL", name, info === undefined ? "" : JSON.stringify(info).slice(0, 700)); } }
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+function btn(root, text) { return Array.prototype.filter.call(root.querySelectorAll("button"), function (b) { return b.textContent.indexOf(text) === 0; })[0]; }
+function fire(elm, type) { var e = d.createEvent("Event"); e.initEvent(type, true, true); elm.dispatchEvent(e); }
+function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
+function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" + lines.join("\n") + "\nEND"; }
+
+(async function () {
+  w.eval(js);
+  fire(d, "DOMContentLoaded");
+  await sleep(60);
+  var L = w.Lantern, act = L.aiAct;
+  ok("boot clean", errs.length === 0, errs);
+  ok("three actions registered", L.aiActions.map(function (a) { return a.id; }).join(",") === "schematic,drawing,sheet", L.aiActions.map(function (a) { return a.id; }));
+
+  // --- finding blocks, and the prompt ---
+  var fb = act.find("Here it is:\n```\nMAKE SCHEMATIC: Lamp\npart B1 battery\nwire B1 L1\nEND\n```\nDone.");
+  ok("a MAKE block is found (code fences ignored, ends at END)", fb.length === 1 && fb[0].kind === "SCHEMATIC" && fb[0].title === "Lamp" && fb[0].lines.length === 2, fb);
+  var unk = act.build("MAKE VIDEO: cats\nframe 1\nEND", "");
+  ok("an unknown kind says what Lantern can make", unk && !unk.ok && /can make: schematic, drawing, sheet/.test(unk.problems[0]), unk && unk.problems);
+  ok("Chat lists only the actions the question is about", /MAKE SCHEMATIC/.test(L.CHAT.buildSystem("Draw a circuit with a battery and a lamp")) &&
+    !/MAKE SHEET/.test(L.CHAT.buildSystem("Draw a circuit with a battery and a lamp")) && !/MAKE /.test(L.CHAT.buildSystem("What is the capital of Kenya?")) &&
+    /MAKE SHEET/.test(L.CHAT.buildSystem("Make a table of my shopping with a total")) && /MAKE DRAWING/.test(L.CHAT.buildSystem("Draw a house")));
+
+  // --- schematics ---
+  var lamp = act.build(blk("SCHEMATIC", "Lamp circuit", ["mode electrical", "part B1 battery \"12 V\"", "part S1 switch", "part L1 bulb \"60 W\"",
+    "wire B1+ S1", "wire S1 L1", "wire L1 B1-"]), "q");
+  ok("a battery, switch and bulb in a loop: built, a closed loop", lamp.ok && lamp.plan.loop && lamp.plan.parts.map(function (p) { return p.type; }).join() === "battery,switch,lamp" &&
+    /3 parts, 3 connections, a closed loop/.test(lamp.summary), { p: lamp.problems, s: lamp.summary });
+  var groups = lamp.shapes.filter(function (s) { return s.t === "group"; }), paths = lamp.shapes.filter(function (s) { return s.t === "path"; });
+  ok("three symbols, three square wires, labels with values", groups.length === 3 && paths.length === 3 &&
+    paths.every(function (p) { return p.pts.every(function (q, i) { return !i || q[0] === p.pts[i - 1][0] || q[1] === p.pts[i - 1][1]; }); }) &&
+    lamp.shapes.some(function (s) { return s.t === "text" && s.s === "B1 (12 V)"; }) && lamp.shapes.some(function (s) { return s.t === "text" && s.s === "Lamp circuit"; }));
+  // every wire ends on a terminal of the parts it names
+  var term = function (x, y) { return groups.some(function (g) { var b = L.drawShapes.bbox(g); return y > b[1] && y < b[3] && (Math.abs(x - b[0] - 1.5) < 3 || Math.abs(x - b[2] + 1.5) < 3); }); };
+  ok("wires start and end on symbol terminals", paths.every(function (p) { var a = p.pts[0], z = p.pts[p.pts.length - 1]; return term(a[0], a[1]) && term(z[0], z[1]); }),
+    paths.map(function (p) { return [p.pts[0], p.pts[p.pts.length - 1]]; }));
+  function probs(lines) { var r = act.build(blk("SCHEMATIC", "t", lines), ""); return r.problems.join(" | "); }
+  ok("check: an open circuit", /not closed: there is no path from B1/.test(probs(["part B1 battery", "part L1 lamp", "part S1 switch", "wire B1 S1", "wire S1 L1"])));
+  ok("check: a part that is not connected", /L2 is not connected/.test(probs(["part B1 battery", "part L1 lamp", "part L2 lamp", "wire B1 L1", "wire L1 B1"])));
+  ok("check: an unknown part names the ones there are", /no electrical part called .warp drive. \(electrical parts: battery, source, resistor/.test(probs(["part B1 battery", "part X1 warp drive", "wire B1 X1", "wire X1 B1"])),
+    probs(["part B1 battery", "part X1 warp drive", "wire B1 X1", "wire X1 B1"]));
+  ok("check: a wire to a part that does not exist", /there is no part L9/.test(probs(["part B1 battery", "part L1 lamp", "wire B1 L9", "wire L1 B1"])));
+  ok("names people use: bulb, LED, earth, power supply", L.aiSchematic.norm("bulb") === "lamp" && L.aiSchematic.norm("LED") === "diode" && L.aiSchematic.norm("earth") === "ground" &&
+    L.aiSchematic.norm("power supply") === "source" && L.aiSchematic.norm("lamps") === "lamp" && L.aiSchematic.norm("pressure gauge") === "gauge");
+  var par = act.build(blk("SCHEMATIC", "Two lamps", ["part B1 battery", "part L1 lamp", "part L2 lamp", "wire B1 L1", "wire L1 B1", "wire B1 L2", "wire L2 B1"]), "");
+  ok("two lamps in parallel: built, joins marked with dots", par.ok && par.shapes.filter(function (s) { return s.t === "circle" && s.f; }).length >= 2, par.problems);
+  var gnd = act.build(blk("SCHEMATIC", "Grounded", ["part V1 source", "part R1 resistor", "part G1 ground", "wire V1 R1", "wire R1 V1", "wire R1 G1"]), "");
+  var gp = gnd.shapes.filter(function (s) { return s.t === "path"; });
+  ok("a one-terminal part (ground) hangs straight below its terminal", gnd.ok && gp.some(function (p) { return p.pts.length === 2 && p.pts[0][0] === p.pts[1][0]; }), gnd.problems);
+  var hyd = act.build(blk("SCHEMATIC", "Press", ["part P1 pump", "part V1 valve", "part C1 cylinder", "part T1 tank", "wire T1 P1", "wire P1 V1", "wire V1 C1", "wire V1 T1"]), "");
+  ok("hydraulics: mode found from the parts, built", hyd.ok && hyd.plan.mode === "hydraulic", hyd.problems);
+  ok("pneumatics: a compressor makes it pneumatic", act.build(blk("SCHEMATIC", "Air", ["part K1 compressor", "part V1 valve", "part C1 cylinder", "wire K1 V1", "wire V1 C1"]), "").plan.mode === "pneumatic");
+  function plusRight(lines) {   // is the battery's long (+) plate on its right?
+    var r = act.build(blk("SCHEMATIC", "Polarity", lines), ""), g = r.shapes.filter(function (s) { return s.t === "group"; })[0];
+    var plates = g.shapes.filter(function (s) { return s.pts && s.pts[0][0] === s.pts[1][0]; });
+    var tall = plates.filter(function (s) { return Math.abs(s.pts[0][1] - s.pts[1][1]) > 20; })[0], short = plates.filter(function (s) { return Math.abs(s.pts[0][1] - s.pts[1][1]) < 20; })[0];
+    return tall.pts[0][0] > short.pts[0][0];
+  }
+  ok("polarity: + on the side the wire from B1+ leaves (mirrored when needed)", plusRight(["part B1 battery", "part L1 lamp", "wire B1+ L1", "wire L1 B1-"]) &&
+    !plusRight(["part B1 battery", "part L1 lamp", "wire B1- L1", "wire L1 B1+"]));
+
+  // --- pictures ---
+  var house = act.build(blk("DRAWING", "House", ["rect 5 6 10 6 fill tan color black", "tri 4 6 10 2 16 6 fill red", "rect 9 9 2 3 fill brown", "circle 17 2 1.5 fill yellow", "text 10 11.5 \"Home\""]), "");
+  ok("a picture: shapes on the grid, scaled up, fill and outline", house.ok && house.plan.shapes.length === 5 &&
+    house.shapes.some(function (s) { return s.t === "rect" && s.f && s.c === "#d6b38a" && s.x === 180 && s.rw === 360; }) &&
+    house.shapes.some(function (s) { return s.t === "rect" && !s.f && s.c === "#111827"; }) && house.shapes.some(function (s) { return s.t === "tri" && s.c === "#dc2626"; }) &&
+    house.shapes.some(function (s) { return s.t === "text" && s.s === "Home"; }), house.problems);
+  function pprobs(lines) { return act.build(blk("DRAWING", "t", lines), "").problems.join(" | "); }
+  ok("picture checks: off the grid, unknown colour, wrong numbers, unknown shape", /off the grid/.test(pprobs(["circle 40 5 2"])) &&
+    /unknown colour .chartreuse/.test(pprobs(["rect 1 1 2 2 fill chartreuse"])) && /a tri needs 6 numbers/.test(pprobs(["tri 1 1 2 2"])) &&
+    /shapes are rect, circle/.test(pprobs(["star 5 5 3"])) && /text needs its words in quotes/.test(pprobs(["text 5 5 hello"])));
+  ok("picture: 4,6 and 12x5 are read as numbers too", act.build(blk("DRAWING", "t", ["rect 4,6 12x5 fill blue"]), "").plan.shapes[0].nums.join() === "4,6,12,5");
+  var oval = act.build(blk("DRAWING", "t", ["oval 2 2 6 3 fill sky"]), "");
+  ok("a filled oval is one shape group (erasable as one)", oval.ok && oval.shapes[0].t === "group" && oval.shapes[0].shapes.length > 30);
+
+  // --- tables ---
+  var shop = act.build(blk("SHEET", "Shopping", ["Item | Qty | Price | Cost", "Bread | 2 | 1.50 | =B2*C2", "Milk | 1 | $0.99 | =B3*C3", "Eggs | 12 | 0.25 | =B4*C4", "Total | | | =SUM(D2:D4)"]), "");
+  ok("a table: the sheet engine works out the formulas", shop.ok && shop.plan.values.D2 === 3 && Math.abs(shop.plan.values.D5 - 6.99) < 1e-9 && shop.plan.cells.C3 === "0.99" && shop.plan.formulas === 4,
+    { p: shop.problems, v: shop.plan && shop.plan.values });
+  function sprobs(lines) { return act.build(blk("SHEET", "t", lines), "").problems.join(" | "); }
+  ok("table check: a formula that reads an empty cell (off by one row)", /D3 \(=B4\*C4\) uses B4, which is empty/.test(sprobs(["A | B | C | D", "x | 2 | 3 | =B2*C2", "y | 4 | 5 | =B4*C4"])),
+    sprobs(["A | B | C | D", "x | 2 | 3 | =B2*C2", "y | 4 | 5 | =B4*C4"]));
+  ok("table check: a formula on text, and one that fails", /uses C2, which is text/.test(sprobs(["A | B | C | D", "x | 2 | lots | =B2*C2"])) &&
+    /gives an error/.test(sprobs(["A | B", "x | =NOSUCH(1)"])));
+  ok("a markdown table is read too", act.build(blk("SHEET", "t", ["| A | B |", "|---|---|", "| 1 | =A2*2 |"]), "").plan.values.B2 === 2);
+
+  // --- Chat: a block with a problem goes back once; the fix is shown ---
+  await L.ai.detect();
+  go("chat"); await sleep(40);
+  var cin = d.querySelector("input[aria-label=\"Message\"]");
+  function chatAsk(text) { cin = d.querySelector("input[aria-label=\"Message\"]"); cin.value = text; modelCalls = []; btn(d, "Send").click(); }
+  function logText() { return d.querySelector("[aria-label=\"Conversation\"]").textContent; }
+  modelReplies = [blk("SCHEMATIC", "Lamp circuit", ["part B1 battery \"12 V\"", "part S1 switch", "part L1 lamp", "wire B1 S1", "wire S1 L1"]),
+    function (body) { var last = body.messages[body.messages.length - 1].content;
+      return /not closed/.test(last) ? blk("SCHEMATIC", "Lamp circuit", ["part B1 battery \"12 V\"", "part S1 switch", "part L1 lamp", "wire B1 S1", "wire S1 L1", "wire L1 B1"]) : "?"; }];
+  var before = logText().length;
+  chatAsk("Draw a circuit with a 12 V battery, a switch and a lamp in series"); await sleep(200);
+  var t = logText().slice(before);
+  ok("Chat: the AI is told how to MAKE a schematic", modelCalls.length === 2 && /MAKE SCHEMATIC: <title>/.test(modelCalls[0].messages[0].content), modelCalls.length);
+  ok("Chat: an open circuit goes back once, the fixed one is shown", /Lantern checked the MAKE SCHEMATIC block: the circuit is not closed/.test(t) &&
+    /Lantern made a schematic: Lamp circuit/.test(t) && /a closed loop/.test(t) && !/still questions/.test(t), t.slice(-600));
+  var prev = [{ t: "rect", c: "#000", w: 3, x: 1, y: 1, rw: 5, rh: 5 }];
+  L.store.set("draw.scene", prev);
+  btn(d, "Open in Draw").click(); await sleep(80);
+  var scene = L.store.get("draw.scene", []);
+  ok("Open in Draw: the schematic is the drawing, the person's own one is kept", w.location.hash === "#draw" && scene.length > 6 &&
+    JSON.stringify(L.store.get("draw.scene.prev", [])) === JSON.stringify(prev) && /Made for you: Lamp circuit/.test(d.body.textContent), { hash: w.location.hash, n: scene.length });
+  btn(d, "Restore previous drawing").click(); await sleep(20);
+  ok("Restore previous drawing swaps back (and keeps the AI's)", JSON.stringify(L.store.get("draw.scene", [])) === JSON.stringify(prev) && L.store.get("draw.scene.prev", []).length > 6);
+
+  // --- Chat: a table, opened in Sheets ---
+  go("chat"); await sleep(40);
+  modelReplies = ["Here is your table.\n" + blk("SHEET", "Shopping", ["Item | Qty | Price | Cost", "Bread | 2 | 1.50 | =B2*C2", "Total | | | =SUM(D2:D2)"])];
+  before = logText().length;
+  chatAsk("Make a table of my shopping with a total"); await sleep(200);
+  t = logText().slice(before);
+  ok("Chat: a table is shown with the sheet's numbers", /Lantern made a table: Shopping/.test(t) && /worked out by the sheet/.test(t) && d.querySelector(".la-make table"), t.slice(-400));
+  var nSheets = L.sheetDocs.list().length;
+  btn(d, "Open in Sheets").click(); await sleep(80);
+  ok("Open in Sheets: a new sheet, opened", L.sheetDocs.list().length === nSheets + 1 && w.location.hash === "#sheet" &&
+    L.sheetDocs.values(L.sheetDocs.list().filter(function (s) { return s.title === "Shopping"; })[0].id).D3 === 3);
+
+  // --- the look turn: only when the model can see ---
+  go("chat"); await sleep(40);
+  modelReplies = [blk("DRAWING", "Sun", ["rect 0 8 20 4 fill blue", "circle 10 4 2 fill yellow"])];
+  before = logText().length;
+  chatAsk("Draw a yellow sun over a blue sea"); await sleep(200);
+  ok("a model that cannot see is not shown the picture", modelCalls.length === 1 && !/showed the AI/.test(logText().slice(before)));
+  vision = true; await L.ai.detect();
+  ok("vision found from llama-server's /props", L.ai.server.vision === true && L.ai.canSee() && /sees images/.test(L.ai.describe()));
+  modelReplies = [blk("DRAWING", "Sun", ["rect 0 8 20 4 fill blue", "circle 10 4 2 fill yellow"]),
+    function (body) { var last = body.messages[body.messages.length - 1].content;
+      return Array.isArray(last) && last[1].type === "image_url" && /^data:image\/png;base64,/.test(last[1].image_url.url) && /LOOKS RIGHT/.test(last[0].text) ?
+        "LOOKS RIGHT. A yellow sun sits above a blue band of sea." : "?"; }];
+  before = logText().length;
+  chatAsk("Draw a yellow sun over a blue sea"); await sleep(250);
+  t = logText().slice(before);
+  ok("a model that can see is shown the picture once, and says what it sees", modelCalls.length === 2 && /showed the AI the picture/.test(t) &&
+    /The AI looked at the picture and says it shows what was asked/.test(t), t.slice(-400));
+  modelReplies = [blk("DRAWING", "Sun", ["rect 0 8 20 4 fill blue", "circle 10 4 2 fill yellow"]),
+    function () { return blk("DRAWING", "Sun", ["rect 0 8 20 4 fill blue", "circle 10 3 2 fill yellow", "line 7 7 13 7 color orange"]); }];
+  before = logText().length;
+  chatAsk("Draw a yellow sun over a blue sea, with a horizon"); await sleep(250);
+  t = logText().slice(before);
+  ok("after looking it may send a corrected block: shown, and not looked at again", modelCalls.length === 2 && (t.match(/Lantern made a drawing/g) || []).length === 2, t.slice(-300));
+  var tr = L.CHAT.trimHistory([{ role: "user", content: [{ type: "text", text: "look" }, { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } }] },
+    { role: "assistant", content: "LOOKS RIGHT" }, { role: "user", content: "next" }]);
+  ok("a picture is sent once: later turns carry a note instead", typeof tr[0].content === "string" && /not sent again/.test(tr[0].content));
+  vision = false; await L.ai.detect();
+
+  // --- the bench: make questions ---
+  var Q = L.aiBenchQuestions.filter(function (q) { return q.cat === "make"; });
+  ok("seven make questions, two quick", Q.length === 7 && Q.filter(function (q) { return q.quick; }).length === 2);
+  function gradeWith(id, reply) {
+    var item = Q.filter(function (q) { return q.id === id; })[0];
+    return L.aiBench.grade(item, reply, { made: act.build(reply, item.q) });
+  }
+  ok("bench: a closed lamp circuit passes", gradeWith("make-lamp-circuit", blk("SCHEMATIC", "c", ["part B1 battery", "part S1 switch", "part L1 lamp", "wire B1 S1", "wire S1 L1", "wire L1 B1"])).pass);
+  ok("bench: lamps wired to each other are not parallel", /series/.test(gradeWith("make-parallel-lamps", blk("SCHEMATIC", "c", ["part B1 battery", "part L1 lamp", "part L2 lamp", "wire B1 L1", "wire L1 L2", "wire L2 B1"])).why));
+  ok("bench: two lamps in parallel pass", gradeWith("make-parallel-lamps", blk("SCHEMATIC", "c", ["part B1 battery", "part L1 lamp", "part L2 lamp", "wire B1 L1", "wire L1 B1", "wire B1 L2", "wire L2 B1"])).pass);
+  ok("bench: a drawing where a schematic was asked fails", /made a drawing, not schematic/.test(gradeWith("make-lamp-circuit", blk("DRAWING", "c", ["rect 1 1 2 2"])).why));
+  ok("bench: house with a red roof passes, without one fails", gradeWith("make-house", blk("DRAWING", "h", ["rect 5 6 10 6 fill tan", "tri 4 6 10 2 16 6 fill red", "rect 9 9 2 3 fill brown"])).pass &&
+    /red roof/.test(gradeWith("make-house", blk("DRAWING", "h", ["rect 5 6 10 6 fill tan", "tri 4 6 10 2 16 6 fill green", "rect 9 9 2 3"])).why));
+  ok("bench: the sun must be above the sea", gradeWith("make-sun-sea", blk("DRAWING", "s", ["rect 0 8 20 4 fill blue", "circle 10 4 2 fill yellow"])).pass &&
+    /not above/.test(gradeWith("make-sun-sea", blk("DRAWING", "s", ["rect 0 2 20 4 fill blue", "circle 10 10 1 fill yellow"])).why));
+  ok("bench: the shopping table needs the sheet to find 6.99", gradeWith("make-shopping", blk("SHEET", "s", ["Item | Qty | Price | Cost", "Bread | 2 | 1.50 | =B2*C2",
+    "Milk | 1 | 0.99 | =B3*C3", "Eggs | 12 | 0.25 | =B4*C4", "Total | | | =SUM(D2:D4)"])).pass &&
+    /no formulas/.test(gradeWith("make-shopping", blk("SHEET", "s", ["Item | Cost", "Bread | 3", "Milk | 0.99", "Eggs | 3", "Total | 6.99"])).why));
+  ok("bench: Celsius to Fahrenheit by formula passes", gradeWith("make-temperatures", blk("SHEET", "t", ["C | F", "0 | =A2*9/5+32", "10 | =A3*9/5+32", "20 | =A4*9/5+32", "30 | =A5*9/5+32", "40 | =A6*9/5+32"])).pass);
+  // a whole bench row through the same path as Chat
+  modelReplies = [blk("SHEET", "s", ["Item | Qty | Price | Cost", "Bread | 2 | 1.50 | =B2*C2", "Milk | 1 | 0.99 | =B3*C3", "Eggs | 12 | 0.25 | =B5*C4", "Total | | | =SUM(D2:D4)"]),
+    function (body) { var last = body.messages[body.messages.length - 1].content;
+      return /uses B5, which is empty/.test(last) ? blk("SHEET", "s", ["Item | Qty | Price | Cost", "Bread | 2 | 1.50 | =B2*C2", "Milk | 1 | 0.99 | =B3*C3", "Eggs | 12 | 0.25 | =B4*C4", "Total | | | =SUM(D2:D4)"]) : "?"; }];
+  var item = Q.filter(function (q) { return q.id === "make-shopping"; })[0];
+  var res = await act.solve(item.q, function (m) { return L.ai.complete(m, { temperature: 0 }); });
+  var g = L.aiBench.grade(item, res.text, res);
+  ok("bench path: a slip goes back once, the fix passes", res.rounds === 2 && res.kind === "questioned" && res.fixed && g.pass, { rounds: res.rounds, why: g.why });
+  var sm = L.aiBench.summary([{ cat: "make", pass: true, ms: 1 }, { cat: "make", pass: false, ms: 1 }, { cat: "tool", pass: true, ms: 1 }]);
+  ok("bench summary keeps things made apart", sm.make.n === 2 && sm.make.pass === 1 && sm.core.n === 1);
+  ok("no errors after all that", errs.length === 0, errs);
+
+  console.log(fails ? fails + " AI ACTION FAILURES (" + passes + " passed)" : "ALL AI ACTION TESTS PASS (" + passes + ")");
+  process.exit(fails ? 1 : 0);
+})().catch(function (e) { console.log("FAIL crashed", e && e.stack); process.exit(1); });

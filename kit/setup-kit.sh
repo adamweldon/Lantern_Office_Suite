@@ -20,6 +20,10 @@
 #                               downloaded unasked.
 #   ./setup-kit.sh zim NAME     any Kiwix file by name (e.g. wikipedia_en_medicine_maxi)
 #                               or full URL, into library/
+#   ./setup-kit.sh vision       the vision part of every laptop model in the kit
+#                               (mmproj, 0.7-0.9 GB each): the AI can then look at
+#                               the drawings it makes. New 4B/9B/35B downloads
+#                               bring theirs along.
 #   ./setup-kit.sh check        what this computer can run and what the kit has
 #   add "gpu" for the Vulkan engine builds (graphics card) on Windows/Linux
 # start-lantern.sh runs "setup-kit.sh offer": when this computer can run a
@@ -78,7 +82,18 @@ tier() {
     *) return 1 ;;
   esac
 }
-get_tier() { tier "$1" && model "$T_REPO" "$T_FILE"; }
+# The model's vision part: mmproj-F16.gguf in its repository, kept as
+# mmproj-<model>-F16.gguf (start-lantern loads it with that model). Laptop
+# models only; a failed download is reported, not fatal.
+vision_file() { echo "mmproj-$(basename "$T_REPO" | sed 's/-GGUF$//')-F16.gguf"; }
+get_vision() {
+  case "$T_ID" in xl|big|laptop) ;; *) return 0 ;; esac
+  vf=$(vision_file)
+  if ! fetch "$HF_BASE/$T_REPO/resolve/main/mmproj-F16.gguf" "$MODELS/$vf"; then echo "  (vision part of $T_NAME not downloaded)"; return 0; fi
+  if [ "$(head -c 4 "$MODELS/$vf")" != "GGUF" ]; then echo "  $vf is not a GGUF file; deleted"; rm -f "$MODELS/$vf"; fi
+  return 0
+}
+get_tier() { tier "$1" && model "$T_REPO" "$T_FILE" && { have "$T_PAT" && get_vision; return 0; }; }
 phone()  { get_tier 0.8b; get_tier 2b; }
 
 # --- the offline library (Kiwix) -------------------------------------------------
@@ -359,7 +374,9 @@ check() {
   for id in $TIERS; do
     tier "$id"
     if [ "$mem" -ge "$T_MEM" ]; then fits="runs here"; else fits="needs $(( T_MEM / 1024 )) GB memory"; fi
-    if have "$T_PAT"; then h="in kit"; else h="not in kit"; fi
+    if have "$T_PAT"; then h="in kit"
+      case "$T_ID" in xl|big|laptop) if [ -s "$MODELS/$(vision_file)" ]; then h="$h, sees images"; else h="$h, no vision part (./setup-kit.sh vision)"; fi ;; esac
+    else h="not in kit"; fi
     printf "  %-17s%-9s%-22s%s\n" "$T_NAME" "$T_GB GB" "$fits" "$h"
   done
   plan
@@ -438,6 +455,7 @@ for s in $SETS; do
     library) if lid=$(pick_lib); then get_library "$lid"; else echo "  No room for an encyclopedia on this drive."; fi ;;
     library-simple) get_library library-simple ;;
     library-full) get_full || true ;;
+    vision) for id in $TIERS; do tier "$id"; if have "$T_PAT"; then get_vision; fi; done ;;
     phone) phone ;;
     usb) engine linux "$LNX"; engine windows "$WIN"; engine mac "llama-$BUILD-bin-macos-arm64.tar.gz"; phone; get_tier laptop; get_tier big ;;
     engine) engine "$OS" "$THIS" ;;

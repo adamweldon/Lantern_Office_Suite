@@ -18,6 +18,10 @@
 #                              never downloaded unasked.
 #   setup-kit.bat zim NAME     any Kiwix file by name (e.g. wikipedia_en_medicine_maxi)
 #                              or full URL, into library\
+#   setup-kit.bat vision       the vision part of every laptop model in the kit
+#                              (mmproj, 0.7-0.9 GB each): the AI can then look at
+#                              the drawings it makes. New 4B/9B/35B downloads
+#                              bring theirs along.
 #   setup-kit.bat check        show what this computer can run and what the kit has
 #   add "gpu" for the Vulkan engine build (graphics card)
 # start-lantern.bat runs "setup-kit.ps1 offer": when this computer can run a
@@ -76,7 +80,21 @@ function Model($repo, $file) {
   $fs = [System.IO.File]::OpenRead($dest); $b = New-Object byte[] 4; [void]$fs.Read($b, 0, 4); $fs.Close()
   if ([System.Text.Encoding]::ASCII.GetString($b) -ne "GGUF") { Write-Host "  $file is not a GGUF file; deleted"; Remove-Item $dest }
 }
-function GetTier($t) { Model $t.repo $t.file }
+# The model's vision part: mmproj-F16.gguf in its repository, kept as
+# mmproj-<model>-F16.gguf (start-lantern loads it with that model). Laptop
+# models only; a failed download is reported, not fatal.
+function VisionFile($t) { "mmproj-" + (($t.repo -split '/')[1] -replace '-GGUF$', '') + "-F16.gguf" }
+function HasVision($t) { $f = Join-Path $Models (VisionFile $t); (Test-Path $f) -and ((Get-Item $f).Length -gt 0) }
+function GetVision($t) {
+  if ($t.id -notin @("xl", "big", "laptop")) { return }
+  try {
+    $dest = Join-Path $Models (VisionFile $t)
+    Fetch "$HfBase/$($t.repo)/resolve/main/mmproj-F16.gguf" $dest
+    $fs = [System.IO.File]::OpenRead($dest); $b = New-Object byte[] 4; [void]$fs.Read($b, 0, 4); $fs.Close()
+    if ([System.Text.Encoding]::ASCII.GetString($b) -ne "GGUF") { Write-Host "  $(Split-Path -Leaf $dest) is not a GGUF file; deleted"; Remove-Item $dest }
+  } catch { Write-Host "  (vision part of $($t.name) not downloaded: $($_.Exception.Message))" }
+}
+function GetTier($t) { Model $t.repo $t.file; if (Have $t) { GetVision $t } }
 function TempRoot { if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() } }
 function Engine($asset) {
   $target = Join-Path $Dir "engine\windows"
@@ -411,7 +429,7 @@ function Check {
   Write-Host ("Kit folder: " + $Dir)
   foreach ($t in $Tiers) {
     $fits = if ($mem -ge $t.mem) { "runs here" } else { "needs " + [math]::Round($t.mem / 1024) + " GB memory" }
-    $has = if (Have $t) { "in kit" } else { "not in kit" }
+    $has = if (Have $t) { "in kit" + $(if ($t.id -in @("xl", "big", "laptop")) { if (HasVision $t) { ", sees images" } else { ", no vision part (setup-kit.bat vision)" } } else { "" }) } else { "not in kit" }
     Write-Host ("  " + $t.name.PadRight(17) + ("" + $t.gb + " GB").PadRight(9) + $fits.PadRight(22) + $has)
   }
   $p = Plan
@@ -478,6 +496,7 @@ foreach ($s in $Sets) {
     "library" { $l = PickLib; if ($l) { GetLibrary $l } else { Write-Host "  No room for an encyclopedia on this drive." } }
     "library-simple" { GetLibrary (LibFor "library-simple") }
     "library-full" { GetFull }
+    "vision" { foreach ($t in $Tiers) { if (Have $t) { GetVision $t } } }
     "zim" { }
     default {
       $t = Tier $s

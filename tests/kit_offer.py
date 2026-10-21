@@ -17,6 +17,7 @@ mirror = os.path.join(tmp, "mirror")
 for repo, f in TIERS.items():
     d = os.path.join(mirror, "unsloth", repo, "resolve", "main"); os.makedirs(d)
     open(os.path.join(d, f), "wb").write(b"GGUF" + os.urandom(4000))
+    open(os.path.join(d, "mmproj-F16.gguf"), "wb").write(b"GGUF" + os.urandom(1000))   # the model's vision part
 port = free_port()
 srv = subprocess.Popen([sys.executable, os.path.join(ROOT, "tests", "fixtures", "hfsim.py"), mirror, str(port)])
 time.sleep(0.8)
@@ -34,7 +35,8 @@ def make_kit(name, models):
     fake = os.path.join(k, "engine", "linux", "llama-server")
     open(fake, "w").write("#!" + sys.executable + "\n" + """import sys, http.server
 port = int(sys.argv[sys.argv.index("--port") + 1]); m = sys.argv[sys.argv.index("-m") + 1]
-print("FAKE model=" + m.replace(chr(92), "/").split("/")[-1], flush=True)
+mm = sys.argv[sys.argv.index("--mmproj") + 1].replace(chr(92), "/").split("/")[-1] if "--mmproj" in sys.argv else "none"
+print("FAKE model=" + m.replace(chr(92), "/").split("/")[-1] + " mmproj=" + mm, flush=True)
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200); self.end_headers(); self.wfile.write(b'{"status":"ok"}'); raise SystemExit
@@ -168,6 +170,28 @@ ok("library offer yes: downloads in the background", wait_file(os.path.join(k, "
 time.sleep(1)
 ok("then the library is not offered again", "library: the kit has a library" in run(k, ["check"], kenv({"LANTERN_MEM_MB": "8000"})))
 
+# --- vision (1.9.5): the model's mmproj, loaded by start-lantern ---
+k = make_kit("vision", ["Qwen3.5-4B-Q4_K_M.gguf"])
+out = run(k, ["check"], {"LANTERN_MEM_MB": "8000"})
+ok("check: a model without its vision part says how to get it", "no vision part (./setup-kit.sh vision)" in out, out)
+out = run(k, ["vision"])
+ok("setup-kit vision fetches the 4B's vision part", os.path.exists(os.path.join(k, "models", "mmproj-Qwen3.5-4B-F16.gguf")) and
+   not os.path.exists(os.path.join(k, "models", "mmproj-Qwen3.5-35B-A3B-F16.gguf")), out)
+ok("check: then it sees images", "sees images" in run(k, ["check"], {"LANTERN_MEM_MB": "8000"}))
+out = run(k, ["nodownload"], {"LANTERN_MEM_MB": "8000"}, [os.path.join(k, "start-lantern.sh")])
+ok("start-lantern loads the vision part with its model", "mmproj=mmproj-Qwen3.5-4B-F16.gguf" in out and "Vision: mmproj-Qwen3.5-4B-F16.gguf" in out, out)
+shutil.copy(os.path.join(mirror, "unsloth", "Qwen3.5-35B-A3B-GGUF", "resolve", "main", "mmproj-F16.gguf"), os.path.join(k, "models", "mmproj-Qwen3.5-35B-A3B-F16.gguf"))
+out = run(k, ["nodownload"], {"LANTERN_MEM_MB": "8000"}, [os.path.join(k, "start-lantern.sh")])
+ok("a vision part for another model is not loaded with this one", "mmproj=mmproj-Qwen3.5-4B-F16.gguf" in out, out)
+out = run(k, ["novision", "nodownload"], {"LANTERN_MEM_MB": "8000"}, [os.path.join(k, "start-lantern.sh")])
+ok("novision starts without it", "mmproj=none" in out and "Vision:" not in out, out)
+if pw:
+    k = make_kit("vision-ps1", ["Qwen3.5-4B-Q4_K_M.gguf"])
+    out = run(k, ["vision"], None, [pw, "-NoProfile", "-File", os.path.join(k, "setup-kit.ps1")])
+    ok("ps1 vision fetches the 4B's vision part", os.path.exists(os.path.join(k, "models", "mmproj-Qwen3.5-4B-F16.gguf")), out)
+    out = run(k, ["check"], {"LANTERN_MEM_MB": "8000"}, [pw, "-NoProfile", "-File", os.path.join(k, "setup-kit.ps1")])
+    ok("ps1 check: sees images", "sees images" in out, out)
+
 # --- the full Wikipedia (1.9.4): opt-in only, after the small one ---
 k = make_kit("lib-full", ["Qwen3.5-4B-Q4_K_M.gguf"])
 os.makedirs(os.path.join(k, "library")); shutil.copy(os.path.join(zw, "wikipedia_en_all_mini_2026-06.zim"), os.path.join(k, "library"))
@@ -203,6 +227,8 @@ def whole(label, cmd_for, engine_file):
        have(*engine_file) and have("models", "Qwen3.5-4B-Q4_K_M.gguf") and have("models", "Qwen3.5-35B-A3B-UD-IQ4_XS.gguf") and
        have("library", "wikipedia_en_all_mini_2026-06.zim"), out[-1500:])
     ok(label + ": an unattended setup does not fetch the full Wikipedia", not [f for f in os.listdir(os.path.join(k, "library")) if "nopic" in f], out[-800:])
+    ok(label + ": each laptop model brings its vision part", have("models", "mmproj-Qwen3.5-4B-F16.gguf") and have("models", "mmproj-Qwen3.5-35B-A3B-F16.gguf"),
+       sorted(os.listdir(os.path.join(k, "models"))))
     return k
 whole("whole-sh", lambda k: [os.path.join(k, "setup-kit.sh")], ("engine", "linux", "llama-server"))
 if pw:

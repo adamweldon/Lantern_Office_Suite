@@ -5,6 +5,9 @@ rem   start-lantern share        also phones on the same Wi-Fi or hotspot
 rem   start-lantern gpu          use the graphics card (Vulkan)
 rem   start-lantern 9b           use a particular model from models\ (35b 9b 4b 2b 0.8b)
 rem   start-lantern nodownload   do not offer a bigger model
+rem   start-lantern novision     do not load the model's vision part (loaded
+rem                              when models\ has it: the AI can then look at
+rem                              the drawings it makes)
 rem It uses the best model in models\ that this computer's memory can run.
 rem When the computer could run a better one than the kit has (and there is
 rem internet and room on the drive), it asks once and downloads it in a
@@ -23,10 +26,12 @@ set HOST=127.0.0.1
 set NGL=-ngl 0
 set "AUTO=1"
 set "FORCE="
+set "VISION=1"
 for %%a in (%*) do (
   if /I "%%a"=="share" set HOST=0.0.0.0
   if /I "%%a"=="gpu" set NGL=
   if /I "%%a"=="nodownload" set "AUTO="
+  if /I "%%a"=="novision" set "VISION="
   if /I "%%a"=="35b" set "FORCE=35B-A3B"
   if /I "%%a"=="9b" set "FORCE=9B"
   if /I "%%a"=="4b" set "FORCE=4B"
@@ -64,8 +69,24 @@ if "!M!"=="" (
   echo No model in %MODELS%. Run setup-kit.bat, or copy a .gguf file there.
   pause & exit /b 1
 )
+rem The model's vision part (mmproj-<model>-F16.gguf, from setup-kit), so the
+rem AI can look at pictures -- the drawings Lantern makes for it to check.
+set "MMPROJ="
+set "MNAME="
+for %%f in ("!M!") do set "MNAME=%%~nxf"
+if defined VISION for %%v in ("%MODELS%\mmproj-*.gguf") do (
+  set "VB=%%~nv"
+  set "VB=!VB:mmproj-=!"
+  set "VB=!VB:-BF16=!"
+  set "VB=!VB:-F16=!"
+  set "VB=!VB:-F32=!"
+  echo !MNAME!| findstr /B /I /L /C:"!VB!-" >nul && set "MMPROJ=%%~fv"
+)
+set "MMARG="
+if defined MMPROJ set MMARG=--mmproj "!MMPROJ!"
 echo.
 echo Lantern: !M! with !MEM! MB memory
+if defined MMPROJ echo Vision: !MMPROJ! ^(the AI can look at the pictures it makes^)
 echo Open http://127.0.0.1:%PORT%/  ^(keep this window open; close it to stop^)
 if "%HOST%"=="0.0.0.0" (
   for /f "tokens=2 delims=:" %%i in ('ipconfig ^| findstr /C:"IPv4"') do (
@@ -89,7 +110,7 @@ if defined ZIMS (
 )
 start "" /b cmd /c "timeout /t 8 >nul & start http://127.0.0.1:%PORT%/"
 pushd "%DIR%engine\windows"
-"%BIN%" -m "!M!" --path "%SITE%" --host %HOST% --port %PORT% -c 8192 %NGL%
+"%BIN%" -m "!M!" !MMARG! --path "%SITE%" --host %HOST% --port %PORT% -c 8192 %NGL%
 popd
 pause
 exit /b 0

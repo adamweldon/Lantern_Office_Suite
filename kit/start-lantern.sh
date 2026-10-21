@@ -7,6 +7,9 @@
 #   ./start-lantern.sh gpu      use the graphics card (Linux; Macs always do)
 #   ./start-lantern.sh 9b       use a particular model from models/ (35b 9b 4b 2b 0.8b)
 #   ./start-lantern.sh nodownload   do not offer a bigger model
+#   ./start-lantern.sh novision     do not load the model's vision part (it
+#                                   is loaded when models/ has it: the AI can
+#                                   then look at the drawings it makes)
 #   MODEL=/path/x.gguf ./start-lantern.sh   use a particular model file
 # When this computer could run a better model than the kit has (and there is
 # internet and room on the drive), it asks once and downloads it in the
@@ -20,12 +23,13 @@ MODELS="$DIR/models"; [ -d "$MODELS" ] || MODELS="$DIR/../models"
 LIBRARY="$DIR/library"; [ -d "$LIBRARY" ] || LIBRARY="$DIR/../library"
 LIBRARY_PORT="${LIBRARY_PORT:-8081}"
 PORT="${PORT:-8080}"
-HOST=127.0.0.1; GPU=""; AUTO=1; FORCE=""
+HOST=127.0.0.1; GPU=""; AUTO=1; FORCE=""; VISION=1
 for a in "$@"; do
   case "$a" in
     share) HOST=0.0.0.0 ;;
     gpu) GPU=1 ;;
     nodownload) AUTO="" ;;
+    novision) VISION="" ;;
     35b|35B) FORCE=35B-A3B ;;
     9b|9B) FORCE=9B ;;
     4b|4B) FORCE=4B ;;
@@ -73,7 +77,19 @@ fi
 
 NGL="-ngl 0"
 if [ "$OS" = mac ] || [ -n "$GPU" ]; then NGL=""; fi
+# The model's vision part (mmproj-<model>-F16.gguf, from setup-kit), so the
+# AI can look at pictures -- the drawings Lantern makes for it to check.
+MMPROJ=""
+if [ -n "$VISION" ]; then
+  MB=$(basename "$M")
+  for v in "$MODELS"/mmproj-*.gguf; do
+    [ -f "$v" ] || continue
+    base=$(basename "$v" .gguf | sed 's/^mmproj-//; s/-BF16$//; s/-F16$//; s/-F32$//')
+    case "$MB" in "$base"-*) MMPROJ="$v" ;; esac
+  done
+fi
 echo "Lantern: $(basename "$M") on $OS with ${MEM} MB memory"
+[ -n "$MMPROJ" ] && echo "Vision: $(basename "$MMPROJ") (the AI can look at the pictures it makes)"
 echo "Open http://127.0.0.1:$PORT/ (this window must stay open; Ctrl+C stops it)"
 if [ "$HOST" = 0.0.0.0 ]; then
   if [ "$OS" = mac ]; then IPS=$(ipconfig getifaddr en0 2>/dev/null; ipconfig getifaddr en1 2>/dev/null)
@@ -100,7 +116,11 @@ cd "$(dirname "$BIN")" || exit 1
 LD_LIBRARY_PATH="$(pwd)${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; export LD_LIBRARY_PATH
 DYLD_LIBRARY_PATH="$(pwd)${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"; export DYLD_LIBRARY_PATH
 # shellcheck disable=SC2086
-"$BIN" -m "$M" --path "$SITE" --host "$HOST" --port "$PORT" -c 8192 $NGL &
+if [ -n "$MMPROJ" ]; then
+  "$BIN" -m "$M" --mmproj "$MMPROJ" --path "$SITE" --host "$HOST" --port "$PORT" -c 8192 $NGL &
+else
+  "$BIN" -m "$M" --path "$SITE" --host "$HOST" --port "$PORT" -c 8192 $NGL &
+fi
 PID=$!
 trap 'kill $PID $KPID 2>/dev/null' INT TERM EXIT
 i=0

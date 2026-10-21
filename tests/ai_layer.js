@@ -146,8 +146,9 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   AI.register("device", { available: function () { return true; }, chosen: function () { return true; },
     label: function () { return "fake " + mode; },
     complete: function (msgs) {
-      var m = /QUESTION: (.+)$/m.exec(msgs[msgs.length - 1].content), item = m && byQ[m[1]];
+      var m = /QUESTION: (.+)$/m.exec(msgs[msgs.length - 1].content), item = (m && byQ[m[1]]) || byQ[msgs[msgs.length - 1].content];
       if (mode === "bad") return Promise.resolve("ANSWER: 42");
+      if (item && item.cat === "make") return Promise.resolve(item.ideal);   // things to make (AI_ACTIONS)
       if (mode === "slip" && /^Lantern could not run/.test(msgs[msgs.length - 1].content))
         return Promise.resolve("=HOHMANNT(CONVERT(400+6371,\"km\",\"m\"),CONVERT(42164,\"km\",\"m\"))/3600\nANSWER: {result} hours");
       if (mode === "slip" && item && item.id === "hohmann-geo")
@@ -181,7 +182,7 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   ok("CSV has a header and every question", /^id,category,set,pass/.test(csv) && Q.every(function (x) { return csv.indexOf("\n" + x.id + ",") !== -1; }));
 
   // 1.8.2: fixes from the first real bench run (Qwen3.5 4B on a laptop, 18/30)
-  ok("report keeps earlier, fresh and hard questions apart", rep.summary.core.n + rep.summary.fresh.n + rep.summary.hard.n === Q.length &&
+  ok("report keeps earlier, fresh and hard questions apart", rep.summary.core.n + rep.summary.fresh.n + rep.summary.hard.n + rep.summary.make.n === Q.length && rep.summary.make.n === 7 &&
     rep.summary.hard.n >= 10 && rep.summary.hard.pass === rep.summary.hard.n && rep.summary.byCat.need.n >= 2 &&
     rep.summary.fresh.n >= 5 && rep.summary.fresh.pass === rep.summary.fresh.n, rep.summary);
   ok("fresh questions have no recipe card of their own", Q.filter(function (x) { return x.fresh; }).every(function (x) {
