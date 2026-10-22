@@ -52,13 +52,13 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   await sleep(60);
   var L = w.Lantern, act = L.aiAct;
   ok("boot clean", errs.length === 0, errs);
-  ok("seven actions registered (1.12: a document, slides, flashcards and a plan join them)", L.aiActions.map(function (a) { return a.id; }).join(",") === "schematic,drawing,sheet,doc,slides,cards,plan", L.aiActions.map(function (a) { return a.id; }));
+  ok("eight actions registered (1.12: a document, slides, flashcards and a plan; 1.12.7: a wheel chart)", L.aiActions.map(function (a) { return a.id; }).join(",") === "schematic,drawing,wheel,sheet,doc,slides,cards,plan", L.aiActions.map(function (a) { return a.id; }));
 
   // --- finding blocks, and the prompt ---
   var fb = act.find("Here it is:\n```\nMAKE SCHEMATIC: Lamp\npart B1 battery\nwire B1 L1\nEND\n```\nDone.");
   ok("a MAKE block is found (code fences ignored, ends at END)", fb.length === 1 && fb[0].kind === "SCHEMATIC" && fb[0].title === "Lamp" && fb[0].lines.length === 2, fb);
   var unk = act.build("MAKE VIDEO: cats\nframe 1\nEND", "");
-  ok("an unknown kind says what Lantern can make", unk && !unk.ok && /can make: schematic, drawing, sheet/.test(unk.problems[0]), unk && unk.problems);
+  ok("an unknown kind says what Lantern can make", unk && !unk.ok && /can make: schematic, drawing, wheel, sheet/.test(unk.problems[0]), unk && unk.problems);
   ok("Chat lists only the actions the question is about", /MAKE SCHEMATIC/.test(L.CHAT.buildSystem("Draw a circuit with a battery and a lamp")) &&
     !/MAKE SHEET/.test(L.CHAT.buildSystem("Draw a circuit with a battery and a lamp")) && !/MAKE [A-Z]+:/.test(L.CHAT.buildSystem("What is the capital of Kenya?")) &&
     /MAKE SHEET/.test(L.CHAT.buildSystem("Make a table of my shopping with a total")) && /MAKE DRAWING/.test(L.CHAT.buildSystem("Draw a house")));
@@ -254,7 +254,7 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
 
   // --- the bench: make questions ---
   var Q = L.aiBenchQuestions.filter(function (q) { return q.cat === "make"; });
-  ok("thirteen make questions, three quick", Q.length === 13 && Q.filter(function (q) { return q.quick; }).length === 3);
+  ok("fourteen make questions (1.12.7: the power wheel), three quick", Q.length === 14 && Q.filter(function (q) { return q.quick; }).length === 3);
   function gradeWith(id, reply) {
     var item = Q.filter(function (q) { return q.id === id; })[0];
     return L.aiBench.grade(item, reply, { made: act.build(reply, item.q) });
@@ -327,6 +327,75 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   ok("asked for the formula and the block has no notes: sent back once to add them", !noNotes.ok && /asked for the formula on the drawing: add note lines/.test(noNotes.problems.join()) &&
     act.build(blk("SCHEMATIC", "P", ["part V1 source", "part R1 resistor", "wire V1 R1", "wire R1 V1"]), "draw a lamp circuit").ok, noNotes.problems);
   ok("the AI is told to put formulas in note lines, not = lines", /put them in note lines in the block -- not in = lines/.test(act.prompt("draw a circuit with a battery")));
+  // --- 1.12.7: a junction no part line made; the power wheel (Adam's Chat) ---
+  var jn = act.build(blk("SCHEMATIC", "Ohm's Law Parallel", ["part V1 source \"12 V\"", "part A1 ammeter", "part R1 resistor \"4 ohm\"", "part R2 resistor \"6 ohm\"",
+    "wire V1 A1", "wire A1 junction1", "wire junction1 R1", "wire junction1 R2", "wire R1 V1", "wire R2 GND"]), "");
+  ok("a wire to junction1 or GND that no part line made: Lantern makes the junction and the ground, no retry", jn.ok &&
+    !jn.plan.parts.some(function (x) { return x.type === "junction"; }) && /closed loop/.test(jn.summary), jn.problems || jn.summary);
+  ok("an undeclared part that is not a junction is still a problem", /there is no part LAMP1/.test(probs(["part B1 battery", "wire B1 LAMP1", "wire LAMP1 B1"])));
+  var WL = ["rect 0 0 20 12 fill white", "circle 10 6 4 fill gray", "text 10 6 \"P\" color black width 2", "text 10 4 \"V\" color black width 2",
+    "text 10 8 \"I\" color black width 2", "text 8 6 \"R\" color black width 2", "text 12 6 \"R\" color black width 2", "text 8 4 \"V\" color black width 2",
+    "text 12 4 \"I\" color black width 2", "text 8 8 \"I\" color black width 2", "text 12 8 \"V\" color black width 2", "text 10 2 \"P=VI\" color black width 1",
+    "text 10 10 \"P=I²R\" color black width 1", "text 6 6 \"P=V²/R\" color black width 1", "text 14 6 \"I=P/V\" color black width 1", "text 14 4 \"V=IR\" color black width 1",
+    "text 14 8 \"I=V/R\" color black width 1", "text 6 4 \"V=√(PR)\" color black width 1", "text 6 8 \"V=IR\" color black width 1", "text 12 2 \"V=√(PR)\" color black width 1",
+    "text 12 10 \"R=V/I\" color black width 1", "text 4 6 \"R=V²/P\" color black width 1", "text 16 6 \"R=V/I\" color black width 1", "text 4 4 \"I=V/R\" color black width 1",
+    "text 4 8 \"I=√(P/R)\" color black width 1", "text 16 4 \"I=P/V\" color black width 1", "text 16 8 \"I=√(P/R)\" color black width 1", "text 10 1 \"P=V²/R\" color black width 1",
+    "text 10 11 \"P=I²R\" color black width 1"];
+  var wq = "draw the ohms law power wheel calculator for educational purposes", wd = act.build(blk("DRAWING", "Ohm's Law Power Wheel", WL), wq);
+  var wdp = (wd.problems || []).join(" | ");
+  ok("the 35B's power-wheel drawing: still drawn, but the words that run together and the formulas written twice go back", wd.plan && !wd.ok &&
+    /“V=√\(PR\)” \(at 6 4\) runs into “I=V\/R” \(at 4 4\)/.test(wdp) && /written twice/.test(wdp) && /“V=IR”/.test(wdp) && /MAKE WHEEL/.test(wdp), wdp);
+  ok("a drawing with its words apart passes; text cut off at the left edge does not", act.build(blk("DRAWING", "House", ["rect 5 6 10 5 fill tan", "tri 4 6 10 2 16 6 fill red",
+    "text 10 1 \"My house\"", "text 3 11 \"Garden\"", "text 17 11 \"Path\""]), "Draw a house").ok &&
+    /cut off at the left edge/.test(act.build(blk("DRAWING", "x", ["text 0 2 \"A long label at the edge\""]), "").problems.join()));
+  ok("the drawing prompt says how much room words need", /a word needs about 1 cell for every 3 letters/.test(act.prompt("draw a house")));
+  var OW = ["P watts: P = V x I | P = V^2 / R | P = I^2 x R", "V volts: V = I x R | V = P / I | V = sqrt(P x R)", "I amps: I = V / R | I = P / V | I = sqrt(P / R)",
+    "R ohms: R = V / I | R = V^2 / P | R = P / I^2", "note P = power (watts), V = voltage (volts), I = current (amps), R = resistance (ohms)",
+    "note With V = 12 V and R = 4 ohm, I = {=12/4} A and P = {=12*12/4} W"];
+  var ow = act.build(blk("WHEEL", "Ohm's law power wheel", OW), wq), owT = ow.shapes ? L.aiDrawCheck.boxes(ow.shapes) : [];
+  ok("MAKE WHEEL: four parts, twelve formulas, the notes worked out", ow.ok && /4 parts, 12 items/.test(ow.summary) && ow.plan.notes[1] === "With V = 12 V and R = 4 ohm, I = 3 A and P = 36 W", ow.problems || ow.summary);
+  ok("every word placed by Lantern: none runs into another, none cut off, the formulas big enough to read", owT.length >= 20 && L.aiDrawCheck.clashes(ow.shapes).length === 0 &&
+    owT.every(function (b) { return b.x0 > 0 && b.y0 > 0; }) && ow.plan.size >= 16 && owT.some(function (b) { return b.s === "P = V × I"; }) &&
+    owT.some(function (b) { return b.s === "P = I² × R"; }), { size: ow.plan && ow.plan.size, clash: ow.shapes && L.aiDrawCheck.clashes(ow.shapes).map(function (c) { return c[0].s + "/" + c[1].s; }) });
+  ok("each formula inside its own wedge: P's three round P", (function () {
+    var P = owT.filter(function (b) { return /^P = /.test(b.s) && b.y < L.aiWheelLayout.CY + L.aiWheelLayout.R; }), lab = owT.filter(function (b) { return b.s === "P"; })[0], C = L.aiWheelLayout;
+    if (!lab || P.length !== 3) return false;
+    var ang = function (b) { return Math.atan2(b.x - C.CX, -(b.y - C.CY)); }, a0 = ang(lab);
+    return P.every(function (b) { return Math.abs(Math.atan2(Math.sin(ang(b) - a0), Math.cos(ang(b) - a0))) < Math.PI / 4 + 0.01; });
+  })(), owT.map(function (b) { return b.s + "@" + Math.round(b.x) + "," + Math.round(b.y); }));
+  var bw = act.build(blk("WHEEL", "Power wheel", ["P: P = V x R | P = V^2 / R | I = P / V", "V: V = I x R | V = I x R | V = sqrt(P x R)", "I: I = V / R | I = sqrt(P / R)",
+    "R: R = V / I | R = V^2 / P | R = P / I^2"]), wq), bwp = bw.problems.join(" | ");
+  ok("the formulas are checked: a wrong one (worked out with V = 12, I = 3, R = 4, P = 36), one in the wrong part, one twice", !bw.ok &&
+    /“P = V x R” is not right: with P = 36, V = 12, I = 3, R = 4 it gives 48, not 36/.test(bwp) && /“I = P \/ V” is in the P part, but it works out I: put it in the I part/.test(bwp) &&
+    /“V = I x R” is on the wheel twice/.test(bwp) && bw.plan, bwp);
+  var rw = act.build(blk("WHEEL", "E wheel", ["P: E x I | E^2/R | I^2R", "E: IR | P/I | sqrt(PR)", "I: E/R | P/E | sqrt(P/R)", "R: E/I | E^2/P | P/I^2 fill pink"]), "");
+  ok("a wheel of right-hand sides only, E for volts, IR and I^2R written short: all right", rw.ok, rw.problems);
+  ok("a wrong right-hand side in a letter's part is caught", /“E x R” is not right/.test(act.build(blk("WHEEL", "x", ["P: E x R | E x I", "E: IR", "I: E/R", "R: E/I"]), "").problems.join()));
+  var yr = act.build(blk("WHEEL", "The year", ["Spring: March | April | May fill green", "Summer: June | July | August fill yellow", "Autumn: September | October | November fill orange",
+    "Winter: December | January | February fill blue", "centre Seasons"]), "");
+  ok("a wheel of words (no formulas) with a centre: built, nothing questioned", yr.ok && yr.plan.hub === "Seasons" && L.aiDrawCheck.clashes(yr.shapes).length === 0 &&
+    L.aiDrawCheck.boxes(yr.shapes).some(function (b) { return b.s === "Seasons"; }), yr.problems);
+  var cw = act.build(blk("WHEEL", "Colour wheel", ["Red:", "Orange:", "Yellow:", "Green:", "Blue:", "Purple:"]), "");
+  var fills = []; (function walk(l) { l.forEach(function (s) { if (s.t === "group") walk(s.shapes); else if (s.t === "tri") fills.push(s.c); }); })(cw.shapes || []);
+  ok("a colour wheel: each part painted its own colour, white words on the dark ones", cw.ok && fills.indexOf("#ef4444") >= 0 && fills.indexOf("#3b82f6") >= 0 &&
+    cw.shapes.some(function (s) { return s.t === "text" && s.s === "Red" && s.c === "#ffffff"; }), cw.problems);
+  ok("a wheel needs two parts; a part line needs its colon", /2 or more parts/.test(act.build(blk("WHEEL", "x", ["Only: one"]), "").problems.join()) &&
+    /a part line is <name>: <item>/.test(act.build(blk("WHEEL", "x", ["A: 1", "B: 2", "just words"]), "").problems.join()));
+  ok("Chat offers MAKE WHEEL for a power wheel, and says to use it, not MAKE DRAWING; not for a car's wheels", /MAKE WHEEL/.test(L.CHAT.buildSystem(wq)) &&
+    /use MAKE WHEEL, not MAKE DRAWING/.test(L.CHAT.buildSystem(wq)) && !/MAKE WHEEL/.test(L.CHAT.buildSystem("draw a car with four wheels")) &&
+    !/MAKE WHEEL/.test(L.CHAT.buildSystem("draw a grinding wheel guard")));
+  // the whole Chat turn: the 35B's drawing goes back once with its problems,
+  // and the corrected block is a MAKE WHEEL
+  var said4 = [], conv4 = await L.CHAT.converse([wq], { call: function (m) {
+    var last = String(m[m.length - 1].content); said4.push(last);
+    if (/Lantern checked your MAKE DRAWING block/.test(last)) return Promise.resolve(blk("WHEEL", "Ohm's law power wheel", OW));
+    return Promise.resolve(blk("DRAWING", "Ohm's Law Power Wheel", WL));
+  } });
+  var t4 = conv4.turns[0];
+  ok("Chat: the drawing's problems go back once, and the corrected block is a wheel Lantern lays out", said4.length === 2 && /runs into/.test(said4[1]) &&
+    t4.made && t4.made.ok && t4.made.block.kind === "WHEEL", { n: said4.length, made: t4.made && t4.made.block && t4.made.block.kind, p: t4.made && t4.made.problems });
+  ok("the look turn asks whether every word is readable", /none running into another, cut off or written twice/.test(act.lookText({ block: { kind: "WHEEL" } }, "q")));
+  ok("bench: the power wheel question passes with its ideal reply", gradeWith("make-power-wheel", Q.filter(function (q) { return q.id === "make-power-wheel"; })[0].ideal).pass);
   ok("no errors after all that", errs.length === 0, errs);
 
   console.log(fails ? fails + " AI ACTION FAILURES (" + passes + " passed)" : "ALL AI ACTION TESTS PASS (" + passes + ")");

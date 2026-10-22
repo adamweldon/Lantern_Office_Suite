@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.12.6 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.12.7 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -166,7 +166,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.12.6",
+  version: "1.12.7",
   apps: {},
   order: []
 };
@@ -23741,7 +23741,8 @@ Lantern.RFB = (function () {
   var LOOKS = /\bLOOKS RIGHT\b/i;
   function lookText(res, q) {
     return "This is the picture Lantern drew from your MAKE " + res.block.kind + " block" + (q ? " (the request was: " + q + ")" : "") + ".\n" +
-      "Look at it. If it shows what was asked, reply LOOKS RIGHT and one sentence on what you see.\n" +
+      "Look at it closely: is every word readable -- none running into another, cut off or written twice -- and is each in its place?\n" +
+      "If it shows what was asked and reads cleanly, reply LOOKS RIGHT and one sentence on what you see.\n" +
       "If something is missing or wrong, reply with a corrected MAKE block only.";
   }
   // solve(question, call) -> Promise<{text, first, made, rounds, kind, fixed,
@@ -23910,6 +23911,14 @@ Lantern.RFB = (function () {
       parts.some(function (p) { return FLUID[p.type] === "hydraulic"; }) ? "hydraulic" : "electrical";
     if (!PARTS[mode]) { problems.push("mode must be electrical, hydraulic or pneumatic"); mode = "electrical"; }
     var known = PARTS[mode];
+    // a wire to a junction or a ground that no part line made ("wire A1
+    // junction1" -- a 35B, 1.12.7) makes it
+    wires.forEach(function (w) {
+      w.forEach(function (e) {
+        var t = byId[e.id] ? "" : /^(J|JCT|JUNC|JUNCTION|NODE|N|JOIN|SPLIT|TEE|DOT)_?\d*$/.test(e.id) ? "junction" : /^(GND|GROUND|EARTH|COMMON|COM)_?\d*$/.test(e.id) ? "ground" : "";
+        if (t && known[t]) { byId[e.id] = { id: e.id, said: t, type: t, label: "", implied: true }; parts.push(byId[e.id]); }
+      });
+    });
     parts.forEach(function (p) {
       if (!known[p.type]) problems.push("there is no " + mode + " part called \u201c" + p.said + "\u201d (" + mode + " parts: " + Object.keys(known).join(", ") + ")");
     });
@@ -24544,6 +24553,516 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: AI_SCHEMATIC_MORE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_DRAW_CHECK - START
+// Depends: AI_DRAW (Lantern.aiDraw), AI_ACTIONS (Lantern.aiActions: the
+//          drawing action) -- feature-detected
+// Exports: Lantern.aiDrawCheck = {textW(s, fs), boxes(shapes), clashes(shapes),
+//          words(shapes)} -- the text checks (AI_WHEEL uses textW and clashes)
+// ===========================================================================
+// Words on a MAKE DRAWING, checked by Lantern (1.12.7). A 35B drew Ohm's law
+// power wheel as 27 text lines on the grid: formulas run into each other
+// ("I=V/R V=sqrt(PR)" read as one), eight of them written twice -- and on the
+// look turn it said LOOKS RIGHT. A model cannot see its own text widths on a
+// grid; Lantern can. Text that touches other text, text cut off at the left
+// or top edge, and a formula written twice go back as problems, once, with
+// the picture still shown.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.aiDraw) return;
+  // textW(s, fs): the width of bold system-ui text, near enough -- narrow
+  // letters (i, l, 1, brackets, spaces) and wide ones (M, W, the times sign)
+  function textW(s, fs) {
+    var w = 0, t = String(s);
+    for (var i = 0; i < t.length; i++) {
+      var c = t.charAt(i);
+      w += / /.test(c) ? 0.28 : /[ilIj.,:;!|\x27\x28\x29\x5B\x5D\x2F\\1tfr]/.test(c) ? 0.36 : /[MWmw\u00d7\u221a@%]/.test(c) ? 0.88 :
+        /[A-Z\u00b2\u00b3=+<>]/.test(c) ? 0.68 : 0.58;
+    }
+    return w * (fs || 16);
+  }
+  // boxes(shapes) -> [{s, x0, y0, x1, y1, fs}] for the text shapes
+  function boxes(shapes) {
+    var out = [];
+    (function walk(list) {
+      list.forEach(function (o) {
+        if (o.t === "group") return walk(o.shapes || []);
+        if (o.t !== "text" || !String(o.s || "").replace(/\s+/g, "")) return;
+        var fs = o.fs || 16, hw = textW(o.s, fs) / 2;
+        out.push({ s: String(o.s), x: o.x, y: o.y, x0: o.x - hw, x1: o.x + hw, y0: o.y - fs / 2, y1: o.y + fs / 2, fs: fs });
+      });
+    })(shapes || []);
+    return out;
+  }
+  // clashes(shapes) -> [[a, b]]: text boxes that overlap, or sit closer than
+  // a gap of 0.4 of the letter size on the same line (they read as one)
+  function clashes(shapes) {
+    var b = boxes(shapes), out = [];
+    for (var i = 0; i < b.length; i++) for (var j = i + 1; j < b.length; j++) {
+      var p = b[i], q = b[j], gap = 0.4 * Math.min(p.fs, q.fs);
+      var vert = Math.min(p.y1, q.y1) - Math.max(p.y0, q.y0);
+      if (vert <= 0.2 * Math.min(p.fs, q.fs)) continue;
+      if (Math.max(p.x0, q.x0) < Math.min(p.x1, q.x1) + gap) out.push([p, q]);
+    }
+    return out;
+  }
+  function cell(v) { return String(Math.round(v / 36 * 10) / 10); }
+  // words(shapes, question) -> problems with the words on a drawing
+  function words(shapes, q) {
+    var probs = [], b = boxes(shapes), cl = clashes(shapes);
+    cl.slice(0, 4).forEach(function (c) {
+      probs.push("the text \u201c" + c[0].s + "\u201d (at " + cell(c[0].x) + " " + cell(c[0].y) + ") runs into \u201c" + c[1].s + "\u201d (at " + cell(c[1].x) + " " + cell(c[1].y) + ")");
+    });
+    if (cl.length > 4) probs.push((cl.length - 4) + " more pairs of words run into each other");
+    if (cl.length) probs.push("at size 20 a word needs about 1 grid cell for every 3 letters: space the words out, or use fewer words or a smaller size (size 14)");
+    b.filter(function (x) { return x.x0 < -6 || x.y0 < -6; }).slice(0, 3).forEach(function (x) {
+      probs.push("the text \u201c" + x.s + "\u201d is cut off at the " + (x.x0 < -6 ? "left" : "top") + " edge: move it in");
+    });
+    var seen = {}, twice = [];
+    b.forEach(function (x) {
+      var k = x.s.replace(/\s+/g, "");
+      if (!/=/.test(k)) return;
+      if (seen[k] === 1) twice.push(x.s);
+      seen[k] = (seen[k] || 0) + 1;
+    });
+    if (twice.length) probs.push((twice.length === 1 ? "the formula \u201c" + twice[0] + "\u201d is" : "the formulas " + twice.slice(0, 6).map(function (t) { return "\u201c" + t + "\u201d"; }).join(", ") + " are") + " written twice: write each once");
+    if (probs.length && q && /\b(wheel|pie|quadrants?|segments?)\b/i.test(q) && (window.Lantern.aiActions || []).some(function (a) { return a.id === "wheel"; }))
+      probs.push("for a wheel of formulas or labels, reply with a MAKE WHEEL block instead: Lantern places and sizes the words");
+    return probs;
+  }
+  var act = (window.Lantern.aiActions || []).filter(function (a) { return a.id === "drawing"; })[0];
+  if (act && !act.wordsChecked) {
+    var build0 = act.build;
+    act.build = function (block, ctx) {
+      var r = build0.call(act, block, ctx);
+      if (r && r.plan && r.shapes) words(r.shapes, ctx && ctx.question).forEach(function (p) { r.problems.push(p); });
+      return r;
+    };
+    act.wordsChecked = true;
+    var at = act.prompt.indexOf("END");
+    if (at > 0) act.prompt.splice(at, 0, "Words: text is size 20 unless you add size <n>; a word needs about 1 cell for every 3 letters, so keep words apart.");
+  }
+  window.Lantern.aiDrawCheck = { textW: textW, boxes: boxes, clashes: clashes, words: words };
+})();
+// ===========================================================================
+// MODULE: AI_DRAW_CHECK - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_WHEEL_COLOURS - START
+// Depends: (none)
+// Exports: Lantern.aiWheelColours = {pastel(name) -> [inner, outer] or null,
+//          forPart(part, k) -> [inner, outer], dark(hex), ORDER}
+// ===========================================================================
+// The colours of a MAKE WHEEL (AI_WHEEL_LAYOUT draws it): each part a light
+// colour for its name and a lighter one for its ring of items, so dark words
+// read on both; "fill <colour>" picks one. A part named after a colour (a
+// colour wheel: Red, Orange, Yellow ...) is painted that colour itself -- a
+// colour wheel with Red on yellow would teach the wrong thing -- with white
+// words where the colour is dark.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var PAL = { yellow: ["#fde68a", "#fef3c7"], blue: ["#bfdbfe", "#dbeafe"], green: ["#bbf7d0", "#dcfce7"], pink: ["#fbcfe8", "#fce7f3"],
+    orange: ["#fed7aa", "#ffedd5"], purple: ["#ddd6fe", "#ede9fe"], teal: ["#99f6e4", "#ccfbf1"], red: ["#fecaca", "#fee2e2"],
+    gray: ["#e5e7eb", "#f3f4f6"], grey: ["#e5e7eb", "#f3f4f6"], brown: ["#e7c9a9", "#f3e3d3"], sky: ["#bae6fd", "#e0f2fe"],
+    "light blue": ["#bae6fd", "#e0f2fe"], lime: ["#d9f99d", "#ecfccb"], gold: ["#fcd34d", "#fef3c7"], tan: ["#e7d3b5", "#f3e9da"], white: ["#ffffff", "#ffffff"] };
+  var ORDER = ["yellow", "blue", "green", "pink", "orange", "purple", "teal", "red", "lime", "sky", "tan", "gray"];
+  var TRUE = { red: "#ef4444", orange: "#f97316", yellow: "#facc15", green: "#22c55e", blue: "#3b82f6", purple: "#a855f7", violet: "#8b5cf6",
+    indigo: "#6366f1", pink: "#ec4899", teal: "#14b8a6", cyan: "#06b6d4", brown: "#a16207", black: "#111827", white: "#ffffff", gray: "#9ca3af",
+    grey: "#9ca3af", magenta: "#d946ef", lime: "#84cc16", "yellow green": "#a3e635", "blue green": "#14b8a6", "blue violet": "#7c3aed",
+    "red violet": "#c026d3", "red orange": "#f4511e", "yellow orange": "#fbbf24" };
+  function mix(hex, k) {   // a #hex colour mixed with white (k = how much white)
+    var h = hex.replace("#", ""); if (h.length === 3) h = h.replace(/(.)/g, "$1$1");
+    var out = "#";
+    for (var i = 0; i < 3; i++) { var v = parseInt(h.substr(i * 2, 2), 16); v = Math.round(v + (255 - v) * k); out += (v < 16 ? "0" : "") + v.toString(16); }
+    return out;
+  }
+  function dark(hex) {   // white words on it?
+    var h = String(hex).replace("#", "");
+    if (h.length === 3) h = h.replace(/(.)/g, "$1$1");
+    var v = [0, 2, 4].map(function (i) { return parseInt(h.substr(i, 2), 16) / 255; });
+    return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2] < 0.42;
+  }
+  function pastel(name) {
+    var n = String(name || "").toLowerCase().replace(/^\s+|\s+$/g, "");
+    if (PAL[n]) return PAL[n];
+    if (/^#[0-9a-f]{3}([0-9a-f]{3})?$/.test(n)) return [mix(n, 0.45), mix(n, 0.72)];
+    return null;
+  }
+  function forPart(p, k) {
+    var nm = String(p.name || "").toLowerCase().replace(/^\s+|\s+$/g, "");
+    if (!p.fill && TRUE[nm]) return [TRUE[nm], mix(TRUE[nm], 0.6)];
+    return p.fill || PAL[ORDER[k % ORDER.length]];
+  }
+  window.Lantern.aiWheelColours = { pastel: pastel, forPart: forPart, dark: dark, ORDER: ORDER };
+})();
+// ===========================================================================
+// MODULE: AI_WHEEL_COLOURS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_WHEEL_LAYOUT - START
+// Depends: AI_DRAW_CHECK (Lantern.aiDrawCheck.textW), AI_WHEEL_COLOURS
+//          (Lantern.aiWheelColours) -- feature-detected
+// Exports: Lantern.aiWheelLayout = {draw(wheel, title) -> {shapes, size,
+//          tooLong, bottom}, CX, CY, R}
+// ===========================================================================
+// The geometry of MAKE WHEEL (AI_WHEEL): a circle cut into parts, each
+// part's name in the inner ring and its items in the outer ring, every word
+// sized to fit its place -- the sines and cosines a model gets wrong. Draw
+// shapes only (triangles for the wedges, paths, circles, text), so the
+// wheel opens in Draw like any drawing. Angles run clockwise from the top.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var INK = "#1b2430", SEP = "#475569", CX = 420, R = 300, CY = 82 + 300, C = L.aiWheelColours;
+  function textW(s, fs) { return L.aiDrawCheck ? L.aiDrawCheck.textW(s, fs) : String(s).length * fs * 0.62; }
+  function pt(a, r) { return [CX + r * Math.sin(a), CY - r * Math.cos(a)]; }
+  function r1d(v) { return Math.round(v * 10) / 10; }
+  var FULL = 2 * Math.PI - 1e-9;
+  function inside(x, y, s, pad) {
+    var dx = x - CX, dy = y - CY, r = Math.sqrt(dx * dx + dy * dy);
+    if (r > s.r1 - pad || (s.r0 > 0 && r < s.r0 + pad)) return false;
+    var span = s.a1 - s.a0;
+    if (span >= FULL) return true;
+    var rel = Math.atan2(dx, -dy) - s.a0;
+    while (rel < 0) rel += 2 * Math.PI;
+    while (rel >= 2 * Math.PI) rel -= 2 * Math.PI;
+    if (rel > span) return false;
+    return r * Math.sin(Math.min(rel, Math.PI / 2)) >= pad && r * Math.sin(Math.min(span - rel, Math.PI / 2)) >= pad;
+  }
+  function boxIn(cx, cy, w, h, s, pad) {
+    for (var i = 0; i <= 2; i++) for (var j = 0; j <= 2; j++)
+      if (!inside(cx - w / 2 + w * i / 2, cy - h / 2 + h * j / 2, s, pad)) return false;
+    return true;
+  }
+  // fit(measure, sector, max, min, mids) -> {fs, x, y} or null: the biggest
+  // size whose box fits, on the sector's middle line (mids: where across the ring)
+  function fit(measure, s, max, min, mids) {
+    for (var fs = max; fs >= min; fs--) {
+      var m = measure(fs), pad = 3 + fs * 0.08;
+      for (var k = 0; k < mids.length; k++) {
+        var p = s.a1 - s.a0 >= FULL && !s.r0 ? [CX, CY] : pt((s.a0 + s.a1) / 2, s.r0 + (s.r1 - s.r0) * mids[k]);
+        if (boxIn(p[0], p[1], m.w, m.h, s, pad)) return { fs: fs, x: p[0], y: p[1] };
+      }
+    }
+    return null;
+  }
+  function lineSets(t) {   // one line, or two split at the space nearest the middle (never inside brackets)
+    var sets = [[t]], sp = [], depth = 0, i;
+    for (i = 1; i < t.length - 1; i++) {
+      var c = t.charAt(i);
+      if (c === "\x28") depth++; else if (c === "\x29") depth--; else if (c === " " && depth <= 0) sp.push(i);
+    }
+    if (sp.length) {
+      sp.sort(function (a, b) { return Math.abs(a - t.length / 2) - Math.abs(b - t.length / 2); });
+      sets.push([t.slice(0, sp[0]), t.slice(sp[0] + 1)]);
+    }
+    return sets;
+  }
+  function measureLines(ls) { return function (fs) { return { w: Math.max.apply(null, ls.map(function (l) { return textW(l, fs); })), h: fs * 1.2 * ls.length }; }; }
+  function labelParts(name) {   // "P watts" or "P (watts)" -> P big, watts small
+    var m = /^(\S{1,3})\s+\x28?([^\x29]+?)\x29?$/.exec(name);
+    return m ? [m[1], m[2]] : [name];
+  }
+  function measureLabel(lp) {
+    return function (fs) {
+      var small = Math.max(12, Math.round(fs * 0.34));
+      return { w: Math.max(textW(lp[0], fs), lp[1] ? textW(lp[1], small) : 0), h: fs * 1.05 + (lp[1] ? small * 1.3 : 0), small: small };
+    };
+  }
+  function sector(s, c) {   // a filled ring sector: triangles, each overlapping the next, so no seams
+    var n = Math.max(2, Math.ceil((s.a1 - s.a0) / (Math.PI / 60))), tris = [];
+    function P(a, r) { var p = pt(a, r); return [r1d(p[0]), r1d(p[1])]; }
+    for (var k = 0; k < n; k++) {
+      var t0 = s.a0 + (s.a1 - s.a0) * k / n, t1 = s.a0 + (s.a1 - s.a0) * Math.min(n, k + 2) / n;
+      if (s.r0 > 0.5) tris.push({ t: "tri", c: c, f: true, w: 1, pts: [P(t0, s.r0), P(t0, s.r1), P(t1, s.r1)] }, { t: "tri", c: c, f: true, w: 1, pts: [P(t0, s.r0), P(t1, s.r1), P(t1, s.r0)] });
+      else tris.push({ t: "tri", c: c, f: true, w: 1, pts: [[CX, CY], P(t0, s.r1), P(t1, s.r1)] });
+    }
+    return { t: "group", shapes: tris };
+  }
+  function ray(a, r0, r1, c, w) { var p = pt(a, r0), q = pt(a, r1); return { t: "path", c: c, w: w, pts: [[r1d(p[0]), r1d(p[1])], [r1d(q[0]), r1d(q[1])]] }; }
+  var MIDS = [0.5, 0.42, 0.58, 0.34, 0.66], LMIDS = [0.6, 0.5, 0.7, 0.42];
+  // place(w, off): every word placed for one turn of the wheel (off 0: the
+  // first part starts at the top; 1: it is centred on the top)
+  function place(w, off) {
+    var n = w.parts.length, S = 2 * Math.PI / n, a = -off * S / 2, any = w.parts.some(function (p) { return p.items.length; });
+    var rh = w.hub ? R * 0.2 : 0, r1 = any ? R * (w.hub ? 0.5 : 0.42) : R, out = { labels: [], items: [], rh: rh, r1: r1, a: a, S: S, any: any, tooLong: [] };
+    w.parts.forEach(function (p, k) {
+      var s = { a0: a + k * S, a1: a + (k + 1) * S, r0: rh, r1: r1 }, lp = labelParts(p.name), lb = fit(measureLabel(lp), s, 56, 10, LMIDS);
+      out.labels.push({ s: s, lp: lp, best: lb });
+      if (!lb) out.tooLong.push(p.name);
+      var T = S / Math.max(1, p.items.length);
+      p.items.forEach(function (t, j) {
+        var si = { a0: s.a0 + j * T, a1: s.a0 + (j + 1) * T, r0: r1, r1: R }, sets = lineSets(t);
+        var one = fit(measureLines(sets[0]), si, 24, 10, MIDS), two = sets[1] ? fit(measureLines(sets[1]), si, 24, 10, MIDS) : null;
+        if (!one && !two) out.tooLong.push(t);
+        out.items.push({ s: si, t: t, part: k, one: one ? one.fs : 0, any: Math.max(one ? one.fs : 0, two ? two.fs : 0) });
+      });
+    });
+    function least(list, key, cap) { return Math.min.apply(null, list.map(function (x) { return x[key] || 99; }).concat([cap])); }
+    // one size for all the items: on one line, unless that makes them much smaller
+    var fs1 = out.items.every(function (x) { return x.one || !x.any; }) ? least(out.items, "one", 24) : 0, fsAny = least(out.items, "any", 24);
+    out.oneLine = fs1 >= Math.max(14, fsAny - 3);
+    out.fsI = out.oneLine ? fs1 : fsAny;
+    out.fsL = Math.min.apply(null, out.labels.map(function (x) { return x.best ? x.best.fs : 99; }).concat([56]));
+    return out;
+  }
+  function colours(p, k) { return C ? C.forPart(p, k) : p.fill || [["#fde68a", "#fef3c7"], ["#bfdbfe", "#dbeafe"], ["#bbf7d0", "#dcfce7"], ["#fbcfe8", "#fce7f3"]][k % 4]; }
+  function dark(hex) { return C ? C.dark(hex) : false; }
+  function shapesFor(w, lay, title) {
+    var sh = [], n = w.parts.length, cols = w.parts.map(colours);
+    w.parts.forEach(function (p, k) {
+      var s = lay.labels[k].s;
+      sh.push(sector(s, cols[k][0]));
+      if (lay.any) sh.push(sector({ a0: s.a0, a1: s.a1, r0: lay.r1, r1: R }, cols[k][1]));
+    });
+    lay.items.forEach(function (x, j) {   // thin lines between the items of a part
+      if (j && lay.items[j - 1].part === x.part) sh.push(ray(x.s.a0, lay.r1, R, SEP, 1.5));
+    });
+    for (var k = 0; k < n; k++) sh.push(ray(lay.a + k * lay.S, lay.rh, R, INK, 3));
+    if (lay.any) sh.push({ t: "circle", c: INK, f: false, w: 2, cx: CX, cy: CY, r: r1d(lay.r1) });
+    sh.push({ t: "circle", c: INK, f: false, w: 3, cx: CX, cy: CY, r: R });
+    if (w.hub) {
+      sh.push({ t: "circle", c: "#ffffff", f: true, w: 1, cx: CX, cy: CY, r: r1d(lay.rh) }, { t: "circle", c: INK, f: false, w: 3, cx: CX, cy: CY, r: r1d(lay.rh) });
+      var hs = { a0: 0, a1: 2 * Math.PI, r0: 0, r1: lay.rh }, hb = null;
+      lineSets(w.hub).forEach(function (ls) { var f = fit(measureLines(ls), hs, 22, 10, [0]); if (f && (!hb || f.fs > hb.f.fs + 1)) hb = { ls: ls, f: f }; });
+      if (hb) hb.ls.forEach(function (l, i) { sh.push({ t: "text", c: INK, x: CX, y: r1d(CY + (i - (hb.ls.length - 1) / 2) * hb.f.fs * 1.2), s: l, fs: hb.f.fs }); });
+    }
+    lay.labels.forEach(function (x, k) {   // each part's name, all the same size
+      var m = measureLabel(x.lp), f = fit(m, x.s, lay.fsL, Math.min(lay.fsL, 10), LMIDS) || x.best;
+      if (!f) return;
+      var d = m(f.fs), top = f.y - d.h / 2, ink = dark(cols[k][0]) ? "#ffffff" : INK;
+      sh.push({ t: "text", c: ink, x: r1d(f.x), y: r1d(top + f.fs * 0.55), s: x.lp[0], fs: f.fs });
+      if (x.lp[1]) sh.push({ t: "text", c: ink === INK ? SEP : ink, x: r1d(f.x), y: r1d(top + f.fs * 1.05 + d.small * 0.65), s: x.lp[1], fs: d.small });
+    });
+    lay.items.forEach(function (x) {   // the items, all one size
+      if (!x.any) return;
+      var fs = Math.max(10, lay.fsI), use = null, sets = lineSets(x.t);
+      function at(lo) { return function (ls) { var f = fit(measureLines(ls), x.s, fs, lo, MIDS); if (f) use = { ls: ls, f: f }; return !!f; }; }
+      if (!sets.some(at(fs))) sets.some(at(Math.min(fs, 10)));
+      if (!use) return;
+      var ink = dark(cols[x.part][1]) ? "#ffffff" : INK;
+      use.ls.forEach(function (l, i) { sh.push({ t: "text", c: ink, x: r1d(use.f.x), y: r1d(use.f.y + (i - (use.ls.length - 1) / 2) * use.f.fs * 1.2), s: l, fs: use.f.fs }); });
+    });
+    if (title) sh.push({ t: "text", c: INK, x: CX, y: 36, s: String(title).slice(0, 60), fs: 26 });
+    return sh;
+  }
+  // draw(w, title): w = {parts: [{name, items: [text as shown], fill}], hub}
+  // -> {shapes, size (the items' letter size), tooLong: [words that do not fit]}
+  function draw(w, title) {
+    var a = place(w, 0), b = place(w, 1);
+    var lay = b.tooLong.length < a.tooLong.length || (b.tooLong.length === a.tooLong.length && b.fsI + b.fsL / 4 > a.fsI + a.fsL / 4) ? b : a;
+    return { shapes: shapesFor(w, lay, title), size: lay.fsI, tooLong: lay.tooLong, bottom: CY + R };
+  }
+  window.Lantern.aiWheelLayout = { draw: draw, CX: CX, CY: CY, R: R };
+})();
+// ===========================================================================
+// MODULE: AI_WHEEL_LAYOUT - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_WHEEL - START
+// Depends: AI_ACTIONS (Lantern.aiActions hook), AI_DRAW (Lantern.aiDraw.result),
+//          AI_WHEEL_LAYOUT (Lantern.aiWheelLayout), AI_WHEEL_COLOURS
+//          (Lantern.aiWheelColours), AI_SCHEMATIC_MORE
+//          (Lantern.aiSchematicMore.noteText) -- all feature-detected
+// Exports: Lantern.aiWheel = {parse(block), wheel(block, ctx), pretty(text),
+//          checks: [fn(wheel) -> problems]} (AI_WHEEL_CHECK adds the formula
+//          checks); adds the WHEEL action to Lantern.aiActions
+// ===========================================================================
+// MAKE WHEEL (1.12.7): a wheel chart. Asked for "the ohms law power wheel
+// calculator", a 35B wrote 27 text lines on Draw's grid: the formulas ran
+// into each other, eight were written twice, and it said LOOKS RIGHT. Words
+// round a circle take sines and cosines, which a model does badly and
+// Lantern does exactly, so here the model only lists the parts:
+//     MAKE WHEEL: Ohm's law power wheel
+//     P watts: P = V x I | P = V^2 / R | P = I^2 x R
+//     V volts: V = I x R | V = P / I | V = sqrt(P x R)
+//     ...
+//     note P = power (watts), V = voltage (volts) ...
+//     END
+// and AI_WHEEL_LAYOUT draws the wedges and sizes every word to fit.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.aiDraw || !L.aiDraw.result || !L.aiWheelLayout) return;
+  var ACTS = window.Lantern.aiActions = window.Lantern.aiActions || [];
+  var W = L.aiWheelLayout, C = L.aiWheelColours, NOTE = "#334155", CHECKS = [];
+  function unq(s) { return String(s || "").replace(/^[\s\x22\u201c\u201d\x27*]+|[\s\x22\u201c\u201d\x27*]+$/g, ""); }
+  // pretty(item): powers and roots as people write them, compact fractions
+  function pretty(s) {
+    return String(s).replace(/\s+/g, " ").replace(/\s*\^\s*2(?![0-9])/g, "\u00b2").replace(/\s*\^\s*3(?![0-9])/g, "\u00b3")
+      .replace(/\bsqrt\s*/gi, "\u221a").replace(/\s*\*\s*/g, " \u00d7 ").replace(/([A-Z0-9\x29\u00b2\u00b3])\s*x\s*(?=[A-Z0-9\x28\u221a])/g, "$1 \u00d7 ")
+      .replace(/\s*\x2F\s*/g, "/").replace(/\x28[^\x28\x29]*\x29/g, function (m) { return m.replace(/\s+/g, ""); });   // "\u221a(P\u00d7R)"
+  }
+  // parse(block) -> {parts: [{name, items, fill}], hub, notes, problems}
+  function parse(block) {
+    var parts = [], problems = [], hub = "", notes = [];
+    block.lines.forEach(function (raw) {
+      var line = String(raw).replace(/^\s*([-*\u2022]|\d+[.\x29])\s+/, "").replace(/\s+$/, ""), m;
+      if (!line.replace(/\s+/g, "")) return;
+      if ((m = /^(centre|center|middle|hub)\b\s*:?\s*(.*)$/i.exec(line))) { hub = unq(m[2]); return; }
+      if ((m = /^(note|key|caption)\b\s*:?\s+(.+)$/i.exec(line))) { notes.push(m[2]); return; }
+      line = line.replace(/^(part|slice|segment|sector|quadrant)\s+/i, "");
+      var c = line.indexOf(":");
+      if (c < 1) { problems.push("\u201c" + raw + "\u201d: a part line is <name>: <item> | <item> | <item>"); return; }
+      var name = unq(line.slice(0, c)), rest = line.slice(c + 1), fill = null;
+      var fm = /\s+(?:fill|colou?r)\s+(#[0-9a-fA-F]{3,6}|[A-Za-z]+(?:\s[A-Za-z]+)?)\s*$/.exec(rest);
+      if (fm) {
+        fill = C ? C.pastel(fm[1]) : null;
+        if (!fill && C) problems.push("part " + name + ": unknown colour \u201c" + fm[1] + "\u201d (use " + C.ORDER.join(", ") + ", or #hex)");
+        rest = rest.slice(0, fm.index);
+      }
+      var bar = /[|;]/.test(rest), pcs = bar ? rest.split(/[|;]/) : rest.split(",");
+      if (!bar && /=/.test(rest) && pcs.some(function (x) { return !/=/.test(x); })) pcs = [rest];   // "P = V x I, so ..." is one item
+      parts.push({ name: name, items: pcs.map(unq).filter(function (x) { return x; }), fill: fill });
+    });
+    if (parts.length < 2) problems.push("a wheel needs 2 or more parts, one line each: <name>: <item> | <item>");
+    if (parts.length > 12) problems.push("keep it to 12 parts or fewer");
+    parts.forEach(function (p) { if (p.items.length > 8) problems.push("part " + p.name + " has " + p.items.length + " items: keep it to 8 or fewer"); });
+    return { parts: parts, hub: hub, notes: notes, problems: problems };
+  }
+  // wheel(block, ctx) -> the result every MAKE action returns (preview, PNG,
+  // Open in Draw)
+  function wheel(block, ctx) {
+    var w = parse(block), problems = w.problems.slice();
+    if (w.parts.length < 2 || w.parts.length > 12) return { problems: problems, plan: null };
+    var seen = {};
+    w.parts.forEach(function (p) {
+      p.items.forEach(function (it) {
+        var k = it.replace(/\s+/g, "").toLowerCase();
+        if (seen[k] === 1) problems.push("\u201c" + it + "\u201d is on the wheel twice: write each item once");
+        seen[k] = (seen[k] || 0) + 1;
+      });
+    });
+    CHECKS.forEach(function (f) { try { (f(w, ctx || {}) || []).forEach(function (p) { problems.push(p); }); } catch (e) { /* a check that fails says nothing */ } });
+    var shown = { parts: w.parts.map(function (p) { return { name: p.name, fill: p.fill, items: p.items.map(pretty) }; }), hub: w.hub };
+    var lay = W.draw(shown, block.title), sh = lay.shapes, notes = [];
+    lay.tooLong.slice(0, 3).forEach(function (it) { problems.push("\u201c" + it + "\u201d is too long for its place on the wheel: shorten it, or use fewer items"); });
+    var y = lay.bottom + 44, NT = L.aiSchematicMore && L.aiSchematicMore.noteText;
+    w.notes.slice(0, 6).forEach(function (nt) {
+      var r = NT ? NT(nt) : { text: unq(nt), problems: [] };
+      r.problems.forEach(function (p) { problems.push(p); });
+      notes.push(r.text.slice(0, 110));
+      sh.push({ t: "text", c: NOTE, x: W.CX, y: y, s: r.text.slice(0, 110), fs: 16 }); y += 26;
+    });
+    var n = w.parts.reduce(function (s, p) { return s + p.items.length; }, 0);
+    var plan = { parts: w.parts.map(function (p) { return { name: p.name, items: p.items.slice() }; }), hub: w.hub, notes: notes, size: lay.size };
+    return L.aiDraw.result(sh, plan, w.parts.length + " parts" + (n ? ", " + n + " items" : ""), block.title, problems);
+  }
+  window.Lantern.aiWheel = { parse: parse, wheel: wheel, pretty: pretty, checks: CHECKS };
+
+  if (!ACTS.some(function (a) { return a.id === "wheel"; })) ACTS.push({
+    id: "wheel", kind: "WHEEL", kinds: ["WHEEL", "WHEEL CHART", "FORMULA WHEEL", "PIE", "PIE CHART"], title: "a wheel chart", opens: "Draw",
+    match: function (q) {
+      return /\b(wheels?|pie\s*(chart|diagram|graph)s?|quadrants?|circular\s*(chart|diagram))\b/i.test(q) &&
+        !/\b(cars?|bikes?|bicycles?|trucks?|carts?|wagons?|vehicles?|tyres?|tires?|bearings?|steering|axles?|grind\w*|abrasive|cutting|ferris|wheelchair|wheelbarrow|gears?|pulleys?)\b/i.test(q);
+    },
+    prompt: [
+      "MAKE WHEEL: <title>   -- a wheel chart: a circle cut into parts, each part's items in the ring around it (a formula",
+      "wheel such as Ohm's law, a colour wheel, a wheel of the seasons). Lantern places, sizes and colours every word.",
+      "<part>: <item> | <item> | <item>    one line a part, 2 to 12 parts, up to 8 items each (a part may have none);",
+      "                                    add fill <colour> at the end of the line to choose its colour",
+      "centre <words>                      (if wanted) words in the middle",
+      "note <words>                        (if wanted) a line under the wheel, such as a key",
+      "END",
+      "For a formula wheel, put each formula in the part of the letter it works out; write powers as ^2 and roots as",
+      "sqrt(...). Lantern checks the formulas. For a wheel, or any labels round a circle, use MAKE WHEEL, not MAKE DRAWING.",
+      "For example:",
+      "MAKE WHEEL: The year",
+      "Spring: March | April | May fill green",
+      "Summer: June | July | August fill yellow",
+      "Autumn: September | October | November fill orange",
+      "Winter: December | January | February fill blue",
+      "note The seasons in the northern hemisphere",
+      "END"],
+    build: function (block, ctx) { return wheel(block, ctx); }
+  });
+})();
+// ===========================================================================
+// MODULE: AI_WHEEL - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_WHEEL_CHECK - START
+// Depends: AI_WHEEL (Lantern.aiWheel.checks), FORMULA (Lantern.formula) --
+//          feature-detected
+// Exports: Lantern.aiWheelCheck = {engine(expr), check(wheel)} (for tests);
+//          adds the make-power-wheel question to Lantern Bench
+//          (Lantern.aiBenchQuestions, created here if absent)
+// ===========================================================================
+// The formulas on a MAKE WHEEL, checked (1.12.7). A wheel for a lesson must
+// not teach a wrong formula, and a model writing twelve of them from memory
+// slips: P = V x R, or I = P / V put in the P part. So:
+//  - a formula goes in the part of the letter it works out (I = P / V in the
+//    I part), when the parts are named by their letters (P, V, I, R);
+//  - on an Ohm's law wheel -- every letter one of P (or W), V (or E, U), I
+//    and R -- each formula is worked out by Lantern's formula engine with
+//    V = 12, I = 3, R = 4, P = 36, and one that does not give its letter's
+//    value goes back to the model.
+// Items without "=" in a part named by its letter ("P: V x I | I^2 x R") are
+// that letter's formulas.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.aiWheel || !L.aiWheel.checks) return;
+  var OHM = { P: 36, W: 36, V: 12, E: 12, U: 12, I: 3, R: 4 }, ROLE = { P: "P", W: "P", V: "V", E: "V", U: "V", I: "I", R: "R" };
+  // engine(expr) -> the formula engine's form ("I^2*R") or null when it is
+  // not a formula of capital letters
+  function engine(expr) {
+    var e = String(expr).replace(/\u00b2/g, "^2").replace(/\u00b3/g, "^3").replace(/[\u00d7\u00b7\u22c5]/g, "*").replace(/\u00f7/g, "/")
+      .replace(/\u221a\s*([A-Z])/g, "sqrt($1)").replace(/\u221a/g, "sqrt").replace(/\bsqrt\s*/gi, "sqrt")
+      .replace(/([A-Z0-9\x29])\s*x\s*(?=[A-Z0-9\x28]|sqrt)/g, "$1*");
+    if (!/[A-Z]/.test(e) || !/^[A-Z0-9.\s+\-*\x2F^\x28\x29]*$/.test(e.replace(/sqrt/g, ""))) return null;
+    return e.replace(/\s+/g, "").replace(/([A-Z\x29])(?=[A-Z\x28]|sqrt)/g, "$1*").replace(/([0-9])(?=[A-Z]|sqrt)/g, "$1*");
+  }
+  function letters(e) { return e.replace(/sqrt/g, "").match(/[A-Z]/g) || []; }
+  function big(name) { var m = /^([A-Za-z]{1,2})(\s|$)/.exec(name); return m ? m[1].toUpperCase() : ""; }
+  function check(w) {
+    var probs = [], owner = {}, forms = [];
+    w.parts.forEach(function (p) { var b = big(p.name); if (b) owner[b] = p.name; });
+    w.parts.forEach(function (p) {
+      var b = big(p.name);
+      p.items.forEach(function (it) {
+        var sides = it.split("="), lhs = sides.length > 1 ? sides[0].replace(/\s+/g, "") : b;
+        if (sides.length > 1 && /^[A-Z]$/.test(lhs) && b && lhs !== b && owner[lhs])
+          probs.push("\u201c" + it + "\u201d is in the " + p.name + " part, but it works out " + lhs + ": put it in the " + owner[lhs] + " part");
+        if (!/^[A-Z]$/.test(lhs)) return;
+        sides.slice(sides.length > 1 ? 1 : 0).forEach(function (rhs) { var e = engine(rhs); if (e) forms.push({ it: it, lhs: lhs, e: e }); });
+      });
+    });
+    var used = {}, roles = {};
+    forms.forEach(function (f) { letters(f.e).concat([f.lhs]).forEach(function (c) { used[c] = 1; roles[ROLE[c] || c] = 1; }); });
+    var all = Object.keys(used);
+    if (!L.formula || forms.length < 2 || !all.length || !all.every(function (c) { return OHM[c] != null; }) || Object.keys(roles).length < 3) return probs;
+    var vals = all.sort(function (x, y) { return "PWVEUIR".indexOf(x) - "PWVEUIR".indexOf(y); }).map(function (c) { return c + " = " + OHM[c]; }).join(", ");
+    forms.forEach(function (f) {
+      var v;
+      try { v = L.formula.evaluate(f.e.replace(/[A-Z]/g, function (c) { return "(" + OHM[c] + ")"; }), { deg: false, ans: 0 }); } catch (er) { v = NaN; }
+      if (typeof v !== "number" || !isFinite(v)) probs.push("\u201c" + f.it + "\u201d could not be worked out: write it like P = V^2 / R or I = sqrt(P / R)");
+      else if (Math.abs(v - OHM[f.lhs]) > 1e-6 * Math.max(1, OHM[f.lhs]))
+        probs.push("\u201c" + f.it + "\u201d is not right: with " + vals + " it gives " + (Math.round(v * 1000) / 1000) + ", not " + OHM[f.lhs]);
+    });
+    return probs;
+  }
+  L.aiWheel.checks.push(check);
+  var Q = window.Lantern.aiBenchQuestions = window.Lantern.aiBenchQuestions || [];
+  if (!Q.some(function (q) { return q.id === "make-power-wheel"; })) Q.push(
+      // 1.12.7: a formula wheel for a lesson -- every formula in its part and
+      // right (Lantern checks them before the picture counts)
+      { id: "make-power-wheel", cat: "make", kind: "WHEEL", max_tokens: 900,
+        q: "Draw the Ohm's law power wheel for a lesson: P, V, I and R, each with its three formulas.",
+        ideal: "MAKE WHEEL: Ohm's law power wheel\nP watts: P = V x I | P = V^2 / R | P = I^2 x R\nV volts: V = I x R | V = P / I | V = sqrt(P x R)\n" +
+          "I amps: I = V / R | I = P / V | I = sqrt(P / R)\nR ohms: R = V / I | R = V^2 / P | R = P / I^2\nEND",
+        check: function (p) {
+          var miss = ["P", "V", "I", "R"].filter(function (c) {
+            return !p.parts.some(function (x) { return new RegExp("^" + c + "\\b", "i").test(x.name) || (c === "V" && /^E\b/i.test(x.name)); });
+          });
+          if (miss.length) return "no part for " + miss.join(", ");
+          var n = p.parts.reduce(function (s, x) { return s + x.items.length; }, 0);
+          return n >= 12 ? "" : "only " + n + " formulas (12 make the wheel)";
+        } });
+  window.Lantern.aiWheelCheck = { engine: engine, check: check };
+})();
+// ===========================================================================
+// MODULE: AI_WHEEL_CHECK - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: AI_SHEET - START
@@ -31906,8 +32425,9 @@ Lantern.RFB = (function () {
     ["Save .pdf", "<p><b>Save .pdf<\u002Fb> downloads the document as a PDF file straight away, with no print box: headings, paragraphs, lists, tables, bold and italic, in Helvetica, numbered at the foot of each page, on Letter or A4 paper as the document is set. <b>Print / PDF<\u002Fb> is still there for the browser\u2019s own print layout.</p>"]
   ]);
   L.guide.append("ai", [
-    ["What the AI can make", "<p>Chat\u2019s AI can make a <b>schematic</b> or a <b>drawing</b> (Draw), a <b>table</b> that calculates (Sheets), a <b>document</b> (Writer), a <b>slide deck</b> (Slides), <b>flashcards</b> (Flashcards) and a <b>plan</b> (Planner). It is told how only when the question is about one of them, so a small model\u2019s instructions stay short. The bench\u2019s <i>make</i> questions test each kind.</p>" +
-      "<p>For module authors: a module adds a kind with <code>Lantern.aiActions.push({id, kind, kinds, title, opens, match(q), prompt: [lines], build(block)})</code>; <code>build</code> returns <code>{problems, plan, summary, preview(), open(), openLabel}</code>. The apps\u2019 own doors are <code>Lantern.writerDocs</code>, <code>slideDocs</code>, <code>cardDocs</code>, <code>plannerDocs</code>, <code>sheetDocs</code> and <code>drawDocs</code>.</p>"]
+    ["What the AI can make", "<p>Chat\u2019s AI can make a <b>schematic</b>, a <b>drawing</b> or a <b>wheel chart</b> (Draw), a <b>table</b> that calculates (Sheets), a <b>document</b> (Writer), a <b>slide deck</b> (Slides), <b>flashcards</b> (Flashcards) and a <b>plan</b> (Planner). It is told how only when the question is about one of them, so a small model\u2019s instructions stay short. The bench\u2019s <i>make</i> questions test each kind.</p>" +
+      "<p>For module authors: a module adds a kind with <code>Lantern.aiActions.push({id, kind, kinds, title, opens, match(q), prompt: [lines], build(block)})</code>; <code>build</code> returns <code>{problems, plan, summary, preview(), open(), openLabel}</code>. The apps\u2019 own doors are <code>Lantern.writerDocs</code>, <code>slideDocs</code>, <code>cardDocs</code>, <code>plannerDocs</code>, <code>sheetDocs</code> and <code>drawDocs</code>.</p>"],
+    ["Wheel charts", "<p>Ask Chat for a wheel \u2014 the Ohm\u2019s law power wheel, a colour wheel, the seasons \u2014 and the AI lists the parts and their items in a <b>MAKE WHEEL</b> block; Lantern cuts the circle, sizes every word to fit its wedge, and opens it in Draw. On a formula wheel each formula must sit in the part of the letter it works out, and an Ohm\u2019s law wheel\u2019s formulas are worked out with V = 12, I = 3, R = 4, P = 36 before the picture counts. On any drawing, words that run into each other, run off the edge or are written twice go back to the AI once.</p>"]
   ]);
 })();
 // ===========================================================================

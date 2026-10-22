@@ -1,5 +1,52 @@
 # Changelog
 
+## 1.12.7 — Wheel charts; words on a drawing checked; junctions that were never declared (2026-10-22)
+
+From Adam's next Chat with the 35B. The parallel and series schematics came
+out right, with their formulas worked out on the picture. The parallel one
+took a retry first: the block wired `A1` to `junction1` but never declared
+`junction1` as a part. Then came "draw the ohms law power wheel calculator
+for educational purposes". The 35B wrote 27 text lines on Draw's grid and
+made a gray disc with letters in a grid. Formulas ran into each other
+("I=V/R V=√(PR)" read as one), eight were written twice, and three were
+missing. On the look turn it said LOOKS RIGHT.
+
+- **MAKE WHEEL**, a new kind. The AI lists the parts, one line each:
+  `P watts: P = V x I | P = V^2 / R | P = I^2 x R`. Lantern does the
+  sines and cosines. It cuts the circle, paints each part, and sizes every
+  word to fit inside its wedge, all items at one size. A long formula breaks
+  onto two lines, but never inside its brackets. It shows powers and roots
+  as ² and √. Optional `centre`, `note` (with {= ...} worked out) and
+  `fill <colour>` lines are allowed. The wheel opens in Draw as ordinary
+  shapes. A part named after a colour (Red, Blue …) is painted that colour,
+  with white words where it is dark. The AI is told to use MAKE WHEEL, not
+  MAKE DRAWING, for a wheel or any labels round a circle. A car's wheels or
+  a grinding wheel still go to MAKE DRAWING.
+- **Formulas on a wheel are checked.** A formula must sit in the part of
+  the letter it works out. No formula may appear twice. On an Ohm's law
+  wheel (P or W, V or E, I, R), each formula is worked out by the formula
+  engine with V = 12, I = 3, R = 4 and P = 36. A wrong one goes back:
+  "P = V x R is not right: … it gives 48, not 36". Right-hand sides alone
+  ("P: E x I | I^2R") are checked as that letter's formulas.
+- **Words on any MAKE DRAWING are checked.** Text that runs into other
+  text, text cut off at the left or top edge, and a formula written twice
+  go back to the AI once, with grid positions. When the request is for a
+  wheel, the message also points to MAKE WHEEL. The drawing prompt says how
+  much room words need (about one cell for every three letters at size 20).
+- **The look turn asks whether every word is readable**: none running into
+  another, cut off or written twice.
+- **A wire to a junction or ground that no part line made** (`junction1`,
+  `J2`, `node`, `GND`) now makes that part, so there is no retry.
+- **Tests.**
+  - 18 new checks: Adam's 27-line drawing; the wheel's layout (no
+    clashes, each formula inside its own wedge); the formula checks; a word
+    wheel with a centre; a colour wheel; the prompt routing; and the whole
+    Chat turn (the drawing sent back, the wheel made).
+  - The power wheel joins the bench as its 14th make question.
+  - The five new modules are tested in isolation.
+  - Replayed in a browser: the undeclared junction1 schematic draws first
+    time, and the power wheel opens in Draw.
+
 ## 1.12.6 — A ground as the return; the formula goes on the drawing (2026-10-22)
 
 From Adam's next Chat: "draw an electrical schematic showing ohms law in
