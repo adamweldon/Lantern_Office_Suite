@@ -6,6 +6,7 @@ var steps = [
   ["bundle payload == src", "node", ["tools/bundle.js", "check", "Lantern_Office_Suite.html", "src/lantern.inner.html"], /^OK/m],
   ["structure (markers, rules, syntax)", "python3", ["tests/structure.py"], /STRUCTURE OK/],
   ["no quotes inside regex literals", "node", ["tests/regex_quotes.js"], /^0 quote-bearing/m],
+  ["Project Context Studio gate (markers, Depends circles, brackets outside strings)", "node", ["tests/pc_compat.js"], /PROJECT CONTEXT GATE OK/],
   ["boot tour (bundle timing, every app)", "node", ["tests/boot_tour.js"], /ALL BOOT TOUR PASS/],
   ["July 13 pages smoke", "node", ["tests/jul13_pages_smoke.js"], /ALL PASS/],
   ["July 13 pagination geometry", "node", ["tests/jul13_pages_geometry.js"], /ALL GEOMETRY PASS/],

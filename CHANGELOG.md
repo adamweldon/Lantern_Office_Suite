@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.11.1 — The AI knows the whole suite; pictures in Chat (2026-10-22)
+
+Built in a separate session on top of 1.10.0, then brought into the
+repository unchanged. This repository's build pipeline reproduces the file
+byte for byte.
+
+- **The AI knows the suite** (SUITE_* modules). Lantern keeps one live
+  catalog of everything it has: 44 tiles, 270 lessons, 38 help guides, 66
+  formula functions, 26 recipe cards, 23 flashcard decks, 40 templates, 18
+  Compose tasks and 13 Chat commands. The catalog is built from the
+  registries each module fills as it loads, never typed by hand.
+  - Chat's instructions name every tile.
+  - A question about Lantern itself ("what are your capabilities", "does
+    Lantern have a farming module") gets the catalog, with buttons that open
+    each entry.
+  - A how-to question gets passages from the best lessons first, checked
+    like library passages.
+  - The AI can ask for more with `LESSON: <words>` and `MODULES: <topic>`.
+- **Pictures in Chat** (CHAT_PICTURES, IMAGE_SHRINK).
+  - A screenshot can be pasted, dropped or picked.
+  - A model that sees images gets the picture, shrunk to at most 1280 px.
+  - For a model that does not, Text Reader reads the text in the picture
+    instead.
+- **New Chat hooks**: `Lantern.chatSystem`, `chatAbout`, `chatCommands` and
+  `chatPictures`. Also new: `Lantern.guide.list/get`,
+  `Lantern.mathLessons.get` (and lesson `meta.app`) and
+  `Lantern.formula.names()`. Ten engineering and RF functions now have
+  descriptions in the AI's catalog.
+- **Project Context Studio compatibility.**
+  - Parentheses, brackets, braces and slashes inside regex literals are now
+    written as \x28 \x29 \x5B \x5D \x7B \x7D \x2F. The Studio's gate
+    strips strings and comments but not regex literals, so those characters
+    unbalanced 17 modules.
+  - Seven circular "Depends:" headers were reworded. Example: AI_ACTIONS
+    named AI_DRAW, which depends on AI_ACTIONS.
+- **New test `tests/pc_compat.js`** (part of `npm test`). It checks what the
+  Studio's splitter and merge gate check: markers, circles in the Depends
+  headers, and brackets outside strings with regex literals not understood.
+  1.10.0 had 24 errors; 1.11.1 has none. 44 modules are over the 2,500-token
+  size warning.
+- **Tests:**
+  - The isolation test covers the 15 new modules (67 in all).
+  - Chat routing grades the four new bench conversations about Lantern
+    itself.
+
 ## 1.10.0 — Text Reader: printed text from pictures, scans and PDFs (2026-10-21)
 
 Lantern can now read. Pictures of pages, photos of labels and nameplates,

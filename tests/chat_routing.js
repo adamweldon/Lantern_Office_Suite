@@ -98,6 +98,14 @@ function good(last) {
     for (var bi = 1; bi < blocks.length; bi += 2) if (blocks[bi + 1].indexOf(hit[1]) >= 0) nn = +blocks[bi];
     return nn ? "ANSWER: " + hit[1].replace(/\.$/, "") + " [" + nn + "].\nQUOTE [" + nn + "]: " + hit[1] : "ANSWER: Not in the document.";
   }
+  // Lantern's own catalog and lessons (SUITE_CHAT, 1.11): name the tiles,
+  // quote a lesson, ask for one when the question is a how-to in disguise
+  if (/LANTERN CATALOG: /.test(last)) return "Yes. Lantern has the Writer, Sheets, Farming, Animals, Health and Repair tiles, with lessons in each.";
+  if (/LESSONS: passages/.test(last)) {
+    var ls = firstPassageSentence(last);
+    return ls.replace(/\.$/, "") + " [1].\nQUOTE [1]: " + ls;
+  }
+  if (/hens have stopped laying/i.test(last)) return "LESSON: chickens laying eggs";
   if (/LIBRARY: passages/.test(last)) {
     var s = firstPassageSentence(last);
     return s.replace(/\.$/, "") + " [1].\nQUOTE [1]: " + s;
@@ -204,11 +212,11 @@ function good(last) {
   ok("C.converse runs a conversation with no page", conv.turns.length === 2 && conv.turns[0].searches.length === 1 && conv.turns[1].searches.length === 0 &&
     conv.turns[1].self && /Kenya/.test(conv.text), conv.turns.map(function (x) { return [x.searches, x.self, x.final]; }));
   var Q = L.aiBenchQuestions.filter(function (x) { return x.cat === "chat"; });
-  ok("eight conversations in the bench, one quick, and four about a document", Q.filter(function (x) { return !x.doc; }).length === 8 && Q.filter(function (x) { return x.quick; }).length === 1 &&
-    Q.filter(function (x) { return x.doc; }).length === 4);
+  ok("eight conversations in the bench, one quick, four about a document and four about Lantern itself", Q.filter(function (x) { return !x.doc && !/^suite-/.test(x.id); }).length === 8 &&
+    Q.filter(function (x) { return x.quick; }).length === 1 && Q.filter(function (x) { return x.doc; }).length === 4 && Q.filter(function (x) { return /^suite-/.test(x.id); }).length === 4);
   var rep = await L.aiBench.run({ quick: false, skip: ["tool", "multi", "need", "unknown", "safety", "fact", "make", "reason", "alone"] });
   var failed = rep.rows.filter(function (r) { return !r.pass; }).map(function (r) { return r.id + ": " + r.why; });
-  ok("a model that behaves well passes every conversation", rep.rows.length === 12 && !failed.length && rep.summary.chat.pass === 12, failed);
+  ok("a model that behaves well passes every conversation", rep.rows.length === 16 && !failed.length && rep.summary.chat.pass === 16, failed);
   ok("document conversations: the bench handed Chat the manual, and took it back", rep.rows.filter(function (r) { return /^doc-/.test(r.id); }).every(function (r) { return r.chat.some(function (t) { return t.searches.some(function (s) { return s.how === "document"; }); }) || r.id === "doc-not-covered"; }) &&
     !(L.textReader && L.textReader.attached));
   ok("rows record each turn's searches", rep.rows.filter(function (r) { return r.id === "chat-follow-up-search"; })[0].chat[1].searches[0].how === "asked");

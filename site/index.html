@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.10.0 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.11.1 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -130,6 +130,23 @@
 //      attached (a document Text Reader read), given to the AI before the
 //      library and checked like library passages (prompt starts "DOCUMENT:
 //      passages from ...") (TEXT_READER_CHAT).
+//    Lantern.suite = {entries(), search(q), passages(q, query), catalog(q),
+//      dump(), stats(), commands(), add(entry)} -- the live catalog of what
+//      Lantern has: tiles, lessons, help guides, formula functions, recipe
+//      cards, decks, templates and Chat commands, built from the registries
+//      above each time they change (SUITE_INDEX, SUITE_SEARCH); add your own
+//      with Lantern.suiteEntries = [{kind, id, title, app, desc, text, open}].
+//    Chat's own hooks (ASSIST_CHAT reads them; SUITE_CHAT and CHAT_PICTURES
+//    fill them): Lantern.chatSystem = [fn(question) -> lines] added to the
+//      AI's instructions; Lantern.chatAbout = [{id, provide(question, msgs)
+//      -> {prompt, note, view()}|null}] for questions about Lantern itself;
+//      Lantern.chatCommands = [{id, verb, usage, desc, test(reply) -> arg|
+//      null, run(arg, question, ctx) -> Promise<{prompt, sources, detail,
+//      more, note, view()}>}] -- reply lines the AI may write (LESSON:,
+//      MODULES); a chatContext result with more: true leaves the library
+//      open for a decline; Lantern.chatPictures = [{id, take(question) ->
+//      Promise<[{url, name}]>}] -- pictures sent with the next question when
+//      the AI can see (Lantern.CHAT.forgetPictures() stops sending them).
 //    Lantern.textReader = {read(source, opts) -> Promise<page>, readAll,
 //      text, ...} reads printed text in pictures (TEXT_READER and its step
 //      modules); Lantern.pdf = {open, pageImage, pageText, searchable}
@@ -153,7 +170,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.10.0",
+  version: "1.11.1",
   apps: {},
   order: []
 };
@@ -763,7 +780,14 @@ Lantern.guide = (function () {
       else pending[id] = (pending[id] || []).concat(sections);
     },
     has: function (id) { return !!docs[id]; },
-    open: open
+    open: open,
+    // list() -> [id] and get(id) -> {id, title, sections: [[heading, html]]}
+    // -- read-only copies, so the AI can read the help guides (SUITE_INDEX).
+    list: function () { var out = []; for (var k in docs) out.push(k); return out; },
+    get: function (id) {
+      var d = docs[id];
+      return d ? { id: id, title: d.title, sections: d.sections.map(function (s) { return [s[0], s[1]]; }) } : null;
+    }
   };
 })();
 // ===========================================================================
@@ -857,7 +881,10 @@ Lantern.mathLessons = (function () {
   });
 
   return {
-    add: function (key, title, html) { lessons[key] = { title: title, html: html }; },
+    // add(key, title, html[, meta]) -- meta {app: "farming"} names the tile
+    // a lesson belongs to, so the AI's catalog (SUITE_INDEX) can say where
+    // to open it; lessons without meta are placed by their key prefix.
+    add: function (key, title, html, meta) { lessons[key] = { title: title, html: html, app: meta && meta.app ? String(meta.app) : "" }; },
     open: open,
     has: function (key) { return !!lessons[key]; },
     // list() -> [{key, title}] so SEARCH can index every lesson by title.
@@ -865,6 +892,12 @@ Lantern.mathLessons = (function () {
       var out = [];
       for (var k in lessons) out.push({ key: k, title: lessons[k].title });
       return out;
+    },
+    // get(key) -> {key, title, html, app} or null -- read-only, for the AI
+    // to read a lesson (SUITE_INDEX).
+    get: function (key) {
+      var d = lessons[key];
+      return d ? { key: key, title: d.title, html: d.html, app: d.app || "" } : null;
     }
   };
 })();
@@ -1130,7 +1163,8 @@ Lantern.formula = (function () {
     // a text result (="abc", =REVERSE("abc") -- TEXT_FUNCS) stays text
     return typeof result === "string" ? result : num(result);
   }
-  return { evaluate: evaluate, register: register, REF: REF };
+  return { evaluate: evaluate, register: register, REF: REF,
+    names: function () { return Object.keys(EXT).sort(); } };
 })();
 // ===========================================================================
 // MODULE: FORMULA - END
@@ -11043,7 +11077,7 @@ Lantern.chem = (function () {
 
   function tokenize(src) {
     src = src.replace(/;[^\n]*/g, " ");            // ; comments to end of line
-    src = src.replace(/\[/g, " [ ").replace(/\]/g, " ] ");
+    src = src.replace(/\x5B/g, " [ ").replace(/\x5D/g, " ] ");
     var raw = src.split(/\s+/), out = [];
     for (var i = 0; i < raw.length; i++) if (raw[i]) out.push(raw[i]);
     return out;
@@ -14322,7 +14356,7 @@ Lantern.RFB = (function () {
   function nameFallback(name, relPath) {
     var base = (name || "").replace(/\.[^.]+$/, "");
     var out = {}, rest = base;
-    var m = base.match(/^\s*(\d{1,3})\s*[-\u2013\u2014._)\]]*\s+(.+)$/);
+    var m = base.match(/^\s*(\d{1,3})\s*[-\u2013\u2014._\x29\x5D]*\s+(.+)$/);
     if (m) { out.track = parseInt(m[1], 10); rest = m[2]; }
     var parts = rest.split(/\s+-\s+/);
     if (parts.length >= 2) { out.artist = parts[0].replace(/^\s+|\s+$/g, ""); out.title = parts.slice(1).join(" - ").replace(/^\s+|\s+$/g, ""); }
@@ -14369,7 +14403,7 @@ Lantern.RFB = (function () {
       }
       var text = rest.replace(/<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>/g, "").replace(/^\s+|\s+$/g, "");
       if (times.length) { for (var ti = 0; ti < times.length; ti++) timed.push({ ms: times[ti], text: text }); }
-      else if (!/^\s*\[[a-z]{2,}:[^\]]*\]\s*$/i.test(line)) plain.push(line.replace(/\s+$/, ""));
+      else if (!/^\s*\x5B[a-z]{2,}:[^\x5D]*\x5D\s*$/i.test(line)) plain.push(line.replace(/\s+$/, ""));
     }
     if (timed.length) {
       out.synced = true;
@@ -15842,11 +15876,18 @@ Lantern.RFB = (function () {
     { n: "MOLARMASS", s: "(\"formula\")", d: "grams per mole, e.g. MOLARMASS(\"H2O\")" },
     { n: "MOLES", s: "(grams,\"formula\")", d: "moles in a given mass" },
     { n: "GRAMS", s: "(moles,\"formula\")", d: "mass of a given mole count" },
+    { n: "ATOMICMASS", s: "(\"symbol\")", d: "atomic mass of one element in g/mol, e.g. ATOMICMASS(\"Fe\")" },
     // ENGINEERING
     { n: "VOLTS", s: "(I,R)", d: "Ohm's law voltage" },
     { n: "WATTS", s: "(V,I)", d: "electrical power" },
     { n: "RPARALLEL", s: "(r1,r2,...)", d: "combined parallel resistance" },
     { n: "GEAR", s: "(driver,driven)", d: "gear ratio driven/driver" },
+    // ENGINEERING_CELLS, described in 1.11.0 (the AI's catalog found them missing)
+    { n: "AMPS", s: "(V,R)", d: "Ohm's law current in amperes" },
+    { n: "OHMS", s: "(V,I)", d: "Ohm's law resistance in ohms" },
+    { n: "RSERIES", s: "(r1,r2,...)", d: "combined series resistance" },
+    { n: "WHRS", s: "(Ah,V)", d: "battery energy in watt-hours from amp-hours and volts" },
+    { n: "RUNTIME", s: "(Wh,W)", d: "hours a battery of Wh watt-hours runs a load of W watts" },
     // FARMING / HUSBANDRY
     { n: "PLANTS", s: "(len_m,wid_m,spacing_cm)", d: "plants that fit a bed" },
     { n: "EGGS", s: "(hens,per_week)", d: "eggs per week from a flock" },
@@ -15857,7 +15898,16 @@ Lantern.RFB = (function () {
     { n: "WAVELEN", s: "(f_MHz[,vf])", d: "wavelength in metres from frequency in MHz" },
     { n: "FRES", s: "(L_nH,C_pF)", d: "LC resonant frequency in MHz" },
     { n: "MATCHSER", s: "(r,x[,z0,sign])", d: "series reactance in ohms for an L-match to z0 (default 50)" },
-    { n: "MATCHSH", s: "(r,x[,z0,sign])", d: "shunt susceptance in siemens for an L-match to z0 (default 50)" }
+    { n: "MATCHSH", s: "(r,x[,z0,sign])", d: "shunt susceptance in siemens for an L-match to z0 (default 50)" },
+    // RF_CELLS, described in 1.11.0
+    { n: "REFLPH", s: "(r,x[,z0])", d: "angle of the reflection coefficient in degrees" },
+    { n: "RLOSS", s: "(r,x[,z0])", d: "return loss in dB" },
+    { n: "LNSWR", s: "(r,x[,z0])", d: "natural log of the SWR (distance from a match on the chart)" },
+    { n: "ZINRE", s: "(r,x,z0,len_wl)", d: "resistance seen through a lossless line of z0 ohms, len_wl wavelengths long; ZINIM gives the reactance" },
+    { n: "QSER", s: "(R,L_nH,C_pF)", d: "Q of a series RLC circuit" },
+    { n: "ELEN", s: "(len_m,f_MHz[,vf])", d: "electrical length of a line in degrees" },
+    { n: "BEATF", s: "(f1,f2)", d: "beat frequency, the difference of two frequencies" },
+    { n: "LOCKP", s: "(ratio)", d: "p of the simple p:q ratio a frequency ratio locks to (q from LOCKQ, 0 if none)" }
   ];
 })();
 // ===========================================================================
@@ -16852,7 +16902,9 @@ Lantern.RFB = (function () {
 // MODULE: ASSIST_CHAT - START
 // Depends: CORE, STORAGE, SHELL, ASSIST_CORE, MOD_FORGE
 // Exports: Lantern.CHAT (buildSystem, parseProposals, trimHistory, turn,
-//          converse, askSearch, toolText), registers "chat" app
+//          converse, askSearch, toolText, forgetPictures), registers "chat"
+//          app; reads the hooks Lantern.chatSystem, chatAbout, chatContext,
+//          chatCommands and chatPictures (see the header, rule 10)
 // ===========================================================================
 // The inverted flow: the person talks to the model, and the model drives
 // Lantern. Each model turn may contain = lines (run here on the real engine,
@@ -16887,6 +16939,12 @@ Lantern.RFB = (function () {
       out.push("Questions about you, Lantern, this conversation or how you reason are not encyclopedia facts: answer");
       out.push("them from your own reasoning, plainly, without [n] or QUOTE lines and without \x22Not in my library\x22.");
     }
+    // Lines other modules add (Lantern.chatSystem): Lantern's own lessons
+    // and catalog of its tiles and tools (SUITE_CHAT), and any added later.
+    (window.Lantern.chatSystem || []).forEach(function (fn) {
+      var t = ""; try { t = fn(question); } catch (e) { t = ""; }
+      if (t) out.push(String(t));
+    });
     out.push("You may also improve Lantern itself. To propose a module edit or a new module, output:");
     out.push("PROPOSE MODULE: <NAME>");
     out.push("<the complete module text, from its START divider to its END divider>");
@@ -16954,30 +17012,52 @@ Lantern.RFB = (function () {
   // by a note, and the oldest turns are dropped once the conversation is
   // long (the kit's server gives each request 8192 tokens). The person
   // still sees the whole conversation.
-  var LIBRE = /\n?\n?(LIBRARY: passages from the offline encyclopedia|DOCUMENT: passages from )[\s\S]*$/;
+  // Lantern's own lessons (LESSONS:) and catalog (LANTERN CATALOG:) are
+  // trimmed from older turns the same way (SUITE_CHAT, 1.11.0).
+  var LIBRE = /\n?\n?(LIBRARY: passages from the offline encyclopedia|DOCUMENT: passages from |LESSONS: passages from |LANTERN CATALOG: )[\s\S]*$/;
+  var PASSRE = /(LIBRARY|DOCUMENT|LESSONS): passages|LANTERN CATALOG: /;
   function isParts(c) { return Object.prototype.toString.call(c) === "[object Array]"; }
   function textOf(c) { return isParts(c) ? c.filter(function (x) { return x && x.type === "text"; }).map(function (x) { return x.text; }).join("\n") : String(c); }
+  // historyBudget() -> characters of conversation sent with each request:
+  // the instructions and the history together stay about where they were
+  // when the history alone had 16000 (the kit's server gives a request 8192
+  // tokens), so a longer tool list or tile list leaves less history.
+  C.historyBudget = function () {
+    var sys = 4800;
+    try { sys = C.buildSystem(currentQ).length; } catch (e) { sys = 4800; }
+    return Math.max(9000, 20800 - sys);
+  };
   C.trimHistory = function (list, maxChars) {
-    maxChars = maxChars || 16000;
+    maxChars = maxChars || C.historyBudget();
     var lastLib = -1, lastImg = -1, i, total = 0, start = list.length;
+    // a picture the person gave (CHAT_PICTURES) stays in view for later
+    // questions until they take it away or give another (list.keepPicture)
+    var keep = list.keepPicture || null;
     for (i = 0; i < list.length; i++) {
-      if (list[i].role === "user" && /(LIBRARY|DOCUMENT): passages/.test(textOf(list[i].content))) lastLib = i;
+      if (list[i].role === "user" && PASSRE.test(textOf(list[i].content))) lastLib = i;
       if (list[i].role === "user") lastImg = isParts(list[i].content) ? i : -1;   // only a picture in the newest message goes
     }
     // a picture is sent once: older ones become a note (and all of them
     // when the model answering cannot see)
     var sees = !!(Lantern.ai && Lantern.ai.canSee && Lantern.ai.canSee());
     list = list.map(function (m, k) {
-      if (!isParts(m.content) || (k === lastImg && sees)) return m;
-      return { role: m.role, content: textOf(m.content) + "\n[the picture Lantern showed here is not sent again]" };
+      if (!isParts(m.content) || ((k === lastImg || m === keep) && sees)) return m;
+      return { role: m.role, content: textOf(m.content) + (m === keep ? "\n[the person\u2019s picture is not sent: the AI in use cannot see pictures]" : "\n[the picture shown here is not sent again]") };
     });
+    function cut(t) {
+      var head = t.replace(LIBRE, "");
+      var what = /DOCUMENT: passages/.test(t) ? "document passages" : /LESSONS: passages/.test(t) ? "lesson passages" : /LANTERN CATALOG: /.test(t) ? "Lantern\u2019s catalog" : "library passages";
+      return (head ? head + "\n\n" : "") + "[" + what + " from an earlier question: removed to save room]";
+    }
     var out = list.map(function (m, k) {
-      if (m.role !== "user" || k === lastLib || !/(LIBRARY|DOCUMENT): passages/.test(m.content)) return m;
-      var head = String(m.content).replace(LIBRE, "");
-      return { role: m.role, content: (head ? head + "\n\n" : "") + "[" + (/DOCUMENT: passages/.test(m.content) ? "document" : "library") + " passages from an earlier question: removed to save room]" };
+      if (m.role !== "user" || k === lastLib || !PASSRE.test(textOf(m.content))) return m;
+      // a kept picture keeps its picture; only the old passages go
+      if (isParts(m.content)) return { role: m.role, content: [{ type: "text", text: cut(textOf(m.content)) }].concat(m.content.filter(function (x) { return x && x.type !== "text"; })) };
+      return { role: m.role, content: cut(String(m.content)) };
     });
     for (i = out.length - 1; i >= 0; i--) {
-      total += isParts(out[i].content) ? textOf(out[i].content).length + 1500 : String(out[i].content).length;
+      // a picture costs the model about a thousand tokens (1280 px, 1.11.0)
+      total += isParts(out[i].content) ? textOf(out[i].content).length + 4000 * out[i].content.filter(function (x) { return x && x.type === "image_url"; }).length : String(out[i].content).length;
       if (total > maxChars && i < out.length - 1) break;
       start = i;
     }
@@ -17040,15 +17120,40 @@ Lantern.RFB = (function () {
       content += "\n\n[Recipe hints]\n" + hl.join("\n");
     }
     var lastValue = null, questioned = false, stillDoubt = null, looked = false, sources = null, detail = false, nudged = false, showed = false, steered = false, pointed = false, madeShown = null,
-      puzzleRuns = 0, pzFixed = false, puzzled = false, helped = false;
+      puzzleRuns = 0, pzFixed = false, puzzled = false, helped = false, cmdRuns = 0, canMore = false;
     currentQ = q;
     rec.self = A.aboutSelf(q); rec.noLibrary = A.noLibrary(q); rec.contextual = A.dependsOnContext(q, history);
     var ownWords = rec.self || rec.noLibrary;
+    // Pictures the person gave Chat (Lantern.chatPictures -- CHAT_PICTURES:
+    // pasted, dropped or picked). A provider returns them only when the AI
+    // in use can see; otherwise it hands them to Text Reader itself, whose
+    // document passages then arrive below like any document (1.11.0).
+    var pics = [], PIC = window.Lantern.chatPictures || [];
+    for (i = 0; i < PIC.length && !opts.headless; i++) {
+      var got = null;
+      try { got = await PIC[i].take(q); } catch (e) { got = null; }
+      if (got && got.length) pics = pics.concat(got);
+    }
+    // Questions about what Lantern has -- its tiles, lessons, tools,
+    // commands (Lantern.chatAbout -- SUITE_CHAT): Lantern sends its real
+    // catalog, read from its modules, instead of letting the AI guess
+    // ("does Lantern have a farming module?" was answered "no", 1.10.0).
+    var about = null, AB = window.Lantern.chatAbout || [];
+    for (i = 0; i < AB.length && !about && !rec.noLibrary; i++) {
+      try { about = await AB[i].provide(q, msgs); } catch (e) { about = null; }
+      if (about && !about.prompt) about = null;
+    }
     // Not every question is for the encyclopedia: about the AI itself,
     // Lantern or this chat -- or "without regard to the library" -- it
     // answers from its own reasoning, marked as such.
     if (rec.noLibrary) content += "\n\n(Lantern: the person asks you to answer from your own knowledge and reasoning, not the library. " +
       "Answer fully, in plain sentences, with no [n] or QUOTE lines, and do not say \x22Not in my library\x22.)";
+    else if (about) {
+      ownWords = true; rec.catalog = about.id || "catalog";
+      content += "\n\n" + about.prompt;
+      note(about.note || "Lantern gave the AI its own catalog of tiles, lessons and tools\u2026");
+      if (about.view) show(about.view);
+    }
     else if (rec.self) content += "\n\n(Lantern: this question is about you, Lantern or this conversation, not a fact about the world. " +
       "Answer it from your own reasoning, plainly, with no [n] or QUOTE lines, and do not say \x22Not in my library\x22.)";
     // Explanation questions ("explain", "in detail", "how does"): Lantern
@@ -17064,10 +17169,12 @@ Lantern.RFB = (function () {
       var dc = null;
       try { dc = await CTX[i].provide(q, msgs, { wantsDetail: !!(Lantern.library && Lantern.library.wantsDetail && Lantern.library.wantsDetail(q)) }); } catch (e) { dc = null; }
       if (dc && dc.sources && dc.sources.length) {
-        sources = dc.sources; looked = true; detail = !!dc.detail;
+        // dc.more: the library may still be read when the AI declines
+        // (Lantern's own lessons -- SUITE_CHAT); a document closes it.
+        sources = dc.sources; looked = !dc.more; canMore = !!dc.more; detail = !!dc.detail;
         seen.push({ sources: sources, detail: detail });
-        rec.searches.push({ query: dc.query || "", how: "document" });
-        rec.document = dc.label || "document";
+        rec.searches.push({ query: dc.query || "", how: dc.how || "document" });
+        if (!dc.how || dc.how === "document") rec.document = dc.label || "document";
         content += "\n\n" + dc.prompt;
         note(dc.note || ("Lantern gave the AI " + dc.sources.length + " passage" + (dc.sources.length === 1 ? "" : "s") + " from " + (dc.label || "your document") + "\u2026"));
       }
@@ -17090,12 +17197,23 @@ Lantern.RFB = (function () {
           " from " + (pre.book || "its offline library") + " first (searched for \u201c" + pre.query + "\u201d), so the AI answers with them in front of it\u2026");
       }
     }
-    msgs.push({ role: "user", content: content });
+    if (pics.length) {
+      // the question and its pictures in one message, kept in view for later
+      // questions until the person takes the picture away (C.forgetPictures)
+      var parts = [{ type: "text", text: content + "\n\n(Lantern: the person attached " + (pics.length === 1 ? "a picture" : pics.length + " pictures") +
+        " to this message" + (pics[0].name ? " (" + pics.map(function (x) { return x.name; }).join(", ") + ")" : "") + ". Look at " + (pics.length === 1 ? "it" : "them") +
+        " when the question is about " + (pics.length === 1 ? "it" : "them") + ".)" }];
+      pics.forEach(function (x) { parts.push({ type: "image_url", image_url: { url: x.url } }); });
+      msgs.push({ role: "user", content: parts });
+      msgs.keepPicture = msgs[msgs.length - 1];
+      rec.pictures = pics.length;
+    } else msgs.push({ role: "user", content: content });
     if (ui.status) ui.status("thinking\u2026");
     // What the person has said so far (for Lantern's checks), without the
-    // passages and notes Lantern added.
-    var said = msgs.filter(function (m) { return m.role === "user" && typeof m.content === "string" && !/^(TOOL RESULTS|Lantern questioned|Lantern checked|LIBRARY:|The LIBRARY|This is not|Passage \[\d+\] says|PUZZLE RESULTS|Lantern ran your|Lantern tracks and solves)/.test(m.content); })
-      .map(function (m) { return String(m.content).split("\n\n[Recipe hints]")[0].split("\n\n(Lantern:")[0].replace(LIBRE, ""); }).join("\n");
+    // passages and notes Lantern added (a message with the person's picture
+    // counts by its text; Lantern's own drawing shown to the AI does not).
+    var said = msgs.filter(function (m) { return m.role === "user" && !/^This is the picture Lantern drew/.test(textOf(m.content)) && !/^(TOOL RESULTS|Lantern questioned|Lantern checked|LIBRARY:|LESSONS:|LANTERN CATALOG|The LIBRARY|The LESSONS|This is not|Passage \[\d+\] says|PUZZLE RESULTS|Lantern ran your|Lantern tracks and solves|Lantern\u2019s own lessons)/.test(textOf(m.content)); })
+      .map(function (m) { return textOf(m.content).split("\n\n[Recipe hints]")[0].split("\n\n(Lantern:")[0].replace(LIBRE, ""); }).join("\n");
     var rounds;
     for (rounds = 0; rounds < 6; rounds++) {   // tools or library, answer, one correction
       var reply = await call(C.trimHistory(msgs), opts.max_tokens ? { max_tokens: opts.max_tokens } : undefined);
@@ -17105,7 +17223,7 @@ Lantern.RFB = (function () {
       var shown = reply.replace(/^PROPOSE MODULE:[\s\S]*?^END PROPOSAL[ \t]*$/gm, "").replace(/^\s+|\s+$/g, "");
       if (sources && window.Lantern.libraryRenumber) shown = window.Lantern.libraryRenumber(shown, sources).text;
       var parsed = A.parseReply(shown);
-      var quotes = /^\s*QUOTE\s*\[?\s*\d/im.test(shown);
+      var quotes = /^\s*QUOTE\s*\x5B?\s*\d/im.test(shown);
       rec.final = shown;
       // Something to MAKE (a schematic, a drawing, a table): Lantern checks
       // the block (one corrected block when it finds problems), shows it,
@@ -17173,6 +17291,35 @@ Lantern.RFB = (function () {
         note("The AI looked at the picture and says it shows what was asked.");
         break;
       }
+      // Commands other modules give the AI (Lantern.chatCommands -- LESSON:
+      // and MODULES from SUITE_CHAT, and any added later): a reply line that
+      // starts with one is run by its module and the result goes back to the
+      // AI, at most three times a question (1.11.0).
+      var CMD = window.Lantern.chatCommands || [], cmdHit = null, ci;
+      for (ci = 0; ci < CMD.length && !cmdHit && cmdRuns < 3 && !parsed.exprText; ci++) {
+        var carg = null;
+        try { carg = CMD[ci].test ? CMD[ci].test(shown) : null; } catch (e) { carg = null; }
+        if (carg != null) cmdHit = { c: CMD[ci], arg: String(carg), verb: CMD[ci].verb || CMD[ci].id || "command" };
+      }
+      if (cmdHit) {
+        cmdRuns++;
+        rec.commands = rec.commands || [];
+        var cres = null, again = rec.commands.some(function (x) { return x.verb === cmdHit.verb && x.arg.toLowerCase() === cmdHit.arg.toLowerCase(); });
+        rec.commands.push({ verb: cmdHit.verb, arg: cmdHit.arg });
+        if (again) { msgs.push({ role: "user", content: "That is already above. Answer the QUESTION now.\n\nQUESTION: " + q }); continue; }
+        if (ui.status) ui.status("Lantern is running " + cmdHit.verb + "\u2026");
+        try { cres = await cmdHit.c.run(cmdHit.arg, q, { msgs: msgs, sources: sources }); } catch (e) { cres = null; }
+        if (cres && cres.view) show(cres.view);
+        if (cres && cres.sources && cres.sources.length) {
+          sources = cres.sources; detail = !!cres.detail; canMore = !!cres.more;
+          seen.push({ sources: sources, detail: detail });
+          rec.searches.push({ query: cres.query || cmdHit.arg, how: cres.how || cmdHit.c.id || "command" });
+        }
+        note((cres && cres.note) || ("Lantern ran " + cmdHit.verb + (cmdHit.arg ? " \u201c" + cmdHit.arg + "\u201d" : "") + "\u2026"));
+        msgs.push({ role: "user", content: cres && cres.prompt ? cres.prompt : "Lantern could not run " + cmdHit.verb + ". Answer the QUESTION now.\n\nQUESTION: " + q });
+        if (ui.status) ui.status("thinking\u2026");
+        continue;
+      }
       // Quotes from passages read earlier in this chat are real quotes, not
       // inventions (the 35B quoted turn 1's passage in turn 2, and Lantern
       // threw its good answer away for a search on "Is this how you work?").
@@ -17188,9 +17335,12 @@ Lantern.RFB = (function () {
       // passages behind them. One reading turn per question; none when the
       // person asked for no library, and only an asked-for one for a
       // question about the AI itself.
-      var wantLook = parsed.lookup || (!ownWords && (A.isDecline(parsed.answer) || A.needEcho(parsed.need, q) || A.needLibrary(parsed.need) || (quotes && !sources && libReady())));
+      // Lantern's own lessons did not cover it (canMore): the encyclopedia
+      // gets its look, even when the decline is a sentence, not an ANSWER.
+      var moreLook = canMore && !!sources && /\bnot in my library\b/i.test(shown);
+      var wantLook = parsed.lookup || moreLook || (!ownWords && (A.isDecline(parsed.answer) || A.needEcho(parsed.need, q) || A.needLibrary(parsed.need) || (quotes && !sources && libReady())));
       if (!looked && !rec.noLibrary && window.Lantern.assistLookup && !parsed.exprText && wantLook) {
-        looked = true;
+        looked = true; canMore = false;
         var lk = null, wantDetail = !!(Lantern.library && Lantern.library.wantsDetail && Lantern.library.wantsDetail(q)), words = parsed.lookup || "";
         if (!words && rec.contextual) words = await C.askSearch(msgs.slice(0, -2), q, call);
         if (words !== "none") { try { lk = await window.Lantern.assistLookup(q, words, { detail: wantDetail }); } catch (e) { lk = null; } }
@@ -17230,7 +17380,8 @@ Lantern.RFB = (function () {
       // A question for its own reasoning, declined anyway: once, say so.
       if (ownWords && !sources && !steered && (A.isDecline(parsed.answer) || /not in my library/i.test(shown))) {
         steered = true;
-        msgs.push({ role: "user", content: "This is not a library question. Answer it from your own reasoning, in plain sentences." });
+        msgs.push({ role: "user", content: rec.catalog ? "This is not a library question. Answer it from the LANTERN CATALOG above, in plain sentences." :
+          "This is not a library question. Answer it from your own reasoning, in plain sentences." });
         continue;
       }
       if (!sources && quotes)
@@ -17305,7 +17456,8 @@ Lantern.RFB = (function () {
       break;
     }
     if (ownWords && !sources && !rec.made && !parsed.exprText)
-      note("\u25e6 Answered from the AI\u2019s own reasoning \u2014 not from the library or the formula engine. Weigh it yourself.");
+      note(rec.catalog ? "\u25e6 Answered from Lantern\u2019s own catalog (above), read from its modules \u2014 tap an entry to open it." :
+        "\u25e6 Answered from the AI\u2019s own reasoning \u2014 not from the library or the formula engine. Weigh it yourself.");
     rec.answer = parsed ? parsed.answer : null;
     rec.declined = /not in (my library|the document)/i.test(rec.answer || "") || /^\s*not in (my library|the document)\.?\s*$/im.test(rec.final);
     rec.sources = sources;
@@ -17321,6 +17473,9 @@ Lantern.RFB = (function () {
     puzzleOff = false;
     return { turns: out, text: out.length ? out[out.length - 1].final : "" };
   };
+  // forgetPictures() -- the person took their picture away (CHAT_PICTURES):
+  // it is not sent with later questions.
+  C.forgetPictures = function () { msgs.keepPicture = null; };
   async function send() {
     var q = qIn.value.replace(/^\s+|\s+$/g, "");
     if (!q || busy) return;
@@ -17373,7 +17528,7 @@ Lantern.RFB = (function () {
       if (!AI || (AI.resolve() === "server" && !AI.server.sameOrigin)) wrap.appendChild(el("div", { "class": "row", style: "flex-wrap:wrap" }, [ep, md]));
       log = el("div", { style: "flex:1;overflow-y:auto;display:flex;flex-direction:column;padding:6px 0", "aria-label": "Conversation" });
       wrap.appendChild(log);
-      bubble("ai", "Offline chat, with Lantern as my hands: I reason, the formula engine computes, every step shows. Ask something \u2014 the ISS question, a molar mass, a battery runtime \u2014 ask me to draw a circuit or a picture, or make a table, or to draft a new recipe card and send it to the Forge.");
+      bubble("ai", "Offline chat, with Lantern as my hands: I reason, the formula engine computes, every step shows. Ask something \u2014 the ISS question, a molar mass, a battery runtime, how to raise goats or fix a bike from Lantern\u2019s own lessons, or what Lantern has on a topic \u2014 ask me to draw a circuit or a picture, or make a table, or to draft a new recipe card and send it to the Forge. Paste a screenshot to show me a picture.");
       statusEl = el("div", { "class": "muted", style: "min-height:18px" });
       wrap.appendChild(statusEl);
       qIn = el("input", { placeholder: "Ask\u2026", style: "flex:1", "aria-label": "Message" });
@@ -17471,11 +17626,11 @@ Lantern.RFB = (function () {
       if (ch === "\n") { push(i + 1); continue; }
       if (ch !== "." && ch !== "!" && ch !== "?" && ch !== "\u2026") continue;
       var j = i;
-      while (j + 1 < n && /[.!?\u2026\x22\x27\u201d\u2019)\]]/.test(text.charAt(j + 1))) j++;
+      while (j + 1 < n && /[.!?\u2026\x22\x27\u201d\u2019\x29\x5D]/.test(text.charAt(j + 1))) j++;
       var next = j + 1 < n ? text.charAt(j + 1) : "";
       if (next && !/\s/.test(next)) { i = j; continue; }
       var rest = text.slice(j + 1).replace(/^[ \t]+/, "");
-      var nextUpper = rest === "" || /^[\nA-Z0-9\x22\x27\u201c\u2018(]/.test(rest);
+      var nextUpper = rest === "" || /^[\nA-Z0-9\x22\x27\u201c\u2018\x28]/.test(rest);
       if (ch === "\u2026" || text.slice(i, i + 3) === "...") {
         if (!nextUpper) { i = j; continue; }
       } else if (ch === ".") {
@@ -17889,12 +18044,13 @@ Lantern.RFB = (function () {
 // MODULE: COMPOSE_CHECK - START
 // Depends: COMPOSE_TEXT (required), COMPOSE_RULES, COMPOSE_RULES_USAGE,
 //          COMPOSE_SPELL (each optional -- missing data just means fewer
-//          checks); self-guarded per rule 11. Style passes live in
-//          COMPOSE_CHECK_STYLE (Lantern.compose.checkers hook).
+//          checks); self-guarded per rule 11.
 // Exports: Lantern.compose.check(text, opts) -> issues,
 //          Lantern.compose.applyFixes(text, issues, accept) -> {text, applied},
 //          Lantern.compose.tally(issues), KINDS, KIND_NAMES, checkers
 // ===========================================================================
+// (Style passes are added by COMPOSE_CHECK_STYLE through the
+// Lantern.compose.checkers hook.)
 // An offline writing checker: plain text in, a list of issues out. Each
 // issue = {kind, rule, start, end, msg, fix, safe, lesson}. fix is the
 // replacement for text.slice(start, end) or null (a hint the writer
@@ -17988,9 +18144,9 @@ Lantern.RFB = (function () {
     });
     // Sentence starts with a capital letter.
     T.sentences(text).forEach(function (s) {
-      var mm = /^[\s\x22\x27\u201c\u2018(\[]*([a-z])/.exec(s.text);
+      var mm = /^[\s\x22\x27\u201c\u2018\x28\x5B]*([a-z])/.exec(s.text);
       if (!mm || inSkip(s.start)) return;
-      var first = (/^[\s\x22\x27\u201c\u2018(\[]*(\S+)/.exec(s.text) || [])[1] || "";
+      var first = (/^[\s\x22\x27\u201c\u2018\x28\x5B]*(\S+)/.exec(s.text) || [])[1] || "";
       if (/[A-Z0-9@\/]/.test(first.slice(1)) || /^(e\.g|i\.e|etc|www|http)/i.test(first)) return;
       var pos = s.start + mm[0].length - 1;
       // Dialogue tag after a quoted ! or ?: "Run!" shouted Ama.
@@ -18026,7 +18182,7 @@ Lantern.RFB = (function () {
       var s0 = lineStart, trimmed = line.replace(/\s+$/, ""), lws, last;
       lineStart += line.length + 1;
       if (!trimmed) return;
-      var open = (trimmed.match(/\(/g) || []).length, close = (trimmed.match(/\)/g) || []).length;
+      var open = (trimmed.match(/\x28/g) || []).length, close = (trimmed.match(/\x29/g) || []).length;
       if (open !== close) {
         var bp = open > close ? trimmed.lastIndexOf("(") : trimmed.indexOf(")");
         add("punctuation", "bracket", s0 + bp, s0 + bp + 1, open > close ?
@@ -18038,7 +18194,7 @@ Lantern.RFB = (function () {
       }
       if (inSkip(s0)) return;
       lws = T.words(trimmed);
-      if (lws.length < 6 || /[.!?:;\x22\x27)\]\u201d\u2019\u2026]$/.test(trimmed)) return;
+      if (lws.length < 6 || /[.!?:;\x22\x27\x29\x5D\u201d\u2019\u2026]$/.test(trimmed)) return;
       last = lws[lws.length - 1];
       add("punctuation", "end", s0 + last.start, s0 + last.end, "This paragraph ends without a full stop",
         last.end === trimmed.length ? last.w + "." : null, "comp_punct", true);
@@ -19537,7 +19693,7 @@ Lantern.RFB = (function () {
           if (p) html += "<p>" + L.esc(p).replace(/\n/g, "<br>") + "</p>";
         });
       } else if (tag === "list" || tag === "olist") {
-        var items = v(x).split(/\n/).map(function (t) { return t.replace(/^\s*([-*\u2022]|\d+[.)])\s*/, "").trim(); })
+        var items = v(x).split(/\n/).map(function (t) { return t.replace(/^\s*([-*\u2022]|\d+[.\x29])\s*/, "").trim(); })
           .filter(function (t) { return t; });
         var lt = tag === "list" ? "ul" : "ol";
         if (items.length) html += "<" + lt + ">" + items.map(function (t) { return "<li>" + L.esc(t) + "</li>"; }).join("") + "</" + lt + ">";
@@ -20829,7 +20985,7 @@ Lantern.RFB = (function () {
     if (r === "device") return "on this device: " + ((dev && dev.label && dev.label()) || "no model loaded yet");
     if (AI.server.sameOrigin && AI.endpoint() === AI.server.endpoint)
       return "the Lantern server on this computer" + (AI.server.label ? " (" + AI.server.label + (AI.server.vision ? ", sees images" : "") + ")" : "");
-    return "server " + AI.endpoint().replace(/^https?:\/\//, "").replace(/\/v1\/chat\/completions$/, "");
+    return "server " + AI.endpoint().replace(/^https?:\x2F\x2F/, "").replace(/\/v1\/chat\/completions$/, "");
   };
 
   // Strip hidden reasoning some models emit before their answer.
@@ -21209,7 +21365,7 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // ===========================================================================
 // MODULE: AI_BENCH_DATA - START
-// Depends: (none -- pure data; AI_BENCH runs it)
+// Depends: (none -- pure data, run by the bench)
 // Exports: Lantern.aiBenchQuestions
 // ===========================================================================
 // Lantern Bench: real questions with answers that Lantern itself proves.
@@ -21453,6 +21609,7 @@ Lantern.RFB = (function () {
         rejected: res && res.rejected ? res.rejected.slice(0, 300) : "", flags: res && res.flags ? res.flags : [],
         chat: res && res.turns ? res.turns.map(function (t) { return { q: t.q, searches: t.searches, self: t.self, noLibrary: t.noLibrary,
           contextual: t.contextual, carried: t.carried, declined: t.declined, pointed: t.pointed || undefined,
+          catalog: t.catalog || undefined, commands: t.commands && t.commands.length ? t.commands.map(function (c) { return c.verb + (c.arg ? ": " + c.arg : ""); }) : undefined,
           puzzles: t.puzzles && t.puzzles.length ? t.puzzles.map(function (z) { return z.kind + (z.ok ? "" : ": " + z.problems.join("; ").slice(0, 200)); }) : undefined,
           rounds: t.rounds, reply: String(t.final).slice(0, item.cat === "alone" ? 2500 : 500) }; }) : undefined,
         tools: g.tools || undefined, answer: item.cat === "reason" || item.cat === "alone" ? String(g.answer || "").slice(0, 400) : undefined,
@@ -21651,7 +21808,7 @@ Lantern.RFB = (function () {
   function cardNumbers() {
     var out = [];
     (window.Lantern.assistCards || []).forEach(function (c) {
-      numbersIn(String(c.compose || "").replace(/\{[^}]*\}/g, "")).forEach(function (x) { out.push(x); });
+      numbersIn(String(c.compose || "").replace(/\x7B[^\x7D]*\x7D/g, "")).forEach(function (x) { out.push(x); });
     });
     return out;
   }
@@ -21686,7 +21843,7 @@ Lantern.RFB = (function () {
     while ((m = re.exec(q))) out.push(m[2]);
     return out.filter(function (n, i) { return out.indexOf(n) === i; });
   }
-  var ORBITAL = /\b(ORBITT|ORBITV|ESCV|VISVIVA|HOHMANNT?)\s*\(/i;
+  var ORBITAL = /\b(ORBITT|ORBITV|ESCV|VISVIVA|HOHMANNT?)\s*\x28/i;
   var EARTH_R = /(637[18](\.\d+)?|PLANET\(\s*\x22earth\x22\s*,\s*\x22radius\x22\s*\))/i;
   // heightAsRadius(question, expr) -> heights from the question that the
   // formula uses with no Earth radius added anywhere next to them.
@@ -21694,7 +21851,7 @@ Lantern.RFB = (function () {
     expr = String(expr || "");
     if (!ORBITAL.test(expr)) return [];
     // A radius added in a later step (=ANS+6371...) cannot be traced: stay quiet.
-    if (/ANS\s*\+\s*(637|PLANET)|(637[18]\S*|\x22radius\x22\s*\))\s*\+\s*ANS/i.test(expr)) return [];
+    if (/ANS\s*\+\s*(637|PLANET)|(637[18]\S*|\x22radius\x22\s*\x29)\s*\+\s*ANS/i.test(expr)) return [];
     return heights(question).filter(function (n) {
       var re = new RegExp("(^|[^0-9.])" + n.replace(".", "\\.") + "(?![0-9.])", "g"), m, any = false, adjusted = false;
       while ((m = re.exec(expr))) {
@@ -21727,7 +21884,7 @@ Lantern.RFB = (function () {
     for (i = 0; i < ls.length - 1; i++) {
       var l = ls[i], v = null, later = ls.slice(i + 1).join(" ");
       var arith = /[0-9)][-+*\/][0-9(A-Z]/i.test(l.replace(/\x22[^\x22]*\x22/g, ""));
-      var onGiven = /^[A-Z]+\(/i.test(l) && numbersIn(l).some(function (x) { return given.some(function (g) { return same(g, x); }); });
+      var onGiven = /^[A-Z]+\x28/i.test(l) && numbersIn(l).some(function (x) { return given.some(function (g) { return same(g, x); }); });
       if (!arith && !onGiven) continue;
       if (/\bANS\b/i.test(ls[i + 1])) continue;
       if (new RegExp("\\bANS" + (i + 1) + "\\b", "i").test(later)) continue;
@@ -21757,7 +21914,7 @@ Lantern.RFB = (function () {
     var m, asked = null, re = /\b(?:in|how many)\s+(second|minute|hour|day)s?\b/gi;
     while ((m = re.exec(String(question || "")))) asked = m[1].toLowerCase();
     if (!asked || !RATE[asked].test(String(question || ""))) return null;
-    var given = questionNumbers(question), t = String(expr || "").replace(/\x22[^\x22]*\x22/g, ""), fm, fre = /[*\/]\s*\(?\s*(24|60|3600|86400)(?![0-9.])/g;
+    var given = questionNumbers(question), t = String(expr || "").replace(/\x22[^\x22]*\x22/g, ""), fm, fre = /[*\x2F]\s*\x28?\s*(24|60|3600|86400)(?![0-9.])/g;
     while ((fm = fre.exec(t))) {
       var f = parseFloat(fm[1]);
       if (!given.some(function (g) { return same(g, f); })) return { asked: asked, factor: f };
@@ -21767,7 +21924,7 @@ Lantern.RFB = (function () {
   // timeUnit(question, expr) -> {asked, divisor, want} when a function that
   // returns SECONDS (ORBITT, HOHMANNT) is turned into a unit other than the
   // one the question asks for ("in hours" but divided by 60).
-  var SECS = /\b(ORBITT|HOHMANNT)\s*\(/i, UNIT = { second: 1, minute: 60, hour: 3600, day: 86400 };
+  var SECS = /\b(ORBITT|HOHMANNT)\s*\x28/i, UNIT = { second: 1, minute: 60, hour: 3600, day: 86400 };
   function timeUnit(question, expr) {
     var m, asked = null, re = /\b(?:in|how many)\s+(second|minute|hour|day)s?\b/gi;
     while ((m = re.exec(String(question || "")))) asked = m[1].toLowerCase();
@@ -21775,7 +21932,7 @@ Lantern.RFB = (function () {
     var ls = lines(expr), i, from = -1;
     for (i = 0; i < ls.length; i++) if (SECS.test(ls[i])) from = i;
     if (from < 0) return null;
-    var tail = ls.slice(from).join(" ").replace(/\x22[^\x22]*\x22/g, ""), d = 1, dm, dre = /\/\s*\(?\s*(60|3600|86400|24)(?![0-9.])/g;
+    var tail = ls.slice(from).join(" ").replace(/\x22[^\x22]*\x22/g, ""), d = 1, dm, dre = /\x2F\s*\x28?\s*(60|3600|86400|24)(?![0-9.])/g;
     while ((dm = dre.exec(tail))) d *= parseFloat(dm[1]);
     var want = UNIT[asked];
     return d === want ? null : { asked: asked, divisor: d, want: want };
@@ -22529,7 +22686,7 @@ Lantern.RFB = (function () {
         var e = es[i], links = e.getElementsByTagName("link"), id = "";
         for (j = 0; j < links.length; j++) {
           var h = links[j].getAttribute("href") || "";
-          if (links[j].getAttribute("type") === "text/html" && /\/content\//.test(h)) id = h.replace(/^.*\/content\//, "").replace(/\/.*$/, "");
+          if (links[j].getAttribute("type") === "text/html" && /\x2Fcontent\x2F/.test(h)) id = h.replace(/^.*\x2Fcontent\x2F/, "").replace(/\/.*$/, "");
         }
         if (!id) continue;
         var nm = own(e, "name"), fl = own(e, "flavour"), pm = /^(.+?)_(mini|nopic|maxi|nodet)_\d{4}-\d{2}$/.exec(id);
@@ -22728,7 +22885,7 @@ Lantern.RFB = (function () {
   function sentences(doc) {
     var out = [];
     (doc.paras || []).forEach(function (p, pi) {
-      p.replace(/([.!?])\s+(?=[A-Z0-9\x22\x27(\u201c])/g, "$1\n").split("\n").forEach(function (t) {
+      p.replace(/([.!?])\s+(?=[A-Z0-9\x22\x27\x28\u201c])/g, "$1\n").split("\n").forEach(function (t) {
         t = t.replace(/^\s+|\s+$/g, "");
         if (t) out.push({ text: t, para: pi });
       });
@@ -22913,8 +23070,8 @@ Lantern.RFB = (function () {
       var sub = subjectOf(src.title), gs = groups(keys, sub), want = gs.filter(function (g) { return !g.subject; });
       if (!want.length || want.length === gs.length) return;   // nothing beyond the subject, or not about the subject
       String(src.text || "").replace(/^Facts from the infobox:\s*/, "").replace(/\s+Facts from the infobox:\s*/, " ")
-        .replace(/([.!?])\s+(?=[A-Z0-9\x22\x27(\u201c])/g, "$1\n").split("\n").forEach(function (t) {
-          t = t.replace(/^\s*\([^)]{1,60}\)\s*/, "").replace(/^\s+|\s+$/g, "");
+        .replace(/([.!?])\s+(?=[A-Z0-9\x22\x27\x28\u201c])/g, "$1\n").split("\n").forEach(function (t) {
+          t = t.replace(/^\s*\x28[^\x29]{1,60}\x29\s*/, "").replace(/^\s+|\s+$/g, "");
           if (hit || t.length < 12) return;
           var low = t.toLowerCase();
           if (!want.every(function (g) { return g.t.some(function (m) { return low.indexOf(m) >= 0; }); })) return;
@@ -23112,8 +23269,8 @@ Lantern.RFB = (function () {
     var out = [];
     String(text || "").split("\n").forEach(function (line) {
       if (/^\s*(QUOTE\b|=|LOOKUP:|NEED:|PROPOSE MODULE|END PROPOSAL|Sources?:)/i.test(line)) return;
-      line = line.replace(/^\s*(#{1,6}\s+|[-*\u2022]\s+|\d+[.)]\s+)/, "").replace(/\*\*/g, "").replace(/^\s*ANSWER:\s*/i, "");
-      line.replace(/([.!?])((?:\s*\[\d+\])*)\s+(?=[A-Z0-9\x22\x27(\u201c])/g, "$1$2\n").split("\n").forEach(function (t) {
+      line = line.replace(/^\s*(#{1,6}\s+|[-*\u2022]\s+|\d+[.\x29]\s+)/, "").replace(/\*\*/g, "").replace(/^\s*ANSWER:\s*/i, "");
+      line.replace(/([.!?])((?:\s*\x5B\d+\x5D)*)\s+(?=[A-Z0-9\x22\x27\x28\u201c])/g, "$1$2\n").split("\n").forEach(function (t) {
         t = t.replace(/^\s+|\s+$/g, "");
         if (t.split(/\s+/).length >= 4 && !/:$/.test(t)) out.push(t);
       });
@@ -23214,12 +23371,16 @@ Lantern.RFB = (function () {
   window.Lantern.assistSourcesView = function (res) {
     var el = L.el, v = verify(res.text, res.sources || []);
     var box = el("div", { "class": "la-sources", style: "margin:8px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px" });
-    var isDoc = (res.sources || []).some(function (s) { return s.doc; });
-    box.appendChild(el("div", { "class": "muted", text: "Sources (" + (isDoc ? "your document" : "offline library") + ")" + (v.declined ? " \u2014 the AI found no answer in them" : "") }));
+    var isDoc = (res.sources || []).some(function (s) { return s.doc; }), isOwn = (res.sources || []).some(function (s) { return s.suite; });
+    box.appendChild(el("div", { "class": "muted", text: "Sources (" + (isDoc ? "your document" : isOwn ? "Lantern\u2019s own lessons" : "offline library") + ")" + (v.declined ? " \u2014 the AI found no answer in them" : "") }));
     (res.sources || []).forEach(function (s) {
       var qs = v.quotes.filter(function (q) { return q.n === s.n; }), used = v.cites.indexOf(s.n) >= 0;
       var row = el("div", { style: "margin-top:6px" });
-      var a = s.url ? el("a", { href: s.url, target: "_blank", rel: "noopener", text: "[" + s.n + "] " + s.title }) : el("b", { text: "[" + s.n + "] " + s.title });
+      // a passage from one of Lantern's own lessons opens that lesson (SUITE_CHAT)
+      var a = s.url ? el("a", { href: s.url, target: "_blank", rel: "noopener", text: "[" + s.n + "] " + s.title }) :
+        typeof s.open === "function" ? el("a", { href: "#" + String(location.hash || "").replace(/^#/, ""), role: "button", title: "Open it", text: "[" + s.n + "] " + s.title,
+          onclick: function (e) { if (e && e.preventDefault) e.preventDefault(); try { s.open(); } catch (x) { } } }) :
+        el("b", { text: "[" + s.n + "] " + s.title });
       row.appendChild(a);
       if (s.bookTitle) row.appendChild(el("span", { "class": "muted", text: " \u00b7 " + s.bookTitle }));
       if (!used) row.appendChild(el("span", { "class": "muted", text: " \u00b7 not cited" }));
@@ -23348,12 +23509,13 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // ===========================================================================
 // MODULE: AI_ACTIONS - START
-// Depends: AI_ENGINE (Lantern.ai) -- feature-detected; actions come from
-//          AI_DRAW and AI_SHEET through the Lantern.aiActions hook
+// Depends: AI_ENGINE (Lantern.ai) -- feature-detected
 // Exports: Lantern.aiActions (hook array, created here if absent),
 //          Lantern.aiAct = {find, relevant, prompt, build, solve, view,
 //          lookText, LOOKS, runaway, compact}
 // ===========================================================================
+// (The actions come from AI_DRAW and AI_SHEET through the
+// Lantern.aiActions hook.)
 // The AI using Lantern's other apps, the way it already uses the formula
 // engine: it writes a short text block --
 //     MAKE SCHEMATIC: Lamp circuit        MAKE SHEET: Shopping
@@ -24195,7 +24357,7 @@ Lantern.RFB = (function () {
     var out = [], re = /\$?([A-Z])\$?(\d{1,3})(?::\$?([A-Z])\$?(\d{1,3}))?/g, m;
     var body = f.replace(/\x22[^\x22]*\x22/g, "");
     while ((m = re.exec(body))) {
-      if (/[A-Za-z_]/.test(body.charAt(m.index - 1) || "") || /[a-z(]/.test(body.charAt(m.index + m[0].length) || "")) continue;   // part of a name like LOG10(
+      if (/[A-Za-z_]/.test(body.charAt(m.index - 1) || "") || /[a-z\x28]/.test(body.charAt(m.index + m[0].length) || "")) continue;   // part of a name like LOG10(
       if (m[3]) {
         for (var r = Math.min(+m[2], +m[4]); r <= Math.max(+m[2], +m[4]); r++)
           for (var c = Math.min(m[1].charCodeAt(0), m[3].charCodeAt(0)); c <= Math.max(m[1].charCodeAt(0), m[3].charCodeAt(0)); c++)
@@ -24541,12 +24703,13 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // MODULE: AI_PUZZLE - START
 // Depends: ASSIST_CHAT (Lantern.CHAT reads Lantern.aiPuzzle) -- feature-
-//          detected; solvers come from AI_PUZZLE_TRACK, AI_PUZZLE_TURN and
-//          AI_PUZZLE_SOLVE through the Lantern.aiSolvers hook
+//          detected
 // Exports: Lantern.aiSolvers (hook array, created here if absent),
 //          Lantern.aiPuzzle = {find, run, relevant, prompt, help, view,
 //          resultText, HELP, ASK}
 // ===========================================================================
+// (The solvers come from AI_PUZZLE_TRACK, AI_PUZZLE_TURN and
+// AI_PUZZLE_SOLVE through the Lantern.aiSolvers hook.)
 // Bookkeeping for puzzles, the way the formula engine does arithmetic. A
 // 35B model (1.9.8 transcript) described every move of a cup shuffle and a
 // rolling die correctly in words -- "the top face moves to the back" -- and
@@ -24591,7 +24754,7 @@ Lantern.RFB = (function () {
       if (m) { cur = { kind: solverFor(m[1]).kind, title: m[2].replace(/^\s+|\s+$/g, ""), lines: [], closed: false }; out.push(cur); return; }
       if (!cur) return;
       if (/^END\b/i.test(line)) { cur.closed = true; cur = null; return; }
-      line = line.replace(/^[-*\u2022]\s+/, "").replace(/^\d+[.)]\s+/, "").replace(/\s*(\/\/|--)\s.*$/, "");
+      line = line.replace(/^[-*\u2022]\s+/, "").replace(/^\d+[.\x29]\s+/, "").replace(/\s*(\/\/|--)\s.*$/, "");
       if (line) cur.lines.push(line);
     });
     return out;
@@ -25063,7 +25226,7 @@ Lantern.RFB = (function () {
   function run(block) {
     var first = trim(block.lines[0] || "").toLowerCase();
     if (/^(cube|die|dice|box|block)\b/.test(first)) return cube(block);
-    if (/^(walker|robot|start|car|person|ant|player|at|from|\(?-?\d)/.test(first)) return walker(block);
+    if (/^(walker|robot|start|car|person|ant|player|at|from|\x28?-?\d)/.test(first)) return walker(block);
     return { problems: ["start with cube top <label> front <label> right <label>, or walker at 0 0 facing north"], steps: [] };
   }
   window.Lantern.aiTurn = { run: run, MOVES: MOVES };
@@ -25131,7 +25294,7 @@ Lantern.RFB = (function () {
     while ((m = re.exec(s))) { var v = trim(m[1] || m[2] || m[3]); if (v && !/^(and|or)$/i.test(v)) out.push(v); }
     return out;
   }
-  var RULE = /^(?:rule|clue|fact|constraint)\s*\d*\s*[:.)-]?\s*/i;
+  var RULE = /^(?:rule|clue|fact|constraint)\s*\d*\s*[:.\x29-]?\s*/i;
   var OPWORD = /(=|<|>|!|\bnot\b|\bnext to\b|\bleft of\b|\bright of\b|\bbefore\b|\bafter\b|\bin\b|\bif\b|\biff\b|\bowns?\b|\bhas\b|\bis\b)/i;
   // --- parse the block -------------------------------------------------------
   function parse(block) {
@@ -25662,12 +25825,12 @@ Lantern.RFB = (function () {
         var low = t.toLowerCase();
         if (!/\(\s*1\s*,\s*-\s*2\s*\)|1\s*(square|unit|block)?s?\s*east[^.]*2\s*(square|unit|block)?s?\s*south/.test(low)) return "it is not at (1, -2)";
         if (!/east/.test(low)) return "it does not face east";
-        return /2\.2[34]|\u221a5|sqrt\s*\(?5|root 5/.test(low) ? "" : "the straight-line distance is not 2.24";
+        return /2\.2[34]|\u221a5|sqrt\s*\x28?5|root 5/.test(low) ? "" : "the straight-line distance is not 2.24";
       } },
     { id: "knights-three", ideal: "SOLVE: Knights and liars\nperson A B C\nkind knight liar (repeat)\nrule A = knight iff B = liar\nrule B = knight iff (A = knight and C = knight)\nrule C = knight iff B = knight\nEND", idealAnswer: "ANSWER: A is a knight, B is a liar, and C is a liar.", q: "On an island, knights always tell the truth and liars always lie. A says: \x22B is a liar.\x22 B says: \x22A and C are both knights.\x22 " +
       "C says: \x22B is a knight.\x22 Who is a knight and who is a liar?",
       check: function (t) {   // names are capitals, so the article "a" is never A
-        var kind = {}, m, re = /\b([ABC])\b\s*(?:is\s+(?:a\s+)?|:\s*|-\s*|\(\s*|=\s*|\u2014\s*)(knight|liar)/gi, re2 = /\b([ABC])\s+and\s+([ABC])\s+are\s+(?:both\s+)?(knight|liar)s/gi;
+        var kind = {}, m, re = /\b([ABC])\b\s*(?:is\s+(?:a\s+)?|:\s*|-\s*|\x28\s*|=\s*|\u2014\s*)(knight|liar)/gi, re2 = /\b([ABC])\s+and\s+([ABC])\s+are\s+(?:both\s+)?(knight|liar)s/gi;
         while ((m = re.exec(t))) if (/^[ABC]$/.test(m[1])) kind[m[1]] = m[2].toLowerCase();
         while ((m = re2.exec(t))) if (/^[ABC]$/.test(m[1]) && /^[ABC]$/.test(m[2])) { kind[m[1]] = m[3].toLowerCase(); kind[m[2]] = m[3].toLowerCase(); }
         return kind.A === "knight" ? (kind.B === "liar" ? (kind.C === "liar" ? "" : "C is not a liar") : "B is not a liar") : "A is not a knight";
@@ -26494,11 +26657,11 @@ Lantern.RFB = (function () {
   // ( [ " ' before a word; . , ; : ! ? ) ] " ' % after it; - / ' . inside
   // (well-known, e.g., 3.5) -- and costs a little everywhere, so a letter
   // is never traded for a look-alike mark just because the rest is a word.
-  var LEAD = /^[(\[\x22\x27\u2018\u201c]$/, TRAIL = /^[.,;:!?)\]\x22\x27%\u2019\u201d]$/;
+  var LEAD = /^[\x28\x5B\x22\x27\u2018\u201c]$/, TRAIL = /^[.,;:!?\x29\x5D\x22\x27%\u2019\u201d]$/;
   function sense(s, caps) {
     var a = 0, b = s.length, sc = 0, i;
     while (a < b && !/[A-Za-z0-9\u00c0-\u024f]/.test(s[a])) { sc -= LEAD.test(s[a]) && a < 1 ? (s[a] === "[" ? 1.2 : s[a] === "(" ? 0.7 : 0.4) : 3; a++; }
-    while (b > a && !/[A-Za-z0-9\u00c0-\u024f%\u00b0\u03a9]/.test(s[b - 1])) { sc -= TRAIL.test(s[b - 1]) && s.length - b < 2 ? (/[.,]/.test(s[b - 1]) ? 0.15 : /[!\])]/.test(s[b - 1]) ? 1 : 0.5) : 3; b--; }
+    while (b > a && !/[A-Za-z0-9\u00c0-\u024f%\u00b0\u03a9]/.test(s[b - 1])) { sc -= TRAIL.test(s[b - 1]) && s.length - b < 2 ? (/[.,]/.test(s[b - 1]) ? 0.15 : /[!\x5D\x29]/.test(s[b - 1]) ? 1 : 0.5) : 3; b--; }
     var core = s.slice(a, b);
     if (!core) return /^[.,;:!?\x27\x22()\[\]\-\/&%$#@+=*<>_]+$/.test(s) && s.length <= 3 ? 0 : -3;
     // marks inside a word: - / ' join parts; . only in numbers; others rare
@@ -26765,7 +26928,7 @@ Lantern.RFB = (function () {
         for (i = 0; i < words.length; i++) {
           var a = o2[o2.length - 1], b = words[i];
           var gap = a ? b.gs[0].x0 - a.gs[a.gs.length - 1].x1 : 0;
-          if (a && (/^[,.;:!?)\]%]/.test(b.text) || (/[0-9]$/.test(a.text) && /^[0-9]/.test(b.text) && gap < 0.9 * sp))) {
+          if (a && (/^[,.;:!?\x29\x5D%]/.test(b.text) || (/[0-9]$/.test(a.text) && /^[0-9]/.test(b.text) && gap < 0.9 * sp))) {
             o2[o2.length - 1] = { text: a.text + b.text, conf: Math.min(a.conf, b.conf), alts: [], known: false, gs: a.gs.concat(b.gs), score: a.score + b.score };
             continue;
           }
@@ -26787,7 +26950,7 @@ Lantern.RFB = (function () {
           lines.forEach(function (o) {
             var wgs = LY.words(o.ln, o.gs, bear, monoPage), words = wgs.map(function (wg) {
               var r = decodeWord(wg, o.ln, { start: start });
-              start = /[.!?][\x22\x27)\]]*$/.test(r.text);
+              start = /[.!?][\x22\x27\x29\x5D]*$/.test(r.text);
               r.start0 = r.ctx.start;
               return r;
             });
@@ -27689,7 +27852,7 @@ Lantern.RFB = (function () {
     139: "\u2039", 140: "\u0152", 142: "\u017d", 145: "\u2018", 146: "\u2019", 147: "\u201c", 148: "\u201d", 149: "\u2022", 150: "\u2013", 151: "\u2014",
     152: "\u02dc", 153: "\u2122", 154: "\u0161", 155: "\u203a", 156: "\u0153", 158: "\u017e", 159: "\u0178" };
   function glyph(n) {
-    n = n.replace(/^\//, "");
+    n = n.replace(/^\x2F/, "");
     if (GN[n]) return GN[n];
     if (n.length === 1) return n;
     var m = /^uni([0-9A-Fa-f]{4,})/.exec(n) || /^u([0-9A-Fa-f]{4,6})$/.exec(n);
@@ -27707,7 +27870,7 @@ Lantern.RFB = (function () {
     re = /beginbfchar([\s\S]*?)endbfchar/g;
     while ((m = re.exec(txt))) m[1].replace(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]*)>/g, function (z, a, b) { map[hex(a)] = uni(b); bytes = Math.max(bytes, a.length / 2); return ""; });
     re = /beginbfrange([\s\S]*?)endbfrange/g;
-    while ((m = re.exec(txt))) m[1].replace(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*(<[0-9a-fA-F]*>|\[[^\]]*\])/g, function (z, a, b, d) {
+    while ((m = re.exec(txt))) m[1].replace(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*(<[0-9a-fA-F]*>|\x5B[^\x5D]*\x5D)/g, function (z, a, b, d) {
       var lo = hex(a), hi = hex(b), k;
       if (d[0] === "[") { var list = d.match(/<([0-9a-fA-F]*)>/g) || []; for (k = lo; k <= hi && k - lo < list.length; k++) map[k] = uni(list[k - lo].slice(1, -1)); }
       else { var h = d.slice(1, -1), base = hex(h.slice(-4) || "0"), pre = h.length > 4 ? uni(h.slice(0, -4)) : ""; for (k = lo; k <= hi && k - lo < 65536; k++) map[k] = pre + String.fromCharCode(base + k - lo); }
@@ -28369,7 +28532,7 @@ Lantern.RFB = (function () {
     function onPaste(e) {
       if (!root || !document.contains(root)) { document.removeEventListener("paste", onPaste); return; }
       var items = (e.clipboardData && e.clipboardData.items) || [], files = [];
-      for (var i = 0; i < items.length; i++) if (items[i].kind === "file" && /^image\//.test(items[i].type)) files.push(items[i].getAsFile());
+      for (var i = 0; i < items.length; i++) if (items[i].kind === "file" && /^image\x2F/.test(items[i].type)) files.push(items[i].getAsFile());
       if (files.length) { e.preventDefault(); start(files); }
     }
     document.addEventListener("paste", onPaste);
@@ -28490,7 +28653,8 @@ Lantern.RFB = (function () {
 // Depends: TEXT_READER, TEXT_READER_DOCS, TEXT_READER_VIEW (Lantern.
 //          textReader); Chat's hooks Lantern.chatTools, Lantern.chatContext
 //          -- feature-detected; Lantern.sheetMusic when present
-// Exports: (adds a "Read a page" button to Chat and a document provider)
+// Exports: (adds a "Read a page" button to Chat and a document provider),
+//          Lantern.textReader.chatAttach(api, files)
 // ===========================================================================
 // Text Reader for the AI. In Chat the person can hand over a picture of a
 // page, a photo of a label or nameplate, a screenshot or a PDF: Lantern reads
@@ -28555,6 +28719,10 @@ Lantern.RFB = (function () {
     b.appendChild(row); b.appendChild(t);
     return b;
   }
+  // chatAttach(api, files) -> Promise: the same reading, for another module
+  // that has pictures for Chat -- a pasted screenshot when the AI in use
+  // cannot see pictures (CHAT_PICTURES, 1.11.0).
+  TR.chatAttach = function (api, files) { return attach(api, files); };
   TOOLS.push({ label: "\ud83d\udcc4", title: "Give Chat a page to read: a picture, photo, screenshot or PDF (Text Reader)",
     // a document handed over from the Text Reader tile is shown when Chat opens
     init: function (api) { if (TR.attached) api.node(card(api, TR.attached)); },
@@ -29054,6 +29222,1147 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: TEXT_READER_BENCH_DATA - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SUITE_TEXT - START
+// Depends: CORE (document, for decoding entities) -- self-guarded
+// Exports: Lantern.suite.decode, Lantern.suite.lines, Lantern.suite.text
+// ===========================================================================
+// Plain text out of the authored HTML of lessons and help guides, for the
+// AI to read (SUITE_INDEX): one line per paragraph, list item, table row or
+// heading, entities decoded, buttons and pictures left out.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var S = window.Lantern.suite = window.Lantern.suite || {};
+  // --- text out of authored HTML ------------------------------------------
+  var ENT = { amp: "&", lt: "<", gt: ">", quot: "\x22", apos: "\x27", nbsp: " ", mdash: "\u2014", ndash: "\u2013", deg: "\u00b0",
+    sup2: "\u00b2", sup3: "\u00b3", times: "\u00d7", divide: "\u00f7", plusmn: "\u00b1", micro: "\u00b5", middot: "\u00b7",
+    hellip: "\u2026", rarr: "\u2192", larr: "\u2190", le: "\u2264", ge: "\u2265", ne: "\u2260", asymp: "\u2248", pi: "\u03c0",
+    frac12: "\u00bd", frac14: "\u00bc", frac34: "\u00be", rsquo: "\u2019", lsquo: "\u2018", ldquo: "\u201c", rdquo: "\u201d",
+    bull: "\u2022", minus: "\u2212", radic: "\u221a", infin: "\u221e" };
+  var ta = null;
+  function decode(s) {
+    s = String(s == null ? "" : s);
+    if (s.indexOf("&") < 0) return s;
+    // a textarea decodes every entity without parsing or loading anything
+    try { if (!ta && window.document) ta = document.createElement("textarea"); if (ta) { ta.innerHTML = s; return ta.value; } } catch (e) { ta = null; }
+    return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z0-9]+);/gi, function (m, e) {
+      if (e.charAt(0) === "#") {
+        var c = e.charAt(1).toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+        return isFinite(c) && c > 0 && c < 65536 ? String.fromCharCode(c) : m;
+      }
+      return Object.prototype.hasOwnProperty.call(ENT, e) ? ENT[e] : m;
+    });
+  }
+  S.decode = decode;
+  var HEAD = "\ue000";
+  var BLOCK = /<\/?(p|div|li|ul|ol|h[1-6]|tr|table|thead|tbody|pre|blockquote|dd|dt|dl|figcaption|section|article)\b[^>]*>/gi;
+  // lines(html) -> [{t, h}]: one line per paragraph, list item, table row or
+  // heading (h: true), entities decoded, buttons and pictures left out.
+  S.lines = function (html) {
+    var s = String(html || "").replace(/<(script|style|svg|canvas|select|button|textarea)\b[\s\S]*?<\/\1>/gi, " ")
+      .replace(/<br\s*\/?>/gi, "\n").replace(/<\/t[hd]>/gi, " \u00b7 ")
+      .replace(BLOCK, function (m, t) {
+        t = t.toLowerCase();
+        var close = m.charAt(1) === "/";
+        if (/^h[1-6]$/.test(t)) return close ? "\n" : "\n" + HEAD;
+        return !close && t === "li" ? "\n\u2022 " : "\n";
+      })
+      .replace(/<[^>]*>/g, "");
+    var out = [];
+    decode(s).split("\n").forEach(function (ln) {
+      var h = ln.indexOf(HEAD) >= 0;
+      ln = ln.split(HEAD).join("").replace(/[ \t\u00a0]+/g, " ").replace(/(\s*\u00b7\s*)+$/, "").replace(/^\s+|\s+$/g, "");
+      if (ln && ln !== "\u2022") out.push({ t: ln, h: h });
+    });
+    return out;
+  };
+  // text(entry, max) -> its lines as plain text
+  S.text = function (e, max) {
+    var t = (e && e.text || []).map(function (u) { return u.t; }).join("\n");
+    return max && t.length > max ? t.slice(0, max).replace(/\s+\S*$/, "") + "\u2026" : t;
+  };
+})();
+// ===========================================================================
+// MODULE: SUITE_TEXT - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SUITE_COMMAND_LIST - START
+// Depends: (none at load) -- reads Lantern.aiActions, aiSolvers, chatCommands
+//          and library when called, each feature-detected
+// Exports: Lantern.suite.commands
+// ===========================================================================
+// commands() -> every reply line the AI may write in Chat: the built-in ones
+// (=, ANSWER, NEED, LOOKUP, PROPOSE MODULE), each MAKE kind (AI_ACTIONS),
+// each puzzle tool (AI_PUZZLE) and each module's own (Lantern.chatCommands),
+// for the catalog (SUITE_INDEX) and its lists.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var S = window.Lantern.suite = window.Lantern.suite || {};
+  var BUILTIN = [
+    { verb: "=", usage: "= <formula>", desc: "compute on Lantern's formula engine with the FUNCTIONS; results come back as TOOL RESULTS" },
+    { verb: "ANSWER", usage: "ANSWER: <sentence with {result}>", desc: "the final answer; Lantern puts its computed number where {result} is" },
+    { verb: "NEED", usage: "NEED: <question>", desc: "ask the person for a number the question leaves out" },
+    { verb: "LOOKUP", usage: "LOOKUP: <2 to 5 search words>", desc: "read the offline encyclopedia (when the kit's library is running)", library: true },
+    { verb: "PROPOSE MODULE", usage: "PROPOSE MODULE: <NAME> ... END PROPOSAL", desc: "propose a module edit or a new module; it is staged in the Forge and tested before it can persist" }
+  ];
+  S.commands = function () {
+    var out = BUILTIN.map(function (c) {
+      return { verb: c.verb, usage: c.usage, desc: c.desc, ready: c.library ? !!(L.library && L.library.ready && L.library.ready()) : true };
+    });
+    (L.aiActions || []).forEach(function (a) {
+      out.push({ verb: "MAKE " + a.kind, usage: "MAKE " + a.kind + ": <title> ... END", desc: "make " + (a.title || a.kind.toLowerCase()) + " (opens in " + (a.kind === "SHEET" ? "Sheets" : "Draw") + ")", ready: true });
+    });
+    (L.aiSolvers || []).forEach(function (s) {
+      out.push({ verb: s.kind, usage: s.kind + ": ... END", desc: "puzzle bookkeeping: " + (s.title || ""), ready: true });
+    });
+    (L.chatCommands || []).forEach(function (c) {
+      if (c && c.usage) out.push({ verb: c.verb || c.id, usage: c.usage, desc: c.desc || "", ready: true });
+    });
+    return out;
+  };
+})();
+// ===========================================================================
+// MODULE: SUITE_COMMAND_LIST - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SUITE_INDEX - START
+// Depends: CORE, SHELL; read-only, feature-detected: SUITE_TEXT, SUITE_COMMAND_LIST,
+//          MATH_LESSONS, GUIDE, FORMULA, ASSIST_CATALOG, ASSIST_CARDS, STARTERS
+// Exports: Lantern.suite (entries, signature, stats, summary, kinds, order,
+//          tileOf, add, undescribed, version), Lantern.suiteEntries (hook)
+// ===========================================================================
+// What Lantern has, as one live list the AI can read (1.11.0): every tile,
+// lesson, help guide, formula function, recipe card, flashcard deck,
+// template, Compose task and Chat command. It is built from the registries
+// each module fills as it loads -- never typed in by hand -- so a tile,
+// lesson, function or command added later (or activated in the Forge) is in
+// the list the next time it is read. Modules with content of their own may
+// add entries: Lantern.suiteEntries = [{kind, id, title, app, desc, text,
+// open()}] (text: [{t, h}] lines, or a string) or Lantern.suite.add(entry).
+// SUITE_SEARCH searches it; SUITE_CHAT gives it to the AI in Chat.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.el || !L.apps) return;
+  var EXTRA = window.Lantern.suiteEntries = window.Lantern.suiteEntries || [];
+  var S = window.Lantern.suite = window.Lantern.suite || {};
+  // Lessons registered without meta {app} are placed by their key prefix;
+  // math lessons by the Learn Math ladder (Lantern.mathPath).
+  var PREFIX = { farm: "farming", hus: "husbandry", health: "health", lit: "literacy", eng: "engineering",
+    sky: "astronomy", geo: "geography", civ: "civics", food: "food", wx: "weather", mind: "mind", code: "code",
+    mus: "music", atlas: "atlas", rep: "repair", comp: "compose", phys: "physics", chem: "chem", bio: "biology" };
+  S.kinds = { tile: "Tiles", lesson: "Lessons", guide: "Help guides", "function": "Formula functions", recipe: "Recipe cards",
+    deck: "Flashcard decks", template: "Templates", task: "Compose tasks", command: "Chat commands" };
+  S.order = ["tile", "lesson", "guide", "function", "recipe", "deck", "template", "task", "command"];
+
+  // --- which tile a lesson belongs to --------------------------------------
+  function pathKeys() {
+    var keys = {}, P = L.mathPath;
+    ((P && P.levels) || []).forEach(function (lv) { (lv.keys || []).forEach(function (k) { keys[k] = 1; }); });
+    return keys;
+  }
+  S.tileOf = function (key, app) {
+    if (app && L.apps[app]) return app;
+    if (pathKeys()[key] && L.apps.mathlearn) return "mathlearn";
+    var p = String(key || "").split("_")[0];
+    if (PREFIX[p] && L.apps[PREFIX[p]]) return PREFIX[p];
+    return L.apps[p] ? p : "";
+  };
+  function appName(id) {
+    var a = L.apps[id];
+    return a ? (L.t ? L.t("app." + id + ".name", a.name) : a.name) : "";
+  }
+
+  // --- the entries ------------------------------------------------------------
+  // text helpers from SUITE_TEXT; without it, tags are simply dropped
+  function html(h) { return S.lines ? S.lines(h) : String(h || "").replace(/<[^>]*>/g, "\n").split("\n").map(function (t) { return { t: t.replace(/^\s+|\s+$/g, "") }; }).filter(function (u) { return u.t; }); }
+  function decode(t) { return S.decode ? S.decode(t) : String(t == null ? "" : t); }
+  function lines(t) { return typeof t === "string" ? html(t) : (t || []); }
+  function build() {
+    var out = [], seen = {};
+    function add(e) {
+      if (!e) return;
+      if (Object.prototype.toString.call(e) === "[object Array]") { e.forEach(add); return; }
+      if (!e.title || !e.kind) return;
+      var uid = e.kind + ":" + (e.id || e.title);
+      if (seen[uid]) return;
+      seen[uid] = 1;
+      e.uid = uid; e.text = lines(e.text); e.desc = e.desc || "";
+      e.appName = e.app ? appName(e.app) : (e.appName || "");
+      out.push(e);
+    }
+    function go(id) { return function () { location.hash = id; }; }
+    (L.order || []).forEach(function (id) {
+      var a = L.apps[id];
+      if (a) add({ kind: "tile", id: id, title: appName(id), app: id, desc: L.t ? L.t("app." + id + ".desc", a.desc || "") : (a.desc || ""), open: go(id) });
+    });
+    var ML = L.mathLessons;
+    if (ML && ML.list) ML.list().forEach(function (l) {
+      var d = ML.get ? ML.get(l.key) : null;
+      add({ kind: "lesson", id: l.key, title: decode(l.title), app: S.tileOf(l.key, d && d.app), text: d ? html(d.html) : [],
+        open: function () { ML.open(l.key); } });
+    });
+    var G = L.guide;
+    if (G && G.list && G.get) G.list().forEach(function (gid) {
+      var g = G.get(gid), ls = [];
+      if (!g) return;
+      g.sections.forEach(function (s) { ls.push({ t: decode(String(s[0]).replace(/<[^>]*>/g, "")), h: true }); ls = ls.concat(html(s[1])); });
+      add({ kind: "guide", id: gid, title: decode(g.title), app: L.apps[gid] ? gid : "", text: ls, open: function () { G.open(gid); } });
+    });
+    var described = {};
+    (L.assistCatalog || []).forEach(function (f) {
+      described[f.n] = 1;
+      add({ kind: "function", id: f.n, title: f.n + (f.s || ""), desc: f.d || "", app: "sheet" });
+    });
+    String(L.assistBuiltins || "").split(/\s+/).forEach(function (n) { if (n) described[n] = 1; });
+    // a function named inside another entry's description counts (TEXT_FUNCS
+    // describes LEFT, RIGHT, UPPER ... in its LEN and MID lines)
+    (L.assistCatalog || []).forEach(function (f) { String(f.d || "").replace(/\b[A-Z][A-Z0-9]{1,}\b/g, function (m) { described[m] = 1; return m; }); });
+    S.undescribed = (L.formula && L.formula.names ? L.formula.names() : []).filter(function (n) { return !described[n]; });
+    (L.assistCards || []).forEach(function (c) {
+      add({ kind: "recipe", id: c.id, title: c.ask, desc: (c.out ? c.out + " \u2014 " : "") + (c.compose || ""), app: "assist", open: go("assist") });
+    });
+    (L.cardDecks || []).forEach(function (d) {
+      add({ kind: "deck", id: d.title, title: d.title, desc: (d.cat ? d.cat + " \u00b7 " : "") + ((d.cards || []).length) + " cards", app: "cards",
+        text: (d.cards || []).slice(0, 60).map(function (c) { return { t: c[0] + " \u2014 " + c[1] }; }), open: go("cards") });
+    });
+    (L.writerTemplates || []).forEach(function (t) { add({ kind: "template", id: "writer/" + t.name, title: t.name, desc: "Writer template", app: "writer", open: go("writer") }); });
+    (L.sheetTemplates || []).forEach(function (t) { add({ kind: "template", id: "sheet/" + t.name, title: t.name, desc: "Sheets template" + (t.sub ? " \u2014 " + t.sub : ""), app: "sheet", open: go("sheet") }); });
+    (L.slideTemplates || []).forEach(function (t) { add({ kind: "template", id: "slides/" + t.name, title: t.name, desc: "Slides template" + (t.sub ? " \u2014 " + t.sub : ""), app: "slides", open: go("slides") }); });
+    (L.composeTasks || []).forEach(function (t) { add({ kind: "task", id: t.id, title: t.title, desc: (t.group ? t.group + " \u2014 " : "") + (t.blurb || ""), app: "compose", open: go("compose") }); });
+    (S.commands ? S.commands() : []).forEach(function (c) { add({ kind: "command", id: c.verb, title: c.usage, desc: c.desc + (c.ready ? "" : " (not available right now)"), app: "chat" }); });
+    EXTRA.forEach(function (e) { try { add(typeof e === "function" ? e() : e); } catch (x) { } });
+    return out;
+  }
+  S.add = function (entry) { EXTRA.push(entry); };
+
+  // Rebuilt whenever a registry it reads has grown or shrunk (a module
+  // activated in the Forge, a tile added); S.version counts the rebuilds so
+  // SUITE_SEARCH knows when to re-index.
+  var cache = null, sig = "";
+  function n(a) { return a ? a.length : 0; }
+  S.signature = function () {
+    var ML = L.mathLessons, G = L.guide;
+    return [n(L.order), ML && ML.list ? ML.list().length : 0, G && G.list ? G.list().length : 0, n(L.assistCatalog), n(L.assistCards),
+      n(L.cardDecks), n(L.writerTemplates), n(L.sheetTemplates), n(L.slideTemplates), n(L.composeTasks), n(L.aiActions),
+      n(L.aiSolvers), n(L.chatCommands), n(EXTRA), L.formula && L.formula.names ? L.formula.names().length : 0,
+      L.library && L.library.ready && L.library.ready() ? 1 : 0].join(".");
+  };
+  S.version = 0;
+  S.entries = function () {
+    var s = S.signature();
+    if (!cache || s !== sig) { cache = build(); sig = s; S.version++; }
+    return cache;
+  };
+  S.stats = function () {
+    var c = {};
+    S.entries().forEach(function (e) { c[e.kind] = (c[e.kind] || 0) + 1; });
+    return c;
+  };
+  S.summary = function () {
+    var c = S.stats();
+    return S.order.filter(function (k) { return c[k]; }).map(function (k) { return c[k] + " " + S.kinds[k].toLowerCase(); }).join(", ");
+  };
+})();
+// ===========================================================================
+// MODULE: SUITE_INDEX - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SUITE_LIST - START
+// Depends: SUITE_INDEX (Lantern.suite) -- feature-detected
+// Exports: Lantern.suite.dump
+// ===========================================================================
+// The running list as plain text: everything the AI can reach, grouped by
+// kind, lessons by tile, and the registered functions the AI is not told
+// about yet. Saved from the AI app (SUITE_PANEL) and written to
+// docs/Lantern_AI_Catalog.txt by tools/catalog.js.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.suite || !L.suite.entries) return;
+  var S = L.suite;
+  // dump() -> the whole list as plain text: the running list of what the AI
+  // can reach, saved from the AI app or written by tools/catalog.js.
+  S.dump = function () {
+    var es = S.entries(), out = [], by = {};
+    es.forEach(function (e) { (by[e.kind] = by[e.kind] || []).push(e); });
+    out.push("LANTERN \u2014 WHAT THE AI CAN REACH" + (L.version ? " (v" + L.version + ")" : ""));
+    out.push("Built from the live modules: " + S.summary() + ".");
+    out.push("");
+    S.order.concat(Object.keys(by).filter(function (k) { return S.order.indexOf(k) < 0; })).forEach(function (k) {
+      var list = by[k];
+      if (!list || !list.length) return;
+      out.push((S.kinds[k] || k).toUpperCase() + " (" + list.length + ")");
+      if (k === "lesson") {
+        var per = {}, names = [];
+        list.forEach(function (e) { var a = e.appName || "Not tied to one tile"; if (!per[a]) { per[a] = []; names.push(a); } per[a].push(e); });
+        names.forEach(function (a) {
+          out.push("  " + a + ":");
+          per[a].forEach(function (e) { out.push("    " + e.title + "  [" + e.id + "]"); });
+        });
+      } else list.forEach(function (e) {
+        // (whether LOOKUP's library is running right now is not part of the list)
+        var desc = String(e.desc || "").replace(/ \(not available right now\)$/, "");
+        out.push("  " + e.title + (desc ? " \u2014 " + desc : "") + (k !== "tile" && k !== "command" && e.appName ? "  [" + e.appName + "]" : k === "tile" ? "  [#" + e.id + "]" : ""));
+      });
+      out.push("");
+    });
+    if (S.undescribed && S.undescribed.length) {
+      out.push("REGISTERED FUNCTIONS NOT YET DESCRIBED TO THE AI (" + S.undescribed.length + ") \u2014 add a line to ASSIST_CATALOG for each:");
+      out.push("  " + S.undescribed.join(" "));
+      out.push("");
+    }
+    return out.join("\n");
+  };
+})();
+// ===========================================================================
+// MODULE: SUITE_LIST - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SUITE_SEARCH - START
+// Depends: SUITE_INDEX (Lantern.suite) -- feature-detected
+// Exports: Lantern.suite.stem, terms, topicOf, vocab, search, unitScore
+// ===========================================================================
+// Searching Lantern's own catalog. Every entry is scored on its title (most),
+// its description, the tile it belongs to, and the best of its paragraphs
+// (BM25), with words that ask ABOUT Lantern ("module", "tool", "resources")
+// left out of a query, so "does Lantern have a farming module?" searches
+// for farming. SUITE_PASSAGES cuts passages from its hits and
+// SUITE_CATALOG builds topic lists from them.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.suite || !L.suite.entries) return;
+  var S = L.suite;
+  function set(words) { var o = {}; words.forEach(function (w) { o[w] = 1; }); return o; }
+  var STOP = set(("a an the and or but nor of to in on at by for with from into onto about over under as is are was were be been " +
+    "being am do does did doing have has had having i me my mine we us our you your yours he him his she her it its they them their " +
+    "this that these those there here what which who whom whose when where why how can could would should will shall may might must " +
+    "not no yes so if then than too very just also any some all each every other others such more most much many few one lot lots " +
+    "get got please tell show give want know like am im ive id dont doesnt cant isnt thing things way ways able really something anything").split(" "));
+  // words that ask ABOUT Lantern rather than name a topic
+  var META = set(("lantern module modules tile tiles app apps application applications tool tools lesson lessons guide guides " +
+    "function functions command commands resource resources capability capabilities ability abilities feature features available " +
+    "access accessed accessing offer offers include includes contain contains section sections content contents information info " +
+    "material materials list catalog dedicated built inside suite reach use used using have").split(" "));
+  // common words that rarely name the topic: they count, but a little
+  var WEAK = set(("start make use get keep need help good best work learn know take give find try set put go come look see little " +
+    "time day people person home own new first basic simple easy right long small big doing done should need needs build fix " +
+    "write create begin stop happen wrong problem problems question questions answer").split(" "));
+  function stem(w) {
+    w = String(w || "").toLowerCase();
+    if (w.length > 4 && /ies$/.test(w)) w = w.slice(0, -3) + "y";
+    else if (w.length > 4 && /(ss|us|is)$/.test(w)) w = w;
+    else if (w.length > 4 && /(ches|shes|sses|xes|zes)$/.test(w)) w = w.slice(0, -2);
+    else if (w.length > 3 && /s$/.test(w)) w = w.slice(0, -1);
+    if (w.length > 5 && /ing$/.test(w)) w = w.slice(0, -3);
+    else if (w.length > 4 && /ed$/.test(w)) w = w.slice(0, -2);
+    if (w.length > 4 && /([b-df-hj-np-tv-z])\1$/.test(w)) w = w.slice(0, -1);
+    if (w.length > 4 && /e$/.test(w)) w = w.slice(0, -1);
+    return w.length > 7 ? w.slice(0, 7) : w;
+  }
+  S.stem = stem;
+  // terms(text, keepMeta) -> stems of the words that carry meaning
+  S.terms = function (text, keepMeta) {
+    var out = [];
+    String(text || "").toLowerCase().replace(/[\u2019\x27]/g, "").replace(/(\d),(\d{3})/g, "$1$2").split(/[^0-9a-z\u00c0-\u024f]+/).forEach(function (w) {
+      if (w.length < 2 || STOP[w] || (!keepMeta && META[w]) || /^\d+$/.test(w)) return;
+      out.push(stem(w));
+    });
+    return out;
+  };
+  function uniq(a) { var s = {}, o = []; a.forEach(function (x) { if (!s[x]) { s[x] = 1; o.push(x); } }); return o; }
+  S.topicOf = function (q) { return uniq(S.terms(q)); };
+  // the word lists, for SUITE_CATALOG's topic labels
+  S.vocab = { stop: STOP, meta: META, weak: WEAK };
+  // unitScore(unit, stems) -> how well one paragraph of a search hit
+  // (hit.d.units) matches, for SUITE_PASSAGES
+  S.unitScore = function (u, qs) { index(); return bm25(u, qs); };
+
+  // --- the index: rebuilt when the catalog is rebuilt ------------------------
+  var idx = null, STRONG = 1.9;
+  function index() {
+    var es = S.entries();
+    if (idx && idx.v === S.version) return idx;
+    var df = {}, docs = [], tot = 0, cnt = 0;
+    es.forEach(function (e) {
+      var title = S.terms(e.title, true), desc = S.terms(e.desc, true), tile = [];
+      if (e.app && e.kind !== "tile" && L.apps[e.app]) tile = S.terms((e.appName || "") + " " + (L.apps[e.app].desc || ""), true);
+      var units = e.text.map(function (u) {
+        var t = S.terms(u.t, true), tf = {};
+        t.forEach(function (w) { tf[w] = (tf[w] || 0) + 1; });
+        tot += t.length; cnt++;
+        return { t: u.t, h: !!u.h, tf: tf, len: t.length };
+      });
+      var all = set(title.concat(desc));
+      units.forEach(function (u) { for (var w in u.tf) all[w] = 1; });
+      for (var w in all) df[w] = (df[w] || 0) + 1;
+      docs.push({ e: e, title: set(title), desc: set(desc), tile: set(tile), units: units });
+    });
+    idx = { v: S.version, docs: docs, df: df, N: docs.length, avg: cnt ? tot / cnt : 10 };
+    return idx;
+  }
+  function idf(w) { var n = idx.df[w] || 0; return Math.log(1 + (idx.N - n + 0.5) / (n + 0.5)); }
+  function weight(w) { return idf(w) * (WEAK[w] ? 0.3 : 1); }
+  function strong(w) { return !WEAK[w] && idf(w) >= STRONG; }
+  function bm25(u, qs) {
+    var s = 0;
+    qs.forEach(function (w) { var f = u.tf[w]; if (f) s += weight(w) * f * 2.2 / (f + 1.2 * (0.25 + 0.75 * u.len / idx.avg)); });
+    return s;
+  }
+  // score(d, qs) -> {s, strong, named, cover, unit}: named -- a word of the
+  // question is in the entry's title, description or tile; strong -- such a
+  // word is a rare one; cover -- the share of the question's (not common)
+  // words found anywhere in the entry.
+  function score(d, qs) {
+    var t = 0, st = 0, named = 0, found = {}, best = 0, bi = -1, rest = 0, real = 0;
+    qs.forEach(function (w) {
+      var f = weight(w);
+      if (!WEAK[w]) real++;
+      if (d.title[w]) { t += 3 * f; found[w] = 1; if (strong(w)) st += 1; if (!WEAK[w]) named++; }
+      else if (d.desc[w]) { t += 1.5 * f; found[w] = 1; if (strong(w)) st += 0.5; if (!WEAK[w]) named++; }
+      if (d.tile[w]) { t += 0.8 * f; found[w] = 1; if (strong(w)) st += 0.5; if (!WEAK[w]) named++; }
+    });
+    d.units.forEach(function (u, i) {
+      var s = bm25(u, qs);
+      if (s > best) { rest += best; best = s; bi = i; } else rest += s;
+      qs.forEach(function (w) { if (u.tf[w]) found[w] = 1; });
+    });
+    var hit = Object.keys(found).filter(function (w) { return !WEAK[w]; }).length;
+    return { s: t + best + 0.15 * Math.min(rest, 3 * best), strong: st, named: named, cover: real ? hit / real : (qs.length ? 1 : 0), unit: bi };
+  }
+  function norm(t) { return String(t || "").toLowerCase().replace(/[^0-9a-z]+/g, " ").replace(/^\s+|\s+$/g, ""); }
+  // search(query, {kinds: {lesson: 1}, max, keepMeta}) -> [{e, d, s, strong,
+  // cover, unit, qs}], best first; a query that IS an entry's title or id
+  // (a lesson asked for by name) puts that entry first.
+  S.search = function (query, o) {
+    o = o || {};
+    index();
+    var qs = uniq(S.terms(query, !!o.keepMeta)), nq = norm(query), out = [];
+    if (!qs.length && !nq) return out;
+    idx.docs.forEach(function (d) {
+      if (o.kinds && !o.kinds[d.e.kind]) return;
+      var r = qs.length ? score(d, qs) : { s: 0, strong: 0, named: 0, cover: 0, unit: -1 };
+      if (nq && (norm(d.e.title) === nq || norm(d.e.id) === nq)) { r.s += 100; r.strong += 2; r.named++; r.cover = 1; r.exact = true; }
+      if (r.s > 0) { r.e = d.e; r.d = d; r.qs = qs; out.push(r); }
+    });
+    out.sort(function (a, b) { return b.s - a.s; });
+    return out.slice(0, o.max || 20);
+  };
+})();
+// ===========================================================================
+// MODULE: SUITE_SEARCH - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SUITE_PASSAGES - START
+// Depends: SUITE_SEARCH (Lantern.suite.search, unitScore) -- feature-detected
+// Exports: Lantern.suite.passages
+// ===========================================================================
+// Numbered passages from the best lessons and help guides for a question --
+// the opening paragraph and the paragraphs that share most words with it,
+// each under its heading -- in the same shape as library passages, so Chat
+// checks quotes and sentences against them the same way.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.suite || !L.suite.search || !L.suite.unitScore) return;
+  var S = L.suite;
+  // --- passages for the AI -------------------------------------------------------
+  function cut(h, limit) {
+    var us = h.d.units, qs = h.qs, pick = {}, len = 0, i;
+    var ranked = us.map(function (u, k) { return { i: k, s: S.unitScore(u, qs) }; }).filter(function (r) { return !us[r.i].h; })
+      .sort(function (a, b) { return b.s - a.s || a.i - b.i; });
+    function take(k) {
+      if (k < 0 || pick[k] || us[k].h) return;
+      var t = us[k].t.length + 1;
+      if (len && len + t > limit) return;
+      pick[k] = 1; len += t;
+    }
+    if (ranked.length && ranked[0].s > 0) take(ranked[0].i);
+    // a lesson's opening paragraph says what it is about
+    if (h.e.kind === "lesson") for (i = 0; i < us.length; i++) if (!us[i].h) { take(i); break; }
+    ranked.forEach(function (r) { if (r.s > 0) take(r.i); });
+    for (i = 0; i < us.length && len < limit * 0.6; i++) take(i);   // a short lesson is given whole
+    var keys = Object.keys(pick).map(Number).sort(function (a, b) { return a - b; }), out = [], lastHead = -1;
+    keys.forEach(function (k) {
+      for (var j = k - 1; j > lastHead; j--) if (us[j].h) { out.push(us[j].t + ":"); lastHead = j; break; }
+      out.push(us[k].t);
+    });
+    return out.join("\n");
+  }
+  // passages(question, query, {max, detail, strong}) -> [{n, title, text,
+  // bookTitle, suite, kind, key, app, open}]; strong: only when the best
+  // match names the topic in its title or tile (Chat's automatic reading).
+  S.passages = function (question, query, o) {
+    o = o || {};
+    var hits = S.search(query || question, { kinds: { lesson: 1, guide: 1 }, max: 12 }).filter(function (h) { return h.d.units.length; });
+    if (!hits.length) return [];
+    if (o.strong && (hits[0].strong < 1 || hits[0].cover < 0.25)) return [];
+    if (!hits[0].exact && hits[0].s < 1.5) return [];
+    var top = hits[0].s;
+    hits = hits.filter(function (h, k) { return k === 0 || (h.s >= top * 0.35 && h.s >= 1.5 && !h.exact); }).slice(0, o.max || 3);
+    var limit = o.detail === false ? 800 : 1300;
+    return hits.map(function (h, k) {
+      // "Goats & milk (Animals tile)"; a tile's help guide by its tile: "Farming help guide"
+      var e = h.e, title = e.kind === "guide" ? (e.appName ? e.appName + " help guide" : e.title) : e.title + (e.appName ? " (" + e.appName + " tile)" : "");
+      return { n: k + 1, title: title, bookTitle: "Lantern\u2019s own " + (e.kind === "guide" ? "help guide" : "lesson"),
+        text: cut(h, limit), suite: true, kind: e.kind, key: e.id, app: e.app || "", open: e.open };
+    });
+  };
+})();
+// ===========================================================================
+// MODULE: SUITE_PASSAGES - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SUITE_CATALOG - START
+// Depends: SUITE_INDEX, SUITE_SEARCH (Lantern.suite) -- feature-detected
+// Exports: Lantern.suite.catalog
+// ===========================================================================
+// What Lantern has on a topic, or everything, as the LANTERN CATALOG block
+// the AI is given for a question about Lantern itself (SUITE_CHAT):
+// entries that name the topic first, then a few that only talk about it a
+// lot, the tiles their lessons live in, and the Chat commands.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.suite || !L.suite.search || !L.suite.entries) return;
+  var S = L.suite;
+  // --- the catalog for questions about Lantern itself ---------------------------
+  var CAP = { tile: 6, lesson: 12, guide: 4, "function": 8, recipe: 4, deck: 3, template: 4, task: 3, command: 4 };
+  var HEADS = { tile: "TILES (the person opens a tile from the home screen)", lesson: "LESSONS (they open from their tile; reply LESSON: <title> to read one)",
+    guide: "HELP GUIDES (the ? button inside a tile)", "function": "FORMULA FUNCTIONS (for = lines)", recipe: "RECIPE CARDS (in Assist)",
+    deck: "FLASHCARD DECKS (in Flashcards)", template: "TEMPLATES", task: "COMPOSE TASKS (guided writing)", command: "CHAT COMMANDS (reply lines you can write)" };
+  function line(e) {
+    if (e.kind === "lesson") return e.title + (e.appName ? " [" + e.appName + "]" : "");
+    if (e.kind === "function") return e.title + " - " + e.desc;
+    if (e.kind === "guide") return e.title;
+    return e.title + (e.desc ? " -- " + e.desc : "");
+  }
+  function tileFor(app) { var t = null; S.entries().forEach(function (e) { if (e.kind === "tile" && e.id === app) t = e; }); return t; }
+  function words(q, qs) {
+    var out = [];
+    String(q || "").replace(/[\u2019\x27]/g, "").split(/[^0-9A-Za-z\u00c0-\u024f]+/).forEach(function (w) {
+      var lw = w.toLowerCase(), V = S.vocab || { stop: {}, meta: {} };
+      if (w.length > 1 && qs.indexOf(S.stem(w)) >= 0 && !V.stop[lw] && !V.meta[lw] && out.indexOf(lw) < 0) out.push(lw);
+    });
+    return out.join(" ");
+  }
+  // catalog(question or topic) -> {topic, groups: {kind: [entry]}, found,
+  // text}: what Lantern has on the topic, or (no topic) everything.
+  S.catalog = function (q) {
+    var V = S.vocab || { stop: {}, meta: {}, weak: {} };
+    var qs = S.topicOf(q).filter(function (w) { return !V.weak[w]; }), c = { topic: words(q, qs), groups: {}, found: 0, overview: !qs.length };
+    if (qs.length) {
+      // entries that name the topic (title, description, tile) first; then,
+      // a few that only talk about it, when they talk about it a lot
+      var hits = S.search(q, { max: 150 }), top = hits.length ? hits[0].s : 0, extra = {};
+      hits.filter(function (h) { return h.named > 0 && h.s >= 1.2; }).concat(hits.filter(function (h) { return !h.named && h.s >= Math.max(1.2, top * 0.6); }))
+        .forEach(function (h) {
+          var k = h.e.kind, g = c.groups[k] = c.groups[k] || [];
+          if (!h.named && (extra[k] = (extra[k] || 0) + 1) > 3) return;
+          if (g.length < (CAP[k] || 4)) g.push(h.e);
+        });
+      // the tiles the best lessons live in belong in the answer too
+      (c.groups.lesson || []).slice(0, 4).concat(c.groups.guide || []).forEach(function (e) {
+        var t = e.app ? tileFor(e.app) : null, g = c.groups.tile = c.groups.tile || [];
+        if (t && g.indexOf(t) < 0 && g.length < CAP.tile) g.push(t);
+      });
+      if (c.groups.tile && !c.groups.tile.length) delete c.groups.tile;
+      Object.keys(c.groups).forEach(function (k) { c.found += c.groups[k].length; });
+    } else {
+      S.entries().forEach(function (e) { if (e.kind === "tile" || e.kind === "command") (c.groups[e.kind] = c.groups[e.kind] || []).push(e); });
+    }
+    c.text = catalogText(c);
+    return c;
+  };
+  function catalogText(c) {
+    var out = [], es = S.entries(), all = S.summary();
+    if (c.overview) {
+      out.push("LANTERN CATALOG: everything Lantern has, read from its own modules just now (" + all + ").");
+      out.push(HEADS.tile + ":");
+      c.groups.tile.forEach(function (e) { out.push("- " + line(e)); });
+      var per = {}, order = [];
+      es.forEach(function (e) { if (e.kind === "lesson") { var a = e.appName || "other"; if (!per[a]) { per[a] = 0; order.push(a); } per[a]++; } });
+      if (order.length) out.push("LESSONS by tile: " + order.map(function (a) { return a + " " + per[a]; }).join(", ") + " (MODULES: <topic> lists them; LESSON: <words> reads them).");
+      var fn = es.filter(function (e) { return e.kind === "function"; }).map(function (e) { return e.id; });
+      if (fn.length) out.push("FORMULA FUNCTIONS: " + fn.join(" ") + ".");
+      ["recipe", "deck", "template", "task"].forEach(function (k) {
+        var n = es.filter(function (e) { return e.kind === k; }).length;
+        if (n) out.push(S.kinds[k].toUpperCase() + ": " + n + ".");
+      });
+      out.push(HEADS.command + ":");
+      c.groups.command.forEach(function (e) { out.push("- " + line(e)); });
+      return out.join("\n");
+    }
+    if (!c.found) {
+      out.push("LANTERN CATALOG: Lantern has nothing on \u201c" + c.topic + "\u201d among its tiles, lessons and tools (read from its own modules just now: " + all + ").");
+      out.push("Its tiles are: " + es.filter(function (e) { return e.kind === "tile"; }).map(function (e) { return e.title; }).join(", ") + ".");
+      return out.join("\n");
+    }
+    out.push("LANTERN CATALOG: what Lantern has on \u201c" + c.topic + "\u201d, read from its own modules just now (in all it has " + all + ").");
+    S.order.forEach(function (k) {
+      var g = c.groups[k];
+      if (!g || !g.length) return;
+      out.push(HEADS[k] + ":");
+      g.forEach(function (e) { out.push("- " + line(e)); });
+    });
+    return out.join("\n");
+  }
+})();
+// ===========================================================================
+// MODULE: SUITE_CATALOG - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SUITE_CARD - START
+// Depends: CORE, SUITE_INDEX (Lantern.suite kinds, order, summary) --
+//          feature-detected
+// Exports: Lantern.suite.card(catalog) -> element
+// ===========================================================================
+// What the person sees in Chat when Lantern gives the AI its catalog
+// (SUITE_CHAT, SUITE_COMMANDS): a card with one button per tile, lesson,
+// guide, function or recipe card, each opening what it names.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.el || !L.suite || !L.suite.entries) return;
+  var S = L.suite, el = L.el;
+  var css = document.createElement("style");
+  css.textContent = ".suite-card{border:1px solid var(--line);border-radius:10px;padding:8px 11px;margin:6px 0;background:var(--soft)}" +
+    ".suite-card h4{margin:6px 0 2px;font-size:13px;color:#4b5563;font-weight:600}" +
+    ".suite-card .suite-chips{display:flex;flex-wrap:wrap;gap:5px}" +
+    ".suite-card .suite-chips button{font-size:13px;padding:3px 9px;min-height:0;border-radius:14px}" +
+    ".suite-card .suite-more{font-size:12px;color:#6b7280;margin-top:4px}";
+  document.head.appendChild(css);
+
+  S.card = function (c) {
+    var b = el("div", { "class": "suite-card" });
+    b.appendChild(el("div", { "class": "muted", text: (c.overview ? "Lantern\u2019s catalog" : "Lantern\u2019s catalog on \u201c" + c.topic + "\u201d") + " \u2014 read from its modules just now" }));
+    S.order.forEach(function (k) {
+      var g = c.groups[k];
+      if (!g || !g.length || (c.overview && k === "command")) return;
+      b.appendChild(el("h4", { text: S.kinds[k] }));
+      var row = el("div", { "class": "suite-chips" });
+      g.forEach(function (e) {
+        row.appendChild(el("button", { text: k === "function" ? e.id : e.title, title: (e.desc || e.appName || e.title) + (e.open ? " \u2014 tap to open" : ""),
+          onclick: function () { if (e.open) { try { e.open(); } catch (x) { } } } }));
+      });
+      b.appendChild(row);
+    });
+    if (c.overview) b.appendChild(el("div", { "class": "suite-more", text: S.summary() + ". The AI app\u2019s \u201cWhat the AI can reach\u201d section lists all of it." }));
+    return b;
+  };
+})();
+// ===========================================================================
+// MODULE: SUITE_CARD - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SUITE_CHAT - START
+// Depends: SUITE_INDEX, SUITE_SEARCH, SUITE_PASSAGES, SUITE_CATALOG, SUITE_CARD
+//          (Lantern.suite); Chat's hooks Lantern.chatSystem, chatAbout and
+//          chatContext (read by ASSIST_CHAT) -- all feature-detected
+// Exports: Lantern.suite.chat (about, howTo, prompt, card, noteFor, catNote)
+// ===========================================================================
+// The AI in Chat knows the whole suite (1.11.0). From a 35B transcript on
+// 1.10.0: asked how to start a farm and raise goats, the AI searched only
+// the encyclopedia and said "Not in my library"; asked whether Lantern had
+// a farming module, it said no -- while the Farming and Animals tiles held
+// fifteen lessons on exactly that, goats included. Now:
+//  - the AI's instructions name every tile and offer LESSON: and MODULES
+//    (SUITE_COMMANDS), both reading the live catalog.
+//  - a how-to question ("how would I raise goats") gets the passages of the
+//    best-matching lessons first, when one names the topic; if they do not
+//    cover it the AI says so and the encyclopedia is read as before.
+//  - a question about Lantern itself ("what are your capabilities", "does
+//    Lantern have a farming module") gets the catalog, with open buttons.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.el || !L.suite || !L.suite.entries) return;
+  var S = L.suite, el = L.el;
+  var SYS = window.Lantern.chatSystem = window.Lantern.chatSystem || [];
+  var ABOUT = window.Lantern.chatAbout = window.Lantern.chatAbout || [];
+  var CTX = window.Lantern.chatContext = window.Lantern.chatContext || [];
+  // --- which questions --------------------------------------------------------
+  // About what Lantern has (its tiles, lessons, tools), not about the world.
+  var ASK_WHAT = /\bwhat (are|is) (your|lantern\x27?s|lanterns|its|the) (main )?(capabilit|abilit|feature|function|tool|module|app|tile|lesson|command|resource|skill|option)|\bwhat (else )?(can|could) (you|lantern|it) (do|help( me)? with|teach|make|calculate|compute)\b|\b(list|show|tell)( me)? (all |every |the )?(of )?(your|lantern\x27?s|lanterns|the) (modules|tiles|apps|tools|lessons|guides|functions|commands|resources|capabilit\w*|features)\b|\b(what|which) (modules|tiles|apps|tools|lessons|guides|functions|commands|resources|recipe cards|decks|templates) (do|does|are|can|is|has|have|would|should|could)\b|\blantern\x27?s (own )?(modules|tiles|apps|lessons|guides|functions|commands|resources|catalog)\b/i;
+  var ASK_HAVE = /\b(do|does|did|can|could) (you|lantern|it) (have|offer|include|contain|carry|come with|support|access|reach|open)\b|\b(is|are) there (a|an|any)\b|\bany (other )?(modules?|tiles?|apps?|lessons?|guides?|resources?)\b/i;
+  var NOUN = /\b(modules?|tiles?|apps?|tools?|lessons?|guides?|functions?|commands?|resources?|recipes?|calculators?|sections?|decks?|templates?|capabilit\w*)\b/i;
+  function about(q) { q = String(q || ""); return ASK_WHAT.test(q) || (ASK_HAVE.test(q) && NOUN.test(q)); }
+  // Practical, how-to questions: Lantern's lessons are written for these.
+  var HOWTO = /\bhow (do|would|can|could|should|might|will) (i|we|you|one|someone|a person|people)\b|\bhow to\b|\b(steps?|tips?|advice|instructions?) (to|for|on)\b|\bwhat (should|do|can|must) (i|we) (do|use|feed|plant|grow|give|check|buy|build)\b|\b(best|right|safe|safest|cheapest|easiest) way to\b|\b(teach|show) me (how|to)\b|\bwhat do (i|we) need (to|for)\b|\b(i|we) (want|need|would like|plan) to (start|raise|grow|keep|build|make|fix|repair|learn|treat|plant|save|store|preserve|purify|clean|care)\b/i;
+  function howTo(q) { q = String(q || ""); return HOWTO.test(q) && !/\d/.test(q); }
+
+  // --- what the AI is told ----------------------------------------------------
+  // (the reply lines are offered only when SUITE_COMMANDS has added them)
+  SYS.push(function () {
+    var tiles = S.entries().filter(function (e) { return e.kind === "tile"; }).map(function (e) { return e.title; });
+    var c = S.stats(), verbs = (window.Lantern.chatCommands || []).map(function (x) { return x.verb; });
+    var out = ["LANTERN\u2019S OWN TILES: " + tiles.join(", ") + ".",
+      "They hold " + ((c.lesson || 0) + (c.guide || 0)) + " lessons and help guides of Lantern\u2019s own (growing food, animals, health and first aid,",
+      "water, repair, engineering, science, maths, writing ...)."];
+    if (verbs.indexOf("LESSON") >= 0) out.push("For a how-to or practical question, reply 'LESSON: <2 to 5 words>': Lantern sends numbered passages from",
+      "them to answer from, with [n] and QUOTE lines as for the library.");
+    if (verbs.indexOf("MODULES") >= 0) out.push("To see what Lantern has on a topic (tiles, lessons, functions, recipe cards, commands), reply",
+      "'MODULES: <topic>' (MODULES alone lists everything). Never tell the person Lantern lacks a tile, lesson or tool without",
+      "asking MODULES first.");
+    return out.join("\n");
+  });
+  function lessonPrompt(q, src, query) {
+    var out = ["LESSONS: passages from Lantern\u2019s own lessons and help guides" + (query ? " (searched for: " + query + ")" : ""), ""];
+    src.forEach(function (s) { out.push("[" + s.n + "] " + s.title); out.push(s.text); out.push(""); });
+    out.push("Answer the QUESTION from these passages; practical steps are welcome. Put [n] at the end of each sentence that uses");
+    out.push("passage n. You may add your own reasoning, in sentences without [n]; never contradict the passages. End with a line");
+    out.push("'QUOTE [n]: <one sentence copied exactly from passage n>' for the most important fact. If the passages do not cover");
+    out.push("the question, say what they do cover, then: Not in my library.");
+    out.push("");
+    out.push("QUESTION: " + q);
+    return out.join("\n");
+  }
+  function aboutPrompt(c) {
+    return c.text + "\n\n(Lantern: this question is about Lantern itself, so Lantern sent its real catalog above, read from its modules just now \u2014 not from memory. " +
+      "Answer from it in plain sentences: name the tiles, lessons and tools that fit, and how to open them. Never say Lantern lacks something the catalog lists, " +
+      "and never name a tile, lesson or tool it does not list. No [n] or QUOTE lines, and do not say \x22Not in my library\x22. To read a lesson to the person, reply LESSON: <its title>.)";
+  }
+  function noteFor(src, query) {
+    var titles = src.map(function (s) { return "\u201c" + s.title + "\u201d"; }).join(", ");
+    return "Lantern gave the AI " + src.length + " passage" + (src.length === 1 ? "" : "s") + " from its own lessons" + (query ? " (searched for \u201c" + query + "\u201d)" : "") + ": " + titles + "\u2026";
+  }
+  function catNote(c) {
+    if (c.overview) return "Lantern gave the AI its catalog: " + S.summary() + "\u2026";
+    if (!c.found) return "Lantern\u2019s catalog has nothing on \u201c" + c.topic + "\u201d; the AI was told so, with the list of tiles\u2026";
+    return "Lantern gave the AI its catalog on \u201c" + c.topic + "\u201d: " + S.order.filter(function (k) { return c.groups[k]; }).map(function (k) {
+      return c.groups[k].length + " " + S.kinds[k].toLowerCase().replace(/s$/, c.groups[k].length === 1 ? "" : "s"); }).join(", ") + "\u2026";
+  }
+
+  // --- the hooks -------------------------------------------------------------
+  // the person's previous question, for "any OTHER resources for that?"
+  function lastAsked(msgs) {
+    for (var i = (msgs || []).length - 1; i >= 0; i--) {
+      var m = msgs[i];
+      if (!m || m.role !== "user") continue;
+      var t = typeof m.content === "string" ? m.content : (m.content || []).filter(function (x) { return x && x.type === "text"; }).map(function (x) { return x.text; }).join("\n");
+      if (/^(TOOL RESULTS|Lantern |LIBRARY:|LESSONS:|LANTERN CATALOG|The LIBRARY|The offline|This is |That is |Passage \x5B|PUZZLE)/.test(t)) continue;
+      return t.split("\n\n")[0];
+    }
+    return "";
+  }
+  ABOUT.push({ id: "catalog", provide: function (q, msgs) {
+    if (!about(q) || !S.catalog) return null;
+    var topic = q;
+    if (/\b(other|else|more|this|that|these|those|it|them|similar|related|such)\b/i.test(q)) topic = q + " " + lastAsked(msgs);
+    var c = S.catalog(topic);
+    return { id: "catalog", catalog: c, prompt: aboutPrompt(c), note: catNote(c), view: function () { return card(c); } };
+  } });
+  CTX.push({ id: "lessons", provide: function (q) {
+    if (!howTo(q) || !S.passages || (L.textReader && L.textReader.attached)) return null;   // a document handed over comes first
+    var src = S.passages(q, q, { detail: true, max: 3, strong: true });
+    if (!src.length) return null;
+    return { sources: src, prompt: lessonPrompt(q, src, ""), detail: true, more: true, how: "lessons", label: "Lantern\u2019s own lessons", query: "", note: noteFor(src, "") };
+  } });
+  // the card (SUITE_CARD) is optional: without it the AI still gets the catalog
+  function card(c) { return S.card ? S.card(c) : null; }
+  S.chat = { about: about, howTo: howTo, prompt: lessonPrompt, card: card, noteFor: noteFor, catNote: catNote };
+})();
+// ===========================================================================
+// MODULE: SUITE_CHAT - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SUITE_COMMANDS - START
+// Depends: SUITE_CHAT (Lantern.suite.chat), SUITE_PASSAGES, SUITE_CATALOG;
+//          Chat's hook Lantern.chatCommands (read by ASSIST_CHAT) -- all
+//          feature-detected
+// Exports: (the LESSON: and MODULES reply lines for the AI in Chat)
+// ===========================================================================
+// Two reply lines the AI may write in Chat: LESSON: <words> reads Lantern's
+// own lessons and help guides as numbered passages, checked like library
+// passages; MODULES: <topic> lists the tiles, lessons, functions, recipe
+// cards and commands on a topic (MODULES alone: everything). The line must
+// open the reply, or the reply must be short, so a word in an answer never
+// sets one off.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.suite || !L.suite.chat) return;
+  var S = L.suite, C = L.suite.chat;
+  var CMDS = window.Lantern.chatCommands = window.Lantern.chatCommands || [];
+  function cmdArg(reply, re) {
+    var t = String(reply || ""), m = re.exec(t);
+    if (!m) return null;
+    // the command line must open the reply, or the reply must be short
+    var first = t.replace(/^\s+/, "").split("\n")[0];
+    if (t.replace(/^\s+|\s+$/g, "").length > 240 && !re.test(first)) return null;
+    return String(m[1] || "").replace(/[\x22\u201c\u201d*]/g, "").replace(/^\s+|\s+$/g, "");
+  }
+  if (S.passages) CMDS.push({ id: "lessons", verb: "LESSON", usage: "LESSON: <2 to 5 words, or a lesson title>",
+    desc: "read Lantern\u2019s own lessons and help guides as numbered passages",
+    test: function (reply) { var a = cmdArg(reply, /^[ \t*]*LESSONS?:[ \t*]*([^\n]+)$/m); return a ? a : null; },
+    run: function (arg, q) {
+      var src = S.passages(q, arg, { detail: true, max: 3 });
+      if (!src.length) return { note: "Lantern\u2019s own lessons have nothing on \u201c" + arg + "\u201d.",
+        prompt: "Lantern\u2019s own lessons have nothing on \u201c" + arg + "\u201d. Reply MODULES: <topic> to see what Lantern has, LOOKUP: <words> for the encyclopedia, or answer the QUESTION now.\n\nQUESTION: " + q };
+      return { sources: src, detail: true, more: true, how: "lessons", query: arg, prompt: C.prompt(q, src, arg), note: C.noteFor(src, arg) };
+    } });
+  if (S.catalog) CMDS.push({ id: "modules", verb: "MODULES", usage: "MODULES: <topic>  (or MODULES alone for everything)",
+    desc: "list Lantern\u2019s tiles, lessons, functions, recipe cards and commands on a topic",
+    test: function (reply) { var a = cmdArg(reply, /^[ \t*]*MODULES[ \t*]*(?::[ \t*]*([^\n]{0,80}))?$/m); return a == null ? null : a; },
+    run: function (arg, q) {
+      var c = S.catalog(arg || "");
+      return { prompt: c.text + "\n\nAnswer the QUESTION from this catalog, in plain sentences (reply LESSON: <title> to read a lesson first).\n\nQUESTION: " + q,
+        note: C.catNote(c), view: function () { return C.card(c); } };
+    } });
+})();
+// ===========================================================================
+// MODULE: SUITE_COMMANDS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: IMAGE_SHRINK - START
+// Depends: (none) -- browser FileReader, Image and canvas
+// Exports: Lantern.imageShrink(file, opts) -> Promise<{url, name, w, h, file}>
+// ===========================================================================
+// A picture file made small enough to send to a model that sees images,
+// with its text still readable (CHAT_PICTURES). Any module may use it.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  function readURL(file) {
+    return new Promise(function (res, rej) {
+      var r = new FileReader();
+      r.onload = function () { res(String(r.result || "")); };
+      r.onerror = function () { rej(r.error || new Error("could not read the picture")); };
+      r.readAsDataURL(file);
+    });
+  }
+  function loadImg(url) {
+    return new Promise(function (res, rej) {
+      var im = new Image(), done = false;
+      var t = setTimeout(function () { if (!done) { done = true; rej(new Error("the picture took too long to open")); } }, 4000);
+      im.onload = function () { if (!done) { done = true; clearTimeout(t); res(im); } };
+      im.onerror = function () { if (!done) { done = true; clearTimeout(t); rej(new Error("not a picture this browser can open")); } };
+      im.src = url;
+    });
+  }
+  // Lantern.imageShrink(file, {side, pixels, bytes}) -> Promise<{url, name, w,
+  // h, file}>: a JPEG at most side px on its long side (default 1280, about
+  // 1.3 million pixels), on white so a transparent screenshot stays readable;
+  // the original when the browser cannot redraw it; too big -> an error.
+  window.Lantern.imageShrink = async function (file, o) {
+    o = o || {};
+    var MAXSIDE = o.side || 1280, MAXPIX = o.pixels || 1300000, MAXURL = o.bytes || 6000000;
+    var url = await readURL(file), w = 0, h = 0;
+    try {
+      var im = await loadImg(url);
+      w = im.naturalWidth || im.width; h = im.naturalHeight || im.height;
+      var k = Math.min(1, MAXSIDE / Math.max(w, h, 1), Math.sqrt(MAXPIX / Math.max(1, w * h)));
+      var cv = document.createElement("canvas"), cx = cv.getContext ? cv.getContext("2d") : null;
+      if (cx && w && h) {
+        cv.width = Math.max(1, Math.round(w * k)); cv.height = Math.max(1, Math.round(h * k));
+        cx.fillStyle = "#fff"; cx.fillRect(0, 0, cv.width, cv.height);
+        cx.drawImage(im, 0, 0, cv.width, cv.height);
+        var out = cv.toDataURL("image/jpeg", 0.9);
+        if (/^data:image\/jpeg/.test(out)) { url = out; w = cv.width; h = cv.height; }
+      }
+    } catch (e) { }
+    if (url.length > MAXURL) throw new Error("it is too big to send (" + Math.round(url.length / 1e6) + " MB); try a smaller screenshot");
+    return { url: url, name: file.name && !/^image\.(png|jpe?g)$/i.test(file.name) ? file.name : "pasted picture", w: w, h: h, file: file };
+  };
+})();
+// ===========================================================================
+// MODULE: IMAGE_SHRINK - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: CHAT_PICTURES - START
+// Depends: Chat's hooks Lantern.chatTools, chatPictures, CHAT.forgetPictures
+//          (ASSIST_CHAT); AI_ENGINE (canSee); IMAGE_SHRINK; TEXT_READER_CHAT
+//          (chatAttach, for an AI that cannot see) -- all feature-detected
+// Exports: Lantern.chatPics (add, pending, clear, shrink, sees)
+// ===========================================================================
+// Pictures for the AI in Chat (1.11.0). A screenshot pasted into Chat
+// (Ctrl+V, or long-press Paste on a phone), a picture dropped on it, or one
+// picked with the picture button goes with the next message. When the
+// model can see ("sees images"), it is sent as the picture itself, at most
+// 1280 px on its long side (IMAGE_SHRINK), and stays in view for later
+// questions until the person taps "Stop showing it" or gives another.
+// When the model cannot see, Text Reader reads the text in the picture
+// instead and Chat answers from that, as for any document.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.el) return;
+  var el = L.el;
+  var TOOLS = window.Lantern.chatTools = window.Lantern.chatTools || [];
+  var PICS = window.Lantern.chatPictures = window.Lantern.chatPictures || [];
+  var MAXN = 3;
+  // shrink(file): IMAGE_SHRINK when present, else the picture as it is
+  function shrink(file) {
+    if (L.imageShrink) return L.imageShrink(file, { side: 1280 });
+    return new Promise(function (res, rej) {
+      var r = new FileReader();
+      r.onload = function () { res({ url: String(r.result || ""), name: file.name || "pasted picture", w: 0, h: 0, file: file }); };
+      r.onerror = function () { rej(r.error || new Error("could not read the picture")); };
+      r.readAsDataURL(file);
+    });
+  }
+  var pending = [], api = null, tray = null, gen = 0, stops = [];
+  var css = document.createElement("style");
+  css.textContent = ".cp-tray{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:4px 0}" +
+    ".cp-thumb{position:relative;width:76px;height:58px;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--soft)}" +
+    ".cp-thumb img{width:100%;height:100%;object-fit:cover;display:block}" +
+    ".cp-thumb .cp-x{position:absolute;top:2px;right:2px;width:20px;min-width:0;height:20px;min-height:0;padding:0;font-size:14px;line-height:18px;border-radius:10px;background:rgba(255,255,255,.92)}" +
+    ".cp-hint{font-size:13px}" +
+    ".cp-sent{margin:4px 0 6px auto;max-width:92%;text-align:right}" +
+    ".cp-sent img{max-width:180px;max-height:120px;border:1px solid var(--line);border-radius:8px;margin-left:6px;vertical-align:top}" +
+    ".cp-sent .cp-row{display:flex;gap:8px;justify-content:flex-end;align-items:center;flex-wrap:wrap;font-size:12px;margin-top:3px}" +
+    ".cp-sent .cp-row button{font-size:12px;min-height:0;padding:2px 8px}" +
+    ".cp-drop{outline:2px dashed var(--accent);outline-offset:-4px}";
+  document.head.appendChild(css);
+  function sees() { return !!(L.ai && L.ai.canSee && L.ai.canSee()); }
+  // until Lantern has asked the server what it is, a picture waits
+  function settled() { return !L.ai || !L.ai.server || !!L.ai.server.checked; }
+  function live() { return !!(api && api.input && document.body && document.body.contains(api.input)); }
+
+  function note(text, cls) { if (api && api.note) api.note(text, cls || "muted"); }
+  function toReader(files) {
+    var TR = L.textReader;
+    if (TR && TR.chatAttach && api) {
+      note("The AI in use cannot see pictures, so Lantern\u2019s Text Reader reads the text in " + (files.length === 1 ? "it" : "them") +
+        " instead; your questions then get passages from that text. (A model that sees images is shown as \u201csees images\u201d at the top of Chat.)");
+      return TR.chatAttach(api, files);
+    }
+    note("The AI in use cannot see pictures, and Text Reader is not in this copy of Lantern, so the picture was not used.", "danger");
+    return Promise.resolve();
+  }
+  async function add(files) {
+    files = (files || []).filter(function (f) { return f && /^image\x2F/i.test(f.type || "image/"); });
+    if (!files.length || !api) return;
+    var room = MAXN - pending.length;
+    if (room <= 0) { note("Chat takes up to " + MAXN + " pictures with one message."); return; }
+    files = files.slice(0, room);
+    if (settled() && !sees()) return toReader(files);
+    if (api.status) api.status("preparing the picture\u2026");
+    for (var i = 0; i < files.length; i++) {
+      try { pending.push(await shrink(files[i])); } catch (e) { note("Lantern could not use that picture: " + (e.message || e), "danger"); }
+    }
+    if (api.status) api.status("");
+    paint();
+    try { api.input.focus(); } catch (e) { }
+  }
+  function paint() {
+    if (api && api.input) api.input.setAttribute("placeholder", pending.length ? "Ask about the picture\u2026" : "Ask\u2026");
+    if (!tray) return;
+    tray.innerHTML = "";
+    tray.style.display = pending.length ? "" : "none";
+    pending.forEach(function (p, i) {
+      tray.appendChild(el("div", { "class": "cp-thumb", title: p.name + (p.w ? " (" + p.w + "\u00d7" + p.h + ")" : "") }, [
+        el("img", { src: p.url, alt: p.name }),
+        el("button", { "class": "cp-x", text: "\u00d7", title: "Remove", "aria-label": "Remove " + p.name, onclick: function () { pending.splice(i, 1); paint(); } })
+      ]));
+    });
+    if (pending.length) tray.appendChild(el("div", { "class": "cp-hint muted", text: "Goes with your next message" + (sees() ? " \u2014 the AI sees pictures." : ".") }));
+  }
+  // what the conversation shows once the pictures are sent
+  function sent(list) {
+    var my = ++gen, b = el("div", { "class": "cp-sent" });
+    list.forEach(function (p) { b.appendChild(el("img", { src: p.url, alt: p.name, title: p.name })); });
+    stops.forEach(function (s) { if (!s.disabled) { s.disabled = true; s.textContent = "Replaced by a newer picture"; } });
+    var stop = el("button", { text: "Stop showing it", title: "Later questions are sent without this picture", onclick: function () {
+      if (my === gen && L.CHAT && L.CHAT.forgetPictures) L.CHAT.forgetPictures();
+      stop.disabled = true; stop.textContent = "Not shown any more";
+    } });
+    stops.push(stop);
+    b.appendChild(el("div", { "class": "cp-row" }, [el("span", { "class": "muted", text: "The AI sees this with your question and the ones after it." }), stop]));
+    return b;
+  }
+  PICS.push({ id: "pictures", take: async function () {
+    if (!pending.length) return [];
+    var list = pending.slice();
+    pending = []; paint();
+    if (!sees()) { await toReader(list.map(function (p) { return p.file; })); return []; }
+    if (api && api.node) api.node(sent(list));
+    return list.map(function (p) { return { url: p.url, name: p.name }; });
+  } });
+
+  // paste anywhere while Chat is open; text pastes as usual
+  function filesOf(dt) {
+    var out = [], i;
+    if (!dt) return out;
+    if (dt.items && dt.items.length) for (i = 0; i < dt.items.length; i++) {
+      var it = dt.items[i];
+      if (it && it.kind === "file" && /^image\x2F/i.test(it.type || "")) { var f = it.getAsFile && it.getAsFile(); if (f) out.push(f); }
+    }
+    if (!out.length && dt.files) for (i = 0; i < dt.files.length; i++) if (/^image\x2F/i.test(dt.files[i].type || "")) out.push(dt.files[i]);
+    return out;
+  }
+  document.addEventListener("paste", function (e) {
+    if (!live()) return;
+    var fs = filesOf(e.clipboardData || window.clipboardData);
+    if (!fs.length) return;
+    if (e.preventDefault) e.preventDefault();
+    add(fs);
+  });
+  TOOLS.push({ label: "\ud83d\uddbc", title: "Show the AI a picture or screenshot (or paste one with Ctrl+V)",
+    init: function (a) {
+      var mine = el("div", { "class": "cp-tray", style: "display:none", "aria-label": "Pictures for the next message" });
+      api = a; tray = mine;
+      // Chat adds its input row after the tools are set up; each Chat page
+      // gets its own tray and drop target, once
+      setTimeout(function () {
+        var row = a && a.input ? a.input.parentNode : null, wrap = row ? row.parentNode : null;
+        if (!wrap || wrap.getAttribute("data-cp")) return;
+        wrap.setAttribute("data-cp", "1");
+        wrap.insertBefore(mine, row);
+        wrap.addEventListener("dragover", function (e) { if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], "Files") >= 0) { e.preventDefault(); wrap.classList.add("cp-drop"); } });
+        wrap.addEventListener("dragleave", function () { wrap.classList.remove("cp-drop"); });
+        wrap.addEventListener("drop", function (e) {
+          wrap.classList.remove("cp-drop");
+          var fs = filesOf(e.dataTransfer);
+          if (!fs.length) return;
+          e.preventDefault();
+          add(fs);
+        });
+        paint();
+      }, 0);
+    },
+    run: function (a) {
+      api = a;
+      var inp = el("input", { type: "file", accept: "image/*", multiple: "multiple", style: "display:none" });
+      inp.onchange = function () { if (inp.files && inp.files.length) add(Array.prototype.slice.call(inp.files)); };
+      document.body.appendChild(inp); inp.click();
+      setTimeout(function () { if (inp.parentNode) inp.parentNode.removeChild(inp); }, 60000);
+    } });
+  window.Lantern.chatPics = { add: add, pending: function () { return pending.slice(); }, clear: function () { pending = []; paint(); }, shrink: shrink, sees: sees };
+})();
+// ===========================================================================
+// MODULE: CHAT_PICTURES - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SUITE_PANEL - START
+// Depends: SUITE_INDEX, SUITE_SEARCH (Lantern.suite); AI_APP's hook
+//          Lantern.aiPanels -- feature-detected
+// Exports: (an AI app section, "What the AI can reach")
+// ===========================================================================
+// The running list, for the person: everything Chat's AI can find with
+// MODULES and read with LESSON, searchable, each row opening its tile,
+// lesson or guide, and saved as a text file (the same list tools/catalog.js
+// writes to docs/Lantern_AI_Catalog.txt for the repository). It also names
+// registered formula functions the AI is not told about yet.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.el || !L.suite || !L.suite.entries || !L.suite.search) return;
+  var S = L.suite, el = L.el;
+  var P = window.Lantern.aiPanels = window.Lantern.aiPanels || [];
+  P.push({ id: "reach", title: "What the AI can reach", order: 27, render: function (box) {
+    var head = el("p", {}), warn = el("p", { "class": "muted" });
+    var inp = el("input", { placeholder: "Search tiles, lessons, functions\u2026", "aria-label": "Search what the AI can reach", style: "flex:1;min-width:160px" });
+    var kind = el("select", { "aria-label": "Show only" });
+    kind.appendChild(el("option", { value: "", text: "Everything" }));
+    S.order.forEach(function (k) { kind.appendChild(el("option", { value: k, text: S.kinds[k] })); });
+    var list = el("div", { "class": "list", style: "margin-top:6px;max-height:380px;overflow:auto" }), foot = el("p", { "class": "muted", style: "font-size:13px" });
+    function paint() {
+      S.entries();
+      head.textContent = "Chat\u2019s AI reads this list live from Lantern\u2019s modules: " + S.summary() + ". It asks for a topic with MODULES: <topic> and reads a lesson with LESSON: <words>. Whatever a new module adds (a tile, a lesson, a function, a command) appears here and in Chat by itself.";
+      warn.textContent = S.undescribed && S.undescribed.length ? S.undescribed.length + " registered formula function" + (S.undescribed.length === 1 ? " is" : "s are") +
+        " not described to the AI yet (add a line for each to ASSIST_CATALOG): " + S.undescribed.join(" ") : "";
+      var q = inp.value.replace(/^\s+|\s+$/g, ""), k = kind.value, only = null, rows;
+      if (k) { only = {}; only[k] = 1; }
+      rows = q ? S.search(q, { kinds: only, max: 80, keepMeta: true }).map(function (h) { return h.e; }) : S.entries().filter(function (e) { return !k || e.kind === k; });
+      list.innerHTML = "";
+      rows.slice(0, 250).forEach(function (e) {
+        var sub = (S.kinds[e.kind] || e.kind).replace(/s$/, "") + (e.appName && e.kind !== "tile" ? " \u00b7 " + e.appName : "") + (e.desc ? " \u00b7 " + e.desc : "");
+        list.appendChild(el("div", { "class": "item", style: e.open ? "cursor:pointer" : "", onclick: function () { if (e.open) { try { e.open(); } catch (x) { } } } }, [
+          el("div", { "class": "grow" }, [el("div", { "class": "t", text: e.title }), el("div", { "class": "s", text: sub.length > 160 ? sub.slice(0, 157) + "\u2026" : sub })])
+        ]));
+      });
+      foot.textContent = rows.length ? (rows.length > 250 ? "Showing 250 of " + rows.length + "." : rows.length + " shown.") + " Tap one to open it." : "Nothing matches.";
+    }
+    inp.addEventListener("input", paint);
+    kind.addEventListener("change", paint);
+    box.appendChild(head);
+    box.appendChild(warn);
+    box.appendChild(el("div", { "class": "row", style: "flex-wrap:wrap" }, [inp, kind,
+      el("button", { text: "Save the list", title: "Save everything the AI can reach as a text file", onclick: function () { L.download("lantern-ai-catalog.txt", S.dump()); } })]));
+    box.appendChild(list);
+    box.appendChild(foot);
+    paint();
+  } });
+})();
+// ===========================================================================
+// MODULE: SUITE_PANEL - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: GUIDE_SUITE - START
+// Depends: GUIDE (Lantern.guide.append) -- feature-detected
+// Exports: (none) -- adds Chat and AI help sections on the catalog,
+//          LESSON / MODULES and pictures
+// ===========================================================================
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.guide || !L.guide.append) return;
+  L.guide.append("chat", [
+    ["Lantern\u2019s own lessons and tiles", "<p>The AI knows every tile, lesson, help guide, formula function, recipe card and command in this copy of Lantern, because it reads them from the modules themselves. A practical question (\u201chow would I raise goats?\u201d) gets passages from Lantern\u2019s own lessons first, checked like library passages, with a link to open each lesson; if they do not cover it, the encyclopedia is read as before. A question about Lantern (\u201cwhat can you do?\u201d, \u201cis there a farming module?\u201d) gets Lantern\u2019s real catalog, with a button for each tile and lesson.<\u002Fp>" +
+      "<p>The AI may also ask for these itself: <code>LESSON: goat milking<\u002Fcode> reads lessons, <code>MODULES: farming<\u002Fcode> lists what Lantern has on a topic, and <code>MODULES<\u002Fcode> alone lists everything. A tile or lesson added later (or activated in the Forge) is found the same way, with nothing to update. The AI app\u2019s <b>What the AI can reach<\u002Fb> section shows the whole list.<\u002Fp>"],
+    ["Pictures and screenshots (\ud83d\uddbc)", "<p>Paste a screenshot into Chat (<b>Ctrl+V<\u002Fb>, or long-press and Paste on a phone), drop a picture on it, or pick one with \ud83d\uddbc; it waits above the message box and goes with your next message (up to three). When the model can see \u2014 shown as \u201csees images\u201d at the top of Chat, the laptop kit\u2019s models with their vision part \u2014 it gets the picture itself, and keeps seeing it for later questions until you tap <b>Stop showing it<\u002Fb> or give another. When it cannot see, Text Reader reads the text in the picture and Chat answers from that, as with \ud83d\udcc4.<\u002Fp>"]
+  ]);
+  L.guide.append("ai", [
+    ["What the AI can reach", "<p>This section lists everything Chat\u2019s AI can find in Lantern, read live from the modules: tiles, lessons, help guides, formula functions, recipe cards, flashcard decks, templates, Compose tasks and Chat commands. Search it, tap a row to open it, or <b>Save the list<\u002Fb> as a text file. If a module registers a formula function that the AI\u2019s tool list (ASSIST_CATALOG) does not describe yet, it is named here so it can be added.<\u002Fp>" +
+      "<p>For module authors: a module that adds a lesson with <code>Lantern.mathLessons.add(key, title, html, {app: \u201cfarming\u201d})<\u002Fcode>, a guide, a function or a recipe card is in the list automatically; anything else can join with <code>Lantern.suiteEntries.push({kind, id, title, app, desc, text, open})<\u002Fcode>, and a new Chat command with <code>Lantern.chatCommands<\u002Fcode> (its <code>usage<\u002Fcode> line is listed for the AI).<\u002Fp>"]
+  ]);
+})();
+// ===========================================================================
+// MODULE: GUIDE_SUITE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SUITE_BENCH_DATA - START
+// Depends: AI_BENCH_DATA (Lantern.aiBenchQuestions, created here if absent);
+//          ASSIST_CHAT (Lantern.CHAT.converse) and SUITE_CHAT at run time
+// Exports: (none) -- adds 4 "chat" conversations about Lantern's own tiles
+//          and lessons to Lantern Bench
+// ===========================================================================
+// From the 1.10.0 transcript where the 35B did not know the suite it runs
+// in: "what are your capabilities" (answered from memory), "does Lantern
+// have a farming module" (answered no), "how would I start a farm and raise
+// goats" (Not in my library). The fourth needs the AI to ask for a lesson
+// itself: nothing in the question looks like a how-to. Graded on the last
+// turn; none needs the encyclopedia.
+(function () {
+  var Q = window.Lantern.aiBenchQuestions = window.Lantern.aiBenchQuestions || [];
+  function last(t) { return t[t.length - 1]; }
+  function text(r) { return String(r.final || ""); }
+  function readLessons(r) { return r.searches.some(function (s) { return s.how === "lessons"; }); }
+  [
+    { id: "suite-capabilities", turns: ["What are your capabilities?"],
+      check: function (t) {
+        var r = last(t), x = text(r), L = window.Lantern, named = 0;
+        if (!r.catalog) return "Chat did not give the AI Lantern\u2019s catalog";
+        if (r.declined) return "answered \u201cNot in my library\u201d";
+        (L.order || []).forEach(function (id) {
+          var nm = String(L.apps[id].name || "").replace(/[^A-Za-z ]/g, "");
+          if (nm.length > 2 && new RegExp("\\b" + nm + "\\b", "i").test(x)) named++;
+        });
+        return named >= 3 ? "" : "named " + named + " of Lantern\u2019s tiles (3 or more wanted)";
+      } },
+    { id: "suite-farming-module", turns: ["Does Lantern have a farming module that can be accessed?"],
+      check: function (t) {
+        var r = last(t), x = text(r);
+        if (!r.catalog) return "Chat did not give the AI Lantern\u2019s catalog";
+        if (/\b(no|not|doesn\x27t|lacks?)\b[^.]*\bfarming (module|tile|app)/i.test(x) && !/^\W*yes\b/i.test(x)) return "said Lantern has no farming module";
+        return /\bfarming\b/i.test(x) ? "" : "did not name the Farming tile";
+      } },
+    { id: "suite-goats", turns: ["How would I start a farm and raise goats?"],
+      check: function (t) {
+        var r = last(t);
+        if (!readLessons(r)) return "Chat did not give the AI Lantern\u2019s own lessons";
+        if (r.declined) return "answered \u201cNot in my library\u201d";
+        if (!(r.sources || []).some(function (s) { return s.key === "hus_goats"; })) return "the goats lesson was not among the passages";
+        return r.backed >= 1 ? "" : "no sentence backed by a lesson passage";
+      } },
+    { id: "suite-asks-for-lesson", turns: ["My hens have stopped laying eggs. What could be wrong?"],
+      check: function (t) {
+        var r = last(t);
+        if (!readLessons(r)) return "the AI did not ask for Lantern\u2019s lessons (LESSON:)";
+        if (r.declined) return "answered \u201cNot in my library\u201d";
+        return r.backed >= 1 ? "" : "no sentence backed by a lesson passage";
+      } }
+  ].forEach(function (x) {
+    x.cat = "chat"; x.q = x.turns.join(" \u2192 ");
+    if (!Q.some(function (y) { return y.id === x.id; })) Q.push(x);
+  });
+})();
+// ===========================================================================
+// MODULE: SUITE_BENCH_DATA - END
 // ===========================================================================
 </script>
 
