@@ -254,7 +254,7 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
 
   // --- the bench: make questions ---
   var Q = L.aiBenchQuestions.filter(function (q) { return q.cat === "make"; });
-  ok("twelve make questions, three quick", Q.length === 12 && Q.filter(function (q) { return q.quick; }).length === 3);
+  ok("thirteen make questions, three quick", Q.length === 13 && Q.filter(function (q) { return q.quick; }).length === 3);
   function gradeWith(id, reply) {
     var item = Q.filter(function (q) { return q.id === id; })[0];
     return L.aiBench.grade(item, reply, { made: act.build(reply, item.q) });
@@ -283,6 +283,36 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   ok("bench path: a slip goes back once, the fix passes", res.rounds === 2 && res.kind === "questioned" && res.fixed && g.pass, { rounds: res.rounds, why: g.why });
   var sm = L.aiBench.summary([{ cat: "make", pass: true, ms: 1 }, { cat: "make", pass: false, ms: 1 }, { cat: "tool", pass: true, ms: 1 }]);
   ok("bench summary keeps things made apart", sm.make.n === 2 && sm.make.pass === 1 && sm.core.n === 1);
+  // --- 1.12.5: Ohm's law in parallel, from Adam's Chat with a 35B ---
+  var par = blk("SCHEMATIC", "Ohm's Law Parallel Circuit", ["mode electrical", "part V1 source \"12 V\"", "part R1 resistor \"4 ohm\"", "part R2 resistor \"6 ohm\"",
+    "part R3 resistor \"12 ohm\"", "part J1 junction \"\"", "wire V1 J1", "wire J1 R1", "wire J1 R2", "wire J1 R3", "wire R1 V1", "wire R2 V1", "wire R3 V1"]);
+  var pr = act.build(par, "");
+  ok("a junction is folded into the wires: three resistors across the source, one under another like a ladder", pr.ok && pr.plan.parts.length === 4 &&
+    !pr.plan.parts.some(function (x) { return x.type === "junction"; }) && pr.plan.wires.length === 6 && /4 parts, 6 connections, a closed loop/.test(pr.summary), pr.problems || pr.summary);
+  var met = act.build(blk("SCHEMATIC", "Meters", ["part V1 battery \"12 V\"", "part A1 ammeter", "part R1 resistor \"6 ohm\"", "part M1 volt meter",
+    "wire V1 A1", "wire A1 R1", "wire R1 V1", "wire R1 M1", "wire M1 R1",
+    "note I = V / R = 12 / 6 = {=12/6} A", "note Rt = {=1/(1/4+1/6+1/12)} ohm"]), "");
+  ok("an ammeter and a voltmeter; notes with {= ...} worked out by Lantern", met.ok && met.plan.parts.map(function (x) { return x.type; }).join() === "battery,ammeter,resistor,voltmeter" &&
+    met.plan.notes.join(" | ") === "I = V / R = 12 / 6 = 2 A | Rt = 2 ohm", met.problems || met.plan && met.plan.notes);
+  ok("a note that cannot be worked out is sent back", /could not be worked out/.test(act.build(blk("SCHEMATIC", "x", ["part V1 battery", "part R1 resistor", "wire V1 R1", "wire R1 V1", "note R = {=12/}"]), "").problems.join()));
+  ok("Draw's Electrical symbols have the meters too", (L.drawModes.filter(function (m) { return m.id === "electrical"; })[0].symbols || []).filter(function (x) { return /^(Ammeter|Voltmeter)$/.test(x.label); }).length === 2);
+  ok("the AI is told about notes, meters and redrawing", /note <text>/.test(act.prompt("draw a circuit with a battery")) && /ammeter, voltmeter/.test(act.prompt("draw a circuit with a battery")) &&
+    /reply with the whole MAKE SCHEMATIC block again/.test(act.prompt("draw a circuit with a battery")));
+  // the follow-up: "The picture needs the formula ..." -- the 35B worked the
+  // numbers out with = lines; they come from its own schematic above, and
+  // each branch current is in its answer, so nothing is questioned now
+  var said3 = [], conv3 = await L.CHAT.converse(["draw an electrical schematic that demonstrates ohm's law in parallel",
+    "The picture needs the formula with the circuit resistances shown for education"], { call: function (m) {
+    var last = String(m[m.length - 1].content); said3.push(last);
+    if (/ohm\x27s law in parallel/i.test(last)) return Promise.resolve(par);
+    return Promise.resolve("To add the formula:\n=12 / 4\n=12 / 6\n=12 / 12\n=1 / 4 + 1 / 6 + 1 / 12\n=1 / ANS\n=12 * ANS\n" +
+      "ANSWER: The total resistance is 2 ohms, with branch currents of 3 A, 2 A, and 1 A respectively.");
+  } });
+  var tq = conv3.turns[1];
+  ok("the follow-up's numbers come from the schematic made earlier: not questioned, no NEED, no library", said3.length === 2 && !tq.stillDoubt && !(tq.searches || []).length &&
+    /2 ohms/.test(tq.final), { n: said3.length, doubt: tq.stillDoubt, searches: tq.searches, final: tq.final });
+  ok("a NEED about a voltage source is not a call for the encyclopedia", !L.assist.needLibrary("What voltage source and resistor values should be used for the parallel circuit demonstration?") &&
+    L.assist.needLibrary("I need factual data from the offline encyclopedia") && L.assist.needLibrary("Which reliable sources give the figure?"));
   ok("no errors after all that", errs.length === 0, errs);
 
   console.log(fails ? fails + " AI ACTION FAILURES (" + passes + " passed)" : "ALL AI ACTION TESTS PASS (" + passes + ")");

@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.12.5 — Ohm's law in parallel: a clean ladder, meters, formulas on the picture (2026-10-22)
+
+From Adam's Chat with the 35B.
+- "Draw an electrical schematic that demonstrates Ohm's law in parallel":
+  the first block used an ammeter, which Lantern did not have. The
+  corrected one put three resistors on a junction, and that drew as a
+  tangle.
+- "The picture needs the formula with the circuit resistances shown": the
+  AI worked the values out with = lines. Lantern questioned numbers that
+  came from the AI's own schematic. The AI then asked NEED for the
+  voltage, and "voltage source" sent Lantern to the encyclopedia ("Not in
+  my library").
+
+What changed:
+- **Junctions folded into the wires** (new AI_SCHEMATIC_MORE). What flows
+  into a junction is wired to what flows out of it, so the three
+  resistors hang one under another like a ladder (the join keeps its
+  dot). A part in parallel now hangs under a load rather than under the
+  source.
+- **Ammeter and voltmeter.** They are schematic parts ("ammeter", "amp
+  meter", "voltmeter", "multimeter") and new symbols in Draw's Electrical
+  mode.
+- **note lines.** `note <text>` puts a line of text under the drawing (a
+  formula or values for teaching). Each `{= ...}` in it is worked out by
+  Lantern's formula engine, so the numbers on the picture are computed,
+  not typed. A note that cannot be worked out is sent back. The AI is
+  told it can redraw with notes.
+- **Checks.**
+  - Numbers in a MAKE block made earlier in the chat count as given.
+  - A step whose value the answer states counts as used.
+  - A NEED counts as a call for the encyclopedia only for "sources of
+    facts", not for a voltage source.
+- **Bench**: a 13th make question, a parallel circuit for a lesson with
+  the total resistance shown on the picture (2 ohm).
+- **Tests.** The Ohm's-law conversation replayed: the junction folded,
+  meters, notes, and the follow-up not questioned, with no NEED and no
+  library. The Project Context gate passes: 300 modules, 0 errors, 44
+  size warnings. 81 AI modules are isolated.
+
 ## 1.12.4 — The AI knows it can make documents and PDFs, also in a follow-up (2026-10-22)
 
 From Adam's next Chat. He pasted the manual picture and asked to "fix the
