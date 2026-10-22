@@ -41,6 +41,10 @@ question.
   - The AI is told which words Text Reader was unsure of.
   - "Yes" and "no" no longer need a quote that says them. This removes the
     false "no quote says yes" warning.
+- **New modules** TEXT_READER_CHECK (the word repairs and confidence) and
+  TEXT_READER_MISREAD (the "May be misread" note). Both are split out to
+  keep TEXT_READER_WORDS and TEXT_READER_VIEW small. The Project Context
+  gate passes: 296 modules, 0 errors, 44 size warnings.
 - **Tests.** Two upside-down skewed screenshots were added to the browser
   test (limits 2% and 2.5%), plus checks for the word repairs, the
   confidence rules and the Chat question about the document.

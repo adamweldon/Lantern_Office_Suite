@@ -26644,7 +26644,8 @@ Lantern.RFB = (function () {
 // Depends: TEXT_READER_GLYPHS (Lantern.textReader) -- feature-detected
 // Exports: Lantern.textReader.words = {model() -> {vocab, tri}, learn(words),
 //          decode(cands, line) -> {text, score, alts, known}, known(word),
-//          near(word) -> a known word one or two letters away, check(reading)}
+//          plaus(word), learned() -> {word: count}} (near and check are added
+//          by TEXT_READER_CHECK)
 // ===========================================================================
 // Text Reader, step 4: which word is it? Each letter arrives with its few
 // closest shapes (l, I and 1 look alike; so do O and 0, rn and m). Lantern
@@ -26815,6 +26816,29 @@ Lantern.RFB = (function () {
     return { text: best.s, score: best.t, conf: Math.round(conf * 100) / 100, alts: beam.slice(1, 4).map(function (b) { return b.s; }),
       known: !!known(best.s.replace(/[^A-Za-z\x27]/g, "")), vis: vis };
   }
+  TR.words = { P: P, model: model, known: known, plaus: plaus, learned: function () { return extra; }, learn: learn, decode: decode, sense: sense, UNITS: UNITS,
+    reset: function () { M = null; extra = {}; if (TR.words.onReset) TR.words.onReset(); } };
+})();
+// ===========================================================================
+// MODULE: TEXT_READER_WORDS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: TEXT_READER_CHECK - START
+// Depends: TEXT_READER_WORDS (Lantern.textReader.words) -- feature-detected
+// Exports: Lantern.textReader.words.near(word), .check(reading) (TEXT_READER
+//          calls check on each word it reads, when it is there)
+// ===========================================================================
+// Text Reader, step 4b (1.12.1): an honest look at each word read. Screen
+// print turned and blurred runs letters together; the shapes can then fit a
+// wrong reading well. Here a word is repaired when the repair makes a word
+// Lantern knows (wIll -> will, m&e -> mode), its spaces are put back when it
+// is three or more everyday words run together, and what is still doubtful
+// is not called sure: a mark inside a word, a digit among letters, or a near
+// miss of a known word whose letters fit poorly (offered as .near).
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.textReader || !L.textReader.words) return;
+  var WD = L.textReader.words;
   // near(word) -> the most common known word one letter away (two for a
   // word of 7 or more), or "": "seleced" is near selected, "flmction" near
   // function, "solenoid" near nothing it could be mistaken for (1.12.1)
@@ -26822,7 +26846,7 @@ Lantern.RFB = (function () {
   function near(w) {
     w = String(w).toLowerCase();
     if (nearMemo.hasOwnProperty(w)) return nearMemo[w];
-    var v = model().vocab, n = w.length, maxd = n >= 7 ? 2 : 1, best = "", bd = 9, bc = 0, L2, k, i;
+    var v = WD.model().vocab, extra = WD.learned(), n = w.length, maxd = n >= 7 ? 2 : 1, best = "", bd = 9, bc = 0, L2, k, i;
     if (!byLen) { byLen = {}; Object.keys(v).forEach(function (x) { if (v[x] >= 2) (byLen[x.length] = byLen[x.length] || []).push(x); }); }
     for (L2 = n - maxd; L2 <= n + maxd; L2++) (byLen[L2] || []).concat(Object.keys(extra).filter(function (x) { return x.length === L2; })).forEach(function (x) {
       var d = dist(w, x, maxd), c = v[x] || extra[x] || 0;
@@ -26867,7 +26891,7 @@ Lantern.RFB = (function () {
         for (var mask = 0; mask < 1 << at.length; mask++) {
           var ch = core.split("");
           at.forEach(function (p, k) { ch[p] = mask & 1 << k ? "l" : "i"; });
-          var wd = ch.join(""), sc = known(wd) ? 10 + Math.log(1 + known(wd)) : plaus(wd);
+          var wd = ch.join(""), sc = WD.known(wd) ? 10 + Math.log(1 + WD.known(wd)) : WD.plaus(wd);
           if (sc > bestS) { bestS = sc; bestW = wd; }
         }
         core = swap(r, core, bestW, bestS >= 10 ? 0.85 : 0.6);
@@ -26876,14 +26900,14 @@ Lantern.RFB = (function () {
     // m&e, \u03a9ne: the mark was two letters touching, when that makes a word
     var mk = /^([A-Za-z]*)([&\u03a9])([A-Za-z]+)$/.exec(core);
     if (mk && (mk[1] || mk[2] === "\u03a9")) {
-      var fills = FILL[mk[2]].map(function (f) { return mk[1] + f + mk[3]; }).filter(function (x) { return known(x); });
+      var fills = FILL[mk[2]].map(function (f) { return mk[1] + f + mk[3]; }).filter(function (x) { return WD.known(x); });
       if (fills.length) { swap(r, core, fills[0], 0.6); return r; }
     }
     if (ODD.test(core)) { r.conf = Math.min(r.conf, 0.4); r.odd = true; return r; }
     // a digit between letters (n1ode, c0de) is a look-alike more often than
     // a part number
     if (/[A-Za-z][0-9]+[A-Za-z]/.test(core)) r.conf = Math.min(r.conf, 0.6);
-    if (/^[A-Za-z]{4,}$/.test(core) && core !== core.toUpperCase() && !known(core)) {
+    if (/^[A-Za-z]{4,}$/.test(core) && core !== core.toUpperCase() && !WD.known(core)) {
       // (only when the letters themselves fit poorly: a clean word that is
       // simply not among Lantern's words -- bolts, chassis -- is left alone)
       var nw = r.vis >= 0.09 ? near(core) : "", parts = nw ? null : runs(core.toLowerCase());
@@ -26908,7 +26932,7 @@ Lantern.RFB = (function () {
   var SHORT = /^(a|an|as|at|be|by|do|go|he|if|in|is|it|me|my|no|of|on|or|so|to|up|us|we)$/;
   function runs(w) {
     if (w.length < 7) return null;
-    var v = model().vocab, best = [[]], i, j;
+    var v = WD.model().vocab, extra = WD.learned(), best = [[]], i, j;
     for (i = 1; i <= w.length; i++) {
       best[i] = null;
       for (j = Math.max(0, i - 18); j < i; j++) {
@@ -26918,10 +26942,12 @@ Lantern.RFB = (function () {
     }
     return best[w.length] && best[w.length].length > 2 ? best[w.length] : null;
   }
-  TR.words = { P: P, model: model, known: known, plaus: plaus, near: near, check: check, learn: learn, decode: decode, sense: sense, UNITS: UNITS, reset: function () { M = null; extra = {}; nearMemo = {}; byLen = null; } };
+  WD.near = near;
+  WD.check = check;
+  WD.onReset = function () { nearMemo = {}; byLen = null; };
 })();
 // ===========================================================================
-// MODULE: TEXT_READER_WORDS - END
+// MODULE: TEXT_READER_CHECK - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: TEXT_READER - START
@@ -28651,21 +28677,8 @@ Lantern.RFB = (function () {
     var ta = el("textarea", { "class": "tr-text", "aria-label": "Text of page " + p.n, spellcheck: "true" });
     ta.value = p.text || "";
     box.appendChild(ta);
-    // words that look misread: one or two letters from a word Lantern knows
-    // (1.12.1); one tap puts the known words in, then Keep my corrections
-    var sus = [];
-    if (p.read && p.read.blocks && !p.own) p.read.blocks.forEach(function (b) { b.lines.forEach(function (l) { l.words.forEach(function (w) {
-      var core = String(w.text).replace(/^[^A-Za-z]+|[^A-Za-z]+$/g, "");
-      if (w.near && core && sus.every(function (x) { return x[0] !== core; })) sus.push([core, w.near]);
-    }); }); });
-    if (sus.length) {
-      var sp = el("p", { "class": "muted", style: "margin:4px 0" }, [el("span", { text: "May be misread: " + sus.slice(0, 12).map(function (x) { return x[0] + " \u2192 " + x[1]; }).join(", ") + (sus.length > 12 ? " \u2026 " : " ") })]);
-      sp.appendChild(el("button", { text: "Use these", title: "Put the suggested words into the text (then Keep my corrections)", onclick: function () {
-        sus.forEach(function (x) { ta.value = ta.value.replace(new RegExp("\\b" + x[0] + "\\b", "g"), x[1]); });
-        sp.parentNode.removeChild(sp);
-      } }));
-      box.appendChild(sp);
-    }
+    // words that look misread, with one tap to fix them (TEXT_READER_MISREAD)
+    if (TR.misread) { var mr = TR.misread(p, ta); if (mr) box.appendChild(mr); }
     var msg = el("span", { "class": "muted", style: "margin-left:8px" });
     var row = el("div", { "class": "row", style: "flex-wrap:wrap;margin-top:6px" }, [
       el("button", { text: "Keep my corrections", onclick: function () {
@@ -28710,6 +28723,41 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: TEXT_READER_VIEW - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: TEXT_READER_MISREAD - START
+// Depends: TEXT_READER_CHECK (the words' .near), CORE (Lantern.el) --
+//          feature-detected
+// Exports: Lantern.textReader.misread(page, textarea) -> element or null
+//          (TEXT_READER_VIEW shows it under a page's text)
+// ===========================================================================
+// "May be misread: flmction -> function, unic -> unit  [Use these]": the
+// words Text Reader read that are one or two letters from a word Lantern
+// knows, and whose letters fit poorly. One tap puts the known words into the
+// page's text; Keep my corrections then teaches them (1.12.1).
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.el || !L.textReader) return;
+  var el = L.el;
+  L.textReader.misread = function (p, ta) {
+    var sus = [];
+    if (p.read && p.read.blocks && !p.own) p.read.blocks.forEach(function (b) { b.lines.forEach(function (l) { l.words.forEach(function (w) {
+      var core = String(w.text).replace(/^[^A-Za-z]+|[^A-Za-z]+$/g, "");
+      if (w.near && core && sus.every(function (x) { return x[0] !== core; })) sus.push([core, w.near]);
+    }); }); });
+    if (sus.length) {
+      var sp = el("p", { "class": "muted", style: "margin:4px 0" }, [el("span", { text: "May be misread: " + sus.slice(0, 12).map(function (x) { return x[0] + " \u2192 " + x[1]; }).join(", ") + (sus.length > 12 ? " \u2026 " : " ") })]);
+      sp.appendChild(el("button", { text: "Use these", title: "Put the suggested words into the text (then Keep my corrections)", onclick: function () {
+        sus.forEach(function (x) { ta.value = ta.value.replace(new RegExp("\\b" + x[0] + "\\b", "g"), x[1]); });
+        sp.parentNode.removeChild(sp);
+      } }));
+      return sp;
+    }
+    return null;
+  };
+})();
+// ===========================================================================
+// MODULE: TEXT_READER_MISREAD - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: TEXT_READER_APP - START
