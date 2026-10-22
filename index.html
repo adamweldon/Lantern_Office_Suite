@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.12.4 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.12.5 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -173,7 +173,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.12.4",
+  version: "1.12.5",
   apps: {},
   order: []
 };
@@ -16333,7 +16333,8 @@ Lantern.RFB = (function () {
   // than a number from the person ("NEED: specific factual data from the
   // offline encyclopedia..." -- a Chat transcript, 1.9.3).
   A.needLibrary = function (need) {
-    return !!need && /\b(encyclop(a)?edia|library|look ?up|wikipedia|factual data|reference (text|data)|sources?)\b/i.test(String(need));
+    // ("sources" only as sources of facts: a voltage source is a part, 1.12.5)
+    return !!need && /\b(encyclop(a)?edia|library|look ?up|wikipedia|factual data|reference (text|data)|(reliable|factual|reference|information|data|outside|external|trusted) sources?|sources? of (information|data|facts))\b/i.test(String(need));
   };
   A.needEcho = function (need, question) {
     if (!need || /\d/.test(String(question || ""))) return false;
@@ -17278,6 +17279,10 @@ Lantern.RFB = (function () {
     // counts by its text; Lantern's own drawing shown to the AI does not).
     var said = msgs.filter(function (m) { return m.role === "user" && !/^This is the picture Lantern drew/.test(textOf(m.content)) && !/^(TOOL RESULTS|Lantern questioned|Lantern checked|LIBRARY:|LESSONS:|LANTERN CATALOG|The LIBRARY|The LESSONS|This is not|Passage \[\d+\] says|PUZZLE RESULTS|Lantern ran your|Lantern tracks and solves|Lantern\u2019s own lessons)/.test(textOf(m.content)); })
       .map(function (m) { return textOf(m.content).split("\n\n[Recipe hints]")[0].split("\n\n(Lantern:")[0].replace(LIBRE, ""); }).join("\n");
+    // what Lantern made earlier in this chat (the AI's schematic or table the
+    // person saw) is given too: its values are not invented later (1.12.5)
+    said += "\n" + msgs.filter(function (m) { return m.role === "assistant"; }).map(function (m) {
+      return (textOf(m.content).match(/^[ \t*]*MAKE [A-Za-z][\s\S]*?^[ \t]*END\b/gm) || []).join("\n"); }).join("\n");
     var rounds;
     for (rounds = 0; rounds < 6; rounds++) {   // tools or library, answer, one correction
       var reply = await call(C.trimHistory(msgs), opts.max_tokens ? { max_tokens: opts.max_tokens } : undefined);
@@ -22025,8 +22030,11 @@ Lantern.RFB = (function () {
     return "ORBITT and HOHMANNT give seconds and the question asks for " + t.asked + "s, so the last step should divide by " +
       t.want + (t.divisor === 1 ? " (the formula does not divide)" : " (the formula divides by " + t.divisor + ")");
   });
-  add("unused-step", function (question, expr) {
-    var u = unusedSteps(expr, question);
+  add("unused-step", function (question, expr, run, ctx) {
+    // a step whose value the ANSWER states is used: it reports it (branch
+    // currents 3 A, 2 A and 1 A worked out one by one -- a 35B Chat, 1.12.5)
+    var said = numbersIn(ctx && ctx.parsed && ctx.parsed.answer || "");
+    var u = unusedSteps(expr, question).filter(function (x) { return !said.some(function (n) { return Math.abs(n - x.value) <= Math.max(1e-9, Math.abs(x.value) * 0.005); }); });
     if (!u.length) return null;
     return u.map(function (x) { return "=" + x.step + " (" + (Math.round(x.value * 1e6) / 1e6) + ")"; }).join(" and ") +
       (u.length > 1 ? " are" : " is") + " worked out but never used afterwards (ANS is only the line just before; ANS1, ANS2 name earlier lines); check the arithmetic";
@@ -23798,7 +23806,8 @@ Lantern.RFB = (function () {
 // Depends: AI_ACTIONS (Lantern.aiActions hook), AI_DRAW (Lantern.aiDraw.result:
 //          preview, PNG, open in Draw), DRAW_ELECTRICAL / DRAW_HYDRAULIC /
 //          DRAW_PNEUMATIC (Lantern.drawModes symbols) -- feature-detected
-// Exports: Lantern.aiSchematic = {schematic(block), parse(block), norm(type)};
+// Exports: Lantern.aiSchematic = {schematic(block), parse(block), norm(type),
+//          PARTS, SYN, hooks: {prep, draw}} (AI_SCHEMATIC_MORE adds to them);
 //          adds the SCHEMATIC action to Lantern.aiActions
 // ===========================================================================
 // MAKE SCHEMATIC: parts and wires only -- the model says WHAT is connected,
@@ -23880,7 +23889,7 @@ Lantern.RFB = (function () {
   }
 
   function parseSchematic(block) {
-    var parts = [], byId = {}, wires = [], problems = [], mode = "";
+    var parts = [], byId = {}, wires = [], problems = [], mode = "", notes = [];
     block.lines.forEach(function (line) {
       var ws = words(line), head = ws[0] && ws[0].w ? ws[0].w.toLowerCase() : "";
       if (head === "mode") { mode = (ws[1] && ws[1].w || "").toLowerCase().replace(/s$/, "").replace(/^hydraulics$/, "hydraulic"); return; }
@@ -23899,6 +23908,9 @@ Lantern.RFB = (function () {
         for (var k = 0; k + 1 < ends.length; k++) wires.push([ends[k], ends[k + 1]]);
         return;
       }
+      // note <text>: a line of text under the drawing (AI_SCHEMATIC_MORE
+      // draws it and works out any {= ...} in it)
+      if (head === "note" || head === "text" || head === "label") { notes.push(line.replace(/^\s*\S+\s*/, "")); return; }
       problems.push("\u201c" + line + "\u201d is not a part or wire line");
     });
     if (!mode) mode = parts.some(function (p) { return FLUID[p.type] === "pneumatic"; }) ? "pneumatic" :
@@ -23926,7 +23938,7 @@ Lantern.RFB = (function () {
       var pump = parts.filter(function (p) { return p.type === "pump"; })[0], tank = parts.filter(function (p) { return p.type === "tank"; })[0];
       if (pump && tank && !problems.length && !reach(pump.id, tank.id, wires)) problems.push("the pump is not connected to the tank");
     }
-    return { mode: mode, parts: parts, byId: byId, wires: wires, problems: problems, loop: !!loop };
+    return { mode: mode, parts: parts, byId: byId, wires: wires, problems: problems, loop: !!loop, notes: notes };
   }
   function reach(a, b, wires, skip) {
     var seen = {}, stack = [a];
@@ -24056,8 +24068,11 @@ Lantern.RFB = (function () {
       if (pos[p.id] || ports(p.id).length !== 2) return;
       var n0 = find(p.id + ":0"), n1 = find(p.id + ":1");
       if (n0 === n1) return;
-      for (var j = 0; j < chain.length; j++) {
-        var y = chain[j];
+      // (a load rather than the source, when both would do: three resistors
+      // across a battery hang under one of them, 1.12.5)
+      var cands = chain.filter(function (y) { return !/^(battery|source)$/.test(byId[y].type); }).concat(chain.filter(function (y) { return /^(battery|source)$/.test(byId[y].type); }));
+      for (var j = 0; j < cands.length; j++) {
+        var y = cands[j];
         if (ports(y).length !== 2) continue;
         var y0 = find(y + ":0"), y1 = find(y + ":1");
         if (!((y0 === n0 && y1 === n1) || (y0 === n1 && y1 === n0))) continue;
@@ -24176,16 +24191,22 @@ Lantern.RFB = (function () {
     return c;
   }
 
+  // HOOKS.prep: fn(sc) before the layout (junctions folded into the wires);
+  // HOOKS.draw: fn(sc, lay, problems) after it (notes under the drawing)
+  var HOOKS = { prep: [], draw: [] };
   function schematic(block) {
     var sc = parseSchematic(block);
     if (sc.problems.length) return { problems: sc.problems, plan: null };
     if (!L.aiDraw || !L.aiDraw.result) return { problems: ["Lantern\u2019s drawing part (AI_DRAW) is missing"], plan: null };
-    var lay = layout(sc, block.title);
+    HOOKS.prep.forEach(function (f) { f(sc); });
+    var lay = layout(sc, block.title), late = [];
+    HOOKS.draw.forEach(function (f) { f(sc, lay, late); });
+    if (late.length) return { problems: late, plan: null };
     var plan = { mode: sc.mode, parts: sc.parts.map(function (p) { return { id: p.id, type: p.type, label: p.label }; }),
-      wires: sc.wires.map(function (w) { return [w[0].id, w[1].id]; }), loop: sc.loop };
+      wires: sc.wires.map(function (w) { return [w[0].id, w[1].id]; }), loop: sc.loop, notes: sc.shownNotes || [] };
     return L.aiDraw.result(lay.shapes, plan, sc.parts.length + " parts, " + sc.wires.length + " connections" + (sc.loop ? ", a closed loop" : ""), block.title, []);
   }
-  window.Lantern.aiSchematic = { schematic: schematic, parse: parseSchematic, norm: norm };
+  window.Lantern.aiSchematic = { schematic: schematic, parse: parseSchematic, norm: norm, PARTS: PARTS, SYN: SYN, hooks: HOOKS };
 
   if (!ACTS.some(function (a) { return a.id === "schematic"; })) ACTS.push({
     id: "schematic", kind: "SCHEMATIC", kinds: ["SCHEMATIC", "CIRCUIT", "DIAGRAM", "WIRING", "WIRING DIAGRAM", "CIRCUIT DIAGRAM"], title: "a schematic",
@@ -24402,6 +24423,113 @@ Lantern.RFB = (function () {
 // MODULE: AI_DRAW - END
 // ===========================================================================
 // ===========================================================================
+// MODULE: AI_SCHEMATIC_MORE - START
+// Depends: AI_SCHEMATIC (Lantern.aiSchematic: PARTS, SYN, hooks), DRAW
+//          (Lantern.drawModes, Lantern.drawSymbols, Lantern.drawShapes),
+//          FORMULA (Lantern.formula) -- all feature-detected
+// Exports: Lantern.aiSchematicMore = {fold(sc), noteText(text)} (for tests)
+// ===========================================================================
+// More for the AI's schematics (1.12.5), from a Chat where a 35B drew Ohm's
+// law in parallel:
+//  - meters: an ammeter and a voltmeter (a circle with A or V), in the
+//    schematic and in Draw's Electrical symbols;
+//  - junctions folded into the wires before the layout: "wire V1 J1, wire J1
+//    R1, wire J1 R2" is V1 feeding R1 and R2, so three resistors on one
+//    junction draw as a ladder, not a tangle (the join gets its dot anyway);
+//  - note lines: text under the drawing, for teaching -- a formula, values --
+//    with each {= ...} worked out by Lantern's formula engine, so the numbers
+//    on the picture are computed, not typed:
+//        note 1/Rt = 1/R1 + 1/R2 + 1/R3, so Rt = {=1/(1/4+1/6+1/12)} ohm
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.aiSchematic || !L.aiSchematic.PARTS) return;
+  var S = L.aiSchematic, NOTE = "#334155", INK = "#1b2430";
+  // --- meters ----------------------------------------------------------------
+  var LR40 = [[-40, 0, "L"], [40, 0, "R"]];
+  S.PARTS.electrical.ammeter = { label: "Ammeter", ports: LR40 };
+  S.PARTS.electrical.voltmeter = { label: "Voltmeter", ports: LR40 };
+  ["ammeter|amp meter|ampmeter|current meter|amperemeter", "voltmeter|volt meter|multimeter|voltage meter"].forEach(function (g, k) {
+    g.split("|").forEach(function (w) { S.SYN[w] = k ? "voltmeter" : "ammeter"; });
+  });
+  var em = (window.Lantern.drawModes || []).filter(function (m) { return m.id === "electrical"; })[0], D = window.Lantern.drawSymbols;
+  if (em && D) [["Ammeter", "A"], ["Voltmeter", "V"]].forEach(function (x) {
+    if (em.symbols.some(function (s) { return s.label === x[0]; })) return;
+    em.symbols.push({ label: x[0], make: function (cx, cy, c) {
+      return D.grp([D.ln(c, 3, cx - 40, cy, cx - 14, cy), D.circ(c, 3, cx, cy, 14), D.txt(c, cx, cy + 1, x[1], 16), D.ln(c, 3, cx + 14, cy, cx + 40, cy)]);
+    } });
+  });
+  // --- junctions folded into the wires -------------------------------------
+  // fold(sc): each junction goes; what flows into it is wired to what flows
+  // out of it (wires are written in the direction the current flows)
+  function fold(sc) {
+    for (var guard = 0; guard < 24; guard++) {
+      var j = sc.parts.filter(function (p) { return p.type === "junction"; })[0];
+      if (!j) return sc;
+      var ins = [], outs = [], keep = [];
+      sc.wires.forEach(function (w) {
+        if (w[1].id === j.id && w[0].id !== j.id) ins.push(w[0]);
+        else if (w[0].id === j.id && w[1].id !== j.id) outs.push(w[1]);
+        else keep.push(w);
+      });
+      if (!ins.length || !outs.length) { var all = ins.concat(outs); ins = all.slice(0, 1); outs = all.slice(1); }
+      ins.forEach(function (a) { outs.forEach(function (b) { if (a.id !== b.id) keep.push([a, b]); }); });
+      sc.wires = keep;
+      sc.parts = sc.parts.filter(function (p) { return p !== j; });
+      delete sc.byId[j.id];
+    }
+    return sc;
+  }
+  // --- notes ------------------------------------------------------------------
+  function fmt(v) {
+    if (v === 0) return "0";
+    var a = Math.abs(v);
+    if (a >= 1e6 || a < 1e-3) return v.toPrecision(4).replace(/\.?0+e/, "e");
+    return String(parseFloat(v.toPrecision(4)));
+  }
+  // noteText(text) -> {text, problems}: each {= ...} worked out
+  function noteText(t) {
+    var problems = [];
+    var s = String(t).replace(/^\s*[\x22\u201c]|[\x22\u201d]\s*$/g, "").replace(/\x7B=\s*([^\x7D]+)\x7D/g, function (m, e) {
+      try {
+        var v = L.formula.evaluate(e, { deg: false, ans: 0 });
+        if (typeof v !== "number" || !isFinite(v)) throw new Error("not a number");
+        return fmt(v);
+      } catch (er) { problems.push("note: {=" + e + "} could not be worked out (" + ((er && er.message) || er) + ")"); return "?"; }
+    });
+    return { text: s, problems: problems };
+  }
+  S.hooks.prep.push(fold);
+  S.hooks.draw.push(function (sc, lay, problems) {
+    var notes = (sc.notes || []).slice(0, 8);
+    if (!notes.length) return;
+    var x0 = 1e9, x1 = -1e9, y1 = 0;
+    lay.shapes.forEach(function (s) {
+      var b = L.drawShapes && L.drawShapes.bbox ? L.drawShapes.bbox(s) : null;
+      if (b) { x0 = Math.min(x0, b[0]); x1 = Math.max(x1, b[2]); y1 = Math.max(y1, b[3]); }
+    });
+    if (x0 > x1) { x0 = 60; x1 = 600; }
+    var y = y1 + 34, shown = notes.map(function (n) { var r = noteText(n); r.problems.forEach(function (p) { problems.push(p); }); return r.text.slice(0, 120); });
+    // centred under the drawing, and never off its left edge
+    var half = Math.max.apply(null, shown.map(function (t) { return t.length * 15 * 0.32; })), cx = Math.max(200, (x0 + x1) / 2, half + 20);
+    shown.forEach(function (t) { lay.shapes.push({ t: "text", c: NOTE, x: cx, y: y, s: t, fs: 15 }); y += 24; });
+    sc.shownNotes = shown;
+  });
+  // --- what the AI is told ------------------------------------------------------
+  var act = (window.Lantern.aiActions || []).filter(function (a) { return a.id === "schematic"; })[0];
+  if (act && act.prompt) {
+    var at = act.prompt.indexOf("For example:");
+    act.prompt = act.prompt.map(function (l) { return /^Electrical types:/.test(l) ? l.replace("ground, junction.", "ground, junction, ammeter, voltmeter.") : l; });
+    if (at > 0) act.prompt.splice(at, 0,
+      "note <text>                a line of text under the drawing, for teaching: a formula, values. Lantern works out each {= ...}:",
+      "                           note Rt = 1 / (1/R1 + 1/R2) = {=1/(1/4+1/6)} ohm",
+      "To change a drawing already made (add notes, values, a part), reply with the whole MAKE SCHEMATIC block again.");
+  }
+  window.Lantern.aiSchematicMore = { fold: fold, noteText: noteText };
+})();
+// ===========================================================================
+// MODULE: AI_SCHEMATIC_MORE - END
+// ===========================================================================
+// ===========================================================================
 // MODULE: AI_SHEET - START
 // Depends: AI_ACTIONS (Lantern.aiActions hook), SHEET (Lantern.sheetDocs:
 //          compute, create, open) -- feature-detected
@@ -24531,7 +24659,7 @@ Lantern.RFB = (function () {
 // MODULE: AI_MAKE_BENCH_DATA - START
 // Depends: AI_BENCH_DATA (Lantern.aiBenchQuestions, created here if absent),
 //          AI_ACTIONS -- the bench runs these only when AI_ACTIONS is there
-// Exports: (none) -- adds 8 "make" questions to Lantern Bench
+// Exports: (none) -- adds 9 "make" questions to Lantern Bench
 // ===========================================================================
 // Things the AI is asked to make. A question passes when the model writes a
 // MAKE block of the right kind, Lantern's checks pass (after at most one
@@ -24582,6 +24710,19 @@ Lantern.RFB = (function () {
         if (lamps.length !== 2) return "not two lamps";
         if (wired(p, lamps[0].id, lamps[1].id)) return "the lamps are wired to each other (series), not in parallel";
         return p.loop && linked(p) ? "" : "the circuit is not closed";
+      } },
+    // 1.12.5: a parallel circuit for teaching, with the total worked out on
+    // the picture by Lantern (a note with {= ...})
+    { id: "make-parallel-ohm", kind: "SCHEMATIC", max_tokens: 900,
+      q: "Draw a parallel circuit for a lesson: a 12 V battery with 4, 6 and 12 ohm resistors in parallel, and show the total resistance on the picture.",
+      ideal: "MAKE SCHEMATIC: Resistors in parallel\nmode electrical\npart B1 battery \x2212 V\x22\npart R1 resistor \x224 ohm\x22\npart R2 resistor \x226 ohm\x22\npart R3 resistor \x2212 ohm\x22\n" +
+        "wire B1 R1\nwire R1 B1\nwire B1 R2\nwire R2 B1\nwire B1 R3\nwire R3 B1\nnote 1/Rt = 1/4 + 1/6 + 1/12, so Rt = {=1/(1/4+1/6+1/12)} ohm\nEND",
+      check: function (p) {
+        var rs = p.parts.filter(function (x) { return x.type === "resistor"; });
+        if (rs.length !== 3) return "not three resistors";
+        for (var i = 0; i < rs.length; i++) for (var j = i + 1; j < rs.length; j++) if (wired(p, rs[i].id, rs[j].id)) return "two resistors are wired to each other (series), not in parallel";
+        if (!p.loop) return "the circuit is not closed";
+        return (p.notes || []).some(function (n) { return /\b2(\.0+)?\s*(ohm|\u03a9)/i.test(n); }) ? "" : "the picture does not show the total resistance of 2 ohm";
       } },
     { id: "make-hydraulic", ideal: "MAKE SCHEMATIC: Pump, valve and cylinder\nmode hydraulic\npart T1 tank\npart P1 pump\npart V1 valve\npart C1 cylinder\nwire T1 P1\nwire P1 V1\nwire V1 C1\nwire V1 T1\nEND", kind: "SCHEMATIC", q: "Draw a hydraulic circuit: a pump takes oil from a tank and feeds a cylinder through a valve, and the oil returns to the tank.",
       check: function (p) {
