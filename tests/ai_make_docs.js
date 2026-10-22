@@ -277,6 +277,31 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
     offs.every(function (o, k) { return bin.slice(o, o + String(k + 1).length + 6) === (k + 1) + " 0 obj"; }) && (bin.match(/\/Type \/Page /g) || []).length === pdf.pageCount && pdf.pageCount >= 3, { pages: pdf.pageCount, offs: offs.length });
   ok("PDF: bold and italic fonts, a bullet, ruled table cells, page numbers, Ohm written out", /\/F2 /.test(bin) && /\/F3 /.test(bin) && /\(\\225\)/.test(bin) && / re S/.test(bin) &&
     /\(Page 1 of \d\)/.test(bin) && /\\223quoted\\224 25 \\260C, 10 Ohm\./.test(bin));
+  // --- 1.12.3: Adam's next Chat -- a picture, "make a corrected pdf of it",
+  // then "proceed with creating a document using the Writer module" ---
+  ["fix the image and make a corrected pdf of it", "The write module in lantern should be able to save as a pdf.",
+    "proceed with creating a document using the Writer module"].forEach(function (q) {
+    ok("offered MAKE DOC: " + q.slice(0, 40), act.relevant(q).some(function (a) { return a.id === "doc"; }));
+  });
+  ok("the MAKE DOC instructions say it is how to make a PDF, and to use it rather than LESSON", /Save \.pdf: this is how you make a Writer document or a PDF/.test(act.prompt("write a letter to my landlord")) &&
+    /not LESSON/.test(act.prompt("write a letter to my landlord")));
+  var sysGo = L.CHAT.buildSystem("yes, go ahead"), sysDoc = L.CHAT.buildSystem("write a letter to my landlord");
+  ok("a follow-up that names nothing still hears what Lantern can make, and how to ask (MAKE: document)", /Lantern can also MAKE a schematic/.test(sysGo) && /reply only MAKE: <document/.test(sysGo) &&
+    !/reply only MAKE: <document/.test(sysDoc) && /MAKE DOC:/.test(sysDoc));
+  var KO = L.aiMakeAsk.kindOf;
+  ok("MAKE: <kind> in everyday words", KO("document").id === "doc" && KO("a PDF").id === "doc" && KO("presentation").id === "slides" && KO("flashcards").id === "cards" &&
+    KO("schedule").id === "plan" && KO("picture").id === "drawing" && KO("circuit").id === "schematic" && KO("table").id === "sheet" && KO("sculpture") === null);
+  var said2 = [];
+  var cv3 = await L.CHAT.converse(["What should a notice about the water being off on Tuesday say?", "yes, go ahead"], { call: function (m) {
+    var last = String(m[m.length - 1].content); said2.push(last);
+    if (/Make it now/.test(last) && /MAKE DOC:/.test(last)) return Promise.resolve(blk("DOC", "Water off on Tuesday", ["## What is happening", "The water will be off on Tuesday from 9 to 12 while the pipes are mended.", "- Fill a kettle first"]));
+    if (/go ahead/.test(last)) return Promise.resolve("MAKE: document");
+    return Promise.resolve("Say when the water is off, why, and what to do before then.");
+  } });
+  var t2 = cv3.turns[1];
+  ok("Chat: \u201cgo ahead\u201d -> MAKE: document -> the format -> the document, with Save .pdf", (t2.commands || []).some(function (c) { return c.verb === "MAKE" && /document/.test(c.arg); }) &&
+    t2.made && t2.made.ok && t2.made.action.id === "doc" && t2.made.extra[0].label === "Save .pdf", { commands: t2.commands, made: t2.made && t2.made.problems, said: said2.slice(-2) });
+  ok("the command list says a document can be saved as a PDF", /MAKE DOC[^}]*Save \.pdf makes a PDF/.test(JSON.stringify(L.suite.commands())));
   ok("no errors after all that", errs.length === 0, errs);
 
   console.log(fails ? fails + " MAKE DOCS FAILURES (" + passes + " passed)" : "ALL MAKE DOCS TESTS PASS (" + passes + ")");

@@ -60,7 +60,7 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   var unk = act.build("MAKE VIDEO: cats\nframe 1\nEND", "");
   ok("an unknown kind says what Lantern can make", unk && !unk.ok && /can make: schematic, drawing, sheet/.test(unk.problems[0]), unk && unk.problems);
   ok("Chat lists only the actions the question is about", /MAKE SCHEMATIC/.test(L.CHAT.buildSystem("Draw a circuit with a battery and a lamp")) &&
-    !/MAKE SHEET/.test(L.CHAT.buildSystem("Draw a circuit with a battery and a lamp")) && !/MAKE /.test(L.CHAT.buildSystem("What is the capital of Kenya?")) &&
+    !/MAKE SHEET/.test(L.CHAT.buildSystem("Draw a circuit with a battery and a lamp")) && !/MAKE [A-Z]+:/.test(L.CHAT.buildSystem("What is the capital of Kenya?")) &&
     /MAKE SHEET/.test(L.CHAT.buildSystem("Make a table of my shopping with a total")) && /MAKE DRAWING/.test(L.CHAT.buildSystem("Draw a house")));
 
   // --- schematics ---

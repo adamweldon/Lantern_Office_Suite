@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.12.4 — The AI knows it can make documents and PDFs, also in a follow-up (2026-10-22)
+
+From Adam's next Chat. He pasted the manual picture and asked to "fix the
+image and make a corrected pdf of it". The 35B said it could not make a
+PDF and gave the corrected text in the reply instead. "Proceed with
+creating a document using the Writer module" then fetched a lesson on the
+writing process (LESSON: document write).
+
+- **MAKE DOC says what it is for.** Lantern shows the document with Open in
+  Writer and Save .pdf, so it is how the AI makes a Writer document or a
+  PDF. It is to be used rather than LESSON when a document is wanted. The
+  command list says "Save .pdf makes a PDF".
+- **More ways of asking** (AI_DOC): creating, making, writing, saving, a
+  corrected copy or version, "using the Writer module".
+- **MAKE: <kind>** (new module AI_MAKE_ASK). When the question does not
+  bring the MAKE instructions, the AI is told in one line what Lantern can
+  make (a document can be saved as a PDF). For a follow-up such as "go
+  ahead", it may reply MAKE: document (or slides, flashcards, plan,
+  drawing, schematic, table) to get the format, then make it from the
+  conversation.
+- **Tests.** Adam's three phrasings, the one-line offer, everyday kind
+  words, and a two-turn Chat ("What should a notice say?" then "yes, go
+  ahead") that ends with a document and Save .pdf. The Project Context gate
+  passes: 299 modules, 0 errors, 44 size warnings. 80 AI modules are
+  isolated.
+
 ## 1.12.3 — Puzzles: take a coin out, the end cups, the middle cup (2026-10-22)
 
 From Adam's two-coin cup puzzle in Chat. The 35B wrote "take silver from
