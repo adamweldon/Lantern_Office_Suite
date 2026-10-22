@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.11.1 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.12.0 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -75,7 +75,10 @@
 //      compute(cells) -> values, open(id)} and Lantern.drawDocs = {open(scene,
 //      title)} -- read/write documents without reaching into WRITER, SHEET
 //      or DRAW (Draw keeps the person's drawing as "previous" when it opens
-//      one made for them),
+//      one made for them); likewise Lantern.slideDocs = {list, create(title,
+//      [{h, body}]) -> id, open(id)}, Lantern.cardDocs = {list, create(title,
+//      [[front, back]]) -> id, open(id)} and Lantern.plannerDocs = {on(date),
+//      add(date, text, repeat) -> id, remove(date, id), open(date)},
 //    Lantern.composeTasks = [{id, group, title, blurb, tip, steps, out,
 //      docTitle}] -- guided writing tasks in the Compose app,
 //    Lantern.composeTabs = [{id, label, mount(el, api)}] -- extra Compose
@@ -136,7 +139,7 @@
 //      Lantern.chatCommands = [{id, verb, usage, desc, test(reply) -> arg|
 //      null, run(arg, question, ctx) -> Promise<{prompt, sources, detail,
 //      more, note, view()}>}] -- reply lines the AI may write (LESSON:,
-//      MODULES); a chatContext result with more: true leaves the library
+//      MODULES, READ:); a chatContext result with more: true leaves the library
 //      open for a decline; Lantern.chatPictures = [{id, take(question) ->
 //      Promise<[{url, name}]>}] -- pictures sent with the next question when
 //      the AI can see (Lantern.CHAT.forgetPictures() stops sending them).
@@ -163,7 +166,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.11.1",
+  version: "1.12.0",
   apps: {},
   order: []
 };
@@ -1706,7 +1709,7 @@ Lantern.formula = (function () {
 // ===========================================================================
 // MODULE: SLIDES - START
 // Depends: CORE, STORAGE, SHELL
-// Exports: (registers "slides" app; renders the Lantern.slideTools,
+// Exports: Lantern.slideDocs (registers "slides" app; renders the Lantern.slideTools,
 //          Lantern.slideDeckTools, Lantern.slideLibTools, Lantern.slideTemplates
 //          and Lantern.slidePresentHooks hooks)
 // ===========================================================================
@@ -1957,10 +1960,29 @@ Lantern.formula = (function () {
     }
   }
 
+  // Public API for other modules (the AI's MAKE SLIDES): decks in and out
+  // of Slides without touching its storage; a slide is {h, body} (body:
+  // limited rich text). open(id) switches to Slides and shows the deck.
+  Lantern.slideDocs = {
+    list: function () { return col.all().map(function (d) { return { id: d.id, title: d.title || "", slides: d.slides.length }; }); },
+    create: function (title, slides) {
+      return col.put({ id: Lantern.uid(), title: title || "", slides: (slides && slides.length) ? slides.map(function (x) { return { h: x.h || "", body: x.body || "" }; }) : [blankSlide()] }).id;
+    },
+    open: function (id) {
+      if (ws && document.contains(ws) && document.body.getAttribute("data-app") === "slides") { editView(id); return; }
+      Lantern.slidesOpenRequest = id;
+      location.hash = "slides";
+    }
+  };
   Lantern.register("slides", {
     name: "Slides", glyph: "\u25b7", color: "#c2410c",
     desc: "Presentations and teaching",
-    mount: function (el) { ws = el; libView(); },
+    mount: function (el) {
+      ws = el;
+      var want = Lantern.slidesOpenRequest;
+      Lantern.slidesOpenRequest = null;
+      if (want && col.get(want)) editView(want); else libView();
+    },
     unmount: function () { stopPresent(); if (doc) save(); }
   });
 })();
@@ -3785,7 +3807,7 @@ Lantern.drawShapes = (function () {
 // ===========================================================================
 // MODULE: PLANNER - START
 // Depends: CORE, STORAGE, SHELL
-// Exports: (registers "planner" app)
+// Exports: Lantern.plannerDocs (registers "planner" app)
 // ===========================================================================
 // Month calendar + events, with optional repeat. Events are stored once,
 // under their START date, in a map: {"2026-07-03":[{id,text,repeat}], ...}
@@ -3946,10 +3968,34 @@ Lantern.drawShapes = (function () {
     ws.appendChild(wrap);
   }
 
+  // Public API for other modules (the AI's MAKE PLAN): events in and out of
+  // the Planner without touching its storage. add(dateIso, text, repeat)
+  // with repeat none|daily|weekly|monthly|yearly; open(dateIso) shows that day.
+  Lantern.plannerDocs = {
+    on: function (dIso) { return eventsOn(events(), dIso).map(function (r) { return { id: r.ev.id, text: r.ev.text, repeat: r.ev.repeat || "none", start: r.start }; }); },
+    add: function (dIso, text, repeat) {
+      var m = events(), ev = { id: Lantern.uid(), text: String(text), repeat: /^(daily|weekly|monthly|yearly)$/.test(repeat) ? repeat : "none" };
+      (m[dIso] = m[dIso] || []).push(ev);
+      saveEvents(m);
+      return ev.id;
+    },
+    remove: function (dIso, id) { removeEvent(dIso, id); },
+    open: function (dIso) {
+      Lantern.plannerOpenRequest = dIso || Lantern.today();
+      if (ws && document.contains(ws) && document.body.getAttribute("data-app") === "planner") { selDate = Lantern.plannerOpenRequest; view = parseIso(selDate); Lantern.plannerOpenRequest = null; paint(); return; }
+      location.hash = "planner";
+    }
+  };
   Lantern.register("planner", {
     name: "Planner", glyph: "\u25a6", color: "#0d9488",
     desc: "Calendar & events",
-    mount: function (el) { ws = el; view = new Date(); selDate = Lantern.today(); paint(); }
+    mount: function (el) {
+      ws = el;
+      var want = Lantern.plannerOpenRequest;
+      Lantern.plannerOpenRequest = null;
+      selDate = want || Lantern.today(); view = want ? parseIso(want) : new Date();
+      paint();
+    }
   });
 })();
 // ===========================================================================
@@ -3958,7 +4004,7 @@ Lantern.drawShapes = (function () {
 // ===========================================================================
 // MODULE: CARDS - START
 // Depends: CORE, STORAGE, SHELL
-// Exports: (registers "cards" app)
+// Exports: Lantern.cardDocs (registers "cards" app)
 // ===========================================================================
 // Flashcards with Leitner boxes: box N comes due every N days. Simple
 // enough to explain to anyone, effective enough to matter for exams,
@@ -4100,10 +4146,28 @@ Lantern.drawShapes = (function () {
     }
   }
 
+  // Public API for other modules (the AI's MAKE CARDS): decks in and out of
+  // Flashcards without touching its storage. create(title, [[front, back]]).
+  Lantern.cardDocs = {
+    list: function () { return col.all().map(function (d) { return { id: d.id, title: d.title || "", cards: d.cards.length }; }); },
+    create: function (title, pairs) {
+      return col.put({ id: Lantern.uid(), title: title || "Untitled deck", cards: (pairs || []).map(function (p) { return { id: Lantern.uid(), f: String(p[0]), b: String(p[1]), box: 1, due: 0 }; }) }).id;
+    },
+    open: function (id) {
+      if (ws && document.contains(ws) && document.body.getAttribute("data-app") === "cards") { deckView(id); return; }
+      Lantern.cardsOpenRequest = id;
+      location.hash = "cards";
+    }
+  };
   Lantern.register("cards", {
     name: "Flashcards", glyph: "\u2750", color: "#be185d",
     desc: "Study and memorize",
-    mount: function (el) { ws = el; libView(); }
+    mount: function (el) {
+      ws = el;
+      var want = Lantern.cardsOpenRequest;
+      Lantern.cardsOpenRequest = null;
+      if (want && col.get(want)) deckView(want); else libView();
+    }
   });
 })();
 // ===========================================================================
@@ -17301,7 +17365,7 @@ Lantern.RFB = (function () {
         rec.commands.push({ verb: cmdHit.verb, arg: cmdHit.arg });
         if (again) { msgs.push({ role: "user", content: "That is already above. Answer the QUESTION now.\n\nQUESTION: " + q }); continue; }
         if (ui.status) ui.status("Lantern is running " + cmdHit.verb + "\u2026");
-        try { cres = await cmdHit.c.run(cmdHit.arg, q, { msgs: msgs, sources: sources }); } catch (e) { cres = null; }
+        try { cres = await cmdHit.c.run(cmdHit.arg, q, { msgs: msgs, sources: sources, status: ui.status }); } catch (e) { cres = null; }
         if (cres && cres.view) show(cres.view);
         if (cres && cres.sources && cres.sources.length) {
           sources = cres.sources; detail = !!cres.detail; canMore = !!cres.more;
@@ -21570,7 +21634,7 @@ Lantern.RFB = (function () {
         // Same path as Assist: one call, plus one correction turn when
         // Lantern rejects the formula (rows record it as rounds: 2).
         var callFn = function (m) {
-          return L.ai.complete(m, { temperature: 0, max_tokens: item.cat === "make" ? 700 : (opts.max_tokens || 256), signal: opts.signal }).then(function (t) {
+          return L.ai.complete(m, { temperature: 0, max_tokens: item.cat === "make" ? (item.max_tokens || 700) : (opts.max_tokens || 256), signal: opts.signal }).then(function (t) {
             var la = L.ai.last || {}; toks += la.tokens || 0; if (la.guard) byRule = true; return t;
           });
         };
@@ -28642,10 +28706,72 @@ Lantern.RFB = (function () {
 // MODULE: TEXT_READER_APP - END
 // ===========================================================================
 // ===========================================================================
+// MODULE: TEXT_READER_PROMPT - START
+// Depends: TEXT_READER (Lantern.textReader); reads Lantern.chatCommands --
+//          feature-detected
+// Exports: Lantern.textReader.docPrompt(doc, q, sources, detail),
+//          .namedPages(doc, text), .aboutDoc, .summaryAsk (patterns)
+// ===========================================================================
+// What the AI is sent about the person's document (TEXT_READER_CHAT sends
+// it with each question, TEXT_READER_READ with each part the AI asks for):
+// the numbered passages, how to answer from them, and -- when READ is there
+// and the document has more pages -- how to ask for another part. Split
+// from TEXT_READER_CHAT in 1.12.0 to keep both small.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.textReader) return;
+  var TR = L.textReader;
+  function pages(list) { return list.length === 1 ? "page " + list[0] : "pages " + list.join(", "); }
+  // docPrompt(doc, question, sources, detail) -> the DOCUMENT block the AI
+  // reads (also used by READ, TEXT_READER_READ): the numbered passages, how
+  // to answer from them, and -- when the READ command is there and the
+  // document has more -- how to ask for another part
+  function docPrompt(doc, q, src, detail) {
+    var out = ["DOCUMENT: passages from \u201c" + doc.title + "\u201d (the person\u2019s own " + (doc.kind === "music" ? "sheet music, read as notes" : "document, read by Lantern\u2019s Text Reader \u2014 a word here and there may be misread") + ")", ""];
+    src.forEach(function (x) { out.push("[" + x.n + "] " + x.title); out.push(x.text); out.push(""); });
+    // READ (TEXT_READER_READ) lets the AI ask for another part of a longer
+    // document before it gives up on it
+    var canRead = doc.kind !== "music" && doc.pages.length > 1 && (window.Lantern.chatCommands || []).some(function (c) { return c && c.id === "read"; });
+    var pg = []; src.forEach(function (x) { if (x.page && pg.indexOf(x.page) < 0) pg.push(x.page); });
+    var readLine = "The document has " + doc.pages.length + " pages" + (pg.length ? "; these passages are from " + pages(pg) : "") +
+      ". If the answer may be on another page, reply only READ: page <n>, READ: section <n> or READ: <words to find>.";
+    if (detail) {
+      out.push("Answer the QUESTION from these passages. Put [n] at the end of each sentence that uses passage n. You may add your");
+      out.push("own reasoning in sentences without [n]; never contradict the passages. End with a line 'QUOTE [n]: <one sentence copied");
+      out.push("exactly from passage n>' for the most important fact. If the passages do not cover it, say what they do cover.");
+      if (canRead) out.push(readLine);
+    } else {
+      out.push("Answer the QUESTION using these passages. Reply with:");
+      out.push("ANSWER: <short answer, with [n] after each fact>");
+      out.push("QUOTE [n]: <one sentence copied exactly from passage n>");
+      out.push("Only if the question needs a calculation, add = lines that use numbers from the passages and put {result} in the ANSWER.");
+      if (canRead) out.push(readLine);
+      out.push("If the passages do not answer it" + (canRead ? " and no other page will" : "") + ", reply exactly: ANSWER: Not in the document.");
+    }
+    out.push(""); out.push("QUESTION: " + q);
+    return out.join("\n");
+  }
+  // named(doc, text) -> the text with "the last page" / "the first page" as
+  // page numbers (also used by READ)
+  function named(doc, t) {
+    return String(t).replace(/\b(?:the\s+)?(?:last|final)\s+page\b/ig, "page " + doc.pages.length).replace(/\b(?:the\s+)?first\s+page\b/ig, "page 1");
+  }
+  var ABOUT = /\b(page|pages|section|chapter|this (document|manual|book|booklet|leaflet|letter|form|report)|the (document|manual|booklet|leaflet|handbook))\b/i;
+  var SUM = /\b(summar|overview|gist|main points|key points|what is (this|it) about|what does (this|it|the (page|document|label|plate)) say)/i;
+  TR.docPrompt = docPrompt;
+  TR.namedPages = named;
+  TR.aboutDoc = ABOUT;
+  TR.summaryAsk = SUM;
+})();
+// ===========================================================================
+// MODULE: TEXT_READER_PROMPT - END
+// ===========================================================================
+// ===========================================================================
 // MODULE: TEXT_READER_CHAT - START
-// Depends: TEXT_READER, TEXT_READER_DOCS, TEXT_READER_VIEW (Lantern.
-//          textReader); Chat's hooks Lantern.chatTools, Lantern.chatContext
-//          -- feature-detected; Lantern.sheetMusic when present
+// Depends: TEXT_READER, TEXT_READER_DOCS, TEXT_READER_VIEW,
+//          TEXT_READER_PROMPT (Lantern.textReader); Chat's hooks
+//          Lantern.chatTools, Lantern.chatContext -- feature-detected;
+//          Lantern.sheetMusic when present
 // Exports: (adds a "Read a page" button to Chat and a document provider),
 //          Lantern.textReader.chatAttach(api, files)
 // ===========================================================================
@@ -28659,7 +28785,7 @@ Lantern.RFB = (function () {
 // sheet music is read by the Sheet Music Reader instead, as notes.
 (function () {
   var L = window.Lantern;
-  if (!L || !L.el || !L.textReader || !L.textReader.docs) return;
+  if (!L || !L.el || !L.textReader || !L.textReader.docs || !L.textReader.docPrompt) return;
   var TR = L.textReader, D = TR.docs, el = L.el;
   var TOOLS = window.Lantern.chatTools = window.Lantern.chatTools || [];
   var CTX = window.Lantern.chatContext = window.Lantern.chatContext || [];
@@ -28725,37 +28851,29 @@ Lantern.RFB = (function () {
     document.body.appendChild(inp); inp.click();
     setTimeout(function () { if (inp.parentNode) inp.parentNode.removeChild(inp); }, 60000);
   } });
-  // the document's passages for each question
-  var SUM = /\b(summar|overview|gist|main points|key points|what is (this|it) about|what does (this|it|the (page|document|label|plate)) say)/i;
+  // the document's passages for each question; the DOCUMENT block, "the
+  // last page" and which questions are about the document are in
+  // TEXT_READER_PROMPT
+  var docPrompt = TR.docPrompt, named = TR.namedPages, ABOUT = TR.aboutDoc, SUM = TR.summaryAsk;
   CTX.push({ id: "textReader", provide: async function (q, msgs, o) {
     var doc = TR.attached;
     if (!doc) return null;
-    // a page or section named in the question is read first
-    var m = /\bpages?\s+(\d+)/i.exec(q), sm = /\bsection\s+(\d+)/i.exec(q);
+    // a page or section named in the question is read first ("the last
+    // page" is a page too, 1.12.0)
+    var qp = named(doc, q), m = /\bpages?\s+(\d+)/i.exec(qp), sm = /\bsection\s+(\d+)/i.exec(qp);
     if (doc.kind !== "music" && (m || sm)) {
       var k = m ? Math.floor((+m[1] - 1) / doc.per) : +sm[1] - 1;
       if (k >= 0 && k < D.sections(doc).length && !D.sections(doc)[k].done) await D.readSection(doc, k, {});
     }
-    var src = D.passages(doc, q, 3);
-    if (!src.length && (SUM.test(q) || doc.pages.length === 1)) src = D.passages(doc, "summary overview", 3);
+    var src = D.passages(doc, qp, 3);
+    // a question about the document that shares no words with what was read
+    // gets its opening passages, so the AI sees what it is and can READ on
+    if (!src.length && (SUM.test(q) || doc.pages.length === 1 || ABOUT.test(q))) src = D.passages(doc, "summary overview", 3);
     if (!src.length) return null;
     var detail = !!(o && o.wantsDetail) || SUM.test(q) || doc.kind === "music";
-    var out = ["DOCUMENT: passages from \u201c" + doc.title + "\u201d (the person\u2019s own " + (doc.kind === "music" ? "sheet music, read as notes" : "document, read by Lantern\u2019s Text Reader \u2014 a word here and there may be misread") + ")", ""];
-    src.forEach(function (s) { out.push("[" + s.n + "] " + s.title); out.push(s.text); out.push(""); });
-    if (detail) {
-      out.push("Answer the QUESTION from these passages. Put [n] at the end of each sentence that uses passage n. You may add your");
-      out.push("own reasoning in sentences without [n]; never contradict the passages. End with a line 'QUOTE [n]: <one sentence copied");
-      out.push("exactly from passage n>' for the most important fact. If the passages do not cover it, say what they do cover.");
-    } else {
-      out.push("Answer the QUESTION using these passages. Reply with:");
-      out.push("ANSWER: <short answer, with [n] after each fact>");
-      out.push("QUOTE [n]: <one sentence copied exactly from passage n>");
-      out.push("Only if the question needs a calculation, add = lines that use numbers from the passages and put {result} in the ANSWER.");
-      out.push("If the passages do not answer it, reply exactly: ANSWER: Not in the document.");
-    }
-    out.push(""); out.push("QUESTION: " + q);
+    var prompt = docPrompt(doc, q, src, detail);
     var pg = []; src.forEach(function (s) { if (pg.indexOf(s.page) < 0) pg.push(s.page); });
-    return { sources: src, prompt: out.join("\n"), detail: detail, label: "\u201c" + doc.title + "\u201d", query: "",
+    return { sources: src, prompt: prompt, detail: detail, label: "\u201c" + doc.title + "\u201d", query: "",
       note: "Lantern gave the AI " + src.length + " passage" + (src.length === 1 ? "" : "s") + " from \u201c" + doc.title + "\u201d" + (doc.pages.length > 1 ? " (" + pages(pg) + ")" : "") + "\u2026" };
   } });
 })();
@@ -29306,7 +29424,7 @@ Lantern.RFB = (function () {
       return { verb: c.verb, usage: c.usage, desc: c.desc, ready: c.library ? !!(L.library && L.library.ready && L.library.ready()) : true };
     });
     (L.aiActions || []).forEach(function (a) {
-      out.push({ verb: "MAKE " + a.kind, usage: "MAKE " + a.kind + ": <title> ... END", desc: "make " + (a.title || a.kind.toLowerCase()) + " (opens in " + (a.kind === "SHEET" ? "Sheets" : "Draw") + ")", ready: true });
+      out.push({ verb: "MAKE " + a.kind, usage: "MAKE " + a.kind + ": <title> ... END", desc: "make " + (a.title || a.kind.toLowerCase()) + " (opens in " + (a.opens || (a.kind === "SHEET" ? "Sheets" : "Draw")) + ")", ready: true });
     });
     (L.aiSolvers || []).forEach(function (s) {
       out.push({ verb: s.kind, usage: s.kind + ": ... END", desc: "puzzle bookkeeping: " + (s.title || ""), ready: true });
@@ -30356,6 +30474,695 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: SUITE_BENCH_DATA - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_DOC - START
+// Depends: AI_ACTIONS (Lantern.aiActions hook), WRITER (Lantern.writerDocs),
+//          COMPOSE_CHECK (Lantern.compose.check) -- feature-detected
+// Exports: Lantern.aiDoc = {doc(block)} (for tests); adds the DOC action
+// ===========================================================================
+// MAKE DOC: the AI writes a document -- a letter, a report, a procedure, a
+// notice -- in plain lines, and Lantern turns it into a Writer document the
+// person can edit, print and save:
+//     MAKE DOC: Lockout procedure for the 3850 press
+//     ## Before you start          (## and ### are headings)
+//     Tell the operator ...        (a plain line is a paragraph)
+//     1. Switch off the main ...   (numbered steps)
+//     - Wear safety glasses        (bullet points)
+//     Part | Torque                (rows with | are a table)
+//     END
+// **bold** is kept. Compose's writing checker reads it first and its
+// findings are shown with the preview (spelling, grammar, punctuation), so
+// the person knows what to look at before using it.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var ACTS = window.Lantern.aiActions = window.Lantern.aiActions || [];
+  function esc(t) { return L.esc ? L.esc(t) : String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function inline(t) { return esc(t).replace(/\*\*([^*]+)\*\*/g, "<b>$1<\u002Fb>"); }
+  // doc(block) -> {html, text, check (what the writing checker reads), parts,
+  // words, problems}
+  function doc(block) {
+    var html = [], text = [], chk = [], problems = [], list = null, table = null, parts = { headings: 0, paragraphs: 0, items: 0, rows: 0 };
+    function close() {
+      if (list) { html.push("<" + list.tag + ">" + list.items.join("") + "<\u002F" + list.tag + ">"); list = null; }
+      if (table) { html.push("<table>" + table.join("") + "<\u002Ftable>"); table = null; }
+    }
+    block.lines.forEach(function (raw) {
+      var line = raw.replace(/^\s+|\s+$/g, ""), m;
+      if (!line || /^\x60\x60\x60/.test(line) || /^[-=_*]{3,}$/.test(line)) return;
+      if ((m = /^(#{1,4})\s+(.+)$/.exec(line))) {
+        close();
+        var lv = Math.min(4, Math.max(2, m[1].length + (m[1].length === 1 ? 1 : 0)));
+        html.push("<h" + lv + ">" + inline(m[2].replace(/\*\*/g, "")) + "<\u002Fh" + lv + ">"); text.push(m[2].replace(/\*\*/g, "")); parts.headings++;
+        return;
+      }
+      if ((m = /^(\d{1,2})[.\x29]\s+(.+)$/.exec(line)) || (m = /^[-*\u2022]\s+(.+)$/.exec(line))) {
+        var ord = /^\d/.test(line), item = ord ? m[2] : m[1];
+        if (table) close();
+        if (!list || list.tag !== (ord ? "ol" : "ul")) { close(); list = { tag: ord ? "ol" : "ul", items: [] }; }
+        list.items.push("<li>" + inline(item) + "<\u002Fli>"); text.push(item.replace(/\*\*/g, "")); parts.items++;
+        // the writing checker reads a list item as a sentence of its own
+        chk.push(item.replace(/\*\*/g, "") + (/[.!?:;\x29]$/.test(item) ? "" : "."));
+        return;
+      }
+      if (/\|/.test(line) && line.replace(/[^|]/g, "").length >= 1 && !/^[^|]+\|$/.test(line)) {
+        if (/^\|?\s*:?-{2,}/.test(line)) return;   // a markdown rule row
+        if (list) close();
+        var cells = line.replace(/^\|/, "").replace(/\|$/, "").split("|").map(function (c) { return c.replace(/^\s+|\s+$/g, ""); });
+        var head = !table;
+        if (!table) table = [];
+        table.push("<tr>" + cells.map(function (c) { return (head ? "<th>" : "<td>") + inline(c) + (head ? "<\u002Fth>" : "<\u002Ftd>"); }).join("") + "<\u002Ftr>");
+        text.push(cells.join(" "));
+        parts.rows++;
+        return;
+      }
+      close();
+      html.push("<p>" + inline(line) + "<\u002Fp>"); text.push(line.replace(/\*\*/g, "")); chk.push(line.replace(/\*\*/g, "")); parts.paragraphs++;
+    });
+    close();
+    var words = text.join(" ").split(/\s+/).filter(Boolean).length;
+    if (!html.length) problems.push("the document is empty: write its lines between MAKE DOC: <title> and END");
+    else if (words < 12) problems.push("the document has only " + words + " words; write it out in full");
+    if (!block.closed) problems.push("the document was cut off before END; write a shorter one, or the rest in a second MAKE DOC");
+    return { html: html.join("\n"), text: text.join("\n"), check: chk.join("\n"), parts: parts, words: words, problems: problems };
+  }
+  // the writing checker's findings, most important first (spelling, grammar,
+  // punctuation; style notes are left for Writer's own Check)
+  function findings(t) {
+    if (!L.compose || !L.compose.check) return [];
+    var out = [];
+    try {
+      (L.compose.check(t) || []).forEach(function (i) {
+        if (i.kind === "spelling" || i.kind === "grammar" || i.kind === "punctuation")
+          out.push("\u201c" + t.slice(i.start, i.end) + "\u201d: " + String(i.msg || i.kind) + (i.fix != null && i.fix !== "" ? " (\u2192 " + i.fix + ")" : ""));
+      });
+    } catch (e) { return []; }
+    return out;
+  }
+  // the preview is a small page: headings to scale, lists indented, tables ruled
+  function tidy(page) {
+    function each(sel, fn) { Array.prototype.forEach.call(page.querySelectorAll(sel), fn); }
+    each("h2,h3,h4", function (h, i) { h.style.fontSize = i ? (h.tagName === "H2" ? "16px" : "15px") : "18px"; h.style.margin = i ? "10px 0 4px" : "0 0 6px"; });
+    each("p", function (x) { x.style.margin = "4px 0"; });
+    each("ul,ol", function (x) { x.style.margin = "4px 0"; x.style.paddingLeft = "24px"; });
+    each("table", function (x) { x.style.borderCollapse = "collapse"; x.style.margin = "6px 0"; });
+    each("th,td", function (x) { x.style.border = "1px solid var(--line)"; x.style.padding = "2px 8px"; x.style.textAlign = "left"; });
+  }
+  function build(block) {
+    var d = doc(block), title = block.title || "Document", notes = d.problems.length ? [] : findings(d.check), made = null;
+    var plan = d.html ? { html: d.html, text: d.text, parts: d.parts, words: d.words, notes: notes } : null;
+    var bits = [];
+    if (d.parts.headings) bits.push(d.parts.headings + " heading" + (d.parts.headings === 1 ? "" : "s"));
+    if (d.parts.items) bits.push(d.parts.items + " list item" + (d.parts.items === 1 ? "" : "s"));
+    if (d.parts.rows) bits.push("a table of " + d.parts.rows + " rows");
+    return {
+      problems: d.problems, plan: plan, openLabel: "Open in Writer",
+      summary: d.words + " words" + (bits.length ? ", " + bits.join(", ") : "") + (notes.length ? "; the writing checker found " + notes.length + " thing" + (notes.length === 1 ? "" : "s") + " to look at" : "; the writing checker found nothing to fix"),
+      preview: function () {
+        var el = L.el, box = el("div", {});
+        var page = el("div", { style: "max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:8px 12px;background:#fff;margin-top:6px;font-size:14px" });
+        page.innerHTML = "<h2>" + esc(title) + "<\u002Fh2>" + d.html;
+        tidy(page);
+        box.appendChild(page);
+        if (notes.length) box.appendChild(el("div", { "class": "muted", style: "font-size:13px;margin-top:4px", text: "Writing checker: " + notes.slice(0, 5).join("; ") + (notes.length > 5 ? "; and " + (notes.length - 5) + " more (Check in Writer lists them all)" : "") }));
+        return box;
+      },
+      png: null,
+      open: function () {
+        if (!L.writerDocs) return;
+        if (!made) made = L.writerDocs.create(title, "<h1>" + esc(title) + "<\u002Fh1>\n" + d.html);
+        L.writerDocs.open(made);
+      }
+    };
+  }
+  window.Lantern.aiDoc = { doc: doc };
+  if (!ACTS.some(function (a) { return a.id === "doc"; })) ACTS.push({
+    id: "doc", kind: "DOC", kinds: ["DOC", "DOCUMENT", "LETTER", "REPORT", "WRITER"], title: "a document", opens: "Writer",
+    match: function (q) {
+      return /\b(write|draft|compose|prepare|make|create|put together|type up)\b[^.?!]{0,40}\b(letter|report|memo|procedure|sop|instructions?|notice|essay|minutes|policy|checklist|document|doc|handout|manual|cover letter)\b/i.test(q) ||
+        /\bin writer\b|\bas a (document|doc)\b/i.test(q);
+    },
+    prompt: [
+      "MAKE DOC: <title>   -- a document for Writer (letter, report, procedure, notice); the person edits and prints it",
+      "One line per paragraph. ## Heading, ### Smaller heading, 1. numbered step, - bullet point, **bold**,",
+      "rows with | for a small table (first row is the header). No blank-line tricks, no HTML.",
+      "END",
+      "For example:",
+      "MAKE DOC: Changing the compressor oil",
+      "## Before you start",
+      "Switch off the compressor and let it cool for 30 minutes.",
+      "## Steps",
+      "1. Drain the old oil into a pan.",
+      "2. Refill with **1.8 litres** of ISO VG 100 oil.",
+      "END"],
+    build: function (block) { return build(block); }
+  });
+})();
+// ===========================================================================
+// MODULE: AI_DOC - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_SLIDES - START
+// Depends: AI_ACTIONS (Lantern.aiActions hook), SLIDES (Lantern.slideDocs)
+//          -- feature-detected
+// Exports: Lantern.aiSlides = {deck(block)} (for tests); adds the SLIDES action
+// ===========================================================================
+// MAKE SLIDES: the AI writes a talk as titles and points, and Lantern makes
+// it a Slides deck the person can edit and present:
+//     MAKE SLIDES: Ladder safety
+//     # Before you climb          (# starts a slide, with its title)
+//     - Check the feet and rungs  (- a point on that slide)
+//     Three points of contact.    (a plain line is a sentence on it)
+//     END
+// Lantern checks the deck reads well on a screen: every slide has a title
+// and something under it (the first may be a title slide), at most 7 points
+// a slide, at most 25 slides, and no point longer than about two lines.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var ACTS = window.Lantern.aiActions = window.Lantern.aiActions || [];
+  var MAXS = 25, MAXP = 7, LONG = 160;
+  function esc(t) { return L.esc ? L.esc(t) : String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function inline(t) { return esc(t).replace(/\*\*([^*]+)\*\*/g, "<b>$1<\u002Fb>"); }
+  // deck(block) -> {slides: [{h, points, lines}], problems}
+  function deck(block) {
+    var slides = [], cur = null, problems = [];
+    block.lines.forEach(function (raw) {
+      var line = raw.replace(/^\s+|\s+$/g, ""), m;
+      if (!line || /^\x60\x60\x60/.test(line) || /^[-=_*]{3,}$/.test(line)) return;
+      if ((m = /^(?:#{1,3}\s+|slide\s*\d*\s*[:.\x29-]\s*)(.+)$/i.exec(line))) { cur = { h: m[1].replace(/\*\*/g, "").replace(/^\s+|\s+$/g, ""), points: [], lines: [] }; slides.push(cur); return; }
+      if (!cur) { cur = { h: block.title || "", points: [], lines: [] }; slides.push(cur); }
+      if ((m = /^(?:[-*\u2022]|\d{1,2}[.\x29])\s+(.+)$/.exec(line))) cur.points.push(m[1]);
+      else cur.lines.push(line);
+    });
+    if (!slides.length) problems.push("the deck is empty: start each slide with # and its title");
+    if (slides.length > MAXS) problems.push("the deck has " + slides.length + " slides; keep it to " + MAXS + " or fewer");
+    slides.forEach(function (s, i) {
+      var n = i + 1;
+      if (!s.h) problems.push("slide " + n + " has no title: start it with # and the title");
+      if (i > 0 && !s.points.length && !s.lines.length) problems.push("slide " + n + " (\u201c" + s.h + "\u201d) has nothing under its title");
+      if (s.points.length > MAXP) problems.push("slide " + n + " (\u201c" + s.h + "\u201d) has " + s.points.length + " points; split it so each slide has " + MAXP + " or fewer");
+      s.points.concat(s.lines).forEach(function (p) { if (p.length > LONG) problems.push("slide " + n + ": \u201c" + p.slice(0, 40) + "\u2026\u201d is too long for a slide; say it in fewer words"); });
+    });
+    if (!block.closed) problems.push("the deck was cut off before END; make fewer slides");
+    return { slides: slides, problems: problems.slice(0, 8) };
+  }
+  function body(s) {
+    var h = s.lines.map(function (l) { return "<p>" + inline(l) + "<\u002Fp>"; }).join("");
+    if (s.points.length) h += "<ul>" + s.points.map(function (p) { return "<li>" + inline(p) + "<\u002Fli>"; }).join("") + "<\u002Ful>";
+    return h;
+  }
+  function build(block) {
+    var d = deck(block), title = block.title || "Slides", made = null;
+    var slides = d.slides.map(function (s) { return { h: s.h, body: body(s) }; });
+    return {
+      problems: d.problems, plan: slides.length ? { slides: slides, count: slides.length, points: d.slides.reduce(function (a, s) { return a + s.points.length; }, 0) } : null,
+      summary: slides.length + " slide" + (slides.length === 1 ? "" : "s"), openLabel: "Open in Slides",
+      preview: function () {
+        var el = L.el, row = el("div", { style: "display:flex;gap:8px;overflow-x:auto;padding:6px 0" });
+        slides.forEach(function (s, i) {
+          var c = el("div", { style: "flex:0 0 200px;height:120px;overflow:hidden;border:1px solid var(--line);border-radius:6px;background:#fff;padding:6px 8px;font-size:11px" });
+          c.innerHTML = "<div style='font-weight:700;font-size:13px;margin-bottom:4px'>" + (i + 1) + ". " + esc(s.h) + "<\u002Fdiv>" + s.body;
+          Array.prototype.forEach.call(c.querySelectorAll("ul,ol"), function (x) { x.style.margin = "2px 0"; x.style.paddingLeft = "16px"; });
+          Array.prototype.forEach.call(c.querySelectorAll("p"), function (x) { x.style.margin = "2px 0"; });
+          row.appendChild(c);
+        });
+        return row;
+      },
+      png: null,
+      open: function () {
+        if (!L.slideDocs) return;
+        if (!made) made = L.slideDocs.create(title, slides);
+        L.slideDocs.open(made);
+      }
+    };
+  }
+  window.Lantern.aiSlides = { deck: deck };
+  if (!ACTS.some(function (a) { return a.id === "slides"; })) ACTS.push({
+    id: "slides", kind: "SLIDES", kinds: ["SLIDES", "SLIDE DECK", "DECK", "PRESENTATION"], title: "a slide deck", opens: "Slides",
+    match: function (q) { return /\b(slides?|slide deck|presentation|powerpoint|deck for|talk on|toolbox talk|briefing)\b/i.test(q); },
+    prompt: [
+      "MAKE SLIDES: <title>   -- a deck for Slides; the person edits and presents it",
+      "# starts a slide with its title; - a point on it (at most 7 a slide, short); a plain line is a sentence on it.",
+      "END",
+      "For example:",
+      "MAKE SLIDES: Lockout in three steps",
+      "# Lockout in three steps",
+      "A two-minute talk for the crew.",
+      "# 1. Isolate",
+      "- Switch off the main breaker",
+      "- Lock it and hang your tag",
+      "# 2. Prove zero energy",
+      "- Try the start button",
+      "- Bleed stored pressure",
+      "END"],
+    build: function (block) { return build(block); }
+  });
+})();
+// ===========================================================================
+// MODULE: AI_SLIDES - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_CARDS - START
+// Depends: AI_ACTIONS (Lantern.aiActions hook), CARDS (Lantern.cardDocs) --
+//          feature-detected
+// Exports: Lantern.aiCards = {cards(block)} (for tests); adds the CARDS action
+// ===========================================================================
+// MAKE CARDS: the AI writes question-and-answer pairs and Lantern makes them
+// a Flashcards deck, studied with the Leitner boxes like any other:
+//     MAKE CARDS: Fault codes
+//     E-04 | Low oil level: stop and top up the oil
+//     What does E-11 mean? | Discharge temperature above 110 degrees C
+//     END
+// Lantern checks every card has both sides, no card is there twice, and
+// the answer does not just repeat the question. Cards made from a lesson
+// or a document the person gave Chat are its facts, in its words.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var ACTS = window.Lantern.aiActions = window.Lantern.aiActions || [];
+  var MAX = 120;
+  function esc(t) { return L.esc ? L.esc(t) : String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function clean(t) { return String(t).replace(/\*\*/g, "").replace(/^\s*(Q|A|front|back)\s*:\s*/i, "").replace(/^\s+|\s+$/g, ""); }
+  // cards(block) -> {pairs: [[front, back]], problems}
+  function cards(block) {
+    var pairs = [], problems = [], seen = {}, pendingQ = null;
+    block.lines.forEach(function (raw) {
+      var line = raw.replace(/^\s+|\s+$/g, "").replace(/^(?:[-*\u2022]|\d{1,3}[.\x29])\s+/, ""), m;
+      if (!line || /^\x60\x60\x60/.test(line) || /^\|?\s*:?-{2,}/.test(line) || /^front\s*\|\s*back$/i.test(line)) return;
+      // Q: ... then A: ... on the next line
+      if ((m = /^Q\s*:\s*(.+)$/i.exec(line))) { pendingQ = m[1]; return; }
+      if ((m = /^A\s*:\s*(.+)$/i.exec(line)) && pendingQ) { pairs.push([clean(pendingQ), clean(m[1])]); pendingQ = null; return; }
+      var parts = line.indexOf("|") >= 0 ? line.split("|") : line.indexOf(" :: ") >= 0 ? line.split(" :: ") : line.indexOf("\t") >= 0 ? line.split("\t") : null;
+      if (!parts) { problems.push("\u201c" + line.slice(0, 50) + "\u201d is not a card: write front | back"); return; }
+      var f = clean(parts[0]), b = clean(parts.slice(1).join(" | "));
+      if (!f || !b) { problems.push("\u201c" + line.slice(0, 50) + "\u201d is missing its " + (f ? "back" : "front")); return; }
+      pairs.push([f, b]);
+    });
+    pairs = pairs.filter(function (p) {
+      var k = p[0].toLowerCase();
+      if (seen[k]) { problems.push("\u201c" + p[0].slice(0, 50) + "\u201d is there twice"); return false; }
+      seen[k] = 1;
+      if (p[1].toLowerCase().replace(/\W/g, "") === k.replace(/\W/g, "")) { problems.push("the card \u201c" + p[0].slice(0, 50) + "\u201d has the same words on both sides"); return false; }
+      return true;
+    });
+    if (!pairs.length) problems.unshift("no cards: write one card a line, front | back");
+    else if (pairs.length < 2) problems.push("only one card: a deck needs at least two");
+    if (pairs.length > MAX) problems.push("keep it to " + MAX + " cards or fewer");
+    if (!block.closed) problems.push("the deck was cut off before END; make fewer cards");
+    return { pairs: pairs.slice(0, MAX), problems: problems.slice(0, 8) };
+  }
+  function build(block) {
+    var d = cards(block), title = block.title || "Cards", made = null;
+    return {
+      problems: d.problems, plan: d.pairs.length ? { pairs: d.pairs, count: d.pairs.length } : null,
+      summary: d.pairs.length + " card" + (d.pairs.length === 1 ? "" : "s"), openLabel: "Open in Flashcards",
+      preview: function () {
+        var el = L.el, tb = el("table", { style: "border-collapse:collapse;margin-top:6px;font-size:14px;width:100%" });
+        d.pairs.slice(0, 12).forEach(function (p) {
+          tb.appendChild(el("tr", {}, [el("td", { style: "border:1px solid var(--line);padding:3px 8px;font-weight:600;width:45%", text: p[0] }),
+            el("td", { style: "border:1px solid var(--line);padding:3px 8px", text: p[1] })]));
+        });
+        var wrap = el("div", { style: "overflow-x:auto" }, [tb]);
+        if (d.pairs.length > 12) wrap.appendChild(el("div", { "class": "muted", style: "font-size:12px", text: "and " + (d.pairs.length - 12) + " more" }));
+        return wrap;
+      },
+      png: null,
+      open: function () {
+        if (!L.cardDocs) return;
+        if (!made) made = L.cardDocs.create(title, d.pairs);
+        L.cardDocs.open(made);
+      }
+    };
+  }
+  window.Lantern.aiCards = { cards: cards };
+  if (!ACTS.some(function (a) { return a.id === "cards"; })) ACTS.push({
+    id: "cards", kind: "CARDS", kinds: ["CARDS", "FLASHCARDS", "FLASH CARDS", "DECK OF CARDS"], title: "flashcards", opens: "Flashcards",
+    match: function (q) { return /\b(flash ?cards?|study cards|quiz cards|cards to (study|learn|memori[sz]e|revise)|help me (memori[sz]e|learn|revise)|quiz me)\b/i.test(q); },
+    prompt: [
+      "MAKE CARDS: <title>   -- a Flashcards deck the person studies; one card a line, front | back",
+      "Short fronts (a question or term), short backs (the answer). Only facts from the passages or lesson in front of you when there are some.",
+      "END",
+      "For example:",
+      "MAKE CARDS: Ohm's law",
+      "Volts across a 10 ohm resistor carrying 2 A? | 20 V (V = I x R)",
+      "What is the unit of resistance? | The ohm",
+      "END"],
+    build: function (block) { return build(block); }
+  });
+})();
+// ===========================================================================
+// MODULE: AI_CARDS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_PLAN - START
+// Depends: AI_ACTIONS (Lantern.aiActions hook), PLANNER (Lantern.plannerDocs)
+//          -- feature-detected
+// Exports: Lantern.aiPlan = {plan(block, today)} (for tests); adds the PLAN
+//          action
+// ===========================================================================
+// MAKE PLAN: the AI writes what to do when, and Lantern puts it in the
+// Planner. The AI says when in words -- today, tomorrow, in 3 weeks, next
+// Monday, or a date -- and how often; Lantern does the calendar arithmetic
+// (small models get dates wrong), so the dates are right by construction:
+//     MAKE PLAN: Compressor upkeep
+//     today | Drain the condensate from the tank | every day
+//     in 1 month | Check the drive belt tension | every month
+//     2026-12-01 | Change the oil (every 500 hours)
+//     END
+// The Planner repeats daily, weekly, monthly or yearly; a job every 2 weeks
+// or every 500 hours is written as its own dated lines. Lantern checks each
+// date reads, none is in the past, and every line says what to do.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var ACTS = window.Lantern.aiActions = window.Lantern.aiActions || [];
+  var DAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"], MAX = 60;
+  var MON = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+  function pad(n) { return n < 10 ? "0" + n : String(n); }
+  function iso(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+  function parseIso(s) { var p = s.split("-"); return new Date(+p[0], +p[1] - 1, +p[2], 12, 0, 0); }
+  // when(text, today) -> ISO date or null
+  function when(t, today) {
+    var s = String(t).toLowerCase().replace(/^\s+|\s+$/g, "").replace(/^(on|from|starting|start)\s+/, ""), d = parseIso(today), m;
+    if (/^(today|now|tonight)$/.test(s)) return today;
+    if (s === "tomorrow") { d.setDate(d.getDate() + 1); return iso(d); }
+    if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s))) { var x = new Date(+m[1], +m[2] - 1, +m[3], 12); return x.getMonth() === +m[2] - 1 ? iso(x) : null; }
+    if ((m = /^in\s+(an?|one|two|three|four|five|six|\d+)\s+(day|week|month|year)s?$/.exec(s))) {
+      var n = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 }[m[1]] || +m[1];
+      if (m[2] === "day") d.setDate(d.getDate() + n);
+      else if (m[2] === "week") d.setDate(d.getDate() + 7 * n);
+      else if (m[2] === "month") { var day = d.getDate(); d.setDate(1); d.setMonth(d.getMonth() + n); d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate())); }
+      else d.setFullYear(d.getFullYear() + n);
+      return iso(d);
+    }
+    if ((m = /^(next\s+|this\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)$/.exec(s))) {
+      var k = DAYS.indexOf(m[2]), add = (k - d.getDay() + 7) % 7;
+      if (add === 0) add = /^this/.test(m[1] || "") ? 0 : 7;
+      d.setDate(d.getDate() + add);
+      return iso(d);
+    }
+    // "1 December", "December 1", "Dec 1 2026"
+    if ((m = /^(\d{1,2})\s+([a-z]{3})[a-z]*\.?(?:\s+(\d{4}))?$/.exec(s)) || (m = /^([a-z]{3})[a-z]*\.?\s+(\d{1,2})(?:,?\s+(\d{4}))?$/.exec(s))) {
+      var dd = /^\d/.test(m[1]) ? +m[1] : +m[2], mo = MON.indexOf(/^\d/.test(m[1]) ? m[2] : m[1]);
+      if (mo < 0) return null;
+      var y = m[3] ? +m[3] : d.getFullYear(), c = new Date(y, mo, dd, 12);
+      if (!m[3] && c < d) c.setFullYear(y + 1);
+      return c.getDate() === dd ? iso(c) : null;
+    }
+    return null;
+  }
+  function repeatOf(t) {
+    var s = String(t || "").toLowerCase().replace(/^\s+|\s+$/g, "");
+    if (!s || /^(once|none|no|-|one time|one-off)$/.test(s)) return "none";
+    if (/^(daily|every\s*day|each day)$/.test(s)) return "daily";
+    if (/^(weekly|every\s*week|each week)$/.test(s)) return "weekly";
+    if (/^(monthly|every\s*month|each month)$/.test(s)) return "monthly";
+    if (/^(yearly|annually|every\s*year|each year)$/.test(s)) return "yearly";
+    return null;
+  }
+  // plan(block, today) -> {events: [{date, text, repeat}], problems}
+  function plan(block, today) {
+    var out = [], problems = [];
+    today = today || (L.today ? L.today() : iso(new Date()));
+    block.lines.forEach(function (raw) {
+      var line = raw.replace(/^\s+|\s+$/g, "").replace(/^(?:[-*\u2022]|\d{1,2}[.\x29])\s+/, "");
+      if (!line || /^\x60\x60\x60/.test(line) || /^\|?\s*:?-{2,}/.test(line) || /^when\s*\|/i.test(line)) return;
+      var p = line.split("|").map(function (x) { return x.replace(/\*\*/g, "").replace(/^\s+|\s+$/g, ""); });
+      if (p.length < 2) { problems.push("\u201c" + line.slice(0, 50) + "\u201d: write when | what to do | how often"); return; }
+      var date = when(p[0], today), rep = repeatOf(p[2]);
+      if (!date) { problems.push("\u201c" + p[0] + "\u201d is not a date Lantern can read: write today, tomorrow, in 3 weeks, next Monday, 1 December or 2026-12-01"); return; }
+      if (date < today) { problems.push(p[0] + " is in the past"); return; }
+      if (!p[1]) { problems.push("the line for " + p[0] + " does not say what to do"); return; }
+      if (rep === null) { problems.push("\u201c" + p[2] + "\u201d: the Planner repeats every day, week, month or year; write other intervals as separate dated lines"); return; }
+      out.push({ date: date, text: p[1], repeat: rep, said: p[0] });
+    });
+    if (!out.length && !problems.length) problems.push("the plan is empty: one line each, when | what to do | how often");
+    if (out.length > MAX) problems.push("keep it to " + MAX + " lines or fewer");
+    if (!block.closed) problems.push("the plan was cut off before END");
+    out.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+    return { events: out.slice(0, MAX), problems: problems.slice(0, 8) };
+  }
+  var REP = { none: "", daily: "every day", weekly: "every week", monthly: "every month", yearly: "every year" };
+  function build(block) {
+    var d = plan(block), added = null;
+    return {
+      problems: d.problems, plan: d.events.length ? { events: d.events, count: d.events.length } : null,
+      summary: d.events.length + " entr" + (d.events.length === 1 ? "y" : "ies") + " from " + (d.events[0] ? d.events[0].date : "") + ", dates worked out by Lantern",
+      openLabel: "Add to Planner",
+      preview: function () {
+        var el = L.el, tb = el("table", { style: "border-collapse:collapse;margin-top:6px;font-size:14px" });
+        d.events.forEach(function (e) {
+          tb.appendChild(el("tr", {}, [el("td", { style: "border:1px solid var(--line);padding:3px 8px;white-space:nowrap", text: e.date }),
+            el("td", { style: "border:1px solid var(--line);padding:3px 8px", text: e.text }),
+            el("td", { style: "border:1px solid var(--line);padding:3px 8px;white-space:nowrap", "class": "muted", text: REP[e.repeat] })]));
+        });
+        return el("div", { style: "overflow-x:auto" }, [tb]);
+      },
+      png: null,
+      open: function () {
+        if (!L.plannerDocs || !d.events.length) return;
+        // added once: a second tap only opens the Planner again
+        if (!added) { added = d.events.map(function (e) { return L.plannerDocs.add(e.date, e.text, e.repeat); }); }
+        L.plannerDocs.open(d.events[0].date);
+      }
+    };
+  }
+  window.Lantern.aiPlan = { plan: plan, when: when };
+  if (!ACTS.some(function (a) { return a.id === "plan"; })) ACTS.push({
+    id: "plan", kind: "PLAN", kinds: ["PLAN", "SCHEDULE", "CALENDAR", "PLANNER"], title: "a plan", opens: "Planner",
+    match: function (q) { return /\b(schedule|planner|calendar|remind(er)?s?|maintenance plan|plan (for|of|my|the|a)|make a plan|timetable|rota|every (day|week|month|year))\b/i.test(q); },
+    prompt: [
+      "MAKE PLAN: <title>   -- dated entries for the Planner; one line each: when | what to do | how often",
+      "when: today, tomorrow, in 3 days, in 2 weeks, in 1 month, next Monday, 1 December or 2026-12-01 (Lantern works out the dates).",
+      "how often: once, every day, every week, every month or every year (other intervals: separate dated lines).",
+      "END",
+      "For example:",
+      "MAKE PLAN: Compressor upkeep",
+      "today | Drain the condensate from the tank | every day",
+      "in 1 month | Check the drive belt tension | every month",
+      "END"],
+    build: function (block) { return build(block); }
+  });
+})();
+// ===========================================================================
+// MODULE: AI_PLAN - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: TEXT_READER_READ - START
+// Depends: TEXT_READER_DOCS, TEXT_READER_PROMPT (Lantern.textReader: docs,
+//          docPrompt, attached); Chat's hooks Lantern.chatCommands and
+//          Lantern.chatSystem -- all feature-detected
+// Exports: Lantern.textReader.readCommand (the READ reply line, for tests)
+// ===========================================================================
+// READ: the AI asks for a part of the document the person gave Chat. With
+// each question Lantern sends the few passages that share most words with
+// it; in a long manual the answer is often elsewhere -- on the page the
+// person named in an earlier question, in the next section, under another
+// word. Now the AI can say where to look:
+//     READ: page 12          READ: pages 3-5        READ: section 2
+//     READ: belt tension     (words to find in what has been read)
+// Lantern reads those pages first when they are not read yet (a long
+// scanned manual is read a section at a time), sends them back as numbered
+// passages, and checks the answer against them like any other passage.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.textReader || !L.textReader.docs) return;
+  var TR = L.textReader, D = TR.docs;
+  var CMDS = window.Lantern.chatCommands = window.Lantern.chatCommands || [];
+  var SYS = window.Lantern.chatSystem = window.Lantern.chatSystem || [];
+  // the command line must open the reply, or the reply must be short, so a
+  // "read:" in the middle of an answer never sets it off
+  function arg(reply) {
+    var t = String(reply || ""), re = /^[ \t*]*READ\s*:[ \t*]*([^\n]+)$/im, m = re.exec(t);
+    if (!m) return null;
+    var first = t.replace(/^\s+/, "").split("\n")[0];
+    if (t.replace(/^\s+|\s+$/g, "").length > 240 && !re.test(first)) return null;
+    return m[1].replace(/[\x22\u201c\u201d*]/g, "").replace(/^\s+|\s+$/g, "");
+  }
+  function readSoFar(doc) {
+    var done = doc.pages.filter(function (p) { return p.done; }).map(function (p) { return p.n; });
+    if (!done.length) return "none";
+    var runs = [], a = done[0], b = done[0];
+    for (var i = 1; i <= done.length; i++) {
+      if (i < done.length && done[i] === b + 1) { b = done[i]; continue; }
+      runs.push(a === b ? String(a) : a + "\u2013" + b);
+      if (i < done.length) { a = b = done[i]; }
+    }
+    return runs.join(", ");
+  }
+  // run(argument, question) -> what Chat sends the AI next
+  async function run(a, q, status) {
+    var doc = TR.attached;
+    if (!doc) return { prompt: "No document is attached. Answer the QUESTION now.\n\nQUESTION: " + q };
+    if (TR.namedPages) a = TR.namedPages(doc, a);
+    var m = /^pages?\s+(\d+)(?:\s*(?:-|to|\u2013)\s*(\d+))?/i.exec(a), sm = /^section\s+(\d+)/i.exec(a), from = 0, to = 0;
+    if (m) { from = +m[1]; to = +(m[2] || m[1]); }
+    else if (sm) { from = (+sm[1] - 1) * doc.per + 1; to = Math.min(doc.pages.length, +sm[1] * doc.per); }
+    if ((m || sm) && (from < 1 || from > doc.pages.length))
+      return { note: "The AI asked for " + a + "; the document has " + doc.pages.length + " pages.", prompt: "\u201c" + doc.title + "\u201d has " + doc.pages.length + " pages; there is no " + a + ". Ask for a page from 1 to " + doc.pages.length + ", or answer the QUESTION now.\n\nQUESTION: " + q };
+    // pages not read yet are read now (their sections)
+    if (m || sm) {
+      var secs = D.sections(doc);
+      for (var k = Math.floor((from - 1) / doc.per); k <= Math.floor((Math.min(to, doc.pages.length) - 1) / doc.per) && k < secs.length; k++) {
+        if (!secs[k].done) { if (status) status("reading pages " + secs[k].from + "\u2013" + secs[k].to + "\u2026"); await D.readSection(doc, k, {}); }
+      }
+    }
+    var src = D.passages(doc, m || sm ? (from === to ? "page " + from : "pages " + from + "-" + to) : a, m || sm ? 6 : 4);
+    if (!src.length) {
+      var unread = doc.pages.length - doc.pages.filter(function (p) { return p.done; }).length;
+      return { note: "Lantern found nothing for \u201c" + a + "\u201d in \u201c" + doc.title + "\u201d" + (unread ? " (" + unread + " pages are not read yet)" : "") + ".",
+        prompt: "READ found nothing for \u201c" + a + "\u201d in the pages read so far (" + readSoFar(doc) + " of " + doc.pages.length + ")." +
+          (unread ? " Ask READ: page <n> or READ: section <n> to read more, or answer the QUESTION now." : " Answer the QUESTION now.") + "\n\nQUESTION: " + q };
+    }
+    var pg = [];
+    src.forEach(function (x) { if (pg.indexOf(x.page) < 0) pg.push(x.page); });
+    return { sources: src, detail: !!(L.library && L.library.wantsDetail && L.library.wantsDetail(q)), how: "document", query: a,
+      prompt: TR.docPrompt ? TR.docPrompt(doc, q, src, !!(L.library && L.library.wantsDetail && L.library.wantsDetail(q))) : src.map(function (x) { return "[" + x.n + "] " + x.title + "\n" + x.text; }).join("\n\n") + "\n\nQUESTION: " + q,
+      note: "The AI asked to read " + (m || sm ? a : "\u201c" + a + "\u201d") + "; Lantern sent " + src.length + " passage" + (src.length === 1 ? "" : "s") + " from \u201c" + doc.title + "\u201d (page" + (pg.length === 1 ? " " : "s ") + pg.join(", ") + ")\u2026" };
+  }
+  var cmd = { id: "read", verb: "READ", usage: "READ: page <n> | pages <a>-<b> | section <n> | <words to find>",
+    desc: "read part of the document the person gave Chat (Text Reader)",
+    test: function (reply) { return TR.attached && TR.attached.kind !== "music" ? arg(reply) : null; },
+    run: function (a, q, ctx) { return run(a, q, ctx && ctx.status); } };
+  if (!CMDS.some(function (c) { return c && c.id === "read"; })) CMDS.push(cmd);
+  // the AI is told a document is there, and how to read any part of it
+  SYS.push(function () {
+    var doc = TR.attached;
+    if (!doc || doc.kind === "music" || doc.pages.length < 2) return "";
+    return "DOCUMENT ATTACHED: \u201c" + doc.title + "\u201d, " + doc.pages.length + " pages" +
+      (doc.pages.length > doc.per ? " in sections of " + doc.per : "") + " (read so far: pages " + readSoFar(doc) + "). With each question Lantern sends the passages that share" +
+      " most words with it. To read another part, reply only READ: page <n>, READ: pages <a>-<b>, READ: section <n> or READ: <words to find>.";
+  });
+  TR.readCommand = cmd;
+})();
+// ===========================================================================
+// MODULE: TEXT_READER_READ - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_MAKE_DOCS_BENCH_DATA - START
+// Depends: AI_BENCH_DATA (Lantern.aiBenchQuestions, created here if absent);
+//          the bench runs the make questions only when AI_ACTIONS is there,
+//          and the document conversation only when Text Reader's Chat
+//          provider is (TEXT_READER_CHAT)
+// Exports: (none) -- adds 4 "make" questions (a document, slides, flashcards,
+//          a plan) and 1 "chat" conversation that needs READ
+// ===========================================================================
+// 1.12.0: the AI can make things in Writer, Slides, Flashcards and the
+// Planner (AI_DOC, AI_SLIDES, AI_CARDS, AI_PLAN), and ask for another page
+// of the person's document (READ, TEXT_READER_READ). These check that it
+// does: the right MAKE block, Lantern's checks pass, and the result has what
+// was asked -- for the plan, that the dates Lantern worked out from the
+// AI's words are the ones the person asked for.
+(function () {
+  var Q = window.Lantern.aiBenchQuestions = window.Lantern.aiBenchQuestions || [];
+  var DAY = 86400000;
+  function days(a, b) {
+    var p = a.split("-"), r = b.split("-");
+    return Math.round((Date.UTC(+r[0], +r[1] - 1, +r[2]) - Date.UTC(+p[0], +p[1] - 1, +p[2])) / DAY);
+  }
+  [
+    { id: "make-doc-oil-change", kind: "DOC", max_tokens: 900, quick: 1,
+      q: "Write a short procedure for changing the oil in a lawn mower engine, as a document I can print.",
+      ideal: "MAKE DOC: Changing the oil in a lawn mower engine\n## Before you start\nRun the engine for two minutes so the oil flows, then switch it off and pull the spark plug lead.\n" +
+        "## You need\n- A drain pan and a funnel\n- 0.6 litres of SAE 30 oil\n## Steps\n1. Tip the mower with the air filter facing up, or open the drain plug.\n" +
+        "2. Let the old oil drain into the pan.\n3. Refit the plug and pour in the new oil a little at a time.\n4. Check the dipstick and top up to the full mark.\n" +
+        "## Afterwards\nTake the old oil to a recycling point; never pour it on the ground.\nEND",
+      check: function (p) {
+        if (p.words < 50) return "only " + p.words + " words";
+        if (p.parts.headings < 2) return "no headings to find your way";
+        if (p.parts.items < 3) return "no steps: a procedure needs its steps as a list";
+        return /\boil\b/i.test(p.text) ? "" : "says nothing about the oil";
+      } },
+    { id: "make-slides-ladder", kind: "SLIDES",
+      q: "Make a short slide deck, 4 to 6 slides, for a toolbox talk on ladder safety.",
+      ideal: "MAKE SLIDES: Ladder safety\n# Ladder safety\nA five-minute toolbox talk.\n# Before you climb\n- Check the feet, rungs and locks\n- Set it on firm, level ground\n" +
+        "# Set it up right\n- One out for every four up\n- Tie it off or have it footed\n# On the ladder\n- Keep three points of contact\n- Never stand on the top two rungs\n" +
+        "# Remember\n- Check it, set it, climb it safely\nEND",
+      check: function (p) {
+        if (p.count < 4 || p.count > 6) return p.count + " slides, not 4 to 6";
+        var bare = p.slides.filter(function (s, i) { return i > 0 && s.body.indexOf("<li>") < 0; }).length;
+        if (bare > 1) return bare + " slides have no points";
+        var all = p.slides.map(function (s) { return s.h + " " + s.body; }).join(" ");
+        return /rung|contact|footed|level|angle|tie/i.test(all) ? "" : "nothing about using a ladder safely";
+      } },
+    { id: "make-cards-si-units", kind: "CARDS",
+      q: "Make flashcards for the seven SI base units: what each one measures, and its name.",
+      ideal: "MAKE CARDS: SI base units\nLength | metre (m)\nMass | kilogram (kg)\nTime | second (s)\nElectric current | ampere (A)\nTemperature | kelvin (K)\n" +
+        "Amount of substance | mole (mol)\nLuminous intensity | candela (cd)\nEND",
+      check: function (p) {
+        var all = p.pairs.map(function (x) { return x.join(" "); }).join(" ").toLowerCase();
+        var miss = ["metre|meter", "kilogram", "second", "ampere|amp\\b", "kelvin", "mole", "candela"].filter(function (u) { return !new RegExp(u).test(all); });
+        if (miss.length) return "missing " + miss.map(function (u) { return u.split("|")[0]; }).join(", ");
+        return p.count >= 7 ? "" : "fewer than seven cards";
+      } },
+    { id: "make-plan-compressor", kind: "PLAN",
+      q: "Put this in my planner: drain the compressor tank every day starting today, check the drive belt every month starting one week from today, and change the oil once, three months from today.",
+      ideal: "MAKE PLAN: Compressor upkeep\ntoday | Drain the compressor tank | every day\nin 1 week | Check the drive belt | every month\nin 3 months | Change the compressor oil | once\nEND",
+      check: function (p) {
+        var e = p.events, by = function (re) { return e.filter(function (x) { return re.test(x.text); })[0]; };
+        var drain = by(/drain|condensate|tank/i), belt = by(/belt/i), oil = by(/oil/i);
+        if (!drain || !belt || !oil) return "missing " + [!drain && "the tank", !belt && "the belt", !oil && "the oil"].filter(Boolean).join(", ");
+        if (drain.repeat !== "daily") return "draining the tank is not every day";
+        if (belt.repeat !== "monthly") return "the belt check is not every month";
+        if (oil.repeat !== "none") return "the oil change repeats; it was asked once";
+        if (days(drain.date, belt.date) !== 7) return "the belt check starts " + days(drain.date, belt.date) + " days after today, not 7";
+        var o = days(drain.date, oil.date);
+        return o >= 89 && o <= 92 ? "" : "the oil change is " + o + " days away, not three months";
+      } }
+  ].forEach(function (x) {
+    x.cat = "make";
+    if (!Q.some(function (y) { return y.id === x.id; })) Q.push(x);
+  });
+  // A manual whose warranty page shares no words with the question (it says
+  // warranty, the person says guarantee): the AI is sent the first pages,
+  // sees the contents and that there are 5 pages, and must READ page 5.
+  var MANUAL = { title: "PX-2200 compressor manual", pages: [
+    "PX-2200 Air Compressor \u2014 Operator\u2019s Manual\n\nContents: 1 Safety; 2 Installation; 3 Maintenance; 4 Fault codes; 5 Warranty and service.\n\nSection 1: Safety. Always switch off and lock out the main breaker before servicing the compressor. Wear safety glasses and hearing protection while it runs.",
+    "Section 2: Installation. Stand the compressor on a level floor with 30 cm of free space on every side. Connect it to a 230 V supply with a 16 A breaker.",
+    "Section 3: Maintenance. Drain the condensate from the tank daily. Change the compressor oil every 500 hours with ISO VG 100 oil; the sump holds 1.8 litres.",
+    "Section 4: Fault codes. E-04: low oil level. E-11: discharge temperature above 110 degrees C. E-17: motor overload.",
+    "Section 5: Warranty and service. The warranty runs for 2 years, parts and labour, from the date of purchase. Keep the receipt; service centres are listed on the back of the box."] };
+  [
+    { id: "doc-read-another-page", doc: MANUAL, turns: ["How long is the guarantee on this compressor?"],
+      check: function (t) {
+        var r = t[t.length - 1], x = String(r.final || "");
+        if (!(r.commands || []).some(function (c) { return c.verb === "READ"; })) return "the AI did not ask to READ another page";
+        if (r.declined) return "said the manual does not say";
+        return /\b(2|two)\s*(-\s*)?years?\b/i.test(x) ? "" : "did not find the 2 years on page 5";
+      } }
+  ].forEach(function (x) {
+    x.cat = "chat"; x.q = "[" + x.doc.title + "] " + x.turns.join(" \u2192 ");
+    if (!Q.some(function (y) { return y.id === x.id; })) Q.push(x);
+  });
+})();
+// ===========================================================================
+// MODULE: AI_MAKE_DOCS_BENCH_DATA - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: GUIDE_MAKE_DOCS - START
+// Depends: GUIDE (Lantern.guide.append) -- feature-detected
+// Exports: (none) -- adds Chat and AI help sections on what the AI can make
+//          in Writer, Slides, Flashcards and the Planner, and on READ
+// ===========================================================================
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.guide || !L.guide.append) return;
+  L.guide.append("chat", [
+    ["Documents, slides, flashcards and plans", "<p>Ask Chat to <b>write a letter, notice, report or procedure</b>, to <b>make a presentation</b>, to <b>make flashcards</b>, or to <b>put something in your planner</b>, and the AI writes it in plain lines that Lantern turns into the real thing. Chat shows it first, with what Lantern checked; one tap opens it in its app: <b>Open in Writer</b>, <b>Open in Slides</b>, <b>Open in Flashcards</b> or <b>Add to Planner</b>. Nothing is saved until you tap, and a second tap only opens it again.</p>" +
+      "<p>What Lantern checks: a document has its words written out in full and Compose\u2019s writing checker reads it (its findings are listed under the preview); a deck has a title on every slide and no more than 7 short points a slide; a deck of flashcards has both sides on every card and no card twice; a plan has a date Lantern can read on every line, none in the past. When something is wrong, the AI is asked once to correct it.</p>" +
+      "<p>The AI says <i>when</i> in words \u2014 today, tomorrow, in 3 weeks, next Monday, 1 December \u2014 and Lantern works out the dates itself, so they are right. The Planner repeats every day, week, month or year; for every 2 weeks or every 500 hours, ask for the dates one by one.</p>"],
+    ["Reading more of a long document (READ)", "<p>With each question, Chat sends the AI the few passages of your document that share the most words with it. When the answer is somewhere else \u2014 another page, another word for the same thing (you say guarantee, the manual says warranty) \u2014 the AI can ask for it: <code>READ: page 12</code>, <code>READ: pages 3-5</code>, <code>READ: section 2</code> or <code>READ: belt tension</code>. Pages not read yet are read first (a long scan is read a section at a time), and the answer is checked against them like any other passage. Chat notes each READ as it happens; a question gets at most three.</p>" +
+      "<p>You can do the same yourself: \u201cWhat does the last page say?\u201d or \u201cOn page 7, what is the torque?\u201d.</p>"]
+  ]);
+  L.guide.append("ai", [
+    ["What the AI can make", "<p>Chat\u2019s AI can make a <b>schematic</b> or a <b>drawing</b> (Draw), a <b>table</b> that calculates (Sheets), a <b>document</b> (Writer), a <b>slide deck</b> (Slides), <b>flashcards</b> (Flashcards) and a <b>plan</b> (Planner). It is told how only when the question is about one of them, so a small model\u2019s instructions stay short. The bench\u2019s <i>make</i> questions test each kind.</p>" +
+      "<p>For module authors: a module adds a kind with <code>Lantern.aiActions.push({id, kind, kinds, title, opens, match(q), prompt: [lines], build(block)})</code>; <code>build</code> returns <code>{problems, plan, summary, preview(), open(), openLabel}</code>. The apps\u2019 own doors are <code>Lantern.writerDocs</code>, <code>slideDocs</code>, <code>cardDocs</code>, <code>plannerDocs</code>, <code>sheetDocs</code> and <code>drawDocs</code>.</p>"]
+  ]);
+})();
+// ===========================================================================
+// MODULE: GUIDE_MAKE_DOCS - END
 // ===========================================================================
 </script>
 

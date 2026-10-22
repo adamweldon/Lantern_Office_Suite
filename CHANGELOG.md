@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.12.0 — The AI makes documents, slides, flashcards and plans; READ (2026-10-22)
+
+Built on 1.11.1, which is merged into this release.
+
+- **MAKE DOC → Writer** (AI_DOC). Ask Chat for a letter, notice, report or
+  procedure. The AI writes plain lines: `##` headings, numbered steps,
+  `-` bullets, `|` table rows and `**bold**`. Lantern turns them into a
+  Writer document.
+  - A document that is too short or cut off is sent back once.
+  - Compose's writing checker reads it, and its findings (spelling,
+    grammar, punctuation) are listed under the preview.
+- **MAKE SLIDES → Slides** (AI_SLIDES). `#` starts a slide and `-` adds a
+  point. Lantern checks every slide has a title and something under it, at
+  most 7 short points a slide and at most 25 slides.
+- **MAKE CARDS → Flashcards** (AI_CARDS). One card a line as
+  `front | back` (also `::` or Q:/A: pairs). Lantern checks every card has
+  both sides, no card is there twice, and no answer just repeats its
+  question.
+- **MAKE PLAN → Planner** (AI_PLAN). One line each:
+  `when | what | how often`.
+  - The AI says *when* in words (today, in 3 weeks, next Monday,
+    1 December) and Lantern works out the dates itself.
+  - A date in the past, an unreadable date or a repeat the Planner does not
+    have (every 2 weeks) is sent back.
+- **One tap opens it.** Each result is shown in Chat first, with
+  **Open in Writer / Slides / Flashcards** or **Add to Planner**. Nothing is
+  saved until the tap, and a second tap only opens it again.
+  - New host doors: `Lantern.slideDocs`, `Lantern.cardDocs` and
+    `Lantern.plannerDocs`, next to `writerDocs` and `sheetDocs`.
+  - The command list says which app each MAKE kind opens.
+- **READ: for documents** (TEXT_READER_READ). With a long document
+  attached, the AI can ask for another part: `READ: page 12`,
+  `READ: pages 3-5`, `READ: section 2` or `READ: <words to find>`.
+  - Pages not read yet are read first, and the answer is checked against
+    them like any passage.
+  - Chat's instructions say a document is attached, how many pages it has
+    and which have been read.
+  - Each passage block says which pages it came from and offers READ
+    before "Not in the document".
+  - "The last page" and "the first page" are page numbers, in a question
+    and in READ.
+  - A question about the document that shares no words with what was read
+    gets its opening passages, so the AI can see the contents and READ on.
+- **TEXT_READER_PROMPT** holds the document prompt, split from
+  TEXT_READER_CHAT. This keeps both under the Studio's 2,500-token size
+  warning (44 warnings, as in 1.11.1).
+- **Bench**: four new make questions (a printable procedure, a 4-6 slide
+  toolbox talk, the seven SI units as flashcards, a compressor plan whose
+  dates must come out right) and a document conversation that needs READ
+  (the person says guarantee, page 5 says warranty).
+- **Tests**: `tests/ai_make_docs.js` (53 checks); the action, routing,
+  layer and isolation tests updated (75 modules isolated). The Project
+  Context gate passes: 294 modules, 0 errors.
+
 ## 1.11.1 — The AI knows the whole suite; pictures in Chat (2026-10-22)
 
 Built in a separate session on top of 1.10.0, then brought into the

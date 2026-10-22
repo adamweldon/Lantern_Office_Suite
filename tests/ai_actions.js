@@ -52,7 +52,7 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   await sleep(60);
   var L = w.Lantern, act = L.aiAct;
   ok("boot clean", errs.length === 0, errs);
-  ok("three actions registered", L.aiActions.map(function (a) { return a.id; }).join(",") === "schematic,drawing,sheet", L.aiActions.map(function (a) { return a.id; }));
+  ok("seven actions registered (1.12: a document, slides, flashcards and a plan join them)", L.aiActions.map(function (a) { return a.id; }).join(",") === "schematic,drawing,sheet,doc,slides,cards,plan", L.aiActions.map(function (a) { return a.id; }));
 
   // --- finding blocks, and the prompt ---
   var fb = act.find("Here it is:\n```\nMAKE SCHEMATIC: Lamp\npart B1 battery\nwire B1 L1\nEND\n```\nDone.");
@@ -254,7 +254,7 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
 
   // --- the bench: make questions ---
   var Q = L.aiBenchQuestions.filter(function (q) { return q.cat === "make"; });
-  ok("eight make questions, two quick", Q.length === 8 && Q.filter(function (q) { return q.quick; }).length === 2);
+  ok("twelve make questions, three quick", Q.length === 12 && Q.filter(function (q) { return q.quick; }).length === 3);
   function gradeWith(id, reply) {
     var item = Q.filter(function (q) { return q.id === id; })[0];
     return L.aiBench.grade(item, reply, { made: act.build(reply, item.q) });

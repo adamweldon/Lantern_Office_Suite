@@ -91,11 +91,16 @@ function good(last) {
     var Qd = [[/oil be changed/, "Change the compressor oil every 500 hours with ISO VG 100 oil; the sump holds 1.8 litres."],
       [/E-11/, "E-11: discharge temperature above 110 degrees C; clean the cooling fins and check the room ventilation."],
       [/E-17/, "E-17: motor overload; check the supply voltage and the belt tension."],
-      [/belt deflect/, "Check the drive belt tension monthly: it should deflect 10 to 15 mm at the middle of its longest span."]];
+      [/belt deflect/, "Check the drive belt tension monthly: it should deflect 10 to 15 mm at the middle of its longest span."],
+      [/guarantee/, "The warranty runs for 2 years, parts and labour, from the date of purchase."]];
     var qline = (/QUESTION: ([^\n]*)/.exec(last) || [])[1] || "", hit = Qd.filter(function (x) { return x[0].test(qline); })[0];
     if (!hit) return "ANSWER: Not in the document.";
     var blocks = last.split(/\n\[(\d)\] /), nn = 0;
     for (var bi = 1; bi < blocks.length; bi += 2) if (blocks[bi + 1].indexOf(hit[1]) >= 0) nn = +blocks[bi];
+    // not in these passages: a longer document's other pages can be asked
+    // for (READ, 1.12.0): the contents say the warranty is on page 5
+    var np = /The document has (\d+) pages[^\n]*reply only READ:/.exec(last), toc = /(\d) Warranty and service/.exec(last);
+    if (hit && !nn && np && toc) return "READ: page " + toc[1];
     return nn ? "ANSWER: " + hit[1].replace(/\.$/, "") + " [" + nn + "].\nQUOTE [" + nn + "]: " + hit[1] : "ANSWER: Not in the document.";
   }
   // Lantern's own catalog and lessons (SUITE_CHAT, 1.11): name the tiles,
@@ -212,11 +217,11 @@ function good(last) {
   ok("C.converse runs a conversation with no page", conv.turns.length === 2 && conv.turns[0].searches.length === 1 && conv.turns[1].searches.length === 0 &&
     conv.turns[1].self && /Kenya/.test(conv.text), conv.turns.map(function (x) { return [x.searches, x.self, x.final]; }));
   var Q = L.aiBenchQuestions.filter(function (x) { return x.cat === "chat"; });
-  ok("eight conversations in the bench, one quick, four about a document and four about Lantern itself", Q.filter(function (x) { return !x.doc && !/^suite-/.test(x.id); }).length === 8 &&
-    Q.filter(function (x) { return x.quick; }).length === 1 && Q.filter(function (x) { return x.doc; }).length === 4 && Q.filter(function (x) { return /^suite-/.test(x.id); }).length === 4);
+  ok("eight conversations in the bench, one quick, five about a document and four about Lantern itself", Q.filter(function (x) { return !x.doc && !/^suite-/.test(x.id); }).length === 8 &&
+    Q.filter(function (x) { return x.quick; }).length === 1 && Q.filter(function (x) { return x.doc; }).length === 5 && Q.filter(function (x) { return /^suite-/.test(x.id); }).length === 4);
   var rep = await L.aiBench.run({ quick: false, skip: ["tool", "multi", "need", "unknown", "safety", "fact", "make", "reason", "alone"] });
   var failed = rep.rows.filter(function (r) { return !r.pass; }).map(function (r) { return r.id + ": " + r.why; });
-  ok("a model that behaves well passes every conversation", rep.rows.length === 16 && !failed.length && rep.summary.chat.pass === 16, failed);
+  ok("a model that behaves well passes every conversation", rep.rows.length === 17 && !failed.length && rep.summary.chat.pass === 17, failed);
   ok("document conversations: the bench handed Chat the manual, and took it back", rep.rows.filter(function (r) { return /^doc-/.test(r.id); }).every(function (r) { return r.chat.some(function (t) { return t.searches.some(function (s) { return s.how === "document"; }); }) || r.id === "doc-not-covered"; }) &&
     !(L.textReader && L.textReader.attached));
   ok("rows record each turn's searches", rep.rows.filter(function (r) { return r.id === "chat-follow-up-search"; })[0].chat[1].searches[0].how === "asked");
