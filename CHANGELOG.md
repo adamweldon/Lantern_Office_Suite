@@ -1,5 +1,53 @@
 # Changelog
 
+## 1.12.2 — Make things from an attached document; Save .pdf (2026-10-22)
+
+From Adam's Chat with his upside-down scan of a grinder manual. The AI
+corrected the text on its own, but said it could not make a PDF or use
+Writer. While a document was attached, every question had been treated as
+a question about it. "Turn this into a PDF", "rewrite it in the writing
+module" and "write it in the text writer" did not trigger MAKE DOC. The AI
+only ever had 3 of the page's passages, with no way to ask for the rest.
+
+- **A request to make something wins over the attached document**
+  (TEXT_READER_CHAT, TEXT_READER_PROMPT). The AI gets the document's whole
+  text (up to 12 passages) and the MAKE instructions, not "ANSWER / Not in
+  the document". It is told to correct words Text Reader misread where the
+  sentence makes the right word clear, and to keep codes and numbers as
+  printed when it cannot tell.
+- **MAKE DOC listens for more ways of asking** (AI_DOC): rewrite, retype,
+  correct, proofread, transcribe, turn into / convert / save as a PDF, "in
+  Writer", "the text writer", "the writing module", "word processor".
+- **Save .pdf** (PDF_DOC_LAYOUT, PDF_DOC). A PDF file straight from a
+  document, with no print box: headings, paragraphs, bullet and numbered
+  lists (nested), tables with ruled cells, bold and italic. It uses the
+  standard Helvetica, so nothing is embedded. Pages are Letter or A4, with
+  page numbers.
+  - It is in Writer (a Writer tool) and beside **Open in Writer** under
+    every document the AI makes.
+  - Signs the standard fonts lack are written out (Ω as Ohm, → as ->).
+- **READ: all.** The whole of a short document (all of a one-page scan),
+  or the next unread section of a long one. When the AI has only some of a
+  page's passages, it is told how many there are and how to get the rest.
+  "Can you request the full text?" counts as a question about the document
+  itself.
+- **Sentences about the document as a whole** ("Yes, I have the page Text
+  Reader read: part of a grinder manual") are no longer flagged as false
+  citations. When nothing cites a passage, the check says so instead of
+  "0 of 1 backed".
+- **Text Reader on the real scan** (829×1160 px, upside down and slightly
+  curved): 7.3% of characters wrong in 1.12.0, 3.3% in 1.12.1, 2.3% now.
+  - Codes keep their digits (lO-3 → 10-3, 12-l( → 12-1(, xl6 → x16).
+  - A list number run into its first word becomes 1 (I.Pressing).
+  - A d with a comma touching it is no longer read as 4 (finishe4then).
+  - Letters touching an f are fixed (fflnction, flmction → function),
+    preferring words the same document prints clearly.
+- **Tests.** Adam's three requests, the whole text for making, READ: all,
+  a description of the document, and the PDF file itself (header, every
+  object where the cross-reference table says, fonts, bullets, table
+  rules, page numbers). The Project Context gate passes: 298 modules,
+  0 errors, 44 size warnings.
+
 ## 1.12.1 — Turned and skewed screenshots read properly; honest confidence (2026-10-22)
 
 From a test: a screenshot of a grinder manual page, upside down and a

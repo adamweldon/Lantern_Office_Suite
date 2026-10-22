@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.12.1 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.12.2 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -166,7 +166,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.12.1",
+  version: "1.12.2",
   apps: {},
   order: []
 };
@@ -23345,8 +23345,13 @@ Lantern.RFB = (function () {
       // "The passages do not cover...") is about them, not a claim from them
       // (1.9.6: both were flagged as false citations in a 35B Chat).
       t = t.replace(/\b(passages?)\s*\[(\d+)\]/gi, "$1 $2");
-      if (/^(passage|passages|the (provided |library |given |above |offline )*(passages?|library)|these passages|none of the passages|neither passage)\b/i.test(t)) {
+      // So is a sentence about the person's document as a whole ("Yes, I
+      // have the page Text Reader read: part of a grinder manual", "The page
+      // covers ...") -- 1.12.2, from a Chat about a scanned manual.
+      if (/^(passage|passages|the (provided |library |given |above |offline )*(passages?|library)|these passages|none of the passages|neither passage)\b/i.test(t) ||
+        /^((yes|no)\b[,.!]?\s*)?((the|this|that) (whole |full |scanned )?(page|document|manual|scan|screenshot|text|pdf|file) (is|covers|describes|explains|contains|has|shows|lists|deals with)\b|it is (a|an|the|part of)\b|i (have|can see|see|got|can read) (it|the|this|all)\b)/i.test(t)) {
         g.about.push({ text: t.replace(/\s*\[\d+\]/g, ""), state: "about" });
+        if (/\[\d+\]/.test(t)) g.cited++;   // it points at the passages
         return;
       }
       var cites = [], m, re = /\[(\d+)\]/g;
@@ -23386,9 +23391,12 @@ Lantern.RFB = (function () {
   // libraryGroundView(g) -> what Lantern found, sentence by sentence.
   window.Lantern.libraryGroundView = function (g) {
     var el = L.el, box = el("div", { "class": "la-ground", style: "margin:8px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px" });
+    // (when no sentence cites a passage, there is nothing backed to count
+    // -- the AI described the document, 1.12.2)
     var n = g.sentences.length;
-    box.appendChild(el("div", { text: "Checked against the passages, sentence by sentence: " + g.backed + " of " + n +
-      " backed by the passage they cite" + (g.loose.length ? ", " + g.loose.length + " match a passage without citing it" : "") + "." }));
+    box.appendChild(el("div", { text: g.backed || g.wrong.length ? "Checked against the passages, sentence by sentence: " + g.backed + " of " + n +
+      " backed by the passage they cite" + (g.loose.length ? ", " + g.loose.length + " match a passage without citing it" : "") + "." :
+      "Checked against the passages: no sentence states a fact from them" + ((g.about || []).length ? " (the AI describes the passages or the document)" : "") + "." }));
     function list(arr, cls, head) {
       if (!arr.length) return;
       box.appendChild(el("div", { "class": cls, style: "margin-top:6px", text: head }));
@@ -23766,8 +23774,10 @@ Lantern.RFB = (function () {
     if (res.preview) { try { var pv = res.preview(); if (pv) box.appendChild(pv); } catch (e) { } }
     if (res.problems && res.problems.length)
       box.appendChild(el("p", { "class": "danger", text: "\u26a0 Lantern still questions this: " + res.problems.join("; ") + ". Check it before you use it." }));
+    // the main button, and any more the action offers (Save .pdf, 1.12.2)
     if (res.open && res.plan) box.appendChild(el("div", { "class": "row", style: "margin-top:6px" }, [
-      el("button", { "class": "primary", text: res.openLabel || "Open", onclick: function () { res.open(); } })]));
+      el("button", { "class": "primary", text: res.openLabel || "Open", onclick: function () { res.open(); } })].concat((res.extra || []).map(function (x) {
+        return el("button", { text: x.label, title: x.title || x.label, onclick: function () { x.run(); } }); }))));
     return box;
   }
   window.Lantern.aiAct = { find: find, relevant: relevant, prompt: prompt, build: build, solve: solve, view: view, lookText: lookText, LOOKS: LOOKS,
@@ -26845,14 +26855,17 @@ Lantern.RFB = (function () {
   var nearMemo = {}, byLen = null;
   function near(w) {
     w = String(w).toLowerCase();
-    if (nearMemo.hasOwnProperty(w)) return nearMemo[w];
-    var v = WD.model().vocab, extra = WD.learned(), n = w.length, maxd = n >= 7 ? 2 : 1, best = "", bd = 9, bc = 0, L2, k, i;
+    // words this document has shown clearly count one letter closer: a page
+    // that prints "function" plainly elsewhere means function, not fraction
+    var ex = WD.learned(), key = w + "|" + Object.keys(ex).length;
+    if (nearMemo.hasOwnProperty(key)) return nearMemo[key];
+    var v = WD.model().vocab, n = w.length, maxd = n >= 7 ? 2 : 1, best = "", bd = 9, bc = 0, L2;
     if (!byLen) { byLen = {}; Object.keys(v).forEach(function (x) { if (v[x] >= 2) (byLen[x.length] = byLen[x.length] || []).push(x); }); }
-    for (L2 = n - maxd; L2 <= n + maxd; L2++) (byLen[L2] || []).concat(Object.keys(extra).filter(function (x) { return x.length === L2; })).forEach(function (x) {
-      var d = dist(w, x, maxd), c = v[x] || extra[x] || 0;
-      if (d <= maxd && (d < bd || (d === bd && c > bc))) { best = x; bd = d; bc = c; }
+    for (L2 = n - maxd - 1; L2 <= n + maxd + 1; L2++) (byLen[L2] || []).concat(Object.keys(ex).filter(function (x) { return x.length === L2 && !(v[x] >= 2); })).forEach(function (x) {
+      var doc = ex[x] ? 1 : 0, d = dist(w, x, maxd + doc) - doc, c = (doc ? 1000 : 0) + (v[x] || 0) + (ex[x] || 0);
+      if (x !== w && d <= maxd && (d < bd || (d === bd && c > bc))) { best = x; bd = d; bc = c; }
     });
-    nearMemo[w] = best;
+    nearMemo[key] = best;
     return best;
   }
   // dist(a, b, max) -> edit distance, or max + 1 once it is certainly more
@@ -26879,8 +26892,21 @@ Lantern.RFB = (function () {
     r.text = r.text.replace(core, word); r.conf = Math.min(r.conf, conf);
     return word;
   }
+  function edges(t) { return String(t).replace(/^[^A-Za-z0-9\u03a9]+|[^A-Za-z0-9%\u00b0\u03a9]+$/g, ""); }
   function check(r) {
-    var core = String(r.text).replace(/^[^A-Za-z0-9\u03a9]+|[^A-Za-z0-9%\u00b0\u03a9]+$/g, ""), i;
+    // codes and numbers: l, I and O among digits and hyphens are digits
+    // (lO-3 -> 10-3, 12-l( -> 12-1(, xl6 -> x16), and a list number run
+    // into its first word is a 1 (I.Pressing -> 1.Pressing) (1.12.2)
+    var t0 = r.text;
+    r.text = r.text.replace(/(^|[^A-Za-z0-9])([0-9lIO]+(?:-[0-9lIO]+)+)(?![A-Za-z])/g, function (m, a, b) {
+      return /[0-9]/.test(b) && /[lIO]/.test(b) ? a + b.replace(/[lI]/g, "1").replace(/O/g, "0") : m;
+    }).replace(/(^|[^A-Za-z])x([0-9lI]*[0-9][0-9lI]*)(?![A-Za-z])/g, function (m, a, b) { return a + "x" + b.replace(/[lI]/g, "1"); })
+      .replace(/^[Il]\.(?=[A-Z][a-z])/, "1.");
+    if (r.text !== t0) r.conf = Math.min(r.conf, 0.85);
+    var core = edges(r.text), i;
+    // a d with a comma after it, touching, reads as 4 (finishe4then)
+    var d4 = /^([A-Za-z]{3,})4([A-Za-z]*)$/.exec(core);
+    if (d4 && WD.known(d4[1] + "d")) { swap(r, core, d4[1] + "d," + d4[2], 0.7); return r; }
     // a capital I inside a small-letter word is an i whose dot ran into it
     // or an l (wIll, IndIcatIng in blurred print): whichever makes a word
     if (/[a-z]/.test(core) && /^[A-Za-z]+$/.test(core) && core.indexOf("I", 1) > 0) {
@@ -26910,8 +26936,14 @@ Lantern.RFB = (function () {
     if (/^[A-Za-z]{4,}$/.test(core) && core !== core.toUpperCase() && !WD.known(core)) {
       // (only when the letters themselves fit poorly: a clean word that is
       // simply not among Lantern's words -- bolts, chassis -- is left alone)
-      var nw = r.vis >= 0.09 ? near(core) : "", parts = nw ? null : runs(core.toLowerCase());
-      if (nw) {
+      var lig = /ff|fl|fi/i.exec(core), nw = r.vis >= 0.09 || lig ? near(core) : "", parts = nw ? null : runs(core.toLowerCase());
+      // f-shapes (ffl, fl, fi) where the common word has none are letters
+      // touching an f (fun read as ffln, flm): the common word goes in
+      if (nw && lig && nw.indexOf(lig[0].toLowerCase()) < 0 && nw.charAt(lig.index) === "f" && WD.known(nw) >= 5 && nw.length >= 5) {
+        swap(r, core, /^[A-Z]/.test(core) ? nw.charAt(0).toUpperCase() + nw.slice(1) : nw, 0.7);
+        return r;
+      }
+      if (nw && !lig || nw && r.vis >= 0.09) {
         r.conf = Math.min(r.conf, 0.6);
         r.near = /^[A-Z]/.test(core) ? nw.charAt(0).toUpperCase() + nw.slice(1) : nw;
         r.alts = [r.near].concat((r.alts || []).filter(function (a) { return a !== r.near; })).slice(0, 4);
@@ -27143,6 +27175,7 @@ Lantern.RFB = (function () {
           var gap = a ? b.gs[0].x0 - a.gs[a.gs.length - 1].x1 : 0;
           if (a && (/^[,.;:!?\x29\x5D%]/.test(b.text) || (/[0-9]$/.test(a.text) && /^[0-9]/.test(b.text) && gap < 0.9 * sp))) {
             o2[o2.length - 1] = { text: a.text + b.text, conf: Math.min(a.conf, b.conf), alts: [], known: false, gs: a.gs.concat(b.gs), score: a.score + b.score };
+            if (WD.check) WD.check(o2[o2.length - 1]);   // I + .Pressing is 1.Pressing
             continue;
           }
           o2.push(b);
@@ -28350,6 +28383,281 @@ Lantern.RFB = (function () {
 // MODULE: PDF_WRITE - END
 // ===========================================================================
 // ===========================================================================
+// MODULE: PDF_DOC_LAYOUT - START
+// Depends: PDF_WRITE (Lantern.pdf.winAnsi) -- feature-detected
+// Exports: Lantern.pdf.layout = {codes, cw, wid, lit, n2, enc, blocks(element),
+//          wrap(runs, size, width)} (for PDF_DOC)
+// ===========================================================================
+// The measuring half of a PDF made from a document's text (PDF_DOC): the
+// document cut into blocks (headings, paragraphs, list items, tables), each
+// block's words in their styles (bold, italic), and the words set into lines
+// with Helvetica's own letter widths, so they wrap where a PDF viewer will
+// draw them (1.12.2).
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var P = window.Lantern.pdf = window.Lantern.pdf || {};
+  // advance widths (1/1000 em) of the printable ASCII letters, 32 to 126
+  var HW = [278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556,
+    1015, 667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556,
+    333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584];
+  var HB = [278, 333, 474, 556, 556, 889, 722, 238, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 333, 333, 584, 584, 584, 611,
+    975, 722, 722, 722, 722, 667, 611, 778, 722, 278, 556, 722, 611, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 333, 278, 333, 584, 556,
+    333, 556, 611, 556, 611, 556, 333, 611, 611, 278, 278, 556, 278, 889, 611, 611, 611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, 389, 280, 389, 584];
+  var WIN = { 8364: 128, 8230: 133, 8216: 145, 8217: 146, 8220: 147, 8221: 148, 8226: 149, 8211: 150, 8212: 151, 8482: 153 };
+  // signs the standard fonts lack, written out
+  var SAY = { "\u03a9": "Ohm", "\u2192": "->", "\u2190": "<-", "\u2264": "<=", "\u2265": ">=", "\u2248": "~", "\u2260": "!=", "\u221a": "sqrt", "\u2713": "v", "\u2212": "-" };
+  function codes(s) {
+    s = String(s).replace(/[\u03a9\u2190\u2192\u2264\u2265\u2248\u2260\u221a\u2713\u2212]/g, function (c) { return SAY[c]; });
+    if (P.winAnsi) return P.winAnsi(s);
+    var out = [];
+    for (var i = 0; i < s.length; i++) { var c = s.charCodeAt(i); out.push(c >= 32 && c < 127 || c >= 160 && c < 256 ? c : WIN[c] || 63); }
+    return out;
+  }
+  function cw(c, b) {
+    if (c >= 32 && c < 127) return (b ? HB : HW)[c - 32];
+    if (c === 145 || c === 146) return b ? 278 : 222;
+    if (c === 147 || c === 148) return b ? 500 : 333;
+    return c === 149 ? 350 : c === 151 || c === 133 ? 1000 : 556;
+  }
+  function wid(cs, b, size) { var w = 0; for (var i = 0; i < cs.length; i++) w += cw(cs[i], b); return w * size / 1000; }
+  function lit(cs) {
+    return "(" + cs.map(function (c) {
+      if (c === 40 || c === 41 || c === 92) return "\\" + String.fromCharCode(c);
+      if (c < 32 || c > 126) return "\\" + ("00" + c.toString(8)).slice(-3);
+      return String.fromCharCode(c);
+    }).join("") + ")";
+  }
+  function n2(v) { return (Math.round(v * 100) / 100).toString(); }
+  function enc(s) { var b = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) b[i] = s.charCodeAt(i) & 255; return b; }
+  // --- the document as blocks ---------------------------------------------
+  // runs(node, b, i, out): the text of a node as [{t, b, i}] (bold, italic)
+  function runs(node, b, i, out) {
+    Array.prototype.forEach.call(node.childNodes, function (k) {
+      if (k.nodeType === 3) { out.push({ t: k.nodeValue.replace(/\s+/g, " "), b: b, i: i }); return; }
+      if (k.nodeType !== 1) return;
+      var tag = k.tagName.toLowerCase();
+      if (tag === "br") { out.push({ t: "\n", b: b, i: i }); return; }
+      if (/^(script|style|img|svg|canvas|input|button)$/.test(tag)) return;
+      runs(k, b || tag === "b" || tag === "strong" || /^h[1-6]$/.test(tag), i || tag === "i" || tag === "em", out);
+    });
+    return out;
+  }
+  var BLOCK = /^(p|div|h[1-6]|ul|ol|li|table|thead|tbody|tr|blockquote|pre|hr|section|article|header|footer|figure|figcaption)$/;
+  function hasBlocks(el) { return Array.prototype.some.call(el.children, function (k) { return BLOCK.test(k.tagName.toLowerCase()); }); }
+  // blocks(element) -> [{kind: h1..h4 | p | li | table | hr, runs, mark, depth, rows}]
+  function blocks(root) {
+    var out = [];
+    function walk(el, depth) {
+      var loose = [];
+      function flush() { if (loose.length && loose.some(function (r) { return /\S/.test(r.t); })) out.push({ kind: "p", runs: loose }); loose = []; }
+      Array.prototype.forEach.call(el.childNodes, function (k) {
+        if (k.nodeType === 3) { loose.push({ t: k.nodeValue.replace(/\s+/g, " "), b: false, i: false }); return; }
+        if (k.nodeType !== 1) return;
+        var tag = k.tagName.toLowerCase();
+        if (!BLOCK.test(tag)) { runs({ childNodes: [k] }, false, false, loose); return; }
+        flush();
+        if (/^h[1-6]$/.test(tag)) out.push({ kind: "h" + Math.min(4, +tag.charAt(1)), runs: runs(k, true, false, []) });
+        else if (tag === "ul" || tag === "ol") {
+          var n = 0;
+          Array.prototype.forEach.call(k.children, function (li) {
+            if (li.tagName.toLowerCase() !== "li") return;
+            n++;
+            var inner = [], subs = [];
+            Array.prototype.forEach.call(li.childNodes, function (c) { if (c.nodeType === 1 && /^(ul|ol)$/i.test(c.tagName)) subs.push(c); else inner.push(c); });
+            out.push({ kind: "li", runs: runs({ childNodes: inner }, false, false, []), mark: tag === "ol" ? n + "." : "\u2022", depth: depth });
+            subs.forEach(function (sl) { walk({ childNodes: [sl] }, depth + 1); });
+          });
+        } else if (tag === "table") {
+          var rows = [];
+          Array.prototype.forEach.call(k.querySelectorAll("tr"), function (tr) {
+            rows.push(Array.prototype.map.call(tr.children, function (td) { return { runs: runs(td, td.tagName.toLowerCase() === "th", false, []) }; }));
+          });
+          if (rows.length) out.push({ kind: "table", rows: rows });
+        } else if (tag === "hr") out.push({ kind: "hr" });
+        else if (hasBlocks(k)) walk(k, depth);
+        else out.push({ kind: tag === "blockquote" ? "quote" : "p", runs: runs(k, false, false, []) });
+      });
+      flush();
+    }
+    walk(root, 0);
+    return out;
+  }
+  // --- lines ---------------------------------------------------------------
+  // wrap(runs, size, width) -> [[{cs, b, i, w}]] lines of styled pieces
+  function wrap(rs, size, width) {
+    var words = [], cur = null;
+    rs.forEach(function (r) {
+      r.t.split(/(\n| )/).forEach(function (bit) {
+        if (bit === "\n") { words.push({ br: true }); cur = null; return; }
+        if (bit === " ") { cur = null; return; }
+        if (!bit) return;
+        var cs = codes(bit);
+        if (cur && cur.glue) { cur.parts.push({ cs: cs, b: r.b, i: r.i }); return; }
+        cur = { parts: [{ cs: cs, b: r.b, i: r.i }], glue: true };
+        words.push(cur);
+      });
+      cur = cur && /\s$/.test(r.t) ? null : cur;
+    });
+    var lines = [], line = [], lw = 0, sp = cw(32, false) * size / 1000;
+    function wl(wd) { return wd.parts.reduce(function (a, p) { return a + wid(p.cs, p.b, size); }, 0); }
+    words.forEach(function (wd) {
+      if (wd.br) { lines.push(line); line = []; lw = 0; return; }
+      var w = wl(wd);
+      // a word wider than the line is cut where it has to be
+      while (w > width && wd.parts.length === 1 && wd.parts[0].cs.length > 1) {
+        var p0 = wd.parts[0], k = p0.cs.length;
+        while (k > 1 && wid(p0.cs.slice(0, k), p0.b, size) > width - (line.length ? lw + sp : 0)) k--;
+        if (line.length && k < 2) { lines.push(line); line = []; lw = 0; continue; }
+        line.push({ parts: [{ cs: p0.cs.slice(0, k), b: p0.b, i: p0.i }] }); lines.push(line); line = []; lw = 0;
+        wd = { parts: [{ cs: p0.cs.slice(k), b: p0.b, i: p0.i }] }; w = wl(wd);
+      }
+      if (line.length && lw + sp + w > width) { lines.push(line); line = []; lw = 0; }
+      lw += (line.length ? sp : 0) + w; line.push(wd);
+    });
+    if (line.length) lines.push(line);
+    return lines;
+  }
+  P.layout = { codes: codes, cw: cw, wid: wid, lit: lit, n2: n2, enc: enc, blocks: blocks, wrap: wrap };
+})();
+// ===========================================================================
+// MODULE: PDF_DOC_LAYOUT - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: PDF_DOC - START
+// Depends: PDF_DOC_LAYOUT (Lantern.pdf.layout), CORE (Lantern.download);
+//          adds a Writer tool through Lantern.writerTools -- feature-detected
+// Exports: Lantern.pdf.fromHtml(title, html, opts) -> Blob,
+//          Lantern.pdf.saveHtml(title, html, opts) (downloads it);
+//          opts: {page: "letter"|"a4"}
+// ===========================================================================
+// A PDF straight from a document's text, with no print box: headings,
+// paragraphs, bullet and numbered lists, tables with ruled cells, bold and
+// italic, set in the Helvetica every PDF viewer has (nothing is embedded,
+// so the file stays small), wrapped to the page and numbered at the foot.
+// Writer's Save .pdf (a Writer tool added here) and the AI's MAKE DOC
+// (AI_DOC) use it (1.12.2).
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.pdf || !L.pdf.layout) return;
+  var P = L.pdf, Y = P.layout, codes = Y.codes, cw = Y.cw, wid = Y.wid, lit = Y.lit, n2 = Y.n2, enc = Y.enc, blocks = Y.blocks, wrap = Y.wrap;
+  // --- pages ---------------------------------------------------------------
+  var SIZE = { h1: 20, h2: 16, h3: 13.5, h4: 12, p: 11, li: 11, quote: 11, table: 10 };
+  function fromHtml(title, html, opts) {
+    opts = opts || {};
+    var W = opts.page === "a4" ? 595.28 : 612, H = opts.page === "a4" ? 841.89 : 792, M = 72, CW = W - 2 * M;
+    var doc = new DOMParser().parseFromString("<!DOCTYPE html><body>" + String(html || ""), "text/html");
+    var bl = blocks(doc.body), pages = [], ops = [], y = H - M;
+    function newPage() { if (ops.length) pages.push(ops); ops = []; y = H - M; }
+    function room(h) { if (y - h < M && y < H - M - 1) newPage(); }
+    function font(b, i) { return b ? (i ? "/F4" : "/F2") : (i ? "/F3" : "/F1"); }
+    // one line: words of one style drawn as one run, so the PDF's text
+    // copies and searches as the words were written
+    function drawLine(ln, x, base, size) {
+      var segs = [], cur = null;
+      ln.forEach(function (wd, k) {
+        wd.parts.forEach(function (p, j) {
+          var f = font(p.b, p.i);
+          if (k > 0 && j === 0 && cur) cur.cs.push(32);
+          if (cur && cur.f === f) cur.cs = cur.cs.concat(p.cs);
+          else { cur = { f: f, b: p.b, cs: p.cs.slice() }; segs.push(cur); }
+        });
+      });
+      segs.forEach(function (sg) {
+        ops.push("BT " + sg.f + " " + n2(size) + " Tf 1 0 0 1 " + n2(x) + " " + n2(base) + " Tm " + lit(sg.cs) + " Tj ET");
+        x += wid(sg.cs, sg.b, size);
+      });
+    }
+    var first = true;
+    bl.forEach(function (b) {
+      var size = SIZE[b.kind] || 11, lead = size * 1.3;
+      if (b.kind === "hr") { room(12); y -= 6; ops.push("0.5 w " + n2(M) + " " + n2(y) + " m " + n2(W - M) + " " + n2(y) + " l S"); y -= 6; return; }
+      if (b.kind === "table") {
+        var nc = Math.max.apply(null, b.rows.map(function (r) { return r.length; })), cwid = CW / Math.max(1, nc), pad = 4;
+        y -= 4;
+        b.rows.forEach(function (r) {
+          var cells = r.map(function (c) { return wrap(c.runs, size, cwid - 2 * pad); });
+          var rh = Math.max(1, Math.max.apply(null, cells.map(function (c) { return c.length; }))) * size * 1.25 + 2 * pad;
+          room(rh);
+          cells.forEach(function (c, k) {
+            var x0 = M + k * cwid;
+            ops.push("0.5 w " + n2(x0) + " " + n2(y - rh) + " " + n2(cwid) + " " + n2(rh) + " re S");
+            c.forEach(function (ln, j) { drawLine(ln, x0 + pad, y - pad - size * 0.85 - j * size * 1.25, size); });
+          });
+          y -= rh;
+        });
+        y -= 8;
+        return;
+      }
+      var indent = b.kind === "li" ? 18 * (1 + (b.depth || 0)) : b.kind === "quote" ? 24 : 0;
+      var lines = wrap(b.runs || [], size, CW - indent);
+      if (!lines.length) return;
+      var before = /^h/.test(b.kind) ? (first ? 0 : size * 0.7) : 0;
+      // a heading keeps at least two lines of what follows on its page
+      room(before + lead * Math.min(lines.length, 2) + (/^h/.test(b.kind) ? 2 * 14 : 0));
+      y -= before;
+      lines.forEach(function (ln, j) {
+        room(lead);
+        y -= lead;
+        if (j === 0 && b.kind === "li") { var mk = codes(b.mark); ops.push("BT /F1 " + n2(size) + " Tf 1 0 0 1 " + n2(M + indent - 4 - wid(mk, false, size)) + " " + n2(y + lead - size) + " Tm " + lit(mk) + " Tj ET"); }
+        drawLine(ln, M + indent, y + lead - size, size);
+      });
+      y -= /^h/.test(b.kind) ? 3 : b.kind === "li" ? 2 : 6;
+      first = false;
+    });
+    newPage();
+    if (!pages.length) pages.push([]);
+    // the file: catalog, page tree, four fonts, information, then each page
+    var parts = [], offs = [], pos = 0, n = 7 + pages.length * 2, kids = [], i;
+    function put(s) { var b2 = typeof s === "string" ? enc(s) : s; parts.push(b2); pos += b2.length; }
+    function obj(num, body, stream) {
+      offs[num] = pos;
+      if (stream) { put(num + " 0 obj\n" + body + "\nstream\n"); put(stream); put("\nendstream\nendobj\n"); }
+      else put(num + " 0 obj\n" + body + "\nendobj\n");
+    }
+    put("%PDF-1.4\n%\xe2\xe3\xcf\xd3\n");
+    for (i = 0; i < pages.length; i++) kids.push((8 + 2 * i) + " 0 R");
+    obj(1, "<< /Type /Catalog /Pages 2 0 R >>");
+    obj(2, "<< /Type /Pages /Count " + pages.length + " /Kids [" + kids.join(" ") + "] >>");
+    ["Helvetica", "Helvetica-Bold", "Helvetica-Oblique", "Helvetica-BoldOblique"].forEach(function (f, k) {
+      obj(3 + k, "<< /Type /Font /Subtype /Type1 /BaseFont /" + f + " /Encoding /WinAnsiEncoding >>");
+    });
+    obj(7, "<< /Producer (Lantern) /Title " + lit(codes(String(title || "Document"))) + " >>");
+    for (i = 0; i < pages.length; i++) {
+      var foot = codes("Page " + (i + 1) + " of " + pages.length);
+      var prog = pages[i].concat(pages.length > 1 ? ["BT /F1 9 Tf 1 0 0 1 " + n2((W - wid(foot, false, 9)) / 2) + " " + n2(M / 2) + " Tm " + lit(foot) + " Tj ET"] : []).join("\n");
+      var pb = enc(prog);
+      obj(8 + 2 * i, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 " + n2(W) + " " + n2(H) + "] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> /Contents " + (9 + 2 * i) + " 0 R >>");
+      obj(9 + 2 * i, "<< /Length " + pb.length + " >>", pb);
+    }
+    var xref = pos, x = ["xref", "0 " + (n + 1), "0000000000 65535 f "];
+    for (var j = 1; j <= n; j++) x.push(("0000000000" + (offs[j] || 0)).slice(-10) + " 00000 n ");
+    put(x.join("\n") + "\ntrailer\n<< /Size " + (n + 1) + " /Root 1 0 R /Info 7 0 R >>\nstartxref\n" + xref + "\n%%EOF\n");
+    var blob = new Blob(parts, { type: "application/pdf" });
+    blob.pageCount = pages.length;
+    return blob;
+  }
+  function saveHtml(title, html, opts) {
+    var blob = fromHtml(title, html, opts), name = String(title || "document").replace(/[\\\x2F:*?\x22<>|]+/g, " ").replace(/^\s+|\s+$/g, "") || "document";
+    if (L.download) L.download(name + ".pdf", blob, "application/pdf");
+    return blob;
+  }
+  P.fromHtml = fromHtml;
+  P.saveHtml = saveHtml;
+  // Writer: Save .pdf, the document as it stands (its title on top)
+  var WT = window.Lantern.writerTools = window.Lantern.writerTools || [];
+  WT.push({ label: "Save .pdf", title: "Download this document as a PDF file (no print box)", run: function (api) {
+    if (api.save) api.save();
+    var html = api.page ? api.page.innerHTML : "", fx = window.Lantern.writerSerialize || [], d = api.doc || {};
+    fx.forEach(function (f) { try { html = f(html) || html; } catch (e) { } });
+    if (!/^\s*<h1[\s>]/i.test(html)) html = "<h1>" + (L.esc ? L.esc(d.title || "Untitled") : d.title || "Untitled") + "<\u002Fh1>" + html;
+    saveHtml(d.title || "document", html, { page: d.paper && d.paper.size === "a4" ? "a4" : "letter" });
+  } });
+})();
+// ===========================================================================
+// MODULE: PDF_DOC - END
+// ===========================================================================
+// ===========================================================================
 // MODULE: HANDWRITING_READER - START
 // Depends: CORE (window.Lantern) -- feature-detected
 // Exports: Lantern.handwritingReader = {available() -> false, read(canvas,
@@ -28924,26 +29232,36 @@ Lantern.RFB = (function () {
   // reads (also used by READ, TEXT_READER_READ): the numbered passages, how
   // to answer from them, and -- when the READ command is there and the
   // document has more -- how to ask for another part
-  function docPrompt(doc, q, src, detail) {
+  function docPrompt(doc, q, src, detail, mode) {
     var out = ["DOCUMENT: passages from \u201c" + doc.title + "\u201d (the person\u2019s own " + (doc.kind === "music" ? "sheet music, read as notes" : "document, read by Lantern\u2019s Text Reader \u2014 a word here and there may be misread") + ")", ""];
     src.forEach(function (x) { out.push("[" + x.n + "] " + x.title); out.push(x.text); out.push(""); });
     // READ (TEXT_READER_READ) lets the AI ask for another part of a longer
     // document before it gives up on it
-    var canRead = doc.kind !== "music" && doc.pages.length > 1 && (window.Lantern.chatCommands || []).some(function (c) { return c && c.id === "read"; });
+    // (a one-page scan has more passages than are sent too: READ: all)
+    var total = TR.docs && TR.docs.chunks ? TR.docs.chunks(doc).length : src.length, more = total > src.length;
+    var canRead = doc.kind !== "music" && (doc.pages.length > 1 || more) && (window.Lantern.chatCommands || []).some(function (c) { return c && c.id === "read"; });
     var pg = []; src.forEach(function (x) { if (x.page && pg.indexOf(x.page) < 0) pg.push(x.page); });
-    var readLine = "The document has " + doc.pages.length + " pages" + (pg.length ? "; these passages are from " + pages(pg) : "") +
-      ". If the answer may be on another page, reply only READ: page <n>, READ: section <n> or READ: <words to find>.";
+    var readLine = doc.pages.length > 1 ? "The document has " + doc.pages.length + " pages" + (pg.length ? "; these passages are from " + pages(pg) : "") +
+      ". If the answer may be on another page, reply only READ: page <n>, READ: section <n>, READ: <words to find> or READ: all." :
+      "These are " + src.length + " of the page\u2019s " + total + " passages. To see all of it, reply only READ: all.";
     // words Text Reader was unsure of on these pages (1.12.1)
     var shaky = unsure(doc, pg);
     if (shaky.length) out.push("Text Reader was unsure of these words: " + shaky.join(", ") + ". Read them with care.");
-    if (ITSELF.test(q)) {
+    if (mode === "make") {
+      // something to make from the document (a corrected copy in Writer,
+      // flashcards, slides ...): its text, and the MAKE instructions win
+      out.push("The person wants something made from this document. Use its text above" + (more && canRead ? " (if you need the rest first, reply only READ: all)" : "") + ".");
+      out.push("Where Text Reader misread a word and the sentence makes the right word clear, write the right word; keep key names, codes and numbers as");
+      out.push("printed when you cannot tell. Reply with the MAKE block your instructions describe (for a document: MAKE DOC: <title>, its lines, END).");
+      out.push("No ANSWER or QUOTE lines.");
+    } else if (ITSELF.test(q)) {
       // a question about the document itself, not a fact in it ("can you
       // see the text?"): answered in the AI's words, about the document
       var done = doc.pages.filter(function (p) { return p.done; }).length;
       out.push("The person asks about the document itself, not a fact in it. Say in your own words that you have it (Text Reader read " + done + " of " + doc.pages.length +
         " page" + (doc.pages.length === 1 ? "" : "s") + "), what it is and what it covers. Put [n] at the end of a sentence that uses passage n");
       out.push("and end with one line 'QUOTE [n]: <a sentence copied exactly from passage n>'." + (shaky.length ? " Say which words look misread." : ""));
-      if (canRead) out.push(readLine);
+      if (canRead) out.push(readLine + (more ? " (The person may want the whole text: then reply only READ: all.)" : ""));
     } else if (detail) {
       out.push("Answer the QUESTION from these passages. Put [n] at the end of each sentence that uses passage n. You may add your");
       out.push("own reasoning in sentences without [n]; never contradict the passages. End with a line 'QUOTE [n]: <one sentence copied");
@@ -28981,7 +29299,7 @@ Lantern.RFB = (function () {
   var ABOUT = /\b(page|pages|section|chapter|this (document|manual|book|booklet|leaflet|letter|form|report)|the (document|manual|booklet|leaflet|handbook))\b/i;
   var SUM = /\b(summar|overview|gist|main points|key points|what is (this|it) about|what does (this|it|the (page|document|label|plate)) say)/i;
   // a question about the document itself, or what Lantern read of it
-  var ITSELF = /\b(can|could|do|did|are)\s+you\s+(?:\w+\s+){0,2}(see|read|have|get|access|view|open)\s+(?:the\s+|this\s+|my\s+|that\s+|any\s+|all\s+)?(?:whole\s+|entire\s+|full\s+)?(text|page|pages|document|manual|picture|screenshot|file|pdf|scan|words|it)\b|\bwhat did (lantern|it|text reader) (read|get|see)\b|\b(is|was) (it|the text|the page|this)\b[^?]{0,30}\b(readable|legible|clear|read (right|correctly|properly|well))\b|\bhow well\b[^?]{0,30}\bread\b/i;
+  var ITSELF = /\b(can|could|do|did|are)\s+you\s+(?:\w+\s+){0,2}(see|read|have|get|access|view|open)\s+(?:the\s+|this\s+|my\s+|that\s+|any\s+|all\s+)?(?:whole\s+|entire\s+|full\s+)?(text|page|pages|document|manual|picture|screenshot|file|pdf|scan|words|it)\b|\bwhat did (lantern|it|text reader) (read|get|see)\b|\b(is|was) (it|the text|the page|this)\b[^?]{0,30}\b(readable|legible|clear|read (right|correctly|properly|well))\b|\bhow well\b[^?]{0,30}\bread\b|\b(full|whole|entire|complete)\s+(text|page|document|scan)\b|\b(all|rest)\s+of\s+the\s+(text|page|document)\b|\bjust\s+(the\s+)?\d+\s+passages\b/i;
   TR.docPrompt = docPrompt;
   TR.itselfAsk = ITSELF;
   TR.namedPages = named;
@@ -29090,14 +29408,17 @@ Lantern.RFB = (function () {
       var k = m ? Math.floor((+m[1] - 1) / doc.per) : +sm[1] - 1;
       if (k >= 0 && k < D.sections(doc).length && !D.sections(doc)[k].done) await D.readSection(doc, k, {});
     }
-    var src = D.passages(doc, qp, 3);
+    // asked to make something from it (a corrected copy in Writer, cards,
+    // slides): the whole text, as far as it goes, and the MAKE instructions
+    var making = doc.kind !== "music" && !!(L.aiAct && L.aiAct.relevant && L.aiAct.relevant(q).length);
+    var src = making ? D.passages(doc, "pages 1-" + doc.pages.length, 12) : D.passages(doc, qp, 3);
     // a question about the document that shares no words with what was read
     // gets its opening passages, so the AI sees what it is and can READ on
     var itself = !!(TR.itselfAsk && TR.itselfAsk.test(q));
     if (!src.length && (SUM.test(q) || doc.pages.length === 1 || ABOUT.test(q) || itself)) src = D.passages(doc, "summary overview", 3);
     if (!src.length) return null;
     var detail = !!(o && o.wantsDetail) || SUM.test(q) || doc.kind === "music" || itself;
-    var prompt = docPrompt(doc, q, src, detail);
+    var prompt = docPrompt(doc, q, src, detail || making, making ? "make" : "");
     var pg = []; src.forEach(function (s) { if (pg.indexOf(s.page) < 0) pg.push(s.page); });
     return { sources: src, prompt: prompt, detail: detail, label: "\u201c" + doc.title + "\u201d", query: "",
       note: "Lantern gave the AI " + src.length + " passage" + (src.length === 1 ? "" : "s") + " from \u201c" + doc.title + "\u201d" + (doc.pages.length > 1 ? " (" + pages(pg) + ")" : "") + "\u2026" };
@@ -30815,6 +31136,8 @@ Lantern.RFB = (function () {
         return box;
       },
       png: null,
+      // a PDF file of it straight away (PDF_DOC)
+      extra: L.pdf && L.pdf.saveHtml ? [{ label: "Save .pdf", title: "Download it as a PDF file", run: function () { L.pdf.saveHtml(title, "<h1>" + esc(title) + "<\u002Fh1>\n" + d.html); } }] : [],
       open: function () {
         if (!L.writerDocs) return;
         if (!made) made = L.writerDocs.create(title, "<h1>" + esc(title) + "<\u002Fh1>\n" + d.html);
@@ -30825,9 +31148,12 @@ Lantern.RFB = (function () {
   window.Lantern.aiDoc = { doc: doc };
   if (!ACTS.some(function (a) { return a.id === "doc"; })) ACTS.push({
     id: "doc", kind: "DOC", kinds: ["DOC", "DOCUMENT", "LETTER", "REPORT", "WRITER"], title: "a document", opens: "Writer",
+    // (1.12.2: also "rewrite it with corrections", "turn this into a PDF",
+    // "write it in the text writer", "Lantern's writing module")
     match: function (q) {
-      return /\b(write|draft|compose|prepare|make|create|put together|type up)\b[^.?!]{0,40}\b(letter|report|memo|procedure|sop|instructions?|notice|essay|minutes|policy|checklist|document|doc|handout|manual|cover letter)\b/i.test(q) ||
-        /\bin writer\b|\bas a (document|doc)\b/i.test(q);
+      return /\b(write|rewrite|re-?type|draft|compose|prepare|make|create|put together|type up|clean up|tidy up|correct|proofread|transcribe|format|turn|convert|save|export)\b[^.?!]{0,60}\b(letter|report|memo|procedure|sop|instructions?|notice|essay|minutes|policy|checklist|document|doc|handout|manual|cover letter|pdf|word file)\b/i.test(q) ||
+        /\b(in|into|to|as)\s+(an?\s+|the\s+)?(pdf|writer|word (doc|document|file)|document|doc|text writer|writing (module|app|tile))\b/i.test(q) ||
+        /\b(text writer|writing module|word processor|in writer)\b/i.test(q);
     },
     prompt: [
       "MAKE DOC: <title>   -- a document for Writer (letter, report, procedure, notice); the person edits and prints it",
@@ -31223,6 +31549,15 @@ Lantern.RFB = (function () {
     var doc = TR.attached;
     if (!doc) return { prompt: "No document is attached. Answer the QUESTION now.\n\nQUESTION: " + q };
     if (TR.namedPages) a = TR.namedPages(doc, a);
+    // all of it (the whole page of a one-page scan, or every page read so far
+    // and the rest read now)
+    var all = /^(all|everything|the rest|rest|whole|full|(the\s+)?(whole|full|entire|complete)\s+(text|document|page|scan)|all\s+of\s+it)$/i.test(a);
+    if (all) {
+      // a long manual is not read whole for one question: the next section
+      // not read yet stands for "all"
+      var unreadK = D.sections(doc).filter(function (x) { return !x.done; })[0];
+      a = doc.pages.length <= doc.per || !unreadK ? (doc.pages.length > 1 ? "pages 1-" + doc.pages.length : "page 1") : "section " + (unreadK.k + 1);
+    }
     var m = /^pages?\s+(\d+)(?:\s*(?:-|to|\u2013)\s*(\d+))?/i.exec(a), sm = /^section\s+(\d+)/i.exec(a), from = 0, to = 0;
     if (m) { from = +m[1]; to = +(m[2] || m[1]); }
     else if (sm) { from = (+sm[1] - 1) * doc.per + 1; to = Math.min(doc.pages.length, +sm[1] * doc.per); }
@@ -31235,7 +31570,7 @@ Lantern.RFB = (function () {
         if (!secs[k].done) { if (status) status("reading pages " + secs[k].from + "\u2013" + secs[k].to + "\u2026"); await D.readSection(doc, k, {}); }
       }
     }
-    var src = D.passages(doc, m || sm ? (from === to ? "page " + from : "pages " + from + "-" + to) : a, m || sm ? 6 : 4);
+    var src = D.passages(doc, m || sm ? (from === to ? "page " + from : "pages " + from + "-" + to) : a, all ? 12 : m || sm ? 6 : 4);
     if (!src.length) {
       var unread = doc.pages.length - doc.pages.filter(function (p) { return p.done; }).length;
       return { note: "Lantern found nothing for \u201c" + a + "\u201d in \u201c" + doc.title + "\u201d" + (unread ? " (" + unread + " pages are not read yet)" : "") + ".",
@@ -31246,9 +31581,9 @@ Lantern.RFB = (function () {
     src.forEach(function (x) { if (pg.indexOf(x.page) < 0) pg.push(x.page); });
     return { sources: src, detail: !!(L.library && L.library.wantsDetail && L.library.wantsDetail(q)), how: "document", query: a,
       prompt: TR.docPrompt ? TR.docPrompt(doc, q, src, !!(L.library && L.library.wantsDetail && L.library.wantsDetail(q))) : src.map(function (x) { return "[" + x.n + "] " + x.title + "\n" + x.text; }).join("\n\n") + "\n\nQUESTION: " + q,
-      note: "The AI asked to read " + (m || sm ? a : "\u201c" + a + "\u201d") + "; Lantern sent " + src.length + " passage" + (src.length === 1 ? "" : "s") + " from \u201c" + doc.title + "\u201d (page" + (pg.length === 1 ? " " : "s ") + pg.join(", ") + ")\u2026" };
+      note: "The AI asked to read " + (all ? "all of it" : m || sm ? a : "\u201c" + a + "\u201d") + "; Lantern sent " + src.length + " passage" + (src.length === 1 ? "" : "s") + " from \u201c" + doc.title + "\u201d (page" + (pg.length === 1 ? " " : "s ") + pg.join(", ") + ")\u2026" };
   }
-  var cmd = { id: "read", verb: "READ", usage: "READ: page <n> | pages <a>-<b> | section <n> | <words to find>",
+  var cmd = { id: "read", verb: "READ", usage: "READ: page <n> | pages <a>-<b> | section <n> | all | <words to find>",
     desc: "read part of the document the person gave Chat (Text Reader)",
     test: function (reply) { return TR.attached && TR.attached.kind !== "music" ? arg(reply) : null; },
     run: function (a, q, ctx) { return run(a, q, ctx && ctx.status); } };
@@ -31378,9 +31713,13 @@ Lantern.RFB = (function () {
   L.guide.append("chat", [
     ["Documents, slides, flashcards and plans", "<p>Ask Chat to <b>write a letter, notice, report or procedure</b>, to <b>make a presentation</b>, to <b>make flashcards</b>, or to <b>put something in your planner</b>, and the AI writes it in plain lines that Lantern turns into the real thing. Chat shows it first, with what Lantern checked; one tap opens it in its app: <b>Open in Writer</b>, <b>Open in Slides</b>, <b>Open in Flashcards</b> or <b>Add to Planner</b>. Nothing is saved until you tap, and a second tap only opens it again.</p>" +
       "<p>What Lantern checks: a document has its words written out in full and Compose\u2019s writing checker reads it (its findings are listed under the preview); a deck has a title on every slide and no more than 7 short points a slide; a deck of flashcards has both sides on every card and no card twice; a plan has a date Lantern can read on every line, none in the past. When something is wrong, the AI is asked once to correct it.</p>" +
+      "<p>With a document given to Chat (\ud83d\udcc4), ask for what you want made from it \u2014 \u201crewrite it with corrections in Writer\u201d, \u201cturn this into a PDF\u201d, \u201cmake flashcards from it\u201d: the AI is given the whole text (not just the passages for a question), corrects words Text Reader misread where the sentence makes them clear, and makes the document. <b>Save .pdf<\u002Fb> beside Open in Writer downloads it as a PDF file at once.</p>" +
       "<p>The AI says <i>when</i> in words \u2014 today, tomorrow, in 3 weeks, next Monday, 1 December \u2014 and Lantern works out the dates itself, so they are right. The Planner repeats every day, week, month or year; for every 2 weeks or every 500 hours, ask for the dates one by one.</p>"],
-    ["Reading more of a long document (READ)", "<p>With each question, Chat sends the AI the few passages of your document that share the most words with it. When the answer is somewhere else \u2014 another page, another word for the same thing (you say guarantee, the manual says warranty) \u2014 the AI can ask for it: <code>READ: page 12</code>, <code>READ: pages 3-5</code>, <code>READ: section 2</code> or <code>READ: belt tension</code>. Pages not read yet are read first (a long scan is read a section at a time), and the answer is checked against them like any other passage. Chat notes each READ as it happens; a question gets at most three.</p>" +
+    ["Reading more of a long document (READ)", "<p>With each question, Chat sends the AI the few passages of your document that share the most words with it. When the answer is somewhere else \u2014 another page, another word for the same thing (you say guarantee, the manual says warranty) \u2014 the AI can ask for it: <code>READ: page 12</code>, <code>READ: pages 3-5</code>, <code>READ: section 2</code>, <code>READ: belt tension</code> or <code>READ: all</code> (the whole of a short document; the next unread section of a long one). Pages not read yet are read first (a long scan is read a section at a time), and the answer is checked against them like any other passage. Chat notes each READ as it happens; a question gets at most three.</p>" +
       "<p>You can do the same yourself: \u201cWhat does the last page say?\u201d or \u201cOn page 7, what is the torque?\u201d.</p>"]
+  ]);
+  L.guide.append("writer", [
+    ["Save .pdf", "<p><b>Save .pdf<\u002Fb> downloads the document as a PDF file straight away, with no print box: headings, paragraphs, lists, tables, bold and italic, in Helvetica, numbered at the foot of each page, on Letter or A4 paper as the document is set. <b>Print / PDF<\u002Fb> is still there for the browser\u2019s own print layout.</p>"]
   ]);
   L.guide.append("ai", [
     ["What the AI can make", "<p>Chat\u2019s AI can make a <b>schematic</b> or a <b>drawing</b> (Draw), a <b>table</b> that calculates (Sheets), a <b>document</b> (Writer), a <b>slide deck</b> (Slides), <b>flashcards</b> (Flashcards) and a <b>plan</b> (Planner). It is told how only when the question is about one of them, so a small model\u2019s instructions stay short. The bench\u2019s <i>make</i> questions test each kind.</p>" +

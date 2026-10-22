@@ -235,6 +235,48 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   var rq = Q.filter(function (q) { return q.id === "doc-read-another-page"; })[0];
   ok("bench: the READ conversation fails without a READ", rq && /did not ask to READ/.test(rq.check([{ final: "ANSWER: 2 years", commands: [] }])) &&
     rq.check([{ final: "The warranty runs for 2 years [1].", commands: [{ verb: "READ", arg: "page 5" }] }]) === "");
+  // --- 1.12.2: Adam's conversation -- a scanned page attached, then "turn
+  // this into a PDF with corrections" ---
+  ["can you turn this into a PDF with corrections for what the words probably are since the ocr reader did not get them all perfectly",
+    "Lantern has a writing module can you rewrite the text in it with corrections for what you believe the words should be?",
+    "Write the following in the text writer in Lantern: 2.Pressing the key of l@2 once"].forEach(function (q) {
+    ok("offered MAKE DOC: " + q.slice(0, 40), act.relevant(q).some(function (a) { return a.id === "doc"; }));
+  });
+  ok("...but not a question about a PDF", !act.relevant("What does the PDF say about the oil?").length);
+  var para = function (k) { return "Paragraph " + k + ". " + new Array(14).join("Press the key of 10-2 once and the indicating LED will light up. "); };
+  var scan = { id: "s", title: "Screenshot 2026-10-22 083921", per: 10, pages: [{ n: 1, done: true, conf: 0.9, text: [1, 2, 3, 4, 5].map(para).join("\n\n") }] };
+  var nChunks = TR.docs.chunks(scan).length;
+  TR.attached = scan;
+  var seen = [];
+  var cv2 = await L.CHAT.converse(["can you turn this into a PDF with corrections for what the words probably are since the ocr reader did not get them all perfectly"], { call: function (m) {
+    var last = String(m[m.length - 1].content); seen.push(last);
+    return Promise.resolve(/wants something made from this document/.test(last) ? blk("DOC", "Feed keys", ["## Down-feed", "Press the key of 10-2 once and the indicating LED will light up.", "Paragraph two of the corrected text, written out in full here."]) : "ANSWER: Not in the document.");
+  } });
+  var t0 = cv2.turns[0];
+  ok("with a document attached, a request to make something gets the whole text and the MAKE instructions", seen.length === 1 && /wants something made from this document/.test(seen[0]) &&
+    (seen[0].match(/\n\[\d+\] /g) || []).length === nChunks && nChunks > 3 && /MAKE DOC:/.test(L.CHAT.buildSystem(t0.q || "can you turn this into a PDF")) && !/Not in the document/.test(seen[0]), { n: seen.length, chunks: nChunks, head: (seen[0] || "").slice(-700) });
+  ok("...and the document is made, with Save .pdf beside Open in Writer", t0.made && t0.made.ok && t0.made.action.id === "doc" && t0.made.extra && t0.made.extra[0].label === "Save .pdf", t0.made && t0.made.problems);
+  var fq = "can you request the full text from lantern or just the 3 passages?", p3 = TR.docs.passages(scan, fq, 3);
+  ok("\u201cthe full text\u201d is a question about the document, and READ: all is offered", TR.itselfAsk.test(fq) && /READ: all/.test(TR.docPrompt(scan, fq, p3, true)) && p3.length < nChunks);
+  var ra = await TR.readCommand.run("all", fq, {});
+  ok("READ: all sends the whole page", ra.sources && ra.sources.length === nChunks, ra.sources && ra.sources.length);
+  var gr = L.libraryGround("Yes, I have the page Text Reader read: it is part of a grinder manual [1]. The page covers the feed keys [1].", [{ n: 1, text: "Press the key of 10-2 once." }], "Can you see the text?");
+  ok("a sentence about the document as a whole is not a false citation", !gr.wrong.length && !gr.problems.length, gr);
+  TR.attached = null;
+
+  // --- 1.12.2: PDF straight from a document ---
+  ok("Writer has a Save .pdf tool", (L.writerTools || []).some(function (t) { return t.label === "Save .pdf"; }));
+  var html = "<h1>Feed keys</h1><p>Plain <b>bold</b> <i>italic</i> \u201cquoted\u201d 25 \u00b0C, 10 \u03a9.</p><ul><li>One<ul><li>One point one</li></ul></li></ul><ol><li>First</li></ol>" +
+    "<table><tr><th>Part</th><th>Torque</th></tr><tr><td>Head bolt</td><td>25 Nm</td></tr></table>";
+  for (i = 0; i < 40; i++) html += "<p>" + new Array(10).join("The wheel head will rise when the auto down-feed circle has finished. ") + "</p>";
+  var pdf = L.pdf.fromHtml("Feed keys", html);
+  var bin = await new Promise(function (res) { var fr = new w.FileReader(); fr.onload = function () { res(fr.result); }; fr.readAsBinaryString(pdf); });
+  var xr = /startxref\n(\d+)/.exec(bin), offs = [], xm, xre = /^(\d{10}) 00000 n $/gm;
+  while ((xm = xre.exec(bin))) offs.push(+xm[1]);
+  ok("PDF: a valid file -- header, every object where the table says, one page object per page", /^%PDF-1\.4/.test(bin) && xr && bin.slice(+xr[1], +xr[1] + 4) === "xref" &&
+    offs.every(function (o, k) { return bin.slice(o, o + String(k + 1).length + 6) === (k + 1) + " 0 obj"; }) && (bin.match(/\/Type \/Page /g) || []).length === pdf.pageCount && pdf.pageCount >= 3, { pages: pdf.pageCount, offs: offs.length });
+  ok("PDF: bold and italic fonts, a bullet, ruled table cells, page numbers, Ohm written out", /\/F2 /.test(bin) && /\/F3 /.test(bin) && /\(\\225\)/.test(bin) && / re S/.test(bin) &&
+    /\(Page 1 of \d\)/.test(bin) && /\\223quoted\\224 25 \\260C, 10 Ohm\./.test(bin));
   ok("no errors after all that", errs.length === 0, errs);
 
   console.log(fails ? fails + " MAKE DOCS FAILURES (" + passes + " passed)" : "ALL MAKE DOCS TESTS PASS (" + passes + ")");
