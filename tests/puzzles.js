@@ -76,7 +76,20 @@ function lastUser(body) { var m = body.messages[body.messages.length - 1]; retur
   var more = run("TRACK: t\nrow \"Mrs Smith\" Bo Cy Di\nput key with Bo\nput pen with Cy\nswap key and pen\nswap contents of Bo and Di\nreverse\nshift left 1\nadd Ed after Cy\nremove Di\nmove \"Mrs Smith\" to position 2\nEND");
   ok("TRACK: quoted names, held things swapping, contents, reverse, shift, add, remove, move", more.ok &&
     more.row.join() === "Cy,Mrs Smith,Ed,Bo" && more.held.key === "Cy" && more.held.pen === undefined, more.problems || [more.row, more.held]);
+  // 1.12.3: the same puzzle as a 35B wrote it in Adam's Chat -- "take silver
+  // from ...", "holder of middle" -- and as the question words it
+  var t35 = run("TRACK: Coin Puzzle\nrow Red Blue Green Yellow White\nput gold in Green\nput silver in White\nswap Blue and White\n" +
+    "swap holder of gold and left of left of holder of gold\nshift right 1\ntake silver from holder of silver\nput silver in left of holder of gold\n" +
+    "swap first and last\nswap holder of middle and holder of silver\nEND");
+  ok("TRACK: take silver from its cup, put it under another; holder of middle is the middle", t35.ok && t35.row.join() === "Yellow,Green,Blue,Red,White" &&
+    t35.held.gold === "Green" && t35.held.silver === "Blue", t35.problems || t35.final);
+  var said = run("TRACK: Two coins\nrow Red Blue Green Yellow White\nput gold in Green\nput silver in White\nBlue and White swap\n" +
+    "swap holder of gold and 2 left of holder of gold\nshift right 1\ntake silver out of White\nput silver under left of holder of gold\n" +
+    "the two end cups swap\nswap middle and holder of silver\nEND");
+  ok("TRACK: \u201cthe two end cups swap\u201d and \u201ctake silver out of White\u201d", said.ok && said.row.join() === "Yellow,Green,Blue,Red,White" && said.held.silver === "Blue", said.problems || said.final);
   function tprobs(lines) { var r = run("TRACK: t\n" + lines.join("\n") + "\nEND"); return r.problems.join(" | "); }
+  ok("TRACK: taking a coin from the wrong cup is caught", /silver is with Blue, not White/.test(tprobs(["row Red Blue White", "put silver in Blue", "take silver from White"])));
+  ok("TRACK: the AI is told to write places, not the names it thinks are there", /never the name you think is there/.test(L.aiSolvers[0].prompt.join("\n")) && /take silver from White/.test(L.aiSolvers[0].prompt.join("\n")));
   ok("TRACK says what is wrong", /Purple is not in the row \(Red, Blue\)/.test(tprobs(["row Red Blue", "swap Red and Purple"])) &&
     /3 left of Blue is off the row \(Blue is at position 2 of 2\)/.test(tprobs(["row Red Blue", "swap Red and 3 left of Blue"])) &&
     /nothing called gold is held/.test(tprobs(["row Red Blue", "swap Red and holder of gold"])) &&

@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.12.3 — Puzzles: take a coin out, the end cups, the middle cup (2026-10-22)
+
+From Adam's two-coin cup puzzle in Chat. The 35B wrote "take silver from
+holder of silver" and then "take silver from White". TRACK did not read
+either line, although its own error message listed "take". The AI then
+answered alone. It also wrote "swap Red and White" for "the two end cups
+swap", naming the cups it guessed were at the ends rather than the ends.
+
+- **take silver from White** (also "out of", "from under", "off"). The coin
+  comes out of its cup, so that a later "put silver in ..." places it
+  again. Taking it from the wrong cup is caught ("silver is with Blue, not
+  White").
+- **swap first and last**. "The two end cups swap", "swap the ends" and
+  "swap the end cups" all read as swapping the first and last cups.
+  "Blue and White swap" reads like "swap Blue and White".
+- **holder of middle**, **holder of Blue**: a place or a cup named after
+  "holder of" is that place or cup.
+- **The AI is told to write places the way the puzzle says them** at that
+  step (first and last, middle, holder of gold), never the names it thinks
+  are there by then. Lantern works out who is there. The help lists
+  "take silver from White" and "swap first and last".
+- **Tests.** The puzzle as the 35B wrote it, and as the question words it,
+  give Yellow, Green, Blue, Red, White, with gold under Green and silver
+  under Blue. Taking a coin from the wrong cup is caught.
+
 ## 1.12.2 — Make things from an attached document; Save .pdf (2026-10-22)
 
 From Adam's Chat with his upside-down scan of a grinder manual. The AI
