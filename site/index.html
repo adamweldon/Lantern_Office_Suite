@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.12.0 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.12.1 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -173,7 +173,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.12.0",
+  version: "1.12.1",
   apps: {},
   order: []
 };
@@ -23255,7 +23255,9 @@ Lantern.RFB = (function () {
    "what which who whom whose when where why how many much do does did has have had can could would should will about also " +
    "mostly mainly usually generally often some any all most more than then very approximately around roughly nearly called " +
    "known named both each other such as into over under between during after before one two first " +
-   "became become becomes began begun happened occurred took place made held served located lies situated").split(" ")
+   "became become becomes began begun happened occurred took place made held served located lies situated " +
+   // yes or no is the answer's shape, not a fact a quote has to say
+   "yes yeah no nope").split(" ")
     .forEach(function (w) { WEAK[w] = 1; });
   function akin(a, b) {   // same word, or one a short form of the other
     if (a === b) return true;
@@ -25916,7 +25918,8 @@ Lantern.RFB = (function () {
 // MODULE: TEXT_READER_IMAGE - START
 // Depends: CORE (window.Lantern) -- feature-detected
 // Exports: Lantern.textReader.image = {load(blobOrCanvas) -> Promise<canvas>,
-//          gray(canvas, scale) -> {w, h, g}, ink(gr) -> {w, h, b, dark},
+//          gray(canvas, scale) -> {w, h, g}, scaled(canvas, scale) -> canvas,
+//          ink(gr) -> {w, h, b, dark},
 //          skew(ink) -> degrees, rotate(canvas, deg) -> canvas,
 //          unrule(ink, maxThick) -> count}
 // ===========================================================================
@@ -25951,17 +25954,19 @@ Lantern.RFB = (function () {
       img.src = url;
     });
   }
+  // scaled(canvas, scale) -> a smoothly enlarged (or shrunk) copy on white
+  function scaled(cv, scale) {
+    var w = Math.max(1, Math.round(cv.width * scale)), h = Math.max(1, Math.round(cv.height * scale));
+    var c = document.createElement("canvas"); c.width = w; c.height = h;
+    var x = c.getContext("2d");
+    x.imageSmoothingEnabled = true; if ("imageSmoothingQuality" in x) x.imageSmoothingQuality = "high";
+    x.fillStyle = "#fff"; x.fillRect(0, 0, w, h);
+    x.drawImage(cv, 0, 0, w, h);
+    return c;
+  }
   // gray(canvas, scale) -> {w, h, g: Uint8Array of grey levels (0 black)}
   function gray(cv, scale) {
-    scale = scale || 1;
-    var w = Math.max(1, Math.round(cv.width * scale)), h = Math.max(1, Math.round(cv.height * scale)), c = cv;
-    if (scale !== 1) {
-      c = document.createElement("canvas"); c.width = w; c.height = h;
-      var x = c.getContext("2d");
-      x.imageSmoothingEnabled = true; if ("imageSmoothingQuality" in x) x.imageSmoothingQuality = "high";
-      x.fillStyle = "#fff"; x.fillRect(0, 0, w, h);
-      x.drawImage(cv, 0, 0, w, h);
-    }
+    var c = scale && scale !== 1 ? scaled(cv, scale) : cv, w = c.width, h = c.height;
     var d = c.getContext("2d").getImageData(0, 0, w, h).data, g = new Uint8Array(w * h), i, j;
     for (i = 0, j = 0; i < g.length; i++, j += 4) {
       var a = d[j + 3];   // transparent pixels count as paper
@@ -26151,7 +26156,7 @@ Lantern.RFB = (function () {
     for (k = 0; k < w * h; k++) if (kill[k]) { b[k] = 0; n++; }
     return n;
   }
-  TR.image = { K: K, sideways: sideways, slant: slant, shear: shear, load: load, gray: gray, ink: ink, otsu: otsu, skew: skew, rotate: rotate, unrule: unrule };
+  TR.image = { K: K, sideways: sideways, slant: slant, shear: shear, load: load, gray: gray, scaled: scaled, ink: ink, otsu: otsu, skew: skew, rotate: rotate, unrule: unrule };
 })();
 // ===========================================================================
 // MODULE: TEXT_READER_IMAGE - END
@@ -26645,7 +26650,8 @@ Lantern.RFB = (function () {
 // MODULE: TEXT_READER_WORDS - START
 // Depends: TEXT_READER_GLYPHS (Lantern.textReader) -- feature-detected
 // Exports: Lantern.textReader.words = {model() -> {vocab, tri}, learn(words),
-//          decode(cands, line) -> {text, score, alts, known}, known(word)}
+//          decode(cands, line) -> {text, score, alts, known}, known(word),
+//          near(word) -> a known word one or two letters away, check(reading)}
 // ===========================================================================
 // Text Reader, step 4: which word is it? Each letter arrives with its few
 // closest shapes (l, I and 1 look alike; so do O and 0, rn and m). Lantern
@@ -26773,6 +26779,14 @@ Lantern.RFB = (function () {
     }
     return sc;
   }
+  // plaus(word) -> how English its letters run: the mean log chance of each
+  // letter after the two before it (about -2 for real words; a misread such
+  // as "flmction" or "autaross" falls well below)
+  function plaus(w) {
+    var x = "^" + String(w).toLowerCase().replace(/[^a-z]/g, "") + "$", t = 0, i;
+    for (i = 0; i + 2 < x.length; i++) t += trans(x[i], x[i + 1], x[i + 2]);
+    return t / Math.max(1, x.length - 2);
+  }
   // decode(cands, line) -> best reading of one word: cands[i] = [{ch, d}]
   // for letter i. Beam search over the shapes, then the sense of the whole.
   function decode(cands, ln, ctx) {
@@ -26808,7 +26822,110 @@ Lantern.RFB = (function () {
     return { text: best.s, score: best.t, conf: Math.round(conf * 100) / 100, alts: beam.slice(1, 4).map(function (b) { return b.s; }),
       known: !!known(best.s.replace(/[^A-Za-z\x27]/g, "")), vis: vis };
   }
-  TR.words = { P: P, model: model, known: known, learn: learn, decode: decode, sense: sense, UNITS: UNITS, reset: function () { M = null; extra = {}; } };
+  // near(word) -> the most common known word one letter away (two for a
+  // word of 7 or more), or "": "seleced" is near selected, "flmction" near
+  // function, "solenoid" near nothing it could be mistaken for (1.12.1)
+  var nearMemo = {}, byLen = null;
+  function near(w) {
+    w = String(w).toLowerCase();
+    if (nearMemo.hasOwnProperty(w)) return nearMemo[w];
+    var v = model().vocab, n = w.length, maxd = n >= 7 ? 2 : 1, best = "", bd = 9, bc = 0, L2, k, i;
+    if (!byLen) { byLen = {}; Object.keys(v).forEach(function (x) { if (v[x] >= 2) (byLen[x.length] = byLen[x.length] || []).push(x); }); }
+    for (L2 = n - maxd; L2 <= n + maxd; L2++) (byLen[L2] || []).concat(Object.keys(extra).filter(function (x) { return x.length === L2; })).forEach(function (x) {
+      var d = dist(w, x, maxd), c = v[x] || extra[x] || 0;
+      if (d <= maxd && (d < bd || (d === bd && c > bc))) { best = x; bd = d; bc = c; }
+    });
+    nearMemo[w] = best;
+    return best;
+  }
+  // dist(a, b, max) -> edit distance, or max + 1 once it is certainly more
+  function dist(a, b, max) {
+    var prev = [], cur, i, j;
+    for (j = 0; j <= b.length; j++) prev.push(j);
+    for (i = 1; i <= a.length; i++) {
+      cur = [i]; var low = i;
+      for (j = 1; j <= b.length; j++) { cur.push(Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1))); if (cur[j] < low) low = cur[j]; }
+      if (low > max) return max + 1;
+      prev = cur;
+    }
+    return prev[b.length];
+  }
+  // check(reading) -> the reading with an honest confidence: a mark inside
+  // a word (m&e, 1&2, \u03a9ne) is a guess; a word nobody has seen that is
+  // one or two letters from a known one is only fairly sure, and the known
+  // word is offered (.near)
+  var ODD = /[A-Za-z0-9][&@#$_\u03a9][A-Za-z0-9]|[A-Za-z]%[A-Za-z]|^\u03a9[a-z]/;
+  // what a mark inside a word most often was: two letters printed touching
+  var FILL = { "\u03a9": ["fi", "Th", "th", "fl"], "&": ["od", "ad", "ed", "d"] };
+  function swap(r, core, word, conf) {
+    r.alts = [core].concat((r.alts || []).filter(function (a) { return a !== word; })).slice(0, 4);
+    r.text = r.text.replace(core, word); r.conf = Math.min(r.conf, conf);
+    return word;
+  }
+  function check(r) {
+    var core = String(r.text).replace(/^[^A-Za-z0-9\u03a9]+|[^A-Za-z0-9%\u00b0\u03a9]+$/g, ""), i;
+    // a capital I inside a small-letter word is an i whose dot ran into it
+    // or an l (wIll, IndIcatIng in blurred print): whichever makes a word
+    if (/[a-z]/.test(core) && /^[A-Za-z]+$/.test(core) && core.indexOf("I", 1) > 0) {
+      var at = [];
+      for (i = 1; i < core.length; i++) if (core[i] === "I") at.push(i);
+      if (at.length <= 5) {
+        var bestW = "", bestS = -1e9;
+        for (var mask = 0; mask < 1 << at.length; mask++) {
+          var ch = core.split("");
+          at.forEach(function (p, k) { ch[p] = mask & 1 << k ? "l" : "i"; });
+          var wd = ch.join(""), sc = known(wd) ? 10 + Math.log(1 + known(wd)) : plaus(wd);
+          if (sc > bestS) { bestS = sc; bestW = wd; }
+        }
+        core = swap(r, core, bestW, bestS >= 10 ? 0.85 : 0.6);
+      }
+    }
+    // m&e, \u03a9ne: the mark was two letters touching, when that makes a word
+    var mk = /^([A-Za-z]*)([&\u03a9])([A-Za-z]+)$/.exec(core);
+    if (mk && (mk[1] || mk[2] === "\u03a9")) {
+      var fills = FILL[mk[2]].map(function (f) { return mk[1] + f + mk[3]; }).filter(function (x) { return known(x); });
+      if (fills.length) { swap(r, core, fills[0], 0.6); return r; }
+    }
+    if (ODD.test(core)) { r.conf = Math.min(r.conf, 0.4); r.odd = true; return r; }
+    // a digit between letters (n1ode, c0de) is a look-alike more often than
+    // a part number
+    if (/[A-Za-z][0-9]+[A-Za-z]/.test(core)) r.conf = Math.min(r.conf, 0.6);
+    if (/^[A-Za-z]{4,}$/.test(core) && core !== core.toUpperCase() && !known(core)) {
+      // (only when the letters themselves fit poorly: a clean word that is
+      // simply not among Lantern's words -- bolts, chassis -- is left alone)
+      var nw = r.vis >= 0.09 ? near(core) : "", parts = nw ? null : runs(core.toLowerCase());
+      if (nw) {
+        r.conf = Math.min(r.conf, 0.6);
+        r.near = /^[A-Z]/.test(core) ? nw.charAt(0).toUpperCase() + nw.slice(1) : nw;
+        r.alts = [r.near].concat((r.alts || []).filter(function (a) { return a !== r.near; })).slice(0, 4);
+      } else if (parts) {
+        // words run together where blurred print lost its spaces
+        // ("headwillrise"): the spaces go back in
+        var sp = parts.join(" ");
+        if (/^[A-Z]/.test(core)) sp = sp.charAt(0).toUpperCase() + sp.slice(1);
+        r.text = r.text.replace(core, sp); r.conf = Math.min(r.conf, 0.6); r.spaced = true;
+      }
+    }
+    return r;
+  }
+  // runs(word) -> three or more common words it is made of, or null:
+  // "thekeyof" -> the key of. Two parts are too often one word Lantern has
+  // not met (offset, weekdays), and short parts other than the everyday
+  // ones too often a long word cut up (in di cat or).
+  var SHORT = /^(a|an|as|at|be|by|do|go|he|if|in|is|it|me|my|no|of|on|or|so|to|up|us|we)$/;
+  function runs(w) {
+    if (w.length < 7) return null;
+    var v = model().vocab, best = [[]], i, j;
+    for (i = 1; i <= w.length; i++) {
+      best[i] = null;
+      for (j = Math.max(0, i - 18); j < i; j++) {
+        var part = w.slice(j, i);
+        if (best[j] && (part.length >= 3 ? ((v[part] || 0) + (extra[part] || 0)) >= 3 : SHORT.test(part)) && (!best[i] || best[j].length + 1 < best[i].length)) best[i] = best[j].concat([part]);
+      }
+    }
+    return best[w.length] && best[w.length].length > 2 ? best[w.length] : null;
+  }
+  TR.words = { P: P, model: model, known: known, plaus: plaus, near: near, check: check, learn: learn, decode: decode, sense: sense, UNITS: UNITS, reset: function () { M = null; extra = {}; nearMemo = {}; byLen = null; } };
 })();
 // ===========================================================================
 // MODULE: TEXT_READER_WORDS - END
@@ -26845,6 +26962,7 @@ Lantern.RFB = (function () {
   function tick() { return new Promise(function (r) { setTimeout(r, 0); }); }
   var CUT = 0.06;   // what cutting a blob into one more letter costs (in shape distance)
   var MERGE = 0.12; // what joining two blobs into one letter costs
+  var RARE = /^[&@#%$*+=<>_\u03a9]$/;
   // prepare(canvas, scale) -> {ink, comps, H}: black and white, rules
   // removed, blobs found, the usual letter height
   function prepare(cv, scale, lean) {
@@ -26863,18 +26981,28 @@ Lantern.RFB = (function () {
     var t0 = Date.now();
     return (async function () {
       var step = opts.onStep || function () { };
-      var W0 = cv0.width, H0 = cv0.height, s = Math.min(1, 2800 / Math.max(W0, H0)), cv = cv0, angle = 0, nSplit = 0, nMerge = 0;
+      var W0 = cv0.width, H0 = cv0.height, s0 = Math.min(1, 2800 / Math.max(W0, H0)), s = s0, cv = cv0, angle = 0, nSplit = 0, nMerge = 0;
       step("cleaning the page");
       var P = prepare(cv, s);
       // letters of a readable size: x-height roughly 14 to 40 pixels
       if (P.H < 16) { s = Math.min(4 * s, s * 22 / Math.max(4, P.H)); P = prepare(cv, s); }
       else if (P.H > 70) { s = s * 45 / P.H; P = prepare(cv, s); }
       angle = TR.image.skew(P.ink);
-      if (Math.abs(angle) >= 0.15) { step("levelling the page (" + angle + "\u00b0)"); cv = TR.image.rotate(cv0, angle); P = prepare(cv, s); }
+      // ps: the scale prepare() still applies to cv
+      var ps = s;
+      if (Math.abs(angle) >= 0.15) {
+        step("levelling the page (" + angle + "\u00b0)");
+        // small print is enlarged first and turned after: turned at its own
+        // size, screen text blurs and its letters run together (1.12.1)
+        var level = function () { cv = TR.image.rotate(s > 1 ? TR.image.scaled(cv0, s) : cv0, angle); ps = s > 1 ? 1 : s; P = prepare(cv, ps); };
+        level();
+        // the letter height measured on the tilted page reads a little tall
+        if (s > 1 && P.H < 18 && s < 4 * s0) { s = Math.min(4 * s0, s * 22 / Math.max(4, P.H)); level(); }
+      }
       // italic print is stood upright first (its letters then match the
       // upright ones Lantern draws)
       var lean = TR.image.slant(P.ink), tl = lean ? Math.tan(lean * Math.PI / 180) : 0;
-      if (tl) { step("standing italic letters upright"); P = prepare(cv, s, tl); }
+      if (tl) { step("standing italic letters upright"); P = prepare(cv, ps, tl); }
       await tick();
       var LY = TR.layout, GL = TR.glyphs, WD = TR.words, H = P.H;
       var comps = P.comps.filter(function (c) {
@@ -26943,7 +27071,9 @@ Lantern.RFB = (function () {
       // a part of a cut blob is a letter or digit, never a stray mark
       function matchG(g, list) {
         var m = GL.match(g.f, list, g.piece ? 30 : 6, g.ln.caps ? GL.weights.pos * 0.55 : null);
-        g.m = g.piece ? m.filter(function (c) { return /^[A-Za-z0-9]+$/.test(c.ch); }).slice(0, 6) : m;
+        // a piece cut from a blob is a letter, a digit, a hyphen or a bracket
+        // (10-2 and wheel) print touching at screen size, 1.12.1)
+        g.m = g.piece ? m.filter(function (c) { return /^(?:[A-Za-z0-9]+|[-\x28\x29])$/.test(c.ch); }).slice(0, 6) : m;
       }
       function matchAll(list) { everyG().forEach(function (g) { matchG(g, list); }); }
       function bestD(g) { return g.m && g.m[0] ? g.m[0].d : 9; }
@@ -26981,7 +27111,7 @@ Lantern.RFB = (function () {
           (all2 = all2 || []).push(r);
         });
         if (opts.debug) best.vars = all2.map(function (r) { return r.text + " " + r.abs0.toFixed(2) + " [" + r.dbg + "]"; });
-        return best;
+        return WD.check ? WD.check(best) : best;
       }
       // tidy(words, line): what spacing alone gets wrong. A word never
       // starts with a comma or full stop, and digits a little apart are one
@@ -27039,7 +27169,10 @@ Lantern.RFB = (function () {
         var w = g.x1 - g.x0, xh = g.ln.xh || 10, minW = Math.max(2, Math.round(0.12 * xh));
         if (w < 2 * minW || depth > 2) return 0;
         var d0 = bestD(g), wide = w >= (g.ln.caps ? 0.9 * g.ln.cap : xh) || (g.m[0] && w > 1.2 * (g.m[0].t.wx || 1) * xh);
-        if (d0 < 0.1 && !wide) return 0;
+        // a rare mark (& @ # % ...) is more often two small letters touching
+        // (od, 0-, fi in screen-size print): always worth a cut (1.12.1)
+        var rare = !!(g.m[0] && RARE.test(g.m[0].ch)), room = rare ? 0.4 : 0.25;
+        if (d0 < 0.1 && !wide && !rare) return 0;
         var p = LY.profile(g), cand = [], i;
         for (i = minW; i <= w - minW; i++) {
           var l = p[i - 1], r = i + 1 < w ? p[i + 1] : 1e9;
@@ -27052,7 +27185,7 @@ Lantern.RFB = (function () {
           if (!A || !B || A.x1 - A.x0 < minW || B.x1 - B.x0 < minW) return;
           [A, B].forEach(function (q) { q.ln = g.ln; q.bm = LY.bitmap(q); q.f = GL.features(q.bm, g.ln, q); matchG(q, list); });
           var sc = bestD(A) + bestD(B);
-          if (sc < d0 + 0.25 && Math.max(bestD(A), bestD(B)) < Math.max(0.3, d0 + 0.1)) ok.push({ sc: sc, p: [A, B] });
+          if (sc < d0 + room && Math.max(bestD(A), bestD(B)) < Math.max(rare ? 0.35 : 0.3, d0 + 0.1)) ok.push({ sc: sc, p: [A, B] });
         });
         if (!ok.length) return 0;
         // the two best ways to cut it are both kept
@@ -27123,7 +27256,8 @@ Lantern.RFB = (function () {
               var g0 = w.gs[0], g1 = w.gs[w.gs.length - 1], y0 = Math.min.apply(null, w.gs.map(function (g) { return g.y0; })), y1 = Math.max.apply(null, w.gs.map(function (g) { return g.y1; }));
               n++; sc += w.conf;
               var wo = { text: w.text, conf: w.conf, alts: w.alts, box: box(g0.x0, y0, g1.x1, y1) };
-              if (opts.debug) { wo.vars = w.vars; wo.xh = o.ln.xh; wo.caps = o.ln.caps; wo.ex = (o.ln.ex || []).map(function (v) { return Math.round(v * 10) / 10; }).join(" "); wo.thr = o.ln.thr; wo.sp = o.ln.sp; wo.bear = bearName; }
+              if (w.near) wo.near = w.near;
+              if (opts.debug) { wo.vis = w.vis; wo.vars = w.vars; wo.xh = o.ln.xh; wo.caps = o.ln.caps; wo.ex = (o.ln.ex || []).map(function (v) { return Math.round(v * 10) / 10; }).join(" "); wo.thr = o.ln.thr; wo.sp = o.ln.sp; wo.bear = bearName; }
               return wo;
             });
             var lb = box(o.words[0].gs[0].x0, o.ln.y0, o.words[o.words.length - 1].gs[o.words[o.words.length - 1].gs.length - 1].x1, o.ln.y1);
@@ -28524,6 +28658,21 @@ Lantern.RFB = (function () {
     var ta = el("textarea", { "class": "tr-text", "aria-label": "Text of page " + p.n, spellcheck: "true" });
     ta.value = p.text || "";
     box.appendChild(ta);
+    // words that look misread: one or two letters from a word Lantern knows
+    // (1.12.1); one tap puts the known words in, then Keep my corrections
+    var sus = [];
+    if (p.read && p.read.blocks && !p.own) p.read.blocks.forEach(function (b) { b.lines.forEach(function (l) { l.words.forEach(function (w) {
+      var core = String(w.text).replace(/^[^A-Za-z]+|[^A-Za-z]+$/g, "");
+      if (w.near && core && sus.every(function (x) { return x[0] !== core; })) sus.push([core, w.near]);
+    }); }); });
+    if (sus.length) {
+      var sp = el("p", { "class": "muted", style: "margin:4px 0" }, [el("span", { text: "May be misread: " + sus.slice(0, 12).map(function (x) { return x[0] + " \u2192 " + x[1]; }).join(", ") + (sus.length > 12 ? " \u2026 " : " ") })]);
+      sp.appendChild(el("button", { text: "Use these", title: "Put the suggested words into the text (then Keep my corrections)", onclick: function () {
+        sus.forEach(function (x) { ta.value = ta.value.replace(new RegExp("\\b" + x[0] + "\\b", "g"), x[1]); });
+        sp.parentNode.removeChild(sp);
+      } }));
+      box.appendChild(sp);
+    }
     var msg = el("span", { "class": "muted", style: "margin-left:8px" });
     var row = el("div", { "class": "row", style: "flex-wrap:wrap;margin-top:6px" }, [
       el("button", { text: "Keep my corrections", onclick: function () {
@@ -28717,7 +28866,8 @@ Lantern.RFB = (function () {
 // Depends: TEXT_READER (Lantern.textReader); reads Lantern.chatCommands --
 //          feature-detected
 // Exports: Lantern.textReader.docPrompt(doc, q, sources, detail),
-//          .namedPages(doc, text), .aboutDoc, .summaryAsk (patterns)
+//          .namedPages(doc, text), .aboutDoc, .summaryAsk, .itselfAsk
+//          (patterns)
 // ===========================================================================
 // What the AI is sent about the person's document (TEXT_READER_CHAT sends
 // it with each question, TEXT_READER_READ with each part the AI asks for):
@@ -28742,7 +28892,18 @@ Lantern.RFB = (function () {
     var pg = []; src.forEach(function (x) { if (x.page && pg.indexOf(x.page) < 0) pg.push(x.page); });
     var readLine = "The document has " + doc.pages.length + " pages" + (pg.length ? "; these passages are from " + pages(pg) : "") +
       ". If the answer may be on another page, reply only READ: page <n>, READ: section <n> or READ: <words to find>.";
-    if (detail) {
+    // words Text Reader was unsure of on these pages (1.12.1)
+    var shaky = unsure(doc, pg);
+    if (shaky.length) out.push("Text Reader was unsure of these words: " + shaky.join(", ") + ". Read them with care.");
+    if (ITSELF.test(q)) {
+      // a question about the document itself, not a fact in it ("can you
+      // see the text?"): answered in the AI's words, about the document
+      var done = doc.pages.filter(function (p) { return p.done; }).length;
+      out.push("The person asks about the document itself, not a fact in it. Say in your own words that you have it (Text Reader read " + done + " of " + doc.pages.length +
+        " page" + (doc.pages.length === 1 ? "" : "s") + "), what it is and what it covers. Put [n] at the end of a sentence that uses passage n");
+      out.push("and end with one line 'QUOTE [n]: <a sentence copied exactly from passage n>'." + (shaky.length ? " Say which words look misread." : ""));
+      if (canRead) out.push(readLine);
+    } else if (detail) {
       out.push("Answer the QUESTION from these passages. Put [n] at the end of each sentence that uses passage n. You may add your");
       out.push("own reasoning in sentences without [n]; never contradict the passages. End with a line 'QUOTE [n]: <one sentence copied");
       out.push("exactly from passage n>' for the most important fact. If the passages do not cover it, say what they do cover.");
@@ -28758,6 +28919,19 @@ Lantern.RFB = (function () {
     out.push(""); out.push("QUESTION: " + q);
     return out.join("\n");
   }
+  // unsure(doc, pages) -> up to 8 words read with little certainty on those
+  // pages, each with the known word it may be ("flmction (function?)")
+  function unsure(doc, pg) {
+    var out = [];
+    doc.pages.forEach(function (p) {
+      if (pg.indexOf(p.n) < 0 || p.own || !p.read || !p.read.blocks) return;
+      p.read.blocks.forEach(function (b) { b.lines.forEach(function (l) { l.words.forEach(function (w) {
+        var t = w.near ? w.text + " (" + w.near + "?)" : w.text;
+        if ((w.near || (w.conf < 0.5 && /[A-Za-z0-9].*[A-Za-z0-9]/.test(w.text))) && out.length < 8 && out.indexOf(t) < 0) out.push(t);
+      }); }); });
+    });
+    return out;
+  }
   // named(doc, text) -> the text with "the last page" / "the first page" as
   // page numbers (also used by READ)
   function named(doc, t) {
@@ -28765,7 +28939,10 @@ Lantern.RFB = (function () {
   }
   var ABOUT = /\b(page|pages|section|chapter|this (document|manual|book|booklet|leaflet|letter|form|report)|the (document|manual|booklet|leaflet|handbook))\b/i;
   var SUM = /\b(summar|overview|gist|main points|key points|what is (this|it) about|what does (this|it|the (page|document|label|plate)) say)/i;
+  // a question about the document itself, or what Lantern read of it
+  var ITSELF = /\b(can|could|do|did|are)\s+you\s+(?:\w+\s+){0,2}(see|read|have|get|access|view|open)\s+(?:the\s+|this\s+|my\s+|that\s+|any\s+|all\s+)?(?:whole\s+|entire\s+|full\s+)?(text|page|pages|document|manual|picture|screenshot|file|pdf|scan|words|it)\b|\bwhat did (lantern|it|text reader) (read|get|see)\b|\b(is|was) (it|the text|the page|this)\b[^?]{0,30}\b(readable|legible|clear|read (right|correctly|properly|well))\b|\bhow well\b[^?]{0,30}\bread\b/i;
   TR.docPrompt = docPrompt;
+  TR.itselfAsk = ITSELF;
   TR.namedPages = named;
   TR.aboutDoc = ABOUT;
   TR.summaryAsk = SUM;
@@ -28875,9 +29052,10 @@ Lantern.RFB = (function () {
     var src = D.passages(doc, qp, 3);
     // a question about the document that shares no words with what was read
     // gets its opening passages, so the AI sees what it is and can READ on
-    if (!src.length && (SUM.test(q) || doc.pages.length === 1 || ABOUT.test(q))) src = D.passages(doc, "summary overview", 3);
+    var itself = !!(TR.itselfAsk && TR.itselfAsk.test(q));
+    if (!src.length && (SUM.test(q) || doc.pages.length === 1 || ABOUT.test(q) || itself)) src = D.passages(doc, "summary overview", 3);
     if (!src.length) return null;
-    var detail = !!(o && o.wantsDetail) || SUM.test(q) || doc.kind === "music";
+    var detail = !!(o && o.wantsDetail) || SUM.test(q) || doc.kind === "music" || itself;
     var prompt = docPrompt(doc, q, src, detail);
     var pg = []; src.forEach(function (s) { if (pg.indexOf(s.page) < 0) pg.push(s.page); });
     return { sources: src, prompt: prompt, detail: detail, label: "\u201c" + doc.title + "\u201d", query: "",

@@ -50,6 +50,21 @@ var L = w.Lantern, TR = L.textReader, WD = TR.words, LY = TR.layout, GL = TR.gly
   ok("decode: close shapes settled by the word", best([c([["l", 0.10], ["1", 0.12]]), c([["e", 0.05], ["c", 0.08]]), c([["a", 0.05]]), c([["k", 0.05]]), c([["s", 0.05], ["5", 0.07]])]) === "leaks");
   ok("decode: clear shapes win over sense", best([c([["x", 0.02], ["a", 0.4]]), c([["q", 0.02], ["l", 0.4]]), c([["z", 0.02], ["l", 0.4]])]) === "xqz");
   ok("decode: a number stays a number", best([c([["5", 0.05], ["S", 0.06]]), c([["0", 0.05], ["O", 0.05]]), c([["0", 0.05], ["O", 0.05]])]) === "500");
+  // 1.12.1: honest confidence -- marks inside words, digits among letters,
+  // a near miss of a known word (only when the shapes fit poorly), and words
+  // run together where spaces were lost
+  function chk(t, conf, vis) { return WD.check({ text: t, conf: conf || 0.97, alts: [], vis: vis == null ? 0.12 : vis }); }
+  ok("a mark inside a word is a guess (x&y, 1&2, \u03a9zq)", chk("x&yq").conf <= 0.4 && chk("1&2").conf <= 0.4 && chk("\u03a9zq").conf <= 0.4 && chk("50%").conf > 0.9 && chk("10\u03a9").conf > 0.9);
+  ok("a digit among letters is only fairly sure (n1ode)", chk("n1ode").conf <= 0.6 && chk("E-11").conf > 0.9);
+  WD.learn(["leaks", "check", "oil", "level", "check", "oil", "level", "check", "oil", "level"]);
+  var nr = chk("leeks", 0.97, 0.12), clean = chk("leeks", 0.97, 0.02);
+  ok("a near miss of a known word is offered, when its shapes fit poorly", nr.near === "leaks" && nr.conf <= 0.6 && nr.alts[0] === "leaks" && !clean.near && clean.conf > 0.9, [nr, clean]);
+  var rt = chk("checktheoillevel", 0.97, 0.02);
+  ok("words run together get their spaces back", rt.text === "check the oil level" && rt.conf <= 0.6, rt);
+  WD.learn(["will", "mode", "fine"]);
+  ok("a capital I inside a small-letter word becomes i or l, whichever makes a word (wIll, lIght)", chk("wIll").text === "will" && chk("lIght").text === "light" && chk("Inlet").text === "Inlet", [chk("wIll"), chk("lIght")]);
+  ok("touching letters read as a mark come apart when a word results (m&e, \u03a9ne)", chk("m&e").text === "mode" && chk("\u03a9ne").text === "fine" && chk("\u03a9ne").conf <= 0.6 && chk("1&2").text === "1&2");
+  ok("...but a word Lantern has not met is not cut up", chk("gasketing", 0.97, 0.02).text === "gasketing" && chk("pumpoil", 0.97, 0.02).text === "pumpoil");
   var before = WD.known("zorbulator");
   WD.learn(["Zorbulator"], true);
   ok("corrections are learnt and kept", !before && WD.known("zorbulator") && JSON.stringify(L.store.get("textReader.words", {})).indexOf("zorbulator") >= 0);
@@ -146,6 +161,22 @@ var L = w.Lantern, TR = L.textReader, WD = TR.words, LY = TR.layout, GL = TR.gly
   ok("chat: a question the document does not cover goes on as usual", !/DOCUMENT: passages/.test(prompts[prompts.length - 1]) && !rec3.searches.some(function (s) { return s.how === "document"; }));
   var hist = C.trimHistory([{ role: "user", content: "q1\n\nDOCUMENT: passages from “X”\n[1] a" }, { role: "assistant", content: "a" }, { role: "user", content: "q2\n\nDOCUMENT: passages from “X”\n[1] b" }]);
   ok("chat: older document passages are dropped from what is sent", /document passages from an earlier question/.test(hist[0].content) && /\[1\] b/.test(hist[2].content));
+  // 1.12.1: Adam's test -- a screenshot of a grinder manual, read with some
+  // misread words, then "Can you see the text from the page lantern read?"
+  var shot = "d4.Handy pulse unit operation:\n1.The grinding mode must be set on manual mode.\n2.Press the key of 7-4 to enable the flmction of Handy pulse unit.";
+  var shotDoc = { id: "s", title: "Screenshot 2026-10-22 083921", per: 10, pages: [{ n: 1, done: true, conf: 0.9, text: shot, read: { blocks: [{ lines: [{ words: [
+    { text: "flmction", conf: 0.6, near: "function" }, { text: "m&e", conf: 0.4 }, { text: "Handy", conf: 0.98 }] }] }] } }] };
+  TR.attached = shotDoc; prompts = [];
+  var rec4 = await C.turn([], "Can you see the text from the page lantern read?", {}, { headless: true, call: function (m) {
+    var last = m[m.length - 1].content; prompts.push(typeof last === "string" ? last : "");
+    return Promise.resolve("Yes. It is the part of the manual on the Handy pulse unit operation, and the grinding mode must be set on manual mode for it [1]. " +
+      "A few words look misread, such as flmction for function.\nQUOTE [1]: 1.The grinding mode must be set on manual mode.");
+  } });
+  ok("chat: a question about the document itself is asked as one (own words, which words look misread)", /asks about the document itself/.test(prompts[0]) &&
+    /Text Reader read 1 of 1 page/.test(prompts[0]) && /unsure of these words: flmction \(function\?\), m&e/.test(prompts[0]) && !/ANSWER: Not in the document/.test(prompts[0]), prompts[0].slice(-900));
+  ok("chat: ...and its answer is not questioned for lacking a quote that says yes", prompts.length === 1 && !rec4.stillDoubt, { n: prompts.length, doubt: rec4.stillDoubt });
+  var vy = L.libraryVerify("ANSWER: Yes, the pump has a gasket [1].\nQUOTE [1]: Do not reuse the gasket.", [{ text: "Do not reuse the gasket." }], "Does the pump have a gasket?");
+  ok("a yes needs no quote that says yes", !vy.problems.some(function (x) { return /says yes/.test(x); }), vy.problems);
   TR.attached = null;
 
   // --- the second reader's word-by-word comparison -----------------------------------

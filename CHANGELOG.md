@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.12.1 — Turned and skewed screenshots read properly; honest confidence (2026-10-22)
+
+From a test: a screenshot of a grinder manual page, upside down and a
+little skewed. Lantern turned it the right way up, but read words such as
+"flmction", "l@2" and "Ω" for "Th", and still called it 92% sure. In Chat,
+"Can you see the text from the page Lantern read?" was handled as a fact
+question.
+
+- **Small print is enlarged before it is levelled** (TEXT_READER,
+  TEXT_READER_IMAGE). Before, a tilted page was turned at its own size and
+  then enlarged. At screen size that blurred the letters together.
+  - Error rates on a reconstruction of the test page (15-16 px text, turned
+    180° plus 2.5-3°): from 6.9-7.9% down to 0.4-1.2%. With extra blur:
+    from 37-44% down to 2.7-10.8%.
+  - The two earlier test sets are unchanged or better: 0.33% (was 0.40%)
+    and 0.32% (was 0.31%).
+- **Touching letters.**
+  - A piece cut from a blob may now be a hyphen or a bracket, so 10-2,
+    (but and wheel) come apart.
+  - A blob that reads as a rare mark (& @ # Ω) is always tried as two
+    letters.
+  - m&e becomes mode and Ωne becomes fine, but only when the result is a
+    word Lantern knows.
+- **Blurred i.** A capital I inside a small-letter word (wIll, IndIcatIng)
+  becomes i or l, whichever makes a word.
+- **Lost spaces.** Words run together where blurred print lost its spaces
+  ("headwillrise") get their spaces back. This only happens when the run is
+  three or more everyday words.
+- **Honest confidence.** These readings are no longer counted as "sure":
+  - a mark inside a word (red);
+  - a digit between letters (amber);
+  - a near miss of a known word whose letters fit poorly (amber). Text
+    Reader lists these as "May be misread: flmction → function", and
+    **Use these** puts the suggestions into the text.
+- **Chat: questions about the document itself** ("can you see the text?",
+  "how well was it read?").
+  - The AI answers in its own words about what the document is and what it
+    covers. It is no longer pushed into the ANSWER / QUOTE format.
+  - The AI is told which words Text Reader was unsure of.
+  - "Yes" and "no" no longer need a quote that says them. This removes the
+    false "no quote says yes" warning.
+- **Tests.** Two upside-down skewed screenshots were added to the browser
+  test (limits 2% and 2.5%), plus checks for the word repairs, the
+  confidence rules and the Chat question about the document.
+
 ## 1.12.0 — The AI makes documents, slides, flashcards and plans; READ (2026-10-22)
 
 Built on 1.11.1, which is merged into this release.

@@ -11,7 +11,9 @@ from playwright.sync_api import sync_playwright
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 FX = os.path.join(ROOT, "tests", "fixtures", "text_reader")
 TRUTH = json.load(open(os.path.join(FX, "pages", "truth.json")))
-LIMIT = {"LiberationSans_scan300.png": 0.5, "FreeSerif_scan300.png": 2.0, "shot_Arial_13.png": 3.0, "plate1.jpg": 2.0, "photo_arial.jpg": 2.0, "italic_arial.png": 3.0}
+LIMIT = {"LiberationSans_scan300.png": 0.5, "FreeSerif_scan300.png": 2.0, "shot_Arial_13.png": 3.0, "plate1.jpg": 2.0, "photo_arial.jpg": 2.0, "italic_arial.png": 3.0,
+         # 1.12.1: screenshots turned upside down and 2.5 degrees (were 6.9% and 7.9% in 1.12.0)
+         "shot_upside_down_skewed.png": 2.0, "shot_serif_upside_down_skewed.png": 2.5}
 
 def norm(t):
     for a, b in (("’", "'"), ("‘", "'"), ("“", '"'), ("”", '"'), ("—", "-"), ("–", "-")): t = t.replace(a, b)
