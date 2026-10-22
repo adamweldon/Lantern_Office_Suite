@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.12.6 — A ground as the return; the formula goes on the drawing (2026-10-22)
+
+From Adam's next Chat: "draw an electrical schematic showing ohms law in
+parallel ... with the formula shown to calculate the resistances". The
+35B wired both resistors and the source's return to a ground (wire R1 G1,
+wire R2 G1, wire V1 G1), and the drawing came out tangled. It worked the
+formula out in = lines in its reply, which Lantern does not run next to a
+MAKE block, instead of putting it on the drawing.
+
+- **A ground used as the return to the source** is folded like a junction.
+  Each load is wired back to the source's other terminal, and the ground
+  symbol hangs on that return. A ground on the way round (battery,
+  resistor, ground, battery) is a join too, and keeps its symbol. Both
+  now draw as a closed loop or a ladder.
+- **Asked for the formula, and the block has no notes?** The block goes
+  back once: "the person asked for the formula on the drawing: add note
+  lines". The AI is also told to put formulas and values in note lines,
+  not in = lines or the answer.
+- **Ladder rungs have their names beside them**, clear of the two rails.
+- **Tests.** The ground-return block from the Chat, the series ground, and
+  the formula request with and without notes. Replayed in a browser, the
+  35B's first reply is sent back once and the corrected block shows
+  "Req = ... = 66.67 ohm" and "I = ... = 0.18 A", both worked out by
+  Lantern.
+
 ## 1.12.5 — Ohm's law in parallel: a clean ladder, meters, formulas on the picture (2026-10-22)
 
 From Adam's Chat with the 35B.

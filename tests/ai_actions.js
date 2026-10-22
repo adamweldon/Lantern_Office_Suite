@@ -313,6 +313,20 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
     /2 ohms/.test(tq.final), { n: said3.length, doubt: tq.stillDoubt, searches: tq.searches, final: tq.final });
   ok("a NEED about a voltage source is not a call for the encyclopedia", !L.assist.needLibrary("What voltage source and resistor values should be used for the parallel circuit demonstration?") &&
     L.assist.needLibrary("I need factual data from the offline encyclopedia") && L.assist.needLibrary("Which reliable sources give the figure?"));
+  // --- 1.12.6: a ground used as the return to the source (Adam's next Chat) ---
+  var gnd2 = act.build(blk("SCHEMATIC", "Ohms Law Parallel Circuit", ["mode electrical", "part V1 source \"12 V\"", "part R1 resistor \"100 ohm\"",
+    "part R2 resistor \"200 ohm\"", "part G1 ground", "wire V1 R1", "wire V1 R2", "wire R1 G1", "wire R2 G1", "wire V1 G1",
+    "note Rt = R1 x R2 / (R1 + R2) = {=100*200/(100+200)} ohm"]), "draw an electrical schematic showing ohms law in parallel with the formula shown to calculate the resistances");
+  var gw = gnd2.plan ? gnd2.plan.wires.map(function (w) { return w.join("-"); }) : [];
+  ok("a ground used as the return is the source's other terminal: both resistors back to the source, the ground on that return", gnd2.ok &&
+    gw.indexOf("R1-V1") >= 0 && gw.indexOf("R2-V1") >= 0 && gw.indexOf("G1-V1") >= 0 && gw.indexOf("R1-G1") < 0 && gnd2.plan.notes[0] === "Rt = R1 x R2 / (R1 + R2) = 66.67 ohm", gnd2.problems || gw);
+  var ser = act.build(blk("SCHEMATIC", "Series with ground", ["part V1 battery \"9 V\"", "part R1 resistor \"1 k\"", "part G1 ground", "wire V1 R1", "wire R1 G1", "wire G1 V1"]), "");
+  ok("a ground on the way round is a join, its symbol kept", ser.ok && ser.plan.wires.map(function (w) { return w.join("-"); }).join() === "V1-R1,R1-V1,G1-V1", ser.plan && ser.plan.wires);
+  var noNotes = act.build(blk("SCHEMATIC", "P", ["part V1 source \"12 V\"", "part R1 resistor \"100 ohm\"", "part R2 resistor \"200 ohm\"", "wire V1 R1", "wire R1 V1", "wire V1 R2", "wire R2 V1"]),
+    "draw a schematic in parallel with the formula shown to calculate the resistances");
+  ok("asked for the formula and the block has no notes: sent back once to add them", !noNotes.ok && /asked for the formula on the drawing: add note lines/.test(noNotes.problems.join()) &&
+    act.build(blk("SCHEMATIC", "P", ["part V1 source", "part R1 resistor", "wire V1 R1", "wire R1 V1"]), "draw a lamp circuit").ok, noNotes.problems);
+  ok("the AI is told to put formulas in note lines, not = lines", /put them in note lines in the block -- not in = lines/.test(act.prompt("draw a circuit with a battery")));
   ok("no errors after all that", errs.length === 0, errs);
 
   console.log(fails ? fails + " AI ACTION FAILURES (" + passes + " passed)" : "ALL AI ACTION TESTS PASS (" + passes + ")");

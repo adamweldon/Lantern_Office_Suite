@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.12.5 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.12.6 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -166,7 +166,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.12.5",
+  version: "1.12.6",
   apps: {},
   order: []
 };
@@ -24114,7 +24114,9 @@ Lantern.RFB = (function () {
       if (flipV[p.id]) g = mirrorV(g, q.y);
       shapes.push(g);
       var lab = p.id + (p.label ? " (" + p.label + ")" : ""), single = ports(p.id).length === 1;
-      shapes.push({ t: "text", c: NOTE, x: single ? q.x + 30 + lab.length * 3.5 : q.x, y: single ? q.y + 4 : q.y - 34, s: lab, fs: 13 });
+      // (a ladder rung's name goes beside it, clear of the two rails)
+      var side = single || q.row % 1 !== 0;
+      shapes.push({ t: "text", c: NOTE, x: single ? q.x + 30 + lab.length * 3.5 : side ? q.x + 52 + lab.length * 3.6 : q.x, y: side ? q.y + 4 : q.y - 34, s: lab, fs: 13 });
       maxY = Math.max(maxY, q.y + 40); maxX = Math.max(maxX, q.x + 60);
     });
     var ends = {};
@@ -24185,15 +24187,15 @@ Lantern.RFB = (function () {
   }
 
   // HOOKS.prep: fn(sc) before the layout (junctions folded into the wires);
-  // HOOKS.draw: fn(sc, lay, problems) after it (notes under the drawing)
+  // HOOKS.draw: fn(sc, lay, problems, {question}) after it (notes under the drawing)
   var HOOKS = { prep: [], draw: [] };
-  function schematic(block) {
+  function schematic(block, ctx) {
     var sc = parseSchematic(block);
     if (sc.problems.length) return { problems: sc.problems, plan: null };
     if (!L.aiDraw || !L.aiDraw.result) return { problems: ["Lantern\u2019s drawing part (AI_DRAW) is missing"], plan: null };
     HOOKS.prep.forEach(function (f) { f(sc); });
     var lay = layout(sc, block.title), late = [];
-    HOOKS.draw.forEach(function (f) { f(sc, lay, late); });
+    HOOKS.draw.forEach(function (f) { f(sc, lay, late, ctx || {}); });
     if (late.length) return { problems: late, plan: null };
     var plan = { mode: sc.mode, parts: sc.parts.map(function (p) { return { id: p.id, type: p.type, label: p.label }; }),
       wires: sc.wires.map(function (w) { return [w[0].id, w[1].id]; }), loop: sc.loop, notes: sc.shownNotes || [] };
@@ -24222,7 +24224,7 @@ Lantern.RFB = (function () {
       "wire R1 D1",
       "wire D1 V1",
       "END"],
-    build: function (block) { return schematic(block); }
+    build: function (block, ctx) { return schematic(block, ctx); }
   });
 })();
 // ===========================================================================
@@ -24453,10 +24455,15 @@ Lantern.RFB = (function () {
   });
   // --- junctions folded into the wires -------------------------------------
   // fold(sc): each junction goes; what flows into it is wired to what flows
-  // out of it (wires are written in the direction the current flows)
+  // out of it (wires are written in the direction the current flows). A
+  // ground, or a junction everything flows into, used as the return to the
+  // source ("wire R1 G1, wire R2 G1, wire V1 G1" -- a 35B, 1.12.6) is the
+  // source's other terminal: each load is wired back to the source, and a
+  // ground symbol stays on that return.
+  var SRC = /^(battery|source)$/;
   function fold(sc) {
     for (var guard = 0; guard < 24; guard++) {
-      var j = sc.parts.filter(function (p) { return p.type === "junction"; })[0];
+      var j = sc.parts.filter(function (p) { return (p.type === "junction" || p.type === "ground" && !p.folded) && !p.kept; })[0];
       if (!j) return sc;
       var ins = [], outs = [], keep = [];
       sc.wires.forEach(function (w) {
@@ -24464,8 +24471,19 @@ Lantern.RFB = (function () {
         else if (w[0].id === j.id && w[1].id !== j.id) outs.push(w[1]);
         else keep.push(w);
       });
-      if (!ins.length || !outs.length) { var all = ins.concat(outs); ins = all.slice(0, 1); outs = all.slice(1); }
-      ins.forEach(function (a) { outs.forEach(function (b) { if (a.id !== b.id) keep.push([a, b]); }); });
+      var all = ins.concat(outs), src = all.filter(function (e) { return sc.byId[e.id] && SRC.test(sc.byId[e.id].type); })[0];
+      var G = j.type === "ground", gEnd = { id: j.id, port: 0, raw: j.id };
+      if (src && (!outs.length || all.length > 2 && G)) {
+        all.forEach(function (e) { if (e.id !== src.id) keep.push([e, { id: src.id, port: -1, raw: src.raw }]); });
+        if (G) { keep.push([gEnd, { id: src.id, port: -1, raw: src.raw }]); j.folded = true; sc.wires = keep; continue; }
+      } else if (G && !(ins.length && outs.length)) { j.kept = true; continue; }
+      else {
+        // (a ground on the way round -- R1 to ground to the source -- is a
+        // join too; its symbol stays on what the current flows on to)
+        if (!ins.length || !outs.length) { ins = all.slice(0, 1); outs = all.slice(1); }
+        ins.forEach(function (a) { outs.forEach(function (b) { if (a.id !== b.id) keep.push([a, b]); }); });
+        if (G) { keep.push([gEnd, { id: outs[0].id, port: outs[0].port, raw: outs[0].raw }]); j.folded = true; sc.wires = keep; continue; }
+      }
       sc.wires = keep;
       sc.parts = sc.parts.filter(function (p) { return p !== j; });
       delete sc.byId[j.id];
@@ -24492,8 +24510,12 @@ Lantern.RFB = (function () {
     return { text: s, problems: problems };
   }
   S.hooks.prep.push(fold);
-  S.hooks.draw.push(function (sc, lay, problems) {
+  // asked for the formula or the values with the drawing: they go on it
+  var ASKS = /\b(formulas?|equations?|calculat\w*|work(ed|s)? out|show(ing|n)? (the )?(total|equivalent|resistance|current|voltage|values?|math|maths)|with (the )?(values|numbers|math|maths|working))\b/i;
+  S.hooks.draw.push(function (sc, lay, problems, ctx) {
     var notes = (sc.notes || []).slice(0, 8);
+    if (!notes.length && ctx && ctx.question && ASKS.test(ctx.question))
+      problems.push("the person asked for the formula on the drawing: add note lines to the block, like note Rt = R1 x R2 / (R1 + R2) = {=100*200/(100+200)} ohm (Lantern works out each {= ...})");
     if (!notes.length) return;
     var x0 = 1e9, x1 = -1e9, y1 = 0;
     lay.shapes.forEach(function (s) {
@@ -24515,6 +24537,7 @@ Lantern.RFB = (function () {
     if (at > 0) act.prompt.splice(at, 0,
       "note <text>                a line of text under the drawing, for teaching: a formula, values. Lantern works out each {= ...}:",
       "                           note Rt = 1 / (1/R1 + 1/R2) = {=1/(1/4+1/6)} ohm",
+      "When the person asks for a formula, values or the working, put them in note lines in the block -- not in = lines or the answer.",
       "To change a drawing already made (add notes, values, a part), reply with the whole MAKE SCHEMATIC block again.");
   }
   window.Lantern.aiSchematicMore = { fold: fold, noteText: noteText };
