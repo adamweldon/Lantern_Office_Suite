@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.12.3 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.12.4 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -173,7 +173,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.12.3",
+  version: "1.12.4",
   apps: {},
   order: []
 };
@@ -29998,7 +29998,7 @@ Lantern.RFB = (function () {
       return { verb: c.verb, usage: c.usage, desc: c.desc, ready: c.library ? !!(L.library && L.library.ready && L.library.ready()) : true };
     });
     (L.aiActions || []).forEach(function (a) {
-      out.push({ verb: "MAKE " + a.kind, usage: "MAKE " + a.kind + ": <title> ... END", desc: "make " + (a.title || a.kind.toLowerCase()) + " (opens in " + (a.opens || (a.kind === "SHEET" ? "Sheets" : "Draw")) + ")", ready: true });
+      out.push({ verb: "MAKE " + a.kind, usage: "MAKE " + a.kind + ": <title> ... END", desc: "make " + (a.title || a.kind.toLowerCase()) + " (opens in " + (a.opens || (a.kind === "SHEET" ? "Sheets" : "Draw")) + (a.also ? "; " + a.also : "") + ")", ready: true });
     });
     (L.aiSolvers || []).forEach(function (s) {
       out.push({ verb: s.kind, usage: s.kind + ": ... END", desc: "puzzle bookkeeping: " + (s.title || ""), ready: true });
@@ -31174,16 +31174,16 @@ Lantern.RFB = (function () {
   }
   window.Lantern.aiDoc = { doc: doc };
   if (!ACTS.some(function (a) { return a.id === "doc"; })) ACTS.push({
-    id: "doc", kind: "DOC", kinds: ["DOC", "DOCUMENT", "LETTER", "REPORT", "WRITER"], title: "a document", opens: "Writer",
-    // (1.12.2: also "rewrite it with corrections", "turn this into a PDF",
-    // "write it in the text writer", "Lantern's writing module")
+    id: "doc", kind: "DOC", kinds: ["DOC", "DOCUMENT", "LETTER", "REPORT", "WRITER"], title: "a document", opens: "Writer", also: "Save .pdf makes a PDF",
+    // (also: rewrite with corrections, turn into a PDF, in the Writer module)
     match: function (q) {
-      return /\b(write|rewrite|re-?type|draft|compose|prepare|make|create|put together|type up|clean up|tidy up|correct|proofread|transcribe|format|turn|convert|save|export)\b[^.?!]{0,60}\b(letter|report|memo|procedure|sop|instructions?|notice|essay|minutes|policy|checklist|document|doc|handout|manual|cover letter|pdf|word file)\b/i.test(q) ||
-        /\b(in|into|to|as)\s+(an?\s+|the\s+)?(pdf|writer|word (doc|document|file)|document|doc|text writer|writing (module|app|tile))\b/i.test(q) ||
-        /\b(text writer|writing module|word processor|in writer)\b/i.test(q);
+      return /\b(writ(e|es|ing|ten)|wrote|rewrit\w*|re-?typ\w*|draft\w*|compos(e|es|ing)|prepar(e|es|ing)|mak(e|es|ing)|made|creat(e|es|ing)|generat(e|es|ing)|produc(e|es|ing)|put together|type up|clean up|tidy up|correct(s|ing)?|proofread\w*|transcrib\w*|format\w*|turn(s|ing)?|convert\w*|sav(e|es|ing)|export\w*)\b[^.?!]{0,60}\b(letter|report|memo|procedure|sop|instructions?|notice|essay|minutes|policy|checklist|document|doc|handout|manual|cover letter|pdf|word file|copy|version)\b/i.test(q) ||
+        /\b(in|into|to|as|with|using|via|through)\s+(an?\s+|the\s+)?(pdf|writer|word (doc|document|file)|document|doc|text writer|writing (module|app|tile)|writer (module|app|tile))\b/i.test(q) ||
+        /\b(text writer|writing module|word processor|in writer|writer (module|app|tile))\b/i.test(q);
     },
     prompt: [
-      "MAKE DOC: <title>   -- a document for Writer (letter, report, procedure, notice); the person edits and prints it",
+      "MAKE DOC: <title>   -- a document (letter, report, procedure, notice, a corrected copy of a page or picture). Lantern shows it",
+      "with Open in Writer and Save .pdf: this is how you make a Writer document or a PDF. Use it, not LESSON, when a document is wanted.",
       "One line per paragraph. ## Heading, ### Smaller heading, 1. numbered step, - bullet point, **bold**,",
       "rows with | for a small table (first row is the header). No blank-line tricks, no HTML.",
       "END",
@@ -31755,6 +31755,74 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: GUIDE_MAKE_DOCS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_MAKE_ASK - START
+// Depends: AI_ACTIONS (Lantern.aiActions, Lantern.aiAct); Chat's hooks
+//          Lantern.chatSystem and Lantern.chatCommands -- feature-detected
+// Exports: Lantern.aiMakeAsk = {kindOf(word)} (for tests); adds the MAKE:
+//          reply line
+// ===========================================================================
+// The AI is told how to write a MAKE block only when the question asks for
+// one, so a small model's instructions stay short. A follow-up ("proceed
+// with creating a document using the Writer module", "yes, do that") often
+// does not say what to make, and a 35B then said Lantern could not make a
+// PDF and fetched a lesson on the writing process instead (1.12.3). So when
+// no MAKE instructions went with the question, one line says what Lantern
+// can make, and the AI may reply MAKE: <kind> to get the instructions for
+// that kind, then make it from the conversation.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var ACTS = window.Lantern.aiActions = window.Lantern.aiActions || [];
+  var CMDS = window.Lantern.chatCommands = window.Lantern.chatCommands || [];
+  var SYS = window.Lantern.chatSystem = window.Lantern.chatSystem || [];
+  // everyday words for each kind
+  var WORDS = { doc: /^(doc|docs|document|documents|letter|report|memo|notice|writer|pdf|copy|procedure|essay)$/,
+    slides: /^(slides?|slide deck|deck|presentation|talk)$/, cards: /^(cards?|flash ?cards?|quiz)$/,
+    plan: /^(plan|planner|schedule|calendar|reminders?)$/, drawing: /^(drawing|picture|sketch|image|illustration)$/,
+    schematic: /^(schematic|circuit|diagram|wiring( diagram)?|circuit diagram)$/, sheet: /^(sheet|table|spreadsheet)$/ };
+  function kindOf(w) {
+    var low = String(w || "").toLowerCase().replace(/^(an?|the)\s+/, "").replace(/[^a-z ]/g, "").replace(/^\s+|\s+$/g, "");
+    var hit = null;
+    ACTS.forEach(function (a) {
+      if (hit) return;
+      if ((a.kinds || [a.kind]).some(function (k) { return k.toLowerCase() === low; }) || (WORDS[a.id] && WORDS[a.id].test(low))) hit = a;
+    });
+    return hit;
+  }
+  function arg(reply) {
+    var t = String(reply || ""), re = /^[ \t*]*MAKE\s*:[ \t*]*([A-Za-z][A-Za-z ]{1,30}?)[ \t*.]*$/im, m = re.exec(t);
+    if (!m) return null;
+    var first = t.replace(/^\s+/, "").split("\n")[0];
+    if (t.replace(/^\s+|\s+$/g, "").length > 240 && !re.test(first)) return null;
+    return m[1];
+  }
+  if (!CMDS.some(function (c) { return c && c.id === "make"; })) CMDS.push({
+    id: "make", verb: "MAKE", usage: "MAKE: <document | slides | flashcards | plan | drawing | schematic | table>",
+    desc: "get the instructions for making one of these (then reply with the MAKE block)",
+    test: function (reply) { return L.aiAct ? arg(reply) : null; },
+    run: function (a, q) {
+      var act = kindOf(a);
+      if (!act) return Promise.resolve({ prompt: "Lantern cannot make \u201c" + a + "\u201d. It can make: " + ACTS.map(function (x) { return x.title; }).join(", ") +
+        ". Reply with MAKE: <one of those>, or answer the QUESTION now.\n\nQUESTION: " + q });
+      return Promise.resolve({ note: "The AI asked how to make " + act.title + "; Lantern sent the format\u2026",
+        prompt: "Make it now: reply with ONE block like this (Lantern lays it out and checks it), using what the person asked and the conversation above.\n\n" +
+          act.prompt.join("\n") + "\n\nQUESTION: " + q });
+    }
+  });
+  // one line, only when the question did not bring the MAKE instructions
+  SYS.push(function (q) {
+    if (!L.aiAct || !ACTS.length) return "";
+    try { if (L.aiAct.relevant(q || "").length) return ""; } catch (e) { return ""; }
+    return "Lantern can also MAKE " + ACTS.map(function (a) { return a.title + (a.opens ? " (" + a.opens + ")" : ""); }).join(", ") +
+      " -- a document can be saved as a PDF. If the person wants one of these made (also in a follow-up such as \u201cgo ahead\u201d), reply only" +
+      " MAKE: <document, slides, flashcards, plan, drawing, schematic or table> and Lantern sends the format.";
+  });
+  window.Lantern.aiMakeAsk = { kindOf: kindOf, arg: arg };
+})();
+// ===========================================================================
+// MODULE: AI_MAKE_ASK - END
 // ===========================================================================
 </script>
 
