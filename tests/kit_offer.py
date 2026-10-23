@@ -98,6 +98,21 @@ for mem, want in (("32000", "35B-A3B"), ("16000", "9B"), ("8000", "4B"), ("4000"
     ok("start-lantern %s MB uses the %s" % (mem, want), "FAKE model=Qwen3.5-%s" % want in out, out)
 out = run(k, ["9b"], {}, [os.path.join(k, "start-lantern.sh")])
 ok("start-lantern 9b picks by hand", "FAKE model=Qwen3.5-9B" in out, out)
+# 1.12.8: the browser opens as soon as the server answers, and the page is
+# told the model's name and size and when the server started (its progress
+# bar while the model loads)
+fb = os.path.join(tmp, "fakebin"); os.makedirs(fb, exist_ok=True); opened = os.path.join(tmp, "opened.txt")
+open(os.path.join(fb, "xdg-open"), "w").write("#!/bin/sh\necho \"$1\" > '%s'\n" % opened); os.chmod(os.path.join(fb, "xdg-open"), 0o755)
+t_before = int(time.time()) * 1000
+out = run(k, ["9b"], {"NO_BROWSER": "", "PATH": fb + os.pathsep + os.environ.get("PATH", "")}, [os.path.join(k, "start-lantern.sh")])
+url = open(opened).read().strip() if wait_file(opened, 5) else ""
+q = dict(x.split("=", 1) for x in url.split("?", 1)[-1].split("&")) if "?" in url else {}
+ok("start-lantern opens Lantern with the model's name, size and start time", url.startswith("http://127.0.0.1:") and q.get("kit") == "1" and
+   q.get("model") == "Qwen3.5-9B-Q4_K_M.gguf" and q.get("bytes") == "4004" and q.get("vbytes") == "0" and t_before - 2000 <= int(q.get("t", "0")) <= t_before + 60000, url)
+ok("start-lantern says the model takes a while and the page shows a progress bar", "shows a progress bar" in out and "Keep this window open" in out, out)
+bat = open(os.path.join(ROOT, "kit", "start-lantern.bat")).read()
+ok("start-lantern.bat passes the same hints, opening as soon as the server listens", "?kit=1&model=!MNAME!&bytes=!MBYTES!&vbytes=!VBYTES!&t=" in bat and
+   "TcpClient" in bat and "timeout /t 8" not in bat, "")
 # --- the offline library: kiwix-tools + a Kiwix file, from a stand-in for
 # download.kiwix.org (plain directory listings, as its mirrors serve them)
 import hashlib, io, tarfile, zipfile

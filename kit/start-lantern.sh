@@ -115,6 +115,11 @@ cd "$(dirname "$BIN")" || exit 1
 # Engine libraries sit next to the binary.
 LD_LIBRARY_PATH="$(pwd)${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; export LD_LIBRARY_PATH
 DYLD_LIBRARY_PATH="$(pwd)${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"; export DYLD_LIBRARY_PATH
+# When the server started, for Lantern's progress bar while the model loads
+T0="$(date +%s)000"
+echo "The AI model is loading now. That takes a minute or two, longer from a USB"
+echo "stick; Lantern's page shows a progress bar until it is ready."
+echo "Keep this window open: closing it stops Lantern's AI."
 # shellcheck disable=SC2086
 if [ -n "$MMPROJ" ]; then
   "$BIN" -m "$M" --mmproj "$MMPROJ" --path "$SITE" --host "$HOST" --port "$PORT" -c 8192 $NGL &
@@ -123,12 +128,20 @@ else
 fi
 PID=$!
 trap 'kill $PID $KPID 2>/dev/null' INT TERM EXIT
+# Open Lantern as soon as the server answers (503 while the model loads):
+# the page shows a progress bar and connects by itself when the model is
+# ready. It is told the model's name and size and when the server started.
 i=0
-while [ $i -lt 120 ]; do
-  if curl -s "http://127.0.0.1:$PORT/health" 2>/dev/null | grep -q ok; then break; fi
-  sleep 1; i=$((i+1))
+while [ $i -lt 60 ]; do
+  code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PORT/health" 2>/dev/null)
+  if [ -n "$code" ] && [ "$code" != "000" ]; then break; fi
+  sleep 0.5; i=$((i+1))
 done
+MBYTES=$(ls -ln "$M" 2>/dev/null | awk '{print $5}')
+VBYTES=0
+[ -n "$MMPROJ" ] && VBYTES=$(ls -ln "$MMPROJ" 2>/dev/null | awk '{print $5}')
+URL="http://127.0.0.1:$PORT/?kit=1&model=$(basename "$M" | sed 's/ /%20/g')&bytes=${MBYTES:-0}&vbytes=${VBYTES:-0}&t=$T0"
 if [ -z "${NO_BROWSER:-}" ]; then
-  if [ "$OS" = mac ]; then open "http://127.0.0.1:$PORT/"; else xdg-open "http://127.0.0.1:$PORT/" >/dev/null 2>&1 || true; fi
+  if [ "$OS" = mac ]; then open "$URL"; else xdg-open "$URL" >/dev/null 2>&1 || true; fi
 fi
 wait $PID

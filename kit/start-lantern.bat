@@ -108,7 +108,20 @@ if defined ZIMS (
     echo Library files found, but not kiwix-serve: run setup-kit.bat library
   )
 )
-start "" /b cmd /c "timeout /t 8 >nul & start http://127.0.0.1:%PORT%/"
+rem Open Lantern as soon as the server answers. The model takes a minute or
+rem more to load (minutes for a big one from a USB stick); the page shows a
+rem progress bar meanwhile and connects by itself when the model is ready.
+rem It is told the model's name and size and when the server started.
+set "MBYTES=0"
+for %%f in ("!M!") do set "MBYTES=%%~zf"
+set "VBYTES=0"
+if defined MMPROJ for %%f in ("!MMPROJ!") do set "VBYTES=%%~zf"
+start "" /b powershell -NoProfile -Command "$t=[DateTimeOffset]::Now.ToUnixTimeMilliseconds(); for($i=0;$i -lt 60;$i++){ try { $c=New-Object Net.Sockets.TcpClient('127.0.0.1',%PORT%); $c.Close(); break } catch { Start-Sleep -Milliseconds 500 } }; Start-Process ('http://127.0.0.1:%PORT%/?kit=1&model=!MNAME!&bytes=!MBYTES!&vbytes=!VBYTES!&t=' + $t)"
+echo.
+echo The AI model is loading now. That takes a minute or two, longer from a USB
+echo stick; Lantern's page shows a progress bar until it is ready.
+echo Keep this window open: closing it stops Lantern's AI.
+echo.
 pushd "%DIR%engine\windows"
 "%BIN%" -m "!M!" !MMARG! --path "%SITE%" --host %HOST% --port %PORT% -c 8192 %NGL%
 popd

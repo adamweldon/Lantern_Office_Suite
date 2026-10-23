@@ -1,5 +1,62 @@
 # Changelog
 
+## 1.12.8 — Lantern waits for the kit's model, with a progress bar (2026-10-23)
+
+From Adam's USB kit. start-lantern launched llama-server and opened Lantern
+8 seconds later. The 35B model then took about 2 min 20 s to load from the
+stick. In that time llama-server (b11435) sends the page but answers every
+other request with 503 "Loading model". Lantern checked for a server once,
+saw no model, fell back to "On this device" and never looked again. The page
+had to be closed and opened. Nothing on screen said the model was loading,
+so it was easy to think it had hung and close it.
+
+- **A loading screen with a progress bar.** While the model loads, a screen
+  over the apps shows:
+  - the model's name and size;
+  - a progress bar;
+  - the time so far and about how long is left;
+  - a request to keep the page and the black Lantern window open, because
+    closing either stops the load and it starts over.
+
+  "Use the other apps while it loads" shrinks the screen to a corner button
+  ("AI loading 47% — details"). The apps work without the AI meanwhile.
+- **It connects by itself.** Lantern asks the server's /health every second.
+  The moment the model is ready it connects (model name and vision too), the
+  bar fills, and the screen goes. No reload is needed.
+- **The estimate.** The start scripts now open the page as soon as the
+  server answers. They pass the model's file name, its size, the vision
+  part's size and the time the server started (`?kit=1&model=…&bytes=…&t=…`;
+  Lantern removes these from the address bar). So the first estimate comes
+  from the file size at about 120 MB a second. After that, Lantern remembers
+  how long each model took and uses that. Past the estimate the bar slows and
+  does not reach the end until the model answers. The scripts' black window
+  also says the model takes a while and to keep it open.
+- **Other cases.**
+  - A page opened by hand (a phone on the Wi-Fi, a reload) gets the same
+    screen.
+  - A saved page opened while the server is off shows only a quiet corner
+    button ("AI server not answering"), and only if this address has had a
+    model before. It brings up the screen if the server starts.
+  - GitHub Pages and plain file hosts show nothing.
+- **Asking while it loads:** Chat now says "the AI model is still loading",
+  with no advice about endpoints. The AI app says "the Lantern server on
+  this computer (the model is still loading)". The on-device panel no longer
+  shows a red "engine could not start" error during the load. It fills in
+  once the server is ready.
+- **Tests.**
+  - 22 new checks in `tests/ai_server_wait.js`:
+    - loading, then ready, without a reload;
+    - the estimate and the remembered load time;
+    - the corner button;
+    - asking while it loads;
+    - the server off, then starting;
+    - no server at all.
+  - The kit test now checks the address start-lantern.sh opens and the
+    Windows script's hints.
+  - Both new modules are tested in isolation.
+  - Replayed in Chromium against a stand-in llama-server that behaves like
+    b11435 (only the page while loading, 503 for the rest).
+
 ## 1.12.7 — Wheel charts; words on a drawing checked; junctions that were never declared (2026-10-22)
 
 From Adam's next Chat with the 35B. The parallel and series schematics came

@@ -50,6 +50,9 @@ Folder layout
    Mac: double-click start-lantern.command (first time: right-click > Open)
    Linux: ./start-lantern.sh
    Lantern opens at http://127.0.0.1:8080 and finds the model by itself.
+   A big model takes a minute or more to load (a few minutes from a USB
+   stick). Lantern shows a progress bar meanwhile and connects as soon as
+   the model is ready -- no need to reload the page.
    Keep the window open; closing it stops the AI.
 
    Bigger model, automatically: each start checks what this computer can
