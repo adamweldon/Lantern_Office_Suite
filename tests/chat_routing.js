@@ -20,7 +20,8 @@ var ART = {
   Work_It_Out: "\"Work It Out\", a song by TJ Davis for Sonic R, released as a single in 1997 and played in the game's menus.",
   Womens_work: "Women's work is a field of labour assumed to be solely the realm of women and associated with specific stereotypical jobs considered as uniquely feminine.",
   Without: "\"Without\", a song by Jack Savoretti from the album Between the Minds, 2007; also an episode of The X-Files.",
-  Kenya: "Kenya is a country in East Africa. Kenya's capital and largest city is Nairobi."
+  Kenya: "Kenya is a country in East Africa. Kenya's capital and largest city is Nairobi.",
+  Raspberry_Pi_400: "The Raspberry Pi 400 (2020) is a single-board computer built into a compact keyboard. It runs Raspberry Pi OS by default."
 };
 var A_ = {};
 Object.keys(ART).forEach(function (k) {
@@ -82,6 +83,9 @@ function firstPassageSentence(t) { var m = /\[1\] [^\n]*\n([^\n]+)/.exec(t); ret
 // A model that behaves well: answers from passages with [n], writes search
 // words when asked, answers questions about itself plainly.
 function good(last) {
+  // a how-to the encyclopedia does not cover: answered from its own knowledge, said (1.12.9)
+  if (/date and time on a Raspberry Pi from the terminal/.test(last)) return "The library has nothing on this.\nFrom my own knowledge: run sudo date -s \x272026-10-23 12:00:00\x27, " +
+    "or sudo timedatectl set-time \x272026-10-23 12:00:00\x27; with internet the Pi sets its clock by itself.";
   if (/reply with ONLY one line: LOOKUP/.test(last)) {
     if (/how are they trained/i.test(last)) return "LOOKUP: large language model training";
     if (/how is reasoning possible/i.test(last)) return "LOOKUP: large language model reasoning";
@@ -217,11 +221,11 @@ function good(last) {
   ok("C.converse runs a conversation with no page", conv.turns.length === 2 && conv.turns[0].searches.length === 1 && conv.turns[1].searches.length === 0 &&
     conv.turns[1].self && /Kenya/.test(conv.text), conv.turns.map(function (x) { return [x.searches, x.self, x.final]; }));
   var Q = L.aiBenchQuestions.filter(function (x) { return x.cat === "chat"; });
-  ok("eight conversations in the bench, one quick, five about a document and four about Lantern itself", Q.filter(function (x) { return !x.doc && !/^suite-/.test(x.id); }).length === 8 &&
+  ok("nine conversations in the bench (1.12.9: a how-to answered from the AI's own knowledge), one quick, five about a document and four about Lantern itself", Q.filter(function (x) { return !x.doc && !/^suite-/.test(x.id); }).length === 9 &&
     Q.filter(function (x) { return x.quick; }).length === 1 && Q.filter(function (x) { return x.doc; }).length === 5 && Q.filter(function (x) { return /^suite-/.test(x.id); }).length === 4);
   var rep = await L.aiBench.run({ quick: false, skip: ["tool", "multi", "need", "unknown", "safety", "fact", "make", "reason", "alone"] });
   var failed = rep.rows.filter(function (r) { return !r.pass; }).map(function (r) { return r.id + ": " + r.why; });
-  ok("a model that behaves well passes every conversation", rep.rows.length === 17 && !failed.length && rep.summary.chat.pass === 17, failed);
+  ok("a model that behaves well passes every conversation", rep.rows.length === 18 && !failed.length && rep.summary.chat.pass === 18, failed);
   ok("document conversations: the bench handed Chat the manual, and took it back", rep.rows.filter(function (r) { return /^doc-/.test(r.id); }).every(function (r) { return r.chat.some(function (t) { return t.searches.some(function (s) { return s.how === "document"; }); }) || r.id === "doc-not-covered"; }) &&
     !(L.textReader && L.textReader.attached));
   ok("rows record each turn's searches", rep.rows.filter(function (r) { return r.id === "chat-follow-up-search"; })[0].chat[1].searches[0].how === "asked");
@@ -230,6 +234,88 @@ function good(last) {
   ok("the check catches a search without the conversation's subject", /without the conversation/.test(lit.check([{}, { searches: [{ query: "trained", how: "read-first" }], declined: false, backed: 1 }])));
   var self1 = Q.filter(function (x) { return x.id === "chat-is-this-how-you-work"; })[0];
   ok("the check catches the transcript's turn 2 (searched, then declined)", /searched the library/.test(self1.check([{}, { searches: [{ query: "Is this how you work?", how: "quotes" }], declined: true, final: "Not in my library." }])));
+  // --- 1.12.9: the AI answers from its own knowledge, and says so -----------
+  // (Adam's Chat: an AccelStepper + TMC2209 example and setting the clock on
+  // a Raspberry Pi 400 were refused -- "my rules strictly require that all
+  // facts come only from the library" -- though the model knew both)
+  var OWN = L.chatOwn, sys9 = C.buildSystem("How do I set the date and time on a rpi400");
+  ok("the instructions: Lantern first, then the AI's own knowledge, said with “From my own knowledge:”", !!OWN && /Use Lantern first/.test(sys9) &&
+    /still help: answer from your own knowledge/.test(sys9) && /“From my own knowledge:”/.test(sys9) && !/never type data from memory/.test(sys9) &&
+    /Answer from them, with \[n\]/.test(sys9) && /then answer from your own knowledge as above/.test(sys9) && /only for what no one could know offline/.test(sys9), sys9.slice(0, 1600));
+  var sent9 = [], turn9 = [];
+  script = function (last, body) {
+    sent9.push(body.messages.map(function (m) { return typeof m.content === "string" ? m.content : ""; }).join("\n----\n"));
+    if (/LIBRARY: passages/.test(last)) return "The passages say the Raspberry Pi 400 runs Raspberry Pi OS [1], but not how to set its clock.\nANSWER: Not in my library.\n" +
+      "From my own knowledge: open a terminal and run sudo date -s \x272026-10-23 12:00:00\x27, or use sudo timedatectl set-time; with internet it sets itself by NTP. " +
+      "The Pi 400 has no battery-backed clock, so it forgets the time when it is off.";
+    if (/rpi400/i.test(last)) return "LOOKUP: Raspberry Pi 400 date time setup";
+    return "ANSWER: Not in my library.";
+  };
+  var r9 = await C.turn(turn9, "How do I set the date and time on a rpi400", {}, {});
+  var libMsg = sent9.filter(function (x) { return /LIBRARY: passages/.test(x); })[0] || "";
+  ok("the library's “then: Not in my library” reaches the AI as “say so, then your own knowledge, said”", /Not in my library\. -- then, if you know the answer, give it anyway, starting with the words “From my own knowledge:”/.test(libMsg) &&
+    !/reply exactly: ANSWER: Not in my library/.test(libMsg), libMsg.slice(-700));
+  ok("the Pi 400 clock: library first, then the AI's own answer, not counted as a refusal", r9.searches.length === 1 && r9.own === true && r9.declined === false &&
+    /sudo date -s/.test(r9.final), { s: r9.searches, own: r9.own, d: r9.declined });
+  ok("Lantern labels it: from the AI's own knowledge, not checked", r9.notes.some(function (n) { return /^◦ From the AI’s own knowledge: the part after “From my own knowledge” did not come from Lantern’s library or tools/.test(n); }), r9.notes);
+  // the library has nothing at all: the AI is told to answer from what it knows
+  var sent9b = [];
+  script = function (last, body) {
+    sent9b.push(last);
+    if (/has nothing on that/.test(last)) return "From my own knowledge: wire STEP to pin 3 and DIR to pin 2, then\n#include <AccelStepper.h>\nAccelStepper stepper(AccelStepper::DRIVER, 3, 2);\nvoid setup() { stepper.setMaxSpeed(1000); stepper.setAcceleration(500); stepper.moveTo(3200); }\nvoid loop() { stepper.run(); }";
+    if (/AccelStepper/i.test(last)) return "LOOKUP: AccelStepper TMC2209 example";
+    return "ANSWER: Not in my library.";
+  };
+  var r9b = await C.turn([], "Write an Arduino AccelStepper example for a TMC2209 driver", {}, {});
+  ok("nothing in the library: the AI is asked for its own knowledge, and gives the code, labelled", sent9b.some(function (x) { return /has nothing on that\. Answer from your own knowledge, starting with the words “From my own knowledge:”/.test(x); }) &&
+    r9b.own && !r9b.declined && /AccelStepper stepper/.test(r9b.final) && r9b.notes.some(function (n) { return /From the AI’s own knowledge/.test(n); }), { sent: sent9b, notes: r9b.notes });
+  // an answer from its own knowledge that does not say so is labelled anyway
+  script = function () { return "Use a TMC2209 in step/dir mode: STEP and DIR from the Arduino, EN low to enable, set the current with the Vref pot, and keep motor power off while wiring."; };
+  var r9c = await C.turn([], "How do I wire a TMC2209 to an Arduino Uno?", {}, {});
+  ok("unlabelled, but no library and no tools behind it: Lantern labels it as the AI's own knowledge", !r9c.own && r9c.searches.length === 0 &&
+    r9c.notes.some(function (n) { return /this answer used neither Lantern’s library nor its tools/.test(n); }), r9c.notes);
+  // what no one could know offline is still declined, with no own-knowledge note
+  script = function () { return "ANSWER: Not in my library."; };
+  var r9d = await C.turn([], "Who is the mayor of my town right now?", {}, {});
+  ok("the mayor of my town: still Not in my library, no label", r9d.declined && !r9d.own && !r9d.notes.some(function (n) { return /own knowledge/.test(n); }), r9d.notes);
+  // a general fact it knows, used in = lines and said: not questioned; a value
+  // only the person knows: still asked for
+  var asked9 = [];
+  script = function (last) {
+    asked9.push(last);
+    if (/Lantern questioned that/.test(last)) return "NEED: How many amp-hours is your battery?";
+    if (/steel plate/.test(last)) return "=2*1.5*0.01*7850\nANSWER: The plate weighs about {result} kg. From my own knowledge: steel is about 7850 kg per cubic metre.";
+    if (/my battery/.test(last)) return "=75*12.8/60\nANSWER: About {result} hours. From my own knowledge: a typical battery is 75 Ah at 12.8 V.";
+    return "ANSWER: ok";
+  };
+  var r9e = await C.turn([], "How much does a steel plate 2 m by 1.5 m by 10 mm weigh?", {}, {});
+  ok("a general fact it knows (steel's density), said: computed, not questioned, labelled", Math.abs(r9e.value - 235.5) < 1e-9 && !asked9.some(function (x) { return /Lantern questioned that/.test(x); }) &&
+    r9e.notes.some(function (n) { return /From the AI’s own knowledge/.test(n); }) && !r9e.notes.some(function (n) { return /computed nothing/.test(n); }), { v: r9e.value, notes: r9e.notes });
+  asked9 = [];
+  var r9f = await C.turn([], "How long will my battery last running a 60 W lamp?", {}, {});
+  var q9 = asked9.filter(function (x) { return /Lantern questioned that/.test(x); })[0] || "";
+  ok("a value only the person knows (their battery) is still questioned, with the person/general choice spelled out", /the formula uses 75, 12\.8/.test(q9) &&
+    /when only the person knows it \x28their tank, their battery\x29, reply NEED/.test(q9) && /NEED/.test(r9f.final), q9);
+  ok("the library check: an answer from the AI's own knowledge claims nothing from the passages", L.libraryVerify("ANSWER: From my own knowledge: it is 42.", [{ n: 1, text: "x" }], "q").declined &&
+    L.libraryGround("Not in my library. From my own knowledge: it runs Linux.", [{ n: 1, text: "x" }], "q").declined);
+  script = function () { return "ANSWER: Not in my library.\nFrom my own knowledge: I am a language model working inside Lantern."; };
+  var r9g = await C.turn([], "Is this how you work?", {}, {});
+  ok("a question about the AI itself: one note, not two", r9g.notes.filter(function (n) { return /own (knowledge|reasoning)/.test(n); }).length <= 1, r9g.notes);
+  var ap = A.buildPrompt ? A.buildPrompt("Who won the last election?") : "";
+  ok("Assist, the calculator-style app, keeps its strict rules", !ap || (/reply exactly: ANSWER: Not in my library/.test(ap) && !/From my own knowledge/.test(ap)), ap.slice(0, 300));
+  var notes9 = [];
+  script = function () { return "From my own knowledge: hold the power button for 5 seconds to reset it."; };
+  await C.turn([], "How do I reset a Raspberry Pi 400 keyboard?", { note: function (t, c) { notes9.push(c + "|" + t); } }, {});
+  ok("in Chat the label has its own look (class la-own)", notes9.some(function (x) { return /^la-own\|/.test(x); }) && !!d.getElementById("la-own-style"), notes9);
+  // code in fences shows in a fixed-width font, without the fence lines
+  script = function () { return "From my own knowledge:\n\x60\x60\x60cpp\nvoid loop() { stepper.run(); }\n\x60\x60\x60"; };
+  go("chat"); await sleep(40);
+  var qin = d.querySelector("input[aria-label='Message']"), logEl = d.querySelector("[aria-label='Conversation']");
+  qin.value = "Show the AccelStepper loop"; btn(d, "Send").click(); await sleep(300);
+  var codes = Array.prototype.map.call(logEl.querySelectorAll("code"), function (c) { return c.textContent; });
+  ok("Chat shows fenced code in a fixed-width font, without the fence lines", codes.indexOf("void loop() { stepper.run(); }") >= 0 && !/\x60\x60\x60/.test(logEl.textContent) &&
+    !!logEl.querySelector(".la-own"), { codes: codes, text: logEl.textContent.slice(-300) });
+  script = null;
   ok("no errors", errs.length === 0, errs);
   console.log(fails ? fails + " CHAT ROUTING FAILURES (" + passes + " passed)" : "ALL CHAT ROUTING TESTS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);

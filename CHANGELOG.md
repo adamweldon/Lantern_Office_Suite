@@ -1,5 +1,66 @@
 # Changelog
 
+## 1.12.9 — Chat answers from the AI's own knowledge, labelled (2026-10-23)
+
+From Adam's Chat. Two questions were refused even though the 35B knew both
+answers: "provide a standard example based on general knowledge of these
+components" (Arduino, AccelStepper, a TMC2209 driver) and "How do I set the
+date and time on an rpi400". The model replied "my rules strictly require that
+all facts and data come only from the provided library passages", and "Not in
+my library" after a search that found nothing useful. Chat's instructions said
+facts come only from Lantern's functions. That was too strict for code,
+how-to steps and commands that the encyclopedia doesn't cover.
+
+- **New rule for Chat's AI.**
+  - It still uses Lantern first: = lines for numbers, LOOKUP for facts,
+    Lantern's lessons, MAKE for things.
+  - When Lantern has nothing, it answers from its own knowledge and begins
+    that part with **"From my own knowledge:"**.
+  - The library's, the lessons' and a document's "reply exactly: ANSWER:
+    Not in my library" become "say so, then, if you know the answer, give
+    it anyway, starting with 'From my own knowledge:'". This rewrite is
+    applied only on the way to Chat's model.
+  - "Not in my library" stays for what no one could know offline
+    (tomorrow's prices, today's news, a local phone number or office holder).
+  - The safety rules for medicine doses, live mains work and mixing
+    chemicals are unchanged.
+- **Lantern labels it.** Under every answer that is the AI's own knowledge,
+  an amber note says it did not come from Lantern's library or tools, so
+  Lantern did not check it. The note also appears when the AI forgot to say
+  so: no library, no tools and no MAKE behind a real answer. Questions about
+  the AI or Lantern keep their own single note.
+- **Numbers.**
+  - A general fact the AI knows (steel at about 7850 kg/m³), used in = lines
+    and said to be its own, is no longer questioned.
+  - A value only the person knows (their battery, their tank) is still
+    asked for with NEED. The question back to the AI now spells out that
+    choice.
+- **Records and the bench.**
+  - An own-knowledge answer is not counted as a refusal (`declined`). Chat
+    records `own`.
+  - The library checks treat "From my own knowledge" as no claim on the
+    passages.
+  - New bench conversation `chat-own-knowledge`: setting the clock on a
+    Raspberry Pi from the terminal, answered and labelled.
+- **Code in Chat.** Code in ``` fences shows in a fixed-width font,
+  without the fence lines.
+- **Assist** (the calculator-style app) keeps its strict rules.
+- **Tests.** 13 new checks in `tests/chat_routing.js`:
+  - the instructions;
+  - the rewritten library line;
+  - the Pi 400 and AccelStepper cases;
+  - an unlabelled answer still labelled;
+  - the mayor still declined;
+  - steel's density versus "my battery";
+  - the library checks;
+  - one note for questions about the AI;
+  - Assist unchanged;
+  - the label's style;
+  - fenced code;
+  - the bench conversation.
+
+  Replayed in Chromium with your three questions.
+
 ## 1.12.8 — Lantern waits for the kit's model, with a progress bar (2026-10-23)
 
 From Adam's USB kit. start-lantern launched llama-server and opened Lantern

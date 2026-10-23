@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.12.8 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.12.9 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -166,7 +166,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.12.8",
+  version: "1.12.9",
   apps: {},
   order: []
 };
@@ -16986,16 +16986,21 @@ Lantern.RFB = (function () {
     out.push("{result} where the number goes>' -- Lantern puts its computed number there. The last =");
     out.push("line must give the number in the unit you will name. Plain arithmetic is fine for");
     out.push("money, counts and recipes. If a needed value is missing, reply 'NEED: <question>'.");
-    out.push("Facts about the world come only from functions: never type data from memory.");
+    // the AI may answer from its own knowledge, said so (CHAT_OWN_KNOWLEDGE,
+    // 1.12.9); without that module, facts come only from Lantern
+    var OWN = window.Lantern.chatOwn;
+    if (OWN) OWN.system.forEach(function (l) { out.push(l); });
+    else out.push("Facts about the world come only from functions: never type data from memory.");
     if (window.Lantern.library && Lantern.library.ready && Lantern.library.ready()) {
       out.push("For a fact about people, places, history, science or health (never a dose), reply");
       out.push("'LOOKUP: <2 to 5 search words>': Lantern searches its offline encyclopedia and sends you");
-      out.push("numbered passages. Answer from them only, with [n] after each fact and a line");
+      out.push("numbered passages. Answer from them" + (OWN ? "" : " only") + ", with [n] after each fact and a line");
       out.push("'QUOTE [n]: <sentence copied exactly from passage n>'. When a message brings LIBRARY passages,");
       out.push("put [n] at the end of each sentence that uses passage n; your own reasoning goes in sentences");
       out.push("without [n]. With no passages, never write [n], QUOTE lines or = LOOKUP(...): reply LOOKUP: <words>.");
       out.push("Questions about you, Lantern, this conversation or how you reason are not encyclopedia facts: answer");
       out.push("them from your own reasoning, plainly, without [n] or QUOTE lines and without \x22Not in my library\x22.");
+      if (OWN) out.push(OWN.library);
     }
     // Lines other modules add (Lantern.chatSystem): Lantern's own lessons
     // and catalog of its tiles and tools (SUITE_CHAT), and any added later.
@@ -17042,12 +17047,16 @@ Lantern.RFB = (function () {
   // Small models write markdown; show **bold**, inline code, # headings and
   // = lines readably, escaped first so nothing in a reply becomes HTML.
   function mdBubble(text) {
+    // code in \x60\x60\x60 fences (the AI's own examples, 1.12.9) in a fixed-width font
+    var fence = false;
     var h = Lantern.esc(text).split("\n").map(function (ln) {
+      if (/^\s*\x60\x60\x60/.test(ln)) { fence = !fence; return null; }
+      if (fence) return "<code>" + ln + "<\u002Fcode>";
       if (/^\s*=/.test(ln)) return "<code>" + ln + "<\u002Fcode>";
       var head = /^\s*#{1,6}\s+(.*)$/.exec(ln);
       if (head) ln = "<b>" + head[1] + "<\u002Fb>";
       return ln.replace(/\*\*([^*]+)\*\*/g, "<b>$1<\u002Fb>").replace(/\x60([^\x60]+)\x60/g, "<code>$1<\u002Fcode>");
-    }).join("\n");
+    }).filter(function (ln) { return ln !== null; }).join("\n");
     var b = bubble("ai", "");
     b.firstChild.innerHTML = h;
     return b;
@@ -17278,7 +17287,9 @@ Lantern.RFB = (function () {
       return (textOf(m.content).match(/^[ \t*]*MAKE [A-Za-z][\s\S]*?^[ \t]*END\b/gm) || []).join("\n"); }).join("\n");
     var rounds;
     for (rounds = 0; rounds < 6; rounds++) {   // tools or library, answer, one correction
-      var reply = await call(C.trimHistory(msgs), opts.max_tokens ? { max_tokens: opts.max_tokens } : undefined);
+      var sent = C.trimHistory(msgs), OWNK = window.Lantern.chatOwn;
+      if (OWNK) sent = sent.map(OWNK.message);   // "Not in my library" -> "say so, then your own knowledge, said"
+      var reply = await call(sent, opts.max_tokens ? { max_tokens: opts.max_tokens } : undefined);
       rec.rounds++;
       msgs.push({ role: "assistant", content: reply });
       var props = C.parseProposals(reply), p;
@@ -17440,7 +17451,7 @@ Lantern.RFB = (function () {
         continue;
       }
       // A question for its own reasoning, declined anyway: once, say so.
-      if (ownWords && !sources && !steered && (A.isDecline(parsed.answer) || /not in my library/i.test(shown))) {
+      if (ownWords && !sources && !steered && !(OWNK && OWNK.mark.test(shown)) && (A.isDecline(parsed.answer) || /not in my library/i.test(shown))) {
         steered = true;
         msgs.push({ role: "user", content: rec.catalog ? "This is not a library question. Answer it from the LANTERN CATALOG above, in plain sentences." :
           "This is not a library question. Answer it from your own reasoning, in plain sentences." });
@@ -17460,6 +17471,7 @@ Lantern.RFB = (function () {
           var r = null; try { r = c(said, parsed.exprText, run, { text: shown, parsed: parsed, sources: null }); } catch (e) { r = null; }
           if (r) doubts.push(String(r));
         });
+        if (OWNK) doubts = doubts.filter(function (dd) { return !OWNK.dropDoubt(q, shown, dd); });   // a value it says it knows itself
         if (doubts.length && !questioned) {   // one more turn with Lantern's reason (as Assist does)
           questioned = true;
           note("Lantern questioned this: " + doubts.join("; ") + ". Asking the AI again\u2026");
@@ -17510,7 +17522,7 @@ Lantern.RFB = (function () {
         if (sources || puzzled) fa.unchecked = false;
         if (ui.answer) ui.answer(fa.text);
         if (fa.mismatch) note("\u26a0 The AI\u2019s sentence does not match Lantern\u2019s computed result above. Trust the computed number.", "danger");
-        if (fa.unchecked) note("\u26a0 Lantern computed nothing for this answer: its numbers come from the AI alone.");
+        if (fa.unchecked && !(OWNK && OWNK.mark.test(shown))) note("\u26a0 Lantern computed nothing for this answer: its numbers come from the AI alone.");
         if (fa.otherUnit) note("\u26a0 The sentence matches Lantern\u2019s result only in a different unit. Check the unit of the computed number.");
         if (sources && window.Lantern.assistSourcesView) show(function () { return window.Lantern.assistSourcesView({ text: shown, parsed: parsed, sources: sources }); });
         if (stillDoubt) { rec.stillDoubt = stillDoubt; note("\u26a0 Lantern still questions this answer: " + stillDoubt.join("; ") + ". Check it before you use it.", "danger"); }
@@ -17521,7 +17533,13 @@ Lantern.RFB = (function () {
       note(rec.catalog ? "\u25e6 Answered from Lantern\u2019s own catalog (above), read from its modules \u2014 tap an entry to open it." :
         "\u25e6 Answered from the AI\u2019s own reasoning \u2014 not from the library or the formula engine. Weigh it yourself.");
     rec.answer = parsed ? parsed.answer : null;
-    rec.declined = /not in (my library|the document)/i.test(rec.answer || "") || /^\s*not in (my library|the document)\.?\s*$/im.test(rec.final);
+    // the AI's own knowledge, said so or not, is labelled as such (1.12.9)
+    var OWNE = window.Lantern.chatOwn;
+    rec.own = !!(OWNE && OWNE.mark.test(rec.final));
+    rec.declined = !rec.own && (/not in (my library|the document)/i.test(rec.answer || "") || /^\s*not in (my library|the document)\.?\s*$/im.test(rec.final));
+    var ownNote = OWNE ? OWNE.note({ text: rec.final, own: rec.own, sources: sources, computed: lastValue != null || !!(parsed && parsed.exprText) || puzzled,
+      made: !!rec.made, ownWords: ownWords, declined: rec.declined }) : "";
+    if (ownNote) note(ownNote, "la-own");
     rec.sources = sources;
     return rec;
   };
@@ -22765,8 +22783,8 @@ Lantern.RFB = (function () {
   if (!L || !L.guide) return;
   L.guide.add("ai", "AI \u2014 set up, test and measure", [
     ["What this is", "<p>A small language model that never answers from memory when a tool can answer. It reads your question, picks a Lantern " +
-      "recipe or formula, and Lantern computes the number on its own engine and shows every step. Questions no tool can answer " +
-      "(news, prices, people, medicine doses, dangerous work) get <b>Not in my library</b>.</p>"],
+      "recipe or formula, and Lantern computes the number on its own engine and shows every step. When Lantern has nothing on it, Chat\u2019s " +
+      "AI answers from its own knowledge, labelled (see <b>Answers from the AI\u2019s own knowledge</b>).</p>"],
     ["On a phone", "<ol><li>Open Lantern from its website and add it to the Home Screen (see <b>Offline and install</b>).</li>" +
       "<li>On Wi-Fi, tap <b>Download &amp; use</b> next to <b>Qwen3.5 0.8B</b> (about 530 MB). It is saved on the phone.</li>" +
       "<li>Ask in <b>Try it</b>, then in Assist (mode <b>AI model</b>) or Chat. After this, airplane mode is fine.</li>" +
@@ -23520,7 +23538,8 @@ Lantern.RFB = (function () {
     var out = { ok: false, declined: false, cites: [], quotes: [], problems: [], answer: "" };
     var am = /^\s*ANSWER:\s*(.+)$/m.exec(text);
     out.answer = am ? am[1] : "";
-    if (/not in (my library|the document)/i.test(out.answer)) { out.declined = true; out.ok = true; return out; }
+    // "From my own knowledge: ..." (Chat, 1.12.9) claims nothing from the passages
+    if (/not in (my library|the document)/i.test(out.answer) || (/\bfrom my own knowledge\b/i.test(out.answer) && !/\[\d+\]/.test(out.answer))) { out.declined = true; out.ok = true; return out; }
     var m, re = /\[(\d+)\]/g, seen = {};
     while ((m = re.exec(out.answer))) { var n = parseInt(m[1], 10); if (!seen[n]) { seen[n] = 1; out.cites.push(n); } }
     QRE.lastIndex = 0;
@@ -23581,7 +23600,7 @@ Lantern.RFB = (function () {
   }
   function ground(text, sources, question) {
     sources = sources || [];
-    var g = { sentences: [], backed: 0, wrong: [], loose: [], own: [], about: [], cited: 0, quotes: [], declined: /not in (my library|the document)/i.test(String(text || "")) };
+    var g = { sentences: [], backed: 0, wrong: [], loose: [], own: [], about: [], cited: 0, quotes: [], declined: /not in (my library|the document)|\bfrom my own knowledge\b/i.test(String(text || "")) };
     proseSentences(text).forEach(function (t) {
       // "passage [3]" names a passage, it does not cite it; and a sentence
       // that describes the passages ("Passage [1] lists songs called...",
@@ -31559,6 +31578,107 @@ Lantern.RFB = (function () {
 // MODULE: SUITE_CHAT - END
 // ===========================================================================
 // ===========================================================================
+// MODULE: CHAT_OWN_KNOWLEDGE - START
+// Depends: ASSIST_CHAT (reads Lantern.chatOwn when it builds its
+//          instructions, sends each turn and finishes an answer) --
+//          feature-detected both ways
+// Exports: Lantern.chatOwn = {system: [lines], library: line, mark: RegExp,
+//          rewrite(text), message(msg), dropDoubt(question, reply, doubt),
+//          note(facts)}; adds the chat-own-knowledge conversation to Lantern
+//          Bench (Lantern.aiBenchQuestions, created here if absent)
+// ===========================================================================
+// Chat's AI may answer from its own knowledge -- and must say so (1.12.9).
+// Until now Chat told the model that facts come only from Lantern's
+// functions and library. Asked for an AccelStepper + TMC2209 example, or
+// how to set the clock on a Raspberry Pi 400, the 35B searched the
+// encyclopedia, found nothing, and refused: "my rules strictly require that
+// all facts and data come only from the provided library passages". It knew
+// the answers. Now:
+//  - Lantern still comes first: = lines for numbers, LOOKUP for facts,
+//    Lantern's lessons, MAKE for things;
+//  - when Lantern has nothing, the AI answers anyway and begins that part
+//    with "From my own knowledge:", so the person sees Lantern did not
+//    check it -- and Lantern adds its own note under every answer that is
+//    the AI's own knowledge, labelled by the AI or not;
+//  - "Not in my library" stays for what no one could know offline
+//    (tomorrow's prices, today's news, a local phone number), and the safety
+//    rules (medicine doses, mains work, mixing chemicals) answer as before;
+//  - a value the person must give (their tank, their battery) is still asked
+//    for with NEED; a general fact the AI knows (a density) it may use, said.
+// The library's and the document's instructions ("reply exactly: ANSWER: Not
+// in my library") are rewritten on the way to the model, so Assist -- the
+// calculator-style app -- keeps its strict rules.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var MARK = /\bfrom my own knowledge\b/i, SAY = "\u201cFrom my own knowledge:\u201d";
+  var system = [
+    "Use Lantern first: = lines for every number you work out, and Lantern's functions, library and lessons for facts.",
+    "When Lantern has nothing on it, still help: answer from your own knowledge (steps, code, commands, explanations)",
+    "and begin that part with the words " + SAY + " -- Lantern did not check it, and the person must know.",
+    "Never give your own knowledge [n] or QUOTE lines. A number the question does not give: ask with NEED when only the",
+    "person knows it (their tank, their battery); a general fact you know (a density, a standard size) you may use, said.",
+    "Reply ANSWER: Not in my library. only for what no one could know offline (tomorrow's prices, today's news, a local",
+    "phone number or office holder), or when you do not know."];
+  var library = "If they do not cover the question, say so in one sentence, then answer from your own knowledge as above.";
+  var THEN = " -- then, if you know the answer, give it anyway, starting with the words " + SAY + " (Lantern did not check that part).";
+  // rewrite(text): the library's, the lessons' and the document's strict
+  // decline turned into "say so, then answer from your own knowledge"
+  function rewrite(t) {
+    return String(t)
+      .replace(/reply exactly: ANSWER: Not in (my library|the document)\./g, function (m, w) { return "reply ANSWER: Not in " + w + "." + THEN; })
+      .replace(/say what they do cover, then:\s+Not in my library\./g, "say what they do cover, then: Not in my library." + THEN)
+      .replace(/The offline library has nothing on that\. Reply with the ANSWER line only\./g,
+        "The offline library has nothing on that. Answer from your own knowledge, starting with the words " + SAY + ", or reply ANSWER: Not in my library. if you do not know.")
+      .replace(/If the question does not give a number you need, reply NEED: <question>\./g,
+        "If the question does not give a number you need: when only the person knows it (their tank, their battery), reply NEED: <question>; " +
+        "when it is a general fact you know (a density, a standard size), keep it and say in the ANSWER that it is from your own knowledge.");
+  }
+  function message(m) {
+    if (!m || m.role !== "user") return m;
+    if (typeof m.content === "string") return { role: m.role, content: rewrite(m.content) };
+    if (Object.prototype.toString.call(m.content) === "[object Array]")
+      return { role: m.role, content: m.content.map(function (x) { return x && x.type === "text" ? { type: "text", text: rewrite(x.text) } : x; }) };
+    return m;
+  }
+  // dropDoubt(question, reply, doubt): a value the AI says is its own
+  // knowledge is not questioned again -- unless it is about the person's own
+  // things, which only the person can give
+  function dropDoubt(q, reply, d) {
+    return MARK.test(String(reply || "")) && /not in the question/.test(String(d)) && !/\b(my|our|mine|ours)\b/i.test(String(q || ""));
+  }
+  // note(f) -> the line under the answer, or "". f = {text, own, sources,
+  // computed, made, ownWords, declined}
+  function note(f) {
+    if (f.ownWords) return "";   // a question about the AI or Lantern: Chat says so itself
+    var words = String(f.text || "").replace(/^\s*(ANSWER|QUOTE[^:]*):/gim, "").split(/\s+/).filter(function (w) { return /\w/.test(w); }).length;
+    if (f.own) return "\u25e6 From the AI\u2019s own knowledge: the part after \u201cFrom my own knowledge\u201d did not come from Lantern\u2019s library or tools, " +
+      "so Lantern did not check it. Check it before you rely on it.";
+    if (f.sources || f.computed || f.made || f.declined || words < 12) return "";
+    return "\u25e6 From the AI\u2019s own knowledge: this answer used neither Lantern\u2019s library nor its tools, so Lantern did not check it. Check it before you rely on it.";
+  }
+  if (document && document.head && !document.getElementById("la-own-style")) {
+    var st = document.createElement("style"); st.id = "la-own-style";
+    st.textContent = ".la-own{color:#7c2d12;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:6px 10px;font-size:14px;margin:4px 0}";
+    document.head.appendChild(st);
+  }
+  window.Lantern.chatOwn = { system: system, library: library, mark: MARK, rewrite: rewrite, message: message, dropDoubt: dropDoubt, note: note };
+  // Lantern Bench: a how-to the encyclopedia does not cover -- answered,
+  // and said to be the AI's own knowledge
+  var Q = window.Lantern.aiBenchQuestions = window.Lantern.aiBenchQuestions || [];
+  if (!Q.some(function (x) { return x.id === "chat-own-knowledge"; })) Q.push({ id: "chat-own-knowledge", cat: "chat",
+    turns: ["How do I set the date and time on a Raspberry Pi from the terminal?"], q: "How do I set the date and time on a Raspberry Pi from the terminal?",
+    check: function (t) {
+      var r = t[t.length - 1];
+      if (r.declined) return "answered \u201cNot in my library\u201d: it should answer from its own knowledge, and say so";
+      if (!r.own) return "the answer does not say it is from the AI\u2019s own knowledge";
+      return /\b(date|timedatectl)\b/.test(String(r.final || "")) ? "" : "no date or timedatectl command";
+    } });
+})();
+// ===========================================================================
+// MODULE: CHAT_OWN_KNOWLEDGE - END
+// ===========================================================================
+// ===========================================================================
 // MODULE: SUITE_COMMANDS - START
 // Depends: SUITE_CHAT (Lantern.suite.chat), SUITE_PASSAGES, SUITE_CATALOG;
 //          Chat's hook Lantern.chatCommands (read by ASSIST_CHAT) -- all
@@ -32662,6 +32782,12 @@ Lantern.RFB = (function () {
   L.guide.append("ai", [
     ["What the AI can make", "<p>Chat\u2019s AI can make a <b>schematic</b>, a <b>drawing</b> or a <b>wheel chart</b> (Draw), a <b>table</b> that calculates (Sheets), a <b>document</b> (Writer), a <b>slide deck</b> (Slides), <b>flashcards</b> (Flashcards) and a <b>plan</b> (Planner). It is told how only when the question is about one of them, so a small model\u2019s instructions stay short. The bench\u2019s <i>make</i> questions test each kind.</p>" +
       "<p>For module authors: a module adds a kind with <code>Lantern.aiActions.push({id, kind, kinds, title, opens, match(q), prompt: [lines], build(block)})</code>; <code>build</code> returns <code>{problems, plan, summary, preview(), open(), openLabel}</code>. The apps\u2019 own doors are <code>Lantern.writerDocs</code>, <code>slideDocs</code>, <code>cardDocs</code>, <code>plannerDocs</code>, <code>sheetDocs</code> and <code>drawDocs</code>.</p>"],
+    ["Answers from the AI\u2019s own knowledge", "<p>Chat uses Lantern first: the formula engine for numbers, the offline library and Lantern\u2019s lessons for facts. " +
+      "When they have nothing on a question (code, how-to steps, commands), the AI still answers from its own knowledge and says so \u2014 that part " +
+      "starts <b>From my own knowledge:</b> \u2014 and Lantern adds a note under it that it did not check it, even when the AI forgot to say so. " +
+      "What no one could know offline (tomorrow\u2019s prices, today\u2019s news, a local phone number) still gets <b>Not in my library</b>; medicine " +
+      "doses and dangerous work get Lantern\u2019s safety rules; a number only you know (your tank, your battery) is still asked for. " +
+      "Assist, the calculator, keeps its strict rules.</p>"],
     ["Wheel charts", "<p>Ask Chat for a wheel \u2014 the Ohm\u2019s law power wheel, a colour wheel, the seasons \u2014 and the AI lists the parts and their items in a <b>MAKE WHEEL</b> block; Lantern cuts the circle, sizes every word to fit its wedge, and opens it in Draw. On a formula wheel each formula must sit in the part of the letter it works out, and an Ohm\u2019s law wheel\u2019s formulas are worked out with V = 12, I = 3, R = 4, P = 36 before the picture counts. On any drawing, words that run into each other, run off the edge or are written twice go back to the AI once.</p>"]
   ]);
 })();
