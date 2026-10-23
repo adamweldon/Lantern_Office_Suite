@@ -52,7 +52,7 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   await sleep(60);
   var L = w.Lantern, act = L.aiAct;
   ok("boot clean", errs.length === 0, errs);
-  ok("eight actions registered (1.12: a document, slides, flashcards and a plan; 1.12.7: a wheel chart)", L.aiActions.map(function (a) { return a.id; }).join(",") === "schematic,drawing,wheel,sheet,doc,slides,cards,plan", L.aiActions.map(function (a) { return a.id; }));
+  ok("nine actions registered (1.12: a document, slides, flashcards and a plan; 1.12.7: a wheel chart; 1.13.0: a program)", L.aiActions.map(function (a) { return a.id; }).join(",") === "schematic,drawing,wheel,sheet,doc,slides,cards,plan,code", L.aiActions.map(function (a) { return a.id; }));
 
   // --- finding blocks, and the prompt ---
   var fb = act.find("Here it is:\n```\nMAKE SCHEMATIC: Lamp\npart B1 battery\nwire B1 L1\nEND\n```\nDone.");
@@ -254,7 +254,7 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
 
   // --- the bench: make questions ---
   var Q = L.aiBenchQuestions.filter(function (q) { return q.cat === "make"; });
-  ok("fourteen make questions (1.12.7: the power wheel), three quick", Q.length === 14 && Q.filter(function (q) { return q.quick; }).length === 3);
+  ok("twenty-one make questions (1.12.7: the power wheel; 1.13.0: seven programs), four quick", Q.length === 21 && Q.filter(function (q) { return q.quick; }).length === 4);
   function gradeWith(id, reply) {
     var item = Q.filter(function (q) { return q.id === id; })[0];
     return L.aiBench.grade(item, reply, { made: act.build(reply, item.q) });

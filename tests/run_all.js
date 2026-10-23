@@ -23,6 +23,7 @@ var steps = [
   ["Waiting for the kit's model to load (progress bar, connects by itself)", "node", ["tests/ai_server_wait.js"], /ALL SERVER WAIT TESTS PASS/],
   ["Chat routing (follow-ups, questions about itself, bench conversations)", "node", ["tests/chat_routing.js"], /ALL CHAT ROUTING TESTS PASS/],
   ["AI makes documents, slides, flashcards, plans; READ (1.12)", "node", ["tests/ai_make_docs.js"], /ALL MAKE DOCS TESTS PASS/],
+  ["Code Lab (editor, checks, ladder, sandbox, examples; MAKE CODE, EXAMPLE:, code in replies)", "node", ["tests/code_lab.js"], /ALL CODE LAB TESTS PASS/],
   ["Puzzles (track, turn, solve; letters; Chat hands puzzles to Lantern)", "node", ["tests/puzzles.js"], /ALL PUZZLE TESTS PASS/],
   ["Text Reader, PDF in and out, Chat with a document, Sheet Music Reader", "node", ["tests/text_reader.js"], /ALL TEXT READER TESTS PASS/],
   ["AI modules isolated (rule 11)", "node", ["tests/ai_isolation.js"], /AI MODULES ISOLATED/],

@@ -1,5 +1,90 @@
 # Changelog
 
+## 1.13.0 — Code Lab: real programs, checked; the AI writes them (2026-10-23)
+
+Adam asked for a coding module with more power than the turtle: Arduino,
+Python, JavaScript, Structured Text and ladder, easy to switch between, with
+links to where each language's tools are installed; its own tile, with the
+turtle kept for beginners; the AI able to write programs into it. This is
+stage 1. Stage 2, next, is a simulator.
+
+- **Code Lab tile** (after Turtle Code on the home screen).
+  - An editor with colours, line numbers, Tab and Shift+Tab indenting,
+    auto-indent, Ctrl+/ comments, and Find and replace.
+  - Files kept on the device: New, Rename, Delete, Open file…, Save to
+    computer (.ino, .py, .js, .st, .lad). The language can be switched at
+    any time.
+  - **Check** lists problems with their line numbers and marks those lines
+    red in the margin. It looks for:
+    - Arduino: no setup() or loop(), a missing ;, a library without its
+      #include, a pin written before pinMode, Serial before Serial.begin,
+      = in a condition, analogWrite on a pin with no PWM, millis() kept in
+      an int, delay() in an AccelStepper sketch, P1AM used before P1.init().
+    - Python: a missing colon, bad or mixed indents, Python 2 print,
+      = in a condition.
+    - JavaScript: anything that stops it compiling.
+    - Structured Text: blocks left open, a missing THEN or DO, = used to
+      assign, a missing ;, undeclared names, reserved words used as names.
+    - Ladder: unknown instructions, wrong argument counts, empty branch
+      legs, rungs with no output, one coil driven from two rungs, a tag used
+      as both a timer and a counter.
+  - **Run** for JavaScript, in a sealed Web Worker: no access to the page
+    or the person's files, a 2-second limit, at most 500 lines of output.
+  - **Ladder**: rung text (`[XIC(Start) ,XIC(Motor) ]XIO(Stop)OTE(Motor);`)
+    is drawn as rungs. **Ladder → Structured Text** turns it into an
+    IEC 61131-3 program in a new file.
+  - **45 tested examples.**
+    - Arduino (21): Blink to state machines, servo, 28BYJ-48, AccelStepper
+      on A4988/DRV8825/TMC2209, homing, TMC2209 over UART, I2C and parallel
+      LCDs, DS18B20, DHT22, HC-SR04, an I2C scanner. Each was compiled and
+      linked for an Uno against the real Arduino core and libraries.
+    - P1AM-100 (3): checked against the real P1AM library.
+    - Python (6, three for the Raspberry Pi): run, with gpiozero's mock pins
+      and a loopback serial port.
+    - JavaScript (4): run.
+    - Structured Text (6) and ladder (5): compiled with matiec.
+  - "Build and run it on a computer" shows each language's free tools with
+    their addresses written out: Arduino IDE and CLI, the P1AM-100 boards
+    URL, Python, Thonny, Raspberry Pi OS, MicroPython, Node.js, OpenPLC,
+    Beremiz and CODESYS.
+- **Turtle Code.** The old Code tile keeps the turtle and is now labelled for
+  first programs, for beginners and children. Its guide points on to Code Lab.
+- **The AI writes programs (MAKE CODE).**
+  - A program comes in a block: `MAKE CODE: <title>`, `language …`, the code
+    with its indents, `END`.
+  - Lantern checks it and sends the problems back once. It shows the code
+    once, in colour, with Open in Code Lab and Save to computer, and Run
+    here for JavaScript. The reply bubble points to it instead of repeating
+    it.
+  - When a tested example fits the question well, it goes into the AI's
+    instructions. The AI can also ask for examples with `EXAMPLE: <words>`.
+  - Lantern says where the code came from: "adapted from Lantern's tested
+    example …" (a third or more of its lines, not counting lines every
+    sketch has), or "written by the AI from its own knowledge". Either way
+    it adds "checked by Lantern, not compiled or tested".
+  - Code written straight into a reply in a fenced block is checked too,
+    with the same buttons. Output, shell commands and data in fences are
+    left alone.
+  - A new Chat hook, `Lantern.chatReplyViews`, puts views under a finished
+    reply.
+- **Lantern Bench: 7 program questions.** Blink without delay, AccelStepper
+  back and forth, a P1AM seal-in, a Python CSV average, Ohm's law in
+  JavaScript, a Structured Text tank fill, and a ladder start/stop. Each
+  checks what matters, such as millis() rather than delay(), or a seal-in in
+  a branch. Every ideal reply was compiled or run.
+- **Help.** Code Lab's guide covers the editor, checks, examples and
+  languages with install links, then Arduino setup, the libraries the
+  examples need, the P1AM-100 boards, a Raspberry Pi with Python, Structured
+  Text in PLC tools, and a ladder rung-text reference. The guide is one of
+  Lantern's lessons, so `LESSON: install arduino` finds it.
+- **The two screenshot fixes** (from the AccelStepper answer in 1.12.9's
+  Chat):
+  - An answer from the AI's own knowledge that uses nothing from the
+    passages no longer gets a long "own reasoning" list; its sources header
+    says the answer uses nothing from them.
+  - Code lines are no longer checked as sentences.
+  - Any own-reasoning list is capped at 8 lines.
+
 ## 1.12.9 — Chat answers from the AI's own knowledge, labelled (2026-10-23)
 
 From Adam's Chat. Two questions were refused even though the 35B knew both

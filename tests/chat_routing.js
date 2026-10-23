@@ -307,6 +307,21 @@ function good(last) {
   script = function () { return "From my own knowledge: hold the power button for 5 seconds to reset it."; };
   await C.turn([], "How do I reset a Raspberry Pi 400 keyboard?", { note: function (t, c) { notes9.push(c + "|" + t); } }, {});
   ok("in Chat the label has its own look (class la-own)", notes9.some(function (x) { return /^la-own\|/.test(x); }) && !!d.getElementById("la-own-style"), notes9);
+  // 1.13.0, from Adam's screenshot: an own-knowledge answer with a QUOTE line
+  // tacked on from an unrelated passage, and a list repeating every line
+  script = function () { return "The passages do not cover installing a library.\nFrom my own knowledge: open Sketch > Include Library > Manage Libraries and search for AccelStepper.\n" +
+    "\x60\x60\x60cpp\n#include <AccelStepper.h>\nAccelStepper stepper(AccelStepper::DRIVER, 3, 2);\nvoid loop() { stepper.run(); }\n\x60\x60\x60\n" +
+    "QUOTE [1]: A large language model (LLM) is an AI model (typically a neural network) trained on a vast amount of text for natural language processing tasks, especially language generation."; };
+  var nodes13 = [];
+  var r13 = await C.turn([], "Explain in detail how large language models work", { node: function (fn) { var n = fn(); if (n) nodes13.push(n); } }, {});
+  var srcBox = nodes13.filter(function (n) { return /la-sources/.test(n.className || ""); })[0];
+  ok("an own-knowledge answer with a tacked-on QUOTE: the sources say the answer uses nothing from them, the quote is not \u201cfound\u201d", r13.own && !!srcBox &&
+    /the answer uses nothing from them/.test(srcBox.textContent) && /quoted, but nothing in the answer comes from this passage/.test(srcBox.textContent) && !/quote found in the passage/.test(srcBox.textContent),
+    srcBox ? srcBox.textContent : nodes13.map(function (n) { return n.className; }));
+  ok("and no list repeating every line as the AI's own reasoning: the amber note says it", !nodes13.some(function (n) { return /la-ground/.test(n.className || ""); }) &&
+    r13.notes.some(function (n) { return /From the AI\u2019s own knowledge/.test(n); }), nodes13.map(function (n) { return n.className; }));
+  var g13 = L.libraryGround("It runs Raspberry Pi OS by default. Use the sketch below for the motor.\n\x60\x60\x60\nint x = 1;\nvoid loop() {\n}\n\x60\x60\x60\nconst int pin = 3;\n// a comment", [{ n: 1, text: "nothing" }], "q");
+  ok("code lines are not counted as sentences", g13.sentences.length === 2 && g13.sentences.every(function (x) { return !/int |loop|comment/.test(x.text); }), g13.sentences);
   // code in fences shows in a fixed-width font, without the fence lines
   script = function () { return "From my own knowledge:\n\x60\x60\x60cpp\nvoid loop() { stepper.run(); }\n\x60\x60\x60"; };
   go("chat"); await sleep(40);
