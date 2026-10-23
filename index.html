@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.12.7 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.12.8 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -173,7 +173,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.12.7",
+  version: "1.12.8",
   apps: {},
   order: []
 };
@@ -16601,7 +16601,7 @@ Lantern.RFB = (function () {
           if (res.sources && run.value == null) { out.innerHTML = ""; out.appendChild(top); return; }
           showRun(run, "", top);
         }).catch(function (e) {
-          status.textContent = "Could not reach the model: " + e.message + (Lantern.ai && Lantern.ai.resolve() === "device" ? "" :
+          status.textContent = "Could not reach the model: " + e.message + (Lantern.ai && (Lantern.ai.resolve() === "device" || /still loading/.test(e.message)) ? "" :
             " \u2014 check the endpoint, and that the server allows browser origins (see guide).");
         });
       } })
@@ -17562,7 +17562,7 @@ Lantern.RFB = (function () {
     };
     try { await C.turn(msgs, q, ui); }
     catch (e) {
-      bubble("ai", "Could not reach the model: " + (e.message || e) + (Lantern.ai && Lantern.ai.resolve() === "device" ? "" :
+      bubble("ai", "Could not reach the model: " + (e.message || e) + (Lantern.ai && (Lantern.ai.resolve() === "device" || /still loading/.test(e.message || e)) ? "" :
         " \u2014 check the endpoint fields above and that the server allows browser origins (see the ? guide)."));
     }
     busy = false;
@@ -20998,21 +20998,16 @@ Lantern.RFB = (function () {
 // MODULE: AI_ENGINE - START
 // Depends: CORE, STORAGE
 // Exports: Lantern.ai (engines, register, choice, setChoice, resolve,
-//          describe, complete, detect, server, onChange, last, canSee,
+//          describe, complete, detect, base, server, onChange, last, canSee,
 //          textOf),
 //          Lantern.aiRoute (host hook used by ASSIST_CORE and ASSIST_CHAT)
 // ===========================================================================
-// One door for every model call. Assist and Chat hand their messages to
-// Lantern.aiRoute; this module decides where they go:
-//   server -- an OpenAI-compatible endpoint. When Lantern itself is served by
-//             llama-server (the laptop / USB kit) it is found automatically
-//             on Lantern's own address, so nothing needs typing.
+// One door for every model call (Lantern.aiRoute, used by Assist and Chat):
+//   server -- an OpenAI-compatible endpoint; llama-server serving Lantern
+//             itself (the USB kit) is found on Lantern's own address.
 //   device -- a model running inside this page (AI_DEVICE registers it).
-// Choice "auto" (default): own-address server if present, else an endpoint
-// set up by hand, else a model on this device when the page can run one,
-// else the default endpoint (Ollama on this computer).
-// The model only ever proposes; Assist/Chat still run every = line on the
-// formula engine and show the result.
+// Choice "auto" (default): own-address server, else an endpoint set up by
+// hand, else a model on this device, else Ollama on this computer.
 (function () {
   var L = window.Lantern;
   if (!L || !L.store) return;
@@ -21020,7 +21015,9 @@ Lantern.RFB = (function () {
   var AI = L.ai = L.ai || {};
   AI.engines = AI.engines || {};
   AI.listeners = AI.listeners || [];
-  AI.server = { checked: false, sameOrigin: false, endpoint: null, model: null, label: "", vision: false };
+  // state: "ready", "loading" (llama-server answers 503 until the model is
+  // read), "down" (no answer), "none" (no model server here), "" (unchecked)
+  AI.server = { checked: false, sameOrigin: false, endpoint: null, model: null, label: "", vision: false, state: "" };
   AI.last = null;
 
   function notify() {
@@ -21052,6 +21049,7 @@ Lantern.RFB = (function () {
   AI.describe = function () {
     var r = AI.resolve(), dev = AI.engines.device;
     if (r === "device") return "on this device: " + ((dev && dev.label && dev.label()) || "no model loaded yet");
+    if (AI.server.sameOrigin && AI.server.state === "loading" && AI.endpoint() === AI.server.endpoint) return "the Lantern server on this computer (the model is still loading)";
     if (AI.server.sameOrigin && AI.endpoint() === AI.server.endpoint)
       return "the Lantern server on this computer" + (AI.server.label ? " (" + AI.server.label + (AI.server.vision ? ", sees images" : "") + ")" : "");
     return "server " + AI.endpoint().replace(/^https?:\x2F\x2F/, "").replace(/\/v1\/chat\/completions$/, "");
@@ -21072,15 +21070,14 @@ Lantern.RFB = (function () {
       chat_template_kwargs: { enable_thinking: false }
     };
     var init = { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: opts.signal }, res;
-    // One quiet retry when the request never got an answer at all (bench
-    // run 6, Firefox: "NetworkError when attempting to fetch resource" once
-    // in 100 requests -- a kept-alive connection the server had just closed).
-    // A stopped request (AbortError) or a server error is not retried.
+    // One quiet retry when a request got no answer at all (Firefox, once in
+    // 100: a kept-alive connection just closed); never after a stop or an error.
     try { res = await window.fetch(AI.endpoint(), init); } catch (e) {
       if (!e || e.name === "AbortError" || (opts.signal && opts.signal.aborted)) throw e;
       await new Promise(function (r) { setTimeout(r, 400); });
       res = await window.fetch(AI.endpoint(), init);
     }
+    if (res.status === 503) throw new Error("the AI model is still loading -- wait for Lantern's progress bar to finish, then ask again");
     if (!res.ok) throw new Error("Server said " + res.status + " " + (res.statusText || ""));
     var data = await res.json();
     var u = data.usage || {};
@@ -21146,14 +21143,18 @@ Lantern.RFB = (function () {
     });
   };
 
-  // Is Lantern being served by llama-server? Ask our own address.
+  // Is Lantern being served by llama-server? Ask our own address. A 503 is
+  // a model still loading: AI_SERVER_WAIT waits and calls detect() again.
+  AI.base = function () { return location.href.replace(/[#?].*$/, "").replace(/[^\/]*$/, ""); };
   AI.detect = function () {
-    if (!window.fetch || !/^https?:$/.test(location.protocol)) { AI.server.checked = true; return Promise.resolve(AI.server); }
-    var base = location.href.replace(/[#?].*$/, "").replace(/[^\/]*$/, "");
+    if (!window.fetch || !/^https?:$/.test(location.protocol)) { AI.server.checked = true; AI.server.state = "none"; return Promise.resolve(AI.server); }
+    var base = AI.base(), st = "none";
     return window.fetch(base + "v1/models", { cache: "no-store" }).then(function (r) {
+      if (r.status === 503) { st = "loading"; AI.server.sameOrigin = true; AI.server.endpoint = base + "v1/chat/completions"; return null; }
       return r.ok ? r.json() : null;
-    }).then(function (j) {
+    }, function () { st = "down"; return null; }).then(function (j) {
       if (j && j.data && j.data.length) {
+        st = "ready";
         AI.server.sameOrigin = true;
         AI.server.endpoint = base + "v1/chat/completions";
         AI.server.model = j.data[0].id || "";
@@ -21162,9 +21163,9 @@ Lantern.RFB = (function () {
         return window.fetch(base + "props", { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : null; })
           .then(function (pj) { AI.server.vision = !!(pj && pj.modalities && pj.modalities.vision); }, function () { AI.server.vision = false; });
       }
-    }).then(function () {
-      AI.server.checked = true; notify(); return AI.server;
-    }).catch(function () { AI.server.checked = true; notify(); return AI.server; });
+    }).catch(function () {}).then(function () {
+      AI.server.state = st; AI.server.checked = true; notify(); return AI.server;
+    });
   };
 
   L.aiRoute = function (messages, opts) { return AI.complete(messages, opts || {}); };
@@ -21216,6 +21217,227 @@ Lantern.RFB = (function () {
 // MODULE: AI_GUARD - END
 // ===========================================================================
 // ===========================================================================
+// MODULE: AI_SERVER_WAIT - START
+// Depends: AI_ENGINE (Lantern.ai: detect, server, base, onChange), STORAGE
+//          (Lantern.store) -- feature-detected
+// Exports: Lantern.aiServerWait = {tick(), estimate(now), mode(), W: {POLL,
+//          SLOW, view}} -- AI_SERVER_WAIT_VIEW sets W.view = {paint(snapshot),
+//          done(ok)}
+// ===========================================================================
+// Waiting for the kit's model to load (1.12.8). start-lantern launches
+// llama-server and opens Lantern a few seconds later, but a 17 GB model read
+// from a USB stick takes two minutes or more, and until then every API call
+// is answered 503 "Loading model". Lantern checked once at start, found no
+// model, and never looked again: the page had to be closed and opened. Now:
+//  - while the model loads, a screen over the apps shows a progress bar and
+//    the time left, and asks people to keep the page and the server's black
+//    window open (closing either stops the load, and it starts over);
+//  - Lantern asks /health every second and connects the moment the model is
+//    ready, with no reload;
+//  - the start script passes the model's name and size and when the server
+//    started (?kit=1&model=...&bytes=...&t=...), so the bar is close the
+//    first time; after that each model's load time is remembered;
+//  - "Use the other apps while it loads" moves the bar to a corner (the
+//    screen is AI_SERVER_WAIT_VIEW).
+// A page from GitHub Pages or from a file has no model server at its own
+// address, so nothing shows there.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.ai || !L.ai.detect || !L.ai.base || !L.store) return;
+  var AI = L.ai, W = { POLL: 1000, SLOW: 3000, view: null }, kit = false, start = 0, downSince = 0, state = "", busy = false, gone = false, timer = null;
+  function label(n) { return String(n || "").split(/[\\\x2F]/).pop().replace(/\.gguf$/i, ""); }
+  function get(k, d) { try { var v = L.store.get(k, d); return v == null ? d : v; } catch (e) { return d; } }
+  function put(k, v) { try { L.store.set(k, v); } catch (e) { /* storage full or blocked: the bar still works */ } }
+  // the start script's hints; then the address is tidied (no query string
+  // left for bookmarks)
+  (function () {
+    if (!/[?&]kit=1(&|$)/.test(location.search)) return;
+    var q = {}, now = Date.now();
+    location.search.slice(1).split("&").forEach(function (kv) {
+      var i = kv.indexOf("="); if (i < 0) return;
+      try { q[decodeURIComponent(kv.slice(0, i))] = decodeURIComponent(kv.slice(i + 1).replace(/\+/g, " ")); } catch (e) { /* a bad escape: skip it */ }
+    });
+    var t = +q.t || 0;
+    kit = true;
+    put("ai.server.loading", { model: label(q.model), bytes: +q.bytes || 0, vbytes: +q.vbytes || 0, t: t > now - 30 * 60000 && t < now + 5000 ? t : now, timed: t > now - 30 * 60000 && t < now + 5000 });
+    try { history.replaceState(null, "", location.pathname + location.hash); } catch (e) { /* a file: page */ }
+  })();
+  function saved() { var s = get("ai.server.loading", null); return s && s.t && Date.now() - s.t < 30 * 60000 ? s : null; }
+  // expected() -> {ms, how}: this model's last load time, else its size at
+  // about 120 MB a second (a USB 3 stick), else two minutes
+  function expected() {
+    var s = saved() || {}, t = get("ai.server.loadMs", {}) || {}, m = s.model || get("ai.server.lastModel", "");
+    if (m && t[m]) return { ms: t[m] * 1.05, how: "last", took: t[m], model: m, bytes: s.bytes };
+    if (s.bytes) return { ms: (s.bytes + (s.vbytes || 0)) / 120e6 * 1000 + 6000, how: "size", model: m, bytes: s.bytes + (s.vbytes || 0) };
+    return { ms: 120000, how: "guess", model: m };
+  }
+  // estimate(now) -> {p: 0..0.99 for the bar, elapsed, left, how, model, bytes}.
+  // Past the estimate the bar slows down and never reaches the end until the
+  // model answers.
+  function estimate(now) {
+    var s = saved(), t0 = s ? s.t : (start || now), e = expected(), el = Math.max(0, now - t0), p = el / e.ms;
+    var shown = p <= 0.92 ? p : 0.92 + 0.07 * (1 - Math.exp(-(p - 0.92) / 0.25));
+    return { p: Math.min(0.99, shown), elapsed: el, left: e.ms - el, total: e.ms, took: e.took, how: e.how, model: e.model, bytes: e.bytes };
+  }
+  // paint(): the screen is AI_SERVER_WAIT_VIEW's (W.view); without it
+  // Lantern still connects when the model is ready, just without the bar
+  function paint() {
+    if (!gone && W.view) W.view.paint({ state: state, kit: kit, est: estimate(Date.now()), downLong: !!(downSince && Date.now() - downSince > 60000) });
+  }
+  function finish(ok) {
+    if (gone) return;
+    gone = true;
+    if (timer) clearTimeout(timer);
+    if (W.view) W.view.done(ok);
+  }
+  function ready() {
+    var s = saved(), name = AI.server.label || "";
+    if (s && s.timed && name) {
+      var t = get("ai.server.loadMs", {}) || {}, keys = Object.keys(t);
+      t[name] = Date.now() - s.t;
+      if (keys.length > 8) delete t[keys[0]];
+      put("ai.server.loadMs", t);
+    }
+    if (name) put("ai.server.lastModel", name);
+    put("ai.server.loading", null); put("ai.server.seen", true);
+    finish(true);
+  }
+  // tick(): ask /health once; ready -> detect again and connect
+  function tick() {
+    if (gone || busy) return Promise.resolve();
+    busy = true;
+    return window.fetch(AI.base() + "health", { cache: "no-store" }).then(function (r) { return r.status; }, function () { return 0; }).then(function (code) {
+      if (code === 200 || code === 503) downSince = 0; else if (!downSince) downSince = Date.now();
+      if (code === 200) return AI.detect().then(function (sv) { if (sv.state === "ready") ready(); else paint(); });
+      if (code === 503 && state !== "loading") { state = "loading"; if (!start) start = Date.now(); return AI.detect().then(paint); }
+      if (code && code !== 503) { finish(false); return; }   // a server without a model at all: nothing to wait for
+      if (!code) state = "down";
+      // opened by hand with no server running: stop asking after two minutes
+      if (!code && !kit && downSince && Date.now() - downSince > 120000) { finish(false); return; }
+      paint();
+    }).then(function () { busy = false; }, function () { busy = false; });
+  }
+  function loop() {
+    if (gone) return;
+    tick().then(function () { if (!gone) timer = setTimeout(loop, state === "down" && !kit ? W.SLOW : W.POLL); });
+  }
+  // after each detect(): begin waiting when the model is loading, or when
+  // this address had a model before (or the kit just opened the page) and
+  // nothing answers yet
+  function check() {
+    if (gone) return;
+    var st = AI.server.state;
+    if (st === "ready" && state) { ready(); return; }
+    if (st === "ready" || st === "none" || !st) { if (st === "ready") put("ai.server.seen", true); return; }
+    if (st === "down" && !kit && !get("ai.server.seen", false)) return;
+    if (st === "loading" && !start) {
+      start = Date.now();
+      if (!saved()) put("ai.server.loading", { model: get("ai.server.lastModel", ""), t: start, timed: false });   // a reload keeps the bar where it was
+    }
+    var first = !state;
+    state = st;
+    if (first) { downSince = st === "down" ? Date.now() : 0; paint(); timer = setTimeout(loop, W.POLL); } else paint();
+  }
+  AI.onChange(check);
+  window.Lantern.aiServerWait = { tick: tick, estimate: estimate, mode: function () { return gone ? "done" : state; }, W: W };
+})();
+// ===========================================================================
+// MODULE: AI_SERVER_WAIT - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_SERVER_WAIT_VIEW - START
+// Depends: AI_SERVER_WAIT (Lantern.aiServerWait.W) -- feature-detected
+// Exports: (none) -- sets Lantern.aiServerWait.W.view = {paint(snap), done(ok)}
+// ===========================================================================
+// The screen over the apps while the kit's model loads (1.12.8): a progress
+// bar, the time so far and the time left, and a plain request to keep the
+// page and the server's black window open -- people closed them because
+// nothing seemed to be happening. "Use the other apps while it loads" turns
+// it into a small button in the corner, which brings it back.
+(function () {
+  var WT = window.Lantern && window.Lantern.aiServerWait;
+  if (!WT || !WT.W) return;
+  var veil = null, pill = null, ui = {}, hidden = false, asked = false, done_ = false, last = null;
+  function fmt(ms) {
+    var s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return s + " s";
+    if (s >= 90) s = Math.round(s / 10) * 10;
+    return Math.floor(s / 60) + " min" + (s % 60 ? " " + (s % 60) + " s" : "");
+  }
+  function clock(ms) { var s = Math.max(0, Math.floor(ms / 1000)); return Math.floor(s / 60) + ":" + (s % 60 < 10 ? "0" : "") + (s % 60); }
+  var CSS = ".lw-veil{position:fixed;inset:0;z-index:9999;background:rgba(15,23,42,.6);display:flex;align-items:center;justify-content:center;padding:16px}" +
+    ".lw-box{background:var(--paper,#fafaf7);color:var(--ink,#1b2430);border-radius:14px;max-width:520px;width:100%;padding:22px 22px 18px;box-shadow:0 10px 40px rgba(0,0,0,.35);font:16px/1.45 system-ui,sans-serif}" +
+    ".lw-box h2{margin:0 0 6px;font-size:1.3em}.lw-box p{margin:6px 0}" +
+    ".lw-bar{height:16px;border-radius:8px;background:var(--soft,#efefe9);border:1px solid var(--line,#d7d7cf);overflow:hidden;margin:16px 0 6px}" +
+    ".lw-fill{height:100%;width:0;background:var(--accent,#2563eb);transition:width .9s linear}" +
+    ".lw-row{display:flex;justify-content:space-between;gap:8px;font-size:.9em;opacity:.8}" +
+    ".lw-warn{margin:14px 0 0;padding:10px 12px;border-radius:8px;background:#fef3c7;color:#713f12;font-size:.95em}" +
+    ".lw-btns{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap}.lw-btns button{font:inherit;padding:8px 14px;border-radius:8px;border:1px solid var(--line,#d7d7cf);background:var(--soft,#efefe9);color:inherit;cursor:pointer}" +
+    ".lw-pill{position:fixed;right:12px;bottom:12px;z-index:9998;background:var(--paper,#fff);color:var(--ink,#1b2430);border:1px solid var(--line,#d7d7cf);border-radius:999px;padding:7px 14px;font:14px system-ui,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,.2);cursor:pointer}";
+  function mk(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function build() {
+    if (veil || !document.body) return;
+    if (!document.getElementById("lw-style")) { var st = mk("style"); st.id = "lw-style"; st.textContent = CSS; (document.head || document.body).appendChild(st); }
+    veil = mk("div", "lw-veil"); veil.setAttribute("role", "dialog"); veil.setAttribute("aria-modal", "true"); veil.setAttribute("aria-labelledby", "lw-title");
+    var box = mk("div", "lw-box");
+    ui.title = mk("h2"); ui.title.id = "lw-title";
+    ui.what = mk("p"); ui.bar = mk("div", "lw-bar"); ui.fill = mk("div", "lw-fill"); ui.bar.appendChild(ui.fill);
+    ui.bar.setAttribute("role", "progressbar"); ui.bar.setAttribute("aria-valuemin", "0"); ui.bar.setAttribute("aria-valuemax", "100"); ui.bar.setAttribute("aria-label", "Loading the AI model");
+    ui.row = mk("div", "lw-row"); ui.so = mk("span"); ui.left = mk("span"); ui.row.appendChild(ui.so); ui.row.appendChild(ui.left);
+    ui.warn = mk("p", "lw-warn", "Please keep this page and the black Lantern window open. Closing either one stops the loading, and it starts again from the beginning.");
+    var btns = mk("div", "lw-btns"); ui.away = mk("button", "", "Use the other apps while it loads"); ui.away.type = "button";
+    ui.away.onclick = function () { hidden = true; paint(last); };
+    btns.appendChild(ui.away);
+    [ui.title, ui.what, ui.bar, ui.row, ui.warn, btns].forEach(function (x) { box.appendChild(x); });
+    veil.appendChild(box);
+    pill = mk("button", "lw-pill"); pill.type = "button"; pill.onclick = function () { hidden = false; asked = true; paint(last); };
+    document.body.appendChild(veil); document.body.appendChild(pill);
+  }
+  // paint(snap): snap = {state: "loading" | "down", kit (the start script
+  // opened the page), est (AI_SERVER_WAIT's estimate), downLong}
+  function paint(snap) {
+    if (done_ || !snap) return;
+    last = snap;
+    build();
+    if (!veil) return;
+    var e = snap.est, loading = snap.state === "loading", pct = loading ? Math.round(e.p * 100) : 0;
+    ui.title.textContent = loading ? "Lantern\u2019s AI is loading" : "Starting Lantern\u2019s AI\u2026";
+    if (loading) {
+      var size = e.bytes ? " (" + (Math.round(e.bytes / 1e8) / 10) + " GB)" : "";
+      ui.what.textContent = "The model" + (e.model ? " " + e.model : "") + size + " is being read from the drive into memory. " +
+        (e.how === "last" ? "Last time this took " + fmt(e.took) + "." : e.how === "size" ? "This takes about " + fmt(e.total) + " from a USB stick." :
+          "This usually takes a minute or two, longer from a USB stick.");
+      ui.so.textContent = clock(e.elapsed) + " so far";
+      ui.left.textContent = e.left > 4000 ? "about " + fmt(e.left) + " left" : "almost ready\u2026";
+    } else {
+      ui.what.textContent = snap.downLong ? "The AI server is not answering. Is the black Lantern window still open? If it was closed, start Lantern again (start-lantern)." :
+        "Waiting for the AI server in the black Lantern window to answer\u2026";
+      ui.so.textContent = ""; ui.left.textContent = "";
+    }
+    ui.fill.style.width = pct + "%"; ui.bar.setAttribute("aria-valuenow", String(pct));
+    ui.away.textContent = loading ? "Use the other apps while it loads" : "Use the apps without the AI";
+    var big = !hidden && (loading || snap.kit || asked);
+    veil.style.display = big ? "" : "none";
+    pill.style.display = big ? "none" : "";
+    pill.textContent = loading ? "AI loading " + pct + "% \u2014 details" : "AI server not answering";
+  }
+  // done(ok): ready -- the bar fills and the screen goes; not ok -- it goes now
+  function done(ok) {
+    if (done_) return;
+    done_ = true;
+    if (!veil) return;
+    if (!ok) { veil.parentNode.removeChild(veil); pill.parentNode.removeChild(pill); return; }
+    ui.title.textContent = "Lantern\u2019s AI is ready"; ui.fill.style.width = "100%"; ui.bar.setAttribute("aria-valuenow", "100");
+    ui.left.textContent = "ready"; pill.textContent = "\u2713 AI ready";
+    setTimeout(function () { if (veil.parentNode) veil.parentNode.removeChild(veil); }, 1200);
+    setTimeout(function () { if (pill.parentNode) pill.parentNode.removeChild(pill); }, 3000);
+  }
+  WT.W.view = { paint: paint, done: done };
+})();
+// ===========================================================================
+// MODULE: AI_SERVER_WAIT_VIEW - END
+// ===========================================================================
+// ===========================================================================
 // MODULE: AI_DEVICE - START
 // Depends: AI_ENGINE (Lantern.ai, feature-detected); site files ai/wllama/*
 //          and ai/wllama-compat/* next to the page
@@ -21263,7 +21485,10 @@ Lantern.RFB = (function () {
     var imp;
     try { imp = new Function("u", "return import(u)"); }
     catch (e) { return Promise.reject(new Error("This browser is too old to run AI on the device.")); }
-    return imp(base() + "wllama/index.js").then(function (m) { st.lib = m; return m; });
+    // a failed import is remembered by the browser under its address: a new
+    // try (after the kit's server finished loading, 1.12.8) asks a new one
+    var n = st.libTries = (st.libTries || 0) + 1;
+    return imp(base() + "wllama/index.js" + (n > 1 ? "?try=" + n : "")).then(function (m) { st.lib = m; return m; });
   }
   function instance() {
     return lib().then(function (m) {
@@ -22235,6 +22460,15 @@ Lantern.RFB = (function () {
         });
       }).catch(function (e) {
         list.innerHTML = "";
+        // the kit's server sends nothing but the page while its model loads
+        // (1.12.8): try again when it is ready, without a false alarm
+        var AI = L.ai || {};
+        if (AI.server && AI.server.state === "loading" && AI.onChange) {
+          list.appendChild(el("p", { "class": "muted", text: "This list appears when the Lantern server has finished loading its model." }));
+          var again = false;
+          AI.onChange(function () { if (!again && AI.server.state === "ready" && document.contains(list)) { again = true; refresh(); } });
+          return;
+        }
         list.appendChild(el("p", { "class": "danger", text: "The AI engine could not start here: " + ((e && e.message) || e) + ". Connect to the internet once so the engine files can be saved." }));
       });
     }
@@ -22546,7 +22780,8 @@ Lantern.RFB = (function () {
       "<li>Phones with 6 GB of memory or more can try <b>Qwen3.5 2B</b> (about 1.3 GB) for better answers.</li></ol>" +
       "<p>No download? Copy a <code>.gguf</code> model file onto the phone from a USB stick or a laptop and use <b>Load file</b>.</p>"],
     ["On a laptop (USB kit)", "<p>Run <b>start-lantern</b> from the kit. It starts the model server, opens Lantern at " +
-      "<code>http://127.0.0.1:8080</code>, and Lantern finds the model by itself. Add <code>share</code> to let phones on the same " +
+      "<code>http://127.0.0.1:8080</code>, and Lantern finds the model by itself. A big model takes a minute or more to load (minutes from a USB stick): " +
+      "Lantern shows a progress bar meanwhile and connects as soon as it is ready \u2014 keep the page and the black window open. Add <code>share</code> to let phones on the same " +
       "Wi-Fi or hotspot use the laptop's model: they open the address the launcher prints.</p>" +
       "<p>It uses the best model in the kit that the computer's memory can run (28 GB or more: Qwen3.5 35B-A3B; 16 GB: 9B; " +
       "8 GB: 4B; less: 2B or 0.8B). When the computer could run a stronger model than the kit has, and there is internet and room " +
