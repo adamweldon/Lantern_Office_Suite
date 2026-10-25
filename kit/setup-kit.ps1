@@ -1,6 +1,7 @@
 # setup-kit.ps1 -- fetch the AI engine (llama.cpp) and models into this kit (Windows).
 # Needs internet once; afterwards the kit works offline and can be copied.
-#   setup-kit.bat              engine + the 4B model, then offers a bigger model
+#   setup-kit.bat              Lantern itself when the kit lacks it (from GitHub), then
+#                              engine + the 4B model, then offers a bigger model
 #                              when this computer can run one, then the offline
 #                              encyclopedia -- everything in one go
 #   setup-kit.bat phone        the two phone models (0.8B, 2B) -- to copy onto phones
@@ -23,7 +24,12 @@
 #                              the drawings it makes. New 4B/9B/35B downloads
 #                              bring theirs along.
 #   setup-kit.bat check        show what this computer can run and what the kit has
+#   setup-kit.bat lantern      the newest Lantern from GitHub into the kit (site\), also
+#                              to update it; setup fetches it by itself when neither
+#                              kit\site nor the repository's site\ is there
 #   add "gpu" for the Vulkan engine build (graphics card)
+# "Install Lantern (Windows).bat" runs this with LANTERN_POPUP=1: the questions
+# come up in message boxes (Yes / No / Cancel) while this window shows the progress.
 # start-lantern.bat runs "setup-kit.ps1 offer": when this computer can run a
 # bigger model than the kit has, and there is room and internet, it asks
 # once and downloads it in a separate window while Lantern starts.
@@ -39,6 +45,8 @@ $Build = if ($env:LLAMA_BUILD) { $env:LLAMA_BUILD } else { "b11435" }
 $LlamaBase = if ($env:LLAMA_BASE) { $env:LLAMA_BASE } else { "https://github.com/ggml-org/llama.cpp/releases/download/$Build" }
 $HfBase = if ($env:HF_BASE) { $env:HF_BASE } else { "https://huggingface.co" }
 $KiwixBase = if ($env:KIWIX_BASE) { $env:KIWIX_BASE } else { "https://download.kiwix.org" }
+$LanternHome = "https://github.com/adamweldon/Lantern_Office_Suite"
+$LanternSrc = if ($env:LANTERN_SRC) { $env:LANTERN_SRC } else { "$LanternHome/archive/refs/heads/main.zip" }
 $Models = Join-Path $Dir "models"
 New-Item -ItemType Directory -Force -Path $Models | Out-Null
 $Library = Join-Path $Dir "library"
@@ -96,6 +104,55 @@ function GetVision($t) {
 }
 function GetTier($t) { Model $t.repo $t.file; if (Have $t) { GetVision $t } }
 function TempRoot { if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() } }
+# --- Lantern itself (the site\ folder llama-server serves) ---
+# SiteDir -> the Lantern this kit starts: kit\site, else the repository's site\
+# beside kit\ (the zip from GitHub); "" when neither is there.
+function SiteDir {
+  foreach ($d in @((Join-Path $Dir "site"), (Join-Path (Split-Path -Parent $Dir) "site"))) {
+    if (Test-Path (Join-Path $d "index.html")) { return (Resolve-Path $d).Path }
+  }
+  return ""
+}
+function VersionIn($packageJson) {
+  if (-not (Test-Path $packageJson)) { return "" }
+  $m = [regex]::Match((Get-Content $packageJson -Raw), '"version":\s*"([^"]*)"')
+  if ($m.Success) { return $m.Groups[1].Value } else { return "" }
+}
+function LanternVersion($site) {
+  $f = Join-Path $site "lantern-version.txt"
+  if (Test-Path $f) { return [string](Get-Content $f -TotalCount 1) }
+  return (VersionIn (Join-Path (Split-Path -Parent $site) "package.json"))
+}
+# GetLantern [fresh] -> Lantern into kit\site from GitHub when the kit has none
+# (fresh: always, the newest -- also an update). The one in use stays until the
+# new one is in place and checked.
+function GetLantern([bool]$fresh = $false) {
+  $cur = SiteDir
+  if ($cur -and -not $fresh) { $v = LanternVersion $cur; Write-Host ("  have Lantern" + $(if ($v) { " $v" } else { "" }) + " ($cur)"); return }
+  Write-Host "  Lantern itself (the suite: about 10 MB) from $LanternHome"
+  $tmp = Join-Path (TempRoot) ("lantern-" + [guid]::NewGuid())
+  New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+  try {
+    $zip = Join-Path $tmp "lantern.zip"
+    try { Fetch $LanternSrc $zip }
+    catch { throw "Could not download Lantern ($($_.Exception.Message)). Check the internet connection and run setup again, or download the zip from $LanternHome and run Install Lantern from inside it." }
+    Expand-Archive -Path $zip -DestinationPath (Join-Path $tmp "x") -Force
+    $top = Get-ChildItem -Directory -Path (Join-Path $tmp "x") | Select-Object -First 1
+    $idx = if ($top) { Join-Path $top.FullName "site\index.html" } else { "" }
+    if (-not $top -or -not (Test-Path $idx) -or -not (Select-String -Path $idx -Pattern "Lantern" -SimpleMatch -Quiet)) {
+      throw "the download has no Lantern in it (site\index.html)"
+    }
+    $v = VersionIn (Join-Path $top.FullName "package.json")
+    Set-Content -Path (Join-Path $top.FullName "site\lantern-version.txt") -Value ($(if ($v) { $v } else { "unknown" }) + " (from $LanternHome, " + (Get-Date -Format "yyyy-MM-dd") + ")")
+    $site = Join-Path $Dir "site"; $next = Join-Path $Dir "site.new"; $old = Join-Path $Dir "site.old"
+    foreach ($p in @($next, $old)) { if (Test-Path $p) { Remove-Item -Recurse -Force $p } }
+    Copy-Item -Recurse -Force (Join-Path $top.FullName "site") $next
+    if (Test-Path $site) { Move-Item $site $old }
+    Move-Item $next $site
+    if (Test-Path $old) { Remove-Item -Recurse -Force $old }
+    Write-Host ("  Lantern" + $(if ($v) { " $v" } else { "" }) + " is in the kit ($site)")
+  } finally { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
+}
 function Engine($asset) {
   $target = Join-Path $Dir "engine\windows"
   if (Test-Path (Join-Path $target "llama-server.exe")) { Write-Host "  have engine"; return }
@@ -272,8 +329,10 @@ function NoRoom($t, $drive) {
 # is downloaded and nothing is remembered).
 # optIn: a very large download -- nothing happens unless Y is pressed (no
 # answer = not now, asked again next time).
-function Ask($secs, [bool]$optIn = $false) {
+function Ask($secs, [bool]$optIn = $false, [string]$title = "Lantern", [string]$text = "") {
   if ($env:LANTERN_AUTO_DOWNLOAD -eq "1") { return "yes" }
+  $p = PopupAsk $title $text $optIn
+  if ($null -ne $p) { Write-Host "  (answered in the popup: $(if ($p) { $p } else { 'not now' }))"; return $p }
   Write-Host -NoNewline ("  Download it now?  Y = yes   N = no, and don't ask again   (" + $(if ($optIn) { "not now" } else { "yes" }) + " in $secs s) ")
   try {
     while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) }   # ignore keys pressed earlier
@@ -290,6 +349,22 @@ function Ask($secs, [bool]$optIn = $false) {
   } catch { Write-Host "(no keyboard here, so not now)"; return "" }
   if ($optIn) { Write-Host "not now"; return "" }
   Write-Host "Y"; return "yes"
+}
+# PopupAsk -> "yes" / "no" / "" (not now) from a message box, or $null when
+# none can be shown (then Ask asks in this window).
+function PopupAsk([string]$title, [string]$text, [bool]$optIn) {
+  if ($env:LANTERN_POPUP -ne "1") { return $null }
+  try {
+    Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+    $msg = $text + "`n`nYes:  download it now.`nNo:  no, and don't ask again.`nCancel:  not now (asked again next time)."
+    $def = if ($optIn) { [System.Windows.Forms.MessageBoxDefaultButton]::Button3 } else { [System.Windows.Forms.MessageBoxDefaultButton]::Button1 }
+    $owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true }   # so the box comes up in front
+    try {
+      $r = [System.Windows.Forms.MessageBox]::Show($owner, $msg, $title, [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
+        [System.Windows.Forms.MessageBoxIcon]::Question, $def)
+    } finally { $owner.Dispose() }
+    switch ($r.ToString()) { "Yes" { return "yes" } "No" { return "no" } default { return "" } }
+  } catch { return $null }
 }
 # Plan -> what to offer: @{ t = model or $null; why = reason when nothing;
 # notes = bigger models passed over, and why }. Walks the models this
@@ -325,9 +400,10 @@ function Offer([bool]$inline) {
     }
     $t = $p.t
     Write-Host ""
-    Write-Host ("  This computer has " + [math]::Round($mem / 1024) + " GB of memory: it can run " + $t.name + " (" + $t.gb + " GB download),")
-    Write-Host "  a stronger model than any in this kit. $($t.note)"
-    $ans = Ask 30
+    $l1 = "This computer has " + [math]::Round($mem / 1024) + " GB of memory: it can run " + $t.name + " (" + $t.gb + " GB download),"
+    $l2 = "a stronger model than any in this kit. $($t.note)"
+    Write-Host "  $l1"; Write-Host "  $l2"
+    $ans = Ask 30 $false "A stronger AI model" "$l1 $l2"
     if ($ans -eq "") { return }
     if ($ans -eq "no") {
       New-Item -ItemType File -Force -Path (Join-Path $Models ".skip-$($t.id)") | Out-Null
@@ -362,9 +438,10 @@ function OfferLibrary([bool]$inline) {
   $l = $p.l
   try { [void](Listing "$KiwixBase/zim/$($l.folder)/") } catch { return }   # no internet: say nothing
   Write-Host ""
-  Write-Host "  Lantern can also keep an offline encyclopedia for the AI to read: $($l.name),"
-  Write-Host "  about $($l.gb) GB. Fact questions are then answered from it, with quotes Lantern checks."
-  $ans = Ask 30
+  $l1 = "Lantern can also keep an offline encyclopedia for the AI to read: $($l.name),"
+  $l2 = "about $($l.gb) GB. Fact questions are then answered from it, with quotes Lantern checks."
+  Write-Host "  $l1"; Write-Host "  $l2"
+  $ans = Ask 30 $false "Offline encyclopedia" "$l1 $l2"
   if ($ans -eq "") { return }
   if ($ans -eq "no") {
     New-Item -ItemType File -Force -Path (Join-Path $Models ".skip-library") | Out-Null
@@ -407,10 +484,11 @@ function OfferFull([bool]$inline) {
   $p = FullPlan
   if (-not $p.l) { return }
   Write-Host ""
-  Write-Host "  Lantern can also keep the FULL English Wikipedia: every article, text without pictures,"
-  Write-Host "  about $($p.gb) GB (a long download -- hours). Explanation questions in Chat (`"explain`","
-  Write-Host "  `"in detail`", `"how does`") are then read from whole articles; quick facts keep the small file."
-  $ans = Ask 30 $true
+  $l1 = "Lantern can also keep the FULL English Wikipedia: every article, text without pictures,"
+  $l2 = "about $($p.gb) GB (a long download -- hours). Explanation questions in Chat (`"explain`","
+  $l3 = "`"in detail`", `"how does`") are then read from whole articles; quick facts keep the small file."
+  Write-Host "  $l1"; Write-Host "  $l2"; Write-Host "  $l3"
+  $ans = Ask 30 $true "The full Wikipedia" "$l1 $l2 $l3"
   if ($ans -eq "") { return }
   if ($ans -eq "no") {
     New-Item -ItemType File -Force -Path (Join-Path $Models ".skip-library-full") | Out-Null
@@ -427,6 +505,9 @@ function Check {
   Write-Host ("Memory: " + [math]::Round($mem / 1024, 1) + " GB")
   if ($drive) { Write-Host ("Drive: " + $drive.Name + " " + $drive.DriveFormat + ", " + [math]::Round($drive.AvailableFreeSpace / 1GB, 1) + " GB free") }
   Write-Host ("Kit folder: " + $Dir)
+  $site = SiteDir
+  if ($site) { $v = LanternVersion $site; Write-Host ("Lantern: " + $(if ($v) { "$v, " } else { "" }) + $site) }
+  else { Write-Host "Lantern: not in the kit (setup-kit.bat lantern downloads it)" }
   foreach ($t in $Tiers) {
     $fits = if ($mem -ge $t.mem) { "runs here" } else { "needs " + [math]::Round($t.mem / 1024) + " GB memory" }
     $has = if (Have $t) { "in kit" + $(if ($t.id -in @("xl", "big", "laptop")) { if (HasVision $t) { ", sees images" } else { ", no vision part (setup-kit.bat vision)" } } else { "" }) } else { "not in kit" }
@@ -482,6 +563,7 @@ if ($Sets.Count -gt 1 -and $Sets[0] -eq "get") {   # one model or library, in it
 $asset = if ($gpu) { "llama-$Build-bin-win-vulkan-x64.zip" } else { "llama-$Build-bin-win-cpu-x64.zip" }
 Write-Host "Lantern kit setup (llama.cpp $Build)"
 if ($Sets.Count -eq 0) {
+  GetLantern
   Engine $asset
   if ((MemMB) -ge 7000) { GetTier (Tier "laptop") } else { GetTier (Tier "0.8b"); GetTier (Tier "2b") }
   Offer $true
@@ -492,6 +574,7 @@ if ($zimArg) { GetZimByName $zimArg }
 foreach ($s in $Sets) {
   switch ($s) {
     "phone" { GetTier (Tier "0.8b"); GetTier (Tier "2b") }
+    "lantern" { GetLantern $true }
     "engine" { Engine $asset }
     "library" { $l = PickLib; if ($l) { GetLibrary $l } else { Write-Host "  No room for an encyclopedia on this drive." } }
     "library-simple" { GetLibrary (LibFor "library-simple") }

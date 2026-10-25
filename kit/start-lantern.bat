@@ -41,6 +41,11 @@ for %%a in (%*) do (
 if "%LANTERN_AUTO_DOWNLOAD%"=="0" set "AUTO="
 if not "%MODEL%"=="" set "AUTO="
 if defined FORCE set "AUTO="
+if not exist "%SITE%\index.html" (
+  echo Lantern itself is not in this folder ^(no site\index.html^).
+  echo Double-click the Install Lantern file for Windows first, or run setup-kit.bat: it downloads it.
+  pause & exit /b 1
+)
 set "BIN=%DIR%engine\windows\llama-server.exe"
 if not exist "%BIN%" (
   echo llama-server.exe not found. Run setup-kit.bat first ^(needs internet once^).

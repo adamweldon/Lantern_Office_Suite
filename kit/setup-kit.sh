@@ -1,7 +1,8 @@
 #!/bin/sh
 # setup-kit.sh -- fetch the AI engine (llama.cpp) and models into this kit.
 # Needs internet once; afterwards the kit works offline and can be copied.
-#   ./setup-kit.sh              engine + the 4B model, then offers a bigger model
+#   ./setup-kit.sh              Lantern itself when the kit lacks it (from GitHub), then
+#                               engine + the 4B model, then offers a bigger model
 #                               when this computer can run one, then the offline
 #                               encyclopedia -- everything in one go
 #   ./setup-kit.sh phone        the two phone models (0.8B, 2B) -- to copy onto phones
@@ -25,11 +26,27 @@
 #                               the drawings it makes. New 4B/9B/35B downloads
 #                               bring theirs along.
 #   ./setup-kit.sh check        what this computer can run and what the kit has
+#   ./setup-kit.sh build-engine build llama-server on this computer from source
+#                               (when the ready-made one cannot start here, e.g.
+#                               Raspberry Pi OS Bookworm: older system libraries);
+#                               setup offers this by itself. Needs a C++ compiler;
+#                               cmake is fetched with pip when it is missing.
+#   ./setup-kit.sh lantern      the newest Lantern from GitHub into the kit (site/),
+#                               also to update it; setup fetches it by itself when
+#                               neither kit/site nor the repository's site/ is there
+#   ./setup-kit.sh info         key=value facts for the installer window
 #   add "gpu" for the Vulkan engine builds (graphics card) on Windows/Linux
+# Double-click set-up: "Install Lantern (Linux).desktop" / "Install Lantern
+# (Mac).command" run this with popups instead of typed answers:
+#   LANTERN_UI=1      the installer window (kit/lantern-kit.py) shows the steps
+#                     and asks the questions: @@ lines on stderr, answers on stdin
+#   LANTERN_POPUP=zenity|kdialog|osascript   questions pop up as dialogs while
+#                     the terminal window shows the progress
 # start-lantern.sh runs "setup-kit.sh offer": when this computer can run a
 # bigger model than the kit has, and there is room and internet, it asks once
 # and downloads it in the background while Lantern starts.
-# Overrides: LLAMA_BUILD (default b11435), LLAMA_BASE, HF_BASE, KIWIX_BASE (mirrors);
+# Overrides: LLAMA_BUILD (default b11435), LLAMA_BASE, LLAMA_SRC, HF_BASE, KIWIX_BASE (mirrors);
+# LANTERN_SRC (Lantern's own archive, default the GitHub repository's main branch);
 # LANTERN_AUTO_DOWNLOAD=0 never offer, =1 download without asking; for
 # testing: LANTERN_MEM_MB, LANTERN_FS, LANTERN_FREE_GB.
 set -eu
@@ -40,32 +57,218 @@ HF_BASE="${HF_BASE:-https://huggingface.co}"
 KIWIX_BASE="${KIWIX_BASE:-https://download.kiwix.org}"
 MODELS="$DIR/models"; mkdir -p "$MODELS"
 LIBRARY="$DIR/library"
+LLAMA_SRC="${LLAMA_SRC:-https://github.com/ggml-org/llama.cpp/archive/refs/tags/$BUILD.tar.gz}"
+LANTERN_SRC="${LANTERN_SRC:-https://github.com/adamweldon/Lantern_Office_Suite/archive/refs/heads/main.tar.gz}"
+LANTERN_HOME="https://github.com/adamweldon/Lantern_Office_Suite"
 
-fetch() {  # url dest -- resumes an interrupted download
+# The installer window (LANTERN_UI=1) follows along by @@ lines on stderr:
+# STEP id text, GET file, ASK kind title + Q lines + END (answer on stdin).
+ui() { if [ -n "${LANTERN_UI:-}" ]; then printf '@@%s\n' "$*" >&2; fi; return 0; }
+# q: a line of the question that ask() asks next (shown in its popup too).
+QTEXT=""
+q() { echo "$1"; QTEXT="$QTEXT$1
+"; }
+
+fetch() {  # url dest -- resumes an interrupted download. Fails, keeping the .part to
+  # carry on from next time, when it stops: callers check (set -e does not hold in
+  # functions called from && or ||, so a stopped download was once kept as whole).
   if [ -s "$2" ]; then echo "  have $(basename "$2")"; return 0; fi
-  echo "  downloading $(basename "$2")"
-  curl -L --fail --retry 3 -C - --progress-bar -o "$2.part" "$1"
+  if [ -s "$2.part" ]; then echo "  downloading $(basename "$2") (resuming where it stopped)"
+  else echo "  downloading $(basename "$2")"; fi
+  ui "GET $(basename "$2")"
+  tries=0
+  while :; do
+    if [ -n "${LANTERN_UI:-}" ]; then   # curl's own meter: the window shows size, speed and time left
+      curl -L --fail --retry 3 -C - -o "$2.part" "$1" && break
+    else
+      curl -L --fail --retry 3 -C - --progress-bar -o "$2.part" "$1" && break
+    fi
+    rc=$?; tries=$((tries + 1))
+    case $rc in
+      18|28|52|55|56|92) ;;          # only a transfer that broke off is tried again ...
+      33) rm -f "$2.part" ;;         # ... from the start when the server cannot carry on
+      *) return $rc ;;
+    esac
+    if [ $tries -ge 3 ]; then echo "  $(basename "$2") stopped downloading; setup carries on from there next time"; return $rc; fi
+    echo "  the download of $(basename "$2") broke off; carrying on from where it stopped"
+    sleep 3
+  done
   mv "$2.part" "$2"
 }
 model() {  # repo file
-  fetch "$HF_BASE/$1/resolve/main/$2" "$MODELS/$2"
+  fetch "$HF_BASE/$1/resolve/main/$2" "$MODELS/$2" || return 1
   if [ "$(head -c 4 "$MODELS/$2")" != "GGUF" ]; then echo "  $2 is not a GGUF file; deleted"; rm -f "$MODELS/$2"; return 1; fi
 }
 engine() {  # os asset
   if [ -x "$DIR/engine/$1/llama-server" ] || [ -f "$DIR/engine/$1/llama-server.exe" ]; then echo "  have engine for $1"; return 0; fi
   tmp=$(mktemp -d)
-  fetch "$LLAMA_BASE/$2" "$tmp/$2"
+  fetch "$LLAMA_BASE/$2" "$tmp/$2" || { rm -rf "$tmp"; ui "FAIL net"; return 1; }
   case "$2" in
-    *.zip) (cd "$tmp" && unzip -q "$2") ;;
-    *) tar -xzf "$tmp/$2" -C "$tmp" ;;
+    *.zip) (cd "$tmp" && unzip -q "$2") || { echo "  $2 is damaged"; rm -rf "$tmp"; return 1; } ;;
+    *) tar -xzf "$tmp/$2" -C "$tmp" || { echo "  $2 is damaged"; rm -rf "$tmp"; return 1; } ;;
   esac
   bin=$(find "$tmp" -type f \( -name llama-server -o -name llama-server.exe \) | head -n 1)
   if [ -z "$bin" ]; then echo "  no llama-server inside $2"; rm -rf "$tmp"; return 1; fi
   mkdir -p "$DIR/engine/$1"
-  cp -R "$(dirname "$bin")"/. "$DIR/engine/$1/"
+  # -L: the libraries' symlinks become plain files -- exFAT sticks cannot hold symlinks
+  cp -RL "$(dirname "$bin")"/. "$DIR/engine/$1/"
   chmod +x "$DIR/engine/$1/"llama-* 2>/dev/null || true
   rm -rf "$tmp"
   echo "  engine for $1 ready"
+}
+# --- Lantern itself (the site/ folder llama-server serves) -----------------------
+# site_dir -- the Lantern this kit starts: kit/site, else the repository's site/
+# beside kit/ (the zip from GitHub); nothing when neither is there.
+site_dir() {
+  for d in "$DIR/site" "$DIR/../site"; do
+    if [ -f "$d/index.html" ]; then (cd "$d" && pwd); return 0; fi
+  done
+  return 0
+}
+lantern_version() {  # site -- the version it says it is, or nothing
+  if [ -f "$1/lantern-version.txt" ]; then head -n 1 "$1/lantern-version.txt"; return 0; fi
+  if [ -f "$1/../package.json" ]; then sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$1/../package.json" | head -n 1; fi
+  return 0
+}
+# get_lantern [new] -- Lantern into kit/site from GitHub when the kit has none
+# ("new": always, the newest -- also an update). The one in use stays until the
+# new one is in place and checked.
+get_lantern() {
+  cur=$(site_dir)
+  if [ -n "$cur" ] && [ "${1:-}" != new ]; then
+    v=$(lantern_version "$cur"); echo "  have Lantern${v:+ $v} ($cur)"; return 0
+  fi
+  ui "STEP lantern Getting Lantern itself"
+  echo "  Lantern itself (the suite: about 10 MB) from $LANTERN_HOME"
+  tmp=$(mktemp -d)
+  if ! fetch "$LANTERN_SRC" "$tmp/lantern.tar.gz"; then
+    echo "  Could not download Lantern. Check the internet connection and run setup again,"
+    echo "  or download the zip from $LANTERN_HOME and run Install Lantern from inside it."
+    rm -rf "$tmp"; ui "FAIL net"; return 1
+  fi
+  mkdir "$tmp/x"
+  if ! tar -xzf "$tmp/lantern.tar.gz" -C "$tmp/x"; then echo "  the Lantern download is damaged; run setup again"; rm -rf "$tmp"; ui "FAIL net"; return 1; fi
+  top=$(find "$tmp/x" -mindepth 1 -maxdepth 1 -type d | head -n 1)
+  if [ -z "$top" ] || [ ! -f "$top/site/index.html" ] || ! grep -q "Lantern" "$top/site/index.html"; then
+    echo "  the download has no Lantern in it (site/index.html)"; rm -rf "$tmp"; ui "FAIL net"; return 1
+  fi
+  v=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$top/package.json" 2>/dev/null | head -n 1)
+  echo "${v:-unknown} (from $LANTERN_HOME, $(date +%Y-%m-%d))" > "$top/site/lantern-version.txt"
+  rm -rf "$DIR/site.new" "$DIR/site.old"
+  if ! cp -RL "$top/site" "$DIR/site.new"; then echo "  could not copy Lantern into $DIR"; rm -rf "$tmp" "$DIR/site.new"; ui "FAIL copy"; return 1; fi
+  if [ -d "$DIR/site" ]; then mv "$DIR/site" "$DIR/site.old"; fi
+  mv "$DIR/site.new" "$DIR/site"
+  rm -rf "$DIR/site.old" "$tmp"
+  echo "  Lantern${v:+ $v} is in the kit ($DIR/site)"
+}
+
+# engine_dir os -- this computer's engine folder: engine/<os>; on Linux
+# engine/linux-<cpu> instead when engine/linux holds programs for another kind
+# of CPU (a stick shared by a laptop and a Raspberry Pi keeps both).
+engine_dir() {
+  if [ "$1" != linux ]; then echo "$1"; return 0; fi
+  a="linux-$(uname -m)"
+  if [ -e "$DIR/engine/$a/llama-server" ] || [ -e "$DIR/engine/$a/kiwix/kiwix-serve" ]; then echo "$a"; return 0; fi
+  for f in "$DIR/engine/linux/llama-server" "$DIR/engine/linux/kiwix/kiwix-serve"; do
+    if [ -f "$f" ] && ! this_cpu "$f"; then echo "$a"; return 0; fi
+  done
+  echo linux
+}
+this_cpu() {  # file -- false only for a program (ELF) made for another kind of CPU
+  [ "$(head -c 4 "$1" 2>/dev/null | od -An -c | tr -d ' \n')" = "177ELF" ] || return 0
+  m=$(od -An -tx1 -j18 -N2 "$1" 2>/dev/null | tr -d ' \n')
+  case "$(uname -m)" in
+    x86_64|amd64) [ "$m" = 3e00 ] ;;
+    aarch64|arm64) [ "$m" = b700 ] || [ "$m" = 2800 ] ;;   # 32-bit Raspberry Pi OS on a 64-bit kernel runs 32-bit ones
+    armv*) [ "$m" = 2800 ] ;;
+    *) return 0 ;;
+  esac
+}
+# engine_fault folder -- prints "ok" when the kit's engine starts on this
+# computer (asked with --version, which exits at once), else why it does not.
+engine_fault() {
+  d="$DIR/engine/$1"
+  [ -f "$d/llama-server" ] || { echo "it is not in the kit"; return 0; }
+  chmod +x "$d/llama-server" 2>/dev/null || true
+  if out=$(cd "$d" && LD_LIBRARY_PATH="$d${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" DYLD_LIBRARY_PATH="$d${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" \
+           ./llama-server --version 2>&1); then echo ok; return 0; fi
+  line=$(printf '%s\n' "$out" | grep -m 1 -E "GLIBC|GLIBCXX|not found|No such file|Exec format|Permission denied|cannot execute" || true)
+  [ -n "$line" ] || line=$(printf '%s\n' "$out" | grep -v '^ *$' | tail -n 1 || true)
+  echo "${line:-it stopped at once}"
+}
+# engine_ready -- setup: the engine must start here. When the ready-made one
+# cannot (Raspberry Pi OS Bookworm and other older systems lack the newer
+# system libraries it was built against), offer to build one on this computer.
+engine_ready() {
+  why=$(engine_fault "$ENGD") || why="it could not be checked"
+  if [ "$why" = ok ]; then echo "  the engine starts on this computer"; return 0; fi
+  echo ""
+  q "  The AI engine does not start on this computer: $why"
+  case "$why" in
+    *GLIBC*) q "  It was made for newer Linux systems than this one (Raspberry Pi OS Bookworm, Ubuntu 22.04 and older)." ;;
+    *"Permission denied"*) if fs_type | grep -qiE '^(msdos|vfat|fat)'; then
+      q "  This drive is FAT32, and Linux cannot start programs from a FAT32 drive."
+      q "  Reformat the stick as exFAT, or copy the Lantern folder onto this computer, then set up again."
+      ui "FAIL fat32"; return 1; fi ;;
+  esac
+  if [ "$OS" != linux ]; then ui "FAIL engine"; return 1; fi
+  q "  Lantern can build the engine on this computer instead. That takes about 10 to 20 minutes"
+  q "  on a Raspberry Pi 5 (less on most laptops) and about 1 GB of space while it builds."
+  ans=$(ask build "Build the AI engine on this computer"); QTEXT=""
+  if [ "$ans" != yes ]; then echo "  Not built. To build it later: ./setup-kit.sh build-engine"; ui "FAIL engine"; return 1; fi
+  build_engine
+}
+# build_engine -- compile llama-server (llama.cpp $BUILD, the same version the
+# ready-made engines are) on this computer and put it in engine/linux/. One
+# static program, so nothing else is needed next to it.
+build_engine() {
+  ui "STEP build Building the AI engine on this computer"
+  for t in cc c++ make; do
+    if ! command -v $t >/dev/null 2>&1; then
+      echo "  Cannot build: '$t' is missing. Install the build tools first (Debian, Ubuntu, Raspberry Pi OS:"
+      echo "  sudo apt install build-essential), then run ./setup-kit.sh build-engine"; ui "FAIL tools"; return 1
+    fi
+  done
+  B="${LANTERN_BUILD_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/lantern-build}"   # on this computer: a stick may not hold symlinks
+  mkdir -p "$B" || { echo "  cannot make the build folder $B"; ui "FAIL build"; return 1; }
+  CMAKE=$(command -v cmake 2>/dev/null || true)
+  if [ -z "$CMAKE" ] && [ -x "$B/venv/bin/cmake" ]; then CMAKE="$B/venv/bin/cmake"; fi
+  if [ -z "$CMAKE" ]; then
+    echo "  getting cmake (the build tool) with pip"
+    if ! { python3 -m venv "$B/venv" && "$B/venv/bin/pip" install --disable-pip-version-check -q cmake; }; then
+      echo "  Could not get cmake. Install it (sudo apt install cmake), then run ./setup-kit.sh build-engine"; ui "FAIL tools"; return 1
+    fi
+    CMAKE="$B/venv/bin/cmake"
+  fi
+  src="$B/llama.cpp-$BUILD"
+  if [ ! -f "$src/CMakeLists.txt" ]; then
+    rm -f "$B/source.tar.gz.part"   # source archives do not resume
+    fetch "$LLAMA_SRC" "$B/source.tar.gz" || { echo "  could not download the llama.cpp source"; ui "FAIL net"; return 1; }
+    rm -rf "$src.unpack"; mkdir -p "$src.unpack"
+    tar -xzf "$B/source.tar.gz" -C "$src.unpack"
+    top=$(find "$src.unpack" -mindepth 1 -maxdepth 1 -type d | head -n 1)
+    if [ -z "$top" ] || [ ! -f "$top/CMakeLists.txt" ]; then echo "  the llama.cpp source archive is not what was expected"; rm -rf "$src.unpack" "$B/source.tar.gz"; ui "FAIL source"; return 1; fi
+    mv "$top" "$src"; rm -rf "$src.unpack" "$B/source.tar.gz"
+  fi
+  # one compile job per CPU core, but each of llama.cpp's big files can take
+  # nearly 2 GB to compile, and the desktop needs its share
+  cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
+  jobs=$(awk -v c="$cores" -v m="$(mem_mb)" 'BEGIN { j = int((m - 1000) / 1800); if (j > c) j = c; if (j < 1) j = 1; print j }')
+  echo "  building llama-server with $jobs of $cores cores (the percentage is the build's own)"
+  "$CMAKE" -S "$src" -B "$src/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=ON \
+    -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_APP=OFF -DLLAMA_OPENSSL=OFF \
+    -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF -DGGML_CCACHE=OFF > "$B/configure.log" 2>&1 ||
+    { tail -n 20 "$B/configure.log"; echo "  the build could not start (log: $B/configure.log)"; ui "FAIL build"; return 1; }
+  "$CMAKE" --build "$src/build" --config Release --target llama-server -j "$jobs" ||
+    { echo "  the build stopped. Run ./setup-kit.sh build-engine to try again (it carries on where it stopped)."; ui "FAIL build"; return 1; }
+  bin="$src/build/bin/llama-server"
+  if ! "$bin" --version >/dev/null 2>&1; then echo "  the engine was built but does not start"; ui "FAIL build"; return 1; fi
+  d="$DIR/engine/$ENGD"; mkdir -p "$d"
+  find "$d" -maxdepth 1 \( -type f -o -type l \) -exec rm -f {} +   # the ready-made engine; kiwix/ stays
+  if ! { cp "$bin" "$d/llama-server" && chmod +x "$d/llama-server"; }; then echo "  could not copy the engine into $d"; ui "FAIL build"; return 1; fi
+  echo "llama.cpp $BUILD, built on this computer ($(uname -m), $(date +%Y-%m-%d))" > "$d/BUILT-HERE.txt"
+  rm -rf "$src" "$B/venv" "$B/configure.log"; rmdir "$B" 2>/dev/null || true   # only what the build made
+  echo "  engine built for this computer"
 }
 
 # Models, best first: id, file-name pattern, name, repo, file, GB, memory (MB) needed.
@@ -130,8 +333,7 @@ kiwix_plat() {
   esac
 }
 kiwix_tools() {
-  case "$(uname -s)" in Darwin) kos=mac ;; *) kos=linux ;; esac
-  kt="$DIR/engine/$kos/kiwix"
+  kt="$DIR/engine/$ENGD/kiwix"
   if [ -x "$kt/kiwix-serve" ]; then echo "  have kiwix-serve"; return 0; fi
   plat=$(kiwix_plat); list=$(listing "$KIWIX_BASE/release/kiwix-tools/") || { echo "  could not list $KIWIX_BASE/release/kiwix-tools/"; return 1; }
   asset=$(printf '%s' "$list" | grep -o "href=\"[^\"]*kiwix-tools_$plat-[0-9][0-9.-]*\.tar\.gz\"" | sed 's/^href="//; s/"$//; s#.*/##' | sort -u | sort -V | tail -n 1)
@@ -140,8 +342,8 @@ kiwix_tools() {
   fi
   if [ -z "$asset" ]; then echo "  no kiwix-tools for $plat at $KIWIX_BASE/release/kiwix-tools/"; return 1; fi
   tmp=$(mktemp -d)
-  fetch "$KIWIX_BASE/release/kiwix-tools/$asset" "$tmp/$asset"
-  tar -xzf "$tmp/$asset" -C "$tmp"
+  fetch "$KIWIX_BASE/release/kiwix-tools/$asset" "$tmp/$asset" || { rm -rf "$tmp"; return 1; }
+  tar -xzf "$tmp/$asset" -C "$tmp" || { echo "  $asset is damaged"; rm -rf "$tmp"; return 1; }
   bin=$(find "$tmp" -type f -name kiwix-serve | head -n 1)
   if [ -z "$bin" ]; then echo "  no kiwix-serve inside $asset"; rm -rf "$tmp"; return 1; fi
   mkdir -p "$kt"; cp -R "$(dirname "$bin")"/. "$kt/"; chmod +x "$kt"/kiwix-* 2>/dev/null || true
@@ -151,7 +353,7 @@ kiwix_tools() {
 get_zim() {  # url -- into library/, checked against the published SHA-256
   mkdir -p "$LIBRARY"; f=$(basename "$1"); dest="$LIBRARY/$f"; fresh=1
   [ -s "$dest" ] && fresh=""
-  fetch "$1" "$dest"
+  fetch "$1" "$dest" || return 1
   [ -n "$fresh" ] || return 0
   want=$(listing "$1.sha256" 2>/dev/null | awk '{ print tolower($1); exit }') || want=""
   if printf '%s' "$want" | grep -qE '^[0-9a-f]{64}$'; then
@@ -216,14 +418,58 @@ no_room() {  # prints why this model cannot go on this drive, or nothing
     echo "it needs $(awk -v g="$T_GB" 'BEGIN { print g + 1 }') GB free and this drive has $fr GB"
   fi
 }
-ask() {  # prints yes / no / nothing (no keyboard). "ask optin": a very large
-  # download -- only Y says yes; no answer means not now (asked next time).
+ask() {  # [kind] [title] -- prints yes / no / nothing (no keyboard). The
+  # question is the q lines printed just before. Kinds: "optin" a very large
+  # download -- only Y says yes; no answer means not now (asked next time);
+  # "build" build the engine here (N is not remembered).
   if [ "${LANTERN_AUTO_DOWNLOAD:-}" = 1 ]; then echo yes; return; fi
+  if [ -n "${LANTERN_UI:-}" ]; then   # the installer window asks; its buttons send y, n or nothing
+    { echo "@@ASK ${1:-ask} ${2:-Lantern}"; printf '%s' "$QTEXT" | sed 's/^/@@Q /'; echo "@@END"; } >&2
+    a=""; read -r a || true
+    case "$a" in n*|N*) echo no ;; y*|Y*) echo yes ;; esac
+    return
+  fi
+  if [ -n "${LANTERN_POPUP:-}" ] && a=$(popup_ask "${1:-}" "${2:-Lantern}"); then [ -z "$a" ] || echo "$a"; return; fi
   if [ ! -t 0 ]; then echo "  (no keyboard here, so not now)" >&2; return; fi
   if [ "${1:-}" = optin ]; then d="not now"; else d="yes"; fi
-  printf "  Download it now?  Y = yes   N = no, and don't ask again   (%s in 30 s) " "$d" >&2
+  if [ "${1:-}" = build ]; then printf "  Build it now?  Y = yes   N = no   (yes in 30 s) " >&2
+  else printf "  Download it now?  Y = yes   N = no, and don't ask again   (%s in 30 s) " "$d" >&2; fi
   if command -v bash >/dev/null 2>&1; then a=$(bash -c 'read -r -t 30 a; echo "$a"'); else read -r a; fi
   case "$a" in n*|N*) echo no ;; y*|Y*) echo yes ;; *) [ "${1:-}" = optin ] || echo yes ;; esac
+}
+# popup_ask kind title -- the question as a dialog (zenity, kdialog or, on a
+# Mac, osascript): prints yes / no / nothing (not now); fails when no dialog
+# could be shown, and the question is then asked in the terminal instead.
+popup_ask() {
+  # It runs in $(...), where set -e still holds: each dialog's status is caught with || r=$?
+  msg=$(printf '%s' "$QTEXT" | sed 's/^ *//' | awk 'BEGIN { ORS = "" } NR > 1 { print " " } { print }')
+  yes="Download it"; no="No, don't ask again"
+  if [ "$1" = build ]; then yes="Build it"; no=""; fi
+  case "$LANTERN_POPUP" in
+    zenity)
+      command -v zenity >/dev/null 2>&1 || return 1
+      if [ -n "$no" ]; then
+        r=0; a=$(zenity --question --title="$2" --width=460 --no-markup --text="$msg" --ok-label="$yes" --cancel-label="Not now" --extra-button="$no" 2>/dev/null) || r=$?
+      else
+        r=0; a=$(zenity --question --title="$2" --width=460 --no-markup --text="$msg" --ok-label="$yes" --cancel-label="Not now" 2>/dev/null) || r=$?
+      fi
+      if [ -n "$no" ] && [ "$a" = "$no" ]; then echo no; return 0; fi
+      case $r in 0) echo yes ;; 1) ;; *) return 1 ;; esac; return 0 ;;
+    kdialog)
+      command -v kdialog >/dev/null 2>&1 || return 1
+      r=0
+      if [ -n "$no" ]; then kdialog --title "$2" --yesnocancel "$msg" --yes-label "$yes" --no-label "$no" --cancel-label "Not now" >/dev/null 2>&1 || r=$?
+      else kdialog --title "$2" --yesno "$msg" --yes-label "$yes" --no-label "Not now" >/dev/null 2>&1 || r=$?; if [ $r -eq 1 ]; then r=2; fi; fi
+      case $r in 0) echo yes ;; 1) echo no ;; 2) ;; *) return 1 ;; esac; return 0 ;;
+    osascript)
+      command -v osascript >/dev/null 2>&1 || return 1
+      if [ -n "$no" ]; then buttons="{\"$no\", \"Not now\", \"$yes\"}"; else buttons="{\"Not now\", \"$yes\"}"; fi
+      a=$(osascript -e 'on run argv' \
+        -e "set r to display dialog (item 1 of argv) with title (item 2 of argv) buttons $buttons default button \"$yes\" with icon note" \
+        -e 'return button returned of r' -e 'end run' "$msg" "$2" 2>/dev/null) || return 1
+      case "$a" in "$yes") echo yes ;; "Not now") ;; *) echo no ;; esac; return 0 ;;
+  esac
+  return 1
 }
 # reach: prints why the model site cannot give this file, or nothing. It does
 # NOT follow the redirect: Hugging Face sends large files from signed storage
@@ -259,6 +505,11 @@ plan() {
     P_ID=$T_ID; P_WHY=""; return 0
   done
 }
+bg_get() {  # log what -- "setup-kit.sh get what" in the background, in a session of
+  # its own (setsid) so that stopping Lantern's window never stops the download
+  if command -v setsid >/dev/null 2>&1; then setsid nohup "$DIR/setup-kit.sh" get "$2" > "$1" 2>&1 < /dev/null &
+  else nohup "$DIR/setup-kit.sh" get "$2" > "$1" 2>&1 < /dev/null & fi
+}
 offer() {  # inline: 1 = download here, else in the background
   [ "${LANTERN_AUTO_DOWNLOAD:-}" = 0 ] && return 0
   shown=""
@@ -277,9 +528,10 @@ offer() {  # inline: 1 = download here, else in the background
     fi
     tier "$P_ID"; mem=$(mem_mb)
     echo ""
-    echo "  This computer has $(( mem / 1024 )) GB of memory: it can run $T_NAME ($T_GB GB download),"
-    echo "  a stronger model than any in this kit. $T_NOTE"
-    ans=$(ask)
+    ui "STEP more A stronger AI model"
+    q "  This computer has $(( mem / 1024 )) GB of memory: it can run $T_NAME ($T_GB GB download),"
+    q "  a stronger model than any in this kit. $T_NOTE"
+    ans=$(ask "" "A stronger AI model"); QTEXT=""
     [ -n "$ans" ] || return 0
     if [ "$ans" = no ]; then
       : > "$MODELS/.skip-$T_ID"
@@ -288,10 +540,10 @@ offer() {  # inline: 1 = download here, else in the background
     fi
     if [ "${1:-}" = 1 ]; then   # setup: download it here, then look again (the library comes next)
       get_tier "$T_ID"
-      if ! have "$T_PAT"; then echo "  $T_NAME did not download properly; run ./setup-kit.sh $T_ID to try again."; return 0; fi
+      if ! have "$T_PAT"; then echo "  $T_NAME did not download properly; run ./setup-kit.sh $T_ID to try again."; ui "WARN $T_NAME did not finish downloading. Run Install Lantern again to carry on where it stopped."; return 0; fi
       continue
     fi
-    nohup "$DIR/setup-kit.sh" get "$T_ID" > "$MODELS/download-$T_ID.log" 2>&1 &
+    bg_get "$MODELS/download-$T_ID.log" "$T_ID"
     echo "  Downloading in the background (progress: models/download-$T_ID.log)."
     echo "  Lantern starts now with the model it has; start it again when the download is done."
     return 0
@@ -312,13 +564,17 @@ offer_library() {
   libinfo "$LP_ID"
   listing "$KIWIX_BASE/zim/$L_FOLDER/" >/dev/null 2>&1 || return 0
   echo ""
-  echo "  Lantern can also keep an offline encyclopedia for the AI to read: $L_NAME,"
-  echo "  about $T_GB GB. Fact questions are then answered from it, with quotes Lantern checks."
-  ans=$(ask)
+  ui "STEP library An offline encyclopedia"
+  q "  Lantern can also keep an offline encyclopedia for the AI to read: $L_NAME,"
+  q "  about $T_GB GB. Fact questions are then answered from it, with quotes Lantern checks."
+  ans=$(ask "" "Offline encyclopedia"); QTEXT=""
   [ -n "$ans" ] || return 0
   if [ "$ans" = no ]; then : > "$MODELS/.skip-library"; echo "  Not asking again. To get it later: ./setup-kit.sh library"; return 0; fi
-  if [ "${1:-}" = 1 ]; then get_library "$LP_ID"; return 0; fi
-  nohup "$DIR/setup-kit.sh" get "$LP_ID" > "$MODELS/download-library.log" 2>&1 &
+  if [ "${1:-}" = 1 ]; then
+    if ! get_library "$LP_ID"; then echo "  The encyclopedia did not finish. Run setup again to carry on (./setup-kit.sh library)."; ui "WARN The encyclopedia did not finish downloading. Run Install Lantern again to carry on where it stopped."; fi
+    return 0
+  fi
+  bg_get "$MODELS/download-library.log" "$LP_ID"
   echo "  Downloading in the background (progress: models/download-library.log)."
   echo "  Start Lantern again when it is done to use the library."
 }
@@ -355,14 +611,18 @@ offer_full() {  # never unasked: not in unattended set-ups
   full_plan
   [ -n "$FP_URL" ] || return 0
   echo ""
-  echo "  Lantern can also keep the FULL English Wikipedia: every article, text without pictures,"
-  echo "  about $FP_GB GB (a long download -- hours). Explanation questions in Chat (\"explain\","
-  echo "  \"in detail\", \"how does\") are then read from whole articles; quick facts keep the small file."
-  ans=$(ask optin)
+  ui "STEP library The full Wikipedia"
+  q "  Lantern can also keep the FULL English Wikipedia: every article, text without pictures,"
+  q "  about $FP_GB GB (a long download -- hours). Explanation questions in Chat (\"explain\","
+  q "  \"in detail\", \"how does\") are then read from whole articles; quick facts keep the small file."
+  ans=$(ask optin "The full Wikipedia"); QTEXT=""
   [ -n "$ans" ] || return 0
   if [ "$ans" = no ]; then : > "$MODELS/.skip-library-full"; echo "  Not asking again. To get it later: ./setup-kit.sh library-full"; return 0; fi
-  if [ "${1:-}" = 1 ]; then get_full; return 0; fi
-  nohup "$DIR/setup-kit.sh" get library-full > "$MODELS/download-library-full.log" 2>&1 &
+  if [ "${1:-}" = 1 ]; then
+    if ! get_full; then echo "  The full Wikipedia did not finish. Run ./setup-kit.sh library-full to carry on."; ui "WARN The full Wikipedia did not finish downloading. Run Install Lantern again to carry on where it stopped."; fi
+    return 0
+  fi
+  bg_get "$MODELS/download-library-full.log" library-full
   echo "  Downloading in the background (progress: models/download-library-full.log; it resumes if stopped)."
   echo "  Start Lantern again when it is done."
 }
@@ -371,6 +631,14 @@ check() {
   echo "Memory: $(awk -v m="$mem" 'BEGIN { printf "%.1f", m / 1024 }') GB"
   echo "Drive: $(fs_type), $(free_gb) GB free"
   echo "Kit folder: $DIR"
+  site=$(site_dir)
+  if [ -n "$site" ]; then v=$(lantern_version "$site"); echo "Lantern: ${v:+$v, }$site"
+  else echo "Lantern: not in the kit (./setup-kit.sh lantern downloads it)"; fi
+  why=$(engine_fault "$ENGD") || why="it could not be checked"
+  if [ "$why" = ok ]; then echo "Engine: llama.cpp starts on this computer$([ -f "$DIR/engine/$ENGD/BUILT-HERE.txt" ] && echo ' (built here)')$([ "$ENGD" = "$OS" ] || echo " (engine/$ENGD)")"
+  elif [ "$why" = "it is not in the kit" ]; then echo "Engine: not in the kit (./setup-kit.sh engine)"
+  elif [ "$OS" = linux ]; then echo "Engine: does not start here: $why (./setup-kit.sh build-engine builds one for this computer)"
+  else echo "Engine: does not start here: $why"; fi
   for id in $TIERS; do
     tier "$id"
     if [ "$mem" -ge "$T_MEM" ]; then fits="runs here"; else fits="needs $(( T_MEM / 1024 )) GB memory"; fi
@@ -381,7 +649,7 @@ check() {
   done
   plan
   printf '%s' "$P_NOTES" | sed 's/^/  /; s/$/./'
-  case "$(uname -s)" in Darwin) kos=mac ;; *) kos=linux ;; esac
+  kos=$ENGD
   if have_library; then
     for z in "$LIBRARY"/*.zim; do
       printf 'Library: %s (%s)%s\n' "$(basename "$z")" "$(du -h "$z" | awk '{print $1}')" "$([ -x "$DIR/engine/$kos/kiwix/kiwix-serve" ] || echo ' -- kiwix-serve missing: ./setup-kit.sh library')"
@@ -405,9 +673,29 @@ check() {
 GPU=""; SETS=""
 for a in "$@"; do case "$a" in gpu) GPU=1 ;; *) SETS="$SETS $a" ;; esac; done
 set -- $SETS
+LNX="llama-$BUILD-bin-ubuntu-x64.tar.gz"; WIN="llama-$BUILD-bin-win-cpu-x64.zip"
+if [ -n "$GPU" ]; then LNX="llama-$BUILD-bin-ubuntu-vulkan-x64.tar.gz"; WIN="llama-$BUILD-bin-win-vulkan-x64.zip"; fi
+case "$(uname -m)" in aarch64|arm64) LNX="llama-$BUILD-bin-ubuntu-arm64.tar.gz"; MACA="llama-$BUILD-bin-macos-arm64.tar.gz" ;;
+  *) MACA="llama-$BUILD-bin-macos-x64.tar.gz" ;; esac
+case "$(uname -s)" in
+  Darwin) OS=mac; THIS="$MACA" ;;
+  *) OS=linux; THIS="$LNX" ;;
+esac
+ENGD=$(engine_dir "$OS")
 case "${1:-}" in
   offer) offer 0 || true; exit 0 ;;
   check) check; exit 0 ;;
+  info)  # for the installer window: what this computer and the kit have, as key=value
+    mem=$(mem_mb)
+    echo "mem_mb=$mem"; echo "free_gb=$(free_gb)"; echo "fs=$(fs_type)"; echo "os=$OS"; echo "dir=$DIR"
+    if [ "$mem" -ge 7000 ]; then tier laptop; echo "base=$T_NAME"; echo "base_gb=$T_GB"; echo "vision_gb=0.8"
+    else tier 0.8b; echo "base=Qwen3.5 0.8B and 2B"; echo "base_gb=1.9"; echo "vision_gb=0"; fi
+    if have "$T_PAT"; then echo "have_base=1"; fi
+    for id in $TIERS; do tier "$id"; if have "$T_PAT"; then echo "best=$T_NAME"; break; fi; done
+    why=$(engine_fault "$ENGD") || why="it could not be checked"; echo "engine=$why"
+    if have_library; then echo "have_library=1"; fi
+    site=$(site_dir); if [ -n "$site" ]; then echo "have_site=1"; echo "site=$site"; fi
+    exit 0 ;;
   get)   # one model or the library, in the background (from offer)
     if [ "${2:-}" = library-full ]; then
       echo $$ > "$MODELS/.downloading-library-full"
@@ -432,18 +720,13 @@ case "${1:-}" in
     echo "Done. Stop Lantern (Ctrl+C) and start it again to use $T_NAME."
     exit 0 ;;
 esac
-LNX="llama-$BUILD-bin-ubuntu-x64.tar.gz"; WIN="llama-$BUILD-bin-win-cpu-x64.zip"
-if [ -n "$GPU" ]; then LNX="llama-$BUILD-bin-ubuntu-vulkan-x64.tar.gz"; WIN="llama-$BUILD-bin-win-vulkan-x64.zip"; fi
-case "$(uname -m)" in aarch64|arm64) LNX="llama-$BUILD-bin-ubuntu-arm64.tar.gz"; MACA="llama-$BUILD-bin-macos-arm64.tar.gz" ;;
-  *) MACA="llama-$BUILD-bin-macos-x64.tar.gz" ;; esac
-
 echo "Lantern kit setup (llama.cpp $BUILD)"
-case "$(uname -s)" in
-  Darwin) OS=mac; THIS="$MACA" ;;
-  *) OS=linux; THIS="$LNX" ;;
-esac
 if [ -z "$SETS" ]; then
-  engine "$OS" "$THIS"
+  get_lantern || exit 1
+  ui "STEP engine Getting the AI engine (llama.cpp $BUILD)"
+  engine "$ENGD" "$THIS"
+  engine_ready || exit 1
+  ui "STEP model Getting the AI model"
   if [ "$(mem_mb)" -ge 7000 ]; then get_tier laptop; else phone; fi
   offer 1 || true
 fi
@@ -457,9 +740,12 @@ for s in $SETS; do
     library-full) get_full || true ;;
     vision) for id in $TIERS; do tier "$id"; if have "$T_PAT"; then get_vision; fi; done ;;
     phone) phone ;;
-    usb) engine linux "$LNX"; engine windows "$WIN"; engine mac "llama-$BUILD-bin-macos-arm64.tar.gz"; phone; get_tier laptop; get_tier big ;;
-    engine) engine "$OS" "$THIS" ;;
+    lantern) get_lantern new || exit 1 ;;
+    usb) get_lantern || exit 1; engine linux "$LNX"; engine windows "$WIN"; engine mac "llama-$BUILD-bin-macos-arm64.tar.gz"; phone; get_tier laptop; get_tier big ;;
+    engine) engine "$ENGD" "$THIS"; engine_ready || exit 1 ;;
+    build-engine) if [ "$OS" != linux ]; then echo "build-engine is for Linux computers"; exit 1; fi; build_engine || exit 1 ;;
     *) if tier "$s"; then get_tier "$s"; else echo "unknown option: $s"; fi ;;
   esac
 done
+ui "DONE"
 echo "Done. Start Lantern with ./start-lantern.sh (or start-lantern.bat on Windows)."

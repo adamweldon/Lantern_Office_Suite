@@ -44,13 +44,34 @@ with **MAKE CODE**; Lantern checks them and opens them in Code Lab, and says
 whether one was adapted from a tested example. The turtle tile is now
 **Turtle Code**, for beginners and children.
 
+## Install on a computer (with its AI) -- two double-clicks
+
+1. Download the zip (green **Code** button above -> **Download ZIP**) and extract it.
+2. Double-click the installer for your computer, at the top of the folder:
+
+| Computer | Double-click | The first time |
+|---|---|---|
+| Windows | `Install Lantern (Windows).bat` | If Windows asks, choose **More info -> Run anyway** |
+| Mac | `Install Lantern (Mac).command` | If macOS refuses: **System Settings -> Privacy & Security -> Open Anyway** |
+| Raspberry Pi, Linux | `Install Lantern (Linux).desktop` (shows as **Install Lantern**) | If asked, choose **Execute** |
+
+It downloads, once, the AI engine and the AI model that suits the computer's
+memory (and Lantern itself, when the `kit` folder was copied on its own), then asks in popups whether to add a stronger model and an offline
+encyclopedia. On a Raspberry Pi or Linux it opens Lantern's own window with
+each step and a progress bar. When the ready-made engine cannot start (older
+systems such as Raspberry Pi OS Bookworm), it offers to build one on the
+computer (10 to 20 minutes on a Raspberry Pi 5). At the end it offers to start
+Lantern. After that, double-click **Start Lantern** for your computer; keep its
+window open while you use Lantern. Other Linux file managers: right-click
+`kit/lantern-kit.sh` -> Run as a program, or type `sh kit/lantern-kit.sh install`.
+
 ## Three ways to run it
 
 | Where | How |
 |---|---|
 | Any device, no AI | Open `Lantern_Office_Suite.html` (one file, works offline). |
 | Phone or any browser, with AI | The website build in `site/`, published with GitHub Pages: open it, Add to Home Screen, download a model once in the **AI** app. |
-| Laptop / USB stick, with AI | `kit/`: run `setup-kit` once, then `start-lantern` (see `kit/README.txt`). It uses the biggest model the computer's memory can run and offers to download a bigger one when the kit lacks it. Phones on the same Wi-Fi can share the laptop's model. |
+| Laptop / USB stick, with AI | Double-click **Install Lantern**, then **Start Lantern** (above). From a terminal: `kit/setup-kit` once, then `kit/start-lantern` (see `kit/README.txt`). It uses the biggest model the computer's memory can run and offers to download a bigger one when the kit lacks it. Phones on the same Wi-Fi can share the laptop's model. |
 
 ### Publishing the website (GitHub Pages)
 
@@ -113,6 +134,7 @@ npm test
 - **AI layer**: engine routing, same-origin server detection, Assist and Chat through `Lantern.aiRoute`, the AI app and its panels, Lantern Bench graded against a perfect and a bad fake model, safety rules, answer-sentence checks, unit words, the everyday recipe cards, Earth-radius checks, checks of each formula against its question and the one correction turn
 - **offline library**: search, read and passage-cutting against a stand-in kiwix-serve built from real kiwix-serve replies (five Wikipedia lead sections, CC BY-SA), the citation check (quotes must be in their passage, numbers in the cited passages), the reading turn in Assist and Chat, Chat reading first for explanation questions and checking each sentence against the passages, infobox facts, a small and a full book of one family used side by side, fact grading in the bench, the library panel, and no probing from public web addresses
 - **AI makes things**: MAKE blocks (schematics, pictures, tables) found and checked, schematic layout on Draw's grid (loops, parallel rungs, one-terminal parts, polarity), circuit checks (closed loop, loose parts, unknown parts), pictures on the 20 x 12 grid, tables worked out by the sheet engine (empty-cell and text references caught), the Chat flow with one corrected block, Open in Draw (the person's drawing kept) and Open in Sheets, the look turn only when llama-server reports vision, and bench grading of the make questions; 1.12.5: junctions folded so a parallel circuit draws as a ladder, ammeters and voltmeters, note lines with {= ...} worked out on the picture, and the Ohm's-law follow-up Chat (numbers from the schematic made earlier count as given, a branch current stated in the answer is a used step, a NEED about a voltage source is not a library question); 1.12.7: a wire to an undeclared junction1 or GND makes that part, words on a drawing that run together, are cut off or are written twice go back once, and MAKE WHEEL (every word inside its wedge, no clashes; formulas in the wrong part, written twice or wrong for V = 12, I = 3, R = 4, P = 36 caught; colour wheels in their own colours; the 35B's power-wheel drawing sent back and corrected as a wheel in one Chat turn)
+- **Install by double-click** (1.13.1): the kit window on a virtual screen -- a whole install with its questions as popups, the menu entry and desktop icon, installed again, Start (loading, ready, share with phones on the Wi-Fi address, stop), already running, no internet, start before install; the launchers opened the way Raspberry Pi OS's file manager and GLib open them; setup's window protocol, zenity popups, Windows message boxes falling back, an engine that cannot start (Bookworm's glibc) and building it here
 - **Waiting for the kit's model** (1.12.8): the page opened while llama-server still answers 503 "Loading model" shows a progress bar (model name and size, time so far and left), connects by itself when the model is ready and remembers how long it took; the corner button; asking while it loads; a saved page with the server off; nothing on a host with no model server
 - **AI makes documents, slides, flashcards, plans; READ** (1.12): the MAKE DOC, SLIDES, CARDS and PLAN parsers and their checks (headings, lists, tables and bold for Writer; at most 7 points a slide; cards with both sides and no repeats; dates worked out by Lantern -- month ends, weekdays, day-and-month, nothing in the past -- and the Planner's repeats), the apps' own doors (`slideDocs`, `cardDocs`, `plannerDocs`), the prompt offering only the kind asked about, the command list saying where each opens, the Chat flow (Open in Writer / Slides / Flashcards, Add to Planner, made once however often tapped), the READ command (page, pages, section, words, "the last page", pages past the end, nothing found) and a conversation that READs words and then a section not yet read, and the four new bench questions graded with their ideal replies; 1.12.2: requests to make something from an attached document (the whole text and the MAKE instructions, not a question about it), READ: all, sentences about the document as a whole, and the Save .pdf file itself (header, cross-reference offsets, fonts, bullets, table rules, page numbers)
 - **Puzzles**: the TRACK (things in a row and what they hold), TURN (a cube or a walker) and SOLVE (clue puzzles, by trying every arrangement) tools on the puzzles a 35B model was given, reworded ones, Einstein's five-house puzzle, knights and liars, a missing clue and contradicting clues; the text functions (REVERSE, REMOVE, LEN ...); Chat handing a puzzle to Lantern (results back for the answer, one correction, the tools on request, off for the bench's "alone" runs); the reasoning bench graded against a perfect model and against the 35B's real answers without the tools

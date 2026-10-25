@@ -1,5 +1,81 @@
 # Changelog
 
+## 1.13.1 — Install by double-click; the engine built on the computer when it must be (2026-10-25)
+
+Adam asked for setup to be easy: download the zip from GitHub, extract it,
+double-click one file, and everything else happens, with popups saying
+clearly what to do. Testing on a Raspberry Pi 500 showed why it was not:
+double-clicking `setup-kit.sh` opened it in Geany, and choosing the terminal
+under Open With only opened a terminal with nothing to run.
+
+- **Install Lantern / Start Lantern at the top of the folder**, one pair per
+  system: `(Windows).bat`, `(Mac).command`, `(Linux).desktop`. A desktop
+  entry runs on Raspberry Pi OS whether or not the zip kept the files'
+  "may run" mark (its file manager asks Execute once); the command finds the
+  folder from the entry's own place (libfm passes the folder, GLib the file,
+  both tested, with a space in the path too).
+- **Lantern's own window on Linux and the Raspberry Pi** (`kit/lantern-kit.py`,
+  Python 3 with Tk, which Raspberry Pi OS has): what will be downloaded and
+  the room for it; then the steps, the file being fetched, size, speed and
+  time left; the questions as popups (Download it / Not now / No, don't ask
+  again; Not now is the default for the full Wikipedia); a failure page that
+  says why (no internet, drive full, FAT32 stick) with Try again; at the end
+  a menu entry and a desktop icon, and Start Lantern now. Start Lantern is a
+  window too: the model, loading then ready, Open Lantern, Share with phones
+  (restarts on the Wi-Fi address and shows it), Stop; closing it stops the AI.
+  Without Tk it opens a terminal, with popups when zenity or kdialog is there.
+- The window drives the same scripts as the terminal (`LANTERN_UI=1`: steps,
+  files and questions as `@@` lines, answers on stdin), so what is fetched and
+  asked is decided in one place. `LANTERN_POPUP=zenity|kdialog|osascript` asks
+  the same questions in dialogs from a terminal (the Mac installer uses it);
+  `setup-kit.ps1` asks in message boxes with `LANTERN_POPUP=1` (the Windows
+  installer sets it) and falls back to the window when none can show.
+- **The engine must start here.** Setup now runs the engine once
+  (`--version`). The ready-made Linux arm64 engine for b11435 needs GLIBC 2.38
+  and GCC 13's libstdc++, so it cannot start on Raspberry Pi OS Bookworm
+  (glibc 2.36) or Ubuntu 22.04. Setup says so and offers to **build the engine
+  on the computer**: the llama.cpp source of the same build, one static
+  `llama-server` (no libraries beside it), cmake fetched with pip when it is
+  missing; about 5 minutes on two laptop cores, 10 to 20 on a Raspberry Pi 5.
+  Also `setup-kit.sh build-engine`, and `check` says whether the engine starts.
+- The engine's library symlinks are copied as plain files: an exFAT stick
+  cannot hold symlinks, so setup on a stick stopped there on Linux.
+- **A download that breaks off is no longer kept as whole.** `set -e` does not
+  hold inside functions called from `&&`, so a model cut off part way was
+  renamed into place and the GGUF header check passed. Now the download is
+  tried again twice from where it stopped, then setup stops with the `.part`
+  kept, and the next run carries on (tested against a server that drops the
+  line a third of the way in). Extras that do not finish are said on the
+  window's last page.
+- **A stick shared by computers with different CPUs** (a laptop and a Pi)
+  keeps one engine each: when `engine/linux` holds another CPU's programs,
+  this computer's go in `engine/linux-<cpu>`, and start-lantern uses them.
+  Before, setup said "have engine" and the build would have replaced the
+  other computer's engine.
+- Stopping Lantern's window never stops a download that runs in the
+  background (they run in a session of their own), start-lantern waits for its
+  servers on the way out (so Share with phones restarts cleanly) and stops at
+  once when the engine dies at the start; on the Start window a question
+  answers Not now by itself after a minute, so Lantern still starts.
+- **Lantern itself comes with the install.** Tested on a Windows laptop, the
+  installer fetched the models and Wikipedia, but Lantern was missing: the kit
+  had always expected the repository's `site/` beside it (or a copy made by
+  hand), and a `kit` folder on its own had none. Setup now looks for Lantern
+  first (`kit/site`, then the repository's `site/`); when neither is there it
+  downloads the main branch from GitHub (about 10 MB), checks it holds Lantern
+  and puts `site/` into the kit, with `lantern-version.txt`. `setup-kit lantern`
+  fetches the newest (an update), keeping the one in use until the new one is
+  in place. Start says plainly when Lantern is missing instead of starting the
+  engine with nothing to serve; `check` names Lantern's version and place.
+  Shell and PowerShell both; the Linux window shows it as the first step.
+- `setup-kit.sh info` gives the window the facts as key=value lines.
+- Tests: `kit_offer.py` adds the window's questions and answers, the popups
+  (a stand-in zenity), an engine that cannot start, building it (a stand-in
+  source tree) and the symlinks; it also runs on a Raspberry Pi now (arm64
+  engine stand-in). New `kit_window.py` runs the window on Xvfb: a whole
+  install, installed again, start/share/stop, already running, offline, start
+  before install, and both launchers opened as libfm and GLib open them.
+
 ## 1.13.0 — Code Lab: real programs, checked; the AI writes them (2026-10-23)
 
 Adam asked for a coding module with more power than the turtle: Arduino,

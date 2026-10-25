@@ -5,10 +5,31 @@ Lantern with its AI on a Windows, Mac or Linux computer, with no internet
 after setup. The same folder works from a USB stick (format it exFAT so model
 files over 4 GB fit).
 
+Double-click (the easy way)
+  At the top of the Lantern folder (the zip from GitHub, extracted):
+    Install Lantern (Windows).bat / (Mac).command / (Linux).desktop
+    Start Lantern   (Windows).bat / (Mac).command / (Linux).desktop
+  Install asks its questions in popups (stronger model? encyclopedia?) and
+  shows the downloads; on Linux and the Raspberry Pi it is a window of its
+  own (lantern-kit.py, Python 3 with Tk) with the steps and a progress bar,
+  and Start Lantern is a window too: Open Lantern, Share with phones, Stop.
+  The first time: Windows "More info > Run anyway"; macOS "System Settings >
+  Privacy & Security > Open Anyway"; Raspberry Pi "Execute".
+  On Linux without Tk it opens a terminal (popups when zenity or kdialog is
+  there); from a terminal: sh lantern-kit.sh install | start.
+  When the ready-made Linux engine cannot start here (it is built for newer
+  systems: Raspberry Pi OS Bookworm, Ubuntu 22.04 and older lack GLIBC 2.38),
+  setup offers to build one on this computer: setup-kit.sh build-engine.
+  A stick used by computers with different CPUs (a laptop and a Raspberry
+  Pi) keeps one engine each: engine/linux and engine/linux-<cpu>.
+
 Folder layout
   start-lantern.bat / .command / .sh   start Lantern (Windows / Mac / Linux)
   setup-kit.bat / .sh                   fetch the engine and models (once)
-  site/                                 Lantern itself (copy from the repo)
+  lantern-kit.py / .sh                  the Linux window for both (double-click set-up)
+  site/                                 Lantern itself: the repo's site/ beside kit/, or
+                                        kit/site (setup fetches it from GitHub when
+                                        neither is there; "setup-kit lantern" updates it)
   engine/windows|mac|linux/             llama.cpp llama-server (setup fills it)
   engine/<system>/kiwix/                kiwix-serve, for the library (setup fills it)
   models/                               .gguf model files (setup fills it)
@@ -43,6 +64,11 @@ Folder layout
               each; new 4B/9B/35B downloads bring theirs along): the AI can
               then look at the drawings it makes in Chat
      check    show what this computer can run and what the kit has
+     lantern  the newest Lantern from GitHub into kit/site (also to update it;
+              setup fetches it by itself when the kit has none)
+     build-engine   build llama-server here from the llama.cpp source (Linux;
+              about 10-20 minutes on a Raspberry Pi 5). Needs a C++ compiler
+              (build-essential); cmake is fetched with pip when missing
      gpu      Vulkan engine (graphics card) instead of the CPU-only one
 
 2. Start

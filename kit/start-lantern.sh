@@ -16,9 +16,13 @@
 # background while Lantern starts; the next start uses it.
 # Folder layout (USB stick or this repository):
 #   site/  engine/linux/ or engine/mac/  models/*.gguf  start-lantern.sh
+# "Start Lantern (Linux).desktop" runs this from Lantern's own window
+# (kit/lantern-kit.py) with LANTERN_UI=1: it follows along by @@ lines on
+# stderr (MODEL, URL, PHONE, FAIL) and answers setup-kit's questions on stdin.
 set -u
+ui() { if [ -n "${LANTERN_UI:-}" ]; then printf '@@%s\n' "$*" >&2; fi; return 0; }
 DIR="$(cd "$(dirname "$0")" && pwd)"
-SITE="$DIR/site"; [ -d "$SITE" ] || SITE="$DIR/../site"
+SITE="$DIR/site"; [ -f "$SITE/index.html" ] || SITE="$DIR/../site"
 MODELS="$DIR/models"; [ -d "$MODELS" ] || MODELS="$DIR/../models"
 LIBRARY="$DIR/library"; [ -d "$LIBRARY" ] || LIBRARY="$DIR/../library"
 LIBRARY_PORT="${LIBRARY_PORT:-8081}"
@@ -46,10 +50,22 @@ case "$(uname -s)" in
   *)      OS=linux; MEM=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo) ;;
 esac
 [ -n "${LANTERN_MEM_MB:-}" ] && MEM=$LANTERN_MEM_MB   # pretend, for testing
-BIN="$DIR/engine/$OS/llama-server"
+# This computer's engine folder: engine/linux-<cpu> when setup made one (a stick
+# shared by computers with different CPUs), else engine/<os>.
+ENG="$DIR/engine/$OS"
+if [ "$OS" = linux ]; then
+  A="$DIR/engine/linux-$(uname -m)"
+  if [ -e "$A/llama-server" ] || [ -e "$A/kiwix/kiwix-serve" ]; then ENG="$A"; fi
+fi
+if [ ! -f "$SITE/index.html" ]; then
+  echo "Lantern itself is not in this folder (no site/index.html beside start-lantern.sh or"
+  echo "next to its folder). Run ./setup-kit.sh (Install Lantern) first: it downloads it."
+  ui "FAIL nosite"; exit 1
+fi
+BIN="$ENG/llama-server"
 [ -x "$BIN" ] || BIN="$(command -v llama-server 2>/dev/null || true)"
 if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
-  echo "llama-server not found. Run ./setup-kit.sh first (needs internet once)."; exit 1
+  echo "llama-server not found. Run ./setup-kit.sh first (needs internet once)."; ui "FAIL noengine"; exit 1
 fi
 
 # A bigger model for this computer? (asks once; downloads in the background)
@@ -72,7 +88,7 @@ elif [ "$MEM" -ge 5000 ]; then M=$(pick 2B 0.8B 4B 9B 35B-A3B "")
 else M=$(pick 0.8B 2B 4B 9B 35B-A3B "")
 fi
 if [ -z "${M:-}" ] || [ ! -f "$M" ]; then
-  echo "No model in $MODELS. Run ./setup-kit.sh, or copy a .gguf file there."; exit 1
+  echo "No model in $MODELS. Run ./setup-kit.sh, or copy a .gguf file there."; ui "FAIL nomodel"; exit 1
 fi
 
 NGL="-ngl 0"
@@ -89,17 +105,18 @@ if [ -n "$VISION" ]; then
   done
 fi
 echo "Lantern: $(basename "$M") on $OS with ${MEM} MB memory"
+ui "MODEL $(basename "$M")"
 [ -n "$MMPROJ" ] && echo "Vision: $(basename "$MMPROJ") (the AI can look at the pictures it makes)"
 echo "Open http://127.0.0.1:$PORT/ (this window must stay open; Ctrl+C stops it)"
 if [ "$HOST" = 0.0.0.0 ]; then
   if [ "$OS" = mac ]; then IPS=$(ipconfig getifaddr en0 2>/dev/null; ipconfig getifaddr en1 2>/dev/null)
   else IPS=$(hostname -I 2>/dev/null); fi
-  for ip in $IPS; do echo "Phones on this network: http://$ip:$PORT/"; done
+  for ip in $IPS; do echo "Phones on this network: http://$ip:$PORT/"; ui "PHONE http://$ip:$PORT/"; done
 fi
 
 # The offline library: kiwix-serve on port 8081 with every ZIM in library/.
 # Lantern finds it there by itself (AI app > Offline library).
-KIWIX="$DIR/engine/$OS/kiwix/kiwix-serve"; [ -x "$KIWIX" ] || KIWIX="$(command -v kiwix-serve 2>/dev/null || true)"
+KIWIX="$ENG/kiwix/kiwix-serve"; [ -x "$KIWIX" ] || KIWIX="$(command -v kiwix-serve 2>/dev/null || true)"
 KPID=""
 if ls "$LIBRARY"/*.zim >/dev/null 2>&1; then
   if [ -n "$KIWIX" ] && [ -x "$KIWIX" ]; then
@@ -127,7 +144,9 @@ else
   "$BIN" -m "$M" --path "$SITE" --host "$HOST" --port "$PORT" -c 8192 $NGL &
 fi
 PID=$!
-trap 'kill $PID $KPID 2>/dev/null' INT TERM EXIT
+# On the way out, stop the servers and wait for them, so the address is free
+# again at once (Lantern's window restarts on it to share with phones).
+trap 'kill $PID $KPID 2>/dev/null; wait' INT TERM EXIT
 # Open Lantern as soon as the server answers (503 while the model loads):
 # the page shows a progress bar and connects by itself when the model is
 # ready. It is told the model's name and size and when the server started.
@@ -135,12 +154,19 @@ i=0
 while [ $i -lt 60 ]; do
   code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PORT/health" 2>/dev/null)
   if [ -n "$code" ] && [ "$code" != "000" ]; then break; fi
+  kill -0 $PID 2>/dev/null || break   # the engine stopped at once: no need to wait for it
   sleep 0.5; i=$((i+1))
 done
+if ! kill -0 $PID 2>/dev/null; then
+  wait $PID; rc=$?
+  echo "The AI engine stopped (code $rc); the lines above say why. Run ./setup-kit.sh again: it checks the engine and can build one for this computer."
+  ui "FAIL stopped"; exit 1
+fi
 MBYTES=$(ls -ln "$M" 2>/dev/null | awk '{print $5}')
 VBYTES=0
 [ -n "$MMPROJ" ] && VBYTES=$(ls -ln "$MMPROJ" 2>/dev/null | awk '{print $5}')
 URL="http://127.0.0.1:$PORT/?kit=1&model=$(basename "$M" | sed 's/ /%20/g')&bytes=${MBYTES:-0}&vbytes=${VBYTES:-0}&t=$T0"
+ui "URL $URL"
 if [ -z "${NO_BROWSER:-}" ]; then
   if [ "$OS" = mac ]; then open "$URL"; else xdg-open "$URL" >/dev/null 2>&1 || true; fi
 fi
