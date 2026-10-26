@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.13.0 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.13.1 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -168,7 +168,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.13.0",
+  version: "1.13.1",
   apps: {},
   order: []
 };
@@ -16077,7 +16077,15 @@ Lantern.RFB = (function () {
       kw: ["kinetic", "energy", "joules", "moving"],
       pre: "Non-relativistic; use RELKE near light speed.",
       slots: [{ k: "m_kg", label: "Mass", unit: "kg" }, { k: "v_ms", label: "Speed", unit: "m/s" }],
-      compose: "=KE({m_kg},{v_ms})", out: "joules" }
+      compose: "=KE({m_kg},{v_ms})", out: "joules" },
+    // bench run 9: the 35B worked out km per litre, then litres for the
+    // trip, then multiplied by the 10 litres again (280 for 28)
+    { id: "trip-fuel", ask: "How much fuel does a trip need, from how far the vehicle goes on some fuel?",
+      kw: ["fuel", "litres", "liters", "petrol", "diesel", "gas", "trip", "journey", "drive", "km", "miles", "gallons", "need"],
+      pre: "The same fuel use per km for the whole trip.",
+      slots: [{ k: "trip_km", label: "Trip distance", unit: "km" }, { k: "km", label: "Distance on the known fuel", unit: "km" },
+              { k: "litres", label: "Fuel used for that distance", unit: "L" }],
+      compose: "={trip_km}*{litres}/{km}", out: "litres for the trip" }
   ];
 })();
 // ===========================================================================
@@ -16240,13 +16248,21 @@ Lantern.RFB = (function () {
     var r = Number(Number(v).toPrecision(5));
     return Lantern.fmtNum ? Lantern.fmtNum(r) : String(r);
   };
-  A.finalAnswer = function (answer, value) {
+  A.finalAnswer = function (answer, value, steps) {
     var text = String(answer || "");
+    // {ANS1}, {ANS2} ... ({ANS}: the last line): that line's result, a word
+    // or a number -- for an answer that names more than one result (1.13.1)
+    var had = /\x7BANS\d*\x7D/i.test(text);
+    if (had && steps && steps.length) text = text.replace(/\x7BANS(\d*)\x7D/gi, function (m, k) {
+      var st = k ? steps[+k - 1] : steps[steps.length - 1];
+      return !st || !st.ok ? "?" : typeof st.value === "string" ? st.value : A.fmtResult(st.value);
+    });
     // a text result (REVERSE, REMOVE ... -- TEXT_FUNCS) goes in as it is
     if (typeof value === "string") return { text: text.replace(/\{result\}/g, value), mismatch: false };
     if (value == null || !isFinite(value))
       return { text: text.replace(/\{result\}/g, "?"), mismatch: false, unchecked: /\d/.test(text.replace(/\{result\}/g, "")) };
     if (text.indexOf("{result}") !== -1) return { text: text.replace(/\{result\}/g, A.fmtResult(value)), mismatch: false };
+    if (had) return { text: text, mismatch: false };
     var nums = text.replace(/(\d),(\d{3})/g, "$1$2").match(/-?\d+(\.\d+)?(e[+-]?\d+)?/gi) || [];
     if (!nums.length) return { text: text, mismatch: false };
     var scales = [1, 1e3, 1e-3, 1e6, 1e-6, 60, 1 / 60, 3600, 1 / 3600, 100, 0.01];
@@ -16394,6 +16410,17 @@ Lantern.RFB = (function () {
     var flags = questioned(p, run, text);
     out.text = text; out.parsed = p; out.run = run; out.flags = flags;
     var bad = run.steps.filter(function (st) { return !st.ok; });
+    // a NEED Lantern can answer itself (how many in a dozen, metres in a
+    // mile -- Lantern.aiNeedAnswer): one more turn with the fact (1.13.1)
+    var na = p.need && !p.exprText && opts.retries !== 0 && window.Lantern.aiNeedAnswer ? window.Lantern.aiNeedAnswer(p.need, question) : null;
+    if (na) {
+      out.needAnswered = na;
+      msgs.push({ role: "assistant", content: text });
+      msgs.push({ role: "user", content: na + "\nNow reply with the = lines and the ANSWER line." });
+      text = relabel(await turn()); p = A.parseReply(text); run = A.run(p.exprText);
+      flags = questioned(p, run, text); bad = run.steps.filter(function (st) { return !st.ok; });
+      out.text = text; out.parsed = p; out.run = run; out.flags = flags;
+    }
     if (p.need || opts.retries === 0) return out;
     if (run.value != null && !flags.length) return out;
     if (run.value == null && !bad.length && !flags.length) return out;
@@ -16987,7 +17014,8 @@ Lantern.RFB = (function () {
     out.push("second's). The results come back to you as");
     out.push("a TOOL RESULTS message; then reply with exactly one line 'ANSWER: <sentence with");
     out.push("{result} where the number goes>' -- Lantern puts its computed number there. The last =");
-    out.push("line must give the number in the unit you will name. Plain arithmetic is fine for");
+    out.push("line must give the number in the unit you will name ({ANS1}, {ANS2} ... put that line's result,");
+    out.push("a number or a word, in the sentence: never retype a result yourself). Plain arithmetic is fine for");
     out.push("money, counts and recipes. If a needed value is missing, reply 'NEED: <question>'.");
     // the AI may answer from its own knowledge, said so (CHAT_OWN_KNOWLEDGE,
     // 1.12.9); without that module, facts come only from Lantern
@@ -17190,7 +17218,7 @@ Lantern.RFB = (function () {
       content += "\n\n[Recipe hints]\n" + hl.join("\n");
     }
     var lastValue = null, questioned = false, stillDoubt = null, looked = false, sources = null, detail = false, nudged = false, showed = false, steered = false, pointed = false, madeShown = null,
-      puzzleRuns = 0, pzFixed = false, puzzled = false, helped = false, cmdRuns = 0, canMore = false;
+      puzzleRuns = 0, pzFixed = false, puzzled = false, helped = false, cmdRuns = 0, canMore = false, pzSelf = false, needHelped = false, lastSteps = null;
     currentQ = q;
     rec.self = A.aboutSelf(q); rec.noLibrary = A.noLibrary(q); rec.contextual = A.dependsOnContext(q, history);
     var ownWords = rec.self || rec.noLibrary;
@@ -17338,10 +17366,10 @@ Lantern.RFB = (function () {
       // bookkeeping exactly, shows every step, and sends the results back
       // for the ANSWER; a block it cannot finish goes back once (1.9.9).
       var PZ = puzzleOff ? null : window.Lantern.aiPuzzle;
-      var pz = PZ && puzzleRuns < 3 ? PZ.run(shown) : null;
+      var pz = PZ && puzzleRuns < 3 ? PZ.run(shown, q) : null;
       if (pz) {
         puzzleRuns++;
-        rec.puzzles.push({ kind: pz.block.kind, ok: pz.ok, problems: pz.problems.slice(), final: pz.final || "" });
+        rec.puzzles.push({ kind: pz.block.kind, ok: pz.ok, problems: pz.problems.slice(), final: pz.final || "", lines: pz.block.lines.slice(0, 40) });
         show(function () { return PZ.view(pz); });
         if (!pz.ok && !pzFixed) {
           pzFixed = true;
@@ -17353,6 +17381,16 @@ Lantern.RFB = (function () {
         if (pz.text) {
           puzzled = true;
           msgs.push({ role: "user", content: PZ.resultText(pz) + "\nNow answer the question from these results: reply ANSWER: <the answer>." });
+          continue;
+        }
+        // the corrected block failed too: the AI works it out itself rather
+        // than leave a block as the answer (1.13.1)
+        if (!pzSelf) {
+          pzSelf = true;
+          note("Lantern could not run the corrected block either (" + pz.problems.join("; ") + "), so the AI works it out itself\u2026", "danger");
+          msgs.push({ role: "user", content: "Lantern could not run that block either: " + pz.problems.join("; ") + ".\nWork the puzzle out yourself, step by step, " +
+            "without a " + pz.block.kind + " block, and end with ANSWER: <the answer>." });
+          puzzleRuns = 3;
           continue;
         }
         note("\u26a0 Lantern could not run the puzzle block, so the answer below is the AI\u2019s own.", "danger");
@@ -17411,6 +17449,15 @@ Lantern.RFB = (function () {
       // passages behind them. One reading turn per question; none when the
       // person asked for no library, and only an asked-for one for a
       // question about the AI itself.
+      // A NEED Lantern can answer itself (how many eggs in 3 dozen, metres
+      // in a mile -- Lantern.aiNeedAnswer): once, with the fact (1.13.1).
+      var needAns = parsed.need && !parsed.exprText && !needHelped && window.Lantern.aiNeedAnswer ? window.Lantern.aiNeedAnswer(parsed.need, q) : null;
+      if (needAns) {
+        needHelped = true; rec.needAnswered = needAns;
+        note("The AI asked \u201c" + parsed.need + "\u201d; Lantern knows that: " + needAns.replace(/^Lantern:\s*/, ""));
+        msgs.push({ role: "user", content: needAns + "\nNow reply with the = lines and the ANSWER line." });
+        continue;
+      }
       // Lantern's own lessons did not cover it (canMore): the encyclopedia
       // gets its look, even when the decline is a sentence, not an ANSWER.
       var moreLook = canMore && !!sources && /\bnot in my library\b/i.test(shown);
@@ -17467,6 +17514,7 @@ Lantern.RFB = (function () {
       if (ui.proposal) for (i = 0; i < props.length; i++) { p = props[i]; ui.proposal(p); }
       if (parsed.exprText) {
         var run = A.run(parsed.exprText);
+        lastSteps = run.steps;
         if (run.value != null) { lastValue = run.value; rec.value = run.value; }
         if (ui.tool) ui.tool(run);
         var resultText = C.toolText(run), doubts = [];
@@ -17523,7 +17571,7 @@ Lantern.RFB = (function () {
         stillDoubt = cdoubts.length ? cdoubts : null;
       }
       if (parsed.answer) {
-        var fa = A.finalAnswer ? A.finalAnswer(parsed.answer, lastValue) : { text: parsed.answer, mismatch: false };
+        var fa = A.finalAnswer ? A.finalAnswer(parsed.answer, lastValue, lastSteps) : { text: parsed.answer, mismatch: false };
         rec.answerText = fa.text;
         if (sources || puzzled) fa.unchecked = false;
         if (ui.answer) ui.answer(fa.text);
@@ -21924,11 +21972,15 @@ Lantern.RFB = (function () {
           // decline can be told apart from a passage without the answer (1.9.7)
           passages: g.pass ? undefined : res.sources.map(function (s) { return String(s.text || "").slice(0, 1500); }) } : null,
         rejected: res && res.rejected ? res.rejected.slice(0, 300) : "", flags: res && res.flags ? res.flags : [],
+        looked: res && res.looked ? (res.changedOnLook ? "changed it" : "kept it") : undefined, needAnswered: res && res.needAnswered || undefined,
         chat: res && res.turns ? res.turns.map(function (t) { return { q: t.q, searches: t.searches, self: t.self, noLibrary: t.noLibrary,
           contextual: t.contextual, carried: t.carried, declined: t.declined, pointed: t.pointed || undefined,
           catalog: t.catalog || undefined, commands: t.commands && t.commands.length ? t.commands.map(function (c) { return c.verb + (c.arg ? ": " + c.arg : ""); }) : undefined,
           puzzles: t.puzzles && t.puzzles.length ? t.puzzles.map(function (z) { return z.kind + (z.ok ? "" : ": " + z.problems.join("; ").slice(0, 200)); }) : undefined,
-          rounds: t.rounds, reply: String(t.final).slice(0, item.cat === "alone" ? 2500 : 500) }; }) : undefined,
+          // each block the AI wrote and what Lantern made of it, so a wrong
+          // answer can be traced to its line (bench run 9, 1.13.1)
+          blocks: t.puzzles && t.puzzles.length ? t.puzzles.map(function (z) { return { kind: z.kind, ok: z.ok, lines: z.lines, final: z.final || undefined, problems: z.problems.length ? z.problems : undefined }; }) : undefined,
+          needAnswered: t.needAnswered || undefined, rounds: t.rounds, reply: String(t.final).slice(0, item.cat === "alone" ? 2500 : 500) }; }) : undefined,
         tools: g.tools || undefined, answer: item.cat === "reason" || item.cat === "alone" ? String(g.answer || "").slice(0, 400) : undefined,
         ms: Date.now() - t0, tokens: err ? null : toks, tps: err || !toks ? null : Math.round(toks / Math.max(0.001, secs) * 10) / 10,
         reply: String(text).slice(0, item.cat === "make" ? 1500 : 600), first: res && res.rounds > 1 ? String(res.first).slice(0, item.cat === "make" ? 1500 : 600) : undefined };
@@ -22634,7 +22686,9 @@ Lantern.RFB = (function () {
       (s.stillQuestioned ? " \u00b7 " + s.stillQuestioned + " still questioned" : "") +
       (s.disagree ? " \u00b7 " + s.disagree + " sentence" + (s.disagree === 1 ? "" : "s") + " disagreed with Lantern" : "") +
       (s.byRule ? " \u00b7 " + s.byRule + " by safety rule" : "");
-    return "Lantern Bench " + (rep.quick ? "quick" : "full") + ": " + s.pass + "/" + s.n + " (" + s.score + "%) \u00b7 " + parts.join(", ") + extra +
+    // the version right after the score: bench run 10 was the old build again
+    // (the kit serves its site folder) and nothing on screen said so
+    return "Lantern Bench " + (rep.quick ? "quick" : "full") + ": " + s.pass + "/" + s.n + " (" + s.score + "%) \u00b7 Lantern " + rep.lantern + " \u00b7 " + parts.join(", ") + extra +
       " \u00b7 avg " + s.avgSeconds + " s/question" + (rep.prompt ? " \u00b7 " + rep.prompt + " prompt" : "") + (s.medianTps ? " \u00b7 ~" + s.medianTps + " tokens/s" : "") + " \u00b7 " + rep.model;
   }
   P.push({ id: "bench", title: "Lantern Bench", order: 40, render: function (box) {
@@ -22653,8 +22707,13 @@ Lantern.RFB = (function () {
       B.run({ quick: quick, signal: ctrl.signal, onItem: function (i, total, r) {
         prog.firstChild.style.width = Math.round(i / total * 100) + "%";
         status.textContent = "Question " + i + " of " + total;
+        // each puzzle is asked twice: with Lantern's puzzle tools, and again
+        // with them switched off to show what they add -- say which is which
+        // (bench run 9: the pairs looked like the same question asked twice)
+        var tag = r.cat === "reason" ? "Puzzle, with Lantern\u2019s puzzle tools" :
+          r.cat === "alone" ? "The same puzzle with Lantern\u2019s puzzle tools switched off \u2014 not scored" : "";
         tbody.appendChild(el("tr", {}, [
-          el("td", { text: r.q }),
+          el("td", {}, [el("div", { text: r.q }), tag ? el("div", { "class": "muted", style: "font-size:12px;margin-top:2px", text: tag }) : null]),
           el("td", {}, [el("span", { "class": r.pass ? "la-pass" : "la-fail", text: r.pass ? "pass" : "fail" }),
             el("div", { "class": "muted", text: (r.why || (r.value != null ? String(Math.round(r.value * 1e4) / 1e4) : "")) +
               (r.by === "rule" ? " (safety rule)" : "") + (r.claim === "disagrees" ? " \u00b7 its sentence disagreed" : "") +
@@ -22685,7 +22744,7 @@ Lantern.RFB = (function () {
         status.textContent = "Bench stopped: " + ((e && e.message) || e);
       }).then(function () { ctrl = null; });
     }
-    box.appendChild(el("p", { "class": "muted", text: "Real questions with answers Lantern proves on its own formula engine. A pass needs the right computed number, or a safe \u201cnot in my library\u201d where no tool applies. Keep the screen on while it runs." }));
+    box.appendChild(el("p", { "class": "muted", text: "Real questions with answers Lantern proves on its own formula engine. A pass needs the right computed number, or a safe \u201cnot in my library\u201d where no tool applies. Keep the screen on while it runs. This is Lantern " + L.version + "; the results record it." }));
     box.appendChild(el("div", { "class": "row" }, [
       el("button", { "class": "primary", text: "Quick run (" + nq + " questions)", onclick: function () { start(true); } }),
       el("button", { text: "Full run (" + n + ")", onclick: function () { start(false); } }),
@@ -24056,6 +24115,16 @@ Lantern.RFB = (function () {
       var text2 = await call(msgs); out.rounds++;
       var made2 = build(text2, q);
       if (made2) { made = made2; out.text = text2; out.fixed = made2.ok; }
+    }
+    // a model that sees is shown its picture once, as in Chat; a corrected
+    // block it sends is kept when Lantern can make it (bench run 9, 1.13.1)
+    var png = made && made.ok && made.png && L.ai && L.ai.canSee && L.ai.canSee() ? made.png() : null;
+    if (png) {
+      msgs.push({ role: "assistant", content: out.text });
+      msgs.push({ role: "user", content: [{ type: "text", text: lookText(made, q) }, { type: "image_url", image_url: { url: png } }] });
+      var text3 = await call(msgs); out.rounds++; out.looked = true;
+      var made3 = LOOKS.test(text3) ? null : build(text3, q);
+      if (made3 && made3.plan && made3.ok) { made = made3; out.text = text3; out.changedOnLook = true; }
     }
     out.made = made;
     return out;
@@ -25570,9 +25639,13 @@ Lantern.RFB = (function () {
       check: function (p) {
         var sun = p.shapes.filter(function (s) { return s.kind === "circle" && (YELLOW.test(s.fill || "") || YELLOW.test(s.color || "")); })[0];
         if (!sun) return "no yellow sun (a yellow circle)";
-        var sea = p.shapes.filter(function (s) { return s.kind !== "text" && (BLUE.test(s.fill || "") || BLUE.test(s.color || "")); })[0];
-        if (!sea) return "no blue sea";
-        var seaTop = sea.kind === "circle" ? sea.nums[1] - sea.nums[2] : Math.min.apply(null, sea.nums.filter(function (v, i) { return i % 2 === 1 && (sea.kind !== "rect" || i === 1); }));
+        // the sea is the lowest blue area: a light blue sky above it is not
+        // the sea (bench run 9, 1.13.1)
+        var seas = p.shapes.filter(function (s) { return s.kind !== "text" && (BLUE.test(s.fill || "") || BLUE.test(s.color || "")); });
+        if (!seas.length) return "no blue sea";
+        var seaTop = Math.max.apply(null, seas.map(function (sea) {
+          return sea.kind === "circle" ? sea.nums[1] - sea.nums[2] : Math.min.apply(null, sea.nums.filter(function (v, i) { return i % 2 === 1 && (sea.kind !== "rect" || i === 1); }));
+        }));
         return sun.nums[1] < seaTop ? "" : "the sun is not above the sea";
       } },
     // 1.9.8: a 35B Chat got stuck painting this sky one square at a time.
@@ -25804,13 +25877,21 @@ Lantern.RFB = (function () {
     });
     return out;
   }
-  // run(text) -> the first block's result, or null when there is none.
-  function run(text) {
+  // run(text, question) -> the first block's result, or null when there is
+  // none. A solver's check(block, question, result) -> [problems] compares
+  // the block with the question (TRACK: a place the puzzle describes but the
+  // block names -- AI_PUZZLE_CHECK, 1.13.1).
+  function run(text, question) {
     var bs = find(text);
     if (!bs.length) return null;
     var b = bs[0], s = solverFor(b.kind), r;
     try { r = s.run(b); } catch (e) { r = { problems: ["the block could not be read (" + ((e && e.message) || e) + ")"], steps: [] }; }
     r.block = b; r.solver = s; r.problems = r.problems || []; r.steps = r.steps || [];
+    if (!r.problems.length && s.check && question) {
+      var cp = [];
+      try { cp = s.check(b, String(question), r) || []; } catch (e) { cp = []; }
+      if (cp.length) { r.problems = cp; r.questioned = true; }
+    }
     r.ok = !r.problems.length;
     return r;
   }
@@ -25879,7 +25960,8 @@ Lantern.RFB = (function () {
 //   add Dee at last / remove Bo / take gold
 //   take silver from White           out of its holder (put it somewhere again)
 // Places: a name, position 3, first, last, middle, left of X, right of X,
-// 2 left of X, holder of gold (also "the cup holding gold").
+// 2 left of X, behind X / in front of X (a queue), holder of gold (also "the
+// cup holding gold").
 (function () {
   var L = window.Lantern;
   if (!L) return;
@@ -25919,7 +26001,9 @@ Lantern.RFB = (function () {
     return t + (h.length ? " | " + h.join(", ") : "");
   };
   // place(text) -> index in the row (throws with a reason)
-  var REL = /^(?:immediately|directly|just|to|left|right|\d+|one|two|three|four|five|holder|holding|with|containing|that|which|having)\b/i;
+  var REL = /^(?:immediately|directly|just|to|left|right|behind|ahead|before|after|in front|\d+|one|two|three|four|five|holder|holding|with|containing|that|which|having)\b/i;
+  // a direction: toward the first (left, front) is -1, toward the last +1
+  function dirOf(w) { return /^(left|before|in\s+front|ahead)/i.test(w) ? -1 : 1; }
   Track.prototype.place = function (text) {
     var s = clean(text), low = s.toLowerCase(), n = this.row.length, m, k;
     if (!s) throw new Error("a place is missing");
@@ -25931,16 +26015,18 @@ Lantern.RFB = (function () {
       if ((fixed = this.fixed(s)) != null) return fixed;
     }
     // "two places to its left": counted from the other thing in the line
-    if ((m = /^(?:(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:places?\s+|spots?\s+)?)?(?:immediately\s+|directly\s+|just\s+)?(?:to\s+|on\s+)?(?:its|their|his|her)\s+(left|right)$/i.exec(s))) {
+    if ((m = /^(?:(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:places?\s+|spots?\s+)?)?(?:immediately\s+|directly\s+|just\s+)?(?:to\s+|on\s+)?(?:(?:its|their|his|her)\s+(left|right)|(behind|in\s+front\s+of|ahead\s+of|before|after)\s+(?:it|them|him|her))$/i.exec(s))) {
       if (this.it == null) throw new Error("\u201c" + s + "\u201d: say from which thing, like 2 left of Green");
       k = m[1] ? count(m[1]) : 1;
-      var from = this.it, dest = from + (m[2].toLowerCase() === "left" ? -k : k);
+      var from = this.it, dest = from + dirOf(m[2] || m[3]) * k;
       if (dest < 0 || dest >= n) throw new Error(s + " is off the row (" + this.row[from] + " is at position " + (from + 1) + " of " + n + ")");
       return dest;
     }
-    if ((m = /^(?:(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:places?\s+|spots?\s+)?)?(?:immediately\s+|directly\s+|just\s+)?(?:to\s+)?(left|right)\s+of\s+(.+)$/i.exec(s))) {
+    // "left of X", "2 right of X"; in a queue (front to back) "behind X",
+    // "in front of X", "ahead of X" (a 35B's queue puzzle, 1.13.1)
+    if ((m = /^(?:(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:places?\s+|spots?\s+)?)?(?:immediately\s+|directly\s+|just\s+)?(?:to\s+)?(left\s+of|right\s+of|behind|in\s+front\s+of|ahead\s+of|before|after)\s+(.+)$/i.exec(s))) {
       k = m[1] ? count(m[1]) : 1;
-      var at = this.place(m[3]), to = at + (m[2].toLowerCase() === "left" ? -k : k);
+      var at = this.place(m[3]), to = at + dirOf(m[2]) * k;
       if (to < 0 || to >= n) throw new Error(s + " is off the row (" + this.row[at] + " is at position " + (at + 1) + " of " + n + ")");
       return to;
     }
@@ -26129,7 +26215,7 @@ Lantern.RFB = (function () {
       "take silver from White           silver comes out of its holder (then: put silver in ...)",
       "swap first and last              the two end ones swap",
       "reverse | add Dee at last | remove Bo | take gold",
-      "Places: a name, position 3, first, last, middle, left of Bo, 2 right of Bo, holder of gold",
+      "Places: a name, position 3, first, last, middle, left of Bo, 2 right of Bo, behind Bo / in front of Bo (a queue), holder of gold",
       "Write each place the way the puzzle says it at that step (the end cups: first and last; the middle cup: middle; the cup",
       "holding gold: holder of gold), never the name you think is there by then: Lantern works out who is there.",
       "END",
@@ -30866,8 +30952,13 @@ Lantern.RFB = (function () {
     { id: "doc-not-covered", doc: DOC, turns: ["How long is the warranty on this compressor?"],
       check: function (t) {
         var r = last(t), x = text(r);
-        if (/\b\d+\s*(year|month)s?\b/i.test(x) && !r.declined) return "gave a warranty the manual does not state";
-        return r.declined || /not (in|stated|mention|cover|say)|does not (say|state|mention|give)|no (warranty|information)/i.test(x) ? "" : "did not say the manual does not cover it";
+        // after saying the manual does not cover it, the AI may add what it
+        // knows in general, labelled "From my own knowledge" (1.12.9) -- but
+        // not a warranty for this compressor (bench run 9, 1.13.1)
+        var parts = x.split(/from my own knowledge\s*:?/i), head = parts[0], own = parts.slice(1).join(" ");
+        if (/\b\d+\s*(year|month)s?\b/i.test(head) && !r.declined) return "gave a warranty the manual does not state";
+        if (/\b(PX-?2200|this compressor|your compressor|this model|this unit)\b[^.]*\b\d+\s*(year|month)s?\b/i.test(own)) return "gave this compressor a warranty from its own knowledge";
+        return r.declined || /not (in|stated|mention|cover|say|given|provided)|does not (say|state|mention|give)|no (warranty|information)/i.test(x) ? "" : "did not say the manual does not cover it";
       } }
   ].forEach(function (x) {
     x.cat = "chat"; x.q = "[" + x.doc.title + "] " + x.turns.join(" \u2192 ");
@@ -31738,9 +31829,10 @@ Lantern.RFB = (function () {
   function cmdArg(reply, re) {
     var t = String(reply || ""), m = re.exec(t);
     if (!m) return null;
-    // the command line must open the reply, or the reply must be short
-    var first = t.replace(/^\s+/, "").split("\n")[0];
-    if (t.replace(/^\s+|\s+$/g, "").length > 240 && !re.test(first)) return null;
+    // the command line must open or close the reply, or the reply must be
+    // short (bench run 9: "...I need to read page 5.\n\nREAD: page 5")
+    var ls = t.replace(/^\s+|\s+$/g, "").split("\n"), first = ls[0], last = ls[ls.length - 1];
+    if (t.replace(/^\s+|\s+$/g, "").length > 240 && !re.test(first) && !re.test(last)) return null;
     return String(m[1] || "").replace(/[\x22\u201c\u201d*]/g, "").replace(/^\s+|\s+$/g, "");
   }
   if (S.passages) CMDS.push({ id: "lessons", verb: "LESSON", usage: "LESSON: <2 to 5 words, or a lesson title>",
@@ -32621,13 +32713,15 @@ Lantern.RFB = (function () {
   var TR = L.textReader, D = TR.docs;
   var CMDS = window.Lantern.chatCommands = window.Lantern.chatCommands || [];
   var SYS = window.Lantern.chatSystem = window.Lantern.chatSystem || [];
-  // the command line must open the reply, or the reply must be short, so a
-  // "read:" in the middle of an answer never sets it off
+  // the command line must open or close the reply, or the reply must be
+  // short, so a "read:" in the middle of an answer never sets it off (the
+  // AI often explains first: "...I need to read page 5.\n\nREAD: page 5" --
+  // bench run 9, 1.13.1)
   function arg(reply) {
     var t = String(reply || ""), re = /^[ \t*]*READ\s*:[ \t*]*([^\n]+)$/im, m = re.exec(t);
     if (!m) return null;
-    var first = t.replace(/^\s+/, "").split("\n")[0];
-    if (t.replace(/^\s+|\s+$/g, "").length > 240 && !re.test(first)) return null;
+    var ls = t.replace(/^\s+|\s+$/g, "").split("\n"), first = ls[0], last = ls[ls.length - 1];
+    if (t.replace(/^\s+|\s+$/g, "").length > 240 && !re.test(first) && !re.test(last)) return null;
     return m[1].replace(/[\x22\u201c\u201d*]/g, "").replace(/^\s+|\s+$/g, "");
   }
   function readSoFar(doc) {
@@ -34603,7 +34697,8 @@ Lantern.RFB = (function () {
   function cmdArg(reply) {
     var t = String(reply || ""), re = /^[ \t*]*EXAMPLES?:[ \t*]*([^\n]+)$/m, m = re.exec(t);
     if (!m) return null;
-    if (t.trim().length > 240 && !re.test(t.replace(/^\s+/, "").split("\n")[0])) return null;
+    var ls = t.trim().split("\n");
+    if (t.trim().length > 240 && !re.test(ls[0]) && !re.test(ls[ls.length - 1])) return null;
     return m[1].replace(/[\x22\u201c\u201d*]/g, "").trim();
   }
   function card(list) {
@@ -34901,6 +34996,372 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: AI_CODE_BENCH_DATA - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_NEED_ANSWERS - START
+// Depends: FORMULA (Lantern.formula, for CONVERT) -- feature-detected
+// Exports: Lantern.aiNeedAnswer(need, question) -> text or null
+// ===========================================================================
+// A NEED Lantern can answer itself (bench run 9, 1.12.9): asked what 3 dozen
+// eggs cost at 12 shillings each, the 35B replied "NEED: How many eggs are in
+// 3 dozen?" -- a fact Lantern knows, so the person was asked for nothing.
+// Counting words (a dozen is 12, a score 20, a gross 144 ...) and "how many
+// <unit> in a <unit>" that CONVERT knows are answered; a value only the
+// person knows (their battery, their goats) is not. Assist and Chat send the
+// answer back to the AI for one more turn.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var COUNT = [["half a dozen", 6], ["half dozen", 6], ["dozen", 12], ["score", 20], ["gross", 144], ["pair", 2], ["ream", 500],
+    ["decade", 10], ["century", 100], ["fortnight", 14]];
+  var WORDNUM = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12, twenty: 20 };
+  function fmt(v) { return L.fmtNum ? L.fmtNum(Math.round(v * 1e6) / 1e6) : String(Math.round(v * 1e6) / 1e6); }
+  function words(t) { return String(t || "").toLowerCase().replace(/[^a-z0-9.\s-]/g, " ").split(/\s+/).map(function (w) { return w.replace(/\.+$/, ""); }).filter(Boolean); }
+  // the number just before a counting word ("3 dozen", "two dozen")
+  function countBefore(ws, at) {
+    var w = ws[at - 1];
+    if (w == null) return null;
+    if (/^\d+(\.\d+)?$/.test(w)) return parseFloat(w);
+    return WORDNUM[w] != null ? WORDNUM[w] : null;
+  }
+  // asked about, not owned: "in 3 dozen", "is a dozen", "how many in a score"
+  // -- not "how many pairs of shoes do you have"
+  var ASKED = { "in": 1, is: 1, are: 1, make: 1, makes: 1, equal: 1, equals: 1 };
+  function asked(ws, j) {
+    var k = j - 1;
+    if (k >= 0 && (/^\d+(\.\d+)?$/.test(ws[k]) || WORDNUM[ws[k]] != null)) k--;
+    if (k >= 1 && ws[k] === "a" && ws[k - 1] === "half") k -= 2;
+    return k >= 0 && !!ASKED[ws[k]];
+  }
+  function counting(need, q) {
+    var nw = words(need), n = " " + nw.join(" ") + " ", i;
+    for (i = 0; i < COUNT.length; i++) {
+      var w = COUNT[i][0], v = COUNT[i][1], first = w.split(" ")[0], hit = -1;
+      if (n.indexOf(" " + w + " ") < 0 && n.indexOf(" " + w + "s ") < 0) continue;
+      for (var t = 0; t < nw.length && hit < 0; t++) if ((nw[t] === first || nw[t] === first + "s") && asked(nw, t)) hit = t;
+      if (hit < 0) continue;
+      // how many: from the NEED, else from the question ("3 dozen eggs")
+      var k = null;
+      [need, q].some(function (t) {
+        var ws = words(t), first = w.split(" ")[0];
+        for (var j = 0; j < ws.length; j++) if (ws[j] === first || ws[j] === first + "s") { k = countBefore(ws, j); if (k != null && k !== 1) return true; k = null; }
+        return false;
+      });
+      return "Lantern: a " + w + " is " + v + (k != null ? ", so " + fmt(k) + " " + w + " is " + fmt(k * v) : "") + ".";
+    }
+    return null;
+  }
+  // "How many metres are in a mile?", "how many grams in 2 pounds"
+  var UNITW = { metres: "m", meters: "m", metre: "m", meter: "m", kilometres: "km", kilometers: "km", kilometre: "km", kilometer: "km",
+    centimetres: "cm", centimeters: "cm", millimetres: "mm", millimeters: "mm", inches: "in", inch: "in", feet: "ft", foot: "ft", yards: "yd", yard: "yd",
+    miles: "mile", grams: "g", gram: "g", kilograms: "kg", kilogram: "kg", kilos: "kg", kilo: "kg", pounds: "lb", pound: "lb", ounces: "oz", ounce: "oz",
+    tonnes: "tonne", litres: "l", liters: "l", litre: "l", liter: "l", millilitres: "ml", milliliters: "ml", gallons: "gal", gallon: "gal",
+    seconds: "s", second: "s", minutes: "min", minute: "min", hours: "hr", hour: "hr", days: "day" };
+  function unitOf(w) { w = String(w || "").toLowerCase(); return UNITW[w] || w.replace(/s$/, ""); }
+  function units(need) {
+    var m = /how many\s+([a-z]+)\s+(?:are\s+|is\s+)?(?:there\s+)?in\s+(a|an|one|\d+(?:\.\d+)?)\s+([a-z]+)/i.exec(String(need || ""));
+    if (!m || !L.formula || !L.formula.evaluate) return null;
+    var k = /^\d/.test(m[2]) ? parseFloat(m[2]) : 1, to = unitOf(m[1]), from = unitOf(m[3]), v;
+    try { v = L.formula.evaluate("CONVERT(" + k + ",\x22" + from + "\x22,\x22" + to + "\x22)", { deg: false, ans: 0 }); } catch (e) { return null; }
+    if (typeof v !== "number" || !isFinite(v)) return null;
+    return "Lantern: " + fmt(k) + " " + m[3] + " is " + fmt(v) + " " + m[1] + " (=CONVERT(" + k + ",\x22" + from + "\x22,\x22" + to + "\x22)).";
+  }
+  window.Lantern.aiNeedAnswer = function (need, question) {
+    if (!need) return null;
+    return counting(need, question) || units(need);
+  };
+})();
+// ===========================================================================
+// MODULE: AI_NEED_ANSWERS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_RESULT_CHECKS - START
+// Depends: (none at load) -- adds a check to the Lantern.assistChecks hook
+// Exports: Lantern.aiResultChecks = {close(a, b), check(question, expr, run, ctx)}
+// ===========================================================================
+// The AI's words against Lantern's results (bench run 9, 1.12.9). Asked to
+// spell "refrigerator" backwards and remove every r, the 35B wrote
+//     =REVERSE("refrigerator")    =REMOVE("rotarigerfer","r")   =LEN("otagiferfer")
+// -- Lantern worked out "rotaregirfer", but the next line typed the AI's own
+// misspelling of it instead of ANS -- and with the tools off it used ANS but
+// then wrote "otaeigef ... 8 letters" in the sentence (Lantern: "otaegife",
+// 12 for its LEN(ANS1)). Lantern only noted the mismatch. Now, once:
+//  - a = line that types out an earlier result with mistakes is questioned
+//    ("write ANS1 instead of typing a result out");
+//  - an ANSWER with no {result} or {ANSn} that spells a worked-out word
+//    differently, or states a number none of the lines gave, is questioned
+//    ("put {ANS2} where it goes; Lantern fills it in").
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var CHK = window.Lantern.assistChecks = window.Lantern.assistChecks || [];
+  function lev(a, b) {
+    var m = a.length, n = b.length, prev = [], cur, i, j;
+    for (j = 0; j <= n; j++) prev.push(j);
+    for (i = 1; i <= m; i++) {
+      cur = [i];
+      for (j = 1; j <= n; j++) cur.push(Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1)));
+      prev = cur;
+    }
+    return prev[n];
+  }
+  // close(a, b): the same word with slips -- same letters in another order,
+  // or a few letters off -- but not the same word
+  function close(a, b) {
+    a = String(a).toLowerCase(); b = String(b).toLowerCase();
+    if (a === b || a.length < 4 || b.length < 4 || Math.abs(a.length - b.length) > 2) return false;
+    if (a.split("").sort().join("") === b.split("").sort().join("")) return true;
+    return lev(a, b) <= Math.max(2, Math.round(Math.min(a.length, b.length) * 0.25));
+  }
+  function fmt(v) { return typeof v === "number" ? String(Math.round(v * 1e4) / 1e4) : "\u201c" + v + "\u201d"; }
+  function numbers(t) { return (String(t || "").replace(/(\d),(\d{3})/g, "$1$2").match(/-?\d+(\.\d+)?/g) || []).map(parseFloat); }
+  var SCALES = [1, 1e3, 1e-3, 1e6, 1e-6, 60, 1 / 60, 3600, 1 / 3600, 100, 0.01];
+  function near(x, v) { return SCALES.some(function (k) { var t = v * k; return Math.abs(x - t) <= Math.max(1e-9, Math.abs(t) * 0.02); }); }
+  function check(question, expr, run, ctx) {
+    var steps = run && run.steps || [], q = String(question || ""), ql = q.toLowerCase(), probs = [];
+    if (!steps.length) return null;
+    // 1. a line that types out an earlier result, with mistakes
+    steps.forEach(function (st, k) {
+      if (!k || probs.length > 1) return;
+      (String(st.expr || "").match(/\x22[^\x22]*\x22/g) || []).forEach(function (lit) {
+        lit = lit.slice(1, -1);
+        if (!lit || ql.indexOf(lit.toLowerCase()) >= 0) return;
+        for (var j = 0; j < k; j++) {
+          var v = steps[j];
+          if (v.ok && typeof v.value === "string" && close(lit, v.value)) {
+            probs.push("line " + (k + 1) + " types \u201c" + lit + "\u201d, but line " + (j + 1) + " gave \u201c" + v.value + "\u201d: write ANS" + (j + 1) + " instead of typing a result out");
+            return;
+          }
+        }
+      });
+    });
+    // 2. the ANSWER says a result differently, with nothing for Lantern to fill
+    var ans = ctx && ctx.parsed && ctx.parsed.answer ? String(ctx.parsed.answer) : "";
+    // the words the lines were given (REVERSE("stressed")) are inputs, not results
+    var inputs = String(expr || "").toLowerCase();
+    if (ans && !/\x7B(result|ANS\d*)\x7D/i.test(ans)) {
+      var said = {};
+      (ans.match(/[A-Za-z\u00c0-\u024f]{4,}/g) || []).forEach(function (w) {
+        if (said[w.toLowerCase()] || ql.indexOf(w.toLowerCase()) >= 0 || inputs.indexOf("\x22" + w.toLowerCase() + "\x22") >= 0) return;
+        steps.forEach(function (st, k) {
+          if (st.ok && typeof st.value === "string" && close(w, st.value) && !said[w.toLowerCase()]) {
+            said[w.toLowerCase()] = 1;
+            probs.push("the ANSWER spells \u201c" + w + "\u201d, but Lantern worked out \u201c" + st.value + "\u201d (line " + (k + 1) + "): put {ANS" + (k + 1) + "} where it goes; Lantern fills it in");
+          }
+        });
+      });
+      var qn = numbers(q), vals = steps.filter(function (st) { return st.ok && typeof st.value === "number"; }).map(function (st) { return st.value; });
+      var own = numbers(ans).filter(function (x) { return !qn.some(function (y) { return Math.abs(x - y) < 1e-9; }); });
+      if (own.length && vals.length && !own.some(function (x) { return vals.some(function (v) { return near(x, v); }); }))
+        probs.push("the ANSWER says " + own[0] + ", but Lantern\u2019s lines give " + vals.slice(-3).map(fmt).join(", ") + ": put {result} (the last line) or {ANS1}, {ANS2} ... where the numbers go");
+    }
+    return probs.length ? probs.slice(0, 3).join("; ") : null;
+  }
+  check.id = "results";
+  if (!CHK.some(function (c) { return c.id === "results"; })) CHK.push(check);
+  window.Lantern.aiResultChecks = { close: close, check: check };
+})();
+// ===========================================================================
+// MODULE: AI_RESULT_CHECKS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_PUZZLE_CHECK - START
+// Depends: AI_PUZZLE_TRACK (its solver in Lantern.aiSolvers) -- feature-detected
+// Exports: Lantern.aiPuzzleCheck = {named(block, question, result)}
+// ===========================================================================
+// A place the puzzle describes, written as a name (bench run 9, 1.12.9). In
+// the two-coin cup puzzle step 4 says "put it under the cup directly to the
+// left of the cup holding the gold coin"; the 35B wrote "put silver in Red",
+// naming the cup it thought was there (it was Blue), and Lantern tracked
+// that faithfully to a wrong answer -- the same puzzle the model got right
+// with the tools off. The puzzle's numbered steps never name Red: a step line
+// that names a thing the steps never name was worked out by the AI, which is
+// the bookkeeping Lantern is there to do. Such a block goes back once.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  function toks(t) { return String(t || "").toLowerCase().split(/[^a-z0-9\u00c0-\u024f]+/).filter(Boolean); }
+  function has(list, name) {   // the name's words, in a row, in the list
+    var n = toks(name), i, j;
+    if (!n.length) return false;
+    for (i = 0; i + n.length <= list.length; i++) {
+      for (j = 0; j < n.length && list[i + j] === n[j]; j++) { }
+      if (j === n.length) return true;
+    }
+    return false;
+  }
+  // named(block, question, result) -> problems
+  function named(block, q, r) {
+    var at = String(q).search(/(^|[\s:])1[.\x29]\s/);
+    if (at < 0 || !r || !r.row) return [];
+    var setup = toks(String(q).slice(0, at)), steps = toks(String(q).slice(at)), lines = block.lines, i = 0, out = [];
+    while (i < lines.length && /^(row|line|order|start|items|things|queue)\b/i.test(lines[i])) i++;
+    // the opening "put gold in Green" lines say what the set-up says
+    while (i < lines.length && /^(put|place|hide)\b/i.test(lines[i]) && r.row.every(function (n) { return !has(toks(lines[i]), n) || has(setup, n); })) i++;
+    for (; i < lines.length && out.length < 2; i++) {
+      var lt = toks(lines[i]);
+      r.row.forEach(function (n) {
+        if (out.length < 2 && has(lt, n) && !has(steps, n))
+          out.push("\u201c" + lines[i] + "\u201d names " + n + ", but the puzzle\u2019s steps never name " + n + ": write each place the way the step says it " +
+            "(left of holder of gold, middle, first and last, behind holder of ball), and Lantern works out who is there");
+      });
+    }
+    return out;
+  }
+  var tr = (window.Lantern.aiSolvers || []).filter(function (s) { return s.kind === "TRACK"; })[0];
+  if (tr && !tr.check) tr.check = named;
+  window.Lantern.aiPuzzleCheck = { named: named };
+})();
+// ===========================================================================
+// MODULE: AI_PUZZLE_CHECK - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_MAKE_LAYOUT - START
+// Depends: AI_ACTIONS (Lantern.aiActions: the drawing and doc actions),
+//          AI_SCHEMATIC (Lantern.aiSchematic.hooks) -- all feature-detected
+// Exports: Lantern.aiMakeLayout = {hidden(shapes), above(shapes, question),
+//          family(hex)}
+// ===========================================================================
+// What a model cannot see in its own block, checked by Lantern (bench run 9,
+// 1.12.9):
+//  - a shape painted over: the house's door and walls were drawn, then
+//    covered by two later rects -- shapes drawn later cover earlier ones;
+//  - "a yellow sun above a blue sea" where the blue rect fills the whole
+//    picture, so the sun sits inside the sea;
+//  - a parallel circuit's total resistance drawn as a fourth resistor
+//    ("part R_total resistor {=...}"): a total is a note, not a part;
+//  - a procedure written as plain lines: its steps go in a numbered list,
+//    so they print as steps.
+// Each goes back to the AI once, with the picture still shown.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var ACTS = window.Lantern.aiActions || [];
+  // colour families from a fill, by hue and lightness
+  function family(hex) {
+    var m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || "")), c = [];
+    if (!m) return "";
+    var r = parseInt(m[1], 16) / 255, g = parseInt(m[2], 16) / 255, b = parseInt(m[3], 16) / 255;
+    var mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn, h = 0;
+    var s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+    if (l > 0.93) return "white";
+    if (l < 0.13) return "black";
+    if (s < 0.12) return "gray";
+    if (mx === r) h = 60 * (((g - b) / d) % 6); else if (mx === g) h = 60 * ((b - r) / d + 2); else h = 60 * ((r - g) / d + 4);
+    if (h < 0) h += 360;
+    if ((h < 40 || h >= 345) && l < 0.42) return "brown";
+    return h < 15 || h >= 345 ? "red" : h < 40 ? "orange" : h < 66 ? "yellow" : h < 170 ? "green" : h < 255 ? "blue" : h < 290 ? "purple" : "pink";
+  }
+  var FAM = { red: "red", scarlet: "red", crimson: "red", orange: "orange", yellow: "yellow", gold: "yellow", golden: "yellow", green: "green",
+    blue: "blue", navy: "blue", sky: "blue", cyan: "blue", teal: "green", purple: "purple", violet: "purple", pink: "pink", brown: "brown",
+    black: "black", white: "white", grey: "gray", gray: "gray" };
+  function fill(s) { return s.fill || ""; }
+  // inside(s, x, y): a point in a filled shape on the 20 x 12 grid
+  function inside(s, x, y) {
+    var n = s.nums || [];
+    if (s.kind === "rect") return x >= n[0] && x < n[0] + n[2] && y >= n[1] && y < n[1] + n[3];
+    if (s.kind === "square") return x >= n[0] && x < n[0] + n[2] && y >= n[1] && y < n[1] + n[2];
+    if (s.kind === "circle") return (x - n[0]) * (x - n[0]) + (y - n[1]) * (y - n[1]) <= n[2] * n[2];
+    if (s.kind === "oval" || s.kind === "ellipse") return n[2] > 0 && n[3] > 0 && Math.pow((x - n[0]) / n[2], 2) + Math.pow((y - n[1]) / n[3], 2) <= 1;
+    if (s.kind === "tri" || s.kind === "triangle") {
+      var d1 = (x - n[2]) * (n[1] - n[3]) - (n[0] - n[2]) * (y - n[3]), d2 = (x - n[4]) * (n[3] - n[5]) - (n[2] - n[4]) * (y - n[5]),
+        d3 = (x - n[0]) * (n[5] - n[1]) - (n[4] - n[0]) * (y - n[1]);
+      return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+    }
+    return false;
+  }
+  var SOLID = /^(rect|square|circle|oval|ellipse|tri|triangle)$/;
+  function said(s) { return s.kind + " " + (s.nums || []).join(" ") + (s.fill ? " (" + (family(s.fill) || "filled") + ")" : ""); }
+  // hidden(shapes) -> [shape]: filled shapes no part of which is left in view
+  function hidden(shapes) {
+    var solid = shapes.filter(function (s) { return SOLID.test(s.kind) && fill(s); }), top = {}, mine = {}, out = [], x, y, i;
+    if (solid.length < 2) return out;
+    for (x = 0.125; x < 20; x += 0.25) for (y = 0.125; y < 12; y += 0.25) {
+      var last = -1;
+      for (i = 0; i < solid.length; i++) if (inside(solid[i], x, y)) { mine[i] = (mine[i] || 0) + 1; last = i; }
+      if (last >= 0) top[last] = (top[last] || 0) + 1;
+    }
+    solid.forEach(function (s, k) { if (mine[k] && (top[k] || 0) / mine[k] < 0.03) out.push(s); });
+    return out;
+  }
+  function box(s) {
+    var n = s.nums || [];
+    if (s.kind === "rect") return [n[1], n[1] + n[3]];
+    if (s.kind === "square") return [n[1], n[1] + n[2]];
+    if (s.kind === "circle") return [n[1] - n[2], n[1] + n[2]];
+    if (s.kind === "oval" || s.kind === "ellipse") return [n[1] - n[3], n[1] + n[3]];
+    if (/^tri/.test(s.kind)) return [Math.min(n[1], n[3], n[5]), Math.max(n[1], n[3], n[5])];
+    return null;
+  }
+  // above(shapes, question) -> problems: "an X above/below a Y" in the
+  // question, X and Y told apart by their colours
+  var REL = /\b([a-z]+)\s+([a-z]+)\s+(above|over|on top of|higher than|below|under|beneath|underneath|lower than)\s+(?:a|an|the)?\s*([a-z]+)\s+([a-z]+)/gi;
+  function above(shapes, q) {
+    var out = [], m;
+    REL.lastIndex = 0;
+    while ((m = REL.exec(String(q || ""))) && out.length < 2) {
+      var fa = FAM[m[1].toLowerCase()], fb = FAM[m[4].toLowerCase()];
+      if (!fa || !fb || fa === fb) continue;
+      var up = /^(above|over|on top of|higher than)$/i.test(m[3]);
+      var A = shapes.filter(function (s) { return SOLID.test(s.kind) && family(fill(s)) === fa; }), B = shapes.filter(function (s) { return SOLID.test(s.kind) && family(fill(s)) === fb; });
+      if (!A.length || !B.length) continue;
+      var ok = A.some(function (a) { var ya = box(a); return B.some(function (b) { var yb = box(b), ca = (ya[0] + ya[1]) / 2; return up ? ca < yb[0] : ca > yb[1]; }); });
+      if (ok) continue;
+      var a0 = A[0], b0 = B[0], ya = box(a0), yb = box(b0);
+      out.push("the request puts the " + m[1] + " " + m[2] + " " + m[3] + " the " + m[4] + " " + m[5] + ", but the " + m[4] + " " + said(b0).replace(/ \(.*\)$/, "") +
+        (up ? " starts at y " + yb[0] + ", above the middle of the " + m[2] + " (" + said(a0).replace(/ \(.*\)$/, "") + "): start the " + m[5] + " lower, below the " + m[2] + " (y " + Math.min(11, Math.ceil(ya[1]) + 1) + " or more), and paint what is above it as its own area" :
+          " reaches down to y " + yb[1] + ", below the middle of the " + m[2] + ": end the " + m[5] + " higher, or move the " + m[2] + " down"));
+    }
+    return out;
+  }
+  // --- drawings ---------------------------------------------------------------
+  var draw = ACTS.filter(function (a) { return a.id === "drawing"; })[0];
+  if (draw && !draw.layoutChecked) {
+    var b0 = draw.build;
+    draw.build = function (block, ctx) {
+      var r = b0.call(draw, block, ctx), shapes = r && r.plan && r.plan.shapes;
+      if (shapes && r.problems) {
+        hidden(shapes).slice(0, 3).forEach(function (s) {
+          r.problems.push("the " + said(s) + " is hidden under shapes drawn after it: shapes drawn later cover earlier ones, so draw the background first and what sits on it after (a door after the wall)");
+        });
+        above(shapes, ctx && ctx.question).forEach(function (p) { r.problems.push(p); });
+      }
+      return r;
+    };
+    draw.layoutChecked = true;
+    var at = draw.prompt.indexOf("END");
+    if (at > 0) draw.prompt.splice(at, 0, "Shapes drawn later cover earlier ones: the background first, then what sits on it (walls, then the door).",
+      "Things above or below each other get their own areas: a sky above, a sea or ground below (rect 0 8 20 4 fill blue); a roof is a tri on top of the walls.");
+  }
+  // --- schematics: a total is a note, not a part --------------------------------
+  var SC = L.aiSchematic;
+  if (SC && SC.hooks && SC.hooks.draw && !SC.totalChecked) {
+    SC.hooks.draw.push(function (sc, lay, problems) {
+      (sc.parts || []).forEach(function (p) {
+        if (p.implied || !/^(resistor|capacitor|inductor|lamp)$/.test(p.type)) return;
+        if (/\x7B=/.test(p.label || "") || /^(R|C|L|Z)_?(T|TOT|TOTAL|EQ|EQV|EQUIV|EQUIVALENT|SUM)$/i.test(p.id) || /\b(total|equivalent)\b/i.test(p.label || ""))
+          problems.push(p.id + " is the circuit\u2019s total, not a part in it: remove it and its wires, and show the total in a note line (note Rt = {=1/(1/4+1/6)} ohm)");
+      });
+    });
+    SC.totalChecked = true;
+  }
+  // --- documents: a procedure's steps as a numbered list ------------------------
+  var PROC = /\b(procedure|step[- ]by[- ]step|steps|instructions|how to|how do i|sop|checklist|method for)\b/i;
+  var doc = ACTS.filter(function (a) { return a.id === "doc"; })[0];
+  if (doc && !doc.stepsChecked) {
+    var d0 = doc.build;
+    doc.build = function (block, ctx) {
+      var r = d0.call(doc, block, ctx), p = r && r.plan;
+      if (p && p.parts && r.problems && ctx && PROC.test(ctx.question || "") && p.parts.items < 3 && p.parts.paragraphs >= 4)
+        r.problems.push("a procedure needs its steps as a numbered list, one step a line (1. ..., 2. ...), so they print as steps; keep the ## headings");
+      return r;
+    };
+    doc.stepsChecked = true;
+  }
+  window.Lantern.aiMakeLayout = { hidden: hidden, above: above, family: family };
+})();
+// ===========================================================================
+// MODULE: AI_MAKE_LAYOUT - END
 // ===========================================================================
 </script>
 

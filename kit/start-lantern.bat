@@ -91,6 +91,7 @@ set "MMARG="
 if defined MMPROJ set MMARG=--mmproj "!MMPROJ!"
 echo.
 echo Lantern: !M! with !MEM! MB memory
+echo Lantern files: %SITE%  ^(to update Lantern, replace index.html and lantern-sw.js there^)
 if defined MMPROJ echo Vision: !MMPROJ! ^(the AI can look at the pictures it makes^)
 echo Open http://127.0.0.1:%PORT%/  ^(keep this window open; close it to stop^)
 if "%HOST%"=="0.0.0.0" (

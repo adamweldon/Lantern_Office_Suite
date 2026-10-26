@@ -106,6 +106,8 @@ if [ -n "$VISION" ]; then
 fi
 echo "Lantern: $(basename "$M") on $OS with ${MEM} MB memory"
 ui "MODEL $(basename "$M")"
+VER=$(grep -o 'version: "[0-9][0-9.]*"' "$SITE/index.html" 2>/dev/null | head -1 | cut -d'"' -f2)
+echo "Lantern ${VER:-?} files: $SITE (to update Lantern, replace index.html and lantern-sw.js there)"
 [ -n "$MMPROJ" ] && echo "Vision: $(basename "$MMPROJ") (the AI can look at the pictures it makes)"
 echo "Open http://127.0.0.1:$PORT/ (this window must stay open; Ctrl+C stops it)"
 if [ "$HOST" = 0.0.0.0 ]; then

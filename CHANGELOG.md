@@ -1,6 +1,8 @@
 # Changelog
 
-## 1.13.1 — Install by double-click; the engine built on the computer when it must be (2026-10-25)
+## 1.13.2 — PLACEHOLDER
+
+## 1.13.1 (install) — Install by double-click; the engine built on the computer when it must be (2026-10-25)
 
 Adam asked for setup to be easy: download the zip from GitHub, extract it,
 double-click one file, and everything else happens, with popups saying
@@ -75,6 +77,132 @@ under Open With only opened a terminal with nothing to run.
   engine stand-in). New `kit_window.py` runs the window on Xvfb: a whole
   install, installed again, start/share/stop, already running, offline, start
   before install, and both launchers opened as libfm and GLib open them.
+
+## 1.13.1 (bench) — Bench run 9: what Lantern could fix (2026-10-26)
+
+Adam's run 9 (Qwen3.5-35B-A3B, sees images, English Wikipedia, 1.12.9):
+**98 of 109 (90%)**. Core 32/32, fresh 4/5, hard 9/10, library 20/20, made
+10/14, conversations 16/18, puzzles 7/10. The six puzzles asked again with
+the puzzle tools switched off ("alone", not scored): 3/6.
+
+**The questions asked twice** were those six puzzles: once with Lantern's
+puzzle tools, once without, to show what the tools add. The results table
+did not say which row was which. In two pairs the result was backwards: the
+two-coin cups failed with the tools and passed without them, and the
+refrigerator letters failed both ways. Both were Lantern-side, as were
+most of the other misses.
+
+- **The results say which is which.** Each puzzle row is marked "with
+  Lantern's puzzle tools" or "the same puzzle with Lantern's puzzle tools
+  switched off — not scored".
+- **The bench keeps the puzzle blocks.** Each row records every TRACK, TURN or
+  SOLVE block the AI wrote, line by line, with what Lantern made of it. This
+  run could not show the cups block; the next will.
+- **Two-coin cups: a described place written as a name.** Every block that
+  gives the run's wrong answer (Yellow, Green, Red, White, Blue, silver under
+  Red) puts the silver coin under Red in step 4. The question says "the cup
+  directly to the left of the cup holding the gold coin", which is Blue by
+  then. The AI worked out the cup itself, against its instructions, and
+  TRACK tracked it faithfully. Lantern now compares the block with the
+  question (`AI_PUZZLE_CHECK`). A step line that names a cup the numbered
+  steps never name goes back once, with the reason. Solvers can add such
+  checks: `check(block, question, result)`.
+- **The queue: "directly behind".** TRACK read left of, right of, 2 left of
+  and holder of, but not behind, in front of, ahead of, before or after. It
+  rejected "swap holder of ball and person directly behind holder of ball"
+  twice, and the block itself was left as the answer. Those words now work:
+  in a queue, front is first. A corrected block that fails too now gets one
+  more turn: "work the puzzle out yourself, step by step".
+- **Refrigerator: results retyped, and restated.** With the tools, the AI
+  wrote `=REMOVE("rotarigerfer","r")`, retyping line 1's "rotaregirfer"
+  with its own slip instead of ANS. Without them, it used ANS, then wrote
+  "otaeigef ... 8 letters" in its sentence. Lantern only noted the mismatch.
+  Now (`AI_RESULT_CHECKS`), once:
+  - a = line that types out an earlier result with mistakes is questioned
+    ("write ANS1 instead of typing a result out");
+  - an ANSWER with no {result} that spells a worked-out word another way, or
+    states a number none of the lines gave, is questioned.
+
+  The ANSWER can name any line's result: `{ANS1}`, `{ANS2}` ... (`{result}`
+  is still the last line), a word or a number. Chat's instructions say so.
+- **READ at the end of an explanation.** The AI wrote two sentences, then
+  `READ: page 5`, and Lantern ignored it. A command line counted only when
+  it opened the reply or the reply was under 240 characters. That was
+  1.11.0's rule for LESSON and MODULES, copied into READ and EXAMPLE. A
+  command line that ends the reply now counts too (all four commands). One
+  in the middle of a long answer still does not.
+- **3 dozen eggs: Lantern answers the NEED.** The AI asked "NEED: How many
+  eggs are in 3 dozen?" (`AI_NEED_ANSWERS`, `Lantern.aiNeedAnswer`).
+  - Counting words are answered when they are asked about: dozen, score,
+    gross, pair, ream, decade, century, fortnight.
+  - So is "how many <unit> in a <unit>" that CONVERT knows.
+  - Assist and Chat send the fact back for one more turn.
+  - What only the person knows ("how many goats do you have") is still asked.
+- **Fuel for a trip.** The AI worked out 15 km/L, then 28 L, then multiplied
+  by the 10 litres again (280). New recipe card `trip-fuel`.
+- **Things the AI makes** (`AI_MAKE_LAYOUT`), each sent back once:
+  - **Painted-over shapes.** In the house, two rects drawn last covered the
+    walls, the door and the window completely. A filled shape with nothing
+    left in view is named.
+  - **Above and below.** "A yellow sun above a blue sea", with a blue rect
+    filling the picture, is questioned. Shapes are told apart by the
+    colours the question names.
+  - **Drawing instructions:** later shapes cover earlier ones; things above
+    or below each other get their own areas; a roof is a tri on top of the
+    walls.
+  - **A total is a note, not a part.** The parallel circuit's total
+    resistance was drawn as a fourth resistor (`part R_total resistor
+    "{=...}"`).
+  - **A procedure's steps go in a numbered list.** Plain lines print as
+    separate paragraphs with no step numbers.
+- **The bench's MAKE path shows a seeing model its picture**, as Chat
+  always has: one look, LOOKS RIGHT or a corrected block, which is kept when
+  Lantern can make it. Rows record `looked`.
+- **Graders.**
+  - `doc-not-covered` now accepts "Not in the document. From my own
+    knowledge: warranties typically run 1 to 5 years..." (1.12.9's labelled
+    own knowledge). It still fails a warranty given for this compressor.
+  - `make-sun-sea` takes the lowest blue area as the sea, so a light blue
+    sky above it is fine.
+- **Which Lantern ran.** Run 10 was 1.12.9 again, word for word the same
+  115 replies (the 35B at temperature 0 repeats itself exactly). The kit
+  shows Lantern from its `site/` folder, so a new `Lantern_Office_Suite.html`
+  on the stick changes nothing. The bench summary line now says
+  "Lantern 1.13.1" right after the score, and the panel says which version
+  it is before a run. `start-lantern` prints the folder it shows Lantern
+  from (the Mac/Linux script also prints the version found there), and
+  `kit/README.txt` says how to update: copy `site/index.html` and
+  `site/lantern-sw.js` over the kit's.
+
+Not changed: the die and the four houses failed only without the tools,
+which is what that comparison is for.
+
+Tested:
+- `tests/bench_run9.js` (37 checks) replays the run's own replies:
+  - the cups block questioned, then corrected and passed;
+  - the queue block run;
+  - a block that fails twice answered by the AI;
+  - both refrigerator replies questioned, and the `{ANS1}`/`{ANS2}` reply
+    passed;
+  - READ, LESSON and EXAMPLE lines at the end of a reply read;
+  - the NEED answered in Assist and Chat (432);
+  - the fuel card;
+  - the house, sea, total and procedure questioned, with every ideal reply
+    in the bench still building clean;
+  - the look turn kept and changed;
+  - the warranty grader;
+  - the table labels and the recorded blocks.
+- Two existing assertions changed with intent: a READ ending a long reply
+  is now read, and the sun-sea check accepts Lantern's own message.
+- `tests/browser/bench_run9_e2e.py` (not in `npm test`) runs the full bench
+  in Chromium against a stand-in llama-server that sees images:
+  - the labels;
+  - the cups corrected and passed;
+  - the full-picture sea sent back, then shown to the model as a real PNG
+    and kept;
+  - the queue;
+  - the dozen.
+- All 26 suites pass.
 
 ## 1.13.0 — Code Lab: real programs, checked; the AI writes them (2026-10-23)
 

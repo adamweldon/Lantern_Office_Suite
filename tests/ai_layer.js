@@ -360,6 +360,7 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   btn(d, "Quick run").click(); await sleep(80);
   ok("bench panel lists results", d.querySelectorAll(".la-tbl tbody tr").length === L.aiBenchQuestions.filter(function (x) { return x.quick && x.cat !== "fact"; }).length);
   ok("bench summary line", /Lantern Bench quick: \d+\/\d+ \(100%\)/.test(d.body.textContent));
+  ok("bench summary line says which Lantern ran", d.body.textContent.indexOf("(100%) \u00b7 Lantern " + L.version + " \u00b7") >= 0);
   btn(d, "Save results (JSON)").click();
   ok("results saved as JSON", saved.length === 1 && /\.json$/.test(saved[0].name) && JSON.parse(saved[0].text).summary.score === 100);
   go("chat"); await sleep(20);

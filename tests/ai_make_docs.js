@@ -186,7 +186,9 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   };
   TR.attached = DOC;
   ok("READ: the reply line is read; a READ: deep in a long answer is not", cmd.test("READ: page 7") === "page 7" && cmd.test("**READ:** pages 6-8") === "pages 6-8" &&
-    cmd.test(new Array(60).join("words ") + "\nREAD: page 3") === null && cmd.test("Not on these pages.\nREAD: section 2") === "section 2");
+    cmd.test(new Array(60).join("words ") + "\nREAD: page 3\n" + new Array(10).join("more words ")) === null && cmd.test("Not on these pages.\nREAD: section 2") === "section 2" &&
+    // a READ that ends a longer reply is meant (bench run 9, 1.13.1)
+    cmd.test(new Array(60).join("words ") + "\n\nREAD: page 3") === "page 3");
   var sys = (L.chatSystem || []).map(function (f) { try { return f("q") || ""; } catch (e) { return ""; } }).join("\n");
   ok("Chat's instructions say a document is attached, what has been read, and how to READ", /DOCUMENT ATTACHED: \u201cSaw manual\u201d, 12 pages in sections of 5 \(read so far: pages 1\u20135\)/.test(sys) && /READ: page <n>/.test(sys), sys.slice(0, 400));
   var r1 = await cmd.run("page 9", "What torque for the head bolts?", {});
