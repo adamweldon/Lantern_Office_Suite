@@ -19,6 +19,11 @@
 #                              never downloaded unasked.
 #   setup-kit.bat zim NAME     any Kiwix file by name (e.g. wikipedia_en_medicine_maxi)
 #                              or full URL, into library\
+#   setup-kit.bat shelves      the practical shelf for the library: WikiMed (medicine),
+#                              iFixit repair guides, Wikivoyage, PhET simulations
+#   setup-kit.bat shelves-all  those and the Wiktionary dictionary and Wikibooks
+#   setup-kit.bat shelf-medicine | shelf-repair | shelf-travel | shelf-science |
+#                 shelf-words | shelf-textbooks   one of them
 #   setup-kit.bat vision       the vision part of every laptop model in the kit
 #                              (mmproj, 0.7-0.9 GB each): the AI can then look at
 #                              the drawings it makes. New 4B/9B/35B downloads
@@ -286,8 +291,59 @@ function GetZimByName($arg) {
   KiwixTools
   if ($arg -match '^https?://') { GetZim $arg; return }
   $folder = ($arg -split '_')[0]
-  $name = LatestZim $folder ($arg -replace '_\d{4}-\d{2}(\.zim)?$', '')
-  GetZim "$KiwixBase/zim/$folder/$name"
+  GetZim ("$KiwixBase/zim/" + (FindZim $folder ($arg -replace '_\d{4}-\d{2}(\.zim)?$', '')))
+}
+# --- the shelves: more free Kiwix books for the AI to read (1.14.0) ---------------
+# Lantern itself (LIBRARY_ENGINE) reads the one that fits a question.
+$Shelves = @(
+  [pscustomobject]@{ id = "shelf-medicine"; name = "WikiMed, Wikipedia's medicine articles"; folder = "wikipedia"; base = "wikipedia_en_medicine_nopic"; gb = 1; lic = "CC BY-SA"; practical = $true },
+  [pscustomobject]@{ id = "shelf-repair"; name = "iFixit repair guides"; folder = "ifixit"; base = "ifixit_en_all"; gb = 3; lic = "CC BY-NC-SA: free, not for sale"; practical = $true },
+  [pscustomobject]@{ id = "shelf-travel"; name = "the Wikivoyage travel guide"; folder = "wikivoyage"; base = "wikivoyage_en_all_nopic"; gb = 0.5; lic = "CC BY-SA"; practical = $true },
+  [pscustomobject]@{ id = "shelf-science"; name = "PhET science and maths simulations"; folder = "phet"; base = "phet_en_all"; gb = 0.5; lic = "CC BY"; practical = $true },
+  [pscustomobject]@{ id = "shelf-words"; name = "the Wiktionary dictionary"; folder = "wiktionary"; base = "wiktionary_en_all_nopic"; gb = 5; lic = "CC BY-SA"; practical = $false },
+  [pscustomobject]@{ id = "shelf-textbooks"; name = "Wikibooks open textbooks"; folder = "wikibooks"; base = "wikibooks_en_all_nopic"; gb = 3; lic = "CC BY-SA"; practical = $false }
+)
+function HaveShelf($sh) { @(Get-ChildItem -Path $Library -Filter "$($sh.base)_*.zim" -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 0 -and $_.Name -match '_\d{4}-\d{2}\.zim$' }).Count -gt 0 }
+# FindZim(folder, base) -> "folder/file" of the newest: its own folder first,
+# then "other" and "zimit", where Kiwix files some books
+function FindZim($folder, $base) {
+  foreach ($f in @($folder, "other", "zimit")) {
+    try { return "$f/" + (LatestZim $f $base) } catch { }
+  }
+  throw "no $base file listed at $KiwixBase/zim/ ($folder, other, zimit)"
+}
+function GetShelf($sh) {
+  if (HaveShelf $sh) { Write-Host "  have $($sh.name)"; return }
+  KiwixTools
+  $fz = FindZim $sh.folder $sh.base
+  Write-Host "  $($sh.name) ($($sh.lic)): $(($fz -split '/')[-1])"
+  GetZim "$KiwixBase/zim/$fz"
+}
+function GetShelves($list) {
+  foreach ($sh in $list) {
+    try { GetShelf $sh } catch { Write-Host "  ($($sh.id) did not finish: $($_.Exception.Message); setup-kit.bat $($sh.id) carries on where it stopped)" }
+  }
+}
+# In setup, once the kit has a library: the practical shelf, asked once.
+function OfferShelves([bool]$inline) {
+  if (-not $inline) { return }
+  if (Test-Path (Join-Path $Models ".skip-shelves")) { return }
+  $miss = @($Shelves | Where-Object { $_.practical -and -not (HaveShelf $_) })
+  if (-not $miss.Count) { return }
+  try { [void](Listing "$KiwixBase/zim/wikipedia/") } catch { return }   # no internet: say nothing
+  $gb = ($miss | Measure-Object -Property gb -Sum).Sum
+  Write-Host ""
+  $l1 = "Lantern can add a shelf of free offline books for the AI to read: WikiMed (medicine), iFixit repair guides,"
+  $l2 = "the Wikivoyage travel guide and PhET science simulations, about $gb GB. The AI reads the one that fits each question, and Lantern checks its quotes."
+  Write-Host "  $l1"; Write-Host "  $l2"
+  $ans = Ask 30 $false "More offline books" "$l1 $l2"
+  if ($ans -eq "") { return }
+  if ($ans -eq "no") {
+    New-Item -ItemType File -Force -Path (Join-Path $Models ".skip-shelves") | Out-Null
+    Write-Host "  Not asking again. To get them later: setup-kit.bat shelves"
+    return
+  }
+  GetShelves $miss
 }
 
 # --- what this computer can run ---------------------------------------------
@@ -415,7 +471,7 @@ function Offer([bool]$inline) {
     foreach ($n in $p.notes) { if (-not $shown.ContainsKey($n)) { Write-Host "  $n."; $shown[$n] = 1 } }
     if (-not $p.t) {
       if ($p.offline) { Write-Host "  ($($p.why); starting with the model the kit has.)"; return }
-      if (-not $p.busy) { OfferLibrary $inline; if (HaveLibrary) { OfferFull $inline } }
+      if (-not $p.busy) { OfferLibrary $inline; if (HaveLibrary) { OfferFull $inline; OfferShelves $inline } }
       return
     }
     $t = $p.t
@@ -539,6 +595,9 @@ function Check {
   $ks = Test-Path (Join-Path $Dir "engine\windows\kiwix\kiwix-serve.exe")
   if ($zims.Count) { foreach ($z in $zims) { Write-Host ("Library: " + $z.Name + " (" + [math]::Round($z.Length / 1GB, 1) + " GB)" + $(if ($ks) { "" } else { " -- kiwix-serve missing: setup-kit.bat library" })) } }
   else { Write-Host "Library: none (setup-kit.bat library adds an offline encyclopedia)" }
+  foreach ($sh in $Shelves) {
+    if (HaveShelf $sh) { Write-Host "Shelf: $($sh.name) -- in the kit" } else { Write-Host "Shelf: $($sh.name) -- not in the kit (setup-kit.bat $($sh.id), about $($sh.gb) GB)" }
+  }
   if ($env:LANTERN_AUTO_DOWNLOAD -eq "0") { Write-Host "Next start: offers nothing (LANTERN_AUTO_DOWNLOAD=0)." }
   elseif ($p.t) { Write-Host "Next start: will offer $($p.t.name) ($($p.t.gb) GB). Or fetch it now: setup-kit.bat $($p.t.id)" }
   elseif ($p.offline -or $p.busy) { Write-Host "Next start: offers nothing: $($p.why)." }
@@ -599,6 +658,9 @@ foreach ($s in $Sets) {
     "library" { $l = PickLib; if ($l) { GetLibrary $l } else { Write-Host "  No room for an encyclopedia on this drive." } }
     "library-simple" { GetLibrary (LibFor "library-simple") }
     "library-full" { GetFull }
+    "shelves" { GetShelves @($Shelves | Where-Object { $_.practical }) }
+    "shelves-all" { GetShelves $Shelves }
+    { $_ -like "shelf-*" } { $sh = $Shelves | Where-Object { $_.id -eq $s } | Select-Object -First 1; if ($sh) { GetShelves @($sh) } else { Write-Host "unknown shelf: $s" } }
     "vision" { foreach ($t in $Tiers) { if (Have $t) { GetVision $t } } }
     "zim" { }
     default {

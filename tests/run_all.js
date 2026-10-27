@@ -19,6 +19,7 @@ var steps = [
   ["Compose modules isolated (rule 11)", "node", ["tests/compose_isolation.js"], /COMPOSE MODULES ISOLATED/],
   ["AI layer (routing, app, bench)", "node", ["tests/ai_layer.js"], /ALL AI LAYER TESTS PASS/],
   ["Offline library (search, read, citations)", "node", ["tests/library.js"], /ALL LIBRARY TESTS PASS/],
+  ["Open modules: shelves (WikiMed, iFixit, Wikivoyage ...), places and distances, codes (1.14)", "node", ["tests/open_modules.js"], /ALL OPEN MODULE TESTS PASS/],
   ["AI makes things (drawings, schematics, tables)", "node", ["tests/ai_actions.js"], /ALL AI ACTION TESTS PASS/],
   ["Waiting for the kit's model to load (progress bar, connects by itself)", "node", ["tests/ai_server_wait.js"], /ALL SERVER WAIT TESTS PASS/],
   ["Chat routing (follow-ups, questions about itself, bench conversations)", "node", ["tests/chat_routing.js"], /ALL CHAT ROUTING TESTS PASS/],

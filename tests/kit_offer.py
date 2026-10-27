@@ -139,6 +139,16 @@ def zim(name, good=True):
 zim("wikipedia_en_all_mini_2026-03.zim"); zim("wikipedia_en_all_mini_2026-06.zim"); zim("wikipedia_en_simple_all_maxi_2026-01.zim")
 zim("wikipedia_en_medicine_maxi_2026-05.zim", good=False)
 zim("wikipedia_en_all_nopic_2026-06.zim"); zim("wikipedia_en_all_nopic_2026-09.zim")
+# 1.14.0 shelves: WikiMed beside Wikipedia, the others in their own folders, and
+# iFixit only under "other" (Kiwix files some books there: find_zim looks)
+zim("wikipedia_en_medicine_nopic_2026-04.zim")
+def zim_in(folder, name):
+    d = os.path.join(kx, "zim", folder); os.makedirs(d, exist_ok=True)
+    data = b"ZIM\x04" + os.urandom(2000)
+    open(os.path.join(d, name), "wb").write(data)
+    open(os.path.join(d, name + ".sha256"), "w").write(hashlib.sha256(data).hexdigest() + "  " + name + "\n")
+zim_in("other", "ifixit_en_all_2026-02.zim"); zim_in("wikivoyage", "wikivoyage_en_all_nopic_2026-07.zim")
+zim_in("phet", "phet_en_all_2026-01.zim"); zim_in("wikibooks", "wikibooks_en_all_nopic_2026-03.zim")
 # This folder's listing uses absolute links, as some mirrors do.
 open(os.path.join(zw, "index.html"), "w").write("<html><body>" + "".join(
     '<a href="/zim/wikipedia/%s">%s</a><br>' % (f, f) for f in sorted(os.listdir(zw)) if f != "index.html") + "</body></html>")
@@ -249,7 +259,9 @@ def whole(label, cmd_for, engine_file):
     ok(label + ": one setup run fetches the engine, the 4B, the 35B-A3B and the encyclopedia",
        have(*engine_file) and have("models", "Qwen3.5-4B-Q4_K_M.gguf") and have("models", "Qwen3.5-35B-A3B-UD-IQ4_XS.gguf") and
        have("library", "wikipedia_en_all_mini_2026-06.zim"), out[-1500:])
-    ok(label + ": an unattended setup does not fetch the full Wikipedia", not [f for f in os.listdir(os.path.join(k, "library")) if "nopic" in f], out[-800:])
+    # (1.14.0: the shelves' books are "nopic" too, and an unattended setup takes them -- only the full Wikipedia is opt-in)
+    ok(label + ": an unattended setup does not fetch the full Wikipedia", not [f for f in os.listdir(os.path.join(k, "library")) if f.startswith("wikipedia_en_all_nopic")], out[-800:])
+    ok(label + ": ...but it takes the practical shelf", have("library", "ifixit_en_all_2026-02.zim") and have("library", "wikipedia_en_medicine_nopic_2026-04.zim"), out[-800:])
     ok(label + ": each laptop model brings its vision part", have("models", "mmproj-Qwen3.5-4B-F16.gguf") and have("models", "mmproj-Qwen3.5-35B-A3B-F16.gguf"),
        sorted(os.listdir(os.path.join(k, "models"))))
     return k
@@ -501,6 +513,56 @@ if pw:
        not os.path.exists(os.path.join(k, "site.old")), out[-600:])
     out = run(rk, [], dict(WLAN, LANTERN_SRC="http://127.0.0.1:%d/x.zip" % free_port()), ps1(rk) if os.path.exists(os.path.join(rk, "setup-kit.ps1")) else None)
     ok("ps1: the repository's own site/ is used", "have Lantern 1.13.1" in out, out[-600:])
+# --- 1.14.0: the shelves -- more free Kiwix books for the AI to read ---
+k = make_kit("shelves-sh", ["Qwen3.5-4B-Q4_K_M.gguf"])
+os.makedirs(os.path.join(k, "library")); shutil.copy(os.path.join(zw, "wikipedia_en_all_mini_2026-06.zim"), os.path.join(k, "library"))
+out = run(k, ["check"], kenv())
+ok("check lists the shelves the kit lacks, and how to get each", "Shelf: WikiMed, Wikipedia's medicine articles -- not in the kit (./setup-kit.sh shelf-medicine" in out and
+   "Shelf: iFixit repair guides -- not in the kit" in out, out)
+out = run(k, ["shelves"], kenv())
+lib = lambda n: os.path.exists(os.path.join(k, "library", n))
+ok("shelves: the practical four, newest of each, checksums checked", lib("wikipedia_en_medicine_nopic_2026-04.zim") and lib("wikivoyage_en_all_nopic_2026-07.zim") and
+   lib("phet_en_all_2026-01.zim") and "checksum OK" in out and "(CC BY-SA)" in out, out[-1500:])
+ok("...iFixit found under \u201cother\u201d, with its licence said", lib("ifixit_en_all_2026-02.zim") and "iFixit repair guides (CC BY-NC-SA: free, not for sale)" in out, out[-1500:])
+out = run(k, ["shelves"], kenv())
+ok("shelves again: nothing downloaded twice", out.count("have ") >= 4 and "downloading" not in out, out[-800:])
+out = run(k, ["shelf-words"], kenv())
+ok("a shelf Kiwix does not list just now: said plainly, setup goes on", "the Wiktionary dictionary: no wiktionary_en_all_nopic file listed" in out and "Done." in out, out[-600:])
+out = run(k, ["shelf-textbooks"], kenv())
+ok("one shelf by name", lib("wikibooks_en_all_nopic_2026-03.zim"), out[-600:])
+out = run(k, ["check"], kenv())
+ok("check: in the kit now", "Shelf: iFixit repair guides -- in the kit" in out and "Shelf: Wikibooks open textbooks -- in the kit" in out, out)
+out = run(k, ["zim", "ifixit_en_all"], kenv())
+ok("zim NAME finds a book filed under other too", "have ifixit_en_all_2026-02.zim" in out, out[-600:])
+# offered once during setup, after the encyclopedia (the window's question)
+k = make_kit("shelves-ui", ["Qwen3.5-4B-Q4_K_M.gguf"])
+os.makedirs(os.path.join(k, "library")); shutil.copy(os.path.join(zw, "wikipedia_en_all_mini_2026-06.zim"), os.path.join(k, "library"))
+out, rc = run_in(k, [], "n\nn\n", kenv({"LLAMA_BASE": LL["LLAMA_BASE"], "LANTERN_MEM_MB": "8000", "LANTERN_FREE_GB": "60", "LANTERN_UI": "1"}))
+ok("setup asks once about the shelf, as a question for the window; N is remembered", "@@ASK ask More offline books" in out and
+   "@@Q   iFixit repair guides, the Wikivoyage travel guide and PhET science simulations," in out and
+   os.path.exists(os.path.join(k, "models", ".skip-shelves")) and not lib("ifixit_en_all_2026-02.zim"), out[-2000:])
+out, rc = run_in(k, [], "n\n", kenv({"LLAMA_BASE": LL["LLAMA_BASE"], "LANTERN_MEM_MB": "8000", "LANTERN_FREE_GB": "60", "LANTERN_UI": "1"}))
+ok("...and not asked again", "More offline books" not in out, out[-800:])
+k = make_kit("shelves-ui-yes", ["Qwen3.5-4B-Q4_K_M.gguf"])
+os.makedirs(os.path.join(k, "library")); shutil.copy(os.path.join(zw, "wikipedia_en_all_mini_2026-06.zim"), os.path.join(k, "library"))
+out, rc = run_in(k, [], "n\ny\n", kenv({"LLAMA_BASE": LL["LLAMA_BASE"], "LANTERN_MEM_MB": "8000", "LANTERN_FREE_GB": "60", "LANTERN_UI": "1"}))
+lib = lambda n: os.path.exists(os.path.join(k, "library", n))
+ok("Yes: the four come down in setup, each a step for the window", lib("wikipedia_en_medicine_nopic_2026-04.zim") and lib("ifixit_en_all_2026-02.zim") and
+   "@@STEP shelves" in out, out[-2000:])
+if pw:
+    k = make_kit("shelves-ps1", ["Qwen3.5-4B-Q4_K_M.gguf"])
+    os.makedirs(os.path.join(k, "engine", "windows")); open(os.path.join(k, "engine", "windows", "llama-server.exe"), "w").write("MZ")
+    os.makedirs(os.path.join(k, "library")); shutil.copy(os.path.join(zw, "wikipedia_en_all_mini_2026-06.zim"), os.path.join(k, "library"))
+    ps = lambda k: [pw, "-NoProfile", "-File", os.path.join(k, "setup-kit.ps1")]
+    out = run(k, ["shelves"], kenv(), ps(k))
+    lib = lambda n: os.path.exists(os.path.join(k, "library", n))
+    ok("ps1 shelves: the practical four, iFixit from other", lib("wikipedia_en_medicine_nopic_2026-04.zim") and lib("ifixit_en_all_2026-02.zim") and
+       lib("phet_en_all_2026-01.zim") and lib("wikivoyage_en_all_nopic_2026-07.zim"), out[-1500:])
+    out = run(k, ["check"], kenv(), ps(k))
+    ok("ps1 check lists the shelves", "Shelf: iFixit repair guides -- in the kit" in out and "Shelf: the Wiktionary dictionary -- not in the kit (setup-kit.bat shelf-words" in out, out)
+    out = run(k, ["shelf-words"], kenv(), ps(k))
+    ok("ps1: a shelf not listed just now is said plainly", "shelf-words did not finish" in out and "Done." in out, out[-600:])
+
 # --- 1.13.2: the Lantern folder (Lantern.zip extracted, or the repository) ---
 # Lantern lives in one place, Lantern/site beside kit/. An older copy in kit/site
 # used to win, so a newer Lantern laid over the folder never showed (bench run 10).

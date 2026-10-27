@@ -157,17 +157,18 @@ def run_window(d, mode, env, timeout=240, shots=""):
     out = p.stdout.read().decode("utf-8", "replace")
     return open(trace).read().splitlines(), out
 
-# 1. Install: Install, No to the 9B, Yes to the encyclopedia, Not now to the full Wikipedia, Close
+# 1. Install: Install, No to the 9B, Yes to the encyclopedia, Not now to the full Wikipedia,
+#    No to the shelf of more books (1.14.0), Close
 d, home = fresh("install")
-tr, out = run_window(d, "install", env_for(home, {"LANTERN_KIT_AUTO": "install,never,yes,notnow,close"}), shots="install")
+tr, out = run_window(d, "install", env_for(home, {"LANTERN_KIT_AUTO": "install,never,yes,notnow,never,close"}), shots="install")
 have = lambda *p: os.path.exists(os.path.join(d, "kit", *p))
 ok("install: the pages and questions in order", tr[:2] == ["page welcome", "page work"] and
-   [l for l in tr if l.startswith("ask ")] == ["ask A stronger AI model", "ask Offline encyclopedia", "ask The full Wikipedia"] and
+   [l for l in tr if l.startswith("ask ")] == ["ask A stronger AI model", "ask Offline encyclopedia", "ask The full Wikipedia", "ask More offline books"] and
    "page done" in tr and tr[-1] == "shortcuts menu,desktop", (tr, out))
 ok("install: engine, model and its vision part, the encyclopedia; the answers kept", have("engine", "linux", "llama-server") and
    have("models", "Qwen3.5-4B-Q4_K_M.gguf") and have("models", "mmproj-Qwen3.5-4B-F16.gguf") and have("models", ".skip-big") and
    have("library", "wikipedia_en_all_mini_2026-06.zim") and not have("library", "wikipedia_en_all_nopic_2026-09.zim") and
-   not have("models", ".skip-library-full"), sorted(os.listdir(os.path.join(d, "kit", "models"))))
+   not have("models", ".skip-library-full") and have("models", ".skip-shelves"), sorted(os.listdir(os.path.join(d, "kit", "models"))))
 menu = os.path.join(home, ".local", "share", "applications", "lantern-kit.desktop")
 desk = os.path.join(home, "Desktop", "Lantern.desktop")
 ok("install: a menu entry and a desktop icon that start Lantern from this folder", os.path.exists(menu) and os.path.exists(desk) and

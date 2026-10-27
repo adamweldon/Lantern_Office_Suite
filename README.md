@@ -43,6 +43,17 @@ build each language. JavaScript runs in a sandbox. Chat's AI writes programs
 with **MAKE CODE**; Lantern checks them and opens them in Code Lab, and says
 whether one was adapted from a tested example. The turtle tile is now
 **Turtle Code**, for beginners and children.
+Since v1.14.0 the library has **shelves**: the USB kit can add WikiMed
+(medicine), iFixit repair guides, the Wikivoyage travel guide, PhET science
+simulations, Wiktionary and Wikibooks beside Wikipedia, and a question reads
+the shelf it is about first. **Places** knows where 7,300 towns and cities are
+(Natural Earth, public domain; every town of 1,000 and up from GeoNames when
+the kit serves `site/places.txt`) and works out distances and bearings
+(`DISTKM`, `BEARING`, Geography > Places & distances). **Codes** adds Morse,
+the radio alphabet, base64, hex, ROT13/Caesar, SHA-256 and CRC-32 to the
+formula engine. The Charter app lists every outside source and its licence
+under **Sources & licences**: everything inside the single file stays CC0 or
+public domain; what sits beside it keeps its own licence.
 
 ## Install on a computer (with its AI) -- two double-clicks
 
@@ -114,7 +125,8 @@ for multi-threading).
 | `src/lantern.inner.html` | The decoded inner suite: every `// MODULE: NAME - START/END` block. Edit and diff here; Project Context Studio ingests this directly. |
 | `tools/bundle.js` | Byte-faithful decode / encode between the two. |
 | `tests/` | Every check the suite must pass before a commit (`npm test`). |
-| `site/` | The website build: Lantern + offline worker + install manifest + on-device AI engine (`site/ai`, wllama 3.8.1, MIT). Rebuilt by `tools/build_site.py`. |
+| `site/` | The website build: Lantern + offline worker + install manifest + on-device AI engine (`site/ai`, wllama 3.8.1, MIT). Rebuilt by `tools/build_site.py`. `site/places.txt` (every town of 1,000 and up) is GeoNames data, **CC BY 4.0, not CC0**: keep its credit line. |
+| `tools/make_places.js` | Builds the Places data: the `PLACES_DATA` module from Natural Earth 5.1.2 (public domain) and `site/places.txt` from GeoNames (CC BY 4.0). |
 | `kit/` | Laptop / USB launchers and setup scripts for llama.cpp `llama-server`, and kiwix-serve for the offline library (Kiwix ZIM files in `kit/library/`). |
 | `docs/Lantern_Edge_AI_Plan.pdf` | The plan: model size per device, architecture, distribution, phases, Lantern Bench. |
 | `docs/Lantern_AI_Test_Guide.pdf` | Phase 1 test steps for phones and laptops, what to send back, and what was verified before release. |
@@ -171,7 +183,8 @@ npm test
 - **Bench run 9 replayed**: the run's own replies through 1.13.1 -- a described place written as a name, the queue's "directly behind", retyped and restated results with `{ANS1}`/`{ANS2}`, READ at the end of a reply, a NEED Lantern answers (3 dozen), the trip-fuel card, painted-over shapes, a sun inside the sea, a total drawn as a part, a procedure without numbered steps, the look turn in the bench, the warranty grader, the puzzle rows labelled and their blocks kept
 - **Bench run 11 replayed** (1.13.3): the run's own replies -- a corrected sentence that still types Lantern's results its own way, repaired and said so (and what repair leaves alone); "two places to its left" written as one place; LESSON: HEN HEALTH reading Chickens & eggs; "EXAMPLE: <title>" with code under it built as MAKE CODE, EXAMPLE: alone run as a command in the bench's MAKE path, the example shown between <<< and >>>; XIO on a normally closed Stop questioned; fuel for a trip the wrong way round questioned with the sum
 - **Bench run 12 replayed** (1.13.4): the run's own replies -- a line that retyped Lantern's result with letters dropped, questioned and then run again with Lantern's results in place; {ANS2} (a word) where the count goes; a correct rung written as plain text, found and checked as Chat checks it; two lamps drawn as resistors labelled "Lamp"; the bench panel's Show, rebuilding what was made from the saved reply
-- **AI isolation**: removes each of the 115 AI, library, action, Text Reader, PDF, sheet music, suite-catalog, make, READ and Code Lab modules in turn and opens Chat, Text Reader and Music (rule 11)
+- **Open modules** (1.14.0): shelves against a stand-in kiwix-serve with five books -- which shelf each book is, a medicine question reading WikiMed first and never iFixit, a repair question reading iFixit, a general one reading only the encyclopedia, the bench asking a shelf's questions only when the kit has the shelf and failing an answer that did not read it; Places -- the public-domain data in the file, capitals (South Africa's three, not Johannesburg), other names (Rangoon, Kiev, Washington, D.C.), regions, countries by other names, distances and bearings, a town the file lacks, `places.txt` loaded when served (Skiatook, Paris, Texas), the Geography card, the AI's `=DISTKM` passing the bench; Codes against published values (SHA-256, CRC-32, Morse, ICAO, base64 with UTF-8); the Charter's Sources & licences
+- **AI isolation**: removes each of the 119 AI, library, action, Text Reader, PDF, sheet music, suite-catalog, make, READ, Code Lab, places, codes and sources modules in turn and opens Chat, Text Reader and Music (rule 11)
 
 `tests/browser/code_lab_e2e.py` (not part of `npm test`; needs Playwright and Chromium) drives Code Lab and Chat in a real browser: Check on a broken example, ladder drawn and turned into Structured Text, JavaScript in a real Web Worker and an endless loop stopped, and MAKE CODE from a stand-in model checked, corrected once, shown once and opened in Code Lab.
 

@@ -1,5 +1,78 @@
 # Changelog
 
+## 1.14.0 — Open modules: library shelves, places and distances, codes, sources & licences (2026-10-27)
+
+Adam asked how Lantern compares with the other offline-knowledge projects
+(Project NOMAD, Internet-in-a-Box, RACHEL, Kolibri, Kiwix itself) and then to
+"borrow where applicable and allowable to make more open modules for Lantern
+and the AI to close the competition". Their lead was content breadth (many
+Kiwix books, not only Wikipedia), maps, and data tools. This release borrows
+the open parts and ties each one to the AI, so the AI can use it and Lantern
+can check the result:
+
+- **Library shelves.** The kit can add more free Kiwix books beside the
+  encyclopedia: WikiMed (Wikipedia's medicine articles, about 1 GB), iFixit
+  repair guides (3 GB), the Wikivoyage travel guide and PhET science
+  simulations (0.5 GB each), and with `shelves-all` the Wiktionary dictionary
+  (5 GB) and Wikibooks textbooks (3 GB). Setup offers the practical shelf once
+  (N is remembered); `setup-kit shelves`, `shelves-all` and `shelf-<name>`
+  fetch them, and `check` lists them (shell and PowerShell). The kit window
+  shows the step as "More books".
+  - A question reads **the shelf it is about** first, then the encyclopedia
+    (`Lantern.library.order`): a snake bite reads WikiMed, a phone battery
+    iFixit, getting around Nairobi Wikivoyage. A shelf a question is not about
+    is not searched -- Mars is not looked up in iFixit. The Offline library
+    panel says what each book is read for.
+  - Five bench questions need a shelf (snakebite first aid, oral rehydration,
+    an iPhone battery, Nairobi transport, a word's meaning). The bench asks
+    them only when the kit has that shelf, and an answer passes only if it
+    read and quoted that shelf.
+  - Not checked from here: download.kiwix.org cannot be reached from where
+    this was built, so the book names (`wikipedia_en_medicine_nopic`,
+    `ifixit_en_all`, `wikivoyage_en_all_nopic`, `phet_en_all`,
+    `wiktionary_en_all_nopic`, `wikibooks_en_all_nopic`) come from Kiwix's
+    catalogue as of mid-2026. Setup looks in the book's own folder, then
+    `other` and `zimit`, and says plainly when a name is not found.
+- **Places.** Where 7,336 towns and cities are -- every capital, every region
+  capital and the big towns -- from **Natural Earth 5.1.2, which is public
+  domain**, so the single file stays CC0. Served by the kit or the website,
+  Lantern also reads `site/places.txt`: every town of 1,000 people and up
+  (135,195), from **GeoNames, CC BY 4.0**. That one is not public domain, so it
+  is a separate file with its credit line at the top, never inside the single
+  file.
+  - Formula functions `DISTKM` (straight-line distance, two names or four
+    numbers), `BEARING` (degrees to set off on), `DIRECTION` (in words),
+    `LAT`, `LON` and `PLACE` (which town Lantern means). "Paris" is the
+    biggest Paris; "Paris, TX", "Paris, Texas" and "Paris (France)" narrow it.
+    Accents, St./Saint, other names Natural Earth lists (Rangoon, Kiev),
+    D.C./U.S.A./U.K., regions (London, Ontario) and countries by other names
+    (Deutschland, Burma, Ivory Coast) all work. Capitals are the official
+    ones (South Africa's three, Dodoma, Porto-Novo, Astana; not Johannesburg
+    or Lagos). People are counted for the urban area, and PLACE says so.
+  - Geography has a **Places & distances** card: two towns, where each is,
+    the distance in km and miles and which way to set off.
+  - The AI has DISTKM, BEARING and PLACE in its catalogue, two recipe cards
+    and two new bench questions (Nairobi to Mombasa; the bearing from Tulsa to
+    Dallas), worked out by Lantern.
+- **Codes.** `MORSE`/`UNMORSE`, `NATO` (the ICAO radio alphabet: Alfa,
+  Juliett), `BASE64`/`UNBASE64` (UTF-8), `HEX`/`UNHEX`, `ROT13`, `CAESAR`,
+  `SHA256` and `CRC32`, checked against their published test values, in the
+  formula engine and the AI's catalogue (`Lantern.codes`).
+- **Sources & licences.** A new section in the Charter (and
+  `Lantern.sources`, for machines) lists everything Lantern borrows, where it
+  sits and what its licence asks: in the file, CC0 and public domain only;
+  beside it, GeoNames (CC BY 4.0), wllama and llama.cpp (MIT), Qwen3.5
+  (Apache 2.0), kiwix-tools (GPL 3.0), the Wikimedia books (CC BY-SA 4.0),
+  PhET (CC BY 4.0) and iFixit (**CC BY-NC-SA 3.0: a kit sold for money must
+  leave the iFixit shelf off**). The Charter shows sections from other
+  modules (`Lantern.charterSections`). Suite search finds "Sources &
+  licences". README.txt and kit/README.txt say the same.
+- Tests: `tests/open_modules.js` (40 checks: shelves against a stand-in
+  kiwix-serve with five books, Places, Codes, Sources); the four new modules
+  in the AI isolation test (rule 11); the kit's shelves in `kit_offer.py`.
+- `tools/make_places.js` builds both place lists; how to fetch its inputs is
+  at its top.
+
 ## 1.13.4 — Bench run 12: retyped lines run again, a rung in plain text, lamps drawn as resistors, Show what was made (2026-10-27)
 
 Adam's run 12 (Qwen3.5-35B-A3B, sees images, Lantern 1.13.3, with the

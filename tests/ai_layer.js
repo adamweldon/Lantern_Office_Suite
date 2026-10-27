@@ -47,7 +47,7 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   await sleep(40);
   var L = w.Lantern, AI = L.ai, A = L.assist;
   ok("boot clean", errs.length === 0, errs);
-  ok("version 1.13", /^1\.13\./.test(L.version), L.version);
+  ok("version 1.14", /^1\.14\./.test(L.version), L.version);
   ok("ai app registered after compose", L.order[L.order.indexOf("compose") + 1] === "ai", L.order.slice(0, 5));
   ok("aiRoute installed", typeof L.aiRoute === "function");
   ok("no server on GitHub-Pages-like path", AI.server.checked && !AI.server.sameOrigin);
@@ -140,7 +140,8 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   // A fake on-device engine: a perfect model and a bad one
   served = false; AI.server.sameOrigin = false;
   var Q = L.aiBenchQuestions.filter(function (x) { return x.cat !== "fact" && x.cat !== "chat" && x.cat !== "reason" && x.cat !== "alone"; }), byQ = {};   // fact questions need a library; conversations: tests/chat_routing.js; puzzles: tests/puzzles.js
-  ok("fact questions are skipped when no library is attached", L.aiBenchQuestions.filter(function (x) { return x.cat === "fact"; }).length === 20 && !L.library.ready());
+  ok("fact questions are skipped when no library is attached", L.aiBenchQuestions.filter(function (x) { return x.cat === "fact" && !x.shelf; }).length === 20 &&
+    L.aiBenchQuestions.filter(function (x) { return x.cat === "fact" && x.shelf; }).length === 5 && !L.library.ready());
   Q.forEach(function (x) { byQ[x.q] = x; });
   var mode = "perfect";
   AI.register("device", { available: function () { return true; }, chosen: function () { return true; },

@@ -23,8 +23,9 @@ First time
        Mac: if it refuses, System Settings > Privacy & Security > Open Anyway.
        Raspberry Pi: choose Execute.
   2. Answer the questions in the popups (a stronger model? the offline
-     encyclopedia?). Big downloads take a while; they carry on where they
-     stopped if the internet drops.
+     encyclopedia? a shelf of more books -- medicine, repair guides,
+     travel, science?). Big downloads take a while; they carry on where
+     they stopped if the internet drops.
   3. At the end it offers to start Lantern.
 
 Every time
@@ -46,5 +47,13 @@ Updating to a newer Lantern
     ditto -x -k ~/Downloads/Lantern.zip "/path/to/the/folder/holding/Lantern"
   The newest Lantern.zip is always at:
     https://github.com/adamweldon/Lantern_Office_Suite/releases/latest/download/Lantern.zip
+
+Licences
+  Everything inside Lantern_Office_Suite.html is CC0 or public domain.
+  What sits beside it keeps its own licence: site/places.txt (GeoNames,
+  CC BY 4.0: keep its credit line), site/ai (MIT), and the models,
+  engine and library books the kit downloads (see kit/README.txt; the
+  iFixit repair shelf is CC BY-NC-SA: not for sale). Lantern's Charter
+  app lists them all under Sources & licences.
 
 More: kit/README.txt (the AI kit in detail).

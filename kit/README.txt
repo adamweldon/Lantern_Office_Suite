@@ -60,6 +60,15 @@ Folder layout
               interrupted download resumes.
      zim NAME any Kiwix file, e.g. "zim wikipedia_en_medicine_maxi" (newest
               version is found by itself; checked against its SHA-256)
+     shelves  more free books for the AI to read, beside the encyclopedia
+              (setup offers them once): WikiMed, Wikipedia's medicine
+              articles (about 1 GB), iFixit repair guides (about 3 GB),
+              the Wikivoyage travel guide and PhET science simulations
+              (about 0.5 GB each)
+     shelves-all  those and the Wiktionary dictionary (about 5 GB) and
+              Wikibooks open textbooks (about 3 GB)
+     shelf-medicine, shelf-repair, shelf-travel, shelf-science,
+     shelf-words, shelf-textbooks   one of them
      vision   the vision part of each laptop model in the kit (0.7-0.9 GB
               each; new 4B/9B/35B downloads bring theirs along): the AI can
               then look at the drawings it makes in Chat
@@ -111,6 +120,17 @@ Folder layout
    one when you ask Chat to explain something ("explain", "in detail", "how
    does"): it reads before the AI answers, then checks every sentence of the
    answer against what it read and shows which sentences are the AI's own.
+   Shelves: a question reads the shelf it is about first -- a snake bite
+   reads WikiMed, a cracked phone screen reads iFixit, getting around a
+   city reads Wikivoyage -- then the encyclopedia; a shelf a question is
+   not about is not searched. The AI app's Offline library panel lists each
+   book and what it is read for.
+
+   Places: Lantern knows where 7,300 towns and cities are (every capital
+   and region capital, the big towns) and works out how far apart two are
+   and which way to go (Geography > Places & distances; the AI writes
+   =DISTKM("Nairobi","Mombasa")). Served by the kit, it also reads
+   Lantern/site/places.txt: every town of 1,000 people and up.
 
 Updating Lantern
    Download the newer Lantern.zip and extract it into the folder that holds
@@ -145,5 +165,12 @@ Notes
    crash llama.cpp; add "gpu" to try the graphics card. Macs use Metal.
  - Copy models/Qwen3.5-*.gguf onto a phone and load it in Lantern's AI app
    (On this device > Load file) to give a phone the AI without downloading.
- - Licences: Lantern CC0; llama.cpp MIT; Qwen3.5 Apache 2.0; kiwix-tools
-   GPLv3 (a separate program); Wikipedia text CC BY-SA 4.0.
+ - Licences: Lantern CC0, and everything inside Lantern_Office_Suite.html
+   is CC0 or public domain (its towns are Natural Earth's, public domain).
+   Beside it: site/places.txt GeoNames, CC BY 4.0 (keep its credit line);
+   site/ai wllama and llama.cpp MIT; llama.cpp MIT; Qwen3.5 Apache 2.0;
+   kiwix-tools GPLv3 (a separate program); Wikipedia, WikiMed, Wikivoyage,
+   Wiktionary and Wikibooks CC BY-SA 4.0; PhET CC BY 4.0; iFixit
+   CC BY-NC-SA 3.0 -- non-commercial: a kit sold for money must leave the
+   iFixit shelf off. The Charter app in Lantern has the full list (Sources
+   & licences).

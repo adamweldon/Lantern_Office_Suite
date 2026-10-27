@@ -21,6 +21,11 @@
 #                               downloaded unasked.
 #   ./setup-kit.sh zim NAME     any Kiwix file by name (e.g. wikipedia_en_medicine_maxi)
 #                               or full URL, into library/
+#   ./setup-kit.sh shelves      the practical shelf for the library: WikiMed (medicine),
+#                               iFixit repair guides, Wikivoyage, PhET simulations
+#   ./setup-kit.sh shelves-all  those and the Wiktionary dictionary and Wikibooks
+#   ./setup-kit.sh shelf-medicine | shelf-repair | shelf-travel | shelf-science |
+#                  shelf-words | shelf-textbooks   one of them
 #   ./setup-kit.sh vision       the vision part of every laptop model in the kit
 #                               (mmproj, 0.7-0.9 GB each): the AI can then look at
 #                               the drawings it makes. New 4B/9B/35B downloads
@@ -376,6 +381,64 @@ get_zim() {  # url -- into library/, checked against the published SHA-256
     echo "  checksum OK"
   else echo "  (no published checksum for $f)"; fi
 }
+# --- the shelves: more free Kiwix books for the AI to read (1.14.0) ---------------
+# Each: a name, the folder on download.kiwix.org, the book's name without its
+# date, about how big, and its licence. Lantern itself (LIBRARY_ENGINE) reads
+# the one that fits a question: medicine for symptoms, iFixit for a repair...
+PRACTICAL="shelf-medicine shelf-repair shelf-travel shelf-science"
+SHELVES="$PRACTICAL shelf-words shelf-textbooks"
+shelfinfo() {
+  case "$1" in
+    shelf-medicine) S_NAME="WikiMed, Wikipedia's medicine articles"; S_FOLDER=wikipedia; S_BASE=wikipedia_en_medicine_nopic; S_GB=1; S_LIC="CC BY-SA" ;;
+    shelf-repair) S_NAME="iFixit repair guides"; S_FOLDER=ifixit; S_BASE=ifixit_en_all; S_GB=3; S_LIC="CC BY-NC-SA: free, not for sale" ;;
+    shelf-travel) S_NAME="the Wikivoyage travel guide"; S_FOLDER=wikivoyage; S_BASE=wikivoyage_en_all_nopic; S_GB=0.5; S_LIC="CC BY-SA" ;;
+    shelf-science) S_NAME="PhET science and maths simulations"; S_FOLDER=phet; S_BASE=phet_en_all; S_GB=0.5; S_LIC="CC BY" ;;
+    shelf-words) S_NAME="the Wiktionary dictionary"; S_FOLDER=wiktionary; S_BASE=wiktionary_en_all_nopic; S_GB=5; S_LIC="CC BY-SA" ;;
+    shelf-textbooks) S_NAME="Wikibooks open textbooks"; S_FOLDER=wikibooks; S_BASE=wikibooks_en_all_nopic; S_GB=3; S_LIC="CC BY-SA" ;;
+    *) return 1 ;;
+  esac
+}
+have_shelf() { shelfinfo "$1" && ls "$LIBRARY/$S_BASE"_[0-9]*.zim >/dev/null 2>&1; }
+# find_zim folder base -> folder/file of the newest one: its own folder first,
+# then "other" and "zimit", where Kiwix files some books
+find_zim() {
+  for f in "$1" other zimit; do
+    n=$(latest_zim "$f" "$2" 2>/dev/null) || n=""
+    if [ -n "$n" ]; then echo "$f/$n"; return 0; fi
+  done
+  return 1
+}
+get_shelf() {
+  shelfinfo "$1" || { echo "  unknown shelf: $1"; return 1; }
+  if have_shelf "$1"; then echo "  have $S_NAME"; return 0; fi
+  kiwix_tools
+  fz=$(find_zim "$S_FOLDER" "$S_BASE") || { echo "  $S_NAME: no $S_BASE file listed at $KIWIX_BASE/zim/ just now"; return 1; }
+  echo "  $S_NAME ($S_LIC): ${fz#*/}"
+  ui "STEP shelves $S_NAME"
+  get_zim "$KIWIX_BASE/zim/$fz"
+}
+get_shelves() { for sf in $1; do get_shelf "$sf" || echo "  ($sf did not finish; ./setup-kit.sh $sf carries on where it stopped)"; done; }
+# offer_shelves [1] -- in setup, once the kit has a library: the practical
+# shelf, asked once (N is remembered: models/.skip-shelves)
+offer_shelves() {
+  [ "${1:-}" = 1 ] || return 0
+  [ -f "$MODELS/.skip-shelves" ] && return 0
+  miss=""; gb=0
+  for sf in $PRACTICAL; do
+    if ! have_shelf "$sf"; then miss="$miss $sf"; gb=$(awk -v a="$gb" -v b="$S_GB" 'BEGIN { print a + b }'); fi
+  done
+  [ -n "$miss" ] || return 0
+  listing "$KIWIX_BASE/zim/wikipedia/" >/dev/null 2>&1 || return 0   # no internet: say nothing
+  echo ""
+  ui "STEP shelves More books for the library"
+  q "  Lantern can add a shelf of free offline books for the AI to read: WikiMed (medicine),"
+  q "  iFixit repair guides, the Wikivoyage travel guide and PhET science simulations,"
+  q "  about $gb GB. The AI reads the one that fits each question, and Lantern checks its quotes."
+  ans=$(ask "" "More offline books"); QTEXT=""
+  [ -n "$ans" ] || return 0
+  if [ "$ans" = no ]; then : > "$MODELS/.skip-shelves"; echo "  Not asking again. To get them later: ./setup-kit.sh shelves"; return 0; fi
+  get_shelves "$miss"
+}
 pick_lib() { for id in $LIBS; do libinfo "$id"; if [ -z "$(no_room)" ]; then echo "$id"; return 0; fi; done; return 1; }
 get_library() {
   libinfo "$1" || return 1
@@ -390,9 +453,8 @@ get_zim_name() {
   case "$1" in
     http://*|https://*) get_zim "$1" ;;
     *) folder=${1%%_*}; base=$(printf '%s' "$1" | sed 's/_[0-9]\{4\}-[0-9]\{2\}\(\.zim\)\{0,1\}$//')
-       name=$(latest_zim "$folder" "$base")
-       if [ -z "$name" ]; then echo "  no $base file listed at $KIWIX_BASE/zim/$folder/"; return 1; fi
-       get_zim "$KIWIX_BASE/zim/$folder/$name" ;;
+       fz=$(find_zim "$folder" "$base") || { echo "  no $base file listed at $KIWIX_BASE/zim/ ($folder, other, zimit)"; return 1; }
+       get_zim "$KIWIX_BASE/zim/$fz" ;;
   esac
 }
 
@@ -536,7 +598,7 @@ offer() {  # inline: 1 = download here, else in the background
     IFS=$old_ifs
     if [ -z "$P_ID" ]; then
       if [ -n "$P_OFFLINE" ]; then echo "  ($P_WHY; starting with the model the kit has.)"; return 0; fi
-      if [ -z "$P_BUSY" ]; then offer_library "${1:-}"; if have_library; then offer_full "${1:-}"; fi; fi
+      if [ -z "$P_BUSY" ]; then offer_library "${1:-}"; if have_library; then offer_full "${1:-}"; offer_shelves "${1:-}"; fi; fi
       return 0
     fi
     tier "$P_ID"; mem=$(mem_mb)
@@ -668,6 +730,10 @@ check() {
       printf 'Library: %s (%s)%s\n' "$(basename "$z")" "$(du -h "$z" | awk '{print $1}')" "$([ -x "$DIR/engine/$kos/kiwix/kiwix-serve" ] || echo ' -- kiwix-serve missing: ./setup-kit.sh library')"
     done
   else echo "Library: none (./setup-kit.sh library adds an offline encyclopedia)"; fi
+  for sf in $SHELVES; do
+    shelfinfo "$sf"
+    if have_shelf "$sf"; then echo "Shelf: $S_NAME -- in the kit"; else echo "Shelf: $S_NAME -- not in the kit (./setup-kit.sh $sf, about $S_GB GB)"; fi
+  done
   if [ "${LANTERN_AUTO_DOWNLOAD:-}" = 0 ]; then echo "Next start: offers nothing (LANTERN_AUTO_DOWNLOAD=0)."
   elif [ -n "$P_ID" ]; then tier "$P_ID"; echo "Next start: will offer $T_NAME ($T_GB GB). Or fetch it now: ./setup-kit.sh $T_ID"
   elif [ -n "$P_OFFLINE" ] || [ -n "$P_BUSY" ]; then echo "Next start: offers nothing: $P_WHY."
@@ -751,6 +817,9 @@ for s in $SETS; do
     library) if lid=$(pick_lib); then get_library "$lid"; else echo "  No room for an encyclopedia on this drive."; fi ;;
     library-simple) get_library library-simple ;;
     library-full) get_full || true ;;
+    shelves) get_shelves "$PRACTICAL" ;;
+    shelves-all) get_shelves "$SHELVES" ;;
+    shelf-*) get_shelf "$s" || true ;;
     vision) for id in $TIERS; do tier "$id"; if have "$T_PAT"; then get_vision; fi; done ;;
     phone) phone ;;
     lantern) get_lantern new || exit 1 ;;

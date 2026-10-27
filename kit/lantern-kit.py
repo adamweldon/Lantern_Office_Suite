@@ -430,7 +430,8 @@ class App(tk.Tk):
                           "%s, the AI model that suits %s of memory%s" % (
                               info.get("base", "the AI model"), ("%.0f GB" % mem_gb) if mem_gb else "this computer's amount",
                               (" (about %.1f GB)" % size) if size else ""),
-                          "Then you choose: a stronger model if this computer can run one, and an offline encyclopedia"])
+                          "Then you choose: a stronger model if this computer can run one, an offline encyclopedia, "
+                          "and a shelf of free books (medicine, repair guides, travel, science simulations)"])
         rows = [("This computer", "%s · %s%s" % (computer_name(), ("%.0f GB memory · " % mem_gb) if mem_gb else "", os_name()))]
         rows.append(("Saved in", "%s%s" % (KIT, ("  ·  %s GB free" % free) if free else "")))
         if installed and info.get("best"):
@@ -513,7 +514,7 @@ class App(tk.Tk):
 
     def set_step(self, sid):
         ids = [s for s, _ in self.STEPS]
-        if sid in ("library",):
+        if sid in ("library", "shelves"):
             sid = "more"
         if sid == "build":
             sid = "engine"
