@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.13.3 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.13.4 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -168,7 +168,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.13.3",
+  version: "1.13.4",
   apps: {},
   order: []
 };
@@ -17531,6 +17531,26 @@ Lantern.RFB = (function () {
           continue;
         }
         stillDoubt = doubts.length ? doubts : null;
+        // the corrected lines still type a result out (with mistakes) instead
+        // of ANSj: Lantern runs them again with its own results in place, and
+        // says so (bench run 12: "rortegifer" for line 1's "rotaregirfer")
+        var RCX = window.Lantern.aiResultChecks, rch = stillDoubt && RCX && RCX.rechain ? RCX.rechain(parsed.exprText, run.steps, said) : null;
+        if (rch) {
+          var run2 = A.run(rch.expr);
+          if (run2.value != null && run2.steps.every(function (x) { return x.ok; })) {
+            run = run2; lastSteps = run2.steps; lastValue = run2.value; rec.value = run2.value; parsed.exprText = rch.expr;
+            rec.rechained = rch.changes.map(function (c) { return c.from + " -> " + c.to; });
+            if (ui.tool) ui.tool(run2);
+            note("The AI typed results out instead of using them; Lantern ran its lines again with its own results in place: " +
+              rch.changes.map(function (c) { return c.from + " \u2192 " + c.to; }).join(", ") + ".");
+            var d2 = [];
+            (window.Lantern.assistChecks || []).forEach(function (c) {
+              var r = null; try { r = c(said, rch.expr, run2, { text: shown, parsed: parsed, sources: null }); } catch (e) { r = null; }
+              if (r) d2.push(String(r));
+            });
+            stillDoubt = d2.length ? d2 : null;
+          }
+        }
         if (!parsed.answer) { msgs.push({ role: "user", content: "TOOL RESULTS\n" + resultText + "\nNow reply with the ANSWER: line only." }); continue; }
       }
       // A detailed answer from passages: every sentence is checked against
@@ -21992,10 +22012,10 @@ Lantern.RFB = (function () {
           passages: g.pass ? undefined : res.sources.map(function (s) { return String(s.text || "").slice(0, 1500); }) } : null,
         rejected: res && res.rejected ? res.rejected.slice(0, 300) : "", flags: res && res.flags ? res.flags : [],
         looked: res && res.looked ? (res.changedOnLook ? "changed it" : "kept it") : undefined, needAnswered: res && res.needAnswered || undefined,
-        commands: res && res.commands && !res.turns ? res.commands : undefined,
+        commands: res && res.commands && !res.turns ? res.commands : undefined, codeInReply: res && res.inReply || undefined,
         chat: res && res.turns ? res.turns.map(function (t) { return { q: t.q, searches: t.searches, self: t.self, noLibrary: t.noLibrary,
           contextual: t.contextual, carried: t.carried, declined: t.declined, pointed: t.pointed || undefined,
-          catalog: t.catalog || undefined, repaired: t.repaired || undefined, commands: t.commands && t.commands.length ? t.commands.map(function (c) { return c.verb + (c.arg ? ": " + c.arg : ""); }) : undefined,
+          catalog: t.catalog || undefined, repaired: t.repaired || undefined, rechained: t.rechained || undefined, commands: t.commands && t.commands.length ? t.commands.map(function (c) { return c.verb + (c.arg ? ": " + c.arg : ""); }) : undefined,
           puzzles: t.puzzles && t.puzzles.length ? t.puzzles.map(function (z) { return z.kind + (z.ok ? "" : ": " + z.problems.join("; ").slice(0, 200)); }) : undefined,
           // each block the AI wrote and what Lantern made of it, so a wrong
           // answer can be traced to its line (bench run 9, 1.13.1)
@@ -22682,7 +22702,7 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // MODULE: AI_PANEL_BENCH - START
 // Depends: AI_APP (Lantern.aiPanels), AI_BENCH (Lantern.aiBench) -- feature-detected
-// Exports: (none) -- adds the "Lantern Bench" section to the AI app
+// Exports: Lantern.aiBenchDetail(row) (what "Show" opens) -- adds the "Lantern Bench" section to the AI app
 // ===========================================================================
 // Run the bench against whatever engine is active, watch it go question by
 // question, and save the results (JSON for analysis, CSV for a spreadsheet,
@@ -22713,6 +22733,34 @@ Lantern.RFB = (function () {
     return "Lantern Bench " + (rep.quick ? "quick" : "full") + ": " + s.pass + "/" + s.n + " (" + s.score + "%) \u00b7 Lantern " + rep.lantern + " \u00b7 " + parts.join(", ") + extra +
       " \u00b7 avg " + s.avgSeconds + " s/question" + (rep.prompt ? " \u00b7 " + rep.prompt + " prompt" : "") + (s.medianTps ? " \u00b7 ~" + s.medianTps + " tokens/s" : "") + " \u00b7 " + rep.model;
   }
+  // detail(row) -> what the AI replied and, for a thing it made, the thing
+  // itself, rebuilt from the saved reply exactly as Lantern built it: Adam
+  // could see "fail -- not two lamps" but not the circuit (bench run 12).
+  function pre(t) {
+    return el("pre", { style: "margin:4px 0;padding:8px;background:#f8fafc;border:1px solid var(--line);border-radius:6px;white-space:pre-wrap;" +
+      "font:12px/17px ui-monospace,Consolas,monospace;max-height:320px;overflow:auto", text: String(t || "") });
+  }
+  function detail(r) {
+    var box = el("div", { style: "padding:4px 0 8px" }), last = r.chat && r.chat.length ? r.chat[r.chat.length - 1] : null;
+    if (r.why) box.appendChild(el("p", { "class": r.pass ? "muted" : "danger", style: "margin:2px 0", text: (r.pass ? "" : "Why it failed: ") + r.why }));
+    if (r.cat === "make" && r.reply && L.aiAct) {
+      var mk = null;
+      try { mk = L.aiAct.fromReply ? L.aiAct.fromReply(r.reply, r.q) : L.aiAct.build(r.reply, r.q); } catch (e) { mk = null; }
+      if (mk) box.appendChild(L.aiAct.view(mk));
+      else box.appendChild(el("p", { "class": "muted", text: "Nothing Lantern can make is in this reply." }));
+    }
+    (last && last.blocks || []).forEach(function (b, k) {
+      box.appendChild(el("div", { "class": "muted", style: "margin-top:6px", text: b.kind + " block " + (k + 1) + (b.ok ? ", ran" : ", not run") +
+        (b.problems ? " \u2014 " + b.problems.join("; ") : "") }));
+      box.appendChild(pre((b.lines || []).join("\n") + (b.final ? "\n\n" + b.final : "")));
+    });
+    if (r.repaired || (last && last.repaired)) box.appendChild(el("p", { "class": "muted", text: "Lantern put its own results in: " + (r.repaired || last.repaired).join(", ") }));
+    var reply = last ? last.reply : r.reply;
+    if (r.first && r.first !== r.reply) { box.appendChild(el("div", { "class": "muted", style: "margin-top:6px", text: "The AI\u2019s first reply" })); box.appendChild(pre(r.first)); }
+    if (reply) { box.appendChild(el("div", { "class": "muted", style: "margin-top:6px", text: r.first && r.first !== r.reply ? "Its last reply" : "The AI\u2019s reply" })); box.appendChild(pre(reply)); }
+    return box;
+  }
+  window.Lantern.aiBenchDetail = detail;
   P.push({ id: "bench", title: "Lantern Bench", order: 40, render: function (box) {
     var n = (window.Lantern.aiBenchQuestions || []).length;
     var nq = (window.Lantern.aiBenchQuestions || []).filter(function (q) { return q.quick; }).length;
@@ -22721,6 +22769,40 @@ Lantern.RFB = (function () {
     prog.style.display = "none";
     var table = el("table", { "class": "la-tbl" }, [
       el("thead", {}, [el("tr", {}, [el("th", { text: "Question" }), el("th", { text: "Result" }), el("th", { text: "Time" })])]), tbody]);
+    // one row; "Show" opens what the AI replied, and what Lantern made of it
+    function addRow(r) {
+      // each puzzle is asked twice: with Lantern's puzzle tools, and again
+      // with them switched off to show what they add -- say which is which
+      // (bench run 9: the pairs looked like the same question asked twice)
+      var tag = r.cat === "reason" ? "Puzzle, with Lantern\u2019s puzzle tools" :
+        r.cat === "alone" ? "The same puzzle with Lantern\u2019s puzzle tools switched off \u2014 not scored" : "";
+      var more = null, shown = null;
+      var tr = el("tr", {}, [
+        el("td", {}, [el("div", { text: r.q }), tag ? el("div", { "class": "muted", style: "font-size:12px;margin-top:2px", text: tag }) : null]),
+        el("td", {}, [el("span", { "class": r.pass ? "la-pass" : "la-fail", text: r.pass ? "pass" : "fail" }),
+          el("div", { "class": "muted", text: (r.why || (r.value != null ? String(Math.round(r.value * 1e4) / 1e4) : "")) +
+            (r.by === "rule" ? " (safety rule)" : "") + (r.claim === "disagrees" ? " \u00b7 its sentence disagreed" : "") +
+            (r.rounds > 1 ? (r.fixed ? " \u00b7 fixed on 2nd try" : " \u00b7 2nd try failed too") : "") +
+            (r.flags && r.flags.length ? " \u00b7 Lantern still questions it" : "") }),
+          more = el("button", { text: "Show", title: "What the AI replied, and what Lantern made of it", style: "margin-top:4px;padding:2px 10px;font-size:12px",
+            onclick: function () {
+              if (shown) { shown.parentNode.removeChild(shown); shown = null; more.textContent = "Show"; return; }
+              shown = el("tr", {}, [el("td", { colspan: "3" }, [detail(r)])]);
+              tr.parentNode.insertBefore(shown, tr.nextSibling); more.textContent = "Hide";
+            } })]),
+        el("td", { text: r.ms != null ? (r.ms / 1000).toFixed(1) + " s" : "" })
+      ]);
+      tbody.appendChild(tr);
+      return tr;
+    }
+    // a saved run (the JSON from Save results), shown the same way
+    function openSaved(rep) {
+      tbody.innerHTML = ""; sum.innerHTML = "";
+      (rep.rows || []).forEach(addRow);
+      sum.appendChild(el("p", { html: "<b>" + L.esc("Saved run, " + String(rep.when || "").slice(0, 16).replace("T", " ") + ": " + line(rep)) + "</b>" }));
+      var bad = (rep.rows || []).filter(function (r) { return !r.pass && r.cat !== "alone"; }).length;
+      status.textContent = bad ? bad + " scored question" + (bad === 1 ? "" : "s") + " failed: \u201cShow\u201d under a result opens the AI\u2019s reply and what Lantern made of it." : "";
+    }
     function start(quick) {
       if (ctrl) return;
       ctrl = window.AbortController ? new AbortController() : { signal: null, abort: function () {} };
@@ -22732,17 +22814,7 @@ Lantern.RFB = (function () {
         // each puzzle is asked twice: with Lantern's puzzle tools, and again
         // with them switched off to show what they add -- say which is which
         // (bench run 9: the pairs looked like the same question asked twice)
-        var tag = r.cat === "reason" ? "Puzzle, with Lantern\u2019s puzzle tools" :
-          r.cat === "alone" ? "The same puzzle with Lantern\u2019s puzzle tools switched off \u2014 not scored" : "";
-        tbody.appendChild(el("tr", {}, [
-          el("td", {}, [el("div", { text: r.q }), tag ? el("div", { "class": "muted", style: "font-size:12px;margin-top:2px", text: tag }) : null]),
-          el("td", {}, [el("span", { "class": r.pass ? "la-pass" : "la-fail", text: r.pass ? "pass" : "fail" }),
-            el("div", { "class": "muted", text: (r.why || (r.value != null ? String(Math.round(r.value * 1e4) / 1e4) : "")) +
-              (r.by === "rule" ? " (safety rule)" : "") + (r.claim === "disagrees" ? " \u00b7 its sentence disagreed" : "") +
-              (r.rounds > 1 ? (r.fixed ? " \u00b7 fixed on 2nd try" : " \u00b7 2nd try failed too") : "") +
-              (r.flags && r.flags.length ? " \u00b7 Lantern still questions it" : "") })]),
-          el("td", { text: (r.ms / 1000).toFixed(1) + " s" })
-        ]));
+        addRow(r);
       } }).then(function (rep) {
         last = rep;
         prog.style.display = "none";
@@ -22770,7 +22842,21 @@ Lantern.RFB = (function () {
     box.appendChild(el("div", { "class": "row" }, [
       el("button", { "class": "primary", text: "Quick run (" + nq + " questions)", onclick: function () { start(true); } }),
       el("button", { text: "Full run (" + n + ")", onclick: function () { start(false); } }),
-      el("button", { text: "Stop", onclick: function () { if (ctrl) ctrl.abort(); } })
+      el("button", { text: "Stop", onclick: function () { if (ctrl) ctrl.abort(); } }),
+      el("button", { text: "Open saved results\u2026", title: "Look through a run saved as JSON: every reply, and what Lantern made", onclick: function () {
+        var inp = el("input", { type: "file", accept: ".json,application/json", style: "display:none" });
+        inp.onchange = function () {
+          var f = inp.files && inp.files[0];
+          if (!f) return;
+          var rd = new FileReader();
+          rd.onload = function () {
+            try { var rep = JSON.parse(String(rd.result)); if (!rep || !rep.rows || !rep.summary) throw new Error("not Lantern Bench results"); openSaved(rep); }
+            catch (e) { status.textContent = "Could not open it: " + ((e && e.message) || e); }
+          };
+          rd.readAsText(f);
+        };
+        document.body.appendChild(inp); inp.click(); setTimeout(function () { if (inp.parentNode) inp.parentNode.removeChild(inp); }, 60000);
+      } })
     ]));
     box.appendChild(prog);
     box.appendChild(status);
@@ -23942,7 +24028,7 @@ Lantern.RFB = (function () {
 // MODULE: AI_ACTIONS - START
 // Depends: AI_ENGINE (Lantern.ai) -- feature-detected
 // Exports: Lantern.aiActions (hook array, created here if absent),
-//          Lantern.aiAct = {find, relevant, prompt, build, solve, view,
+//          Lantern.aiAct = {find, relevant, prompt, build, fromReply, inReply, solve, view,
 //          lookText, LOOKS, runaway, compact}
 // ===========================================================================
 // (The actions come from AI_DRAW and AI_SHEET through the
@@ -24100,7 +24186,30 @@ Lantern.RFB = (function () {
   function build(text, q) {
     var bs = find(text);
     if (!bs.length) return null;
-    var b = bs[0];
+    return buildBlock(bs[0], q, text);
+  }
+  // inReply(text, question) -> a CODE block from code written straight into the
+  // reply (fenced, or ladder rungs on their own lines; Lantern.chatCode.blocks
+  // -- what Chat checks under such a reply), when the question asks for a
+  // program. Bench run 12: the ladder answer was one correct rung in plain
+  // text, and the bench said "no MAKE block".
+  function inReply(text, q) {
+    var ca = actionFor("CODE"), CC = window.Lantern.chatCode;
+    if (!ca || !CC || !CC.blocks || (ca.match && !ca.match(q))) return null;
+    var bs = CC.blocks(text);
+    if (!bs.length) return null;
+    var b = bs.slice().sort(function (x, y) { return y.lines - x.lines; })[0], raw = b.text.replace(/\n$/, "").split("\n");
+    return { kind: "CODE", title: "Program", lines: raw.filter(function (l) { return l.trim(); }), raw: ["language " + b.lang].concat(raw), closed: true, action: ca, inReply: true };
+  }
+  // fromReply(text, question) -> a MAKE block built, or else code in the reply
+  // built the same way (marked inReply), or null
+  function fromReply(text, q) {
+    var r = build(text, q);
+    if (r) return r;
+    var ib = inReply(text, q);
+    return ib ? buildBlock(ib, q, text) : null;
+  }
+  function buildBlock(b, q, text) {
     if (!b.action) {
       var kinds = [];
       ACTS.forEach(function (a) { kinds = kinds.concat((a.kinds || [a.kind]).slice(0, 1)); });
@@ -24186,6 +24295,9 @@ Lantern.RFB = (function () {
       var made3 = LOOKS.test(text3) ? null : build(text3, q);
       if (made3 && made3.plan && made3.ok) { made = made3; out.text = text3; out.changedOnLook = true; }
     }
+    // code written straight into the reply, as Chat checks it under the reply
+    // (no correction turn, as in Chat): graded like a MAKE CODE block (1.13.4)
+    if (!made) { made = fromReply(out.text, q); if (made) out.inReply = true; }
     out.made = made;
     return out;
   }
@@ -24211,7 +24323,7 @@ Lantern.RFB = (function () {
         return el("button", { text: x.label, title: x.title || x.label, onclick: function () { x.run(); } }); }))));
     return box;
   }
-  window.Lantern.aiAct = { find: find, relevant: relevant, prompt: prompt, build: build, solve: solve, view: view, lookText: lookText, LOOKS: LOOKS,
+  window.Lantern.aiAct = { find: find, relevant: relevant, prompt: prompt, build: build, fromReply: fromReply, inReply: inReply, solve: solve, view: view, lookText: lookText, LOOKS: LOOKS,
     runaway: runaway, runawayText: runawayText, compact: compact };
 })();
 // ===========================================================================
@@ -24627,10 +24739,12 @@ Lantern.RFB = (function () {
     HOOKS.prep.forEach(function (f) { f(sc); });
     var lay = layout(sc, block.title), late = [];
     HOOKS.draw.forEach(function (f) { f(sc, lay, late, ctx || {}); });
-    if (late.length) return { problems: late, plan: null };
     var plan = { mode: sc.mode, parts: sc.parts.map(function (p) { return { id: p.id, type: p.type, label: p.label }; }),
       wires: sc.wires.map(function (w) { return [w[0].id, w[1].id]; }), loop: sc.loop, notes: sc.shownNotes || [] };
-    return L.aiDraw.result(lay.shapes, plan, sc.parts.length + " parts, " + sc.wires.length + " connections" + (sc.loop ? ", a closed loop" : ""), block.title, []);
+    // what the hooks question (a total drawn as a part, a lamp drawn as a
+    // resistor) is drawn all the same, so the person sees what Lantern means;
+    // the block still goes back to the AI once (1.13.4)
+    return L.aiDraw.result(lay.shapes, plan, sc.parts.length + " parts, " + sc.wires.length + " connections" + (sc.loop ? ", a closed loop" : ""), block.title, late);
   }
   window.Lantern.aiSchematic = { schematic: schematic, parse: parseSchematic, norm: norm, PARTS: PARTS, SYN: SYN, hooks: HOOKS };
 
@@ -34874,10 +34988,23 @@ Lantern.RFB = (function () {
         if (lang === "javascript" && !JSLIKE.test(body)) lang = null;
       }
       var lines = body.replace(/\n$/, "").split("\n").length;
-      if (lang && lines >= 3) out.push({ lang: lang, text: body, lines: lines });
+      if (lang && lines >= (lang === "ladder" ? 1 : 3)) out.push({ lang: lang, text: body, lines: lines });
+    }
+    // ladder rungs written on their own lines, with no fence: one rung is a
+    // whole program (bench run 12: "[XIC(Start) ,XIC(Motor) ]XIC(Stop)...;")
+    if (!out.length) {
+      var rungs = [], cur = [];
+      String(text || "").replace(/\r/g, "").split("\n").forEach(function (l) {
+        var t = l.replace(/^\s+|\s+$/g, "").replace(/^\x60|\x60$/g, "");
+        if (RUNG.test(t)) cur.push(t);
+        else if (cur.length) { rungs.push(cur); cur = []; }
+      });
+      if (cur.length) rungs.push(cur);
+      rungs.forEach(function (rs) { if (out.length < 4) out.push({ lang: "ladder", text: rs.join("\n") + "\n", lines: rs.length }); });
     }
     return out;
   }
+  var RUNG = /^(\x5B\s*)?(XIC|XIO|OTE|OTL|OTU|TON|TOF|RTO|CTU|CTD|RES|MOV|EQU|NEQ|GRT|GEQ|LES|LEQ|ONS|OSR)\s*\x28[^;]*;$/i;
   function title(q, lg) {
     var w = String(q || "").replace(/[^A-Za-z0-9 ]+/g, " ").split(/\s+/).filter(function (x) { return x.length > 2; }).slice(0, 5).join(" ");
     return w || lg.name;
@@ -35186,8 +35313,9 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // MODULE: AI_RESULT_CHECKS - START
 // Depends: (none at load) -- adds a check to the Lantern.assistChecks hook
-// Exports: Lantern.aiResultChecks = {close(a, b), check(question, expr, run, ctx),
-//          repair(answer, steps, question, expr) -> {text, changes} | null}
+// Exports: Lantern.aiResultChecks = {close(a, b), sameLetters(a, b), check(question, expr, run, ctx),
+//          repair(answer, steps, question, expr) -> {text, changes} | null,
+//          rechain(expr, steps, question) -> {expr, changes} | null, retyped(steps, question)}
 // ===========================================================================
 // The AI's words against Lantern's results (bench run 9, 1.12.9). Asked to
 // spell "refrigerator" backwards and remove every r, the 35B wrote
@@ -35233,41 +35361,114 @@ Lantern.RFB = (function () {
     var steps = run && run.steps || [], q = String(question || ""), ql = q.toLowerCase(), probs = [];
     if (!steps.length) return null;
     // 1. a line that types out an earlier result, with mistakes
-    steps.forEach(function (st, k) {
-      if (!k || probs.length > 1) return;
-      (String(st.expr || "").match(/\x22[^\x22]*\x22/g) || []).forEach(function (lit) {
-        lit = lit.slice(1, -1);
-        if (!lit || ql.indexOf(lit.toLowerCase()) >= 0) return;
-        for (var j = 0; j < k; j++) {
-          var v = steps[j];
-          if (v.ok && typeof v.value === "string" && close(lit, v.value)) {
-            probs.push("line " + (k + 1) + " types \u201c" + lit + "\u201d, but line " + (j + 1) + " gave \u201c" + v.value + "\u201d: write ANS" + (j + 1) + " instead of typing a result out");
-            return;
-          }
-        }
-      });
+    retyped(steps, q).slice(0, 2).forEach(function (x) {
+      probs.push("line " + (x.k + 1) + " types \u201c" + x.lit + "\u201d, but line " + (x.j + 1) + " gave \u201c" + steps[x.j].value + "\u201d: write ANS" + (x.j + 1) + " instead of typing a result out");
     });
-    // 2. the ANSWER says a result differently, with nothing for Lantern to fill
+    // 2. the ANSWER says a result differently
     var ans = ctx && ctx.parsed && ctx.parsed.answer ? String(ctx.parsed.answer) : "";
     // the words the lines were given (REVERSE("stressed")) are inputs, not results
     var inputs = String(expr || "").toLowerCase();
-    if (ans && !/\x7B(result|ANS\d*)\x7D/i.test(ans)) {
+    if (ans) {
       var said = {};
-      (ans.match(/[A-Za-z\u00c0-\u024f]{4,}/g) || []).forEach(function (w) {
+      (plain(ans).match(/[A-Za-z\u00c0-\u024f]{4,}/g) || []).forEach(function (w) {
         if (said[w.toLowerCase()] || ql.indexOf(w.toLowerCase()) >= 0 || inputs.indexOf("\x22" + w.toLowerCase() + "\x22") >= 0) return;
-        steps.forEach(function (st, k) {
-          if (st.ok && typeof st.value === "string" && close(w, st.value) && !said[w.toLowerCase()]) {
-            said[w.toLowerCase()] = 1;
-            probs.push("the ANSWER spells \u201c" + w + "\u201d, but Lantern worked out \u201c" + st.value + "\u201d (line " + (k + 1) + "): put {ANS" + (k + 1) + "} where it goes; Lantern fills it in");
-          }
-        });
+        var k = best(w, steps.map(function (st) { return st.ok && typeof st.value === "string" ? st.value : null; }));
+        if (k < 0) return;
+        said[w.toLowerCase()] = 1;
+        probs.push("the ANSWER spells \u201c" + w + "\u201d, but Lantern worked out \u201c" + steps[k].value + "\u201d (line " + (k + 1) + "): put {ANS" + (k + 1) + "} where it goes; Lantern fills it in");
       });
-      var qn = numbers(q), vals = steps.filter(function (st) { return st.ok && typeof st.value === "number"; }).map(function (st) { return st.value; });
-      var own = numbers(ans).filter(function (x) { return !qn.some(function (y) { return Math.abs(x - y) < 1e-9; }); });
-      if (own.length && vals.length && !own.some(function (x) { return vals.some(function (v) { return near(x, v); }); }))
-        probs.push("the ANSWER says " + own[0] + ", but Lantern\u2019s lines give " + vals.slice(-3).map(fmt).join(", ") + ": put {result} (the last line) or {ANS1}, {ANS2} ... where the numbers go");
+      // a placeholder that holds a word where a count goes ("{ANS2} letters")
+      wordCounts(ans, steps).forEach(function (x) {
+        probs.push("the ANSWER puts " + x.ph + " (\u201c" + x.value + "\u201d, a word) before \u201c" + x.noun + "\u201d: " +
+          (x.num >= 0 ? "the count is line " + (x.num + 1) + "\u2019s, so put {ANS" + (x.num + 1) + "} there" : "add a line that counts them (=LEN(ANS" + (x.word + 1) + ")) and put its {ANSn} there"));
+      });
+      if (!/\x7B(result|ANS\d*)\x7D/i.test(ans)) {
+        var qn = numbers(q), vals = steps.filter(function (st) { return st.ok && typeof st.value === "number"; }).map(function (st) { return st.value; });
+        var own = numbers(ans).filter(function (x) { return !qn.some(function (y) { return Math.abs(x - y) < 1e-9; }); });
+        if (own.length && vals.length && !own.some(function (x) { return vals.some(function (v) { return near(x, v); }); }))
+          probs.push("the ANSWER says " + own[0] + ", but Lantern\u2019s lines give " + vals.slice(-3).map(fmt).join(", ") + ": put {result} (the last line) or {ANS1}, {ANS2} ... where the numbers go");
+      }
     }
     return probs.length ? probs.slice(0, 3).join("; ") : null;
+  }
+  // best(word, values) -> the index of the one worked-out word it is a slip
+  // of, or -1: a near spelling (close) first, the nearest if several; else
+  // mostly the same letters, when only one is
+  function best(w, vals) {
+    var c = [], sl = [], lw = String(w).toLowerCase();
+    vals.forEach(function (v, i) {
+      if (v == null || String(v).toLowerCase() === lw) return;
+      if (close(w, v)) c.push(i); else if (sameLetters(w, v)) sl.push(i);
+    });
+    if (vals.some(function (v) { return v != null && String(v).toLowerCase() === lw; })) return -1;
+    if (c.length) return c.sort(function (a, b) { return lev(lw, String(vals[a]).toLowerCase()) - lev(lw, String(vals[b]).toLowerCase()); })[0];
+    return sl.length === 1 ? sl[0] : -1;
+  }
+  // the answer without its {placeholders}
+  function plain(t) { return String(t || "").replace(/\x7B[^\x7D]*\x7D/g, " "); }
+  // sameLetters(a, b): mostly the same letters, near the same length -- a word
+  // retyped with letters dropped or swapped ("rortegifer" for "rotaregirfer",
+  // bench run 12), which close() alone missed
+  function sameLetters(a, b) {
+    a = String(a).toLowerCase(); b = String(b).toLowerCase();
+    if (a === b || a.length < 5 || b.length < 5) return false;
+    var lo = Math.min(a.length, b.length), hi = Math.max(a.length, b.length);
+    if (lo / hi < 0.75) return false;
+    var cnt = {}, both = 0, i;
+    for (i = 0; i < b.length; i++) cnt[b.charAt(i)] = (cnt[b.charAt(i)] || 0) + 1;
+    for (i = 0; i < a.length; i++) if (cnt[a.charAt(i)] > 0) { cnt[a.charAt(i)]--; both++; }
+    return both / hi >= 0.8;
+  }
+  // retyped(steps, question, exact) -> [{k, j, lit}]: line k types, as a quoted
+  // word not in the question, what line j worked out -- with mistakes (and,
+  // with exact, also word for word: once an earlier line is put right, a
+  // later line that copied it must follow it)
+  function retyped(steps, q, exact) {
+    var ql = String(q || "").toLowerCase(), out = [];
+    steps.forEach(function (st, k) {
+      if (!k) return;
+      (String(st.expr || "").match(/\x22[^\x22]*\x22/g) || []).forEach(function (lit) {
+        lit = lit.slice(1, -1);
+        if (!lit || ql.indexOf(lit.toLowerCase()) >= 0) return;
+        for (var j = k - 1; j >= 0; j--) {
+          var v = steps[j];
+          if (v.ok && typeof v.value === "string" && ((exact && lit === v.value) || close(lit, v.value) || sameLetters(lit, v.value))) { out.push({ k: k, j: j, lit: lit, exact: lit === v.value }); return; }
+        }
+      });
+    });
+    return out;
+  }
+  // rechain(expr, steps, question) -> {expr, changes} or null: the lines with
+  // each retyped word replaced by the ANSj it came from, for Lantern to run
+  // again when the AI's one correction still typed its results out
+  function rechain(expr, steps, q) {
+    var rs = retyped(steps, q, true);
+    if (!rs.some(function (x) { return !x.exact; })) return null;
+    var lines = String(expr || "").split("\n"), idx = [], changes = [];
+    lines.forEach(function (l, i) { if (/^\s*=/.test(l)) idx.push(i); });
+    if (idx.length !== steps.length) return null;
+    rs.forEach(function (x) {
+      var i = idx[x.k], from = "\x22" + x.lit + "\x22";
+      if (lines[i].indexOf(from) < 0) return;
+      lines[i] = lines[i].split(from).join("ANS" + (x.j + 1));
+      changes.push({ from: "line " + (x.k + 1) + ": \u201c" + x.lit + "\u201d", to: "ANS" + (x.j + 1) + (x.exact ? "" : " (\u201c" + steps[x.j].value + "\u201d)") });
+    });
+    return changes.length ? { expr: lines.join("\n"), changes: changes } : null;
+  }
+  // wordCounts(answer, steps) -> [{ph, value, noun, num, word}]: {ANSn} or
+  // {result} filled with a word, right before a word that counts ("letters")
+  var COUNT = /^(letters?|characters?|chars?|words?|vowels?|consonants?|digits?|syllables?|items?|times|people|letters long)$/i;
+  function phStep(all, n, steps) { return n ? parseInt(n, 10) - 1 : steps.length - 1; }
+  function wordCounts(ans, steps) {
+    var out = [], re = /\x7B(result|ANS(\d*))\x7D\s+([A-Za-z]+)/gi, m;
+    while ((m = re.exec(String(ans || "")))) {
+      var k = phStep(m[1], m[2], steps), st = steps[k];
+      if (!st || typeof st.value !== "string" || !COUNT.test(m[3])) continue;
+      var num = -1, i;
+      for (i = steps.length - 1; i > k; i--) if (typeof steps[i].value === "number") { num = i; break; }
+      out.push({ ph: m[0].replace(/\s+[A-Za-z]+$/, ""), value: st.value, noun: m[3], num: num, word: k });
+    }
+    return out;
   }
   check.id = "results";
   if (!CHK.some(function (c) { return c.id === "results"; })) CHK.push(check);
@@ -35276,34 +35477,47 @@ Lantern.RFB = (function () {
   // way (bench run 11: "otageifer" and 7 for otaegife and 8 -- questioned,
   // and sent back the same), Lantern puts its own results into the sentence
   // and Chat says what it changed. Only what is unambiguous: a word close to
-  // exactly one worked-out word, and a number when exactly one number the
-  // lines gave is missing from the sentence and exactly one number in it
-  // matches nothing.
+  // exactly one worked-out word; a {placeholder} holding a word where a count
+  // goes, when a later line counts (bench run 12: "{ANS2} letters"); and a
+  // number when exactly one number the lines gave is missing from the
+  // sentence and exactly one number in it matches nothing.
   function repair(answer, steps, question, expr) {
     var ans = String(answer || ""), ql = String(question || "").toLowerCase(), inputs = String(expr || "").toLowerCase(), changes = [];
-    if (!ans || !steps || !steps.length || /\x7B(result|ANS\d*)\x7D/i.test(ans)) return null;
+    if (!ans || !steps || !steps.length) return null;
+    var hasPh = /\x7B(result|ANS\d*)\x7D/i.test(ans);
     var texts = steps.filter(function (st) { return st.ok && typeof st.value === "string" && st.value.length >= 4; }).map(function (st) { return st.value; });
-    var out = ans.replace(/[A-Za-z\u00c0-\u024f]{4,}/g, function (w) {
-      var lw = w.toLowerCase();
-      if (ql.indexOf(lw) >= 0 || inputs.indexOf("\x22" + lw + "\x22") >= 0 || texts.some(function (t) { return t.toLowerCase() === lw; })) return w;
-      var hit = texts.filter(function (t) { return close(w, t); });
-      if (hit.length !== 1) return w;
-      changes.push({ from: w, to: hit[0] });
-      return hit[0];
+    var out = ans.split(/(\x7B[^\x7D]*\x7D)/).map(function (part) {
+      if (/^\x7B[^\x7D]*\x7D$/.test(part)) return part;
+      return part.replace(/[A-Za-z\u00c0-\u024f]{4,}/g, function (w) {
+        var lw = w.toLowerCase();
+        if (ql.indexOf(lw) >= 0 || inputs.indexOf("\x22" + lw + "\x22") >= 0) return w;
+        var k = best(w, texts);
+        if (k < 0) return w;
+        changes.push({ from: w, to: texts[k] });
+        return texts[k];
+      });
+    }).join("");
+    wordCounts(out, steps).forEach(function (x) {
+      if (x.num < 0) return;
+      var to = "{ANS" + (x.num + 1) + "}";
+      out = out.replace(x.ph + " " + x.noun, to + " " + x.noun);
+      changes.push({ from: x.ph, to: to });
     });
-    var qn = numbers(question), vals = steps.filter(function (st) { return st.ok && typeof st.value === "number"; }).map(function (st) { return st.value; });
-    var toks = [], re = /-?\d+(?:\.\d+)?/g, m;
-    while ((m = re.exec(out))) toks.push({ at: m.index, s: m[0], v: parseFloat(m[0]) });
-    var stray = toks.filter(function (t) { return !qn.some(function (y) { return Math.abs(t.v - y) < 1e-9; }) && !vals.some(function (v) { return near(t.v, v); }); });
-    var missing = vals.filter(function (v) { return !toks.some(function (t) { return near(t.v, v); }); });
-    if (stray.length === 1 && missing.length === 1 && vals.length) {
-      var t = stray[0], to = fmt(missing[0]);
-      out = out.slice(0, t.at) + to + out.slice(t.at + t.s.length);
-      changes.push({ from: t.s, to: to });
+    if (!hasPh) {
+      var qn = numbers(question), vals = steps.filter(function (st) { return st.ok && typeof st.value === "number"; }).map(function (st) { return st.value; });
+      var toks = [], re = /-?\d+(?:\.\d+)?/g, m;
+      while ((m = re.exec(out))) toks.push({ at: m.index, s: m[0], v: parseFloat(m[0]) });
+      var stray = toks.filter(function (t) { return !qn.some(function (y) { return Math.abs(t.v - y) < 1e-9; }) && !vals.some(function (v) { return near(t.v, v); }); });
+      var missing = vals.filter(function (v) { return !toks.some(function (t) { return near(t.v, v); }); });
+      if (stray.length === 1 && missing.length === 1 && vals.length) {
+        var t = stray[0], to = fmt(missing[0]);
+        out = out.slice(0, t.at) + to + out.slice(t.at + t.s.length);
+        changes.push({ from: t.s, to: to });
+      }
     }
     return changes.length ? { text: out, changes: changes } : null;
   }
-  window.Lantern.aiResultChecks = { close: close, check: check, repair: repair };
+  window.Lantern.aiResultChecks = { close: close, sameLetters: sameLetters, check: check, repair: repair, rechain: rechain, retyped: retyped };
 })();
 // ===========================================================================
 // MODULE: AI_RESULT_CHECKS - END
@@ -35517,6 +35731,31 @@ Lantern.RFB = (function () {
     });
     SC.totalChecked = true;
   }
+  // --- schematics: a part drawn as one thing, labelled as another -------------
+  // Bench run 12: "part R1 resistor "Lamp 1"" -- two resistor symbols with
+  // lamp labels, which the model, shown the picture, kept. Lantern has a
+  // lamp (and a motor, switch, diode ...): a label that names another part
+  // type than the one drawn goes back once.
+  if (SC && SC.hooks && SC.hooks.draw && SC.PARTS && !SC.labelChecked) {
+    var SAME = { battery: "source", source: "source" };
+    SC.hooks.draw.push(function (sc, lay, problems) {
+      var kinds = SC.PARTS[sc.mode || "electrical"] || {}, syn = SC.SYN || {};
+      (sc.parts || []).forEach(function (p) {
+        if (p.implied || !p.label || problems.length > 4) return;
+        var ws = String(p.label).toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(Boolean), named = null, own = false, i;
+        for (i = 0; i < ws.length; i++) {
+          var two = i + 1 < ws.length ? ws[i] + " " + ws[i + 1] : "", t = syn[two] || (kinds[two] ? two : "") || syn[ws[i]] || (kinds[ws[i]] ? ws[i] : "");
+          if (!t) continue;
+          if (t === p.type || (SAME[t] && SAME[t] === SAME[p.type])) own = true;
+          else if (!named && kinds[t] && t !== "junction" && t !== "ground") named = t;
+        }
+        if (named && !own)
+          problems.push(p.id + " is drawn as a " + p.type + " but labelled \u201c" + p.label + "\u201d: a " + named + " is a part of its own \u2014 write part " +
+            p.id + " " + named + " \x22" + p.label + "\x22, and Lantern draws the " + named + " symbol");
+      });
+    });
+    SC.labelChecked = true;
+  }
   // --- documents: a procedure's steps as a numbered list ------------------------
   var PROC = /\b(procedure|step[- ]by[- ]step|steps|instructions|how to|how do i|sop|checklist|method for)\b/i;
   var doc = ACTS.filter(function (a) { return a.id === "doc"; })[0];
@@ -35579,7 +35818,7 @@ Lantern.RFB = (function () {
     if (Math.abs(run.value - p.expected) <= Math.max(1e-9, Math.abs(p.expected) * 0.01)) return null;
     return (p.asked === "fuel" ? "with the same fuel use all the way, " + fmt(p.target) + " " + p.unitA + " needs " :
       "at the same fuel use, " + fmt(p.target) + " " + p.unitA + " of fuel goes ") +
-      fmt(p.target) + " × " + fmt(p.known) + " ÷ " + fmt(p.paired) + " = " + fmt(p.expected) + " " + p.unitB +
+      fmt(p.target) + " \u00d7 " + fmt(p.known) + " \u00f7 " + fmt(p.paired) + " = " + fmt(p.expected) + " " + p.unitB +
       ", but the lines give " + fmt(run.value) + ": check which number divides (more " + (p.asked === "fuel" ? "distance needs more fuel" : "fuel goes further") + ")";
   }
   check.id = "proportion";

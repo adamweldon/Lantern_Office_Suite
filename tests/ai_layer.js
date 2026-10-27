@@ -363,6 +363,15 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   ok("bench summary line says which Lantern ran", d.body.textContent.indexOf("(100%) \u00b7 Lantern " + L.version + " \u00b7") >= 0);
   btn(d, "Save results (JSON)").click();
   ok("results saved as JSON", saved.length === 1 && /\.json$/.test(saved[0].name) && JSON.parse(saved[0].text).summary.score === 100);
+  // 1.13.4: "Show" under a result opens the AI's reply (and what Lantern made of it), and "Hide" closes it
+  var rowsBefore = d.querySelectorAll(".la-tbl tbody tr").length, shows = Array.prototype.filter.call(d.querySelectorAll(".la-tbl tbody button"), function (b) { return b.textContent === "Show"; });
+  ok("each bench row has a Show button", shows.length === rowsBefore, [shows.length, rowsBefore]);
+  shows[0].click(); await sleep(5);
+  var opened = d.querySelector(".la-tbl tbody td[colspan=\"3\"]");
+  ok("Show opens the reply under its row", d.querySelectorAll(".la-tbl tbody tr").length === rowsBefore + 1 && opened && /The AI\u2019s reply/.test(opened.textContent) && shows[0].textContent === "Hide");
+  shows[0].click(); await sleep(5);
+  ok("Hide closes it", d.querySelectorAll(".la-tbl tbody tr").length === rowsBefore && shows[0].textContent === "Show");
+  ok("a saved run can be opened again", Array.prototype.some.call(d.querySelectorAll("button"), function (b) { return /Open saved results/.test(b.textContent); }));
   go("chat"); await sleep(20);
   ok("Chat shows which AI answers", /Using on this device: fake perfect/.test(d.body.textContent));
   // Chat renders a model's markdown readably and says when an answer was cut short

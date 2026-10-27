@@ -1,5 +1,68 @@
 # Changelog
 
+## 1.13.4 — Bench run 12: retyped lines run again, a rung in plain text, lamps drawn as resistors, Show what was made (2026-10-27)
+
+Adam's run 12 (Qwen3.5-35B-A3B, sees images, Lantern 1.13.3, with the
+library): **113 of 116 (97%)**. Core 32/32, fresh 5/5, hard 10/10, library
+20/20, made 19/21, conversations 18/18, puzzles 9/10; without the tools 3/6
+(not scored). Run 11's misses passed: the fuel (questioned with the sum,
+then 28), the two-coin cups, the hens, the P1AM and stepper sketches. Adam
+asked about the three that failed, and could not see the circuit or the
+ladder to check them:
+
+- **Refrigerator.** Lantern's `=REVERSE("refrigerator")` gave rotaregirfer,
+  but the AI's next line typed `REMOVE("rortegifer","r")` -- its own copy with
+  two letters dropped -- instead of ANS1, the third line copied that line's
+  result, and the sentence put `{ANS2}` (a word) where the count goes: "which
+  has otegife letters". Lantern's check missed it (rortegifer is four edits
+  from rotaregirfer). Now:
+  - a line that types out an earlier result with mostly the same letters
+    (`sameLetters`) is questioned, as near spellings were;
+  - a `{placeholder}` holding a word right before "letters", "words",
+    "characters" ... is questioned, naming the line that counts;
+  - when the AI's one correction still types results out, Lantern runs its
+    lines again with its own results in place (`rechain`: rortegifer → ANS1,
+    otegife → ANS2), puts them into the sentence ("rotaregirfer", "otaegife",
+    {ANS2} → {ANS3}: 8), and the notes under the answer say both. The row
+    records `rechained` and `repaired`.
+  - the nearest spelling wins when a word is close to two results.
+- **Ladder: one correct rung in plain text, "no MAKE block".**
+  `[XIC(Start) ,XIC(Motor) ]XIC(Stop)XIC(Overload)OTE(Motor);` -- right this
+  time, with the normally closed Stop on XIC -- but written in the reply with
+  no MAKE block and no fence. Chat's checks for code in a reply now find
+  ladder rungs on their own lines (and a one-rung fenced block), and the
+  bench's MAKE path grades code in the reply the way Chat checks it, when the
+  question asks for a program (`Lantern.aiAct.fromReply`; the row records
+  `codeInReply`). A rung with XIO on the normally closed Stop is questioned
+  there too.
+- **Two lamps drawn as resistors.** `part R1 resistor "Lamp 1"`: two resistor
+  symbols labelled as lamps, which the model, shown the picture, kept. A part
+  whose label names another kind Lantern draws (lamp, motor, switch, diode
+  ...) goes back once: "a lamp is a part of its own -- write part R1 lamp".
+  Labels that name the part's own kind ("LED resistor") or a battery on a
+  source are left alone.
+- **A questioned schematic is drawn anyway**, with what Lantern questions under
+  it, instead of "nothing was made" -- so the person sees what Lantern means.
+- **Show, in the bench.** Each result has a Show button: why it failed, what
+  the AI replied (its first reply too, when it was asked again), the puzzle
+  blocks, and for a thing it made, the thing itself -- the circuit, the
+  drawing, the program with its ladder picture -- rebuilt from the saved reply
+  exactly as Lantern built it. **Open saved results…** opens a run saved as
+  JSON the same way, so a run from another computer can be looked through.
+
+Tested:
+- New `tests/bench_run12.js` (21 checks) with the run's replies
+  (`tests/fixtures/bench_run12_replies.json`): the letters questioned, run
+  again and passed in Chat with the notes, and what is left alone; the rung in
+  plain text found, checked and passed through the bench's MAKE path, prose
+  that only mentions XIC, a question that asks for no program; the lamps
+  questioned, corrected and passed, and labels left alone; Show on the lamps
+  and ladder rows.
+- `tests/ai_layer.js`: Show and Hide on the bench rows, and Open saved results.
+- In Chromium: run 12's JSON opened with Open saved results, Show on the
+  lamps, ladder and letters rows (the circuit and the ladder picture drawn).
+- All suites pass.
+
 ## 1.13.3 — Bench run 11: results put in, two places, the lesson asked about, EXAMPLE as code, fuel the right way round (2026-10-27)
 
 Adam's run 11 (Qwen3.5-35B-A3B, sees images, Lantern 1.13.2): **87 of 94
