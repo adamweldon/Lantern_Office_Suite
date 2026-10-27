@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.14.0 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.14.1 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -168,7 +168,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.14.0",
+  version: "1.14.1",
   apps: {},
   order: []
 };
@@ -17338,6 +17338,16 @@ Lantern.RFB = (function () {
       // the block (one corrected block when it finds problems), shows it,
       // and -- when the model can see -- shows it the picture once.
       var made = window.Lantern.aiAct ? window.Lantern.aiAct.build(shown, q) : null;
+      // Code written straight into the reply, when a program was asked for and
+      // Lantern finds problems: back once, like a MAKE block (1.14.1).
+      var rcode = !made && !questioned && window.Lantern.aiAct && window.Lantern.aiAct.replyCode ? window.Lantern.aiAct.replyCode(shown, q) : null;
+      if (rcode) {
+        questioned = true;
+        if (shown && ui.reply) ui.reply(shown);
+        note("Lantern checked the code in the reply: " + rcode.problems.join("; ") + ". Asking the AI again\u2026");
+        msgs.push({ role: "user", content: window.Lantern.aiAct.replyCodeText(rcode) });
+        continue;
+      }
       // A reply stuck in a loop is shown, and kept for the model, without
       // the repeats (1.9.8).
       if (made && made.trimmed) msgs[msgs.length - 1].content = made.trimmed;
@@ -17460,7 +17470,10 @@ Lantern.RFB = (function () {
       if (needAns) {
         needHelped = true; rec.needAnswered = needAns;
         note("The AI asked \u201c" + parsed.need + "\u201d; Lantern knows that: " + needAns.replace(/^Lantern:\s*/, ""));
-        msgs.push({ role: "user", content: needAns + "\nNow reply with the = lines and the ANSWER line." });
+        // a puzzle goes back to its tool block (TURN, TRACK, SOLVE), not = lines
+        var pzNeed = !puzzleOff && window.Lantern.aiPuzzle && window.Lantern.aiPuzzle.prompt ? window.Lantern.aiPuzzle.prompt(q) : "";
+        msgs.push({ role: "user", content: needAns + (pzNeed ? "\nNow reply with Lantern\u2019s puzzle tool block (or the = lines) and the ANSWER line." :
+          "\nNow reply with the = lines and the ANSWER line.") });
         continue;
       }
       // Lantern's own lessons did not cover it (canMore): the encyclopedia
@@ -24076,7 +24089,7 @@ Lantern.RFB = (function () {
 // MODULE: AI_ACTIONS - START
 // Depends: AI_ENGINE (Lantern.ai) -- feature-detected
 // Exports: Lantern.aiActions (hook array, created here if absent),
-//          Lantern.aiAct = {find, relevant, prompt, build, fromReply, inReply, solve, view,
+//          Lantern.aiAct = {find, relevant, prompt, build, fromReply, inReply, replyCode, replyCodeText, solve, view,
 //          lookText, LOOKS, runaway, compact}
 // ===========================================================================
 // (The actions come from AI_DRAW and AI_SHEET through the
@@ -24257,6 +24270,22 @@ Lantern.RFB = (function () {
     var ib = inReply(text, q);
     return ib ? buildBlock(ib, q, text) : null;
   }
+  // replyCode(text, question) -> code written straight into the reply, built
+  // and checked, when the question asks for a program to be written and
+  // Lantern found problems in it -- for one correction turn, as a MAKE block
+  // gets (bench run 13: a rung with XIC(SealIn), a tag nothing sets, as the
+  // seal-in). null otherwise.
+  var WRITE = /\b(write|make|create|generate|give me|show me|draw up|program)\b/i;
+  function replyCode(text, q) {
+    if (!WRITE.test(String(q || "")) || find(text).length) return null;
+    var ib = inReply(text, q);
+    if (!ib) return null;
+    var r = buildBlock(ib, q, text);
+    return r && !r.ok && r.plan ? r : null;
+  }
+  function replyCodeText(r) {
+    return "Lantern checked the code in your reply: " + r.problems.join("; ") + ".\nReply with the corrected program as a MAKE CODE block (MAKE CODE: <title>, language ..., the code, END).";
+  }
   function buildBlock(b, q, text) {
     if (!b.action) {
       var kinds = [];
@@ -24268,18 +24297,27 @@ Lantern.RFB = (function () {
     r.block = b; r.action = b.action; r.problems = compact(r.problems || []);
     r.ok = !r.problems.length;
     if (r.runaway) r.trimmed = trimmed(text, b, r.runaway);
-    if (b.action.collapse) r.replyText = collapsed(text, b);
+    if (b.action.collapse) r.replyText = collapsed(text, b, q);
     return r;
   }
-  // collapsed(text, block) -> the reply with a long block (code) shown once:
-  // the reply bubble gets a line pointing at the result below (1.13.0).
-  function collapsed(text, b) {
-    var out = [], st = 0, mark = "\u2193 " + b.title + " \u2014 " + b.action.title + ", checked below";
+  // collapsed(text, block, question) -> the reply with a long block (code)
+  // shown once: the reply bubble gets a line pointing at the result below
+  // (1.13.0). Lines after the block that copy Lantern's own instructions are
+  // left out (bench run 13: the 35B went on past END with six lines of the
+  // MAKE CODE instructions, 1.14.1).
+  function echoes(q) {
+    var set = {};
+    String(prompt(q) || "").split("\n").forEach(function (l) { var t = l.replace(/\s+/g, " ").trim(); if (t.length >= 24) set[t] = 1; });
+    return set;
+  }
+  function collapsed(text, b, q) {
+    var out = [], st = 0, mark = "\u2193 " + b.title + " \u2014 " + b.action.title + ", checked below", echo = echoes(q);
     String(text || "").replace(/\r/g, "").split("\n").forEach(function (raw) {
       var line = raw.replace(/^\s+|\s+$/g, "");
       if (st === 0 && (/^\**\s*MAKE\s+[A-Za-z]/i.test(line) || (b.viaExample && /^\**\s*EXAMPLE\s*:/i.test(line)))) { if (out.length && /^\x60\x60\x60\w*$/.test(out[out.length - 1].trim())) out.pop(); out.push(mark); st = 1; return; }
       if (st === 1) { if (/^END$/i.test(line)) st = 2; return; }
       if (st === 2 && /^\x60\x60\x60$/.test(line)) { st = 3; return; }
+      if (st >= 2 && echo[line.replace(/\s+/g, " ")]) return;
       if (st === 2 && line) st = 3;
       out.push(raw);
     });
@@ -24343,8 +24381,18 @@ Lantern.RFB = (function () {
       var made3 = LOOKS.test(text3) ? null : build(text3, q);
       if (made3 && made3.plan && made3.ok) { made = made3; out.text = text3; out.changedOnLook = true; }
     }
-    // code written straight into the reply, as Chat checks it under the reply
-    // (no correction turn, as in Chat): graded like a MAKE CODE block (1.13.4)
+    // code written straight into the reply, as Chat checks it under the reply:
+    // graded like a MAKE CODE block (1.13.4); when the question asked for a
+    // program and Lantern found problems, it goes back once, as in Chat (1.14.1)
+    var rc = !made ? replyCode(out.text, q) : null;
+    if (rc) {
+      out.kind = "questioned"; out.rejected = rc.problems.join("; ");
+      msgs.push({ role: "assistant", content: out.text });
+      msgs.push({ role: "user", content: replyCodeText(rc) });
+      var text4 = await call(msgs); out.rounds++;
+      var made4 = fromReply(text4, q);
+      if (made4) { made = made4; out.text = text4; out.fixed = made4.ok; out.inReply = !!(made4.block && made4.block.inReply); }
+    }
     if (!made) { made = fromReply(out.text, q); if (made) out.inReply = true; }
     out.made = made;
     return out;
@@ -24371,7 +24419,7 @@ Lantern.RFB = (function () {
         return el("button", { text: x.label, title: x.title || x.label, onclick: function () { x.run(); } }); }))));
     return box;
   }
-  window.Lantern.aiAct = { find: find, relevant: relevant, prompt: prompt, build: build, fromReply: fromReply, inReply: inReply, solve: solve, view: view, lookText: lookText, LOOKS: LOOKS,
+  window.Lantern.aiAct = { find: find, relevant: relevant, prompt: prompt, build: build, fromReply: fromReply, inReply: inReply, replyCode: replyCode, replyCodeText: replyCodeText, solve: solve, view: view, lookText: lookText, LOOKS: LOOKS,
     runaway: runaway, runawayText: runawayText, compact: compact };
 })();
 // ===========================================================================
@@ -34731,7 +34779,8 @@ Lantern.RFB = (function () {
 //          CODELAB_HIGHLIGHT, CODELAB_FILES (Lantern.codeDocs), CODELAB_RUN,
 //          CODELAB_LADDER(_VIEW), AI_CODE_EXAMPLES (Lantern.aiCodeExamples)
 //          -- all feature-detected
-// Exports: Lantern.aiCode = {parse(block), build(block, ctx), ncProblems}; adds the CODE
+// Exports: Lantern.aiCode = {parse(block), build(block, ctx), ncProblems, stProblems,
+//          sealProblems}; adds the CODE
 //          action to Lantern.aiActions
 // ===========================================================================
 // MAKE CODE (1.13.0): the AI writes a program -- Arduino, Python, JavaScript,
@@ -34796,11 +34845,70 @@ Lantern.RFB = (function () {
     });
     return out;
   }
+  // The program against what the question asks (bench run 13, 1.14.1):
+  //  - Structured Text the AI writes is a PROGRAM (or a FUNCTION_BLOCK):
+  //    the 35B wrote a bare VAR block and one line;
+  //  - "open it when the low float comes on, close it when the high float
+  //    comes on" needs the output held in between -- FillValve := LowFloat
+  //    AND NOT HighFloat closes it as soon as the level rises past the low
+  //    float. Set and reset (IF ... := TRUE), or the output in its own line
+  //    (a seal-in), or an SR/RS block hold it;
+  //  - a ladder seal-in examines the coil's own tag: the 35B wrote
+  //    [XIC(Start) ,XIC(SealIn) ] with no rung setting SealIn.
+  function plainCode(t) { return String(t || "").replace(/\x2F\x2F[^\n]*|\x28\*[\s\S]*?\*\x29|\x2F\*[\s\S]*?\*\x2F/g, ""); }
+  var EVENTS = /\b(open|start|turn on|switch on|run|energi[sz]e|fill)\w*\b[^.]*?\bwhen\b[^.]*?\b(close|stop|turn off|switch off|shut|de-?energi[sz]e)\w*\b[^.]*?\bwhen\b/i;
+  function stProblems(lang, text, q) {
+    var out = [], c = plainCode(text);
+    if (lang !== "st") return out;
+    if (!/^\s*(PROGRAM|FUNCTION_BLOCK|FUNCTION|CONFIGURATION)\b/im.test(c) && /:=|\bVAR\b/i.test(c))
+      out.push("the code is not inside PROGRAM <name> ... END_PROGRAM: a PLC runs programs, so put the VAR block and the statements between PROGRAM and END_PROGRAM");
+    if (!q || !EVENTS.test(q) || /\b(SR|RS)\b|\bS1\s*:=|\bR1?\s*:=/.test(c)) return out;
+    var by = {}, order = [], m, re = /\b([A-Za-z_]\w*)\s*:=\s*([^;]+);/g;
+    while ((m = re.exec(c))) { if (!by[m[1]]) { by[m[1]] = []; order.push(m[1]); } by[m[1]].push(m[2].replace(/\s+/g, " ").trim()); }
+    order.forEach(function (t) {
+      var rhs = by[t];
+      if (rhs.some(function (r) { return /^(TRUE|FALSE|1|0)$/i.test(r) || new RegExp("\\b" + t + "\\b").test(r); })) return;
+      var e = rhs[rhs.length - 1];
+      if (!/\bNOT\b/i.test(e)) return;
+      var tags = (e.match(/\b[A-Za-z_]\w*\b/g) || []).filter(function (w) { return !/^(AND|OR|NOT|XOR|TRUE|FALSE)$/i.test(w); });
+      var stop = (e.match(/\bNOT\s+\x28?\s*([A-Za-z_]\w*)/gi) || []).map(function (x) { return x.replace(/^NOT\s+\x28?\s*/i, ""); });
+      var start = tags.filter(function (w) { return stop.indexOf(w) < 0; });
+      if (start.length !== 1 || stop.length !== 1) return;
+      out.push(t + " := " + e + " is on only while " + start[0] + " is on, but the question turns it on when " + start[0] + " comes on and off when " +
+        stop[0] + " comes on, so it must stay on in between (the level leaves the low float long before it reaches the high one). Hold it: " +
+        t + " := (" + start[0] + " OR " + t + ") AND NOT " + stop[0] + "; or IF " + start[0] + " THEN " + t + " := TRUE; END_IF; IF " + stop[0] + " THEN " + t + " := FALSE; END_IF;");
+    });
+    return out;
+  }
+  var SEAL = /seal[\s-]?in|holding contact|hold[\s-]?in|self[\s-]?holding|latch(es|ed|ing)?\b/i;
+  function sealProblems(lang, text, q) {
+    var out = [], c = plainCode(text);
+    if (lang !== "ladder" || !q || !SEAL.test(q) || /\bOTL\s*\x28/i.test(c)) return out;
+    var coils = {}, m, re = /\bOTE\s*\x28\s*([A-Za-z_][\w.]*)\s*\x29/gi;
+    while ((m = re.exec(c))) coils[m[1]] = 1;
+    Object.keys(coils).forEach(function (coil) {
+      var rungs = c.split(";").filter(function (r) { return new RegExp("OTE\\s*\\x28\\s*" + coil.replace(/\./g, "\\.") + "\\s*\\x29", "i").test(r); });
+      if (rungs.some(function (r) { return new RegExp("XIC\\s*\\x28\\s*" + coil.replace(/\./g, "\\.") + "\\s*\\x29", "i").test(r); })) return;
+      var bad = [], bm, br = /\x5B([^\x5D]*)\x5D/g;
+      rungs.forEach(function (r) {
+        while ((bm = br.exec(r))) (bm[1].match(/XIC\s*\x28\s*([A-Za-z_][\w.]*)\s*\x29/gi) || []).forEach(function (x) {
+          var t = x.replace(/^XIC\s*\x28\s*|\s*\x29$/gi, "");
+          if (!coils[t] && String(q).toLowerCase().indexOf(t.toLowerCase()) < 0 && bad.indexOf(t) < 0) bad.push(t);
+        });
+      });
+      out.push("the question asks for a seal-in, but no contact examines the coil " + coil +
+        (bad.length ? ": XIC(" + bad[0] + ") examines a tag no rung sets, and the seal-in contact is the coil\u2019s own, so write XIC(" + coil + ") in its place" :
+          ": put XIC(" + coil + ") in a branch with Start, [XIC(Start) ,XIC(" + coil + ") ]"));
+    });
+    return out;
+  }
   function build(block, ctx) {
     var p = parse(block), lg = L.codeLangs.get(p.lang), problems = p.problems.slice();
     var found = p.text.trim() ? L.codeCheck.run(p.lang, p.text) : [];
     found.forEach(function (x) { problems.push((x.line ? "line " + x.line + ": " : "") + x.msg); });
-    ncProblems(p.lang, p.text, ctx && ctx.question).forEach(function (x) { problems.push(x); found.push({ line: 0, msg: x }); });
+    var q = ctx && ctx.question;
+    ncProblems(p.lang, p.text, q).concat(stProblems(p.lang, p.text, q), sealProblems(p.lang, p.text, q))
+      .forEach(function (x) { problems.push(x); found.push({ line: 0, msg: x }); });
     if (!p.text.trim()) return { problems: problems, plan: null };
     var based = L.aiCodeExamples ? L.aiCodeExamples.basedOn(p.text, p.lang) : null;
     var lines = p.text.replace(/\n$/, "").split("\n").length, title = block.title || "Code";
@@ -34839,7 +34947,7 @@ Lantern.RFB = (function () {
     } });
     return res;
   }
-  window.Lantern.aiCode = { parse: parse, build: build, ncProblems: ncProblems };
+  window.Lantern.aiCode = { parse: parse, build: build, ncProblems: ncProblems, stProblems: stProblems, sealProblems: sealProblems };
   var MATCH = /\b(code|coding|programs?|programming|programmed|script|scripts|arduino|esp32|esp8266|p1am|plc|ladder|structured text|python|javascript|c\+\+|firmware|microcontroller|gpio|accelstepper|tmc2209|a4988|drv8825|i2c|uart|pwm|serial monitor|compile|compiler|debug)\b/i;
   var PROMPT = [
     "MAKE CODE: <title>   -- a program Lantern checks and opens in Code Lab (JavaScript also runs there)",
@@ -35229,7 +35337,7 @@ Lantern.RFB = (function () {
       check: function (p) {
         var c = code(p);
         return lang(p, "arduino") || (!/AccelStepper/.test(c) && !/\b(3|stepPin)\b/.test(c) ? "no stepper driver code" :
-          /AccelStepper/.test(c) && !/setAcceleration/.test(c) ? "no acceleration" : !/\b800\b/.test(c) ? "not 800 steps" : "");
+          /AccelStepper/.test(c) && !/setAcceleration/.test(c) ? "no acceleration" : !/\b800[uUlL]*\b/.test(c) ? "not 800 steps" : "");   // 800L (bench run 13)
       } },
     { id: "code-p1am-seal-in", kind: "CODE", max_tokens: 1200,
       q: "Write a P1AM-100 sketch: a Start button on input 1 and a normally closed Stop button on input 2 of the discrete input module in slot 1, and a motor contactor on output 1 of the output module in slot 2, with a seal-in.",
@@ -35262,7 +35370,15 @@ Lantern.RFB = (function () {
         "IF LowFloat THEN\n    FillValve := TRUE;\nEND_IF;\nIF HighFloat THEN\n    FillValve := FALSE;\nEND_IF;\nEND_PROGRAM\nEND",
       check: function (p) {
         var c = code(p);
-        return lang(p, "st") || (!/PROGRAM\b/i.test(c) ? "not a PROGRAM" : !/:=/.test(c) ? "nothing is set" : (c.match(/\b\w*(Float|Level|Low|High)\w*/gi) || []).length < 2 ? "it does not use the two float switches" : "");
+        if (lang(p, "st")) return lang(p, "st");
+        if (!/PROGRAM\b/i.test(c)) return "not a PROGRAM";
+        if (!/:=/.test(c)) return "nothing is set";
+        if ((c.match(/\b\w*(Float|Level|Low|High)\w*/gi) || []).length < 2) return "it does not use the two float switches";
+        // held open between the floats: set and reset, the valve in its own
+        // line, or an SR/RS block -- not Valve := Low AND NOT High (bench run 13)
+        var held = /\bTHEN\s+\w+\s*:=\s*TRUE\b/i.test(c) || /\b(SR|RS)\b/.test(c) || (c.match(/\b(\w+)\s*:=\s*[^;]*/g) || []).some(function (a) {
+          var t = /^(\w+)/.exec(a)[1]; return new RegExp("\\b" + t + "\\b").test(a.replace(/^\w+\s*:=/, "")); });
+        return held ? "" : "the valve is not held open between the two floats";
       } },
     { id: "code-ladder-start-stop", kind: "CODE", max_tokens: 900,
       q: "Write ladder logic as rung text for a motor start/stop: a Start pushbutton, a normally closed Stop pushbutton, an overload contact, and a seal-in.",
@@ -35292,7 +35408,9 @@ Lantern.RFB = (function () {
 // Counting words (a dozen is 12, a score 20, a gross 144 ...) and "how many
 // <unit> in a <unit>" that CONVERT knows are answered; a value only the
 // person knows (their battery, their goats) is not. Assist and Chat send the
-// answer back to the AI for one more turn.
+// answer back to the AI for one more turn. The size of a square when a
+// puzzle counts in squares (bench run 13) is answered too: squares are the
+// unit.
 (function () {
   var L = window.Lantern;
   if (!L) return;
@@ -35350,9 +35468,22 @@ Lantern.RFB = (function () {
     if (typeof v !== "number" || !isFinite(v)) return null;
     return "Lantern: " + fmt(k) + " " + m[3] + " is " + fmt(v) + " " + m[1] + " (=CONVERT(" + k + ",\x22" + from + "\x22,\x22" + to + "\x22)).";
   }
+  // "What is the size of a square in meters?" when the question counts its
+  // moves in squares (bench run 13, the robot walk): the square is the unit,
+  // and nothing in the question asks for metres. Not when the question gives
+  // or wants a real size (metres, feet ...).
+  var GRID = /\b(squares?|cells?|blocks?|spaces?|tiles?|units?|grid steps?|steps?)\b/;
+  function grid(need, q) {
+    var n = String(need || "").toLowerCase(), ql = String(q || "").toLowerCase(), m = GRID.exec(n);
+    if (!m || !/\b(size|how long|long is|length|wide|width|how big|large|scale|metres?|meters?|feet|foot|km|cm|inches)\b/.test(n)) return null;
+    var w = m[1].replace(/^grid /, "").replace(/s$/, "");
+    if (!new RegExp("\\b" + w + "s?\\b").test(ql)) return null;
+    if (/\b(metres?|meters?|feet|foot|km|kilomet\w*|cm|centimet\w*|inch\w*|miles?|yards?)\b|\d\s*(m|ft)\b/.test(ql)) return null;
+    return "Lantern: the question counts in " + w + "s, so a " + w + " is the unit: no size in metres is needed. Give positions and distances in " + w + "s.";
+  }
   window.Lantern.aiNeedAnswer = function (need, question) {
     if (!need) return null;
-    return counting(need, question) || units(need);
+    return counting(need, question) || units(need) || grid(need, question);
   };
 })();
 // ===========================================================================
@@ -35456,16 +35587,30 @@ Lantern.RFB = (function () {
   function plain(t) { return String(t || "").replace(/\x7B[^\x7D]*\x7D/g, " "); }
   // sameLetters(a, b): mostly the same letters, near the same length -- a word
   // retyped with letters dropped or swapped ("rortegifer" for "rotaregirfer",
-  // bench run 12), which close() alone missed
+  // bench run 12), which close() alone missed. Also a word retyped with a
+  // quarter of its letters dropped and the rest mostly in order ("rotarigef"
+  // for "rotaregirfer", bench run 13): every letter of the short one is in
+  // the long one, and most of them in the same order.
+  function lcs(a, b) {
+    var prev = [], cur, i, j;
+    for (j = 0; j <= b.length; j++) prev.push(0);
+    for (i = 1; i <= a.length; i++) {
+      cur = [0];
+      for (j = 1; j <= b.length; j++) cur.push(a.charAt(i - 1) === b.charAt(j - 1) ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]));
+      prev = cur;
+    }
+    return prev[b.length];
+  }
   function sameLetters(a, b) {
     a = String(a).toLowerCase(); b = String(b).toLowerCase();
     if (a === b || a.length < 5 || b.length < 5) return false;
     var lo = Math.min(a.length, b.length), hi = Math.max(a.length, b.length);
-    if (lo / hi < 0.75) return false;
+    if (lo / hi < 0.7) return false;
     var cnt = {}, both = 0, i;
     for (i = 0; i < b.length; i++) cnt[b.charAt(i)] = (cnt[b.charAt(i)] || 0) + 1;
     for (i = 0; i < a.length; i++) if (cnt[a.charAt(i)] > 0) { cnt[a.charAt(i)]--; both++; }
-    return both / hi >= 0.8;
+    if (lo / hi >= 0.75 && both / hi >= 0.8) return true;
+    return both / lo >= 0.9 && lcs(a, b) / lo >= 0.75;
   }
   // retyped(steps, question, exact) -> [{k, j, lit}]: line k types, as a quoted
   // word not in the question, what line j worked out -- with mistakes (and,

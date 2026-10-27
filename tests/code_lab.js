@@ -277,7 +277,8 @@ function msgs(list, re) { return list.some(function (p) { return re.test(p.msg);
   var bq1 = BQ.filter(function (q) { return q.id === "code-blink-millis"; })[0];
   ok("bench: a blink with delay() fails, and says why", gradeCode(bq1, "MAKE CODE: b\nlanguage arduino\nvoid setup() {\n  pinMode(13, OUTPUT);\n}\nvoid loop() {\n  digitalWrite(13, HIGH);\n  delay(500);\n  digitalWrite(13, LOW);\n  delay(500);\n}\nEND").why === "it uses delay()");
   var bq2 = BQ.filter(function (q) { return q.id === "code-ladder-start-stop"; })[0];
-  ok("bench: ladder with no seal-in fails", /no seal-in/.test(gradeCode(bq2, "MAKE CODE: m\nlanguage ladder\nXIC(Start)XIC(Stop)OTE(Motor);\nEND").why));
+  // (since 1.14.1 Lantern itself questions a missing seal-in before the grader sees it)
+  ok("bench: ladder with no seal-in fails", /no seal-in|asks for a seal-in, but no contact examines the coil Motor/.test(gradeCode(bq2, "MAKE CODE: m\nlanguage ladder\nXIC(Start)XIC(Stop)OTE(Motor);\nEND").why));
   ok("bench: Python for an Arduino question is the wrong language", /written in python, not arduino/.test(gradeCode(bq1, "MAKE CODE: b\nlanguage python\nimport time\nprint(1)\nprint(2)\nEND").why));
 
   ok("no page errors", errs.length === 0, errs);

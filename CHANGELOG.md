@@ -1,5 +1,54 @@
 # Changelog
 
+## 1.14.1 — Bench run 13: a retype with letters dropped, the size of a square, a tank valve held open, a seal-in on the coil (2026-10-27)
+
+Adam's run 13 (Qwen3.5-35B-A3B, sees images, Lantern 1.14.0, with the
+library): **113 of 118 (96%)**. Core 32/32, fresh 7/7 (both new Places
+questions: the AI wrote `=DISTKM("Nairobi","Mombasa")` and
+`=BEARING("Tulsa","Dallas")`), hard 10/10, library 20/20, conversations
+18/18, made 18/21, puzzles 8/10; without the tools 4/6 (not scored). The
+shelf questions were skipped: this kit has only Wikipedia. 1.14.0 went to
+`main` on these results. The five misses:
+
+- **Refrigerator again.** The next line typed `REMOVE("rotarigef","r")` --
+  Lantern's "rotaregirfer" with three letters dropped -- and the retype test
+  (1.13.4) missed it: every letter of rotarigef is in rotaregirfer and most
+  are in the same order, but it is a quarter shorter. Lantern then repaired
+  the sentence to the AI's own wrong chain ("otaigef", 7). Now a word whose
+  letters are all in an earlier result, mostly in order, counts as a retype:
+  questioned, and when the same reply comes back Lantern runs the lines
+  again with its own result (`REMOVE(ANS1,"r")`: otaegife, 8).
+- **Robot walk: "NEED: What is the size of a square in meters?"** The
+  question counts its moves in squares. Lantern answers that NEED itself
+  ("a square is the unit: no size in metres is needed") -- not when the
+  question gives or asks for metres -- and the follow-up asks a puzzle for
+  its tool block (TURN), not = lines.
+- **AccelStepper: the grader was wrong.** The sketch was right (`const long
+  moveSteps = 800L`, moved there and back to 0); the grader looked for 800
+  with no `L`. It accepts the suffix now, so this was really 114 of 118.
+- **Structured Text tank: no PROGRAM, and the valve not held.** The 35B
+  wrote a bare VAR block and `FillValve := LowFloat AND NOT HighFloat;`,
+  which closes the valve as soon as the level rises past the low float, long
+  before the high one -- then copied six lines of Lantern's own MAKE CODE
+  instructions after END. Now, for Structured Text the AI writes:
+  - code outside PROGRAM ... END_PROGRAM (or a FUNCTION_BLOCK) is questioned;
+  - when the question turns something on when one input comes on and off
+    when another comes on, an output that is on only while the first is on
+    is questioned, with the two ways to hold it (`FillValve := (LowFloat OR
+    FillValve) AND NOT HighFloat;`, or set and reset with IF);
+  - lines after the block that copy Lantern's instructions are left out of
+    the reply;
+  - the grader also fails a valve that is not held open between the floats.
+- **Ladder: XIC(SealIn).** One rung in plain text, with the seal-in contact
+  on `SealIn`, a tag no rung sets. When the question asks for a seal-in,
+  Lantern now questions a coil whose own contact is in no branch, naming
+  the stray tag ("write XIC(Motor) in its place"). Code written straight
+  into a reply, when the question asked for a program and Lantern finds
+  problems, now goes back once as a MAKE block does -- in Chat and on the
+  bench -- asking for a corrected MAKE CODE block.
+- Tests: `tests/bench_run13.js` (29 checks, from the run's own replies);
+  Code Lab's "no seal-in" check accepts Lantern questioning it first.
+
 ## 1.14.0 — Open modules: library shelves, places and distances, codes, sources & licences (2026-10-27)
 
 Adam asked how Lantern compares with the other offline-knowledge projects
