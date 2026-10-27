@@ -22,7 +22,10 @@
 set -u
 ui() { if [ -n "${LANTERN_UI:-}" ]; then printf '@@%s\n' "$*" >&2; fi; return 0; }
 DIR="$(cd "$(dirname "$0")" && pwd)"
-SITE="$DIR/site"; [ -f "$SITE/index.html" ] || SITE="$DIR/../site"
+# Lantern itself: the Lantern folder's site/ (beside kit/, what Lantern.zip
+# updates) first, else kit/site for a kit on its own.
+SITE="$DIR/../site"; [ -f "$SITE/index.html" ] || SITE="$DIR/site"
+[ -d "$SITE" ] && SITE=$(cd "$SITE" && pwd)
 MODELS="$DIR/models"; [ -d "$MODELS" ] || MODELS="$DIR/../models"
 LIBRARY="$DIR/library"; [ -d "$LIBRARY" ] || LIBRARY="$DIR/../library"
 LIBRARY_PORT="${LIBRARY_PORT:-8081}"
@@ -107,7 +110,9 @@ fi
 echo "Lantern: $(basename "$M") on $OS with ${MEM} MB memory"
 ui "MODEL $(basename "$M")"
 VER=$(grep -o 'version: "[0-9][0-9.]*"' "$SITE/index.html" 2>/dev/null | head -1 | cut -d'"' -f2)
-echo "Lantern ${VER:-?} files: $SITE (to update Lantern, replace index.html and lantern-sw.js there)"
+echo "Lantern ${VER:-?} files: $SITE"
+echo "  (to update: extract a newer Lantern.zip over the Lantern folder and replace the files)"
+if [ -f "$DIR/site/index.html" ] && [ "$SITE" != "$DIR/site" ]; then echo "  (kit/site is a second copy and is not used; it can be deleted)"; fi
 [ -n "$MMPROJ" ] && echo "Vision: $(basename "$MMPROJ") (the AI can look at the pictures it makes)"
 echo "Open http://127.0.0.1:$PORT/ (this window must stay open; Ctrl+C stops it)"
 if [ "$HOST" = 0.0.0.0 ]; then

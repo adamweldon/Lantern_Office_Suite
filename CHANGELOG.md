@@ -1,6 +1,72 @@
 # Changelog
 
-## 1.13.2 — PLACEHOLDER
+## 1.13.2 — One Lantern folder: install, update and the bench fixes together (2026-10-27)
+
+Two pieces of work were each built on 1.13.0 and each called 1.13.1, and
+neither reached GitHub: the double-click installer (1.13.1 (install), below)
+and the bench run 9 fixes (1.13.1 (bench), below). 1.13.2 is both, plus a
+single way to get and update Lantern.
+
+**Why bench run 10 was 1.12.9 again.** Adam's stick holds
+`Lantern_USB_Kit_1.9.1\Lantern\` with `kit\`, `site\` and the single file.
+The kit shows Lantern from a `site` folder, never from
+`Lantern_Office_Suite.html`, so replacing that file changed nothing. And
+`start-lantern` looked in `kit\site` before the Lantern folder's `site`, so even
+a new `site` laid over the folder could lose to an older copy in the kit (the
+installer also downloaded into `kit\site`). Run 10's 115 replies were word for
+word run 9's: the 35B repeats itself exactly at temperature 0, so the next
+run's changes will be Lantern's.
+
+- **Lantern.zip: one folder, `Lantern`.** `tools/make_lantern_zip.py` packs the
+  launchers, `Lantern_Office_Suite.html`, `README.txt` (new, plain text: what
+  each file is, first time, every time, updating), `CHANGELOG.md`, `site/`,
+  `kit/` and `docs/`. Never `kit/engine`, `kit/models`, `kit/library` (what
+  setup downloads) or a `kit/site` copy, and none of the repository's working
+  parts (`src/`, `tests/`, `tools/`, package files). Extracting it into the
+  folder that holds a Lantern folder updates it: Windows' Extract All merges
+  and asks before replacing; the models stay. It keeps the "may run" mark for
+  Mac and Linux and the Windows line endings, and refuses to pack when
+  `package.json`, `site/index.html`, `site/lantern-sw.js` and the single file
+  disagree about the version.
+- **Every push to main publishes it.** `.github/workflows/lantern-zip.yml`
+  builds Lantern.zip and puts it on the release `v<version>`, marked Latest,
+  with the newest changelog entry as notes, so
+  `releases/latest/download/Lantern.zip` is always the newest Lantern. A push
+  with the same version replaces that release's zip.
+- **Lantern lives in one place: `Lantern/site`.** `start-lantern` (Windows and
+  Mac/Linux) and setup look in the Lantern folder's `site` first and use
+  `kit/site` only for a kit on its own; when both are there the window says
+  `kit/site` is a second copy and is not used. When Lantern is missing, or for
+  `setup-kit lantern`, the download goes into the Lantern folder (`site/` and
+  `Lantern_Office_Suite.html`) whenever the kit sits in one.
+- **The version comes from Lantern's own page.** Setup's check and the Start
+  window read `version: "…"` from `site/index.html`, so a newer Lantern laid
+  over an older one can never report the old number from a leftover
+  `lantern-version.txt`. The Start window prints the version and the folder it
+  serves, and how to update.
+- **Updating on a Mac or a Raspberry Pi**, in `README.txt` and
+  `kit/README.txt`: a Mac's Finder replaces whole folders (models and all)
+  instead of merging, so on a Mac `ditto -x -k Lantern.zip "<folder>"`; on the
+  Pi, tick "Overwrite existing files" when extracting.
+- Lantern 1.13.2 everywhere: the page, the worker's cache, the single file,
+  `package.json`.
+
+Tested:
+- New `tests/lantern_zip.py`: one top folder; what is in and what never is;
+  the run marks and line endings; the same files from a plain folder as from
+  git; refusing mismatched versions; and the stick itself:
+  `Lantern_USB_Kit_1.9.1/Lantern` with a 1.12.9 `site`, an old `kit/site`, the
+  35B model, the engine and the library, with Lantern.zip extracted over it:
+  the new Lantern is in place, the model, engine, library and the stick's own
+  Pilot Guide are untouched, and both start scripts now show the folder's
+  `site`.
+- `tests/kit_offer.py`: a Lantern folder with both copies (check and Start use
+  the folder's, by its page's version, and say `kit/site` is not used); with
+  none (setup puts Lantern into the folder, not the kit); an update for a kit
+  inside a Lantern folder; the same for PowerShell (run here with pwsh 7.4).
+- `tests/kit_window.py` run with Tk on Xvfb.
+- All suites pass.
+
 
 ## 1.13.1 (install) — Install by double-click; the engine built on the computer when it must be (2026-10-25)
 
@@ -170,9 +236,8 @@ most of the other misses.
   on the stick changes nothing. The bench summary line now says
   "Lantern 1.13.1" right after the score, and the panel says which version
   it is before a run. `start-lantern` prints the folder it shows Lantern
-  from (the Mac/Linux script also prints the version found there), and
-  `kit/README.txt` says how to update: copy `site/index.html` and
-  `site/lantern-sw.js` over the kit's.
+  from (the Mac/Linux script also prints the version found there).
+  (1.13.2 replaced the update steps given here with one Lantern folder.)
 
 Not changed: the die and the four houses failed only without the tools,
 which is what that comparison is for.

@@ -903,7 +903,7 @@ class App(tk.Tk):
                          (r"^engine for \w+ ready$", "The AI engine is in the kit."), (r"^the engine starts on this computer", "The AI engine works on this computer."),
                          (r"^engine built for this computer", "The AI engine is built."), (r"^checksum OK", "Checked."),
                          (r"^kiwix-serve ready", "The library reader is in the kit."),
-                         (r"^Lantern(?: \S+)? is in the kit", "Lantern is in the kit."), (r"^have Lantern", "Lantern is already here.")):
+                         (r"^Lantern(?: \S+)? is in (?:the kit|place)", "Lantern is in place."), (r"^have Lantern", "Lantern is already here.")):
             m = re.match(pat, s)
             if m:
                 self.now.configure(text=out % m.groups() if "%s" in out else out)

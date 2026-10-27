@@ -31,9 +31,9 @@
 #                               Raspberry Pi OS Bookworm: older system libraries);
 #                               setup offers this by itself. Needs a C++ compiler;
 #                               cmake is fetched with pip when it is missing.
-#   ./setup-kit.sh lantern      the newest Lantern from GitHub into the kit (site/),
-#                               also to update it; setup fetches it by itself when
-#                               neither kit/site nor the repository's site/ is there
+#   ./setup-kit.sh lantern      the newest Lantern from GitHub into the Lantern folder
+#                               (site/ and Lantern_Office_Suite.html), also to update
+#                               it; setup fetches it by itself when there is none
 #   ./setup-kit.sh info         key=value facts for the installer window
 #   add "gpu" for the Vulkan engine builds (graphics card) on Windows/Linux
 # Double-click set-up: "Install Lantern (Linux).desktop" / "Install Lantern
@@ -117,20 +117,31 @@ engine() {  # os asset
   echo "  engine for $1 ready"
 }
 # --- Lantern itself (the site/ folder llama-server serves) -----------------------
-# site_dir -- the Lantern this kit starts: kit/site, else the repository's site/
-# beside kit/ (the zip from GitHub); nothing when neither is there.
+# site_dir -- the Lantern this kit starts: the Lantern folder's site/ (beside
+# kit/: what Lantern.zip, extracted over the folder, updates), else kit/site (a
+# kit on its own); nothing when neither is there. One place first, always: a
+# copy in kit/site used to win over the folder's, so an update laid over the
+# folder never showed (bench run 10).
 site_dir() {
-  for d in "$DIR/site" "$DIR/../site"; do
+  for d in "$DIR/../site" "$DIR/site"; do
     if [ -f "$d/index.html" ]; then (cd "$d" && pwd); return 0; fi
   done
   return 0
 }
-lantern_version() {  # site -- the version it says it is, or nothing
+lantern_version() {  # site -- the version its own page says (index.html), or nothing
+  v=$(grep -o 'version: "[0-9][0-9.]*"' "$1/index.html" 2>/dev/null | head -n 1 | cut -d'"' -f2)
+  if [ -n "$v" ]; then echo "$v"; return 0; fi
   if [ -f "$1/lantern-version.txt" ]; then head -n 1 "$1/lantern-version.txt"; return 0; fi
   if [ -f "$1/../package.json" ]; then sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$1/../package.json" | head -n 1; fi
   return 0
 }
-# get_lantern [new] -- Lantern into kit/site from GitHub when the kit has none
+# lantern_folder -- true when kit/ sits in a Lantern folder (Lantern.zip or the
+# repository): Lantern goes there, beside kit/, not into the kit.
+lantern_folder() {
+  [ -f "$DIR/../Lantern_Office_Suite.html" ] || [ -f "$DIR/../Start Lantern (Linux).desktop" ] || [ -f "$DIR/../site/index.html" ]
+}
+# get_lantern [new] -- Lantern from GitHub when there is none: into the Lantern
+# folder (site/ and Lantern_Office_Suite.html), or kit/site for a kit on its own
 # ("new": always, the newest -- also an update). The one in use stays until the
 # new one is in place and checked.
 get_lantern() {
@@ -152,14 +163,16 @@ get_lantern() {
   if [ -z "$top" ] || [ ! -f "$top/site/index.html" ] || ! grep -q "Lantern" "$top/site/index.html"; then
     echo "  the download has no Lantern in it (site/index.html)"; rm -rf "$tmp"; ui "FAIL net"; return 1
   fi
-  v=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$top/package.json" 2>/dev/null | head -n 1)
+  v=$(lantern_version "$top/site")
   echo "${v:-unknown} (from $LANTERN_HOME, $(date +%Y-%m-%d))" > "$top/site/lantern-version.txt"
-  rm -rf "$DIR/site.new" "$DIR/site.old"
-  if ! cp -RL "$top/site" "$DIR/site.new"; then echo "  could not copy Lantern into $DIR"; rm -rf "$tmp" "$DIR/site.new"; ui "FAIL copy"; return 1; fi
-  if [ -d "$DIR/site" ]; then mv "$DIR/site" "$DIR/site.old"; fi
-  mv "$DIR/site.new" "$DIR/site"
-  rm -rf "$DIR/site.old" "$tmp"
-  echo "  Lantern${v:+ $v} is in the kit ($DIR/site)"
+  if lantern_folder; then LHOME=$(cd "$DIR/.." && pwd); else LHOME="$DIR"; fi
+  rm -rf "$LHOME/site.new" "$LHOME/site.old"
+  if ! cp -RL "$top/site" "$LHOME/site.new"; then echo "  could not copy Lantern into $LHOME"; rm -rf "$tmp" "$LHOME/site.new"; ui "FAIL copy"; return 1; fi
+  if [ -d "$LHOME/site" ]; then mv "$LHOME/site" "$LHOME/site.old"; fi
+  mv "$LHOME/site.new" "$LHOME/site"
+  if [ "$LHOME" != "$DIR" ] && [ -f "$top/Lantern_Office_Suite.html" ]; then cp "$top/Lantern_Office_Suite.html" "$LHOME/Lantern_Office_Suite.html.new" && mv -f "$LHOME/Lantern_Office_Suite.html.new" "$LHOME/Lantern_Office_Suite.html"; fi
+  rm -rf "$LHOME/site.old" "$tmp"
+  echo "  Lantern${v:+ $v} is in place ($LHOME/site)"
 }
 
 # engine_dir os -- this computer's engine folder: engine/<os>; on Linux

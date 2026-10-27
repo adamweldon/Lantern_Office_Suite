@@ -46,8 +46,11 @@ whether one was adapted from a tested example. The turtle tile is now
 
 ## Install on a computer (with its AI) -- two double-clicks
 
-1. Download the zip (green **Code** button above -> **Download ZIP**) and extract it.
-2. Double-click the installer for your computer, at the top of the folder:
+1. Download **[Lantern.zip](https://github.com/adamweldon/Lantern_Office_Suite/releases/latest/download/Lantern.zip)**
+   (always the newest; built from `main` by `.github/workflows/lantern-zip.yml`).
+   It holds one folder, `Lantern`. Extract it anywhere: a laptop, or a USB stick
+   formatted exFAT (model files are over 4 GB).
+2. Double-click the installer for your computer, at the top of the `Lantern` folder:
 
 | Computer | Double-click | The first time |
 |---|---|---|
@@ -64,6 +67,25 @@ computer (10 to 20 minutes on a Raspberry Pi 5). At the end it offers to start
 Lantern. After that, double-click **Start Lantern** for your computer; keep its
 window open while you use Lantern. Other Linux file managers: right-click
 `kit/lantern-kit.sh` -> Run as a program, or type `sh kit/lantern-kit.sh install`.
+
+### Updating: extract the new Lantern.zip over the old Lantern folder
+
+Download the newer `Lantern.zip` and extract it into the folder that holds your
+`Lantern` folder (on a stick, the folder with `Lantern` in it); choose **Replace
+the files in the destination**. The zip never holds `kit/engine`, `kit/models`
+or `kit/library`, so the AI and the encyclopedia you downloaded stay. Lantern
+lives in one place, `Lantern/site`; `start-lantern` uses it before any older
+copy in `kit/site` and prints the version it opened. On a Raspberry Pi tick
+"Overwrite existing files" when extracting. A Mac's Finder replaces whole
+folders instead of merging, so on a Mac use
+`ditto -x -k Lantern.zip "<folder holding Lantern>"`.
+
+For maintainers: every push to `main` builds `Lantern.zip` (`python3
+tools/make_lantern_zip.py`; it refuses when `package.json`, `site/` and the
+single file disagree about the version) and puts it on the release
+`v<version>`, marked Latest. GitHub's green **Code -> Download ZIP** still works
+too (its folder is named `Lantern_Office_Suite-main` and holds the whole
+repository).
 
 ## Three ways to run it
 
@@ -99,6 +121,10 @@ for multi-threading).
 | `docs/Lantern_Compose_Guide.pdf` | What the Compose writing suite does, how to use it, and how it is built. |
 | `docs/Lantern_v1_6_Review.pdf` | How v1.6 was rebuilt from session history, what was fixed, what is still missing. |
 | `CHANGELOG.md` | Version history. |
+| `README.txt` | The plain-text guide at the top of the `Lantern` folder (Lantern.zip): what each file is, first time, every time, updating. |
+| `Install Lantern (...)`, `Start Lantern (...)` | The double-click launchers for Windows, Mac and Linux / Raspberry Pi. |
+| `tools/make_lantern_zip.py` | Packs `Lantern.zip`: one `Lantern` folder with the launchers, `site/`, `kit/`, `docs/`, the single file and the readme; never `kit/engine`, `kit/models`, `kit/library`. |
+| `.github/workflows/lantern-zip.yml` | On every push to `main`: builds `Lantern.zip` and puts it on the latest release. |
 
 ## Working on it
 
@@ -135,6 +161,7 @@ npm test
 - **offline library**: search, read and passage-cutting against a stand-in kiwix-serve built from real kiwix-serve replies (five Wikipedia lead sections, CC BY-SA), the citation check (quotes must be in their passage, numbers in the cited passages), the reading turn in Assist and Chat, Chat reading first for explanation questions and checking each sentence against the passages, infobox facts, a small and a full book of one family used side by side, fact grading in the bench, the library panel, and no probing from public web addresses
 - **AI makes things**: MAKE blocks (schematics, pictures, tables) found and checked, schematic layout on Draw's grid (loops, parallel rungs, one-terminal parts, polarity), circuit checks (closed loop, loose parts, unknown parts), pictures on the 20 x 12 grid, tables worked out by the sheet engine (empty-cell and text references caught), the Chat flow with one corrected block, Open in Draw (the person's drawing kept) and Open in Sheets, the look turn only when llama-server reports vision, and bench grading of the make questions; 1.12.5: junctions folded so a parallel circuit draws as a ladder, ammeters and voltmeters, note lines with {= ...} worked out on the picture, and the Ohm's-law follow-up Chat (numbers from the schematic made earlier count as given, a branch current stated in the answer is a used step, a NEED about a voltage source is not a library question); 1.12.7: a wire to an undeclared junction1 or GND makes that part, words on a drawing that run together, are cut off or are written twice go back once, and MAKE WHEEL (every word inside its wedge, no clashes; formulas in the wrong part, written twice or wrong for V = 12, I = 3, R = 4, P = 36 caught; colour wheels in their own colours; the 35B's power-wheel drawing sent back and corrected as a wheel in one Chat turn)
 - **Install by double-click** (1.13.1): the kit window on a virtual screen -- a whole install with its questions as popups, the menu entry and desktop icon, installed again, Start (loading, ready, share with phones on the Wi-Fi address, stop), already running, no internet, start before install; the launchers opened the way Raspberry Pi OS's file manager and GLib open them; setup's window protocol, zenity popups, Windows message boxes falling back, an engine that cannot start (Bookworm's glibc) and building it here
+- **One Lantern folder** (1.13.2): `Lantern.zip` has one top folder, `Lantern`, with the launchers, the single file, `README.txt`, `site/`, `kit/` and `docs/`, and never `kit/engine`, `kit/models`, `kit/library`, a `kit/site` copy or the repository's working parts; the run marks and Windows line endings kept; the same files from a plain folder as from git; a mismatched version refused; extracted over a copy of the USB stick's old Lantern folder: the new Lantern in place, the model, engine, library and the stick's own files untouched; Lantern found in the Lantern folder's `site/` before `kit/site` (check, Start, setup and its download, shell and PowerShell)
 - **Waiting for the kit's model** (1.12.8): the page opened while llama-server still answers 503 "Loading model" shows a progress bar (model name and size, time so far and left), connects by itself when the model is ready and remembers how long it took; the corner button; asking while it loads; a saved page with the server off; nothing on a host with no model server
 - **AI makes documents, slides, flashcards, plans; READ** (1.12): the MAKE DOC, SLIDES, CARDS and PLAN parsers and their checks (headings, lists, tables and bold for Writer; at most 7 points a slide; cards with both sides and no repeats; dates worked out by Lantern -- month ends, weekdays, day-and-month, nothing in the past -- and the Planner's repeats), the apps' own doors (`slideDocs`, `cardDocs`, `plannerDocs`), the prompt offering only the kind asked about, the command list saying where each opens, the Chat flow (Open in Writer / Slides / Flashcards, Add to Planner, made once however often tapped), the READ command (page, pages, section, words, "the last page", pages past the end, nothing found) and a conversation that READs words and then a section not yet read, and the four new bench questions graded with their ideal replies; 1.12.2: requests to make something from an attached document (the whole text and the MAKE instructions, not a question about it), READ: all, sentences about the document as a whole, and the Save .pdf file itself (header, cross-reference offsets, fonts, bullets, table rules, page numbers)
 - **Puzzles**: the TRACK (things in a row and what they hold), TURN (a cube or a walker) and SOLVE (clue puzzles, by trying every arrangement) tools on the puzzles a 35B model was given, reworded ones, Einstein's five-house puzzle, knights and liars, a missing clue and contradicting clues; the text functions (REVERSE, REMOVE, LEN ...); Chat handing a puzzle to Lantern (results back for the answer, one correction, the tools on request, off for the bench's "alone" runs); the reasoning bench graded against a perfect model and against the 35B's real answers without the tools

@@ -14,8 +14,12 @@ rem internet and room on the drive), it asks once and downloads it in a
 rem separate window while Lantern starts; the next start uses it.
 setlocal EnableDelayedExpansion
 set "DIR=%~dp0"
-set "SITE=%DIR%site"
-if not exist "%SITE%\index.html" set "SITE=%DIR%..\site"
+rem Lantern itself: the Lantern folder's site\ (beside kit\, what Lantern.zip
+rem updates) first, else kit\site for a kit on its own.
+set "SITE=%DIR%..\site"
+if not exist "%SITE%\index.html" set "SITE=%DIR%site"
+set "OLDSITE="
+if exist "%DIR%..\site\index.html" if exist "%DIR%site\index.html" set "OLDSITE=1"
 set "MODELS=%DIR%models"
 if not exist "%MODELS%" set "MODELS=%DIR%..\models"
 set "LIBRARY=%DIR%library"
@@ -91,7 +95,12 @@ set "MMARG="
 if defined MMPROJ set MMARG=--mmproj "!MMPROJ!"
 echo.
 echo Lantern: !M! with !MEM! MB memory
-echo Lantern files: %SITE%  ^(to update Lantern, replace index.html and lantern-sw.js there^)
+rem the version Lantern's own page says (bench run 10 ran an old Lantern unnoticed)
+set "LVER=?"
+for /f "usebackq delims=" %%v in (`powershell -NoProfile -Command "$m=[regex]::Match([IO.File]::ReadAllText($env:SITE+'\index.html'),'version: .([0-9][0-9.]*).'); if($m.Success){$m.Groups[1].Value}"`) do set "LVER=%%v"
+for %%s in ("%SITE%") do echo Lantern !LVER! files: %%~fs
+echo   ^(to update: extract a newer Lantern.zip over the Lantern folder and replace the files^)
+if defined OLDSITE echo   ^(kit\site is a second copy and is not used; it can be deleted^)
 if defined MMPROJ echo Vision: !MMPROJ! ^(the AI can look at the pictures it makes^)
 echo Open http://127.0.0.1:%PORT%/  ^(keep this window open; close it to stop^)
 if "%HOST%"=="0.0.0.0" (

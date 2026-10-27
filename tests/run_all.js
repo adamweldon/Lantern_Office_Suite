@@ -29,7 +29,8 @@ var steps = [
   ["Text Reader, PDF in and out, Chat with a document, Sheet Music Reader", "node", ["tests/text_reader.js"], /ALL TEXT READER TESTS PASS/],
   ["AI modules isolated (rule 11)", "node", ["tests/ai_isolation.js"], /AI MODULES ISOLATED/],
   ["Kit: model choice and bigger-model offer; popups; engine built here", "python3", ["tests/kit_offer.py"], /KIT OFFER TESTS PASS/],
-  ["Kit window: Install / Start Lantern by double-click (Linux)", "python3", ["tests/kit_window.py"], /KIT WINDOW TESTS PASS/]
+  ["Kit window: Install / Start Lantern by double-click (Linux)", "python3", ["tests/kit_window.py"], /KIT WINDOW TESTS PASS/],
+  ["Lantern.zip: one Lantern folder; laid over the stick's old one", "python3", ["tests/lantern_zip.py"], /LANTERN ZIP TESTS PASS/]
 ];
 var failed = 0;
 steps.forEach(function (s) {

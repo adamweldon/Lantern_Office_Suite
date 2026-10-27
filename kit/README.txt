@@ -27,9 +27,9 @@ Folder layout
   start-lantern.bat / .command / .sh   start Lantern (Windows / Mac / Linux)
   setup-kit.bat / .sh                   fetch the engine and models (once)
   lantern-kit.py / .sh                  the Linux window for both (double-click set-up)
-  site/                                 Lantern itself: the repo's site/ beside kit/, or
-                                        kit/site (setup fetches it from GitHub when
-                                        neither is there; "setup-kit lantern" updates it)
+  ../site/                              Lantern itself: the Lantern folder's site/,
+                                        beside kit/ (kit/site only for a kit on its own;
+                                        when both are there, the folder's is used)
   engine/windows|mac|linux/             llama.cpp llama-server (setup fills it)
   engine/<system>/kiwix/                kiwix-serve, for the library (setup fills it)
   models/                               .gguf model files (setup fills it)
@@ -64,8 +64,9 @@ Folder layout
               each; new 4B/9B/35B downloads bring theirs along): the AI can
               then look at the drawings it makes in Chat
      check    show what this computer can run and what the kit has
-     lantern  the newest Lantern from GitHub into kit/site (also to update it;
-              setup fetches it by itself when the kit has none)
+     lantern  the newest Lantern from GitHub into the Lantern folder (site/
+              and Lantern_Office_Suite.html; also to update it; setup fetches
+              it by itself when there is none)
      build-engine   build llama-server here from the llama.cpp source (Linux;
               about 10-20 minutes on a Raspberry Pi 5). Needs a C++ compiler
               (build-essential); cmake is fetched with pip when missing
@@ -110,6 +111,20 @@ Folder layout
    one when you ask Chat to explain something ("explain", "in detail", "how
    does"): it reads before the AI answers, then checks every sentence of the
    answer against what it read and shows which sentences are the AI's own.
+
+Updating Lantern
+   Download the newer Lantern.zip and extract it into the folder that holds
+   your Lantern folder (on the stick: the folder with Lantern in it), and
+   choose Replace when it asks. Only Lantern's own files are in the zip:
+   engine/, models/ and library/ here are never in it, so nothing you
+   downloaded is touched. Windows (Extract All) merges the folders and asks
+   before replacing files; on the Raspberry Pi, tick "Overwrite existing
+   files" in the archive tool's Extract window. A Mac does not merge:
+   double-clicking the zip makes "Lantern 2", and dragging a folder over
+   one of the same name REPLACES it, models and all. On a Mac, in Terminal:
+     ditto -x -k ~/Downloads/Lantern.zip "/Volumes/STICK/folder-with-Lantern"
+   (ditto merges), or ./setup-kit.sh lantern (fetches the newest Lantern).
+   start-lantern prints which Lantern it shows and its version.
 
 3. Share with phones (classroom)
    Start with "share" (start-lantern.bat share / ./start-lantern.sh share).

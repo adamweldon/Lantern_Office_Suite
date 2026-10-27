@@ -432,7 +432,8 @@ ok("mixed CPUs: start-lantern runs this computer's engine", "FAKE model=Qwen3.5-
 # Stand-ins for GitHub's archives of the main branch: Lantern_Office_Suite-main/{site,package.json}
 def lantern_archives(version):
     d = os.path.join(kx, "lantern"); os.makedirs(d, exist_ok=True)
-    files = {"Lantern_Office_Suite-main/site/index.html": "<!doctype html><title>Lantern Office</title>v" + version,
+    files = {"Lantern_Office_Suite-main/site/index.html": '<!doctype html><title>Lantern Office</title><script>var C = { version: "%s" };</script>v%s' % (version, version),
+             "Lantern_Office_Suite-main/Lantern_Office_Suite.html": "<!doctype html><title>Lantern Office</title>one file v" + version,
              "Lantern_Office_Suite-main/site/ai/wllama/x.js": "// engine",
              "Lantern_Office_Suite-main/package.json": '{\n  "name": "lantern-office-suite",\n  "version": "%s",\n  "private": true\n}\n' % version,
              "Lantern_Office_Suite-main/kit/README.txt": "the kit"}
@@ -458,10 +459,10 @@ ok("setup with no internet for Lantern: stops, says what to do, leaves nothing h
 out, rc = run_in(k, [], "", dict(LAN, LANTERN_UI="1"))
 site = os.path.join(k, "site")
 ok("setup fetches Lantern itself first, into the kit", rc == 0 and out.index("@@STEP lantern") < out.index("@@STEP engine") and
-   "Lantern 9.9.1 is in the kit" in out and open(os.path.join(site, "index.html")).read().endswith("v9.9.1") and
+   "Lantern 9.9.1 is in place (%s)" % site in out and open(os.path.join(site, "index.html")).read().endswith("v9.9.1") and
    os.path.exists(os.path.join(site, "ai", "wllama", "x.js")) and open(os.path.join(site, "lantern-version.txt")).read().startswith("9.9.1 (from"), out[-800:])
 out, rc = run_in(k, [], "", DEADLAN)
-ok("setup again: Lantern is there, nothing fetched", rc == 0 and "have Lantern 9.9.1 (from" in out, out[-600:])
+ok("setup again: Lantern is there, nothing fetched", rc == 0 and "have Lantern 9.9.1 (" in out, out[-600:])
 out = run(k, ["nodownload"], {"LANTERN_MEM_MB": "8000"}, [os.path.join(k, "start-lantern.sh")])
 ok("start-lantern then serves the kit's Lantern", "FAKE model=Qwen3.5-4B" in out, out)
 lantern_archives("9.9.2")
@@ -490,16 +491,63 @@ if pw:
     out = run(k, [], dict(WLAN, LANTERN_SRC=DEADLAN["LANTERN_SRC"].replace(".tar.gz", ".zip")), ps1(k))
     ok("ps1: no internet for Lantern stops setup with what to do", "Could not download Lantern" in out and not os.path.exists(os.path.join(k, "site")), out[-800:])
     out = run(k, [], WLAN, ps1(k))
-    ok("ps1 setup fetches Lantern itself into the kit", "Lantern 9.9.2 is in the kit" in out and
+    ok("ps1 setup fetches Lantern itself into the kit", "Lantern 9.9.2 is in place" in out and
        open(os.path.join(k, "site", "index.html")).read().endswith("v9.9.2") and os.path.exists(os.path.join(k, "site", "ai", "wllama", "x.js")), out[-800:])
     out = run(k, ["check"], WLAN, ps1(k))
-    ok("ps1 check: then it names the version", "Lantern: 9.9.2 (from" in out, out)
+    ok("ps1 check: then it names the version", "Lantern: 9.9.2, " in out, out)
     lantern_archives("9.9.3")
     out = run(k, ["lantern"], WLAN, ps1(k))
     ok("ps1 setup-kit lantern updates it", open(os.path.join(k, "site", "index.html")).read().endswith("v9.9.3") and
        not os.path.exists(os.path.join(k, "site.old")), out[-600:])
     out = run(rk, [], dict(WLAN, LANTERN_SRC="http://127.0.0.1:%d/x.zip" % free_port()), ps1(rk) if os.path.exists(os.path.join(rk, "setup-kit.ps1")) else None)
     ok("ps1: the repository's own site/ is used", "have Lantern 1.13.1" in out, out[-600:])
+# --- 1.13.2: the Lantern folder (Lantern.zip extracted, or the repository) ---
+# Lantern lives in one place, Lantern/site beside kit/. An older copy in kit/site
+# used to win, so a newer Lantern laid over the folder never showed (bench run 10).
+def lantern_folder(name, kit_site=None, folder_site=None, stale_txt=None):
+    L = os.path.join(tmp, name, "Lantern"); os.makedirs(L)
+    open(os.path.join(L, "Lantern_Office_Suite.html"), "w").write("one file, old")
+    open(os.path.join(L, "Start Lantern (Linux).desktop"), "w").write("[Desktop Entry]")
+    k = make_kit(name + "-kit", ["Qwen3.5-4B-Q4_K_M.gguf"]); shutil.rmtree(os.path.join(k, "site"))
+    shutil.move(k, os.path.join(L, "kit")); k = os.path.join(L, "kit")
+    for where, v in ((os.path.join(k, "site"), kit_site), (os.path.join(L, "site"), folder_site)):
+        if v:
+            os.makedirs(where); open(os.path.join(where, "index.html"), "w").write('<title>Lantern</title><script>var C = { version: "%s" };</script>' % v)
+    if stale_txt: open(os.path.join(L, "site", "lantern-version.txt"), "w").write(stale_txt + " (from GitHub, 2026-10-20)\n")
+    return L, k
+L, k = lantern_folder("lf-both", kit_site="1.12.9", folder_site="1.13.2", stale_txt="1.12.9")
+out, rc = run_in(k, ["check"], "", DEADLAN)
+ok("Lantern folder: check names the folder's Lantern, by its own page's version", "Lantern: 1.13.2, %s" % os.path.join(L, "site") in out, out)
+out = run(k, ["nodownload"], {"LANTERN_MEM_MB": "8000"}, [os.path.join(k, "start-lantern.sh")])
+ok("Lantern folder: start serves the folder's site, says kit/site is a spare copy",
+   "Lantern 1.13.2 files: %s" % os.path.join(L, "site") in out and "kit/site is a second copy and is not used" in out and "FAKE model=" in out, out)
+L, k = lantern_folder("lf-none")
+out, rc = run_in(k, [], "", LAN)
+ok("Lantern folder with no Lantern: setup puts it in the folder (site/ and the single file), not in kit/",
+   rc == 0 and "is in place (%s)" % os.path.join(L, "site") in out and os.path.exists(os.path.join(L, "site", "index.html")) and
+   not os.path.exists(os.path.join(k, "site")) and open(os.path.join(L, "Lantern_Office_Suite.html")).read().startswith("<!doctype") and
+   not os.path.exists(os.path.join(L, "site.new")), out[-800:])
+L, k = lantern_folder("lf-update", kit_site="1.12.9")
+lantern_archives("9.9.4")
+out, rc = run_in(k, ["lantern"], "", LAN)
+ok("an update for a kit in a Lantern folder lands in the folder: then it is the one used",
+   rc == 0 and open(os.path.join(L, "site", "index.html")).read().endswith("v9.9.4"), out[-800:])
+out, rc = run_in(k, ["check"], "", DEADLAN)
+ok("...and check says so", "Lantern: 9.9.4, %s" % os.path.join(L, "site") in out, out)
+if pw:
+    L, k = lantern_folder("lf-ps1", kit_site="1.12.9", folder_site="1.13.2", stale_txt="1.12.9")
+    os.makedirs(os.path.join(k, "engine", "windows")); open(os.path.join(k, "engine", "windows", "llama-server.exe"), "w").write("MZ")
+    out = run(k, ["check"], WLAN, ps1(k))
+    ok("ps1 Lantern folder: check names the folder's Lantern, by its own page's version", "Lantern: 1.13.2, " in out and os.path.join(L, "site") in out, out)
+    L, k = lantern_folder("lf-ps1-none")
+    os.makedirs(os.path.join(k, "engine", "windows")); open(os.path.join(k, "engine", "windows", "llama-server.exe"), "w").write("MZ")
+    open(os.path.join(L, "Start Lantern (Windows).bat"), "w").write("@echo off")
+    out = run(k, [], WLAN, ps1(k))
+    ok("ps1 Lantern folder with no Lantern: it goes in the folder, not kit\\site",
+       os.path.exists(os.path.join(L, "site", "index.html")) and not os.path.exists(os.path.join(k, "site")) and
+       open(os.path.join(L, "Lantern_Office_Suite.html")).read().startswith("<!doctype"), out[-800:])
+bat = open(os.path.join(ROOT, "kit", "start-lantern.bat")).read()
+ok("start-lantern.bat looks in the Lantern folder's site first", bat.index('set "SITE=%DIR%..\\site"') < bat.index('set "SITE=%DIR%site"'), "")
 bat = open(os.path.join(ROOT, "kit", "start-lantern.bat")).read()
 ok("start-lantern.bat stops with a clear message when Lantern is missing", 'if not exist "%SITE%\\index.html" (' in bat and
    "Lantern itself is not in this folder" in bat, "")

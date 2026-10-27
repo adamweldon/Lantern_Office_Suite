@@ -222,15 +222,17 @@ dead = "http://127.0.0.1:%d" % free_port()
 tr, out = run_window(d2, "install", env_for(home2, {"LANTERN_KIT_AUTO": "install,close", "LLAMA_BASE": dead + "/llama"}), shots="offline")
 ok("install offline: the failure page", tr == ["page welcome", "page work", "page failed"], (tr, out))
 
-# 5b. Only the kit folder (Lantern itself not beside it): Install fetches Lantern first, then Start serves it
+# 5b. A Lantern folder without Lantern itself (site/ gone): Install fetches Lantern first,
+# into the folder's site/ (one place, 1.13.2), not kit/site; then Start serves it
 d4, home4 = fresh("kit-only"); shutil.rmtree(os.path.join(d4, "site"))
 tr, out = run_window(d4, "start", env_for(home4, {"LANTERN_KIT_AUTO": "close"}))
 ok("start with no Lantern: says so and offers Install", tr == ["page run", "page failed"], (tr, out))
 tr, out = run_window(d4, "install", env_for(home4, {"LANTERN_KIT_AUTO": "install,close", "LANTERN_AUTO_DOWNLOAD": "0"}), shots="kitonly")
-ok("install in a kit-only folder: Lantern fetched, then the AI", tr == ["page welcome", "page work", "page done", "shortcuts menu,desktop"] and
-   os.path.exists(os.path.join(d4, "kit", "site", "index.html")) and os.path.exists(os.path.join(d4, "kit", "models", "Qwen3.5-4B-Q4_K_M.gguf")), (tr, out))
+ok("install in a Lantern folder with no Lantern: Lantern fetched into the folder, then the AI", tr == ["page welcome", "page work", "page done", "shortcuts menu,desktop"] and
+   os.path.exists(os.path.join(d4, "site", "index.html")) and not os.path.exists(os.path.join(d4, "kit", "site")) and
+   os.path.exists(os.path.join(d4, "kit", "models", "Qwen3.5-4B-Q4_K_M.gguf")), (tr, out))
 tr, out = run_window(d4, "start", env_for(home4, {"LANTERN_KIT_AUTO": "stop,close", "LANTERN_AUTO_DOWNLOAD": "0", "LANTERN_KIT_AUTO_DELAY": "6000"}))
-ok("then Start serves the kit's Lantern", tr == ["page run", "ready", "page stopped"], (tr, out))
+ok("then Start serves that Lantern", tr == ["page run", "ready", "page stopped"], (tr, out))
 
 # 6. Start with nothing installed: points to Install
 tr, out = run_window(d2, "start", env_for(home2, {"LANTERN_KIT_AUTO": "close"}))

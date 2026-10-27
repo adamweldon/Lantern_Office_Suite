@@ -24,9 +24,9 @@
 #                              the drawings it makes. New 4B/9B/35B downloads
 #                              bring theirs along.
 #   setup-kit.bat check        show what this computer can run and what the kit has
-#   setup-kit.bat lantern      the newest Lantern from GitHub into the kit (site\), also
-#                              to update it; setup fetches it by itself when neither
-#                              kit\site nor the repository's site\ is there
+#   setup-kit.bat lantern      the newest Lantern from GitHub into the Lantern folder
+#                              (site\ and Lantern_Office_Suite.html), also to update
+#                              it; setup fetches it by itself when there is none
 #   add "gpu" for the Vulkan engine build (graphics card)
 # "Install Lantern (Windows).bat" runs this with LANTERN_POPUP=1: the questions
 # come up in message boxes (Yes / No / Cancel) while this window shows the progress.
@@ -105,10 +105,13 @@ function GetVision($t) {
 function GetTier($t) { Model $t.repo $t.file; if (Have $t) { GetVision $t } }
 function TempRoot { if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() } }
 # --- Lantern itself (the site\ folder llama-server serves) ---
-# SiteDir -> the Lantern this kit starts: kit\site, else the repository's site\
-# beside kit\ (the zip from GitHub); "" when neither is there.
+# SiteDir -> the Lantern this kit starts: the Lantern folder's site\ (beside
+# kit\: what Lantern.zip, extracted over the folder, updates), else kit\site
+# (a kit on its own); "" when neither is there. One place first, always: a
+# copy in kit\site used to win over the folder's, so an update laid over the
+# folder never showed (bench run 10).
 function SiteDir {
-  foreach ($d in @((Join-Path $Dir "site"), (Join-Path (Split-Path -Parent $Dir) "site"))) {
+  foreach ($d in @((Join-Path (Split-Path -Parent $Dir) "site"), (Join-Path $Dir "site"))) {
     if (Test-Path (Join-Path $d "index.html")) { return (Resolve-Path $d).Path }
   }
   return ""
@@ -118,12 +121,26 @@ function VersionIn($packageJson) {
   $m = [regex]::Match((Get-Content $packageJson -Raw), '"version":\s*"([^"]*)"')
   if ($m.Success) { return $m.Groups[1].Value } else { return "" }
 }
+# LanternVersion -> the version Lantern's own page says it is (index.html), so a
+# newer Lantern laid over an older one never reports the old number.
 function LanternVersion($site) {
+  $idx = Join-Path $site "index.html"
+  if (Test-Path $idx) {
+    $m = [regex]::Match([System.IO.File]::ReadAllText($idx), 'version: "([0-9][0-9.]*)"')
+    if ($m.Success) { return $m.Groups[1].Value }
+  }
   $f = Join-Path $site "lantern-version.txt"
   if (Test-Path $f) { return [string](Get-Content $f -TotalCount 1) }
   return (VersionIn (Join-Path (Split-Path -Parent $site) "package.json"))
 }
-# GetLantern [fresh] -> Lantern into kit\site from GitHub when the kit has none
+# LanternFolder -> true when kit\ sits in a Lantern folder (Lantern.zip or the
+# repository): Lantern goes there, beside kit\, not into the kit.
+function LanternFolder {
+  $up = Split-Path -Parent $Dir
+  return ((Test-Path (Join-Path $up "Lantern_Office_Suite.html")) -or (Test-Path (Join-Path $up "Start Lantern (Windows).bat")) -or (Test-Path (Join-Path $up "site\index.html")))
+}
+# GetLantern [fresh] -> Lantern from GitHub when there is none: into the Lantern
+# folder (site\ and Lantern_Office_Suite.html), or kit\site for a kit on its own
 # (fresh: always, the newest -- also an update). The one in use stays until the
 # new one is in place and checked.
 function GetLantern([bool]$fresh = $false) {
@@ -142,15 +159,18 @@ function GetLantern([bool]$fresh = $false) {
     if (-not $top -or -not (Test-Path $idx) -or -not (Select-String -Path $idx -Pattern "Lantern" -SimpleMatch -Quiet)) {
       throw "the download has no Lantern in it (site\index.html)"
     }
-    $v = VersionIn (Join-Path $top.FullName "package.json")
+    $v = LanternVersion (Join-Path $top.FullName "site")
     Set-Content -Path (Join-Path $top.FullName "site\lantern-version.txt") -Value ($(if ($v) { $v } else { "unknown" }) + " (from $LanternHome, " + (Get-Date -Format "yyyy-MM-dd") + ")")
-    $site = Join-Path $Dir "site"; $next = Join-Path $Dir "site.new"; $old = Join-Path $Dir "site.old"
+    $lhome = if (LanternFolder) { Split-Path -Parent $Dir } else { $Dir }
+    $site = Join-Path $lhome "site"; $next = Join-Path $lhome "site.new"; $old = Join-Path $lhome "site.old"
     foreach ($p in @($next, $old)) { if (Test-Path $p) { Remove-Item -Recurse -Force $p } }
     Copy-Item -Recurse -Force (Join-Path $top.FullName "site") $next
     if (Test-Path $site) { Move-Item $site $old }
     Move-Item $next $site
     if (Test-Path $old) { Remove-Item -Recurse -Force $old }
-    Write-Host ("  Lantern" + $(if ($v) { " $v" } else { "" }) + " is in the kit ($site)")
+    $one = Join-Path $top.FullName "Lantern_Office_Suite.html"
+    if (($lhome -ne $Dir) -and (Test-Path $one)) { Copy-Item -Force $one (Join-Path $lhome "Lantern_Office_Suite.html") }
+    Write-Host ("  Lantern" + $(if ($v) { " $v" } else { "" }) + " is in place ($site)")
   } finally { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
 }
 function Engine($asset) {
