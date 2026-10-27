@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.13.2 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.13.3 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -175,7 +175,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.13.2",
+  version: "1.13.3",
   apps: {},
   order: []
 };
@@ -17578,7 +17578,26 @@ Lantern.RFB = (function () {
         stillDoubt = cdoubts.length ? cdoubts : null;
       }
       if (parsed.answer) {
-        var fa = A.finalAnswer ? A.finalAnswer(parsed.answer, lastValue, lastSteps) : { text: parsed.answer, mismatch: false };
+        // the corrected answer still types Lantern's results its own way:
+        // Lantern puts its results in and says so (bench run 11, 1.13.3)
+        var RCK = window.Lantern.aiResultChecks, ansIn = parsed.answer;
+        if (stillDoubt && parsed.exprText && lastSteps && RCK && RCK.repair) {
+          var rp = RCK.repair(parsed.answer, lastSteps, said, parsed.exprText);
+          if (rp) {
+            ansIn = rp.text; rec.repaired = rp.changes.map(function (c) { return c.from + " -> " + c.to; });
+            note("Lantern put its own results into the AI\u2019s sentence, which typed them differently: " +
+              rp.changes.map(function (c) { return "\u201c" + c.from + "\u201d \u2192 \u201c" + c.to + "\u201d"; }).join(", ") + ".");
+            var pfix = {}, left = [];
+            for (var pk in parsed) pfix[pk] = parsed[pk];
+            pfix.answer = ansIn;
+            (window.Lantern.assistChecks || []).forEach(function (c) {
+              var r = null; try { r = c(said, parsed.exprText, { steps: lastSteps, value: lastValue }, { text: shown, parsed: pfix, sources: null }); } catch (e) { r = null; }
+              if (r) left.push(String(r));
+            });
+            stillDoubt = left.length ? left : null;
+          }
+        }
+        var fa = A.finalAnswer ? A.finalAnswer(ansIn, lastValue, lastSteps) : { text: ansIn, mismatch: false };
         rec.answerText = fa.text;
         if (sources || puzzled) fa.unchecked = false;
         if (ui.answer) ui.answer(fa.text);
@@ -21980,9 +21999,10 @@ Lantern.RFB = (function () {
           passages: g.pass ? undefined : res.sources.map(function (s) { return String(s.text || "").slice(0, 1500); }) } : null,
         rejected: res && res.rejected ? res.rejected.slice(0, 300) : "", flags: res && res.flags ? res.flags : [],
         looked: res && res.looked ? (res.changedOnLook ? "changed it" : "kept it") : undefined, needAnswered: res && res.needAnswered || undefined,
+        commands: res && res.commands && !res.turns ? res.commands : undefined,
         chat: res && res.turns ? res.turns.map(function (t) { return { q: t.q, searches: t.searches, self: t.self, noLibrary: t.noLibrary,
           contextual: t.contextual, carried: t.carried, declined: t.declined, pointed: t.pointed || undefined,
-          catalog: t.catalog || undefined, commands: t.commands && t.commands.length ? t.commands.map(function (c) { return c.verb + (c.arg ? ": " + c.arg : ""); }) : undefined,
+          catalog: t.catalog || undefined, repaired: t.repaired || undefined, commands: t.commands && t.commands.length ? t.commands.map(function (c) { return c.verb + (c.arg ? ": " + c.arg : ""); }) : undefined,
           puzzles: t.puzzles && t.puzzles.length ? t.puzzles.map(function (z) { return z.kind + (z.ok ? "" : ": " + z.problems.join("; ").slice(0, 200)); }) : undefined,
           // each block the AI wrote and what Lantern made of it, so a wrong
           // answer can be traced to its line (bench run 9, 1.13.1)
@@ -21990,7 +22010,9 @@ Lantern.RFB = (function () {
           needAnswered: t.needAnswered || undefined, rounds: t.rounds, reply: String(t.final).slice(0, item.cat === "alone" ? 2500 : 500) }; }) : undefined,
         tools: g.tools || undefined, answer: item.cat === "reason" || item.cat === "alone" ? String(g.answer || "").slice(0, 400) : undefined,
         ms: Date.now() - t0, tokens: err ? null : toks, tps: err || !toks ? null : Math.round(toks / Math.max(0.001, secs) * 10) / 10,
-        reply: String(text).slice(0, item.cat === "make" ? 1500 : 600), first: res && res.rounds > 1 ? String(res.first).slice(0, item.cat === "make" ? 1500 : 600) : undefined };
+        // a program is kept whole (up to 6000 characters): run 11's was cut at 1500, mid-line
+        reply: String(text).slice(0, item.kind === "CODE" ? 6000 : item.cat === "make" ? 1500 : 600),
+        first: res && res.rounds > 1 ? String(res.first).slice(0, item.kind === "CODE" ? 6000 : item.cat === "make" ? 1500 : 600) : undefined };
       rows.push(row);
       if (opts.onItem) opts.onItem(i + 1, list.length, row);
       if (err && /No AI model|Open Lantern from/.test(err)) break;
@@ -23969,13 +23991,30 @@ Lantern.RFB = (function () {
   // find(text) -> [{kind, title, lines, action}] -- MAKE blocks in a reply.
   // A block ends at END (or at the next MAKE, or the end of the reply);
   // code fences around it are ignored.
+  // An "EXAMPLE: <title>" line with code right under it (a language line, or
+  // a line that can only be code) is a MAKE CODE block too: the 35B wrote
+  // its programs that way, copying how Lantern showed it a tested example
+  // (bench run 11, 1.13.2). EXAMPLE: on its own stays Chat's command.
+  var CODEY = /^(language\s*[:=]?\s*\w|lang\s*[:=]\s*\w|#include\b|#!|import\s|from\s+\S+\s+import\b|def\s|void\s|int\s+main\b|const\s|let\s|var\s|function\s|PROGRAM\b|FUNCTION_BLOCK\b|\x28\*|\x5B\s*(XIC|XIO)|(XIC|XIO|OTE|OTL|OTU|TON|TOF|CTU|CTD)\s*\x28)/i;
+  function exampleCode(lines, i) {
+    var m = /^\**\s*EXAMPLE\s*:\s*(.*?)\**$/i.exec(lines[i].replace(/^\s+|\s+$/g, ""));
+    if (!m || !actionFor("CODE")) return null;
+    for (var j = i + 1; j < lines.length && j <= i + 3; j++) {
+      var t = lines[j].replace(/^\s+|\s+$/g, "");
+      if (!t || /^\x60\x60\x60\w*$/.test(t)) continue;
+      return CODEY.test(t) ? m[1].replace(/^\s+|\s+$/g, "") || "Code" : null;
+    }
+    return null;
+  }
   function find(text) {
-    var out = [], cur = null;
-    String(text || "").replace(/\r/g, "").split("\n").forEach(function (raw) {
+    var out = [], cur = null, all = String(text || "").replace(/\r/g, "").split("\n");
+    all.forEach(function (raw, i) {
       var line = raw.replace(/^\s+|\s+$/g, "");
       if (/^\x60\x60\x60/.test(line)) return;   // a code fence
       var m = /^\**\s*MAKE\s+([A-Za-z][A-Za-z ]{1,20}?)\s*:\s*(.*?)\**$/i.exec(line);
       if (m) { cur = { kind: m[1].toUpperCase(), title: m[2].replace(/^\s+|\s+$/g, ""), lines: [], closed: false, action: actionFor(m[1]) }; out.push(cur); return; }
+      var ex = !cur || cur.closed ? exampleCode(all, i) : null;
+      if (ex != null) { cur = { kind: "CODE", title: ex.split(" \u2014 ")[0].replace(/\s*\x28(Arduino|Python|JavaScript|Ladder|Structured Text|ST|PLC)\b.*$/i, "") || ex, lines: [], closed: false, action: actionFor("CODE"), viaExample: true }; out.push(cur); return; }
       if (!cur) return;
       // code keeps its indents and blank lines (raw), and only a bare END ends it (1.13.0)
       if (/^END\b/i.test(line) && (!cur.action || cur.action.id !== "code" || /^END$/i.test(line))) { cur.closed = true; cur = null; return; }
@@ -24088,7 +24127,7 @@ Lantern.RFB = (function () {
     var out = [], st = 0, mark = "\u2193 " + b.title + " \u2014 " + b.action.title + ", checked below";
     String(text || "").replace(/\r/g, "").split("\n").forEach(function (raw) {
       var line = raw.replace(/^\s+|\s+$/g, "");
-      if (st === 0 && /^\**\s*MAKE\s+[A-Za-z]/i.test(line)) { if (out.length && /^\x60\x60\x60\w*$/.test(out[out.length - 1].trim())) out.pop(); out.push(mark); st = 1; return; }
+      if (st === 0 && (/^\**\s*MAKE\s+[A-Za-z]/i.test(line) || (b.viaExample && /^\**\s*EXAMPLE\s*:/i.test(line)))) { if (out.length && /^\x60\x60\x60\w*$/.test(out[out.length - 1].trim())) out.pop(); out.push(mark); st = 1; return; }
       if (st === 1) { if (/^END$/i.test(line)) st = 2; return; }
       if (st === 2 && /^\x60\x60\x60$/.test(line)) { st = 3; return; }
       if (st === 2 && line) st = 3;
@@ -24107,13 +24146,34 @@ Lantern.RFB = (function () {
   // solve(question, call) -> Promise<{text, first, made, rounds, kind, fixed,
   // rejected}> -- the bench's path: Chat's instructions, one call, and one
   // corrected block when Lantern finds problems.
+  // A reply with no MAKE block that uses one of Chat's commands (EXAMPLE:,
+  // LESSON: ... -- Lantern.chatCommands) gets what Chat gives it, up to twice,
+  // so the bench asks the way Chat does (bench run 11, 1.13.2).
+  function commandIn(text) {
+    var CMD = window.Lantern.chatCommands || [], i, a;
+    for (i = 0; i < CMD.length; i++) {
+      try { a = CMD[i].test ? CMD[i].test(text) : null; } catch (e) { a = null; }
+      if (a != null) return { c: CMD[i], arg: String(a), verb: CMD[i].verb || CMD[i].id || "command" };
+    }
+    return null;
+  }
   async function solve(q, call) {
     var sys = L.CHAT && L.CHAT.buildSystem ? L.CHAT.buildSystem(q) : prompt(q);
     var msgs = [{ role: "system", content: sys }, { role: "user", content: q }];
     var out = { rounds: 0, kind: "", fixed: false, rejected: "" };
     var text = await call(msgs); out.rounds++;
     out.first = text; out.text = text;
-    var made = build(text, q);
+    var made = build(text, q), runs = 0, hit;
+    while (!made && runs < 2 && (hit = commandIn(text))) {
+      runs++;
+      var cres = null;
+      try { cres = await hit.c.run(hit.arg, q, { msgs: msgs }); } catch (e) { cres = null; }
+      (out.commands = out.commands || []).push(hit.verb + ": " + hit.arg);
+      msgs.push({ role: "assistant", content: text });
+      msgs.push({ role: "user", content: cres && cres.prompt ? cres.prompt : "Lantern could not run " + hit.verb + ". Answer the QUESTION now.\n\nQUESTION: " + q });
+      text = await call(msgs); out.rounds++; out.text = text;
+      made = build(text, q);
+    }
     if (made && !made.ok) {
       out.kind = "questioned"; out.rejected = made.problems.join("; ");
       msgs.push({ role: "assistant", content: made.trimmed || text });
@@ -31444,9 +31504,24 @@ Lantern.RFB = (function () {
   // passages(question, query, {max, detail, strong}) -> [{n, title, text,
   // bookTitle, suite, kind, key, app, open}]; strong: only when the best
   // match names the topic in its title or tile (Chat's automatic reading).
+  // The AI's own words (LESSON: HEN HEALTH) are its guess at the topic; the
+  // person's question says what is needed. Each hit also gets 0.6 of how well
+  // it matches the question, so "hen health" for "My hens have stopped
+  // laying" reads Chickens & eggs, not the Health tile's guide on people
+  // (bench run 11, 1.13.3). A lesson asked for by its exact title stays first.
+  function blend(hits, question, query) {
+    var qs = S.terms(question), qq = S.terms(query);
+    if (!qs.length || qs.join(" ") === qq.join(" ")) return hits;
+    var byQ = {}, have = {};
+    S.search(question, { kinds: { lesson: 1, guide: 1 }, max: 12 }).forEach(function (h) { byQ[h.e.id + "|" + h.e.kind] = h; });
+    hits.forEach(function (h) { var k = h.e.id + "|" + h.e.kind; have[k] = 1; if (byQ[k]) h.s += 0.6 * byQ[k].s; });
+    Object.keys(byQ).forEach(function (k) { if (!have[k] && byQ[k].d.units.length) { var h = byQ[k]; h.s = 0.6 * h.s; hits.push(h); } });
+    return hits.sort(function (a, b) { return (b.exact ? 1 : 0) - (a.exact ? 1 : 0) || b.s - a.s; });
+  }
   S.passages = function (question, query, o) {
     o = o || {};
     var hits = S.search(query || question, { kinds: { lesson: 1, guide: 1 }, max: 12 }).filter(function (h) { return h.d.units.length; });
+    if (query && question && !o.strong) hits = blend(hits, question, query);
     if (!hits.length) return [];
     if (o.strong && (hits[0].strong < 1 || hits[0].cover < 0.25)) return [];
     if (!hits[0].exact && hits[0].s < 1.5) return [];
@@ -34501,7 +34576,7 @@ Lantern.RFB = (function () {
 //          CODELAB_HIGHLIGHT, CODELAB_FILES (Lantern.codeDocs), CODELAB_RUN,
 //          CODELAB_LADDER(_VIEW), AI_CODE_EXAMPLES (Lantern.aiCodeExamples)
 //          -- all feature-detected
-// Exports: Lantern.aiCode = {parse(block), build(block, ctx)}; adds the CODE
+// Exports: Lantern.aiCode = {parse(block), build(block, ctx), ncProblems}; adds the CODE
 //          action to Lantern.aiActions
 // ===========================================================================
 // MAKE CODE (1.13.0): the AI writes a program -- Arduino, Python, JavaScript,
@@ -34539,10 +34614,38 @@ Lantern.RFB = (function () {
     if (!raw.length) problems.push("the block has no code in it");
     return { lang: lang, text: text, problems: problems };
   }
+  // ncProblems(lang, text, question) -> problems: a device the question calls
+  // normally closed (a Stop button, an overload contact) whose ladder tag is
+  // examined with XIO. Its input is on until it is pressed or trips, so XIO
+  // keeps the coil off for good. The 35B wrote XIO(Stop) for "a normally
+  // closed Stop pushbutton" -- as Lantern's own prompt line showed it
+  // (bench run 11, 1.13.2).
+  var NC_DEV = { stop: /stop/i, overload: /overload|\bol\b|\bovl/i, limit: /limit|\bls\d*/i, guard: /guard|door|gate/i, float: /float/i, pressure: /press|psw/i };
+  function ncProblems(lang, text, q) {
+    var out = [], m, re = /normally[\s-]+closed\s+(?:\w+\s+){0,2}?(stop|overload|limit|guard|door|gate|float|pressure)\b|\b(stop|overload|limit|guard|door|gate|float|pressure)\w*\s+(?:\w+\s+){0,2}?\x28?(?:normally[\s-]+closed|nc)\b/gi;
+    if (lang !== "ladder" || !q) return out;
+    var said = {};
+    while ((m = re.exec(String(q)))) {
+      var w = (m[1] || m[2]).toLowerCase(), k = w === "door" || w === "gate" ? "guard" : w;
+      said[k] = 1;
+    }
+    Object.keys(said).forEach(function (k) {
+      var seen = {}, x, rx = /XIO\s*\x28\s*([A-Za-z_][\w.]*)\s*\x29/g;
+      while ((x = rx.exec(text))) {
+        var tag = x[1];
+        if (seen[tag] || !NC_DEV[k].test(tag) || /^(run|motor|start)/i.test(tag)) continue;
+        seen[tag] = 1;
+        out.push("XIO(" + tag + ") examines the " + k + " the question calls normally closed: its input is on until it is " +
+          (k === "stop" ? "pressed" : k === "overload" ? "tripped" : "opened") + ", so XIO keeps the output off for good; use XIC(" + tag + ")");
+      }
+    });
+    return out;
+  }
   function build(block, ctx) {
     var p = parse(block), lg = L.codeLangs.get(p.lang), problems = p.problems.slice();
     var found = p.text.trim() ? L.codeCheck.run(p.lang, p.text) : [];
     found.forEach(function (x) { problems.push((x.line ? "line " + x.line + ": " : "") + x.msg); });
+    ncProblems(p.lang, p.text, ctx && ctx.question).forEach(function (x) { problems.push(x); found.push({ line: 0, msg: x }); });
     if (!p.text.trim()) return { problems: problems, plan: null };
     var based = L.aiCodeExamples ? L.aiCodeExamples.basedOn(p.text, p.lang) : null;
     var lines = p.text.replace(/\n$/, "").split("\n").length, title = block.title || "Code";
@@ -34581,7 +34684,7 @@ Lantern.RFB = (function () {
     } });
     return res;
   }
-  window.Lantern.aiCode = { parse: parse, build: build };
+  window.Lantern.aiCode = { parse: parse, build: build, ncProblems: ncProblems };
   var MATCH = /\b(code|coding|programs?|programming|programmed|script|scripts|arduino|esp32|esp8266|p1am|plc|ladder|structured text|python|javascript|c\+\+|firmware|microcontroller|gpio|accelstepper|tmc2209|a4988|drv8825|i2c|uart|pwm|serial monitor|compile|compiler|debug)\b/i;
   var PROMPT = [
     "MAKE CODE: <title>   -- a program Lantern checks and opens in Code Lab (JavaScript also runs there)",
@@ -34591,7 +34694,9 @@ Lantern.RFB = (function () {
     "Lantern checks it (brackets, a missing ;, colons and indents, pins never set as outputs, undeclared PLC",
     "variables ...) and sends back what it finds once. Explain in comments inside the code, briefly; never think",
     "aloud in comments. Ladder is rung text, one rung per line ending with ; and [A ,B ] is a branch (OR):",
-    "    [XIC(Start) ,XIC(Motor) ]XIO(Stop)OTE(Motor);"];
+    "    [XIC(Start) ,XIC(Motor) ]XIC(Stop)OTE(Motor);",
+    "XIC is true while the input is on, XIO while it is off. A normally closed Stop button (or overload contact) keeps",
+    "its input on until it is pressed (or trips), so it is examined with XIC; XIO there would never let the motor run."];
   if (!ACTS.some(function (a) { return a.id === "code"; })) ACTS.push({
     id: "code", kind: "CODE", kinds: ["CODE", "PROGRAM", "SCRIPT", "ARDUINO", "PYTHON", "JAVASCRIPT", "LADDER", "STRUCTURED TEXT"], title: "a program",
     opens: "Code Lab", collapse: true, also: "checked by Lantern; JavaScript runs in a sandbox",
@@ -34658,15 +34763,19 @@ Lantern.RFB = (function () {
     return out.sort(function (a, b) { return b.score - a.score; });
   }
   function langName(x) { var lg = L.codeLangs.get(x.lang); return (lg ? lg.name : x.lang) + (x.board === "p1am" ? ", P1AM-100" : x.board === "pi" ? ", Raspberry Pi" : ""); }
+  // Shown between <<< and >>>, with no "EXAMPLE n:" or "language" line: the
+  // 35B copied that layout as its reply ("EXAMPLE: ... / language arduino /
+  // the code / END"), so Lantern found no MAKE block (bench run 11, 1.13.2).
   function full(x, n) {
     SENT[x.id] = true;
-    return ["EXAMPLE " + n + ": " + x.title + " (" + langName(x) + ") \u2014 " + x.desc, "language " + x.lang, x.text.replace(/\n$/, "")];
+    return ["Tested example " + n + ": " + x.title + " (" + langName(x) + ") \u2014 " + x.desc, "<<<", x.text.replace(/\n$/, ""), ">>>"];
   }
   // promptLines(question) -> the best example in full when it fits well
   function promptLines(q) {
     var r = search(q), b = r[0];
     if (!b || b.hits < 2 || b.score < 7) return [];
-    return ["", "LANTERN\u2019S TESTED EXAMPLE (it compiles and passes Lantern\u2019s checks): start from it when it fits, and keep what works."]
+    return ["", "LANTERN\u2019S TESTED EXAMPLE (it compiles and passes Lantern\u2019s checks): start from it when it fits, and keep what works.",
+      "It is shown between <<< and >>>; your reply is still a MAKE CODE block."]
       .concat(full(b.ex, 1)).concat(r.length > 1 ? ["Other tested examples: " + r.slice(1, 4).map(function (x) { return x.ex.title; }).join("; ") +
         ". Reply EXAMPLE: <words> to read one."] : []);
   }
@@ -34727,7 +34836,7 @@ Lantern.RFB = (function () {
       top = r.slice(0, 2).map(function (x) { return x.ex; });
       if (!top.length) return { note: "Lantern has no tested example for \u201c" + arg + "\u201d.",
         prompt: "Lantern has no tested example for \u201c" + arg + "\u201d. Write the program from your own knowledge in a MAKE CODE block (MAKE CODE: <title> / language ... / the code / END).\n\nQUESTION: " + q };
-      var lines = ["LANTERN\u2019S TESTED EXAMPLES for \u201c" + arg + "\u201d (each one compiles and passes Lantern\u2019s checks):", ""];
+      var lines = ["LANTERN\u2019S TESTED EXAMPLES for \u201c" + arg + "\u201d (each one compiles and passes Lantern\u2019s checks; each is shown between <<< and >>>):", ""];
       top.forEach(function (x, k) { lines = lines.concat(full(x, k + 1)).concat([""]); });
       if (r.length > 2) lines.push("Also there: " + r.slice(2, 5).map(function (x) { return x.ex.title; }).join("; ") + ".");
       lines.push("", "Now answer the QUESTION. For a program, reply with a MAKE CODE block (MAKE CODE: <title> / language ... / the code / END), starting from the example that fits and keeping what works.", "", "QUESTION: " + q);
@@ -35084,7 +35193,8 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // MODULE: AI_RESULT_CHECKS - START
 // Depends: (none at load) -- adds a check to the Lantern.assistChecks hook
-// Exports: Lantern.aiResultChecks = {close(a, b), check(question, expr, run, ctx)}
+// Exports: Lantern.aiResultChecks = {close(a, b), check(question, expr, run, ctx),
+//          repair(answer, steps, question, expr) -> {text, changes} | null}
 // ===========================================================================
 // The AI's words against Lantern's results (bench run 9, 1.12.9). Asked to
 // spell "refrigerator" backwards and remove every r, the 35B wrote
@@ -35102,15 +35212,17 @@ Lantern.RFB = (function () {
   var L = window.Lantern;
   if (!L) return;
   var CHK = window.Lantern.assistChecks = window.Lantern.assistChecks || [];
+  // edits between two words; two letters swapped count as one slip
+  // ("otageifer" for "otaegife" is a swap and an extra r: bench run 11)
   function lev(a, b) {
-    var m = a.length, n = b.length, prev = [], cur, i, j;
-    for (j = 0; j <= n; j++) prev.push(j);
-    for (i = 1; i <= m; i++) {
-      cur = [i];
-      for (j = 1; j <= n; j++) cur.push(Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1)));
-      prev = cur;
+    var m = a.length, n = b.length, D = [], i, j;
+    for (i = 0; i <= m; i++) { D.push([i]); for (j = 1; j <= n; j++) D[i].push(i ? 0 : j); }
+    for (i = 1; i <= m; i++) for (j = 1; j <= n; j++) {
+      var c = a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1;
+      D[i][j] = Math.min(D[i - 1][j] + 1, D[i][j - 1] + 1, D[i - 1][j - 1] + c);
+      if (i > 1 && j > 1 && a.charAt(i - 1) === b.charAt(j - 2) && a.charAt(i - 2) === b.charAt(j - 1)) D[i][j] = Math.min(D[i][j], D[i - 2][j - 2] + 1);
     }
-    return prev[n];
+    return D[m][n];
   }
   // close(a, b): the same word with slips -- same letters in another order,
   // or a few letters off -- but not the same word
@@ -35166,7 +35278,39 @@ Lantern.RFB = (function () {
   }
   check.id = "results";
   if (!CHK.some(function (c) { return c.id === "results"; })) CHK.push(check);
-  window.Lantern.aiResultChecks = { close: close, check: check };
+  // repair(answer, steps, question, expr) -> {text, changes: [{from, to}]} or
+  // null. After the AI's one correction still types Lantern's results its own
+  // way (bench run 11: "otageifer" and 7 for otaegife and 8 -- questioned,
+  // and sent back the same), Lantern puts its own results into the sentence
+  // and Chat says what it changed. Only what is unambiguous: a word close to
+  // exactly one worked-out word, and a number when exactly one number the
+  // lines gave is missing from the sentence and exactly one number in it
+  // matches nothing.
+  function repair(answer, steps, question, expr) {
+    var ans = String(answer || ""), ql = String(question || "").toLowerCase(), inputs = String(expr || "").toLowerCase(), changes = [];
+    if (!ans || !steps || !steps.length || /\x7B(result|ANS\d*)\x7D/i.test(ans)) return null;
+    var texts = steps.filter(function (st) { return st.ok && typeof st.value === "string" && st.value.length >= 4; }).map(function (st) { return st.value; });
+    var out = ans.replace(/[A-Za-z\u00c0-\u024f]{4,}/g, function (w) {
+      var lw = w.toLowerCase();
+      if (ql.indexOf(lw) >= 0 || inputs.indexOf("\x22" + lw + "\x22") >= 0 || texts.some(function (t) { return t.toLowerCase() === lw; })) return w;
+      var hit = texts.filter(function (t) { return close(w, t); });
+      if (hit.length !== 1) return w;
+      changes.push({ from: w, to: hit[0] });
+      return hit[0];
+    });
+    var qn = numbers(question), vals = steps.filter(function (st) { return st.ok && typeof st.value === "number"; }).map(function (st) { return st.value; });
+    var toks = [], re = /-?\d+(?:\.\d+)?/g, m;
+    while ((m = re.exec(out))) toks.push({ at: m.index, s: m[0], v: parseFloat(m[0]) });
+    var stray = toks.filter(function (t) { return !qn.some(function (y) { return Math.abs(t.v - y) < 1e-9; }) && !vals.some(function (v) { return near(t.v, v); }); });
+    var missing = vals.filter(function (v) { return !toks.some(function (t) { return near(t.v, v); }); });
+    if (stray.length === 1 && missing.length === 1 && vals.length) {
+      var t = stray[0], to = fmt(missing[0]);
+      out = out.slice(0, t.at) + to + out.slice(t.at + t.s.length);
+      changes.push({ from: t.s, to: to });
+    }
+    return changes.length ? { text: out, changes: changes } : null;
+  }
+  window.Lantern.aiResultChecks = { close: close, check: check, repair: repair };
 })();
 // ===========================================================================
 // MODULE: AI_RESULT_CHECKS - END
@@ -35174,7 +35318,7 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // MODULE: AI_PUZZLE_CHECK - START
 // Depends: AI_PUZZLE_TRACK (its solver in Lantern.aiSolvers) -- feature-detected
-// Exports: Lantern.aiPuzzleCheck = {named(block, question, result)}
+// Exports: Lantern.aiPuzzleCheck = {named(block, question, result), distances(block, question)}
 // ===========================================================================
 // A place the puzzle describes, written as a name (bench run 9, 1.12.9). In
 // the two-coin cup puzzle step 4 says "put it under the cup directly to the
@@ -35215,9 +35359,37 @@ Lantern.RFB = (function () {
     }
     return out;
   }
+  // distances(block, question) -> problems: a step that moves "two places to
+  // its left" needs a line that moves two places. Bench run 11: step 2, "the
+  // cup holding the gold coin swaps with the cup two places to its left",
+  // became "swap holder of gold and left of holder of gold" -- one place --
+  // and the block ran cleanly to a wrong order.
+  var NUMW = { two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+  function distances(block, q) {
+    var at = String(q).search(/(^|[\s:])1[.\x29]\s/), out = [], m, seen = {};
+    if (at < 0) return out;
+    var steps = String(q).slice(at), body = block.lines.join("\n").toLowerCase();
+    // only a block that works through every step (a part of one is not judged)
+    var nsteps = 0, sm, sre = /(^|[\s:])(\d+)[.\x29]\s/g;
+    while ((sm = sre.exec(steps))) nsteps = Math.max(nsteps, parseInt(sm[2], 10));
+    var acts = block.lines.filter(function (l) { return !/^(row|line|order|start|items|things|queue)\b/i.test(l); });
+    while (acts.length && /^(put|place|hide)\b/i.test(acts[0])) acts.shift();
+    if (acts.length < nsteps) return out;
+    var re = /\b(two|three|four|five|six|seven|eight|nine|ten|[2-9]|1\d)\s+(?:places?|spots?|positions?|seats?|steps?)\s+(?:to\s+(?:its|their|the|his|her)\s+|further\s+)?(left|right|forward|back|backwards|ahead|behind|up|down)\b/gi;
+    while ((m = re.exec(steps)) && out.length < 2) {
+      var n = NUMW[m[1].toLowerCase()] || parseInt(m[1], 10), side = m[2].toLowerCase(), key = n + side;
+      if (seen[key]) continue;
+      seen[key] = 1;
+      var lr = side === "left" || side === "forward" || side === "ahead" || side === "up" ? "left" : side === "right" || side === "back" || side === "backwards" || side === "behind" || side === "down" ? "right" : side;
+      var ok = new RegExp("\\b" + n + "\\s+(left|right|places?|before|after|ahead|behind)\\b|\\bshift\\s+(left|right)\\s+" + n + "\\b|\\b(left|right)\\s+" + n + "\\b").test(body);
+      if (!ok) out.push("the steps say \u201c" + m[0] + "\u201d, but no line of the block moves " + n + " places: write it with the number, as in \u201c" + n + " " + lr + " of holder of \u2026\u201d " +
+        "(or \u201cshift " + lr + " " + n + "\u201d when every one moves)");
+    }
+    return out;
+  }
   var tr = (window.Lantern.aiSolvers || []).filter(function (s) { return s.kind === "TRACK"; })[0];
-  if (tr && !tr.check) tr.check = named;
-  window.Lantern.aiPuzzleCheck = { named: named };
+  if (tr && !tr.check) tr.check = function (block, q, r) { return named(block, q, r).concat(distances(block, q)); };
+  window.Lantern.aiPuzzleCheck = { named: named, distances: distances };
 })();
 // ===========================================================================
 // MODULE: AI_PUZZLE_CHECK - END
@@ -35369,6 +35541,60 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: AI_MAKE_LAYOUT - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_PROPORTION_CHECK - START
+// Depends: (none at load) -- adds a check to the Lantern.assistChecks hook
+// Exports: Lantern.aiProportion = {parse(question), check(question, expr, run, ctx)}
+// ===========================================================================
+// Fuel for a trip, the other way round (bench run 11, 1.13.2). "A car goes
+// 150 km on 10 litres of fuel. How many litres does a 420 km trip need?" --
+// the 35B wrote =150*10/420 (3.57 litres for a trip almost three times as
+// long) with the recipe card for it in front of it. Fuel and distance go up
+// together, so Lantern can work out the answer from the question itself:
+// the distance said with the fuel is the known pair, the other is the trip.
+// When the lines give something else, they go back once with the sum.
+// Only distance and fuel (km or miles, litres or gallons), one unit each,
+// where more of one always means more of the other.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var CHK = window.Lantern.assistChecks = window.Lantern.assistChecks || [];
+  var DIST = /(\d+(?:\.\d+)?)\s*(km|kms|kilomet(?:er|re)s?|miles?|mi)\b/gi;
+  var FUEL = /(\d+(?:\.\d+)?)\s*(l|litres?|liters?|gallons?|gal)\b/gi;
+  function unitOf(u) { u = u.toLowerCase(); return /^(km|kms|kilo)/.test(u) ? "km" : /^(mi)/.test(u) ? "miles" : /^(l|lit)/.test(u) ? "litres" : "gallons"; }
+  function all(re, t) { var out = [], m; re.lastIndex = 0; while ((m = re.exec(t))) out.push({ v: parseFloat(m[1]), u: unitOf(m[2]), at: m.index }); return out; }
+  function one(list) { return list.length && list.every(function (x) { return x.u === list[0].u; }); }
+  // parse(question) -> {asked: "fuel"|"distance", known, paired, target, expected, unitA, unitB} or null
+  function parse(q) {
+    var t = String(q || "").replace(/(\d),(\d{3})/g, "$1$2"), lt = t.toLowerCase();
+    var askFuel = /how\s+(many|much)\s+(litres|liters|l|gallons|gal|fuel|petrol|diesel|gas|gasoline)\b/.test(lt);
+    var askDist = /how\s+far\b|how\s+many\s+(km|kms|kilomet\w*|miles)\b/.test(lt);
+    if (askFuel === askDist) return null;
+    var d = all(DIST, t), f = all(FUEL, t), asked = askFuel ? f : d, other = askFuel ? d : f;
+    if (asked.length !== 1 || other.length !== 2 || !one(other)) return null;
+    var k = asked[0], a = other[0], b = other[1];
+    var paired = Math.abs(a.at - k.at) <= Math.abs(b.at - k.at) ? a : b, target = paired === a ? b : a;
+    if (!paired.v || !target.v) return null;
+    return { asked: askFuel ? "fuel" : "distance", known: k.v, paired: paired.v, target: target.v,
+      expected: target.v * k.v / paired.v, unitA: target.u, unitB: k.u };
+  }
+  function fmt(v) { return String(Math.round(v * 1e4) / 1e4); }
+  function check(question, expr, run) {
+    var p = parse(question);
+    if (!p || !run || run.value == null || !isFinite(run.value)) return null;
+    if (Math.abs(run.value - p.expected) <= Math.max(1e-9, Math.abs(p.expected) * 0.01)) return null;
+    return (p.asked === "fuel" ? "with the same fuel use all the way, " + fmt(p.target) + " " + p.unitA + " needs " :
+      "at the same fuel use, " + fmt(p.target) + " " + p.unitA + " of fuel goes ") +
+      fmt(p.target) + " × " + fmt(p.known) + " ÷ " + fmt(p.paired) + " = " + fmt(p.expected) + " " + p.unitB +
+      ", but the lines give " + fmt(run.value) + ": check which number divides (more " + (p.asked === "fuel" ? "distance needs more fuel" : "fuel goes further") + ")";
+  }
+  check.id = "proportion";
+  if (!CHK.some(function (c) { return c.id === "proportion"; })) CHK.push(check);
+  window.Lantern.aiProportion = { parse: parse, check: check };
+})();
+// ===========================================================================
+// MODULE: AI_PROPORTION_CHECK - END
 // ===========================================================================
 </script>
 

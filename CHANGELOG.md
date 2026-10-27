@@ -1,5 +1,86 @@
 # Changelog
 
+## 1.13.3 — Bench run 11: results put in, two places, the lesson asked about, EXAMPLE as code, fuel the right way round (2026-10-27)
+
+Adam's run 11 (Qwen3.5-35B-A3B, sees images, Lantern 1.13.2): **87 of 94
+(93%)**. Core 32/32, fresh 5/5, hard 9/10, made 18/21, conversations 15/16,
+puzzles 8/10; the same puzzles without the tools 3/6 (not scored). The
+library was not reached this run, so its 20 fact questions and two library
+conversations were not asked (`"library": null` in the results). Fixed since
+runs 9 and 10, with the model's replies: 3 dozen eggs, the house, the sun and
+the sea, the parallel resistors, the oil-change steps, the queue, the
+warranty answer and reading another page. Seven of the rest were Lantern's to
+fix:
+
+- **Refrigerator: the corrected sentence still typed its own results.** The
+  AI's lines were right (`=REVERSE("refrigerator")`, `=REMOVE(ANS1,"r")`,
+  `=LEN(ANS2)`: otaegife, 8) but its sentence said "otageifer" and 7. Lantern
+  questioned the 7 only: two swapped letters and an extra r were three
+  edits, over the limit. A swap now counts as one slip, so the spelling is
+  questioned too. And when the one correction comes back still typing
+  Lantern's results its own way (the run sent the same sentence back),
+  Lantern puts its results into the sentence -- only a word close to exactly
+  one worked-out word, and a number only when exactly one result is missing
+  and exactly one number matches nothing -- and the note under the answer
+  says what it changed ("otageifer" → "otaegife", "7" → "8"). The bench row
+  records it (`repaired`).
+- **Two-coin cups: "two places to its left" written as one place.** The block
+  said `swap holder of gold and left of holder of gold` and ran cleanly to a
+  wrong order. A step that moves two or more places now needs a line with
+  that number (`2 left of`, `shift right 2`); otherwise the block goes back
+  once (`Lantern.aiPuzzleCheck.distances`).
+- **Hens: LESSON: HEN HEALTH read the Health tile's guide on people.** The
+  AI's two words matched the Health guide's title strongly and Chickens &
+  eggs only by "hen" in its text, so only the Health guide was sent. The
+  person's question now counts too (0.6 of how well each lesson matches it),
+  so Chickens & eggs comes first; a lesson asked for by its exact title still
+  leads.
+- **Three programs had "no MAKE block".** The AI wrote `EXAMPLE: <title>`, then
+  `language arduino`, the code and END -- the way Lantern had shown it a
+  tested example (`EXAMPLE 1: ... / language arduino / code`). Now:
+  - an `EXAMPLE:` line with code right under it (a language line, or a line
+    that can only be code) is a MAKE CODE block, titled from the example's
+    name; `EXAMPLE:` on its own is still Chat's command;
+  - the example is shown as "Tested example 1: ..." between `<<<` and `>>>`,
+    with no line to copy as a reply;
+  - the bench's MAKE path runs Chat's commands (EXAMPLE:, LESSON: ...) up to
+    twice when a reply has no MAKE block, as Chat does; the row records them.
+  With that, the P1AM seal-in from the run passes, and so does the AccelStepper
+  sketch (its end filled in: the run saved only its first 1500 characters).
+- **Ladder: XIO(Stop) for a normally closed Stop.** Lantern's own prompt line
+  showed `[XIC(Start) ,XIC(Motor) ]XIO(Stop)OTE(Motor);`, and the AI wrote it
+  for "a normally closed Stop pushbutton": the input is on until the button
+  is pressed, so XIO never lets the motor run. The prompt line now says
+  `XIC(Stop)` and why, and a ladder block that examines a device the question
+  calls normally closed (Stop, overload, limit, guard, float, pressure) with
+  XIO goes back once (`Lantern.aiCode.ncProblems`).
+- **Fuel for a trip, the other way round.** `=150*10/420` (3.57 litres for a
+  420 km trip on a car that does 150 km on 10). New `AI_PROPORTION_CHECK`:
+  for distance and fuel (km or miles, litres or gallons, one unit each), the
+  distance said with the fuel is the known pair and the other is the trip;
+  lines that give something else go back once with the sum ("420 km needs
+  420 × 10 ÷ 150 = 28 litres"). Also "per 100 km" and "how far on 25 litres".
+- **The results keep whole programs** (up to 6000 characters): run 11's
+  stepper sketch was cut at 1500, mid-line.
+
+Not changed: the die and the four houses failed only without the tools.
+
+Tested:
+- New `tests/bench_run11.js` (30 checks) replays the run's replies
+  (`tests/fixtures/bench_run11_replies.json`; the stepper sketch's last four
+  lines filled in, as the run saved 1500 characters): the letters repaired in
+  Chat and passed, with the note; what repair leaves alone; the cups block
+  questioned, corrected and passed; LESSON: HEN HEALTH reading Chickens & eggs
+  and passing, while exact titles and health questions still lead; the three
+  EXAMPLE replies built as MAKE CODE, two passing and the ladder questioned,
+  corrected and passing through the bench's MAKE path; EXAMPLE: alone run as
+  a command there; the example shown between `<<<` and `>>>`; the prompt's
+  XIC(Stop); fuel questioned with the sum and passing in Assist, and the
+  other ways of asking, and what is left alone.
+- `tests/code_lab.js`: the example's new layout (changed with intent).
+- `tests/ai_isolation.js`: `AI_PROPORTION_CHECK` added (115 modules).
+- All suites pass.
+
 ## 1.13.2 — One Lantern folder: install, update and the bench fixes together (2026-10-27)
 
 Two pieces of work were each built on 1.13.0 and each called 1.13.1, and

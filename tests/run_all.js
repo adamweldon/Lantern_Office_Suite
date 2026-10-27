@@ -26,6 +26,7 @@ var steps = [
   ["Code Lab (editor, checks, ladder, sandbox, examples; MAKE CODE, EXAMPLE:, code in replies)", "node", ["tests/code_lab.js"], /ALL CODE LAB TESTS PASS/],
   ["Puzzles (track, turn, solve; letters; Chat hands puzzles to Lantern)", "node", ["tests/puzzles.js"], /ALL PUZZLE TESTS PASS/],
   ["Bench run 9 replayed (named places, queues, retyped results, READ, dozens, covered shapes, totals, steps)", "node", ["tests/bench_run9.js"], /ALL BENCH RUN 9 CHECKS PASS/],
+  ["Bench run 11 replayed (results put in, two places, the lesson asked about, EXAMPLE as code, XIO on a closed Stop, fuel the right way round)", "node", ["tests/bench_run11.js"], /ALL BENCH RUN 11 CHECKS PASS/],
   ["Text Reader, PDF in and out, Chat with a document, Sheet Music Reader", "node", ["tests/text_reader.js"], /ALL TEXT READER TESTS PASS/],
   ["AI modules isolated (rule 11)", "node", ["tests/ai_isolation.js"], /AI MODULES ISOLATED/],
   ["Kit: model choice and bigger-model offer; popups; engine built here", "python3", ["tests/kit_offer.py"], /KIT OFFER TESTS PASS/],

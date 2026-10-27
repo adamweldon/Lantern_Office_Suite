@@ -188,7 +188,7 @@ function msgs(list, re) { return list.some(function (p) { return re.test(p.msg);
   chatAsk("Write an Arduino sketch to blink the LED"); await sleep(250);
   var t = logText().slice(before);
   ok("Chat: the AI is told how to MAKE CODE, with the tested Blink example", modelCalls.length === 2 && /MAKE CODE: <title>/.test(modelCalls[0].messages[0].content) &&
-    /LANTERN\u2019S TESTED EXAMPLE/.test(modelCalls[0].messages[0].content) && /EXAMPLE 1: Blink \(Arduino/.test(modelCalls[0].messages[0].content), modelCalls.length);
+    /LANTERN\u2019S TESTED EXAMPLE/.test(modelCalls[0].messages[0].content) && /Tested example 1: Blink \(Arduino[\s\S]*\n<<<\n/.test(modelCalls[0].messages[0].content) && !/^EXAMPLE 1:/m.test(modelCalls[0].messages[0].content), modelCalls.length);
   ok("Chat: the missing ; goes back once, the fixed sketch is shown", /Lantern checked the MAKE CODE block: line 7: this line may be missing a ;/.test(t) &&
     /Lantern made a program: Blink pin 13/.test(t) && /no problems found/.test(t) && !/still questions/.test(t), t.slice(-700));
   ok("Chat: it says the sketch was adapted from the tested example", /adapted from Lantern\u2019s tested example \u201cBlink\u201d/.test(t), t.slice(-400));
