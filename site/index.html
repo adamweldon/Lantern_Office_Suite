@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.14.1 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.14.2 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -175,7 +175,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.14.1",
+  version: "1.14.2",
   apps: {},
   order: []
 };
@@ -16422,13 +16422,31 @@ Lantern.RFB = (function () {
     var flags = questioned(p, run, text);
     out.text = text; out.parsed = p; out.run = run; out.flags = flags;
     var bad = run.steps.filter(function (st) { return !st.ok; });
+    // A line that retyped an earlier result with its own rounding (1436.06
+    // for 1435.7027 -- bench run 14): Lantern runs its own result in its
+    // place, and the sentence's number with it, when that leaves nothing to
+    // question -- no turn spent on it (1.14.2).
+    var RCN = window.Lantern.aiResultChecks;
+    if (flags.length && p.exprText && !bad.length && RCN && RCN.rechainNumbers) {
+      var rn = RCN.rechainNumbers(p.exprText, run.steps, question), runN = rn ? A.run(rn.expr) : null;
+      if (runN && runN.value != null && runN.steps.every(function (st) { return st.ok; })) {
+        var cr = RCN.carry ? RCN.carry(p.answer, run.steps, runN.steps, question) : null, ansN = cr ? cr.text : p.answer;
+        var textN = rn.expr + (ansN ? "\nANSWER: " + ansN : ""), pN = A.parseReply(textN), fN = questioned(pN, runN, textN);
+        if (!fN.length) {
+          out.rechained = rn.changes.map(function (c) { return c.from + " -> " + c.to; });
+          if (cr) out.repaired = cr.changes.map(function (c) { return c.from + " -> " + c.to; });
+          text = textN; p = pN; run = runN; flags = fN;
+          out.text = text; out.parsed = p; out.run = run; out.flags = flags;
+        }
+      }
+    }
     // a NEED Lantern can answer itself (how many in a dozen, metres in a
     // mile -- Lantern.aiNeedAnswer): one more turn with the fact (1.13.1)
     var na = p.need && !p.exprText && opts.retries !== 0 && window.Lantern.aiNeedAnswer ? window.Lantern.aiNeedAnswer(p.need, question) : null;
     if (na) {
       out.needAnswered = na;
       msgs.push({ role: "assistant", content: text });
-      msgs.push({ role: "user", content: na + "\nNow reply with the = lines and the ANSWER line." });
+      msgs.push({ role: "user", content: na + (/\nNow /.test(na) ? "" : "\nNow reply with the = lines and the ANSWER line.") });
       text = relabel(await turn()); p = A.parseReply(text); run = A.run(p.exprText);
       flags = questioned(p, run, text); bad = run.steps.filter(function (st) { return !st.ok; });
       out.text = text; out.parsed = p; out.run = run; out.flags = flags;
@@ -17230,7 +17248,7 @@ Lantern.RFB = (function () {
       content += "\n\n[Recipe hints]\n" + hl.join("\n");
     }
     var lastValue = null, questioned = false, stillDoubt = null, looked = false, sources = null, detail = false, nudged = false, showed = false, steered = false, pointed = false, madeShown = null,
-      puzzleRuns = 0, pzFixed = false, puzzled = false, helped = false, cmdRuns = 0, canMore = false, pzSelf = false, needHelped = false, lastSteps = null;
+      puzzleRuns = 0, pzFixed = false, puzzled = false, helped = false, cmdRuns = 0, canMore = false, pzSelf = false, needHelped = false, lastSteps = null, docAsked = false;
     currentQ = q;
     rec.self = A.aboutSelf(q); rec.noLibrary = A.noLibrary(q); rec.contextual = A.dependsOnContext(q, history);
     var ownWords = rec.self || rec.noLibrary;
@@ -17341,6 +17359,30 @@ Lantern.RFB = (function () {
       var parsed = A.parseReply(shown);
       var quotes = /^\s*QUOTE\s*\x5B?\s*\d/im.test(shown);
       rec.final = shown;
+      // A decline about the person's document (Lantern.chatDeclineChecks --
+      // CHAT_DOC_DECLINE, 1.14.2): pages it never saw are asked for once, and
+      // a guess about the person's own item from the AI's own knowledge is
+      // left out of the answer.
+      var DCL = window.Lantern.chatDeclineChecks || [], docAgain = null;
+      if (DCL.length && rec.document && /\bnot in the document\b/i.test(shown)) {
+        for (var dci = 0; dci < DCL.length && !docAgain; dci++) {
+          var dcr = null;
+          try { dcr = DCL[dci](q, shown, { seen: seen, asked: docAsked, commands: rec.commands || [] }); } catch (e) { dcr = null; }
+          if (!dcr) continue;
+          if (dcr.again) { if (!docAsked) docAgain = dcr; continue; }
+          if (dcr.text != null) {
+            shown = dcr.text; rec.final = shown; parsed = A.parseReply(shown); msgs[msgs.length - 1].content = shown;
+            note(dcr.note); rec.ownLeftOut = true;
+          }
+        }
+      }
+      if (docAgain) {
+        docAsked = true;
+        if (shown && ui.reply) ui.reply(shown);
+        note(docAgain.note);
+        msgs.push({ role: "user", content: docAgain.again });
+        continue;
+      }
       // Something to MAKE (a schematic, a drawing, a table): Lantern checks
       // the block (one corrected block when it finds problems), shows it,
       // and -- when the model can see -- shows it the picture once.
@@ -17479,7 +17521,7 @@ Lantern.RFB = (function () {
         note("The AI asked \u201c" + parsed.need + "\u201d; Lantern knows that: " + needAns.replace(/^Lantern:\s*/, ""));
         // a puzzle goes back to its tool block (TURN, TRACK, SOLVE), not = lines
         var pzNeed = !puzzleOff && window.Lantern.aiPuzzle && window.Lantern.aiPuzzle.prompt ? window.Lantern.aiPuzzle.prompt(q) : "";
-        msgs.push({ role: "user", content: needAns + (pzNeed ? "\nNow reply with Lantern\u2019s puzzle tool block (or the = lines) and the ANSWER line." :
+        msgs.push({ role: "user", content: needAns + (/\nNow /.test(needAns) ? "" : pzNeed ? "\nNow reply with Lantern\u2019s puzzle tool block (or the = lines) and the ANSWER line." :
           "\nNow reply with the = lines and the ANSWER line.") });
         continue;
       }
@@ -17548,6 +17590,29 @@ Lantern.RFB = (function () {
           if (r) doubts.push(String(r));
         });
         if (OWNK) doubts = doubts.filter(function (dd) { return !OWNK.dropDoubt(q, shown, dd); });   // a value it says it knows itself
+        // a line that retyped an earlier result with its own rounding: Lantern
+        // runs its own result there instead, when that leaves nothing to
+        // question (bench run 14, 1.14.2)
+        var RCN2 = window.Lantern.aiResultChecks, rnc = doubts.length && !questioned && RCN2 && RCN2.rechainNumbers ? RCN2.rechainNumbers(parsed.exprText, run.steps, said) : null;
+        var runC = rnc ? A.run(rnc.expr) : null;
+        if (runC && runC.value != null && runC.steps.every(function (x) { return x.ok; })) {
+          var crc = RCN2.carry ? RCN2.carry(parsed.answer, run.steps, runC.steps, said) : null, pC = {}, dC = [];
+          for (var pk2 in parsed) pC[pk2] = parsed[pk2];
+          pC.exprText = rnc.expr; if (crc) pC.answer = crc.text;
+          (window.Lantern.assistChecks || []).forEach(function (c) {
+            var r = null; try { r = c(said, rnc.expr, runC, { text: shown, parsed: pC, sources: null }); } catch (e) { r = null; }
+            if (r) dC.push(String(r));
+          });
+          if (!dC.length) {
+            run = runC; lastSteps = runC.steps; lastValue = runC.value; rec.value = runC.value; parsed = pC;
+            rec.rechained = rnc.changes.map(function (c) { return c.from + " -> " + c.to; });
+            if (crc) rec.repaired = crc.changes.map(function (c) { return c.from + " -> " + c.to; });
+            if (ui.tool) ui.tool(runC);
+            note("The AI typed a result out with its own rounding; Lantern used its own result there instead: " +
+              rnc.changes.map(function (c) { return c.from + " \u2192 " + c.to; }).join(", ") + (crc ? "; in the sentence: " + crc.changes.map(function (c) { return c.from + " \u2192 " + c.to; }).join(", ") : "") + ".");
+            doubts = [];
+          }
+        }
         if (doubts.length && !questioned) {   // one more turn with Lantern's reason (as Assist does)
           questioned = true;
           note("Lantern questioned this: " + doubts.join("; ") + ". Asking the AI again\u2026");
@@ -22387,6 +22452,7 @@ Lantern.RFB = (function () {
   }
   L.aiChecks = { numbersIn: numbersIn, unexplained: unexplained, heights: heights, heightAsRadius: heightAsRadius,
     unusedSteps: unusedSteps, timeUnit: timeUnit, timesOne: timesOne, repeatedStep: repeatedStep, extraTimeStep: extraTimeStep };
+  // (calls, inputs and ampHours are added to L.aiChecks below, with their checks)
   function add(id, fn) { if (CHK.some(function (c) { return c.id === id; })) return; fn.id = id; CHK.push(fn); }
   add("height-as-radius", function (question, expr) {
     var h = heightAsRadius(question, expr);
@@ -22423,6 +22489,83 @@ Lantern.RFB = (function () {
     return timesOne(expr) ? "the formula multiplies or divides by 1, which changes nothing; it usually stands in for a number " +
       "the question does not give (ask with NEED)" : null;
   });
+  // calls(expr) -> [{fn, args: [text]}]: each function call, its arguments
+  // split at the top level ("RUNTIME(10,60)" -> RUNTIME, ["10", "60"])
+  function calls(expr) {
+    var t = String(expr || ""), out = [], re = /\b([A-Z][A-Z0-9_]*)\s*\x28/g, m;
+    while ((m = re.exec(t))) {
+      var i = re.lastIndex, depth = 1, quote = false, cur = "", args = [];
+      for (; i < t.length && depth > 0; i++) {
+        var ch = t.charAt(i);
+        if (ch === "\x22") quote = !quote;
+        if (!quote && ch === "\x28") depth++;
+        if (!quote && ch === "\x29") { depth--; if (!depth) break; }
+        if (!quote && depth === 1 && ch === ",") { args.push(cur.trim()); cur = ""; continue; }
+        cur += ch;
+      }
+      args.push(cur.trim());
+      out.push({ fn: m[1], args: args });
+    }
+    return out;
+  }
+  // inputs(question, expr, sources) -> [{fn, arg, name}]: a bare number put in
+  // a required input of one of Lantern's quantity functions that the question
+  // does not give -- even a round one like 10, which a unit factor can be but
+  // an input is not (bench run 14: "How many hours will my battery run a
+  // 60 W light?" -> =RUNTIME(10,60), a 10 Wh battery nobody mentioned).
+  var NOT_QTY = { CONVERT: 1, PLANET: 1, REVERSE: 1, REMOVE: 1, LEN: 1, MID: 1, DISTKM: 1, BEARING: 1, PLACE: 1, MORSE: 1, NATO: 1, BASE64: 1,
+    CAESAR: 1, SHA256: 1, MOLARMASS: 1, ATOMICMASS: 1, LOCKP: 1, ROUND: 1, ROUNDUP: 1, ROUNDDOWN: 1, MOD: 1, LOG: 1 };
+  function inputs(question, expr, given) {
+    // (not "a" or "an" as 1: "my battery run a light" gives no number, and 1 x 10 would let any 10 through)
+    var cat = {}, qn = questionNumbers(String(given || question).replace(/\b(a|an)\b/gi, " ")), out = [];
+    (window.Lantern.assistCatalog || []).forEach(function (c) {
+      if (!c || !c.n || NOT_QTY[c.n] || !/^\x28/.test(c.s || "")) return;
+      var sig = String(c.s).replace(/^\x28|\x29$/g, ""), req = sig.split("\x5B")[0].split(",").map(function (x) { return x.replace(/[\x22\s]/g, ""); }).filter(Boolean);
+      cat[c.n] = req;
+    });
+    calls(expr).forEach(function (c) {
+      var req = cat[c.fn];
+      if (!req) return;
+      c.args.slice(0, req.length).forEach(function (a, i) {
+        if (!/^-?\d+(\.\d+)?$/.test(a) || /\.\.\./.test(req[i] || "")) return;
+        var x = parseFloat(a);
+        // the question's numbers, a unit factor of one, or two of them combined (100 Ah x 12 V)
+        var ok = qn.some(function (y) { return same(x, y) || same(x, y + 6371) || FACTORS.some(function (k) { return same(x, y * k) || same(x, y / k); }) ||
+          qn.some(function (z) { return same(x, y * z) || (z && same(x, y / z)) || same(x, y + z) || same(x, y - z); }); });
+        if (!ok) out.push({ fn: c.fn, arg: a, name: req[i] || "an input" });
+      });
+    });
+    return out;
+  }
+  add("invented-input", function (question, expr, run, ctx) {
+    var given = question + (ctx && ctx.sources ? " " + ctx.sources.map(function (s) { return s.text; }).join(" ") : "");
+    var u = inputs(question, expr, given);
+    if (!u.length) return null;
+    return u.slice(0, 2).map(function (x) { return x.fn + " is given " + x.arg + " for " + x.name; }).join(", and ") + ", which " + (u.length > 1 ? "are" : "is") +
+      " not in the question; if the person did not give " + (u.length > 1 ? "them" : "it") + ", ask with NEED";
+  });
+  // ampHours(question, value, answer) -> {a, v, h} when the ANSWER gives amp-hours
+  // but the value is volts x amps x hours -- watt-hours (bench run 14, a Chat
+  // follow-up: "A 12 V pump draws 5 A ... how many amp-hours in 3 hours?" ->
+  // =60*3, "180 amp-hours", for 15)
+  function unitNums(t, re) { var out = [], m; re.lastIndex = 0; while ((m = re.exec(t))) out.push(parseFloat(m[1])); return out; }
+  function ampHours(question, value, answer) {
+    if (typeof value !== "number" || !/\bamp[\s-]?hours?\b|\bAh\b/.test(String(answer || ""))) return null;
+    var q = String(question || "").replace(/(\d),(\d{3})/g, "$1$2");
+    var amps = unitNums(q, /(\d+(?:\.\d+)?)\s*(?:A|amps?|amperes?)\b/g), volts = unitNums(q, /(\d+(?:\.\d+)?)\s*(?:V|volts?)\b/g),
+      hrs = unitNums(q, /(\d+(?:\.\d+)?)\s*(?:h|hrs?|hours?)\b/g), i, j, k;
+    for (i = 0; i < amps.length; i++) for (j = 0; j < volts.length; j++) for (k = 0; k < hrs.length; k++) {
+      var a = amps[i], v = volts[j], h = hrs[k];
+      if (same(value, a * v * h) && !same(value, a * h)) return { a: a, v: v, h: h };
+    }
+    return null;
+  }
+  add("amp-hours-from-watts", function (question, expr, run, ctx) {
+    var r = ampHours(question, run && run.value, ctx && ctx.parsed && ctx.parsed.answer);
+    return r ? "the ANSWER gives amp-hours, but " + (Math.round(run.value * 1e4) / 1e4) + " is volts \u00d7 amps \u00d7 hours (" + r.v + " V \u00d7 " + r.a + " A \u00d7 " + r.h +
+      " h), which is watt-hours; amp-hours are amps \u00d7 hours: =" + r.a + "*" + r.h : null;
+  });
+  L.aiChecks.calls = calls; L.aiChecks.inputs = inputs; L.aiChecks.ampHours = ampHours;
   add("number-not-in-question", function (question, expr, run, ctx) {
     // Numbers read from offline-library passages count as given (1.9.0).
     var given = question + (ctx && ctx.sources ? " " + ctx.sources.map(function (s) { return s.text; }).join(" ") : "");
@@ -23771,6 +23914,18 @@ Lantern.RFB = (function () {
     var missing = adds.filter(function (w) { return !said.some(function (x) { return akin(w, x); }); });
     return missing.length > adds.length / 2 ? missing : [];
   }
+  // pointTo(words, sources) -> {n, text}: the first sentence of a passage that
+  // has every one of the words
+  function pointTo(ws, sources) {
+    for (var k = 0; k < (sources || []).length; k++) {
+      var ss = String(sources[k] && sources[k].text || "").match(/[^.!?]+[.!?]*/g) || [];
+      for (var i = 0; i < ss.length; i++) {
+        var tw = tokens(ss[i]);
+        if (ss[i].trim().length > 12 && ws.every(function (w) { return tw.some(function (x) { return akin(w, x); }); })) return { n: k + 1, text: ss[i].replace(/^\s+|\s+$/g, "") };
+      }
+    }
+    return null;
+  }
   function verify(text, sources, question) {
     text = String(text || ""); sources = sources || [];
     var out = { ok: false, declined: false, cites: [], quotes: [], problems: [], answer: "" };
@@ -23802,8 +23957,12 @@ Lantern.RFB = (function () {
     });
     var said = out.quotes.filter(function (q) { return q.ok; }).map(function (q) { return q.text; });
     if (question && said.length) {
-      var miss = unsupported(out.answer.replace(/\{result\}/g, " "), question, said);
-      if (miss.length) out.problems.push("no quote says " + miss.join(", ") + ": QUOTE the sentence from the passage that says it");
+      var miss = unsupported(out.answer.replace(/\{result\}/g, " "), question, said), at = miss.length ? pointTo(miss, sources) : null;
+      // the sentence that does say it, when a passage has one (bench run 14:
+      // the 4B said methane and quoted a sentence without it, twice; passage
+      // [1] opens "Natural gas (also gas, methane gas or fossil gas) ...")
+      if (miss.length) out.problems.push("no quote says " + miss.join(", ") + (at ? ": passage [" + at.n + "] says it in \u201c" + at.text + "\u201d \u2014 QUOTE that sentence" :
+        ": QUOTE the sentence from the passage that says it"));
     }
     out.ok = !out.problems.length && out.quotes.some(function (q) { return q.ok; });
     return out;
@@ -32659,7 +32818,7 @@ Lantern.RFB = (function () {
 // MODULE: AI_SLIDES - START
 // Depends: AI_ACTIONS (Lantern.aiActions hook), SLIDES (Lantern.slideDocs)
 //          -- feature-detected
-// Exports: Lantern.aiSlides = {deck(block)} (for tests); adds the SLIDES action
+// Exports: Lantern.aiSlides = {deck(block), asked(question)} (for tests); adds the SLIDES action
 // ===========================================================================
 // MAKE SLIDES: the AI writes a talk as titles and points, and Lantern makes
 // it a Slides deck the person can edit and present:
@@ -32706,9 +32865,24 @@ Lantern.RFB = (function () {
     if (s.points.length) h += "<ul>" + s.points.map(function (p) { return "<li>" + inline(p) + "<\u002Fli>"; }).join("") + "<\u002Ful>";
     return h;
   }
-  function build(block) {
+  // asked(question) -> {lo, hi, said} when the question says how many slides:
+  // "4 to 6 slides", "between 4 and 6 slides", "5 slides" (a title slide on
+  // top of an exact number is fine). Bench run 14: asked for 4 to 6, the 4B
+  // made 2, and Lantern made them.
+  var NUMW = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12, fifteen: 15, twenty: 20 };
+  function num(w) { return /^\d+$/.test(w) ? +w : NUMW[String(w).toLowerCase()] || 0; }
+  function asked(q) {
+    var t = String(q || ""), m, W = "(\\d+|one|two|three|four|five|six|seven|eight|nine|ten|twelve|fifteen|twenty)";
+    if ((m = new RegExp("\\b(?:between\\s+)?" + W + "\\s*(?:to|-|\\u2013|or|and)\\s*" + W + "\\s+slides?\\b", "i").exec(t))) return { lo: num(m[1]), hi: num(m[2]), said: m[0] };
+    if ((m = new RegExp("\\b" + W + "[\\s-]+slides?\\b", "i").exec(t))) return { lo: num(m[1]), hi: num(m[1]) + 1, said: m[0] };
+    return null;
+  }
+  function build(block, ctx) {
     var d = deck(block), title = block.title || "Slides", made = null;
-    var slides = d.slides.map(function (s) { return { h: s.h, body: body(s) }; });
+    var slides = d.slides.map(function (s) { return { h: s.h, body: body(s) }; }), want = asked(ctx && ctx.question);
+    if (want && want.lo && slides.length && (slides.length < want.lo || slides.length > want.hi))
+      d.problems.push("the question asks for " + want.said + ", but the deck has " + slides.length + ": " + (slides.length < want.lo ? "add slides" : "merge slides") +
+        " so there are " + (want.hi > want.lo + 1 ? want.lo + " to " + want.hi : want.lo) + " (each starts with # and its title)");
     return {
       problems: d.problems, plan: slides.length ? { slides: slides, count: slides.length, points: d.slides.reduce(function (a, s) { return a + s.points.length; }, 0) } : null,
       summary: slides.length + " slide" + (slides.length === 1 ? "" : "s"), openLabel: "Open in Slides",
@@ -32731,7 +32905,7 @@ Lantern.RFB = (function () {
       }
     };
   }
-  window.Lantern.aiSlides = { deck: deck };
+  window.Lantern.aiSlides = { deck: deck, asked: asked };
   if (!ACTS.some(function (a) { return a.id === "slides"; })) ACTS.push({
     id: "slides", kind: "SLIDES", kinds: ["SLIDES", "SLIDE DECK", "DECK", "PRESENTATION"], title: "a slide deck", opens: "Slides",
     match: function (q) { return /\b(slides?|slide deck|presentation|powerpoint|deck for|talk on|toolbox talk|briefing)\b/i.test(q); },
@@ -32750,7 +32924,7 @@ Lantern.RFB = (function () {
       "- Try the start button",
       "- Bleed stored pressure",
       "END"],
-    build: function (block) { return build(block); }
+    build: function (block, ctx) { return build(block, ctx); }
   });
 })();
 // ===========================================================================
@@ -32852,7 +33026,7 @@ Lantern.RFB = (function () {
 // MODULE: AI_PLAN - START
 // Depends: AI_ACTIONS (Lantern.aiActions hook), PLANNER (Lantern.plannerDocs)
 //          -- feature-detected
-// Exports: Lantern.aiPlan = {plan(block, today)} (for tests); adds the PLAN
+// Exports: Lantern.aiPlan = {plan(block, today), when, said(question, today)} (for tests); adds the PLAN
 //          action
 // ===========================================================================
 // MAKE PLAN: the AI writes what to do when, and Lantern puts it in the
@@ -32938,8 +33112,31 @@ Lantern.RFB = (function () {
     return { events: out.slice(0, MAX), problems: problems.slice(0, 8) };
   }
   var REP = { none: "", daily: "every day", weekly: "every week", monthly: "every month", yearly: "every year" };
-  function build(block) {
-    var d = plan(block), added = null;
+  // said(question, today) -> [{said, date}]: the start dates the question
+  // itself gives ("starting today", "one week from today", "in 3 days",
+  // "three months from today", "next Monday"). Bench run 14: asked to start
+  // the belt check one week from today, the 4B wrote "in 1 month" -- the
+  // line in Lantern's own example -- and the plan was made with the wrong
+  // date. A date the question gives that no line starts on goes back once.
+  var NW = "(?:an?|one|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+(?:day|week|month|year)s?";
+  var SAID = new RegExp("\\b(?:in\\s+" + NW + "(?:\\s+from\\s+(?:today|now))?|" + NW + "\\s+from\\s+(?:today|now)|tomorrow|today|(?:next|this)\\s+(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday))\\b", "gi");
+  function said(q, today) {
+    var out = [], m, t = String(q || "");
+    SAID.lastIndex = 0;
+    while ((m = SAID.exec(t))) {
+      var p = m[0].toLowerCase().replace(/\s+from\s+(today|now)$/, ""), w = /^(today|tomorrow|next|this|in)\b/.test(p) ? p : "in " + p.replace(/^a\b/, "1").replace(/^an\b/, "1");
+      var date = when(w.replace(/^in\s+an?\s/, "in 1 "), today);
+      if (date && !out.some(function (x) { return x.date === date; })) out.push({ said: m[0], date: date });
+    }
+    return out;
+  }
+  function build(block, ctx) {
+    var d = plan(block), added = null, today = L.today ? L.today() : iso(new Date());
+    if (ctx && ctx.question && d.events.length) said(ctx.question, today).forEach(function (x) {
+      if (d.events.some(function (e) { return e.date === x.date; })) return;
+      d.problems.push("the question says \u201c" + x.said + "\u201d (" + x.date + "), but no line starts then: write that line\u2019s when as Lantern reads it, e.g. " +
+        (/from\s+(today|now)$/i.test(x.said) ? "in " + x.said.replace(/\s+from\s+(today|now)$/i, "") : x.said));
+    });
     return {
       problems: d.problems, plan: d.events.length ? { events: d.events, count: d.events.length } : null,
       summary: d.events.length + " entr" + (d.events.length === 1 ? "y" : "ies") + " from " + (d.events[0] ? d.events[0].date : "") + ", dates worked out by Lantern",
@@ -32962,7 +33159,7 @@ Lantern.RFB = (function () {
       }
     };
   }
-  window.Lantern.aiPlan = { plan: plan, when: when };
+  window.Lantern.aiPlan = { plan: plan, when: when, said: said };
   if (!ACTS.some(function (a) { return a.id === "plan"; })) ACTS.push({
     id: "plan", kind: "PLAN", kinds: ["PLAN", "SCHEDULE", "CALENDAR", "PLANNER"], title: "a plan", opens: "Planner",
     match: function (q) { return /\b(schedule|planner|calendar|remind(er)?s?|maintenance plan|plan (for|of|my|the|a)|make a plan|timetable|rota|every (day|week|month|year))\b/i.test(q); },
@@ -32976,7 +33173,7 @@ Lantern.RFB = (function () {
       "today | Drain the condensate from the tank | every day",
       "in 1 month | Check the drive belt tension | every month",
       "END"],
-    build: function (block) { return build(block); }
+    build: function (block, ctx) { return build(block, ctx); }
   });
 })();
 // ===========================================================================
@@ -35417,7 +35614,10 @@ Lantern.RFB = (function () {
 // person knows (their battery, their goats) is not. Assist and Chat send the
 // answer back to the AI for one more turn. The size of a square when a
 // puzzle counts in squares (bench run 13) is answered too: squares are the
-// unit.
+// unit; so are a planet's mass, GM, radius ... (PLANET) and -- for "who is
+// the mayor right now" -- that no place's office holder is in the library
+// (bench run 14). An answer that ends with its own "Now reply ..." line is
+// sent as it is.
 (function () {
   var L = window.Lantern;
   if (!L) return;
@@ -35488,9 +35688,40 @@ Lantern.RFB = (function () {
     if (/\b(metres?|meters?|feet|foot|km|kilomet\w*|cm|centimet\w*|inch\w*|miles?|yards?)\b|\d\s*(m|ft)\b/.test(ql)) return null;
     return "Lantern: the question counts in " + w + "s, so a " + w + " is the unit: no size in metres is needed. Give positions and distances in " + w + "s.";
   }
+  // "What is the mass of the Earth (in kg) or its gravitational parameter?"
+  // (bench run 14, the 4B on a geostationary orbit): Lantern has NASA's
+  // numbers for the planets, the Moon and the Sun (PLANET, Lantern.planetData).
+  var BODY = /\b(sun|mercury|venus|earth|moon|mars|jupiter|saturn|uranus|neptune|pluto)\b/i;
+  var PROPS = [["mass", /\bmass\b/i, "kg"], ["gm", /\b(gm|mu|gravitational parameter|standard gravitational)\b/i, "m^3/s^2"],
+    ["radius", /\bradius\b/i, "m"], ["gravity", /\b(surface gravity|gravitational acceleration|acceleration due to gravity)\b/i, "m/s^2"],
+    ["escape", /\bescape (velocity|speed)\b/i, "m/s"], ["distance", /\b(distance from the sun|semi-?major axis)\b/i, "m"],
+    ["period", /\b(orbital period|period of (its )?orbit)\b/i, "s"]];
+  function bodyFact(need) {
+    var n = String(need || ""), b = BODY.exec(n), PD = L.planetData;
+    if (!b || !PD || !L.formula || !L.formula.evaluate) return null;
+    var name = b[1].charAt(0).toUpperCase() + b[1].slice(1).toLowerCase(), got = [];
+    PROPS.forEach(function (pr) {
+      if (!pr[1].test(n)) return;
+      var v; try { v = L.formula.evaluate("PLANET(\x22" + name + "\x22,\x22" + pr[0] + "\x22)", { deg: false, ans: 0 }); } catch (e) { return; }
+      if (typeof v === "number" && isFinite(v)) got.push(name + "\u2019s " + (pr[0] === "gm" ? "GM (gravitational parameter)" : pr[0]) + " is " +
+        v.toPrecision(5).replace(/\.?0+(e|$)/, "$1").replace("e+", "e") + " " + pr[2] + ": =PLANET(\x22" + name + "\x22,\x22" + pr[0] + "\x22)");
+    });
+    return got.length ? "Lantern: " + got.join("; ") + ". Use PLANET in your = lines rather than typing the number." : null;
+  }
+  // "Who is the mayor of my town right now?" answered with "NEED: What is
+  // the name of your town?" (bench run 14, the 4B): who holds an office
+  // right now is not in a library copied on one date, whatever the town.
+  var NOW = /\b(right now|currently|current|at the moment|these days|this week)\b/i;
+  var OFFICE = /\b(mayor|president|prime minister|governor|senator|ceo|chairman|chief|minister|king|queen|leader|head of|in charge)\b/i;
+  function current(need, q) {
+    if (!NOW.test(String(q || "")) || !OFFICE.test(String(q || ""))) return null;
+    if (!/\b(town|city|village|country|state|county|district|where|which|name|location|area)\b/i.test(String(need || ""))) return null;
+    return "Lantern: whatever the place, who holds an office right now is not in Lantern\u2019s library (a copy from one date, with no internet), " +
+      "so it is not something Lantern can know.\nNow reply: ANSWER: Not in my library.";
+  }
   window.Lantern.aiNeedAnswer = function (need, question) {
     if (!need) return null;
-    return counting(need, question) || units(need) || grid(need, question);
+    return counting(need, question) || units(need) || grid(need, question) || bodyFact(need) || current(need, question);
   };
 })();
 // ===========================================================================
@@ -35500,6 +35731,7 @@ Lantern.RFB = (function () {
 // MODULE: AI_RESULT_CHECKS - START
 // Depends: (none at load) -- adds a check to the Lantern.assistChecks hook
 // Exports: Lantern.aiResultChecks = {close(a, b), sameLetters(a, b), check(question, expr, run, ctx),
+//          rechainNumbers(expr, steps, question), carry(answer, oldSteps, newSteps, question),
 //          repair(answer, steps, question, expr) -> {text, changes} | null,
 //          rechain(expr, steps, question) -> {expr, changes} | null, retyped(steps, question)}
 // ===========================================================================
@@ -35717,7 +35949,57 @@ Lantern.RFB = (function () {
     }
     return changes.length ? { text: out, changes: changes } : null;
   }
-  window.Lantern.aiResultChecks = { close: close, sameLetters: sameLetters, check: check, repair: repair, rechain: rechain, retyped: retyped };
+  // rechainNumbers(expr, steps, question) -> {expr, changes} or null: a line
+  // that types an earlier line's number with its own rounding -- 1436.06
+  // for Lantern's 1435.7027 (bench run 14, the 4B: =ORBITT(...)/60 then
+  // =1436.06/60) -- gets that line's ANSj instead. Only numbers with four or
+  // more figures, within 0.2% of the result and not equal to it, and not in
+  // the question.
+  function rechainNumbers(expr, steps, q) {
+    var qn = numbers(q), lines = String(expr || "").split("\n"), idx = [], changes = [];
+    lines.forEach(function (l, i) { if (/^\s*=/.test(l)) idx.push(i); });
+    if (idx.length !== steps.length) return null;
+    steps.forEach(function (st, k) {
+      if (!k) return;
+      var i = idx[k];
+      lines[i] = lines[i].replace(/(\x22[^\x22]*\x22)|(^|[^A-Za-z0-9_.])(\d+\.\d+|\d{4,})(?![\d.])/g, function (m, qt, pre, num) {
+        if (qt) return qt;
+        var x = parseFloat(num);
+        if (String(num).replace(/[^\d]/g, "").replace(/^0+/, "").length < 4 || qn.some(function (y) { return Math.abs(x - y) < 1e-9; })) return m;
+        for (var j = k - 1; j >= 0; j--) {
+          var v = steps[j];
+          if (!v || !v.ok || typeof v.value !== "number" || !v.value) continue;
+          var rel = Math.abs(x - v.value) / Math.abs(v.value);
+          if (rel > 0 && rel <= 0.002) { changes.push({ from: "line " + (k + 1) + ": " + num, to: "ANS" + (j + 1) + " (" + fmt(v.value) + ")" }); return pre + "ANS" + (j + 1); }
+        }
+        return m;
+      });
+    });
+    return changes.length ? { expr: lines.join("\n"), changes: changes } : null;
+  }
+  // carry(answer, oldSteps, newSteps, question) -> {text, changes} or null:
+  // after rechainNumbers, a number in the sentence that was an old line's
+  // result becomes that line's new result, rounded as the sentence rounded it
+  function carry(ans, oldS, newS, q) {
+    var qn = numbers(q), changes = [];
+    var t = String(ans || "").replace(/-?\d+(?:\.\d+)?/g, function (num) {
+      var x = parseFloat(num);
+      if (qn.some(function (y) { return Math.abs(x - y) < 1e-9; })) return num;
+      for (var k = oldS.length - 1; k >= 0; k--) {
+        var o = oldS[k], n = newS[k];
+        if (!o || !n || typeof o.value !== "number" || typeof n.value !== "number" || o.value === n.value) continue;
+        if (Math.abs(x - o.value) <= Math.max(1e-9, Math.abs(o.value) * 0.001)) {
+          var dec = Math.max(2, (num.split(".")[1] || "").length), r = String(Math.round(n.value * Math.pow(10, dec)) / Math.pow(10, dec));
+          if (r !== num) changes.push({ from: num, to: r });
+          return r;
+        }
+      }
+      return num;
+    });
+    return changes.length ? { text: t, changes: changes } : null;
+  }
+  window.Lantern.aiResultChecks = { close: close, sameLetters: sameLetters, check: check, repair: repair, rechain: rechain, retyped: retyped,
+    rechainNumbers: rechainNumbers, carry: carry };
 })();
 // ===========================================================================
 // MODULE: AI_RESULT_CHECKS - END
@@ -35942,6 +36224,10 @@ Lantern.RFB = (function () {
       var kinds = SC.PARTS[sc.mode || "electrical"] || {}, syn = SC.SYN || {};
       (sc.parts || []).forEach(function (p) {
         if (p.implied || !p.label || problems.length > 4) return;
+        // an LED lamp, a bulb, a light are lamps: never push a lamp to a
+        // diode (bench run 14: the 4B labelled its lamps "LED", Lantern sent
+        // them back as diodes, and the circuits lost their lamps)
+        if (p.type === "lamp" && /\b(led|bulb|light|globe|lamp)s?\b/i.test(p.label)) return;
         var ws = String(p.label).toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(Boolean), named = null, own = false, i;
         for (i = 0; i < ws.length; i++) {
           var two = i + 1 < ws.length ? ws[i] + " " + ws[i + 1] : "", t = syn[two] || (kinds[two] ? two : "") || syn[ws[i]] || (kinds[ws[i]] ? ws[i] : "");
@@ -35955,6 +36241,36 @@ Lantern.RFB = (function () {
       });
     });
     SC.labelChecked = true;
+  }
+  // --- schematics: asked for in parallel, wired in series -----------------------
+  // Bench run 14: "three resistors in parallel" drawn as wire V1 R1, R1 R2,
+  // R2 R3, R3 V1 -- one loop, all in series -- and two "parallel" lamps the
+  // same way; Lantern drew both without a word. When the question says
+  // parallel (and not series), two parts of the same kind wired to each
+  // other go back once, with how to wire each across the source.
+  if (SC && SC.hooks && SC.hooks.draw && !SC.parallelChecked) {
+    var LOADS = /^(lamp|resistor|diode|led|motor|heater|capacitor|inductor|bell|buzzer|speaker|fan)$/;
+    SC.hooks.draw.push(function (sc, lay, problems, ctx) {
+      var q = ctx && ctx.question ? String(ctx.question) : "";
+      if (!/\bparallel\b/i.test(q) || /\bseries\b/i.test(q) || problems.length > 4) return;
+      var by = {}, src = (sc.parts || []).filter(function (p) { return /^(battery|source|cell|supply)$/.test(p.type); })[0];
+      (sc.parts || []).forEach(function (p) { if (!p.implied && LOADS.test(p.type)) (by[p.type] = by[p.type] || []).push(p.id); });
+      Object.keys(by).forEach(function (t) {
+        var ids = by[t];
+        if (ids.length < 2) return;
+        var pair = null;
+        (sc.wires || []).some(function (w) {
+          var a = w[0] && w[0].id, b = w[1] && w[1].id;
+          if (a !== b && ids.indexOf(a) >= 0 && ids.indexOf(b) >= 0) { pair = [a, b]; return true; }
+          return false;
+        });
+        if (!pair) return;
+        var s0 = src ? src.id : "B1";
+        problems.push("the question asks for the " + t + "s in parallel, but " + pair[0] + " and " + pair[1] + " are wired to each other, which puts them in series: wire each " + t +
+          " across " + s0 + " on its own (" + ids.slice(0, 3).map(function (id) { return "wire " + s0 + " " + id + ", wire " + id + " " + s0; }).join("; ") + ")");
+      });
+    });
+    SC.parallelChecked = true;
   }
   // --- documents: a procedure's steps as a numbered list ------------------------
   var PROC = /\b(procedure|step[- ]by[- ]step|steps|instructions|how to|how do i|sop|checklist|method for)\b/i;
@@ -36454,6 +36770,64 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: CODES_CELLS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: CHAT_DOC_DECLINE - START
+// Depends: TEXT_READER (Lantern.textReader.attached), TEXT_READER_READ (the
+//          READ command); Chat's hook Lantern.chatDeclineChecks (read by
+//          ASSIST_CHAT) -- all feature-detected
+// Exports: Lantern.chatDeclineChecks = [fn(question, reply, ctx) -> {again,
+//          note} | {text, note} | null]; adds two
+// ===========================================================================
+// "ANSWER: Not in the document." about the person's own document (bench
+// run 14, the 4B, 1.14.2):
+//  - asked about the guarantee on a five-page manual, it was given passages
+//    from the first pages and said the document does not say -- page 5 is
+//    "Warranty and service". When pages were never in front of the AI and it
+//    has not asked to READ, it is asked once to READ the page that may say
+//    it (the contents, a heading, another word for it) before declining;
+//  - it then added "From my own knowledge: most compressors like the
+//    PX-2200 come with a 1-year warranty". A question about this compressor
+//    (my pump, our machine ...) is about that one: what others usually have
+//    is a guess about it. Lantern leaves that part out of the answer, and
+//    says what it left out.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.textReader) return;
+  var TR = L.textReader, H = window.Lantern.chatDeclineChecks = window.Lantern.chatDeclineChecks || [];
+  function list(ns) { return ns.length === 1 ? "page " + ns[0] : "pages " + ns.slice(0, -1).join(", ") + " and " + ns[ns.length - 1]; }
+  function unread(q, reply, ctx) {
+    var doc = TR.attached;
+    if (!doc || doc.kind === "music" || ctx.asked || !doc.pages || doc.pages.length < 2) return null;
+    if ((ctx.commands || []).some(function (c) { return c.verb === "READ"; })) return null;
+    if (!(window.Lantern.chatCommands || []).some(function (c) { return c && c.id === "read"; })) return null;
+    var sent = {};
+    (ctx.seen || []).forEach(function (x) { (x.sources || []).forEach(function (s) { if (s && s.doc && s.page) sent[s.page] = 1; }); });
+    var got = Object.keys(sent).map(Number).sort(function (a, b) { return a - b; });
+    var not = doc.pages.map(function (p) { return p.n; }).filter(function (n) { return !sent[n]; });
+    if (!got.length || !not.length) return null;
+    return { again: "Lantern sent you passages from " + list(got) + " of the " + doc.pages.length + " pages of \u201c" + doc.title + "\u201d; " + list(not) +
+        (not.length === 1 ? " was" : " were") + " not in front of you. Before you answer Not in the document, find the page that may say it (the contents, a heading, " +
+        "another word for it) and reply only READ: page <n>. If no page can say it, reply ANSWER: Not in the document.\n\nQUESTION: " + q,
+      note: "The AI said the document does not say, but it had only seen " + list(got) + " of " + doc.pages.length + "; Lantern asked it to read the page that may say it first\u2026" };
+  }
+  var OWN = /\bfrom my own knowledge\b/i;
+  var THIS = /\b(this|my|our|your|the attached)\s+(?:[\w-]+\s+){0,2}?(compressor|machine|unit|model|device|product|engine|pump|motor|tool|appliance|equipment|printer|generator|battery|vehicle|car|item|system|heater|boiler|press|grinder|lathe|saw|drill|welder|controller|plc|robot)\b/i;
+  function ownGuess(q, reply) {
+    var t = String(reply || ""), m = OWN.exec(t), it = THIS.exec(String(q || ""));
+    if (!m || !it) return null;
+    var head = t.slice(0, m.index).replace(/\s+$/, ""), cut = t.slice(m.index).replace(/^\s+|\s+$/g, "");
+    if (!/\bnot in the document\b/i.test(head)) return null;
+    return { text: head, note: "Lantern left out what the AI added from its own knowledge (\u201c" + cut.slice(0, 160) + (cut.length > 160 ? "\u2026" : "") + "\u201d): the question is about " +
+      it[1].toLowerCase() + " " + it[2].toLowerCase() + ", and what others like it usually have is a guess about it; its document, maker or seller would know." };
+  }
+  unread.id = "unread-pages"; ownGuess.id = "own-guess";
+  if (!H.some(function (f) { return f.id === "unread-pages"; })) H.push(unread);
+  if (!H.some(function (f) { return f.id === "own-guess"; })) H.push(ownGuess);
+  window.Lantern.chatDocDecline = { unread: unread, ownGuess: ownGuess };
+})();
+// ===========================================================================
+// MODULE: CHAT_DOC_DECLINE - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: SOURCES - START

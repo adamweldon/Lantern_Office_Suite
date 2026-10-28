@@ -230,7 +230,8 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
     ok("bench: the ideal reply passes " + id, g.pass, g.why);
   });
   function gradeWith(id, reply) { var item = Q.filter(function (q) { return q.id === id; })[0]; return L.aiBench.grade(item, reply, { made: act.build(reply, item.q) }); }
-  ok("bench: a plan with the belt check a day late fails, and says so", /starts 8 days after today, not 7/.test(gradeWith("make-plan-compressor",
+  // (since 1.14.2 Lantern itself questions a start date the question gave differently, before the grader sees it)
+  ok("bench: a plan with the belt check a day late fails, and says so", /starts 8 days after today, not 7|Lantern still questions it: the question says \u201cone week from today\u201d/.test(gradeWith("make-plan-compressor",
     blk("PLAN", "p", ["today | Drain the tank | every day", "in 8 days | Check the drive belt | every month", "in 3 months | Change the oil | once"])).why));
   ok("bench: flashcards missing a unit fail", /missing candela/.test(gradeWith("make-cards-si-units", blk("CARDS", "u", ["Length | metre", "Mass | kilogram", "Time | second", "Current | ampere", "Temperature | kelvin", "Amount | mole"])).why));
   ok("bench: slides as a document fail", /not slides/.test(gradeWith("make-slides-ladder", blk("DOC", "Ladders", ["## Ladders", "Use three points of contact on every ladder you climb, every time."])).why));

@@ -30,6 +30,7 @@ var steps = [
   ["Bench run 11 replayed (results put in, two places, the lesson asked about, EXAMPLE as code, XIO on a closed Stop, fuel the right way round)", "node", ["tests/bench_run11.js"], /ALL BENCH RUN 11 CHECKS PASS/],
   ["Bench run 12 replayed (retyped lines run again, a word where the count goes, a rung in plain text, lamps drawn as resistors, Show)", "node", ["tests/bench_run12.js"], /ALL BENCH RUN 12 CHECKS PASS/],
   ["Bench run 13 replayed (a retype with letters dropped, the size of a square, 800L, a tank valve held open, a seal-in on a tag nothing sets)", "node", ["tests/bench_run13.js"], /ALL BENCH RUN 13 CHECKS PASS/],
+  ["Bench run 14 replayed, the 4B (LED lamps, parallel wiring, slide counts, plan dates, made-up inputs, amp-hours, retyped numbers, the quote that says it, unread pages)", "node", ["tests/bench_run14.js"], /ALL BENCH RUN 14 CHECKS PASS/],
   ["Text Reader, PDF in and out, Chat with a document, Sheet Music Reader", "node", ["tests/text_reader.js"], /ALL TEXT READER TESTS PASS/],
   ["AI modules isolated (rule 11)", "node", ["tests/ai_isolation.js"], /AI MODULES ISOLATED/],
   ["Kit: model choice and bigger-model offer; popups; engine built here", "python3", ["tests/kit_offer.py"], /KIT OFFER TESTS PASS/],

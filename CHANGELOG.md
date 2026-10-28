@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.14.2 — Bench run 14, the 4B: what Lantern can catch for a small model (2026-10-28)
+
+Adam ran the bench with Qwen3.5-4B (the model Lantern picks on 8 GB
+computers) on 1.14.1: **100 of 118 (85%)** -- core 31/32, fresh 7/7, hard
+8/10, library 19/20, made 14/21, conversations 14/18, puzzles 7/10. The 35B
+scored 118 of 118 on the same build, and 1.14.1 went to `main`. The 4B is
+the one most kits will run, so its misses show where Lantern's checks fall
+short. About two thirds were Lantern's to catch; the rest (the game-show
+doors with a host who does not know, knights and liars and the coin cups
+answered without the puzzle tools, "Is this how you work?", a house with a
+tiny roof, a drawing stuck repeating one line) are the model's, and Lantern
+does not write the bench's answers into itself. Everything below is a check
+on the reply, not a change to what the AI is told, so the 35B's replies are
+graded as before.
+
+- **Lantern made two of them.** The 4B drew both lamp circuits with lamps
+  labelled "LED"; Lantern's label check (1.13.4) sent them back as diodes,
+  and both lost their lamps. A lamp labelled LED, bulb or light is a lamp.
+- **Parallel asked, series drawn.** Three resistors and two lamps "in
+  parallel" were drawn as one loop through every part. When the question
+  says parallel, two parts of a kind wired to each other go back once, with
+  how to wire each across the source.
+- **Slides and the planner against the question.** 2 slides for "4 to 6
+  slides" goes back with the count; a plan with no line on a date the
+  question gives ("starting one week from today" -- the 4B wrote "in 1
+  month", the line in Lantern's own example) goes back with that date.
+- **A made-up input.** `=RUNTIME(10,60)` for "How many hours will my battery
+  run a 60 W light?" -- 10 passed as a unit factor. A bare number in a
+  required input of one of Lantern's quantity functions must come from the
+  question (or two of its numbers combined); otherwise it is questioned.
+- **Amp-hours from watts.** "180 amp-hours" from 60 W x 3 h is watt-hours:
+  questioned, with amps x hours (5 x 3).
+- **A result retyped with its own rounding.** `=1436.06/60` after Lantern
+  worked out 1435.7027: Lantern now runs `=ANS4/60` itself, and puts the
+  new number in the sentence, when that leaves nothing to question -- no
+  turn spent (the 4B's first reply was right but for this; questioned, it
+  then asked for Earth's mass). Only numbers of four or more figures within
+  0.2% of an earlier result, and not in the question.
+- **What Lantern knows, it says.** A NEED for a planet's mass, GM, radius,
+  gravity, escape speed or orbit is answered from PLANET; a NEED for the
+  town, asked who is mayor right now, is answered that no place's office
+  holder right now is in the library. "No quote says methane" now quotes
+  the passage sentence that does say it.
+- **Not in the document.** Said after seeing 2 of a manual's 5 pages, the AI
+  is asked once to READ the page that may say it; and an own-knowledge guess
+  about "this compressor" (most compressors have a 1-year warranty) is left
+  out of the answer, with a note saying what was left out.
+- Tests: `tests/bench_run14.js` (33 checks from the 4B's own replies; where
+  Lantern sends something back, the reply that comes back is scripted).
+  Code Lab's and the make-docs tests accept Lantern questioning first.
+
 ## 1.14.1 — Bench run 13: a retype with letters dropped, the size of a square, a tank valve held open, a seal-in on the coil (2026-10-27)
 
 Adam's run 13 (Qwen3.5-35B-A3B, sees images, Lantern 1.14.0, with the
