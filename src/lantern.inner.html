@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.14.2 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.14.3 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -168,7 +168,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.14.2",
+  version: "1.14.3",
   apps: {},
   order: []
 };
@@ -22555,9 +22555,59 @@ Lantern.RFB = (function () {
   }
   add("amp-hours-from-watts", function (question, expr, run, ctx) {
     var r = ampHours(question, run && run.value, ctx && ctx.parsed && ctx.parsed.answer);
-    return r ? "the ANSWER gives amp-hours, but " + (Math.round(run.value * 1e4) / 1e4) + " is volts \u00d7 amps \u00d7 hours (" + r.v + " V \u00d7 " + r.a + " A \u00d7 " + r.h +
-      " h), which is watt-hours; amp-hours are amps \u00d7 hours: =" + r.a + "*" + r.h : null;
+    if (r) return "the ANSWER gives amp-hours, but " + (Math.round(run.value * 1e4) / 1e4) + " is volts \u00d7 amps \u00d7 hours (" + r.v + " V \u00d7 " + r.a + " A \u00d7 " + r.h +
+      " h), which is watt-hours; amp-hours are amps \u00d7 hours: =" + r.a + "*" + r.h;
+    // any other way round (bench run 15, the 4B: =60/3, watts over hours):
+    // with one current and one time given, amp-hours are their product
+    // (times the days or weeks the question counts)
+    var g = ampHoursOff(question, run && run.value, ctx && ctx.parsed && ctx.parsed.answer);
+    return g ? "the ANSWER gives amp-hours, but " + (Math.round(run.value * 1e4) / 1e4) + " is not amps \u00d7 hours: " + g.a + " A \u00d7 " + g.h + " h = " + (Math.round(g.a * g.h * 1e4) / 1e4) +
+      " amp-hours (=" + g.a + "*" + g.h + ")" : null;
   });
+  function ampHoursOff(question, value, answer) {
+    if (typeof value !== "number" || !/\bamp[\s-]?hours?\b|\bAh\b/.test(String(answer || ""))) return null;
+    var q = String(question || "").replace(/(\d),(\d{3})/g, "$1$2");
+    var amps = unitNums(q, /(\d+(?:\.\d+)?)\s*(?:A|amps?|amperes?)\b/g), hrs = unitNums(q, /(\d+(?:\.\d+)?)\s*(?:h|hrs?|hours?)\b/g);
+    if (amps.length !== 1 || hrs.length !== 1) return null;
+    var a = amps[0], h = hrs[0], ks = [1, 7, 12, 24, 30, 31, 52, 365].concat(questionNumbers(q));
+    if (ks.some(function (k) { return same(value, a * h * k); })) return null;
+    return { a: a, h: h };
+  }
+  // a weight in newtons divided by g (bench run 15, the 4B: =70*ANS/9.80665
+  // for a 70 kg person on the Moon) is kilograms-force, not newtons
+  add("newtons-over-g", function (question, expr) {
+    if (!/\bnewtons?\b/i.test(String(question || "")) || /\b(kg|kilograms?)[\s-]*(force|f)\b/i.test(String(question || ""))) return null;
+    var m = /\/\s*\x28?\s*(9\.8(?:0665|1)?)\b/.exec(String(expr || ""));
+    return m ? "the formula divides by " + m[1] + " (Earth\u2019s gravity), which turns newtons into kilograms-force, but the question asks for newtons: " +
+      "a weight is the mass \u00d7 the gravity where it is, =WEIGHT(m, g)" : null;
+  });
+  // precedence: a line glued from two earlier lines with * or / when one of
+  // them is a sum (bench run 15, the 4B: =60*5/1000+100*5/1000*0.15*30 --
+  // both kWh, times the price for 30 days -- multiplies only the TV's part)
+  function topSum(t) {
+    var d = 0, i, c;
+    for (i = 1; i < t.length; i++) {
+      c = t.charAt(i);
+      if (c === "\x28") d++;
+      else if (c === "\x29") d--;
+      else if (!d && (c === "+" || c === "-") && !/[eE*\/\^+\-\x28]/.test(t.charAt(i - 1))) return true;
+    }
+    return false;
+  }
+  function precedence(expr) {
+    var ls = String(expr || "").split("\n").map(function (l) { return l.replace(/^\s*=\s*/, "").replace(/\s+/g, ""); }).filter(Boolean), k, i, j, o, ops = ["*", "/"];
+    for (k = 2; k < ls.length; k++) for (i = 0; i < k; i++) for (j = 0; j < k; j++) for (o = 0; o < ops.length; o++) {
+      if (i !== j && ls[k] === ls[i] + ops[o] + ls[j] && topSum(ls[i])) return { line: ls[k], first: ls[i], second: ls[j], op: ops[o], i: i, j: j, fix: "(" + ls[i] + ")" + ops[o] + ls[j] };
+      if (i !== j && ls[k] === ls[i] + ops[o] + ls[j] && topSum(ls[j])) return { line: ls[k], first: ls[i], second: ls[j], op: ops[o], i: i, j: j, fix: ls[i] + ops[o] + "(" + ls[j] + ")" };
+    }
+    return null;
+  }
+  add("precedence", function (question, expr) {
+    var p = precedence(expr);
+    return p ? "the line =" + p.line + " joins =" + p.first + " and =" + p.second + " with " + p.op + ", but " + p.op + " is worked out before + and -, so it reaches only one part of the sum: " +
+      "write =" + p.fix + ", or =ANS" + (p.i + 1) + p.op + "ANS" + (p.j + 1) : null;
+  });
+  L.aiChecks.precedence = precedence; L.aiChecks.ampHoursOff = ampHoursOff;
   L.aiChecks.calls = calls; L.aiChecks.inputs = inputs; L.aiChecks.ampHours = ampHours;
   add("number-not-in-question", function (question, expr, run, ctx) {
     // Numbers read from offline-library passages count as given (1.9.0).
@@ -24305,18 +24355,24 @@ Lantern.RFB = (function () {
     }
     return null;
   }
+  // NOTE_AFTER: "note ..." lines straight after a schematic's (drawing's,
+  // wheel's) END belong to it (bench run 15: the 4B wrote "note Rt = ..."
+  // after END twice, and Lantern asked for the formula it had been given)
+  var NOTE_AFTER = { schematic: 1, drawing: 1, wheel: 1 };
   function find(text) {
-    var out = [], cur = null, all = String(text || "").replace(/\r/g, "").split("\n");
+    var out = [], cur = null, last = null, all = String(text || "").replace(/\r/g, "").split("\n");
     all.forEach(function (raw, i) {
       var line = raw.replace(/^\s+|\s+$/g, "");
       if (/^\x60\x60\x60/.test(line)) return;   // a code fence
+      if (!cur && last && /^note\s+\S/i.test(line)) { last.lines.push(line); (last.raw = last.raw || []).push(raw.replace(/\s+$/, "")); last.noteAfterEnd = true; return; }
+      if (line) last = null;
       var m = /^\**\s*MAKE\s+([A-Za-z][A-Za-z ]{1,20}?)\s*:\s*(.*?)\**$/i.exec(line);
       if (m) { cur = { kind: m[1].toUpperCase(), title: m[2].replace(/^\s+|\s+$/g, ""), lines: [], closed: false, action: actionFor(m[1]) }; out.push(cur); return; }
       var ex = !cur || cur.closed ? exampleCode(all, i) : null;
       if (ex != null) { cur = { kind: "CODE", title: ex.split(" \u2014 ")[0].replace(/\s*\x28(Arduino|Python|JavaScript|Ladder|Structured Text|ST|PLC)\b.*$/i, "") || ex, lines: [], closed: false, action: actionFor("CODE"), viaExample: true }; out.push(cur); return; }
       if (!cur) return;
       // code keeps its indents and blank lines (raw), and only a bare END ends it (1.13.0)
-      if (/^END\b/i.test(line) && (!cur.action || cur.action.id !== "code" || /^END$/i.test(line))) { cur.closed = true; cur = null; return; }
+      if (/^END\b/i.test(line) && (!cur.action || cur.action.id !== "code" || /^END$/i.test(line))) { cur.closed = true; last = cur.action && NOTE_AFTER[cur.action.id] ? cur : null; cur = null; return; }
       if (line) cur.lines.push(line);
       (cur.raw = cur.raw || []).push(raw.replace(/\s+$/, ""));
     });
@@ -26430,7 +26486,7 @@ Lantern.RFB = (function () {
     return t + (h.length ? " | " + h.join(", ") : "");
   };
   // place(text) -> index in the row (throws with a reason)
-  var REL = /^(?:immediately|directly|just|to|left|right|behind|ahead|before|after|in front|\d+|one|two|three|four|five|holder|holding|with|containing|that|which|having)\b/i;
+  var REL = /^(?:immediately|directly|just|to|left|right|behind|ahead|before|after|in front|\d+|one|two|three|four|five|holder|holding|with|containing|that|which|having|at|in)\b/i;
   // a direction: toward the first (left, front) is -1, toward the last +1
   function dirOf(w) { return /^(left|before|in\s+front|ahead)/i.test(w) ? -1 : 1; }
   Track.prototype.place = function (text) {
@@ -26475,7 +26531,8 @@ Lantern.RFB = (function () {
   // fixed(text) -> an index for position 3, first, last, middle ... or null
   Track.prototype.fixed = function (s) {
     var low = s.toLowerCase(), n = this.row.length, m, k;
-    if ((m = /^(?:position|pos|place|spot|seat|#)\s*(\d+)$/i.exec(s))) { k = +m[1]; if (k < 1 || k > n) throw new Error("there is no position " + k + " (the row has " + n + ")"); return k - 1; }
+    // "position 2", "at position 2" -- "person at position 2" (bench run 15, the 4B)
+    if ((m = /^(?:at\s+|in\s+)?(?:the\s+)?(?:position|pos|place|spot|seat|#)\s*(\d+)$/i.exec(s))) { k = +m[1]; if (k < 1 || k > n) throw new Error("there is no position " + k + " (the row has " + n + ")"); return k - 1; }
     if (ORD[low] && ORD[low] <= n && low !== "first") return ORD[low] - 1;
     if (/^(first|leftmost|left end|far left|front|start|beginning|head)$/.test(low)) return 0;
     if (/^(last|rightmost|right end|far right|back|end|tail)$/.test(low)) return n - 1;
@@ -35706,10 +35763,13 @@ Lantern.RFB = (function () {
   // right now is not in a library copied on one date, whatever the town.
   var NOW = /\b(right now|currently|current|at the moment|these days|this week)\b/i;
   var OFFICE = /\b(mayor|president|prime minister|governor|senator|ceo|chairman|chief|minister|king|queen|leader|head of|in charge)\b/i;
+  // and a local fact -- the nearest clinic's phone number (bench run 15)
+  var LOCAL = /\b(phone number|telephone|phone|address|opening hours|opening times|open (now|today|tomorrow))\b/i;
   function current(need, q) {
-    if (!NOW.test(String(q || "")) || !OFFICE.test(String(q || ""))) return null;
+    if (!(NOW.test(String(q || "")) && OFFICE.test(String(q || ""))) && !LOCAL.test(String(q || ""))) return null;
     if (!/\b(town|city|village|country|state|county|district|where|which|name|location|area)\b/i.test(String(need || ""))) return null;
-    return "Lantern: whatever the place, who holds an office right now is not in Lantern\u2019s library (a copy from one date, with no internet), " +
+    return "Lantern: whatever the place, " + (LOCAL.test(String(q || "")) ? "a local phone number, address or opening hours are" : "who holds an office right now is") +
+      " not in Lantern\u2019s library (a copy from one date, with no internet), " +
       "so it is not something Lantern can know.\nNow reply: ANSWER: Not in my library.";
   }
   window.Lantern.aiNeedAnswer = function (need, question) {
@@ -36047,6 +36107,28 @@ Lantern.RFB = (function () {
   // became "swap holder of gold and left of holder of gold" -- one place --
   // and the block ran cleanly to a wrong order.
   var NUMW = { two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+  // pairLine(steps, lines, at) -> {text, ref} or null: the block line that
+  // writes the step phrase found at "at". The steps' place phrases ("two
+  // places to its left", "directly to the left of") and the block's "left
+  // of" lines are paired in order when there are as many of each (bench run
+  // 15: told only that no line moved 2 places, the 4B wrote 2 in both of its
+  // "left of" lines, and the second one, "directly to the left", fell off
+  // the row).
+  function pairLine(steps, lines, at) {
+    // (a place next to a thing -- "to its left", "to the left of", "behind"
+    // -- not the whole row moving "one place to the right")
+    var ph = [], m, re = /\b(?:(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:places?|spots?|positions?|seats?|steps?)\s+)?(?:(?:directly|immediately|just)\s+)?(?:to\s+(?:its|their|his|her)\s+(?:left|right)|(?:to\s+the\s+)?(?:left|right)\s+of|behind|in\s+front\s+of|ahead\s+of)\b/gi;
+    while ((m = re.exec(steps))) ph.push(m.index);
+    var refs = [];
+    lines.forEach(function (l) {
+      var r = /(?:^|\s)((?:left|right)\s+of\s+.+?|(?:behind|in\s+front\s+of|ahead\s+of)\s+.+?)(?:\s+and\s+|$)/i.exec(l);
+      if (r) refs.push({ text: l, ref: r[1], counted: /(?:^|\s)\d+\s+(?:left|right|behind|in\s+front|ahead)\b/i.test(l) });
+    });
+    var k = -1, i;
+    for (i = 0; i < ph.length; i++) if (Math.abs(ph[i] - at) <= 3) k = i;
+    if (k < 0 || ph.length !== refs.length || refs[k].counted) return null;
+    return refs[k];
+  }
   function distances(block, q) {
     var at = String(q).search(/(^|[\s:])1[.\x29]\s/), out = [], m, seen = {};
     if (at < 0) return out;
@@ -36064,8 +36146,12 @@ Lantern.RFB = (function () {
       seen[key] = 1;
       var lr = side === "left" || side === "forward" || side === "ahead" || side === "up" ? "left" : side === "right" || side === "back" || side === "backwards" || side === "behind" || side === "down" ? "right" : side;
       var ok = new RegExp("\\b" + n + "\\s+(left|right|places?|before|after|ahead|behind)\\b|\\bshift\\s+(left|right)\\s+" + n + "\\b|\\b(left|right)\\s+" + n + "\\b").test(body);
-      if (!ok) out.push("the steps say \u201c" + m[0] + "\u201d, but no line of the block moves " + n + " places: write it with the number, as in \u201c" + n + " " + lr + " of holder of \u2026\u201d " +
-        "(or \u201cshift " + lr + " " + n + "\u201d when every one moves)");
+      if (!ok) {
+        var pl = pairLine(steps, block.lines, m.index);
+        out.push(pl ? "the steps say \u201c" + m[0] + "\u201d, but its line, \u201c" + pl.text + "\u201d, moves 1 place: write \u201c" + n + " " + pl.ref + "\u201d in that line, and leave the other lines as they are" :
+          "the steps say \u201c" + m[0] + "\u201d, but no line of the block moves " + n + " places: write it with the number, as in \u201c" + n + " " + lr + " of holder of \u2026\u201d " +
+          "(or \u201cshift " + lr + " " + n + "\u201d when every one moves)");
+      }
     }
     return out;
   }

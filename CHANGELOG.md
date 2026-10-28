@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.14.3 — Bench run 15, the 4B again: a sum glued with *, newtons over g, the line that needs the 2 (2026-10-28)
+
+Adam ran the 4B on 1.14.2 with no library: **88 of 96 (92%)** -- core
+30/32, fresh 7/7, hard 9/10, made 19/21, conversations 15/16, puzzles 8/10
+(without the tools 1/6, not scored). On the same 96 questions run 14 (1.14.1)
+scored 79: every miss 1.14.2 aimed at passed -- the satellite with its
+retyped number, the made-up battery, the mayor, both lamp circuits, the
+slides, the planner, both document questions -- and the house, the knights
+and "Is this how you work?" passed too. Of the eight left, Lantern can catch
+six:
+
+- **Divided by g.** `=70*ANS/9.80665` for a 70 kg person's weight on the
+  Moon in newtons. A formula that divides by 9.80665 (9.81, 9.8) when the
+  question asks for newtons is questioned: that gives kilograms-force.
+- **A sum glued with \*.** `=60*5/1000+100*5/1000*0.15*30` -- the lines for
+  both kWh and for the price over 30 days, joined with * -- multiplies only
+  the TV's part (2.55 dollars for 3.60). A line that is two earlier lines
+  joined with * or /, one of them a sum, is questioned with the brackets
+  (`=(60*5/1000+100*5/1000)*0.15*30`, or `=ANS5*ANS4`).
+- **Amp-hours any wrong way.** `=60/3` "amp-hours" (1.14.2 caught only
+  watts x hours). With one current and one time in the question, amp-hours
+  that are not amps x hours (times the days or weeks it counts) are
+  questioned with 5 A x 3 h = 15.
+- **The nearest clinic's phone number.** "NEED: the name or address of the
+  clinic" is answered by Lantern: no place's phone number, address or
+  opening hours are in its library.
+- **A note after END.** The parallel circuit's `note Rt = ...` came after
+  END in both of the 4B's blocks, so Lantern asked for the formula it had
+  been given. Note lines straight after a schematic's, drawing's or wheel's
+  END are now part of it.
+- **TRACK.** "swap person at position 2 and person at position 4" was not
+  read as places; it is now ("at position 2", "in position 2"). And told
+  only that no line moved 2 places for "two places to its left", the 4B put
+  2 in both of its "left of" lines, and the one for "directly to the left"
+  fell off the row: Lantern now pairs the steps' place phrases with the
+  block's lines and names the one line that needs the 2.
+- Left as the model's: the game-show doors with a host who does not know,
+  and a house drawing stuck repeating one line.
+- Tests: `tests/bench_run15.js` (16 checks from the 4B's replies); every
+  passing reply of runs 13, 14 and 15 (176) re-checked: none newly
+  questioned.
+
 ## 1.14.2 — Bench run 14, the 4B: what Lantern can catch for a small model (2026-10-28)
 
 Adam ran the bench with Qwen3.5-4B (the model Lantern picks on 8 GB
