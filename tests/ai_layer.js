@@ -47,7 +47,7 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   await sleep(40);
   var L = w.Lantern, AI = L.ai, A = L.assist;
   ok("boot clean", errs.length === 0, errs);
-  ok("version 1.16", /^1\.16\./.test(L.version), L.version);
+  ok("version 1.17", /^1\.17\./.test(L.version), L.version);
   ok("ai app registered after compose", L.order[L.order.indexOf("compose") + 1] === "ai", L.order.slice(0, 5));
   ok("aiRoute installed", typeof L.aiRoute === "function");
   ok("no server on GitHub-Pages-like path", AI.server.checked && !AI.server.sameOrigin);

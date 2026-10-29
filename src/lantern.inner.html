@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.16.1 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.17.0 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -168,7 +168,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.16.1",
+  version: "1.17.0",
   apps: {},
   order: []
 };
@@ -2667,6 +2667,8 @@ Lantern.drawShapes = (function () {
       for (var g = 0; g < o.shapes.length; g++) render(ctx, o.shapes[g]);
       return;
     }
+    // d: a dashed line, [dash, gap] -- a fluid power pilot line (1.17.0)
+    if (ctx.setLineDash) ctx.setLineDash(o.d || []);
     ctx.globalAlpha = (o.o == null ? 1 : o.o);
     ctx.strokeStyle = o.c; ctx.fillStyle = o.c; ctx.lineWidth = o.w;
     ctx.lineCap = "round"; ctx.lineJoin = "round";
@@ -6604,6 +6606,169 @@ Lantern.drawSymbols = (function () {
 // MODULE: DRAW_PNEUMATIC - END
 // ===========================================================================
 // ===========================================================================
+// MODULE: DRAW_HYDRAULIC_ISO - START
+// Depends: DRAW_SYMBOLS (Lantern.drawSymbols), DRAW_HYDRAULIC (the
+//          Hydraulics mode in Lantern.drawModes) -- feature-detected
+// Exports: Lantern.hydSym = {valve, cylinder, motor, pump, emotor, filter,
+//          tank, relief, check, flow, gauge, accumulator} -- each (x, y,
+//          colour, opts) -> {g: a group shape, ports: {name: [x, y]}}; adds
+//          the symbols to Draw's Hydraulics palette
+// ===========================================================================
+// ISO 1219 fluid power symbols with their ports named (1.17.0), so that
+// Lantern's hydraulic builder (AI_HYDRAULIC) joins each pipe where it
+// belongs: a valve's P, T, A and B, a cylinder's cap end (A) and rod end
+// (B), a pump's inlet and outlet. A directional valve is drawn as its
+// envelopes (one square per position): the ports sit on the one it rests
+// in -- the middle of a 4/3, the spring side of a 4/2 or 3/2. Pilot lines
+// are dashed. Every symbol is drawn with its pressure side down and its
+// working side up, the way a circuit is laid out: power unit at the bottom,
+// valves in the middle, cylinders and motors on top.
+(function () {
+  var L = window.Lantern, D = L && L.drawSymbols;
+  if (!D) return;
+  var W = 3, W2 = 2, E = 48, H = 24, GREY = "#64748b";
+  function dash(s) { s.d = [6, 4]; return s; }
+  // what each envelope shows: par (P to A, B to T), cross (P to B, A to T),
+  // the 4/3 centres closed, tandem (P to T), open (all four), float (A and B
+  // to T), and a 3/2's pa (P to A) and at (A to T)
+  function paths(c, cx, y, kind) {
+    var l = cx - 12, r = cx + 12, t = y - H, b = y + H, s = [];
+    function arr(x1, y1, x2, y2) { s.push(D.arrow(c, W2, x1, y1, x2, y2)); }
+    function blk(x, edge, dir) { var y2 = edge + dir * 9; s.push(D.ln(c, W2, x, edge, x, y2), D.ln(c, W2, x - 6, y2, x + 6, y2)); }
+    if (kind === "par") { arr(l, b, l, t); arr(r, t, r, b); }
+    else if (kind === "cross") { arr(l, b, r, t); arr(l, t, r, b); }
+    else if (kind === "tandem") { s.push(D.ln(c, W2, l, b, l, y + 6, r, y + 6, r, b)); blk(l, t, 1); blk(r, t, 1); }
+    else if (kind === "open") { s.push(D.ln(c, W2, l, b, l, t), D.ln(c, W2, r, b, r, t), D.ln(c, W2, l, y, r, y)); }
+    else if (kind === "float") { s.push(D.ln(c, W2, l, t, l, y - 4, r, y - 4), D.ln(c, W2, r, t, r, b)); blk(l, b, -1); }
+    else if (kind === "pa") { arr(l, b, l, t); blk(r, b, -1); }
+    else if (kind === "at") { arr(l, t, r, b); blk(l, b, -1); }
+    else { blk(l, b, -1); blk(r, b, -1); blk(l, t, 1); blk(r, t, 1); }   // closed
+    return s;
+  }
+  // how a valve is worked, on one side (dir -1 left, 1 right), upper half
+  function operator(c, xe, y, dir, act) {
+    var yy = y - 9, x1 = xe + dir * 20;
+    if (act === "solenoid") return [D.rect(c, W2, Math.min(xe, x1), y - 18, 20, 16), D.ln(c, W2, Math.min(xe, x1), y - 2, Math.max(xe, x1), y - 18)];
+    if (act === "pilot") return [dash(D.ln(c, W2, xe + dir * 28, yy, xe + dir * 8, yy)), D.tri(c, W2, [xe, yy], [xe + dir * 8, yy - 5], [xe + dir * 8, yy + 5], true)];
+    if (act === "button") return [D.ln(c, W2, xe, yy, xe + dir * 14, yy), D.ln(c, W2, xe + dir * 14, yy - 7, xe + dir * 14, yy + 7), D.circ(c, W2, xe + dir * 19, yy, 5)];
+    return [D.ln(c, W2, xe, yy, xe + dir * 14, yy, xe + dir * 22, yy - 10), D.circ(c, W2, xe + dir * 23, yy - 12, 2.5, true)];   // lever
+  }
+  function spring(c, xe, y, dir) { return D.zig(c, W2, xe, y + 11, xe + dir * 22, 5, 4); }
+
+  // valve(x, y, c, {way: 4/3 | 4/2 | 3/2, centre, act}): ports P and T
+  // below, A and B above, on the envelope it rests in
+  function valve(x, y, c, o) {
+    o = o || {};
+    var way = o.way === "4/2" || o.way === "3/2" ? o.way : "4/3", n = way === "4/3" ? 3 : 2, x0 = x - n * E / 2, s = [], k;
+    var kinds = way === "4/3" ? ["par", o.centre || "closed", "cross"] : way === "4/2" ? ["par", "cross"] : ["pa", "at"];
+    for (k = 0; k < n; k++) { s.push(D.rect(c, W, x0 + k * E, y - H, E, E)); s = s.concat(paths(c, x0 + k * E + E / 2, y, kinds[k])); }
+    var rest = x0 + E + E / 2, ports = { P: [rest - 12, y + H + 8], T: [rest + 12, y + H + 8], A: [rest - 12, y - H - 8] };
+    if (way !== "3/2") ports.B = [rest + 12, y - H - 8];
+    Object.keys(ports).forEach(function (p) {
+      var q = ports[p], low = q[1] > y;
+      s.push(D.ln(c, W, q[0], low ? y + H : y - H, q[0], q[1]));
+      s.push(D.txt(GREY, q[0] + (q[0] < rest ? -8 : 8), q[1] + (low ? 1 : -1), p, 10));
+    });
+    var act = o.act || "lever", xl = x0, xr = x0 + n * E;
+    s = s.concat(operator(c, xl, y, -1, act));
+    if (way === "4/3" && act !== "lever" && act !== "button") s = s.concat(operator(c, xr, y, 1, act));
+    if (way === "4/3") s.push(spring(c, xl, y, -1));
+    s.push(spring(c, xr, y, 1));
+    return { g: D.grp(s), ports: ports, left: xl - 24, right: xr + 24 };
+  }
+  // cylinder(x, y, c, {single}): A at the cap end, B at the rod end (none
+  // for a single-acting one, whose spring is drawn in the rod side)
+  function cylinder(x, y, c, o) {
+    o = o || {};
+    var s = [D.rect(c, W, x - 60, y - 16, 120, 32), D.ln(c, W, x - 28, y - 16, x - 28, y + 16), D.ln(c, W, x - 28, y, x + 92, y), D.ln(c, W, x - 48, y + 16, x - 48, y + 26)];
+    var ports = { A: [x - 48, y + 26] };
+    if (o.single) s.push(D.zig(c, W2, x - 22, y - 8, x + 54, 5, 7));
+    else { ports.B = [x + 48, y + 26]; s.push(D.ln(c, W, x + 48, y + 16, x + 48, y + 26)); }
+    return { g: D.grp(s), ports: ports };
+  }
+  // a hydraulic motor that turns both ways (the triangles point in: oil in)
+  function motor(x, y, c) {
+    var s = [D.circ(c, W, x, y, 22), D.tri(c, W2, [x - 7, y - 20], [x + 7, y - 20], [x, y - 9], true), D.tri(c, W2, [x - 7, y + 20], [x + 7, y + 20], [x, y + 9], true),
+      D.ln(c, W, x - 48, y + 26, x - 48, y, x - 22, y), D.ln(c, W, x + 48, y + 26, x + 48, y, x + 22, y)];
+    return { g: D.grp(s), ports: { A: [x - 48, y + 26], B: [x + 48, y + 26] } };
+  }
+  // a fixed pump turning one way: outlet up (the triangle points out),
+  // its shaft to the left, to the electric motor
+  function pump(x, y, c) {
+    var s = [D.circ(c, W, x, y, 20), D.tri(c, W2, [x - 7, y - 8], [x + 7, y - 8], [x, y - 19], true), D.ln(c, W, x, y - 20, x, y - 28), D.ln(c, W, x, y + 20, x, y + 28),
+      D.ln(c, W2, x - 20, y - 3, x - 40, y - 3), D.ln(c, W2, x - 20, y + 3, x - 40, y + 3)];
+    return { g: D.grp(s), ports: { in: [x, y + 28], out: [x, y - 28] } };
+  }
+  function emotor(x, y, c) { return { g: D.grp([D.circ(c, W, x, y, 18), D.txt(c, x, y + 1, "M", 15)]), ports: {} }; }
+  // a filter (or the strainer in the tank line): oil in below, out above
+  function filter(x, y, c) {
+    var s = [D.ln(c, W, x, y - 16, x + 16, y, x, y + 16, x - 16, y, x, y - 16), dash(D.ln(c, W2, x - 12, y, x + 12, y)), D.ln(c, W, x, y - 16, x, y - 24), D.ln(c, W, x, y + 16, x, y + 24)];
+    return { g: D.grp(s), ports: { in: [x, y + 24], out: [x, y - 24] } };
+  }
+  // a tank: the pipe goes in from above, down under the oil
+  function tank(x, y, c) {
+    return { g: D.grp([D.ln(c, W, x - 14, y - 8, x - 14, y + 10, x + 14, y + 10, x + 14, y - 8), D.ln(c, W, x, y - 18, x, y + 4)]), ports: { P: [x, y - 18] } };
+  }
+  // a relief valve: pressure in above, to tank below; closed (the arrow is
+  // off the line) until the pressure, felt through the dashed pilot line,
+  // beats the spring
+  function relief(x, y, c) {
+    var s = [D.rect(c, W, x - 16, y - 16, 32, 32), D.ln(c, W, x, y - 16, x, y - 24), D.ln(c, W, x, y + 16, x, y + 24),
+      D.arrow(c, W2, x + 7, y - 11, x + 7, y + 11), D.zig(c, W2, x + 16, y + 5, x + 36, 5, 4),
+      dash(D.ln(c, W2, x, y - 20, x - 26, y - 20, x - 26, y - 6, x - 16, y - 6))];
+    return { g: D.grp(s), ports: { in: [x, y - 24], out: [x, y + 24] } };
+  }
+  // check(x, y, c, {down, pilot}): a ball on a seat; oil passes upward
+  // freely (downward with down). A pilot-operated one opens to its pilot
+  // line, which comes in at X.
+  function check(x, y, c, o) {
+    o = o || {};
+    var d = o.down ? -1 : 1, s = [D.ln(c, W, x, y - 24, x, y - 9), D.ln(c, W, x, y + 24, x, y + 9),
+      D.ln(c, W2, x - 9, y - 4 * d, x, y + 8 * d, x + 9, y - 4 * d), D.circ(c, W2, x, y - 3 * d, 6)];
+    var ports = { in: [x, y + 24 * d], out: [x, y - 24 * d] };
+    if (o.pilot) { s.push(dash(D.ln(c, W2, x + 28, y, x + 8, y))); ports.X = [x + 28, y]; }
+    return { g: D.grp(s), ports: ports };
+  }
+  // flow(x, y, c, {free: up | down}): an adjustable throttle on the line,
+  // with a check beside it letting oil back past freely the other way
+  function flow(x, y, c, o) {
+    var up = !o || o.free !== "down";
+    var s = [D.ln(c, W, x, y - 24, x, y - 14), D.ln(c, W, x, y + 24, x, y + 14),
+      { t: "curve", c: c, w: W2, pts: [[x - 7, y - 14], [x - 2, y], [x - 7, y + 14]] },
+      { t: "curve", c: c, w: W2, pts: [[x + 7, y - 14], [x + 2, y], [x + 7, y + 14]] },
+      D.arrow(c, W2, x - 13, y + 13, x + 13, y - 13),
+      D.ln(c, W, x, y - 20, x + 28, y - 20, x + 28, y - 9), D.ln(c, W, x, y + 20, x + 28, y + 20, x + 28, y + 9),
+      up ? D.ln(c, W2, x + 19, y - 4, x + 28, y + 8, x + 37, y - 4) : D.ln(c, W2, x + 19, y + 4, x + 28, y - 8, x + 37, y + 4),
+      D.circ(c, W2, x + 28, up ? y - 3 : y + 3, 6), D.circ(c, W, x, y - 20, 3, true), D.circ(c, W, x, y + 20, 3, true)];
+    return { g: D.grp(s), ports: { a: [x, y + 24], b: [x, y - 24] } };
+  }
+  function gauge(x, y, c) {
+    return { g: D.grp([D.circ(c, W, x, y, 12), D.arrow(c, W2, x - 6, y + 6, x + 7, y - 7), D.ln(c, W, x, y + 12, x, y + 20)]), ports: { P: [x, y + 20] } };
+  }
+  // a gas-loaded accumulator: oil below the line, gas above
+  function accumulator(x, y, c) {
+    var s = [D.rect(c, W, x - 11, y - 20, 22, 40), D.ln(c, W2, x - 11, y, x + 11, y), D.tri(c, W2, [x - 6, y - 6], [x + 6, y - 6], [x, y - 14], true), D.ln(c, W, x, y + 20, x, y + 28)];
+    return { g: D.grp(s), ports: { P: [x, y + 28] } };
+  }
+  var SYM = { valve: valve, cylinder: cylinder, motor: motor, pump: pump, emotor: emotor, filter: filter, tank: tank, relief: relief,
+    check: check, flow: flow, gauge: gauge, accumulator: accumulator };
+  window.Lantern.hydSym = SYM;
+
+  // Draw's Hydraulics palette: the new symbols beside the old ones
+  var mode = (window.Lantern.drawModes || []).filter(function (m) { return m.id === "hydraulic"; })[0];
+  if (!mode) return;
+  function g(f, o) { return function (x, y, c) { return f(x, y, c, o).g; }; }
+  var add = [["Valve 4/3", g(valve, { way: "4/3", centre: "closed" })], ["Valve 4/3 tandem", g(valve, { way: "4/3", centre: "tandem" })],
+    ["Valve 4/2", g(valve, { way: "4/2" })], ["Valve 3/2", g(valve, { way: "3/2" })], ["Cylinder, spring return", g(cylinder, { single: true })],
+    ["Motor, two ways", g(motor)], ["Relief valve", g(relief)], ["Check valve", g(check)], ["Flow control", g(flow)],
+    ["Electric motor", g(emotor)], ["Accumulator", g(accumulator)]];
+  var at = mode.symbols.length - 1;   // before Label
+  add.forEach(function (a) { if (!mode.symbols.some(function (s) { return s.label === a[0]; })) mode.symbols.splice(at++, 0, { label: a[0], make: a[1] }); });
+})();
+// ===========================================================================
+// MODULE: DRAW_HYDRAULIC_ISO - END
+// ===========================================================================
+// ===========================================================================
 // MODULE: DRAW_MECHANICAL - START
 // Depends: DRAW_SYMBOLS, DRAW
 // Exports: (none) -- registers the Mechanical mode via Lantern.drawModes
@@ -6752,7 +6917,10 @@ Lantern.drawSymbols = (function () {
     ["Symbol sets", "<ul><li><b>Electrical</b>: resistor, capacitor, battery, ground, switch, lamp, " +
       "diode, inductor, motor, source, junction dot</li>" +
       "<li><b>Hydraulics</b>: pump, motor, cylinder, tank, valve, filter, gauge, flow arrow " +
-      "(filled triangles = liquid)</li>" +
+      "(filled triangles = liquid), and ISO directional valves -- 4/3 (closed or tandem centre), 4/2 and 3/2, each square one position, " +
+      "ports P and T below, A and B above -- a spring-return cylinder, a motor that turns both ways, relief, check and flow control " +
+      "valves, an electric motor and an accumulator. Dashed lines are pilot lines. Ask Chat to <b>draw a hydraulic circuit</b> and " +
+      "Lantern pipes it for you, every port where it belongs.</li>" +
       "<li><b>Pneumatics</b>: compressor, reservoir, 3/2 valve, spring-return cylinder, exhaust, " +
       "gauge (open triangles = air)</li>" +
       "<li><b>Mechanical</b>: spring, damper, mass, fixed support, pivot, gear, pulley, shaft, " +
@@ -26153,6 +26321,460 @@ Lantern.RFB = (function () {
 // MODULE: AI_SCHEMATIC_MORE - END
 // ===========================================================================
 // ===========================================================================
+// MODULE: AI_HYDRAULIC - START
+// Depends: AI_SCHEMATIC (the schematic action in Lantern.aiActions),
+//          AI_DRAW (Lantern.aiDraw.result), DRAW_HYDRAULIC_ISO
+//          (Lantern.hydSym), AI_SCHEMATIC_MORE (noteText) -- feature-detected
+// Exports: Lantern.aiHydraulic = {isHydraulic(block), parse(block),
+//          circuit(parsed) -> {parts, problems, added}, layout(circuit,
+//          title) -> {shapes, pipes}, verify(circuit, pipes) -> [problems],
+//          build(block, ctx), PROMPT, asks(question)}
+// ===========================================================================
+// Hydraulic circuits the AI asks for are drawn by Lantern, correct by
+// construction (1.17.0, Adam: "make the correct drawing the path of least
+// resistance for any AI model"). The AI says WHAT the circuit has and what
+// each part does -- a pump, a double-acting cylinder, a 4/3 tandem-centre
+// valve working it, a flow control setting its extend speed -- and never
+// draws a pipe:
+//     MAKE HYDRAULIC: Press
+//     pump P1 "20 L/min"
+//     relief R1 "150 bar"
+//     cylinder C1 double "press ram"
+//     valve V1 C1 4/3 tandem solenoid
+//     flow F1 C1 extend meter-out
+//     END
+// Lantern draws the one correct circuit: the power unit at the bottom
+// (tank, strainer, electric motor, pump, relief valve to its own tank, a
+// gauge or filter if asked), the pressure line along to every valve's P,
+// each T to a tank, A to the cap end and B to the rod end of the cylinder
+// it works (or a motor's two ports), the flow control on the line that
+// meters it. What the AI leaves out it gets by default, and Lantern says
+// what it added: the relief valve every pump needs, a valve for a cylinder
+// that has none (4/3, spring centred, worked by a lever), a 3/2 for a
+// single-acting cylinder. What cannot work it changes and says so: a tandem
+// or open centre beside other valves on one pump line (it would send all
+// the pump's oil to tank). Then verify() walks the pipes as a check of the
+// drawing itself: no pressure line to tank except through the relief
+// valve, every valve's P on the pump line and T to a tank, every cylinder
+// port to its own valve.
+// The older MAKE SCHEMATIC form with "mode hydraulic", parts and wires --
+// what models wrote before, and what a model may still write -- is read
+// for its parts: which valve works which cylinder comes from the wires, and
+// Lantern does the piping (the 35B's pump -> valve -> cylinder -> tank was
+// drawn with the return teed off the cylinder's feed, straight to tank).
+// A new kind of part is one entry in ROLES and one place in the layout.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var INK = "#1b2430", NOTE = "#334155", GREY = "#64748b";
+  // role words -> what the part is. Several words may name one role.
+  var ROLES = {
+    pump: "pump power hpu powerpack", relief: "relief safety", cylinder: "cylinder ram jack actuator",
+    motor: "motor", valve: "valve dcv spool directional", flow: "flow throttle needle speed",
+    check: "check", gauge: "gauge", filter: "filter", accumulator: "accumulator",
+    implied: "tank reservoir strainer electric prime suction", note: "note text label", mode: "mode",
+    part: "part", pipe: "wire pipe connect line hose"
+  };
+  var ROLE = {};
+  Object.keys(ROLES).forEach(function (r) { ROLES[r].split(" ").forEach(function (w) { ROLE[w] = r; }); });
+  var IDRE = /^[A-Za-z]{1,3}\d{1,3}$/;
+  // valves Lantern does not draw yet: said so, never drawn as a directional valve
+  var NOTYET = /^(sequence|reducing|pressure-reducing|counterbalance|counter-balance|proportional|servo|unloading|shuttle|divider|priority|logic|cartridge|brake|regenerative)$/i;
+  var DRAWS = "pump, relief, cylinder, motor, valve, flow, check, gauge, filter, accumulator";
+  function words(line) {
+    var out = [], re = /\x22([^\x22]*)\x22|\u201c([^\u201d]*)\u201d|(\S+)/g, m;
+    while ((m = re.exec(line))) out.push(m[1] != null ? { q: m[1] } : m[2] != null ? { q: m[2] } : { w: m[3] });
+    return out;
+  }
+  // what a word says about a part: {key: value}
+  function attr(w) {
+    w = String(w).toLowerCase().replace(/[.,;]+$/, "");
+    var m = /^([2345])\x2F([23])$/.exec(w);
+    if (m) return { way: m[1] === "5" ? "4/2" : m[1] + "/" + m[2] };
+    if (/^(closed|blocked|closed-centre|closed-center)$/.test(w)) return { centre: "closed" };
+    if (/^(tandem|tandem-centre|tandem-center)$/.test(w)) return { centre: "tandem" };
+    if (/^(open|open-centre|open-center)$/.test(w)) return { centre: "open" };
+    if (/^(float|floating|float-centre|float-center)$/.test(w)) return { centre: "float" };
+    if (/^(lever|manual|hand|handle|pedal)$/.test(w)) return { act: "lever" };
+    if (/^(solenoid|solenoids|electric|electrical|sol)$/.test(w)) return { act: "solenoid" };
+    if (/^(pilot|pilot-operated)$/.test(w)) return { act: "pilot", pilot: true };
+    if (/^(button|push-button|pushbutton|push)$/.test(w)) return { act: "button" };
+    if (/^(single|single-acting|spring|spring-return)$/.test(w)) return { single: true };
+    if (/^(double|double-acting)$/.test(w)) return { single: false };
+    if (/^(extend|extending|advance|out-stroke|outstroke|forward|press|down)$/.test(w)) return { stroke: "extend" };
+    if (/^(retract|retracting|return|in-stroke|instroke|back|reverse|up)$/.test(w)) return { stroke: "retract" };
+    if (/^(meter-out|meterout|out)$/.test(w)) return { meter: "out" };
+    if (/^(meter-in|meterin|in)$/.test(w)) return { meter: "in" };
+    if (/^[ab]$/.test(w)) return { leg: w.toUpperCase() };
+    return null;
+  }
+  function merge(p, a) { Object.keys(a).forEach(function (k) { if (p[k] === undefined) p[k] = a[k]; }); }
+  // isHydraulic(block): MAKE HYDRAULIC, or a schematic block in hydraulic mode
+  function isHydraulic(b) {
+    if (/^HYDRAULIC/.test(String(b.kind || ""))) return true;
+    var ls = b.lines || [];
+    if (ls.some(function (l) { return /^\s*mode\s+hydraulics?\s*$/i.test(l); })) return true;
+    if (ls.some(function (l) { return /^\s*mode\s+\w/i.test(l); })) return false;
+    var heads = ls.map(function (l) { return (/^\s*(\w+)/.exec(l) || [])[1] || ""; }).map(function (w) { return ROLE[w.toLowerCase()] || ""; });
+    if (heads.indexOf("part") >= 0) return ls.some(function (l) { return /^\s*part\s+\S+\s+(hydraulic\s+)?(pump|tank|reservoir)\b/i.test(l); }) &&
+      !ls.some(function (l) { return /\b(compressor|air|exhaust|battery|resistor)\b/i.test(l); });
+    return heads.some(function (h) { return h === "cylinder" || h === "valve" || h === "pump"; }) && !heads.some(function (h) { return h === "pipe"; });
+  }
+
+  // parse(block) -> {items: [{role, id, label, said, a: {attributes}, refs: [ids]}], pipes: [[id, id]], notes, problems}
+  function parse(b) {
+    var items = [], pipes = [], notes = [], problems = [];
+    (b.lines || []).forEach(function (line) {
+      var ws = words(line), w0 = ws[0] && ws[0].w ? ws[0].w.toLowerCase() : "", role = ROLE[w0] || "";
+      if (role === "mode") return;
+      if (role === "note") { notes.push(line.replace(/^\s*\S+\s*/, "")); return; }
+      if (role === "pipe") { var ids = ws.slice(1).filter(function (x) { return x.w && IDRE.test(x.w.replace(/[.:].*$/, "")); }).map(function (x) { return x.w.replace(/[.:].*$/, "").toUpperCase(); }); for (var k = 0; k + 1 < ids.length; k++) pipes.push([ids[k], ids[k + 1]]); return; }
+      var it = { role: role, id: "", label: "", said: line, a: {}, refs: [] }, rest = ws.slice(1);
+      if (role === "part") {   // the older form: part <ID> <type words> "<label>"
+        it.id = rest[0] && rest[0].w ? rest[0].w.toUpperCase() : "";
+        rest = rest.slice(1);
+        var type = rest.filter(function (x) { return x.w; }).map(function (x) { return x.w.toLowerCase(); }), lab = rest.filter(function (x) { return x.q != null; }).map(function (x) { return x.q; }).join(" ");
+        var all = (type.join(" ") + " " + lab).toLowerCase();
+        it.role = /\brelief|safety\b/.test(all) ? "relief" : /\bcheck\b/.test(all) ? "check" : /\b(flow control|throttle|needle|speed control)\b/.test(all) ? "flow" :
+          /^(flow|arrow|flow arrow)\b/.test(all) ? "implied" :
+          /\b(tank|reservoir|strainer)\b/.test(all) ? "implied" : /\belectric\b/.test(all) ? "implied" :
+          ROLE[type.filter(function (t) { return ROLE[t] && ROLE[t] !== "implied"; })[0]] || ROLE[type[0]] || "";
+        if (!it.role) { problems.push("\u201c" + line + "\u201d: Lantern does not know a hydraulic " + type.join(" ")); return; }
+        rest.forEach(function (x) { if (x.q != null) it.label = it.label ? it.label + " " + x.q : x.q; });
+        (type.join(" ") + " " + lab).split(/\s+/).forEach(function (t) { var a = attr(t); if (a) merge(it.a, a); });
+        items.push(it); return;
+      }
+      if (!role) {
+        // words before the part's name say what kind: "directional valve",
+        // "pilot operated check valve", "double acting cylinder", "hydraulic motor"
+        if (ws.slice(0, 3).some(function (x) { return x.w && NOTYET.test(x.w); })) { problems.push("\u201c" + line + "\u201d is not a part Lantern draws yet (it draws: " + DRAWS + ")"); return; }
+        for (var j = 1; j < Math.min(4, ws.length) && !role; j++) {
+          var wj = ws[j].w ? ws[j].w.toLowerCase() : "", rj = ROLE[wj];
+          if (rj && rj !== "note" && rj !== "pipe" && rj !== "part" && rj !== "mode") {
+            role = it.role = rj; rest = ws.slice(j + 1);
+            ws.slice(0, j).forEach(function (x) { var a0 = x.w && attr(x.w); if (a0) merge(it.a, a0); if (x.w && /^electric/i.test(x.w)) role = it.role = "implied"; });
+          }
+        }
+        if (!role) { problems.push("\u201c" + line + "\u201d is not a part Lantern draws (it draws: " + DRAWS + ")"); return; }
+      }
+      if (role === "implied") return;   // always drawn
+      rest.forEach(function (x) {
+        if (x.q != null) { it.label = it.label ? it.label + " " + x.q : x.q; return; }
+        var t = x.w.replace(/[.,;:]+$/, ""), a = attr(t);
+        if (a) { merge(it.a, a); return; }
+        if (IDRE.test(t)) { if (!it.id) it.id = t.toUpperCase(); else it.refs.push(t.toUpperCase()); return; }
+        if (/\d/.test(t)) { it.label = it.label ? it.label + " " + t : t; return; }
+        var r2 = ROLE[t.toLowerCase()];   // "valve V1 for cylinder C1"
+        if (r2 || /^(for|on|of|to|the|a|an|works|working|controls|controlling|centre|center|operated|acting|valve|control|way|position|hydraulic)$/i.test(t)) return;
+      });
+      items.push(it);
+    });
+    return { items: items, pipes: pipes, notes: notes, problems: problems };
+  }
+
+  // circuit(parsed) -> {pump, relief, gauge, filter, acc, acts: [{id, type, single, label, valve, inline: {A: [], B: []}}], problems, added}
+  function circuit(pr) {
+    var problems = pr.problems.slice(), added = [], changed = [], used = {}, n = {};
+    function nid(pfx) { n[pfx] = n[pfx] || 0; var id; do { id = pfx + (++n[pfx]); } while (used[id]); used[id] = 1; return id; }
+    var actIds = {};
+    pr.items.forEach(function (it) { if (it.role === "cylinder" || it.role === "motor") { if (it.id && !actIds[it.id]) actIds[it.id] = 1; else it.id = ""; } });
+    pr.items.forEach(function (it) {
+      if (it.role !== "cylinder" && it.role !== "motor" && it.id && actIds[it.id]) { it.refs.unshift(it.id); it.id = ""; }   // "valve C1 4/3"
+      if (it.role !== "cylinder" && it.role !== "motor" && it.id && used[it.id]) it.id = "";
+      if (it.id) used[it.id] = 1;
+    });
+    function of(role) { return pr.items.filter(function (it) { return it.role === role; }); }
+    pr.items.forEach(function (it) { if (!it.id) it.id = nid({ pump: "P", relief: "R", cylinder: "C", motor: "M", valve: "V", flow: "F", check: "K", gauge: "G", filter: "F", accumulator: "A" }[it.role] || "X"); });
+    var acts = of("cylinder").concat(of("motor")).map(function (it) {
+      return { id: it.id, type: it.role, single: it.role === "cylinder" && it.a.single === true, label: it.label, valve: null, inline: { A: [], B: [] }, item: it };
+    });
+    var byId = {};
+    acts.forEach(function (a) { byId[a.id] = a; });
+    if (!acts.length) problems.push("there is no cylinder or motor: add one, like: cylinder C1 double \x22press ram\x22");
+    if (acts.length > 6) problems.push("keep it to 6 cylinders and motors or fewer");
+    // which actuator a valve, flow control or check is for: named on its
+    // line, or (the older form) the nearest along the wires, or the only one
+    var adj = {};
+    pr.pipes.forEach(function (p) { (adj[p[0]] = adj[p[0]] || []).push(p[1]); (adj[p[1]] = adj[p[1]] || []).push(p[0]); });
+    var roleOf = {};
+    pr.items.forEach(function (it) { roleOf[it.id] = it.role; });
+    function nearest(id) {
+      var seen = {}, q = [id];
+      seen[id] = 1;
+      while (q.length) {
+        var x = q.shift();
+        if (x !== id && byId[x]) return byId[x];
+        if (x !== id && /^(pump|valve)$/.test(roleOf[x] || "")) continue;
+        (adj[x] || []).forEach(function (y) { if (!seen[y]) { seen[y] = 1; q.push(y); } });
+      }
+      return null;
+    }
+    function target(it, what) {
+      var named = it.refs.filter(function (r) { return byId[r]; })[0];
+      if (it.refs.length && !named) { problems.push(what + " " + it.id + " names " + it.refs.join(", ") + ", which is not a cylinder or motor here"); return null; }
+      return byId[named] || nearest(it.id) || null;
+    }
+    of("valve").forEach(function (it) {
+      var a = target(it, "valve");
+      if (!a) a = acts.filter(function (x) { return !x.valve; })[0] || null;
+      if (!a) { if (acts.length) problems.push("valve " + it.id + " works no cylinder or motor: name one on its line, like: valve " + it.id + " C1 4/3"); return; }
+      if (a.valve) { problems.push(a.id + " has two valves (" + a.valve.id + " and " + it.id + "): one valve works one cylinder or motor"); return; }
+      a.valve = { id: it.id, way: it.a.way || "", centre: it.a.centre || "", act: it.a.act || "lever", label: it.label, said: it.a };
+    });
+    acts.forEach(function (a) {
+      if (!a.valve) { a.valve = { id: nid("V"), way: "", centre: "", act: "lever", label: "", said: {} }; added.push("a valve " + a.valve.id + " for " + a.id); }
+      var v = a.valve, said = v.way;
+      if (a.single) { v.way = "3/2"; if (said && said !== "3/2") changed.push(v.id + " is a 3/2: a single-acting cylinder has one port"); }
+      else if (!v.way || v.way === "3/2") { if (v.way === "3/2") changed.push(v.id + " is a 4/3: " + a.id + " has two ports"); v.way = "4/3"; }
+    });
+    // centres: with one valve a tandem centre unloads the pump at rest; with
+    // several on one pump line, a tandem or open centre would send all the
+    // pump's oil to tank and leave the others nothing
+    var fours = acts.filter(function (a) { return a.valve.way === "4/3"; });
+    fours.forEach(function (a) {
+      var v = a.valve;
+      if (!v.centre) v.centre = acts.length === 1 ? "tandem" : "closed";
+      else if (acts.length > 1 && (v.centre === "tandem" || v.centre === "open")) { changed.push(v.id + " has a closed centre: a " + v.centre + " centre beside other valves on one pump line would send all the pump\u2019s oil to tank"); v.centre = "closed"; }
+    });
+    function inline(it, kind) {
+      var a = target(it, kind);
+      if (!a) a = acts.length === 1 ? acts[0] : null;
+      if (!a) { if (acts.length) problems.push(kind + " " + it.id + ": name the cylinder or motor it is for, like: " + kind + " " + it.id + " C1"); return; }
+      var leg;
+      if (kind === "flow") {
+        var out = it.a.meter !== "in", ext = it.a.stroke !== "retract";
+        leg = it.a.leg || (ext === out ? "B" : "A");
+        if (a.single && leg === "B") { leg = "A"; changed.push(it.id + " is on " + a.id + "\u2019s only line, A"); }
+        // the throttle meters the oil leaving the cylinder (meter-out: down
+        // this line, toward the valve) or entering it (meter-in: up); the
+        // check beside it lets oil the other way past freely
+        a.inline[leg].push({ kind: "flow", id: it.id, label: it.label, free: out ? "up" : "down" });
+      } else {
+        leg = a.single ? "A" : it.a.leg || "A";
+        if (a.inline[leg].some(function (x) { return x.kind === "check"; })) { problems.push(a.id + " already has a check valve on " + leg); return; }
+        a.inline[leg].unshift({ kind: "check", id: it.id, label: it.label, pilot: !a.single && it.a.pilot !== false });
+      }
+      if (a.inline[leg].length > 2) problems.push(a.id + "\u2019s " + leg + " line has more than two valves on it: keep it to a check and a flow control");
+    }
+    of("flow").forEach(function (it) { inline(it, "flow"); });
+    of("check").forEach(function (it) { inline(it, "check"); });
+    acts.forEach(function (a) {   // a check's pilot line crosses to the other line at its height: nothing there
+      ["A", "B"].forEach(function (s) { var o = s === "A" ? "B" : "A"; if (a.inline[s][0] && a.inline[s][0].kind === "check" && a.inline[s][0].pilot && a.inline[o].length && a.inline[o][0].kind !== "check") a.inline[o].unshift({ kind: "gap" }); });
+    });
+    var pump = of("pump")[0], relief = of("relief")[0];
+    if (of("pump").length > 1) changed.push("one power unit is drawn (" + of("pump").slice(1).map(function (x) { return x.id; }).join(", ") + " left out)");
+    if (!pump) pump = { id: nid("P"), label: "" };
+    if (!relief) { relief = { id: nid("R"), label: "" }; added.push("the relief valve " + relief.id + " every pump needs"); }
+    return { pump: { id: pump.id, label: pump.label || "" }, relief: { id: relief.id, label: relief.label || "" },
+      gauge: of("gauge")[0] ? { id: of("gauge")[0].id, label: of("gauge")[0].label } : null,
+      filter: of("filter")[0] ? { id: of("filter")[0].id, label: of("filter")[0].label } : null,
+      acc: of("accumulator")[0] ? { id: of("accumulator")[0].id, label: of("accumulator")[0].label } : null,
+      acts: acts, problems: problems, added: added, changed: changed, notes: pr.notes };
+  }
+
+  // layout(c, title) -> {shapes, pipes: [[id.port, id.port]], parts}: the
+  // power unit bottom left, valves in a row with their cylinders above
+  function layout(c, title) {
+    var S = L.hydSym, shapes = [], pipes = [], parts = [], dots = [];
+    var X0 = 220, GAP = 280, VX0 = X0 + 330 + (c.acc ? 70 : 0), YA = 140;
+    var m = 0;
+    c.acts.forEach(function (a) { m = Math.max(m, a.inline.A.length, a.inline.B.length); });
+    var leg = 60 + 56 * m, VY = YA + 26 + 24 + leg + 32, YH = VY + 110;
+    function put(sym, id, type, x, y, o, label, lx, ly) {
+      var r = S[sym](x, y, INK, o);
+      shapes.push(r.g);
+      parts.push({ id: id, type: type, ports: r.ports });
+      if (label) shapes.push({ t: "text", c: NOTE, x: lx, y: ly, s: label, fs: 13 });
+      return r.ports;
+    }
+    function pipe(pts, a, b, dashed) {
+      var s = { t: "path", c: INK, w: dashed ? 2 : 3, pts: pts };
+      if (dashed) s.d = [6, 4];
+      shapes.push(s);
+      if (a && b) pipes.push([a, b]);
+    }
+    function dot(x, y) { dots.push([x, y]); }
+    function name(id, label) { return id + (label ? " " + label : ""); }
+    // --- the power unit ---
+    var py = YH + 120, pp = put("pump", c.pump.id, "pump", X0, py, null, name(c.pump.id, c.pump.label), X0 - 104, py + 44);
+    put("emotor", "EM", "electric motor", X0 - 58, py);
+    var sp = put("filter", "STR", "strainer", X0, py + 58), tp = put("tank", "TK1", "tank", X0, py + 118);
+    pipe([pp.in, sp.out], c.pump.id + ".in", "STR.out"); pipe([sp.in, tp.P], "STR.in", "TK1.P");
+    var up = pp.out, upId = c.pump.id + ".out";
+    if (c.filter) {
+      var fp = put("filter", c.filter.id, "filter", X0, YH + 46, null, c.filter.id, X0 - 36, YH + 46);
+      pipe([pp.out, fp.in], upId, c.filter.id + ".in"); up = fp.out; upId = c.filter.id + ".out";
+    }
+    parts.push({ id: "PL", type: "pressure line", ports: {} });
+    pipe([up, [X0, YH]], upId, "PL");
+    var rx = X0 + 90, rp = put("relief", c.relief.id, "relief", rx, YH + 56, null, name(c.relief.id, c.relief.label), rx + 88, YH + 56);
+    var rt = put("tank", "TK2", "tank", rx, YH + 116);
+    pipe([[rx, YH], rp.in], "PL", c.relief.id + ".in"); dot(rx, YH);
+    pipe([rp.out, rt.P], c.relief.id + ".out", "TK2.P");
+    if (c.gauge) { var gp = put("gauge", c.gauge.id, "gauge", X0 + 150, YH - 48, null, c.gauge.id, X0 + 150, YH - 74); pipe([gp.P, [X0 + 150, YH]], c.gauge.id + ".P", "PL"); dot(X0 + 150, YH); }
+    if (c.acc) { var ap = put("accumulator", c.acc.id, "accumulator", X0 + 240, YH - 56, null, c.acc.id, X0 + 240, YH - 92); pipe([ap.P, [X0 + 240, YH]], c.acc.id + ".P", "PL"); dot(X0 + 240, YH); }
+    // --- each cylinder or motor with its valve ---
+    var tn = 2, lastP = X0;
+    c.acts.forEach(function (a, i) {
+      var vx = VX0 + i * GAP, v = a.valve;
+      var vp = put("valve", v.id, "valve", vx, VY, { way: v.way, centre: v.centre, act: v.act });
+      shapes.push({ t: "text", c: NOTE, x: vx - (v.way === "4/3" ? 72 : 48) - 40, y: VY - 34, s: v.id, fs: 13 });
+      var ap2 = put(a.type === "motor" ? "motor" : "cylinder", a.id, a.type, vx, YA, { single: a.single }, name(a.id, a.label), vx, YA - 36);
+      // P down to the pressure line; T down to a tank of its own
+      pipe([vp.P, [vp.P[0], YH]], v.id + ".P", "PL");
+      if (i < c.acts.length - 1) dot(vp.P[0], YH);
+      lastP = vp.P[0];
+      var tk = "TK" + (++tn), tx = vp.T[0] + 22, tt = put("tank", tk, "tank", tx, VY + 78);
+      pipe([vp.T, [vp.T[0], VY + 44], [tx, VY + 44], tt.P], v.id + ".T", tk + ".P");
+      // A and B up to the cylinder or motor, through what is on each line
+      ["A", "B"].forEach(function (side) {
+        if (!ap2[side] || !vp[side]) return;
+        var vx2 = vp[side][0], ax = ap2[side][0], yj = VY - 56, top = ap2[side][1], from = vp[side], fromId = v.id + "." + side;
+        var stack = a.inline[side];
+        var pts = [from, [vx2, yj], [ax, yj]];
+        // from the valve up: the elements nearest the valve come last in the stack
+        for (var k = stack.length - 1; k >= 0; k--) {
+          var e = stack[k], ey = top + 24 + 28 + k * 56, ep;
+          if (e.kind === "gap") continue;
+          if (e.kind === "flow") ep = put("flow", e.id, "flow control", ax, ey, { free: e.free }, name(e.id, e.label), ax + (side === "A" ? -62 : 76), ey);
+          else ep = put("check", e.id, e.pilot ? "pilot-operated check" : "check", ax, ey, { pilot: e.pilot, down: false }, name(e.id, e.label), ax + (side === "A" ? -62 : 76), ey);
+          var low = e.kind === "flow" ? ep.a : ep.in, high = e.kind === "flow" ? ep.b : ep.out, lowId = e.id + (e.kind === "flow" ? ".a" : ".in"), highId = e.id + (e.kind === "flow" ? ".b" : ".out");
+          pts.push(low); pipe(pts, fromId, lowId);
+          pts = [high]; fromId = highId;
+          if (e.kind === "check" && e.pilot && ap2[side === "A" ? "B" : "A"]) {
+            var ox = ap2[side === "A" ? "B" : "A"][0];
+            pipe([ep.X, [ox, ep.X[1]]], null, null, true); dot(ox, ep.X[1]);
+          }
+        }
+        pts.push(ap2[side]); pipe(pts, fromId, a.id + "." + side);
+      });
+    });
+    // the pressure line, from the pump along to the last valve's P
+    var xs = [X0, rx, lastP].concat(c.gauge ? [X0 + 150] : [], c.acc ? [X0 + 240] : []);
+    shapes.push({ t: "path", c: INK, w: 3, pts: [[X0, YH], [Math.max.apply(null, xs), YH]] });
+    dots.forEach(function (d) { shapes.push({ t: "circle", c: INK, w: 2, cx: d[0], cy: d[1], r: 4, f: true }); });
+    var maxX = Math.max(VX0 + (c.acts.length - 1) * GAP + 180, X0 + 330);
+    if (title) shapes.unshift({ t: "text", c: INK, x: Math.max(280, (X0 - 160 + maxX) / 2), y: 40, s: title, fs: 18 });
+    return { shapes: shapes, pipes: pipes, parts: parts, bottom: py + 140, left: X0 - 200, right: maxX };
+  }
+
+  // verify(c, lay) -> [problems]: the drawing walked as pipes. Oil passes
+  // straight through strainers, filters, flow controls and checks (either
+  // way: what matters here is where a line can reach), never through a pump,
+  // a relief valve or a directional valve, whose ports are kept apart.
+  function verify(c, lay) {
+    var parent = {}, out = [];
+    function f(k) { while (parent[k] && parent[k] !== k) k = parent[k]; return k; }
+    function u(a, b) { a = f(a); b = f(b); if (a !== b) parent[a] = b; }
+    lay.pipes.forEach(function (p) { u(p[0], p[1]); });
+    lay.parts.forEach(function (p) {
+      if (p.type === "strainer" || p.type === "filter") u(p.id + ".in", p.id + ".out");
+      if (p.type === "flow control") u(p.id + ".a", p.id + ".b");
+      if (/check$/.test(p.type)) u(p.id + ".in", p.id + ".out");
+    });
+    var tanks = lay.parts.filter(function (p) { return p.type === "tank"; }).map(function (p) { return f(p.id + ".P"); });
+    function toTank(k) { return tanks.indexOf(f(k)) >= 0; }
+    var press = f(c.pump.id + ".out");
+    if (tanks.indexOf(press) >= 0) out.push("the pump\u2019s outlet runs straight to tank");
+    if (f("PL") !== press) out.push("the pressure line is not the pump\u2019s outlet");
+    if (!toTank(c.pump.id + ".in")) out.push("the pump does not draw from the tank");
+    if (f(c.relief.id + ".in") !== press || !toTank(c.relief.id + ".out")) out.push("the relief valve is not between the pressure line and tank");
+    c.acts.forEach(function (a) {
+      var v = a.valve.id;
+      if (f(v + ".P") !== press) out.push(v + "\u2019s P is not on the pressure line");
+      if (!toTank(v + ".T")) out.push(v + "\u2019s T does not go to tank");
+      ["A", "B"].forEach(function (s) {
+        var has = lay.parts.filter(function (p) { return p.id === a.id; })[0];
+        if (!has || !has.ports[s]) return;
+        if (f(a.id + "." + s) !== f(v + "." + s)) out.push(a.id + "\u2019s " + s + " port is not joined to " + v + "\u2019s " + s);
+        if (toTank(a.id + "." + s) || f(a.id + "." + s) === press) out.push(a.id + "\u2019s " + s + " line runs straight to tank or to the pump");
+      });
+    });
+    return out;
+  }
+
+  function notesUnder(lay, notes, problems) {
+    var y = lay.bottom + 30, cx = Math.max(300, (lay.left + lay.right) / 2), shown = [];
+    var nt = L.aiSchematicMore && L.aiSchematicMore.noteText;
+    (notes || []).slice(0, 8).forEach(function (n) {
+      var r = nt ? nt(n) : { text: String(n), problems: [] };
+      r.problems.forEach(function (p) { problems.push(p); });
+      shown.push(r.text.slice(0, 120));
+      lay.shapes.push({ t: "text", c: NOTE, x: cx, y: y, s: r.text.slice(0, 120), fs: 15 }); y += 24;
+    });
+    return shown;
+  }
+
+  // build(block, ctx) -> what Chat and the bench take (AI_DRAW's result)
+  function build(block, ctx) {
+    var pr = parse(block), c = circuit(pr);
+    if (c.problems.length) return { problems: c.problems, plan: null };
+    if (!L.hydSym || !L.aiDraw || !L.aiDraw.result) return { problems: ["Lantern\u2019s hydraulic drawing parts are missing"], plan: null };
+    var lay = layout(c, block.title), late = [];
+    var bad = verify(c, lay);
+    if (bad.length) return { problems: ["Lantern could not draw this circuit correctly (" + bad.join("; ") + ")"], plan: null };
+    var shown = notesUnder(lay, c.notes, late);
+    // what Lantern added or changed, said under the drawing (and in Chat)
+    var said = (c.added.length ? "Lantern added " + c.added.join(", ") : "") + (c.changed.length ? (c.added.length ? ". " : "") + c.changed.join(". ") : "");
+    if (said) lay.shapes.push({ t: "text", c: GREY, x: Math.max(300, (lay.left + lay.right) / 2), y: lay.bottom + 30 + shown.length * 24, s: said.slice(0, 170), fs: 12 });
+    var wires = lay.pipes.filter(function (p) { return p[0] && p[1]; }).map(function (p) { return [p[0].split(".")[0], p[1].split(".")[0]]; });
+    var plan = { mode: "hydraulic", parts: lay.parts.filter(function (p) { return p.type !== "electric motor"; }).map(function (p) { return { id: p.id, type: p.type === "pressure line" ? "junction" : p.type === "relief" || p.type === "flow control" || /check$/.test(p.type) ? "valve" : p.type, kind: p.type, label: "" }; }),
+      wires: wires, loop: true, notes: shown,
+      circuit: { pump: c.pump.id, relief: c.relief.id, acts: c.acts.map(function (a) { return { id: a.id, type: a.type, single: a.single, valve: { id: a.valve.id, way: a.valve.way, centre: a.valve.centre, act: a.valve.act },
+        inline: { A: a.inline.A.map(function (e) { return e.kind + " " + e.id; }), B: a.inline.B.map(function (e) { return e.kind + " " + e.id; }) } }; }), added: c.added, changed: c.changed, verified: true } };
+    var n = c.acts.length, cyl = c.acts.filter(function (a) { return a.type === "cylinder"; }).length;
+    var summary = (cyl ? cyl + " cylinder" + (cyl === 1 ? "" : "s") : "") + (n - cyl ? (cyl ? ", " : "") + (n - cyl) + " motor" + (n - cyl === 1 ? "" : "s") : "") +
+      ", " + n + " valve" + (n === 1 ? "" : "s") + ", pump and relief valve; piped by Lantern" + (said ? ". " + said : "");
+    return L.aiDraw.result(lay.shapes, plan, summary, block.title, late);
+  }
+
+  // what the AI is told when the question is about hydraulics
+  var PROMPT = [
+    "MAKE HYDRAULIC: <title>   -- a hydraulic circuit. Name the parts and what each does; Lantern draws every pipe and port.",
+    "pump P1 \x22<flow>\x22             the power unit (tank, strainer, electric motor, pump) is always drawn",
+    "relief R1 \x22<pressure>\x22       the relief valve on the pump line (drawn even if you leave it out)",
+    "cylinder C1 double \x22<name>\x22  a double-acting cylinder; single = single-acting, spring return",
+    "motor M1 \x22<name>\x22            a hydraulic motor (turns both ways)",
+    "valve V1 C1 4/3 tandem lever   the valve that works C1: 4/3 (centre closed, tandem, open or float) or 4/2;",
+    "                               worked by lever, solenoid, pilot or button. A single-acting cylinder gets a 3/2.",
+    "flow F1 C1 extend meter-out    a flow control setting C1\u2019s speed: extend or retract, meter-in or meter-out",
+    "check K1 C1                    a pilot-operated check valve holding C1\u2019s load",
+    "gauge G1 / filter F2 / accumulator A1    on the pump line",
+    "note <text>                    a line of text under the drawing",
+    "END",
+    "One line per part, each cylinder or motor with its own valve. Never write pipes or ports: Lantern joins P to the pump,",
+    "T to the tank, A to the cap end and B to the rod end, and checks the circuit. For example:",
+    "MAKE HYDRAULIC: Pump, valve and cylinder",
+    "pump P1",
+    "cylinder C1 double",
+    "valve V1 C1 4/3 tandem lever",
+    "END"];
+  // asks(question): is this about a hydraulic circuit?
+  function asks(q) {
+    q = String(q || "");
+    if (/\b(pneumatic|compressed air|air cylinder|air valve|compressor)\b/i.test(q)) return false;
+    return /\bhydraulic/i.test(q) || /\b(cylinder|ram|hydraulic motor)\b/i.test(q) && /\b(pump|valve|oil|tank)\b/i.test(q);
+  }
+  window.Lantern.aiHydraulic = { isHydraulic: isHydraulic, parse: parse, circuit: circuit, layout: layout, verify: verify, build: build, PROMPT: PROMPT, asks: asks };
+
+  // the schematic action takes MAKE HYDRAULIC, and hydraulic schematic blocks go here
+  var act = (window.Lantern.aiActions || []).filter(function (a) { return a.id === "schematic"; })[0];
+  if (!act) return;
+  ["HYDRAULIC", "HYDRAULICS", "HYDRAULIC CIRCUIT", "HYDRAULIC DIAGRAM", "HYDRAULIC SCHEMATIC"].forEach(function (k) { if (act.kinds.indexOf(k) < 0) act.kinds.push(k); });
+  var before = act.build;
+  act.build = function (block, ctx) { return isHydraulic(block) ? build(block, ctx) : before(block, ctx); };
+  var base = act.prompt.map(function (l) {
+    if (/^mode electrical/.test(l)) return "mode electrical            (or pneumatic)";
+    if (/^MAKE SCHEMATIC:/.test(l)) return l.replace("a hydraulic / pneumatic diagram", "a pneumatic diagram");
+    if (/^Hydraulic: pump/.test(l)) return l.replace(/^Hydraulic: [^.]*\.\s*/, "");
+    return l;
+  });
+  act.promptFor = function (q) { return asks(q) ? PROMPT : base; };
+})();
+// ===========================================================================
+// MODULE: AI_HYDRAULIC - END
+// ===========================================================================
+// ===========================================================================
 // MODULE: AI_DRAW_CHECK - START
 // Depends: AI_DRAW (Lantern.aiDraw), AI_ACTIONS (Lantern.aiActions: the
 //          drawing action) -- feature-detected
@@ -26857,13 +27479,17 @@ Lantern.RFB = (function () {
         if (!p.loop) return "the circuit is not closed";
         return (p.notes || []).some(function (n) { return /\b2(\.0+)?\s*(ohm|\u03a9)/i.test(n); }) ? "" : "the picture does not show the total resistance of 2 ohm";
       } },
-    { id: "make-hydraulic", ideal: "MAKE SCHEMATIC: Pump, valve and cylinder\nmode hydraulic\npart T1 tank\npart P1 pump\npart V1 valve\npart C1 cylinder\nwire T1 P1\nwire P1 V1\nwire V1 C1\nwire V1 T1\nEND", kind: "SCHEMATIC", q: "Draw a hydraulic circuit: a pump takes oil from a tank and feeds a cylinder through a valve, and the oil returns to the tank.",
+    // (1.17.0) the circuit itself, not just its parts: the old model answer
+    // here, a two-port valve with the tank wired to it, teed the valve's
+    // output straight to tank, and the 35B's drawing did the same and passed
+    { id: "make-hydraulic", ideal: "MAKE HYDRAULIC: Pump, valve and cylinder\npump P1\ncylinder C1 double\nvalve V1 C1 4/3 tandem lever\nEND", kind: "SCHEMATIC", q: "Draw a hydraulic circuit: a pump takes oil from a tank and feeds a cylinder through a valve, and the oil returns to the tank.",
       check: function (p) {
-        var t = types(p);
         if (p.mode !== "hydraulic") return "not a hydraulic diagram";
-        var miss = ["pump", "tank", "valve", "cylinder"].filter(function (x) { return !count(t, x); });
-        if (miss.length) return "missing: " + miss.join(", ");
-        return linked(p) ? "" : "not all parts are connected";
+        var c = p.circuit;
+        if (!c || !c.verified) return "not piped as a hydraulic circuit (a valve\u2019s P to the pump, T to tank, A and B to the cylinder)";
+        var cyl = c.acts.filter(function (a) { return a.type === "cylinder"; })[0];
+        if (!cyl) return "no cylinder";
+        return cyl.valve && cyl.valve.id ? "" : "the cylinder has no valve";
       } },
     { id: "make-house", ideal: "MAKE DRAWING: House\nrect 5 6 10 5 fill tan\ntri 4 6 10 2 16 6 fill red\nrect 9 8 2 3 fill brown\nEND", kind: "DRAWING", q: "Draw a simple house with a red roof and a door.",
       check: function (p) {

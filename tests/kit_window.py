@@ -72,7 +72,10 @@ def tgz(rel, files):
     put(rel, b.getvalue())
 for arch in ("x64", "arm64"):
     tgz("llama/llama-b11435-bin-ubuntu-%s.tar.gz" % arch, [("build/bin/llama-server", FAKE_SERVER.encode())])
-kiwix_fake = ("#!" + PY + "\nimport time\ntime.sleep(3600)\n").encode()
+# (it listens on its port, as kiwix-serve does: start-lantern waits for the
+# library to answer before it starts the AI model, 1.17.0)
+kiwix_fake = ("#!" + PY + "\nimport sys, socket, time\ntry:\n    s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
+              "    s.bind(('127.0.0.1', int(sys.argv[sys.argv.index('--port') + 1]))); s.listen(5)\nexcept Exception:\n    pass\ntime.sleep(3600)\n").encode()
 for plat in ("linux-x86_64", "linux-aarch64"):
     tgz("kiwix/release/kiwix-tools/kiwix-tools_%s-3.8.1.tar.gz" % plat, [("kiwix-tools_%s-3.8.1/kiwix-serve" % plat, kiwix_fake)])
 for name, size in (("wikipedia_en_all_mini_2026-06.zim", 24 << 20), ("wikipedia_en_all_nopic_2026-09.zim", 3000)):

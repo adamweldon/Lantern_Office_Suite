@@ -152,6 +152,18 @@ if ls "$LIBRARY"/*.zim >/dev/null 2>&1; then
   if [ -n "$KIWIX" ] && [ -x "$KIWIX" ]; then
     "$KIWIX" --port "$LIBRARY_PORT" --address "$HOST" -z "$LIBRARY"/*.zim > /dev/null 2>&1 &
     KPID=$!
+    # given up to 10 s to answer before the AI model starts: the model's read
+    # fills the stick's queue, and a library started after it waited up to
+    # 14 minutes on a slow USB port (1.17.0)
+    k=0
+    while [ $k -lt 40 ]; do
+      # (listening is enough: a connection, not a page, which may take longer)
+      if command -v python3 >/dev/null 2>&1; then python3 -c "import socket,sys; s=socket.socket(); s.settimeout(0.5); sys.exit(s.connect_ex(('127.0.0.1', int(sys.argv[1]))))" "$LIBRARY_PORT" && break
+      elif command -v curl >/dev/null 2>&1; then curl -s -o /dev/null --connect-timeout 1 -m 2 "http://127.0.0.1:$LIBRARY_PORT/"; [ $? -ne 7 ] && break
+      else sleep 2; break; fi
+      kill -0 "$KPID" 2>/dev/null || break
+      sleep 0.25; k=$((k + 1))
+    done
     echo "Library: $(cd "$LIBRARY" && ls *.zim | tr '\n' ' ')(http://127.0.0.1:$LIBRARY_PORT/)"
   else
     echo "Library files found, but not kiwix-serve: run ./setup-kit.sh library"

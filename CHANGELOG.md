@@ -1,5 +1,64 @@
 # Changelog
 
+## 1.17.0 — Hydraulic circuits correct by construction (2026-10-29)
+
+Adam spotted that the 35B's bench drawing for "a pump takes oil from a tank and
+feeds a cylinder through a valve, and the oil returns to the tank" was wrong:
+the cylinder looked single-acting with no spring, and the return came off the
+line between the valve and the cylinder. It was mostly Lantern: the AI wired
+each pipe the way current goes round an electrical loop (Lantern's
+instructions asked for exactly that), Lantern's valve had two ports (no P, T,
+A, B), the layout put the return on the cylinder's feed port -- a short to
+tank -- and only "the pump reaches the tank" was checked, so the bench passed
+it. Its own model answer had the same short. Adam's direction: make the
+correct drawing the path of least resistance for any AI model, with the
+drawing rules and the hydraulic flows baked into the tool, so complexity can
+be added easily.
+
+- **MAKE HYDRAULIC: the AI names the parts and what each does; Lantern does
+  every pipe.** `pump P1 "20 L/min"`, `relief R1 "150 bar"`, `cylinder C1
+  double "press ram"`, `motor M1`, `valve V1 C1 4/3 tandem solenoid`, `flow F1
+  C1 extend meter-out`, `check K1 C1`, `gauge`, `filter`, `accumulator`,
+  `note`. Lantern draws the one correct circuit in the ISO layout: the power
+  unit at the bottom (tank, strainer, electric motor, pump, relief valve to its
+  own tank), the pressure line along to each valve's P, each T to a tank of its
+  own, A to the cap end and B to the rod end of the cylinder it works (or a
+  motor's two ports), a flow control on the line it meters with its check
+  letting oil back freely, a pilot-operated check nearest the cylinder with its
+  pilot line (dashed) from the other line. Port letters on every valve.
+- **Defaults, said.** No relief valve: one is added ("every pump needs one").
+  A cylinder with no valve gets a 4/3, spring centred, worked by a lever. One
+  valve gets a tandem centre (the pump unloads at rest), several get closed
+  centres. A single-acting cylinder gets a spring and a 3/2. What cannot work
+  is changed and said: a tandem or open centre beside other valves on one pump
+  line (it would send all the pump's oil to tank). Chat and the drawing say
+  what Lantern added or changed.
+- **Checked as pipes.** Before anything is shown, the drawing is walked as
+  pipes: no line from the pump to tank except through the relief valve, every
+  valve's P on the pressure line and T to a tank, every cylinder port joined
+  to its own valve. Two valves for one cylinder, a valve for a cylinder that is
+  not there, or a valve Lantern does not draw yet (sequence, reducing,
+  counterbalance ...) go back to the AI with what it can use instead.
+- **The older form is piped the same way.** A MAKE SCHEMATIC block in hydraulic
+  mode (parts and wires, what models wrote before) is read for its parts and
+  which valve works which cylinder, and Lantern does the piping: the 35B's
+  pump -> valve -> cylinder -> tank now draws as a correct circuit at once, with
+  no correction round.
+- **The bench checks the circuit**, not just that four parts are connected; its
+  model answer is a MAKE HYDRAULIC block.
+- **Draw's Hydraulics palette** has the ISO symbols too: 4/3 (closed and tandem
+  centre), 4/2 and 3/2 valves, a spring-return cylinder, a motor turning both
+  ways, relief, check and flow control valves, an electric motor and an
+  accumulator. Draw draws dashed lines (pilot lines).
+- A new part is one entry in the builder's list of roles and one place in the
+  layout; the checks stay the same.
+- **The library starts first.** start-lantern gives kiwix-serve up to 10 s to
+  answer before it starts the AI model: on a slow USB port the model's read
+  held a library started after it for 14 minutes.
+- Tests: `tests/hydraulic.js` (in npm test), `tests/browser/hydraulic_e2e.py`
+  (Chat with a stand-in model, in Chromium); the kit test checks that the
+  library answers before the engine starts.
+
 ## 1.16.1 — Lantern Watch from two real laptops: no stall on a slow port, warnings only for a real shortage (2026-10-29)
 
 Adam loaded the 35B with 1.15.0's watcher on two laptops from the same USB

@@ -76,7 +76,9 @@ var all = [];
   var server = { phase: "loading" }, watch = { mode: "answer", status: function () { return status("reading"); } };
   var A = boot(kitUrl("127.0.0.1", "&watch=8082"), server, watch), L = A.L, d = A.d;
   all.push(A);
-  await sleep(200);
+  // (up to 3 s: a busy machine boots the page more slowly than the 25 ms polls)
+  for (var waited = 0; waited < 3000 && !(A.asked.watch.length >= 2 && A.asked.health >= 2); waited += 50) await sleep(50);
+  await sleep(100);
   ok("boot clean, the address tidied, the watcher's port kept with the loading record", A.errs.length === 0 && A.w.location.search === "" &&
     L.store.get("ai.server.loading", {}).watch === 8082, [A.errs, A.w.location.href, L.store.get("ai.server.loading", null)]);
   ok("the watcher is asked at 127.0.0.1:8082/status, alongside /health", A.asked.watch.length >= 2 && A.asked.watch[0] === "http://127.0.0.1:8082/status" && A.asked.health >= 2,

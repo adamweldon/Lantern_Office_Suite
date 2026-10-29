@@ -35,6 +35,8 @@ def make_kit(name, models):
     fake = os.path.join(k, "engine", "linux", "llama-server")
     open(fake, "w").write("#!" + sys.executable + "\n" + """import sys, http.server
 if "--version" in sys.argv: print("version: fake"); sys.exit(0)   # setup's check that the engine starts
+import os, time
+if os.environ.get("ENGINE_UP_OUT"): open(os.environ["ENGINE_UP_OUT"], "w").write(repr(time.time()))
 port = int(sys.argv[sys.argv.index("--port") + 1]); m = sys.argv[sys.argv.index("-m") + 1]
 mm = sys.argv[sys.argv.index("--mmproj") + 1].replace(chr(92), "/").split("/")[-1] if "--mmproj" in sys.argv else "none"
 pr = sys.argv[sys.argv.index("--prio") + 1] if "--prio" in sys.argv else "none"
@@ -213,6 +215,17 @@ ok("start-lantern starts kiwix-serve on 8081 with the library", "--port 8081 --a
 out = run(k, ["share", "nodownload"], {"LANTERN_MEM_MB": "8000", "KIWIX_ARGS_OUT": argsf}, [os.path.join(k, "start-lantern.sh")])
 time.sleep(0.5)
 ok("share: the library listens for phones too", "--address 0.0.0.0" in open(argsf).read())
+# the library answers before the AI model starts (1.17.0: on a slow USB port
+# the model's read held a library started after it for 14 minutes)
+listen_kiwix = ("#!" + sys.executable + "\nimport sys, os, time, socket\ntime.sleep(1.5)\ns = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
+                "s.bind(('127.0.0.1', int(sys.argv[sys.argv.index('--port') + 1]))); s.listen(5)\nopen(os.environ['KIWIX_UP_OUT'], 'w').write(repr(time.time()))\ntime.sleep(8)\n")
+upf, engf = os.path.join(tmp, "kiwix-up.txt"), os.path.join(tmp, "engine-up.txt")
+saved_ks = open(ks).read(); open(ks, "w").write(listen_kiwix)
+out = run(k, ["nodownload"], {"LANTERN_MEM_MB": "8000", "LIBRARY_PORT": str(free_port()), "KIWIX_UP_OUT": upf, "ENGINE_UP_OUT": engf}, [os.path.join(k, "start-lantern.sh")])
+up = float(open(upf).read()) if os.path.exists(upf) else None
+eng = float(open(engf).read()) if os.path.exists(engf) else None
+ok("the library answers before the AI model starts (start-lantern waits for it, up to 10 s)", up is not None and eng is not None and eng >= up, (up, eng, out[-300:]))
+open(ks, "w").write(saved_ks)
 
 k = make_kit("lib-fat", ["Qwen3.5-4B-Q4_K_M.gguf"])
 out = run(k, ["library"], kenv({"LANTERN_FS": "msdos"}))

@@ -144,6 +144,10 @@ for %%z in ("%LIBRARY%\*.zim") do set ZIMS=!ZIMS! "%%~fz"
 if defined ZIMS (
   if exist "!KIWIX!" (
     start "Lantern library" /b "!KIWIX!" --port !LIBRARY_PORT! --address !HOST! -z !ZIMS!
+    rem given up to 10 s to answer before the AI model starts: the model's read
+    rem fills the stick's queue, and a library started after it waited up to
+    rem 14 minutes on a slow USB port ^(1.17.0^)
+    powershell -NoProfile -Command "for($i=0;$i -lt 40;$i++){ try { $c=New-Object Net.Sockets.TcpClient('127.0.0.1',!LIBRARY_PORT!); $c.Close(); break } catch { Start-Sleep -Milliseconds 250 } }"
     echo Library: !ZIMS! ^(http://127.0.0.1:!LIBRARY_PORT!/^)
   ) else (
     echo Library files found, but not kiwix-serve: run setup-kit.bat library
