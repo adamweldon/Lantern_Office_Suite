@@ -365,7 +365,7 @@ Lantern.injectStyles = function () {
     ".fbar{display:flex;gap:6px;padding:6px 12px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:104px;z-index:9;}",
     ".fbar .cellname{width:70px;text-align:center;font-weight:600;background:var(--soft);border:1px solid var(--line);border-radius:6px;display:flex;align-items:center;justify-content:center;}",
     ".fbar input{flex:1;font-family:ui-monospace,Consolas,monospace;}",
-    ".gridwrap{overflow:auto;max-height:calc(100vh - 170px);}",
+    ".gridwrap{overflow:auto;max-height:calc(100vh - 170px);scroll-padding:34px 0 0 46px;}",
     "table.grid{border-collapse:collapse;font-size:14px;}",
     ".grid th{background:var(--soft);border:1px solid var(--line);min-width:34px;padding:2px 6px;font-weight:600;position:sticky;z-index:2;}",
     ".grid thead th{top:0;}.grid tbody th{left:0;}",
@@ -475,7 +475,7 @@ Lantern.injectStyles = function () {
     ".chartbox{display:grid;gap:6px;margin:12px 0;}",
     ".crow{display:grid;grid-template-columns:110px 1fr 74px;gap:8px;align-items:center;font-size:14px;}",
     ".crow .clabel{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;}",
-    ".crow .cbar{background:var(--accent);height:22px;border-radius:3px;min-width:2px;}",
+    ".crow .cbar{background:var(--accent);height:22px;border-radius:3px;min-width:2px;-webkit-print-color-adjust:exact;print-color-adjust:exact;}",
     // Invoice
     ".invhead{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px;}",
     // Help
@@ -966,6 +966,8 @@ Lantern.physics = (function () {
 // ctx = { resolve(ref) -> number|null, range(a,b) -> number[], deg: bool }
 Lantern.formula = (function () {
   var REF = /^[A-Z]{1,2}[0-9]{1,3}$/;
+  // the error a sheet cell can hold (it travels to formulas that use it)
+  var ERRCODE = /^#(?:ERR|CYCLE|DIV\x2F0!|VALUE!|NAME\?|NUM!|REF!)$/;
   // Extension boundary: other modules (Convert, Physics) register cell
   // functions here without FORMULA depending on them. evaluate() consults
   // EXT after its own built-ins, so =CONVERT(...) or =FORCE(...) just work.
@@ -1017,6 +1019,8 @@ Lantern.formula = (function () {
       if (isNaN(n)) throw new Error("Not a number");
       return n;
     }
+    // picked(x): an argument IF chose -- its error, if it had one, now counts
+    function picked(x) { if (x && x.lazyErr) throw x.lazyErr; return x; }
     function flatNums(args) {
       var out = [];
       for (var i = 0; i < args.length; i++) {
@@ -1064,7 +1068,15 @@ Lantern.formula = (function () {
         if (y === 0) throw new Error("Divide by zero");
         return x - y * Math.floor(x / y);
       },
-      IF: function (a) { return num(a[0]) ? (a.length > 1 ? num(a[1]) : 1) : (a.length > 2 ? num(a[2]) : 0); },
+      // IF and IFERROR get their arguments worked out one by one (see
+      // lazyArg): an error in the branch not taken does not count, so
+      // =IF(B1=0,0,A1/B1) works; a branch can be text (=IF(A1>10,"big","small"))
+      IF: function (a) {
+        var t = picked(a[0]);
+        var yes = typeof t === "string" ? t !== "" && t.toUpperCase() !== "FALSE" : num(t) !== 0;
+        return yes ? (a.length > 1 ? picked(a[1]) : 1) : (a.length > 2 ? picked(a[2]) : 0);
+      },
+      IFERROR: function (a) { return a[0] && a[0].lazyErr ? (a.length > 1 ? picked(a[1]) : "") : a[0]; },
       SIN: function (a) { var q = quarter(num(a[0])); return q === null ? Math.sin(trigIn(num(a[0]))) : [0, 1, 0, -1][q]; },
       COS: function (a) { var q = quarter(num(a[0])); return q === null ? Math.cos(trigIn(num(a[0]))) : [1, 0, -1, 0][q]; },
       TAN: function (a) {
@@ -1102,13 +1114,14 @@ Lantern.formula = (function () {
         var name = t.v;
         if (peek() && peek().t === "op" && peek().v === "(") {
           next(); // (
-          var args = [];
+          var args = [], lazy = name === "IF" || name === "IFERROR";
           if (!(peek() && peek().v === ")")) {
-            args.push(argExpr());
-            while (peek() && peek().v === ",") { next(); args.push(argExpr()); }
+            args.push(lazy ? lazyArg() : argExpr());
+            while (peek() && peek().v === ",") { next(); args.push(lazy ? lazyArg() : argExpr()); }
           }
           expect(")");
           var fn = FN[name] || EXT[name];
+          if (!fn && name in CONST && !args.length) return CONST[name];   // =PI()
           if (!fn) throw new Error("Unknown function " + name);
           return fn(args, ctx);
         }
@@ -1121,8 +1134,10 @@ Lantern.formula = (function () {
             return ctx.range(name, t2.v);
           }
           var cv = ctx.resolve(name);
-          if (cv === "#ERR" || cv === "#CYCLE") throw new Error("Ref error");
-          return cv == null || cv === "" ? 0 : num(cv);
+          if (typeof cv === "string" && ERRCODE.test(cv)) { var re = new Error(cv); re.code = cv; throw re; }
+          // a text cell is text (=A1, =LEN(A1), =A1="hello"); arithmetic
+          // still turns it into a number or fails
+          return cv == null || cv === "" ? 0 : typeof cv === "string" ? cv : num(cv);
         }
         if (name in CONST) return CONST[name];
         // ANS1, ANS2 ... = the result of the 1st, 2nd ... line of a worked
@@ -1138,6 +1153,22 @@ Lantern.formula = (function () {
         throw new Error("Unknown name " + name);
       }
       throw new Error("Unexpected " + t.v);
+    }
+    // lazyArg(): one argument whose error is kept, not thrown (IF, IFERROR):
+    // the rest of the argument is skipped from where it started
+    function lazyArg() {
+      var at = p;
+      try { return argExpr(); } catch (e) {
+        p = at;
+        for (var depth = 0; p < toks.length; p++) {
+          var tk = toks[p];
+          if (tk.t !== "op") continue;
+          if (tk.v === "(") depth++;
+          else if (tk.v === ")") { if (!depth) break; depth--; }
+          else if (tk.v === "," && !depth) break;
+        }
+        return { lazyErr: e };
+      }
     }
     function argExpr() {
       // Ranges are only legal as function arguments; compare() handles rest.
@@ -1195,7 +1226,11 @@ Lantern.formula = (function () {
       var v = addSub();
       while (peek() && peek().t === "op" &&
              ["=", "<", ">", "<=", ">=", "<>"].indexOf(peek().v) >= 0) {
-        var op = next().v, r = num(addSub()), l = num(v);
+        var op = next().v, r = addSub(), l = v;
+        // text against text (or a number) compares as text, ignoring case
+        if (typeof l === "string" || typeof r === "string") {
+          l = String(l == null ? "" : l).toLowerCase(); r = String(r == null ? "" : r).toLowerCase();
+        } else { l = num(l); r = num(r); }
         v = (op === "=" ? l === r : op === "<" ? l < r : op === ">" ? l > r :
              op === "<=" ? l <= r : op === ">=" ? l >= r : l !== r) ? 1 : 0;
       }
@@ -1477,6 +1512,31 @@ Lantern.formula = (function () {
   var COLS = 26, ROWS = 100;
   var col = Lantern.store.collection("sheet.docs");
   var ws, doc = null, tds = {}, sel = "A1", fbar, nameEl, gridwrap, shown = {};
+  // dirty: the formula bar holds typing not yet in the cell (1.16.0: it was
+  // thrown away by a click on another cell, "<- Sheets", another app or a
+  // reload -- now it is kept, as in Excel and Calc)
+  var dirty = false, pointed = false;
+  var ERRCODE = /^#(?:ERR|CYCLE|DIV\x2F0!|VALUE!|NAME\?|NUM!|REF!)$/;
+  // typed(raw) -> the number a typed cell means, or null: 1500, 1,500,
+  // $12.50, -3.5, 10% (0.1), 4.7e-11 -- but not " ", 0x1F or Infinity
+  function typed(raw) {
+    var m = /^\s*([+-]?)\s*([\$\u20ac\u00a3]?)\s*([+-]?)(\d{1,3}(?:,\d{3})+(?:\.\d*)?|\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?)\s*(%?)\s*$/.exec(String(raw));
+    if (!m || (m[1] && m[3])) return null;
+    var n = parseFloat(m[4].replace(/,/g, ""));
+    if (m[1] === "-" || m[3] === "-") n = -n;
+    if (m[5]) n /= 100;
+    return isFinite(n) ? n : null;
+  }
+  // errCode(e): the error a cell shows, as Excel names them
+  function errCode(e) {
+    var msg = String((e && e.message) || "");
+    if (e && e.code) return e.code;
+    if (/Divide by zero/.test(msg)) return "#DIV/0!";
+    if (/^Unknown (?:function|name)/.test(msg)) return "#NAME?";
+    if (/Not a number|single value|text/i.test(msg)) return "#VALUE!";
+    if (/range|Overflow|not a real|undefined|whole number/i.test(msg)) return "#NUM!";
+    return "#ERR";
+  }
 
   function colName(i) { return String.fromCharCode(65 + i); }
   function refOf(c, r) { return colName(c) + (r + 1); }
@@ -1503,17 +1563,20 @@ Lantern.formula = (function () {
               for (var r = Math.min(A.r, B.r); r <= Math.max(A.r, B.r); r++)
                 for (var c = Math.min(A.c, B.c); c <= Math.max(A.c, B.c); c++) {
                   var x = val(refOf(c, r));
+                  // an error (or a loop) in the range is the range's error:
+                  // SUM used to skip it and show a total that looked right
+                  if (typeof x === "string" && ERRCODE.test(x)) { var re = new Error(x); re.code = x; throw re; }
                   if (typeof x === "number") arr.push(x);
                 }
               return arr;
             }
           });
-        } catch (e) { v = out[ref] === "#CYCLE" ? "#CYCLE" : "#ERR"; }
+        } catch (e) { v = out[ref] === "#CYCLE" ? "#CYCLE" : errCode(e); }
         delete visiting[ref];
         out[ref] = v; return v;
       }
-      var n = raw !== "" && !isNaN(raw) ? parseFloat(raw) : raw;
-      out[ref] = n; return n;
+      var n = typed(raw);
+      out[ref] = n === null ? raw : n; return out[ref];
     }
     for (var k in cells) val(k);
     return out;
@@ -1544,7 +1607,12 @@ Lantern.formula = (function () {
       if (!td) continue;
       var v = out[k];
       if (v == null) { td.textContent = ""; td.className = ""; }
-      else if (typeof v === "number") { td.textContent = Lantern.fmtNum(v); td.className = "num"; }
+      else if (typeof v === "number") {
+        // a number typed with its format ($12.50, 1,500, 10%) shows as typed
+        var raw = doc.cells[k];
+        td.textContent = typeof raw === "string" && raw.charAt(0) !== "=" && /[,%\$\u20ac\u00a3]/.test(raw) ? raw.replace(/^\s+|\s+$/g, "") : Lantern.fmtNum(v);
+        td.className = "num";
+      }
       else { td.textContent = String(v); td.className = /^#/.test(String(v)) ? "num" : ""; }
     }
     shown = out;
@@ -1559,20 +1627,44 @@ Lantern.formula = (function () {
       if (tds[sel].scrollIntoView) tds[sel].scrollIntoView({ block: "nearest", inline: "nearest" });
     }
     nameEl.textContent = ref;
-    if (!keepBar) fbar.value = doc.cells[ref] == null ? "" : String(doc.cells[ref]);
+    if (!keepBar) { fbar.value = doc.cells[ref] == null ? "" : String(doc.cells[ref]); dirty = false; }
   }
 
   function commit(move) {
     var v = fbar.value;
     if (v === "") delete doc.cells[sel];
     else doc.cells[sel] = v;
+    dirty = false;
     col.put(doc);
     repaint();
     var p = parseRef(sel);
     if (move === "down" && p.r < ROWS - 1) select(refOf(p.c, p.r + 1));
+    else if (move === "up" && p.r > 0) select(refOf(p.c, p.r - 1));
     else if (move === "right" && p.c < COLS - 1) select(refOf(p.c + 1, p.r));
+    else if (move === "left" && p.c > 0) select(refOf(p.c - 1, p.r));
     else select(sel);
   }
+  // keepTyping(): typing left in the bar goes into its cell, without a
+  // repaint (leaving the sheet, another app, the page closing)
+  function keepTyping() {
+    if (!doc || !dirty || !fbar) return;
+    if (fbar.value === "") delete doc.cells[sel]; else doc.cells[sel] = fbar.value;
+    dirty = false; col.put(doc);
+  }
+  // pointing(): a formula being typed, with the cursor after an operator,
+  // "(" or "," -- a cell clicked now goes into the formula as its reference
+  function pointing() {
+    var v = fbar.value, at = fbar.selectionStart == null ? v.length : fbar.selectionStart;
+    return v.charAt(0) === "=" && /[=+\-*\x2F^\x28,:<>&%]\s*$/.test(v.slice(0, at));
+  }
+  function pointAt(ref) {
+    var v = fbar.value, at = fbar.selectionStart == null ? v.length : fbar.selectionStart;
+    fbar.value = v.slice(0, at) + ref + v.slice(at);
+    try { fbar.setSelectionRange(at + ref.length, at + ref.length); } catch (e) { /* old browser */ }
+    fbar.focus(); dirty = true;
+  }
+  window.addEventListener("pagehide", keepTyping);
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "hidden") keepTyping(); });
 
   function usedRange() {
     var maxC = 0, maxR = 0, any = false;
@@ -1605,23 +1697,41 @@ Lantern.formula = (function () {
       tbody.appendChild(tr);
     }
     var table = Lantern.el("table", { "class": "grid" }, [thead, tbody]);
+    // while a formula is typed, a cell pressed goes into it (the focus
+    // stays in the bar); otherwise a click keeps what was typed, then selects
+    table.addEventListener("mousedown", function (e) {
+      var ref = e.target && e.target.getAttribute && e.target.getAttribute("data-ref");
+      if (ref && dirty && pointing()) { e.preventDefault(); pointAt(ref); pointed = true; }
+    });
     table.addEventListener("click", function (e) {
       var ref = e.target && e.target.getAttribute && e.target.getAttribute("data-ref");
-      if (ref) { select(ref); gridwrap.focus(); }
+      if (pointed) { pointed = false; return; }
+      if (ref) { if (dirty) commit(); select(ref); gridwrap.focus(); }
     });
     table.addEventListener("dblclick", function (e) {
       var ref = e.target && e.target.getAttribute && e.target.getAttribute("data-ref");
-      if (ref) { select(ref); fbar.focus(); }
+      if (ref && !dirty) { select(ref); fbar.focus(); }
     });
     return table;
   }
 
+  // the keys Excel and Calc users reach for: arrows, Tab / Shift+Tab, Home
+  // (column A), End (the row's last used cell), Ctrl+Home (A1), PageUp/Down
   function gridKeys(e) {
     var p = parseRef(sel), k = e.key;
     if (k === "ArrowDown" && p.r < ROWS - 1) select(refOf(p.c, p.r + 1));
     else if (k === "ArrowUp" && p.r > 0) select(refOf(p.c, p.r - 1));
-    else if (k === "ArrowRight" && p.c < COLS - 1) select(refOf(p.c + 1, p.r));
-    else if (k === "ArrowLeft" && p.c > 0) select(refOf(p.c - 1, p.r));
+    else if ((k === "ArrowRight" || (k === "Tab" && !e.shiftKey)) && p.c < COLS - 1) select(refOf(p.c + 1, p.r));
+    else if ((k === "ArrowLeft" || (k === "Tab" && e.shiftKey)) && p.c > 0) select(refOf(p.c - 1, p.r));
+    else if (k === "Tab") { /* at the edge: stay in the grid */ }
+    else if (k === "Home") select(e.ctrlKey || e.metaKey ? "A1" : refOf(0, p.r));
+    else if (k === "End") {
+      var last = 0;
+      for (var cc = 0; cc < COLS; cc++) if (doc.cells[refOf(cc, p.r)] != null) last = cc;
+      select(refOf(last, p.r));
+    }
+    else if (k === "PageDown") select(refOf(p.c, Math.min(ROWS - 1, p.r + 20)));
+    else if (k === "PageUp") select(refOf(p.c, Math.max(0, p.r - 20)));
     else if (k === "Enter" || k === "F2") { fbar.focus(); }
     else if (k === "Delete" || k === "Backspace") { fbar.value = ""; commit(); }
     else if (k && k.length === 1 && !e.ctrlKey && !e.metaKey) {
@@ -1666,9 +1776,10 @@ Lantern.formula = (function () {
     fbar = Lantern.el("input", {
       placeholder: "Value or formula, e.g. =SUM(A1:A5)",
       "aria-label": "Cell editor",
+      oninput: function () { dirty = true; },
       onkeydown: function (e) {
-        if (e.key === "Enter") { commit("down"); gridwrap.focus(); e.preventDefault(); }
-        else if (e.key === "Tab") { commit("right"); gridwrap.focus(); e.preventDefault(); }
+        if (e.key === "Enter") { commit(e.shiftKey ? "up" : "down"); gridwrap.focus(); e.preventDefault(); }
+        else if (e.key === "Tab") { commit(e.shiftKey ? "left" : "right"); gridwrap.focus(); e.preventDefault(); }
         else if (e.key === "Escape") { select(sel); gridwrap.focus(); }
       }
     });
@@ -1701,6 +1812,10 @@ Lantern.formula = (function () {
   }
 
   function libView() {
+    keepTyping();
+    // a sheet opened with "+ New sheet" and left empty is not kept (the list
+    // filled up with "Untitled sheet")
+    if (doc && !doc.title && !Object.keys(doc.cells || {}).length) col.del(doc.id);
     doc = null;
     ws.innerHTML = "";
     var items = col.all().map(function (d) {
@@ -1747,7 +1862,8 @@ Lantern.formula = (function () {
       var want = Lantern.sheetOpenRequest;
       Lantern.sheetOpenRequest = null;
       if (want && col.get(want)) editView(want); else libView();
-    }
+    },
+    unmount: function () { keepTyping(); }
   });
 })();
 // ===========================================================================
@@ -6513,9 +6629,13 @@ if (document.readyState === "loading") {
       "In B10 type <code>=SUM(B1:B9)</code> for the total. In B11 type <code>=ROUND(B10/4,2)</code> " +
       "to split it four ways. Change any cost and both update.</p>"],
     ["When you see an error", "<ul><li><code>#CYCLE</code> - the formula depends on itself " +
-      "(A1 cannot contain <code>=A1+1</code>, and A1&rarr;B1&rarr;A1 loops are caught too).</li>" +
-      "<li><code>#ERR</code> - the formula could not be worked out: a typo, brackets that do not close, " +
-      "or dividing by zero.</li></ul>"],
+      "(A1 cannot contain <code>=A1+1</code>, a total cannot include its own cell, and A1&rarr;B1&rarr;A1 loops are caught too).</li>" +
+      "<li><code>#DIV/0!</code> - dividing by zero (guard it: <code>=IF(B1=0,0,A1/B1)</code> or <code>=IFERROR(A1/B1,0)</code>).</li>" +
+      "<li><code>#VALUE!</code> - text where a number is needed.</li>" +
+      "<li><code>#NAME?</code> - a function or name Lantern does not know (check the spelling).</li>" +
+      "<li><code>#NUM!</code> - a number out of range (FACT of 171, TAN of 90 degrees).</li>" +
+      "<li><code>#ERR</code> - anything else: a typo or brackets that do not close.</li>" +
+      "<li>An error inside a range shows in its total too, so a SUM is never quietly wrong.</li></ul>"],
     ["Charts", "<p>The <b>Chart</b> button in the toolbar draws a bar chart from your data. " +
       "Give it a labels range (like <code>A1:A5</code> for the names) and a values range " +
       "(like <code>B1:B5</code> for the numbers), then tap <b>Draw</b>. Negative numbers show in red. " +
@@ -12848,13 +12968,29 @@ Lantern.chem = (function () {
     }
     L.download((api.doc.title || "sheet") + ".csv", L.csv.stringify(rows), "text/csv");
   }
+  // importCsv (1.16.0): into a sheet that has data, the file replaces it
+  // or opens as a new sheet (it used to mix old and new cells); a file
+  // bigger than the grid says what was left out (rows past 100 and columns
+  // past Z were dropped without a word); the sheet takes the file's name.
   function importCsv(api, file) {
     var reader = new FileReader();
     reader.onload = function () {
-      var rows = L.csv.parse(String(reader.result));
-      for (var r = 0; r < Math.min(rows.length, api.ROWS); r++)
-        for (var c = 0; c < Math.min(rows[r].length, api.COLS); c++)
-          if (rows[r][c] !== "") api.doc.cells[ref(c, r)] = rows[r][c];
+      var rows = L.csv.parse(String(reader.result)), cells = {}, r, c, wide = 0;
+      for (r = 0; r < rows.length; r++) wide = Math.max(wide, rows[r].length);
+      for (r = 0; r < Math.min(rows.length, api.ROWS); r++)
+        for (c = 0; c < Math.min(rows[r].length, api.COLS); c++)
+          if (rows[r][c] !== "") cells[ref(c, r)] = rows[r][c];
+      var name = String(file.name || "").replace(/\.[^.]*$/, "");
+      var had = Object.keys(api.doc.cells || {}).length > 0;
+      var cut = rows.length > api.ROWS || wide > api.COLS;
+      if (cut) window.alert("Sheets has " + api.ROWS + " rows and columns A-" + ref(api.COLS - 1, 0).charAt(0) + ": imported " +
+        Math.min(rows.length, api.ROWS) + " of " + rows.length + " rows and " + Math.min(wide, api.COLS) + " of " + wide + " columns.");
+      if (had && !window.confirm("This sheet already has data. Replace it with \u201c" + (name || "the file") + "\u201d?\n\nOK replaces it; Cancel opens the file as a new sheet.")) {
+        if (L.sheetDocs) L.sheetDocs.open(L.sheetDocs.create(name, cells));
+        return;
+      }
+      api.doc.cells = cells;
+      if (!api.doc.title && name) api.doc.title = name;
       api.put();
       api.refresh();
     };
@@ -12909,7 +13045,7 @@ Lantern.chem = (function () {
     ".lp-shln{position:absolute;}",
     ".lp-shln.v{top:0;width:0;border-left:2px dashed #2563eb;}",
     ".lp-shln.h{left:0;height:0;border-top:2px dashed #2563eb;}",
-    ".lp-shln.drag{pointer-events:auto;border:none;background:transparent;}",
+    ".lp-shln.drag{pointer-events:auto;border:none;background:rgba(37,99,235,.16);border-radius:4px;}",
     ".lp-shln.v.drag{width:14px;margin-left:-7px;cursor:col-resize;}",
     ".lp-shln.h.drag{height:14px;margin-top:-7px;cursor:row-resize;}",
     ".lp-shcore{position:absolute;}",
@@ -12925,7 +13061,7 @@ Lantern.chem = (function () {
   document.head.appendChild(css);
 
   function cfgOf(doc) {
-    if (!doc.paper) doc.paper = { size: "letter", orient: "l", margin: 0.5, scale: 100, show: 1 };
+    if (!doc.paper) doc.paper = { size: "letter", orient: "l", margin: 0.5, scale: 100, show: (window.innerWidth || 1000) < 700 ? 0 : 1 };   // a phone starts with the grid, not the panel
     return doc.paper;
   }
   function budget(cfg) { // printable px per page at the current scale
@@ -12966,11 +13102,11 @@ Lantern.chem = (function () {
   function makeDrag(ln, axis, m) {
     function start(ev) {
       ev.preventDefault();
-      var rect = ov.getBoundingClientRect();
+      var rect = ov.getBoundingClientRect(), p0 = pt(ev);
       function move(e2) {
         var p = pt(e2);
-        if (axis === "v") ln.style.left = Math.max(m.hdrW, p.x - rect.left) - 7 + "px";
-        else ln.style.top = Math.max(m.hdrH, p.y - rect.top) - 7 + "px";
+        if (axis === "v") ln.style.left = Math.max(m.hdrW, p.x - rect.left) + "px";
+        else ln.style.top = Math.max(m.hdrH, p.y - rect.top) + "px";
         e2.preventDefault();
       }
       function up(e2) {
@@ -12979,6 +13115,8 @@ Lantern.chem = (function () {
         document.removeEventListener("touchmove", move);
         document.removeEventListener("touchend", up);
         var p = pt(e2.changedTouches && e2.changedTouches.length ? e2.changedTouches[0] : e2);
+        // a tap or click on the grip is not a drag: the scale stays
+        if (Math.abs(p.x - p0.x) + Math.abs(p.y - p0.y) < 4) { redraw(); return; }
         var drop = axis === "v" ? p.x - rect.left : p.y - rect.top;
         // Nearest column/row edge; page 1 must keep at least one of them.
         var items = axis === "v" ? m.cols : m.rows, edges = [], i;
@@ -13017,21 +13155,25 @@ Lantern.chem = (function () {
     ov = L.el("div", { "class": "lp-shov",
       style: "width:" + m.W + "px;height:" + m.H + "px" });
     var i, ln;
+    // Page lines are drawn on the column/row edge; the first one has a grip
+    // in the header row (or the row numbers) to drag. The grip used to run
+    // the whole height of the grid, drawn 7px too early (the offset was
+    // applied twice), so clicking a cell beside it changed the print scale.
     for (i = 0; i < vb.length; i++) {
-      ln = L.el("div", { "class": "lp-shln v" + (i === 0 ? " drag" : ""),
-        title: i === 0 ? "Page edge \u2014 drag to fit more or fewer columns per page (sets scale)" : "",
-        style: (i === 0 ? "left:" + (m.cols[vb[i]].x - 7) : "left:" + (m.cols[vb[i]].x - 1)) +
-          "px;height:" + m.H + "px" });
-      if (i === 0) { ln.appendChild(L.el("i", { "class": "lp-shcore" })); makeDrag(ln, "v", m); }
-      ov.appendChild(ln);
+      ov.appendChild(L.el("div", { "class": "lp-shln v", style: "left:" + (m.cols[vb[i]].x - 1) + "px;height:" + m.H + "px" }));
+      if (i === 0) {
+        ln = L.el("div", { "class": "lp-shln v drag", title: "Page edge \u2014 drag to fit more or fewer columns per page (sets scale)",
+          style: "left:" + m.cols[vb[i]].x + "px;height:" + m.hdrH + "px" });
+        ln.appendChild(L.el("i", { "class": "lp-shcore" })); makeDrag(ln, "v", m); ov.appendChild(ln);
+      }
     }
     for (i = 0; i < hb.length; i++) {
-      ln = L.el("div", { "class": "lp-shln h" + (i === 0 ? " drag" : ""),
-        title: i === 0 ? "Page edge \u2014 drag to fit more or fewer rows per page (sets scale)" : "",
-        style: (i === 0 ? "top:" + (m.rows[hb[i]].y - 7) : "top:" + (m.rows[hb[i]].y - 1)) +
-          "px;width:" + m.W + "px" });
-      if (i === 0) { ln.appendChild(L.el("i", { "class": "lp-shcore" })); makeDrag(ln, "h", m); }
-      ov.appendChild(ln);
+      ov.appendChild(L.el("div", { "class": "lp-shln h", style: "top:" + (m.rows[hb[i]].y - 1) + "px;width:" + m.W + "px" }));
+      if (i === 0) {
+        ln = L.el("div", { "class": "lp-shln h drag", title: "Page edge \u2014 drag to fit more or fewer rows per page (sets scale)",
+          style: "top:" + m.rows[hb[i]].y + "px;width:" + m.hdrW + "px" });
+        ln.appendChild(L.el("i", { "class": "lp-shcore" })); makeDrag(ln, "h", m); ov.appendChild(ln);
+      }
     }
     ctx.gridwrap.appendChild(ov);
     status((vb.length + 1) + " across \u00d7 " + (hb.length + 1) + " down at " +
@@ -13246,7 +13388,9 @@ Lantern.chem = (function () {
   }
   function active() { return ctx && document.contains(ctx.gridwrap); }
   window.addEventListener("beforeprint", function () { // plain Ctrl+P support
-    if (active() && !document.querySelector(".lp-shprint")) build();
+    // not while a chart is open: its Print is the chart alone (the sheet's
+    // print area used to land on top of it)
+    if (active() && !document.querySelector(".lp-shprint") && !document.querySelector(".chartbox.print-area")) build();
   });
   window.addEventListener("afterprint", cleanup);
 

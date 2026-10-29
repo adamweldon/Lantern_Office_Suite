@@ -26,6 +26,7 @@ var steps = [
   ["Lantern Watch for real: the watcher and the page over HTTP with CORS, ready, the load log (1.15)", "node", ["tests/ai_server_watch_live.js"], /ALL LIVE WATCH TESTS PASS/],
   ["Chat routing (follow-ups, questions about itself, bench conversations)", "node", ["tests/chat_routing.js"], /ALL CHAT ROUTING TESTS PASS/],
   ["AI makes documents, slides, flashcards, plans; READ (1.12)", "node", ["tests/ai_make_docs.js"], /ALL MAKE DOCS TESTS PASS/],
+  ["Sheets after the audit (typing kept, pointing at cells, text cells, IF/IFERROR, Excel error codes, errors in ranges, typed 1,500/$12.50/10%, keys, CSV import) (1.16)", "node", ["tests/sheet_audit.js"], /ALL SHEET AUDIT TESTS PASS/],
   ["Calculator after the audit (after =, errors kept, brackets closed, memory and RAD kept, keyboard and dialogs) and the shared number and formula fixes (1.16)", "node", ["tests/calc_audit.js"], /ALL CALC AUDIT TESTS PASS/],
   ["Draw's schematic symbols: a right-click only deletes, Turn and R point them any way, the preview (1.15)", "node", ["tests/draw_symbols.js"], /ALL DRAW SYMBOL TESTS PASS/],
   ["Code Lab (editor, checks, ladder, sandbox, examples; MAKE CODE, EXAMPLE:, code in replies)", "node", ["tests/code_lab.js"], /ALL CODE LAB TESTS PASS/],

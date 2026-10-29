@@ -4,7 +4,7 @@
 // file store. Requests to a model server's API (/v1/...) are never cached.
 // With ?coi=1 it also adds cross-origin isolation headers, which lets the
 // engine use several CPU threads on hosts that cannot send them (GitHub Pages).
-var VERSION = "1.15.0-35c3ad3e";
+var VERSION = "1.15.0-c17a697c";
 var CACHE = "lantern-" + VERSION;
 var COI = new URL(self.location.href).searchParams.get("coi") === "1";
 var CORE = ["./", "index.html", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png",
