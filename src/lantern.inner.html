@@ -505,9 +505,29 @@ Lantern.store = (function () {
     persistent = true;
   } catch (e) { persistent = false; }
 
+  // Full storage (1.16.0): when the browser refuses a save (its space for
+  // this page is used up -- a few phone photos in Slides or Writer do it),
+  // the value is kept in memory and read back first, set() returns false,
+  // ok() is false, and a bar says so. It used to keep the old saved copy
+  // without a word: apps said "saved", and the work was gone after closing.
+  var full = false, bar = null, warnedAt = 0;
+  function warn() {
+    if (typeof document === "undefined" || !document.body) return;
+    if ((bar && document.body.contains(bar)) || Date.now() - warnedAt < 30000) return;
+    warnedAt = Date.now();
+    bar = document.createElement("div");
+    bar.setAttribute("role", "alert");
+    bar.style.cssText = "position:fixed;left:8px;right:8px;bottom:8px;z-index:10000;background:#7f1d1d;color:#fff;padding:10px 12px;border-radius:10px;font:15px/1.4 system-ui,sans-serif;box-shadow:0 4px 20px rgba(0,0,0,.3)";
+    bar.appendChild(document.createTextNode("Not saved: this browser\u2019s space for Lantern is full. Your last changes stay on screen until Lantern is closed. Make room (delete pictures or documents you do not need, or keep a copy with Backup), then change something again to save it. "));
+    var x = document.createElement("button");
+    x.textContent = "OK"; x.style.marginLeft = "6px";
+    x.onclick = function () { if (bar.parentNode) bar.parentNode.removeChild(bar); };
+    bar.appendChild(x);
+    document.body.appendChild(bar);
+  }
   function get(key, fallback) {
     try {
-      var raw = persistent ? localStorage.getItem("lantern." + key) : mem[key];
+      var raw = key in mem ? mem[key] : persistent ? localStorage.getItem("lantern." + key) : null;
       if (raw == null) return fallback;
       return JSON.parse(raw);
     } catch (e) { return fallback; }
@@ -515,9 +535,11 @@ Lantern.store = (function () {
   function set(key, value) {
     var raw = JSON.stringify(value);
     if (persistent) {
-      try { localStorage.setItem("lantern." + key, raw); }
-      catch (e) { mem[key] = raw; }
-    } else mem[key] = raw;
+      try { localStorage.setItem("lantern." + key, raw); delete mem[key]; full = false; return true; }
+      catch (e) { mem[key] = raw; full = true; warn(); return false; }
+    }
+    mem[key] = raw;
+    return true;
   }
   function remove(key) {
     if (persistent) { try { localStorage.removeItem("lantern." + key); } catch (e) {} }
@@ -562,7 +584,8 @@ Lantern.store = (function () {
     for (k in mem) if (arr.indexOf(k) < 0) arr.push(k);
     return arr;
   }
-  return { get: get, set: set, remove: remove, keys: keys, collection: collection, persistent: persistent };
+  return { get: get, set: set, remove: remove, keys: keys, collection: collection, persistent: persistent,
+    ok: function () { return !full; } };
 })();
 // ===========================================================================
 // MODULE: STORAGE - END
@@ -719,6 +742,17 @@ Lantern.shell = (function () {
     workspace = Lantern.el("main", {});
     root.appendChild(workspace);
     window.addEventListener("hashchange", route);
+    // Esc closes the dialog on top, in every app (Writer's Stats and
+    // History, Slides' Notes and Theme ... ignored it, 1.16.0). A dialog
+    // that handles Esc itself calls preventDefault first.
+    window.addEventListener("keydown", function (e) {
+      if ((e.key !== "Escape" && e.keyCode !== 27) || e.defaultPrevented) return;
+      var ovs = document.querySelectorAll(".guide-overlay");
+      if (!ovs.length) return;
+      var top = ovs[ovs.length - 1];
+      if (top.parentNode) top.parentNode.removeChild(top);
+      e.preventDefault();
+    });
     route();
   }
   return { start: start };
@@ -749,7 +783,7 @@ Lantern.guide = (function () {
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
       document.removeEventListener("keydown", onKey);
     }
-    function onKey(e) { if (e.key === "Escape" || e.keyCode === 27) close(); }
+    function onKey(e) { if (e.key === "Escape" || e.keyCode === 27) { close(); e.preventDefault(); } }
 
     var body = el("div", { "class": "guide-body" });
     for (var i = 0; i < d.sections.length; i++) {
@@ -1299,7 +1333,84 @@ Lantern.formula = (function () {
 // deliberate trade: maximum reach over spec purity.
 (function () {
   var col = Lantern.store.collection("writer.docs");
-  var ws, page, doc = null, saveTimer = null, countEl = null;
+  var ws, page, doc = null, saveTimer = null, countEl = null, changed = false;
+  // A save that is waiting (typing pauses 600 ms first) happens now when the
+  // page is closed, reloaded or hidden: the last words used to be lost.
+  function flush() { if (saveTimer && doc) { clearTimeout(saveTimer); saveTimer = null; save(); } }
+  window.addEventListener("pagehide", flush);
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "hidden") flush(); });
+  // writerClean(html) -> HTML with only document structure kept: paragraphs,
+  // headings, lists, tables, bold/italic/underline, links (http, mailto, #)
+  // and pictures held in the file (data:). Used for pasting and importing:
+  // a pasted web page brought its colours (white text), sizes and fixed
+  // positions; an imported .html could run script through onerror and
+  // javascript: links (1.16.0).
+  var KEEP = { P: 1, BR: 1, H1: 1, H2: 1, H3: 1, H4: 1, UL: 1, OL: 1, LI: 1, B: 1, STRONG: 1, I: 1, EM: 1, U: 1, S: 1, STRIKE: 1,
+    SUB: 1, SUP: 1, A: 1, TABLE: 1, THEAD: 1, TBODY: 1, TR: 1, TD: 1, TH: 1, BLOCKQUOTE: 1, PRE: 1, CODE: 1, HR: 1, IMG: 1 };
+  var DROP = { SCRIPT: 1, STYLE: 1, IFRAME: 1, OBJECT: 1, EMBED: 1, LINK: 1, META: 1, TITLE: 1, BASE: 1, SVG: 1, MATH: 1, FORM: 1,
+    INPUT: 1, BUTTON: 1, TEXTAREA: 1, SELECT: 1, NOSCRIPT: 1, TEMPLATE: 1, HEAD: 1, CANVAS: 1, VIDEO: 1, AUDIO: 1 };
+  var BLOCKY = /^(?:P|DIV|H[1-6]|UL|OL|LI|TABLE|BLOCKQUOTE|PRE|HR|SECTION|ARTICLE|HEADER|FOOTER|NAV|ASIDE|MAIN|FIGURE)$/;
+  function writerClean(html) {
+    var src = new DOMParser().parseFromString(String(html || ""), "text/html").body, out = document.createElement("div");
+    (function walk(from, to) {
+      for (var n = from.firstChild; n; n = n.nextSibling) {
+        if (n.nodeType === 3) { to.appendChild(document.createTextNode(n.nodeValue)); continue; }
+        if (n.nodeType !== 1 || DROP[n.tagName]) continue;
+        var tag = n.tagName, el = null;
+        if (KEEP[tag]) {
+          if (tag === "IMG") {
+            var s = n.getAttribute("src") || "";
+            if (/^data:image\x2F/i.test(s)) { el = document.createElement("img"); el.setAttribute("src", s); if (n.getAttribute("alt")) el.setAttribute("alt", n.getAttribute("alt")); to.appendChild(el); }
+            continue;
+          }
+          el = document.createElement(tag.toLowerCase());
+          if (tag === "A") { var h = n.getAttribute("href") || ""; if (/^(?:https?:|mailto:|#)/i.test(h.replace(/\s+/g, ""))) el.setAttribute("href", h); }
+          if ((tag === "TD" || tag === "TH") && /^\d{1,2}$/.test(n.getAttribute("colspan") || "")) el.setAttribute("colspan", n.getAttribute("colspan"));
+          to.appendChild(el); walk(n, el);
+        } else if (tag === "DIV" || tag === "SECTION" || tag === "ARTICLE") {
+          // a div of text is a paragraph; a div of blocks is unwrapped
+          var hasBlock = false;
+          for (var c = n.firstChild; c; c = c.nextSibling) if (c.nodeType === 1 && BLOCKY.test(c.tagName)) { hasBlock = true; break; }
+          if (hasBlock) walk(n, to); else { el = document.createElement("p"); to.appendChild(el); walk(n, el); }
+        } else walk(n, to);   // span, font, mark ...: their words, not their styling
+      }
+    })(src, out);
+    return out.innerHTML;
+  }
+  Lantern.writerClean = writerClean;
+  // writerText(html) -> plain text, one line per paragraph, heading or list
+  // item (Save .txt ran every paragraph into one line)
+  function writerText(html) {
+    var t = String(html || "").replace(/<br\s*\x2F?>/gi, "\n").replace(/<li[^>]*>/gi, "- ")
+      .replace(/<\x2F(?:p|div|h[1-6]|li|tr|blockquote|pre)>/gi, "\n").replace(/<\x2Ft[dh]>/gi, "\t")
+      .replace(/<[^>]+>/g, "");
+    var ta = document.createElement("textarea"); ta.innerHTML = t;
+    return ta.value.replace(/\u00a0/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").replace(/^\s+|\s+$/g, "") + "\n";
+  }
+  Lantern.writerText = writerText;
+  // exec(name, val): execCommand without a value when there is none
+  // (insertHorizontalRule with null made <hr id="null">)
+  function exec(name, val) { if (val == null) document.execCommand(name, false); else document.execCommand(name, false, val); }
+  // toParagraphs(): "Normal text" one block at a time. formatBlock over a
+  // selection of headings and paragraphs moved every heading to the top of
+  // the document (1.16.0); each block on its own keeps the order, and each
+  // step can still be undone.
+  function toParagraphs() {
+    var s = window.getSelection && window.getSelection();
+    if (!s || !s.rangeCount) return;
+    var r = s.getRangeAt(0), blocks = [], i;
+    for (i = 0; i < page.children.length; i++) {
+      var b = page.children[i];
+      if (/^(?:H[1-6]|BLOCKQUOTE|PRE|DIV)$/.test(b.tagName) && b.className !== "lp-gap" && (r.intersectsNode ? r.intersectsNode(b) : true)) blocks.push(b);
+    }
+    for (i = 0; i < blocks.length; i++) {
+      var rr = document.createRange();
+      rr.selectNodeContents(blocks[i]);
+      s.removeAllRanges(); s.addRange(rr);
+      exec("formatBlock", "p");
+    }
+    if (blocks.length) { s.removeAllRanges(); s.addRange(r); }
+  }
 
   function libView() {
     doc = null;
@@ -1355,7 +1466,7 @@ Lantern.formula = (function () {
   }
 
   function cmd(name, val) {
-    return function () { page.focus(); document.execCommand(name, false, val || null); scheduleSave(); };
+    return function () { page.focus(); exec(name, val); scheduleSave(); };
   }
   function words() {
     // innerText keeps a break between paragraphs (textContent runs
@@ -1365,6 +1476,7 @@ Lantern.formula = (function () {
     return t ? t.split(" ").length : 0;
   }
   function scheduleSave() {
+    changed = true;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(save, 600);
   }
@@ -1379,12 +1491,22 @@ Lantern.formula = (function () {
     }
     return html;
   }
+  // save(): only a document that changed is written (just opening one used
+  // to give it a new date and move it to the top of the list); when the
+  // browser's storage is full it says NOT saved, not "saved"
   function save() {
     if (!doc) return;
+    clearTimeout(saveTimer); saveTimer = null;
+    if (!changed) return;
     doc.html = cleanHtml();
     doc.words = words();
     col.put(doc);
-    if (countEl) countEl.textContent = doc.words + " words \u00b7 saved";
+    changed = false;
+    var ok = !Lantern.store.ok || Lantern.store.ok();
+    if (countEl) {
+      countEl.textContent = doc.words + " words \u00b7 " + (ok ? "saved" : "NOT saved: storage is full (Save .html now)");
+      countEl.style.color = ok ? "" : "var(--bad,#b91c1c)";
+    }
   }
 
   // toolApi() -- the object handed to Lantern.writerTools extensions.
@@ -1392,23 +1514,29 @@ Lantern.formula = (function () {
     return {
       page: page,
       doc: doc,
-      exec: function (name, val) { page.focus(); document.execCommand(name, false, val || null); scheduleSave(); },
-      save: save,
+      exec: function (name, val) { page.focus(); exec(name, val); scheduleSave(); },
+      save: function () { changed = true; save(); },
+      text: function () { return writerText(cleanHtml()); },
+      toParagraphs: function () { page.focus(); toParagraphs(); scheduleSave(); },
       scheduleSave: scheduleSave,
       words: words,
       panel: function (el) { ws.insertBefore(el, page); return el; }
     };
   }
 
+  // exportHtml(): the title once (a document that starts with it as its
+  // heading had it twice), and tables with their lines
   function exportHtml() {
-    var body = "<h1>" + Lantern.esc(doc.title || "Untitled") + "</h1>" + cleanHtml();
+    var inner = cleanHtml(), first = /^\s*<h1[^>]*>([\s\S]*?)<\x2Fh1>/i.exec(inner);
+    var sameTitle = first && first[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() === String(doc.title || "").trim();
+    var body = (sameTitle || !doc.title ? "" : "<h1>" + Lantern.esc(doc.title) + "</h1>") + inner;
     var html = "<!DOCTYPE html><html><head><meta charset='utf-8'><title>" +
-      Lantern.esc(doc.title || "Untitled") + "</title></head><body style='max-width:720px;margin:24px auto;" +
+      Lantern.esc(doc.title || "Untitled") + "</title><style>table{border-collapse:collapse}td,th{border:1px solid #999;padding:4px 8px}</style></head><body style='max-width:720px;margin:24px auto;" +
       "font-family:Georgia,serif;line-height:1.6;padding:0 16px'>" + body + "</body></html>";
     Lantern.download((doc.title || "document") + ".html", html, "text/html");
   }
   function exportTxt() {
-    Lantern.download((doc.title || "document") + ".txt", page.textContent);
+    Lantern.download((doc.title || "document") + ".txt", writerText(cleanHtml()));
   }
 
   function editView(id) {
@@ -1421,14 +1549,14 @@ Lantern.formula = (function () {
       oninput: function () { doc.title = titleIn.value; scheduleSave(); }
     });
     var edKids = [
-      Lantern.el("button", { "class": "ghost", text: "\u2190 Documents", onclick: function () { save(); libView(); } }),
+      Lantern.el("button", { "class": "ghost", text: "\u2190 Documents", onclick: function () { save(); ws.style.overflowX = ""; libView(); } }),
       titleIn,
       Lantern.el("button", { text: "B", style: "font-weight:700", title: "Bold", onclick: cmd("bold") }),
       Lantern.el("button", { text: "I", style: "font-style:italic", title: "Italic", onclick: cmd("italic") }),
       Lantern.el("button", { text: "U", style: "text-decoration:underline", title: "Underline", onclick: cmd("underline") }),
       Lantern.el("button", { text: "H1", title: "Heading", onclick: cmd("formatBlock", "h1") }),
       Lantern.el("button", { text: "H2", title: "Subheading", onclick: cmd("formatBlock", "h2") }),
-      Lantern.el("button", { text: "\u00b6", title: "Normal text", onclick: cmd("formatBlock", "p") }),
+      Lantern.el("button", { text: "\u00b6", title: "Normal text", onclick: function () { page.focus(); toParagraphs(); scheduleSave(); } }),
       Lantern.el("button", { text: "\u2022 List", onclick: cmd("insertUnorderedList") }),
       Lantern.el("button", { text: "1. List", onclick: cmd("insertOrderedList") })
     ];
@@ -1446,8 +1574,19 @@ Lantern.formula = (function () {
     var tb = Lantern.el("div", { "class": "toolbar" }, edKids);
     page = Lantern.el("div", {
       "class": "page print-area", contenteditable: "true",
-      "aria-label": "Document text", html: doc.html || "<p></p>",
+      "aria-label": "Document text", html: doc.html && doc.html !== "<p></p>" ? doc.html : "<p><br></p>",
       oninput: scheduleSave
+    });
+    changed = false;
+    // new lines are paragraphs (typing in a new document made bare text and divs)
+    try { document.execCommand("defaultParagraphSeparator", false, "p"); } catch (e) { /* old browser */ }
+    // a paste keeps the words and the structure, not the source's styling
+    page.addEventListener("paste", function (e) {
+      var cd = e.clipboardData, h = cd && cd.getData && cd.getData("text/html");
+      if (!h) return;
+      e.preventDefault();
+      exec("insertHTML", writerClean(h));
+      scheduleSave();
     });
     countEl = Lantern.el("div", { "class": "muted", style: "text-align:center;padding:4px 0 16px",
       text: (doc.words || 0) + " words" });
@@ -1486,7 +1625,7 @@ Lantern.formula = (function () {
       Lantern.writerOpenRequest = null;
       if (want && col.get(want)) editView(want); else libView();
     },
-    unmount: function () { if (doc) save(); }
+    unmount: function () { if (doc) save(); if (ws) ws.style.overflowX = ""; }
   });
 })();
 // ===========================================================================
@@ -5155,7 +5294,12 @@ Lantern.drawShapes = (function () {
       run: function (api) { api.exec(name, val); } });
   }
   ex("S", "Strikethrough", "strikeThrough", null, "text-decoration:line-through");
-  ex("HL", "Highlight selection (yellow marker)", "hiliteColor", "#fde68a");
+  // HL again on highlighted text takes the highlight off
+  T.push({ label: "HL", title: "Highlight selection (yellow marker); again to remove it", run: function (api) {
+    var on = false;
+    try { var v = String(document.queryCommandValue("hiliteColor") || document.queryCommandValue("backColor") || ""); on = /253,\s*230,\s*138|fde68a/i.test(v); } catch (e) { /* not supported */ }
+    api.exec("hiliteColor", on ? "transparent" : "#fde68a");
+  } });
   ex("\u201cQ\u201d", "Quote block", "formatBlock", "blockquote");
   ex("Left", "Align left", "justifyLeft");
   ex("Center", "Align center", "justifyCenter");
@@ -5184,7 +5328,7 @@ Lantern.drawShapes = (function () {
   } });
   T.push({ label: "Clear", title: "Remove formatting from selection", run: function (api) {
     api.exec("removeFormat");
-    api.exec("formatBlock", "p");
+    if (api.toParagraphs) api.toParagraphs(); else api.exec("formatBlock", "p");
   } });
   T.push({ label: "\u21b6", title: "Undo", run: function (api) { api.exec("undo"); } });
   T.push({ label: "\u21b7", title: "Redo", run: function (api) { api.exec("redo"); } });
@@ -5311,11 +5455,11 @@ Lantern.drawShapes = (function () {
   var T = window.Lantern.writerTools = window.Lantern.writerTools || [];
   T.push({ label: "Stats", title: "Word, sentence and reading statistics", run: function (api) {
     var el = Lantern.el;
-    var text = api.page.textContent.replace(/\s+/g, " ").trim();
+    var text = (api.text ? api.text() : api.page.textContent).replace(/\s+/g, " ").trim();
     var wordArr = text ? text.split(" ") : [];
     var sentences = (text.match(/[.!?\u061f\u3002](\s|$)/g) || []).length;
     if (!sentences && wordArr.length) sentences = 1;
-    var paras = 0, blocks = api.page.querySelectorAll("p,h1,h2,h3,li,blockquote"), i;
+    var paras = 0, blocks = api.page.querySelectorAll("p,h1,h2,h3,h4,li,blockquote,td,div:not(.lp-gap)"), i;
     for (i = 0; i < blocks.length; i++) if (blocks[i].textContent.replace(/\s/g, "")) paras++;
     var seen = {}, uniqCount = 0, longest = "";
     for (i = 0; i < wordArr.length; i++) {
@@ -5497,6 +5641,7 @@ Lantern.drawShapes = (function () {
 (function () {
   var LT = window.Lantern.writerLibTools = window.Lantern.writerLibTools || [];
   function sanitize(h) {
+    if (Lantern.writerClean) return Lantern.writerClean(h);   // allow-list (WRITER); the old filter below let onerror through
     return h
       .replace(/<script[\s\S]*?(<\/script>|$)/gi, "")
       .replace(/<style[\s\S]*?(<\/style>|$)/gi, "")
@@ -6689,9 +6834,9 @@ if (document.readyState === "loading") {
       "Edit everything - it is a normal document once created.</p>"],
     ["Getting your work out", "<ul><li><b>Print / PDF</b> opens the device's print box - " +
       "choose \"Save as PDF\" there to make a PDF for free</li>" +
-      "<li><b>Export HTML</b> saves a file that keeps your formatting and opens in any browser or word processor</li>" +
-      "<li><b>Export TXT</b> saves plain text for SMS, email, or old machines</li></ul>"],
-    ["Tips", "<ul><li>The word count sits in the toolbar - useful for assignments with limits</li>" +
+      "<li><b>Save .html</b> saves a file that keeps your formatting and opens in any browser or word processor</li>" +
+      "<li><b>Save .txt</b> saves plain text, one line per paragraph, for SMS, email, or old machines</li></ul>"],
+    ["Tips", "<ul><li>The word count sits under the page, with \u201csaved\u201d (or a warning if the device is out of space) - useful for assignments with limits</li>" +
       "<li>For a CV: name as H1, sections like Experience and Education as H2, details as bullet lists</li></ul>"]
   ]);
 
@@ -12748,12 +12893,14 @@ Lantern.chem = (function () {
     ".lp-gap::after{content:none!important;}",
     ".lp-paged{width:auto!important;max-width:none!important;min-height:0!important;",
     "padding:0!important;margin:0!important;border:none!important;box-shadow:none!important;",
-    "transform:none!important;}}"
+    "transform:none!important;zoom:1!important;position:absolute!important;top:0!important;left:0!important;}}"
   ].join("\n")));
   document.head.appendChild(css);
 
   function cfgOf(doc) {
-    if (!doc.paper) doc.paper = { size: "letter", orient: "p", margin: 96, zoom: "100" };
+    // a phone starts at Fit width (an 816px page on a 390px screen cut off
+    // the start of every line)
+    if (!doc.paper) doc.paper = { size: "letter", orient: "p", margin: 96, zoom: (window.innerWidth || 1000) < 700 ? "fit" : "100" };
     return doc.paper;
   }
   function dims(cfg) {
@@ -12815,7 +12962,11 @@ Lantern.chem = (function () {
       var avail = (pg.parentNode ? pg.parentNode.clientWidth : 0) - 20;
       z = avail > 0 ? Math.min(1, avail / dims(cfg).w) : 1;
     } else z = (parseInt(cfg.zoom, 10) || 100) / 100;
-    if (z >= 0.999) { pg.style.transform = ""; pg.style.marginBottom = ""; return; }
+    if (z >= 0.999) { pg.style.transform = ""; pg.style.marginBottom = ""; pg.style.zoom = ""; return; }
+    // CSS zoom changes the page's real width, so it fits (a transform only
+    // drew it smaller and the area still scrolled sideways); old browsers
+    // without zoom get the transform
+    if ("zoom" in pg.style) { pg.style.transform = ""; pg.style.marginBottom = ""; pg.style.zoom = String(z); return; }
     pg.style.transformOrigin = "top center";
     pg.style.transform = "scale(" + z + ")";
     pg.style.marginBottom = Math.round(-pg.offsetHeight * (1 - z) + 14) + "px";
@@ -12879,8 +13030,9 @@ Lantern.chem = (function () {
   function mount(api) {
     ctx = { page: api.page, doc: api.doc, save: api.scheduleSave,
       cfg: cfgOf(api.doc), pages: 1, countEl: null };
+    // (it no longer sets overflow-x on <main>: every app shares <main>, and
+    // that unstuck their toolbars -- the library's covered its first item)
     var ws = api.page.parentNode;
-    if (ws) ws.style.overflowX = "auto"; // full-width paper on small screens
     var tb = ws ? ws.firstChild : null;
     if (tb && tb.appendChild) {
       var cfg = ctx.cfg;
@@ -12909,6 +13061,23 @@ Lantern.chem = (function () {
     else if (obs) obs.disconnect();
     setPageRule();
     paginate();
+    // Backspace at the start of a page, Delete at the end of one: the page
+    // gaps go first, so the paragraphs join as they would on one page (the
+    // gap used to break the paragraph and leave its grey on the next words);
+    // the pages come back as soon as the text has changed
+    api.page.addEventListener("keydown", function (e) {
+      if ((e.key !== "Backspace" && e.key !== "Delete") || !api.page.querySelector(".lp-gap")) return;
+      var s = window.getSelection && window.getSelection();
+      if (!s || !s.rangeCount || !s.isCollapsed) return;
+      var blk = s.anchorNode;
+      while (blk && blk.parentNode !== api.page) blk = blk.parentNode;
+      if (!blk) return;
+      var r = document.createRange();
+      if (e.key === "Backspace") { r.selectNodeContents(blk); r.setEnd(s.anchorNode, s.anchorOffset); }
+      else { r.selectNodeContents(blk); r.setStart(s.anchorNode, s.anchorOffset); }
+      var sib = e.key === "Backspace" ? blk.previousSibling : blk.nextSibling;
+      if (r.toString() === "" && sib && sib.className === "lp-gap") clearGaps(api.page);
+    });
   }
 
   (window.Lantern.writerEditHooks = window.Lantern.writerEditHooks || []).push(mount);
@@ -12922,6 +13091,10 @@ Lantern.chem = (function () {
       for (var i = g.length; i--;) g[i].parentNode.removeChild(g[i]);
       return d.innerHTML;
     });
+  // and the gap's grey that a merge copied onto text (documents saved before 1.16.0)
+  window.Lantern.writerSerialize.push(function (html) {
+    return String(html).replace(/\s*background-color:\s*rgb\x28216,\s*214,\s*203\x29;?/g, "").replace(/<span style=\x22\s*\x22>([\s\S]*?)<\x2Fspan>/g, "$1");
+  });
   window.addEventListener("resize", function () {
     if (ctx && ctx.cfg.zoom === "fit" && document.contains(ctx.page)) schedule();
   });
