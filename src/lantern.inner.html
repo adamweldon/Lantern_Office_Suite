@@ -254,9 +254,14 @@ Lantern.uid = function () {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 };
 
-// fmtNum -- trims float noise for display (0.30000000000000004 -> 0.3)
+// fmtNum -- trims float noise for display (0.30000000000000004 -> 0.3).
+// Very small and very large numbers keep 12 significant digits: rounding them
+// to 10 decimals showed Planck's constant (and 47 pF) as 0 and 1e300 as
+// Infinity (1.16.0).
 Lantern.fmtNum = function (v) {
   if (typeof v !== "number" || !isFinite(v)) return String(v);
+  var a = Math.abs(v);
+  if (a !== 0 && (a < 1e-6 || a >= 1e15)) return String(Number(v.toPrecision(12)));
   var r = Math.round(v * 1e10) / 1e10;
   return String(r);
 };
@@ -385,7 +390,8 @@ Lantern.injectStyles = function () {
     ".cdisp .res{font-size:26px;font-weight:600;text-align:right;min-height:32px;word-break:break-all;}",
     ".ckeys{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;}",
     ".ckeys button{min-height:44px;padding:4px;font-size:15px;}",
-    ".ckeys .op{background:var(--soft);}.ckeys .eq{background:var(--accent);color:#fff;border-color:var(--accent);grid-column:span 2;}",
+    ".ckeys .op{background:var(--soft);}.ckeys .eq{background:var(--accent);color:#fff;border-color:var(--accent);}",
+    ".cdisp .cstat{font-size:11px;letter-spacing:.06em;color:#fbbf24;min-height:13px;text-align:left;}",
     // Ledger / tables
     "table.data{border-collapse:collapse;width:100%;background:#fff;font-size:14px;}",
     ".data th,.data td{border:1px solid var(--line);padding:6px 8px;text-align:left;}",
@@ -1017,6 +1023,14 @@ Lantern.formula = (function () {
       return out;
     }
     function trigIn(x) { return ctx.deg ? x * Math.PI / 180 : x; }
+    // quarter(x) -> 0..3 when the angle is a whole number of quarter turns
+    // (0, 90, 180, 270 degrees, or the same in radians), else null: SIN(180)
+    // is 0, not 1.2e-16, and TAN(90) is undefined, not 1.6e16
+    function quarter(x) {
+      var k = x / (ctx.deg ? 90 : Math.PI / 2), r = Math.round(k);
+      if (!isFinite(k) || Math.abs(k - r) > 1e-12 * Math.max(1, Math.abs(k))) return null;
+      return ((r % 4) + 4) % 4;
+    }
     function trigOut(x) { return ctx.deg ? x * 180 / Math.PI : x; }
     var FN = {
       SUM: function (a) { var n = flatNums(a), s = 0; for (var i = 0; i < n.length; i++) s += n[i]; return s; },
@@ -1025,24 +1039,41 @@ Lantern.formula = (function () {
       MAX: function (a) { var n = flatNums(a); if (!n.length) throw new Error("MAX of nothing"); return Math.max.apply(null, n); },
       COUNT: function (a) { return flatNums(a).length; },
       ABS: function (a) { return Math.abs(num(a[0])); },
-      ROUND: function (a) { var d = a.length > 1 ? num(a[1]) : 0, f = Math.pow(10, d); return Math.round(num(a[0]) * f) / f; },
+      // ROUND as Excel does: halves away from zero (ROUND(-2.5) = -3), and
+      // 1.005 to 2 places is 1.01 (worked at 15 digits, so the 1.00499... a
+      // float stores does not round down)
+      ROUND: function (a) {
+        var x = num(a[0]), d = a.length > 1 ? num(a[1]) : 0, f = Math.pow(10, d);
+        var y = Number((Math.abs(x) * f).toPrecision(15));
+        return (x < 0 ? -1 : 1) * Math.round(y) / f;
+      },
       FLOOR: function (a) { return Math.floor(num(a[0])); },
       CEIL: function (a) { return Math.ceil(num(a[0])); },
       SQRT: function (a) { return Math.sqrt(num(a[0])); },
       POW: function (a) { return Math.pow(num(a[0]), num(a[1])); },
-      MOD: function (a) { return num(a[0]) % num(a[1]); },
+      // MOD as Excel does: the sign of the divisor (MOD(-7,3) = 2)
+      MOD: function (a) {
+        var x = num(a[0]), y = num(a[1]);
+        if (y === 0) throw new Error("Divide by zero");
+        return x - y * Math.floor(x / y);
+      },
       IF: function (a) { return num(a[0]) ? (a.length > 1 ? num(a[1]) : 1) : (a.length > 2 ? num(a[2]) : 0); },
-      SIN: function (a) { return Math.sin(trigIn(num(a[0]))); },
-      COS: function (a) { return Math.cos(trigIn(num(a[0]))); },
-      TAN: function (a) { return Math.tan(trigIn(num(a[0]))); },
+      SIN: function (a) { var q = quarter(num(a[0])); return q === null ? Math.sin(trigIn(num(a[0]))) : [0, 1, 0, -1][q]; },
+      COS: function (a) { var q = quarter(num(a[0])); return q === null ? Math.cos(trigIn(num(a[0]))) : [1, 0, -1, 0][q]; },
+      TAN: function (a) {
+        var q = quarter(num(a[0]));
+        if (q === 1 || q === 3) throw new Error("TAN of 90 degrees is undefined");
+        return q === null ? Math.tan(trigIn(num(a[0]))) : 0;
+      },
       ASIN: function (a) { return trigOut(Math.asin(num(a[0]))); },
       ACOS: function (a) { return trigOut(Math.acos(num(a[0]))); },
       ATAN: function (a) { return trigOut(Math.atan(num(a[0]))); },
-      LOG: function (a) { return Math.log(num(a[0])) / Math.LN10; },
+      LOG: function (a) { return Math.log(num(a[0])) / (a.length > 1 ? Math.log(num(a[1])) : Math.LN10); },   // LOG(8,2) = 3, as Excel
       LN: function (a) { return Math.log(num(a[0])); },
       EXP: function (a) { return Math.exp(num(a[0])); },
       FACT: function (a) {
-        var n = Math.round(num(a[0]));
+        var x = num(a[0]), n = Math.round(x);
+        if (Math.abs(x - n) > 1e-9) throw new Error("FACT needs a whole number");
         if (n < 0 || n > 170) throw new Error("FACT range");
         var r = 1; for (var i = 2; i <= n; i++) r *= i; return r;
       }
@@ -1131,7 +1162,11 @@ Lantern.formula = (function () {
     function mulDiv() {
       var v = unary();
       while (peek() && peek().t === "op" && (peek().v === "*" || peek().v === "/" || peek().v === "%")) {
-        var op = next().v, r = num(unary());
+        var op = next().v;
+        // % with no number after it is percent, as on a calculator and in a
+        // spreadsheet (50% = 0.5, 200*5% = 10); 17%5 is still the remainder
+        if (op === "%" && !(peek() && (peek().t === "num" || peek().t === "id" || peek().t === "str" || (peek().t === "op" && peek().v === "(")))) { v = num(v) / 100; continue; }
+        var r = num(unary());
         if (op === "*") v = num(v) * r;
         else if (op === "%") v = num(v) % r;
         else { if (r === 0) throw new Error("Divide by zero"); v = num(v) / r; }
@@ -1141,8 +1176,11 @@ Lantern.formula = (function () {
     function addSub() {
       var v = mulDiv();
       while (peek() && peek().t === "op" && (peek().v === "+" || peek().v === "-")) {
-        var op = next().v, r = num(mulDiv());
-        v = op === "+" ? num(v) + r : num(v) - r;
+        var op = next().v, r = num(mulDiv()), l = num(v);
+        v = op === "+" ? l + r : l - r;
+        // what is left when two nearly equal numbers cancel is float noise:
+        // 0.1*3-0.3 is 0, not 5.55e-17 (Excel does the same)
+        if (v !== 0 && Math.abs(v) < 1e-12 * Math.max(Math.abs(l), Math.abs(r))) v = 0;
       }
       return v;
     }
@@ -2000,10 +2038,24 @@ Lantern.formula = (function () {
 // The calculator is a thin skin over the same FORMULA engine the
 // spreadsheet uses -- one parser to maintain, identical results in both.
 (function () {
-  var ws, exprEl, resEl, expr = "", ans = 0, mem = 0, deg = true, degBtn;
+  var ws, exprEl, resEl, stEl, expr = "", ans = 0, mem = 0, deg = true, degBtn;
+  // After = (1.16.0): the display keeps "2+3 =" over the answer (fresh); a
+  // number or function starts a new calculation and an operator goes on from
+  // ANS -- typing used to be added to the end of the shown result (2+3= then
+  // 7 gave 57), and going on used its 10-digit text (1/3= x3= 0.9999999999).
+  var fresh = false, lastSrc = "", errMsg = "";
+  var OP = /^[+\-*\x2F^%,\x29]/;
 
+  function save() { try { Lantern.store.set("calc.mem", mem); Lantern.store.set("calc.deg", deg); } catch (e) { /* kept for this visit */ } }
+  function status() {
+    if (degBtn) degBtn.textContent = deg ? "DEG" : "RAD";
+    if (stEl) stEl.textContent = [deg ? "" : "RAD", mem ? "M" : ""].filter(Boolean).join(" \u00b7 ");
+  }
   function paint() {
+    status();
+    if (fresh) { exprEl.textContent = lastSrc + " ="; resEl.textContent = Lantern.fmtNum(ans); return; }
     exprEl.textContent = expr || "\u00a0";
+    if (errMsg) { resEl.textContent = errMsg; return; }
     try {
       if (expr.trim() === "") { resEl.textContent = "0"; return; }
       var v = Lantern.formula.evaluate(expr, { deg: deg, ans: ans });
@@ -2012,15 +2064,41 @@ Lantern.formula = (function () {
       resEl.textContent = "\u2026";
     }
   }
-  function push(s) { expr += s; paint(); }
+  // valStr(v): a value written in full (15 digits), for memory, history and
+  // constants (6.62607015e-34 stays itself)
+  function valStr(v) { return String(Number(Number(v).toPrecision(15))); }
+  // input(s, value, raw): what a key, a tool or the keyboard adds. A value
+  // or a function after a number multiplies it (2 pi is 2*PI, 5 10^x 3 is
+  // 5*10^3, 2 MR is 2*memory); raw keyboard typing is left as typed (6.02e23).
+  function input(s, value, raw) {
+    s = String(s); errMsg = "";
+    if (fresh) { fresh = false; expr = OP.test(s) ? "ANS" : ""; }
+    if (!raw && (value || /^[A-Za-z\x28]/.test(s) || s === "10^") && /(?:[0-9.\x29]|PI|ANS|\bE)$/.test(expr)) expr += "*";
+    if (value && s.charAt(0) === "-") s = "(" + s + ")";
+    expr += s; paint();
+  }
+  function push(s) { input(s); }
+  function closeOpen(src) {
+    var open = (src.match(/\x28/g) || []).length - (src.match(/\x29/g) || []).length;
+    while (open-- > 0) src += ")";
+    return src;
+  }
+  // equals(): an unfinished expression keeps its text and says why (it used
+  // to be emptied behind an "Error"); brackets left open are closed, as a
+  // TI or Casio does (sin 30 = is SIN(30)); = again adds nothing.
   function equals() {
-    var src = expr;
+    if (fresh) return;
+    var src = closeOpen(expr.replace(/\s+$/, ""));
+    if (!src) return;
+    var v;
     try {
-      var v = Lantern.formula.evaluate(expr, { deg: deg, ans: ans });
-      ans = v;
-      Lantern.store.set("calc.ans", ans);
-      expr = Lantern.fmtNum(v);
-    } catch (e) { expr = ""; resEl.textContent = "Error"; return; }
+      v = Lantern.formula.evaluate(src, { deg: deg, ans: ans });
+      if (typeof v !== "number") throw new Error("the answer is not a number");
+      if (isNaN(v)) throw new Error("not a real number");
+      if (!isFinite(v)) throw new Error("too big");
+    } catch (e) { expr = src; errMsg = "Error: " + String((e && e.message) || e); paint(); return; }
+    ans = v; lastSrc = src; fresh = true; expr = "";
+    Lantern.store.set("calc.ans", ans);
     paint();
     // Hook: extension modules observe results (see CALC_HISTORY).
     var obs = window.Lantern.calcOnEquals || [];
@@ -2028,29 +2106,50 @@ Lantern.formula = (function () {
       try { obs[oi](src, ans); } catch (e2) {}
     }
   }
+  function clear() { expr = ""; fresh = false; errMsg = ""; paint(); }
+  // back(): a whole function name or ANS/PI at a time (SIN( was left as SIN)
+  function back() {
+    errMsg = "";
+    if (fresh) { fresh = false; expr = Lantern.fmtNum(ans); }
+    expr = expr.replace(/(?:[A-Za-z_][A-Za-z_0-9]*\x28|ANS|PI|[\s\S])$/i, "");
+    paint();
+  }
+  // current(): the value memory keys use -- the answer, or the expression if
+  // it works out (M+ on "5+" used to add 0)
+  function current() {
+    if (fresh) return ans;
+    try { var v = Lantern.formula.evaluate(closeOpen(expr), { deg: deg, ans: ans }); return typeof v === "number" && isFinite(v) ? v : null; } catch (e) { return null; }
+  }
+  function memAdd(sign) {
+    var v = current();
+    if (v === null) { errMsg = "Error: nothing to add to memory yet"; paint(); return; }
+    mem += sign * v; save(); paint();
+  }
   // toolApi() -- the object handed to Lantern.calcTools extensions.
   function toolApi() {
     return {
       getExpr: function () { return expr; },
-      setExpr: function (s) { expr = String(s); paint(); },
+      setExpr: function (s) { expr = String(s); fresh = false; errMsg = ""; paint(); },
       push: push,
+      value: function (v) { input(valStr(v), true); },
       equals: equals,
       ans: function () { return ans; },
       isDeg: function () { return deg; },
-      paint: paint
+      paint: paint,
+      focus: function () { if (ws) ws.focus(); }
     };
   }
   function key(label, insert, cls) {
     return Lantern.el("button", { "class": cls || "", text: label, onclick: function () {
       if (insert === "=") equals();
-      else if (insert === "C") { expr = ""; paint(); }
-      else if (insert === "back") { expr = expr.slice(0, -1); paint(); }
-      else if (insert === "M+") { mem += parseFloat(resEl.textContent) || 0; }
-      else if (insert === "M-") { mem -= parseFloat(resEl.textContent) || 0; }
-      else if (insert === "MR") push(Lantern.fmtNum(mem));
-      else if (insert === "MC") { mem = 0; }
-      else if (insert === "deg") { deg = !deg; degBtn.textContent = deg ? "DEG" : "RAD"; paint(); }
-      else push(insert);
+      else if (insert === "C") clear();
+      else if (insert === "back") back();
+      else if (insert === "M+") memAdd(1);
+      else if (insert === "M-") memAdd(-1);
+      else if (insert === "MR") input(valStr(mem), true);
+      else if (insert === "MC") { mem = 0; save(); paint(); }
+      else if (insert === "deg") { deg = !deg; save(); paint(); }
+      else input(insert);
     } });
   }
 
@@ -2060,10 +2159,14 @@ Lantern.formula = (function () {
     mount: function (el) {
       ws = el;
       ans = Lantern.store.get("calc.ans", 0);
+      mem = Number(Lantern.store.get("calc.mem", 0)) || 0;
+      deg = Lantern.store.get("calc.deg", true) !== false;
+      fresh = false; expr = ""; errMsg = "";
       var box = Lantern.el("div", { "class": "calcbox" });
       exprEl = Lantern.el("div", { "class": "expr" });
-      resEl = Lantern.el("div", { "class": "res", text: "0" });
-      box.appendChild(Lantern.el("div", { "class": "cdisp" }, [exprEl, resEl]));
+      resEl = Lantern.el("div", { "class": "res", text: "0", "aria-live": "polite" });
+      stEl = Lantern.el("div", { "class": "cstat", "aria-label": "Calculator mode" });
+      box.appendChild(Lantern.el("div", { "class": "cdisp" }, [stEl, exprEl, resEl]));
       var keys = Lantern.el("div", { "class": "ckeys" });
       var rows = [
         [key("sin", "SIN(", "op"), key("cos", "COS(", "op"), key("tan", "TAN(", "op"), key("\u03c0", "PI", "op"), key("e", "E", "op")],
@@ -2077,7 +2180,7 @@ Lantern.formula = (function () {
       for (var r = 0; r < rows.length; r++)
         for (var c = 0; c < rows[r].length; c++) keys.appendChild(rows[r][c]);
       degBtn = Lantern.el("button", { "class": "op", text: "DEG", onclick: function () {
-        deg = !deg; degBtn.textContent = deg ? "DEG" : "RAD"; paint();
+        deg = !deg; save(); paint();
       } });
       var memRow = Lantern.el("div", { "class": "ckeys", style: "margin-top:6px;grid-template-columns:repeat(5,1fr);" },
         [degBtn, key("M+", "M+", "op"), key("M\u2212", "M-", "op"), key("MR", "MR", "op"), key("MC", "MC", "op")]);
@@ -2104,22 +2207,32 @@ Lantern.formula = (function () {
         box.appendChild(trow);
       }
       box.appendChild(Lantern.el("p", { "class": "muted", style: "margin-top:8px",
-        text: "Type with the keyboard too. Functions: SIN COS TAN LOG LN SQRT FACT POW MOD ROUND IF." }));
+        text: "Type with the keyboard too: numbers, + - * / ^ % and functions by name -- sqrt(2), log(8,2), IF(5>3,1,0). Enter is =, Esc clears, Backspace deletes." }));
       ws.appendChild(box);
-      ws.addEventListener("keydown", onKey);
+      document.addEventListener("keydown", onKey);
       ws.setAttribute("tabindex", "0");
       ws.focus();
       paint();
     },
-    unmount: function () { ws.removeEventListener("keydown", onKey); }
+    unmount: function () { document.removeEventListener("keydown", onKey); }
   });
 
+  // Keys reach the calculator wherever the focus is (after a dialog closed
+  // it was outside, and typing did nothing), but not while typing in a box,
+  // nor with Ctrl/Cmd/Alt (browser zoom, shortcuts). A dialog open over it
+  // takes the keys: Esc closes the dialog instead of clearing the sum.
   function onKey(e) {
+    if (!ws || !document.contains(ws)) { document.removeEventListener("keydown", onKey); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    var tag = e.target && e.target.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    var ov = document.querySelector(".guide-overlay");
+    if (ov) { if (e.key === "Escape") { ov.parentNode.removeChild(ov); ws.focus(); e.preventDefault(); } return; }
     var k = e.key;
-    if (/^[0-9+\-*/^%().,]$/.test(k)) { push(k); e.preventDefault(); }
-    else if (k === "Enter" || k === "=") { equals(); e.preventDefault(); }
-    else if (k === "Backspace") { expr = expr.slice(0, -1); paint(); e.preventDefault(); }
-    else if (k === "Escape") { expr = ""; paint(); }
+    if (k === "Enter" || k === "=") { equals(); e.preventDefault(); }
+    else if (k === "Backspace") { back(); e.preventDefault(); }
+    else if (k === "Escape" || k === "Delete") { clear(); e.preventDefault(); }
+    else if (k && k.length === 1 && /[0-9A-Za-z_+\-*\x2F^%\x28\x29.,<>\x22\x27! ]/.test(k)) { input(k, false, true); e.preventDefault(); }
   }
 })();
 // ===========================================================================
@@ -5742,7 +5855,7 @@ Lantern.drawShapes = (function () {
   var T = window.Lantern.calcTools = window.Lantern.calcTools || [];
   T.push({ label: "History", title: "Recent calculations", run: function (api) {
     var el = Lantern.el;
-    function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
+    function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); if (api.focus) api.focus(); }
     var listEl = el("div", { "class": "list", style: "padding:0;margin:10px 0;max-width:none;" });
     function render() {
       listEl.innerHTML = "";
@@ -5751,7 +5864,7 @@ Lantern.drawShapes = (function () {
         text: "Nothing yet. Every time you press =, the calculation is kept here." }));
       for (var i = 0; i < h.length; i++) (function (item) {
         listEl.appendChild(el("div", { "class": "item" }, [
-          el("div", { "class": "grow", onclick: function () { api.push(Lantern.fmtNum(item.v)); close(); } }, [
+          el("div", { "class": "grow", onclick: function () { if (api.value) api.value(item.v); else api.push(Lantern.fmtNum(item.v)); close(); } }, [
             el("div", { "class": "t", text: item.e + " = " + Lantern.fmtNum(item.v) }),
             el("div", { "class": "s", text: new Date(item.t).toLocaleString() })
           ])
@@ -5801,11 +5914,11 @@ Lantern.drawShapes = (function () {
   var T = window.Lantern.calcTools = window.Lantern.calcTools || [];
   T.push({ label: "Constants", title: "Insert a physical constant", run: function (api) {
     var el = Lantern.el;
-    function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
+    function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); if (api.focus) api.focus(); }
     var listEl = el("div", { "class": "list", style: "padding:0;margin:10px 0;max-width:none;" });
     for (var i = 0; i < CONSTS.length; i++) (function (cst) {
       listEl.appendChild(el("div", { "class": "item" }, [
-        el("div", { "class": "grow", onclick: function () { api.push(String(cst[1])); close(); } }, [
+        el("div", { "class": "grow", onclick: function () { if (api.value) api.value(cst[1]); else api.push(String(cst[1])); close(); } }, [
           el("div", { "class": "t", text: cst[0] + " = " + String(cst[1]) }),
           el("div", { "class": "s", text: cst[2] })
         ])
@@ -5864,7 +5977,7 @@ Lantern.drawShapes = (function () {
   var T = window.Lantern.calcTools = window.Lantern.calcTools || [];
   T.push({ label: "f(x)", title: "Function reference", run: function (api) {
     var el = Lantern.el;
-    function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
+    function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); if (api.focus) api.focus(); }
     var listEl = el("div", { "class": "list", style: "padding:0;margin:10px 0;max-width:none;" });
     for (var i = 0; i < FUNCS.length; i++) (function (f) {
       listEl.appendChild(el("div", { "class": "item" }, [
