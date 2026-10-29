@@ -65,6 +65,10 @@ it, run 17.) Lantern Watch was written in another thread as a drop-in for
 - Not yet run on Windows itself (the CIM counters, the drive's bus type, the
   question window, the `.bat` hooks under cmd.exe), on a Mac, or on the Pi with
   the exFAT stick: the PowerShell watcher ran here under PowerShell 7 on Linux.
+- From Adam's first self-test on Windows (PowerShell 5.1): a model path typed
+  as `kit\models\...` had no drive letter, so the drive's read counter was not
+  found (`drive=no`). The Windows watcher now makes every path full first
+  (start-lantern.bat already passed full paths; `MODEL=` may not).
 
 ## 1.14.3 — Bench run 15, the 4B again: a sum glued with *, newtons over g, the line that needs the 2 (2026-10-28)
 

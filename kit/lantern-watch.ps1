@@ -47,6 +47,13 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'   # the Storage module draws progress bars over the shared console
 $LW_VERSION = '1.0'
 $INV = [Globalization.CultureInfo]::InvariantCulture
+# A path typed by hand can be relative (kit\models\...). The drive letter is
+# what finds the drive's read counter, so every path is made full here.
+function Full-Path([string]$p) {
+  if (-not $p -or $Simulate) { return $p }
+  try { return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($p) } catch { return $p }
+}
+$Model = Full-Path $Model; $MmProj = Full-Path $MmProj; $Models = Full-Path $Models
 
 # ---- tuning (first guesses; the load logs are there to refine them) --------
 $ENGINE_OVERHEAD_MB = 1200  # KV cache for -c 8192 plus compute buffers
