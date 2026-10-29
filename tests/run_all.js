@@ -27,6 +27,7 @@ var steps = [
   ["Chat routing (follow-ups, questions about itself, bench conversations)", "node", ["tests/chat_routing.js"], /ALL CHAT ROUTING TESTS PASS/],
   ["AI makes documents, slides, flashcards, plans; READ (1.12)", "node", ["tests/ai_make_docs.js"], /ALL MAKE DOCS TESTS PASS/],
   ["Slides after the audit (one show at a time, X, no bare bullet, outline round trip, unchanged on open, Ctrl+Z guard, keyboard thumbnails, paste) (1.16)", "node", ["tests/slides_audit.js"], /ALL SLIDES AUDIT TESTS PASS/],
+  ["Storage full when Lantern starts: saved work still read, saves said to fail (1.16)", "node", ["tests/storage_full.js"], /ALL STORAGE FULL TESTS PASS/],
   ["Writer after the audit (paste and import cleaned, .txt lines, title once, unchanged on open, storage full said, Esc) and the shared storage fix (1.16)", "node", ["tests/writer_audit.js"], /ALL WRITER AUDIT TESTS PASS/],
   ["Sheets after the audit (typing kept, pointing at cells, text cells, IF/IFERROR, Excel error codes, errors in ranges, typed 1,500/$12.50/10%, keys, CSV import) (1.16)", "node", ["tests/sheet_audit.js"], /ALL SHEET AUDIT TESTS PASS/],
   ["Calculator after the audit (after =, errors kept, brackets closed, memory and RAD kept, keyboard and dialogs) and the shared number and formula fixes (1.16)", "node", ["tests/calc_audit.js"], /ALL CALC AUDIT TESTS PASS/],
