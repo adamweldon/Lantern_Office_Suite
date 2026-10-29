@@ -383,6 +383,8 @@ Lantern.injectStyles = function () {
     ".present .st{font-size:6vmin;font-weight:700;color:var(--accent);}",
     ".present .sb{font-size:3.4vmin;line-height:1.55;}",
     ".present .pnav{position:fixed;bottom:10px;right:14px;color:#9aa4af;font-size:13px;}",
+    ".present .pclose{position:fixed;top:10px;right:12px;background:rgba(0,0,0,.35);color:#fff;border:1px solid rgba(255,255,255,.35);border-radius:999px;width:40px;height:40px;font-size:18px;padding:0;z-index:2;}",
+    ".present .psimg{min-height:0;flex:0 1 auto;}",
     // Calc
     ".calcbox{max-width:380px;margin:16px auto;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px;}",
     ".cdisp{background:var(--ink);color:#fff;border-radius:8px;padding:10px 12px;margin-bottom:10px;}",
@@ -2015,11 +2017,25 @@ Lantern.formula = (function () {
 // is missing (old webviews), advances by tap / arrow keys / space.
 (function () {
   var col = Lantern.store.collection("slides.docs");
-  var ws, doc = null, cur = 0, side, main, presentEl = null, keyHandler = null;
+  var ws, doc = null, cur = 0, side, main, presentEl = null, keyHandler = null, fsHandler = null;
+  // Saving (1.16.0): typing saves 400 ms after the last key (every key used
+  // to re-save the whole store -- slow with pictures), at once on leaving or
+  // closing the page; a deck only opened is not saved (it used to get a new
+  // date and jump to the top of the library).
+  var saveTimer = null, opened = "";
 
   function blankSlide() { return { h: "Title", body: "<ul><li>Point one</li></ul>" }; }
 
-  function save() { if (doc) col.put(doc); }
+  function save() {
+    clearTimeout(saveTimer); saveTimer = null;
+    if (!doc) return;
+    var now = JSON.stringify(doc);
+    if (now === opened) return;
+    col.put(doc); opened = JSON.stringify(doc);
+  }
+  function saveSoon() { clearTimeout(saveTimer); saveTimer = setTimeout(save, 400); }
+  window.addEventListener("pagehide", function () { if (saveTimer) save(); });
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "hidden" && saveTimer) save(); });
 
   // Shrink a picked photo so a deck stays small enough to store and back up.
   function downscale(dataURL, cb) {
@@ -2031,10 +2047,14 @@ Lantern.formula = (function () {
       var cv = document.createElement("canvas"); cv.width = w; cv.height = h;
       var ctx = cv.getContext("2d");
       if (!ctx) { cb(dataURL); return; }
+      // white under a transparent PNG (JPEG has no transparency: it was black)
+      ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, w, h);
       ctx.drawImage(img, 0, 0, w, h);
       try { cb(cv.toDataURL("image/jpeg", 0.82)); } catch (e) { cb(dataURL); }
     };
-    img.onerror = function () { cb(dataURL); };
+    // a picture this browser cannot show (an iPhone's HEIC on a PC) is not
+    // stored: it used to be kept full size, as a broken image
+    img.onerror = function () { cb(null); };
     img.src = dataURL;
   }
   function pickImage() {
@@ -2045,7 +2065,17 @@ Lantern.formula = (function () {
       if (!f) return;
       var reader = new FileReader();
       reader.onload = function () {
-        downscale(reader.result, function (d) { doc.slides[cur].img = d; save(); renderMain(); });
+        downscale(reader.result, function (d) {
+          if (!d) { alert("This picture cannot be shown here (an iPhone HEIC photo, perhaps). Save it as a JPEG or PNG and add that."); return; }
+          var s = doc.slides[cur], before = s.img;
+          s.img = d; save();
+          if (Lantern.store.ok && !Lantern.store.ok()) {
+            if (before) s.img = before; else delete s.img;
+            save();
+            alert("This picture does not fit in the space this browser gives Lantern. Remove pictures you do not need (or keep a copy with Backup), then try again.");
+          }
+          renderMain();
+        });
       };
       reader.readAsDataURL(f);
     };
@@ -2062,7 +2092,7 @@ Lantern.formula = (function () {
       slide: function () { return doc.slides[cur]; },
       body: function () { return main ? main.querySelector(".sb") : null; },
       go: function (i) { cur = Math.max(0, Math.min(doc.slides.length - 1, i)); renderAll(); },
-      save: save,
+      save: function () { opened = ""; save(); },
       renderAll: renderAll,
       renderMain: renderMain,
       present: present
@@ -2073,8 +2103,10 @@ Lantern.formula = (function () {
     side.innerHTML = "";
     doc.slides.forEach(function (s, i) {
       var th = Lantern.el("div", {
-        "class": "sthumb" + (i === cur ? " sel" : ""),
+        "class": "sthumb" + (i === cur ? " sel" : ""), tabindex: "0", role: "button",
+        "aria-label": "Slide " + (i + 1) + (s.h ? ": " + s.h : ""),
         onclick: function () { cur = i; renderAll(); },
+        onkeydown: function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); cur = i; renderAll(); } },
         html: "<b>" + (i + 1) + ".</b> " + Lantern.esc(s.h || "")
       });
       side.appendChild(th);
@@ -2088,10 +2120,28 @@ Lantern.formula = (function () {
   function renderMain() {
     main.innerHTML = "";
     var s = doc.slides[cur];
+    // the title is one line of plain text: Enter goes on to the body, and
+    // pasted or Ctrl+B formatting is not kept (it showed but was not saved)
     var h = Lantern.el("div", { "class": "st", contenteditable: "true", "aria-label": "Slide title",
-      html: Lantern.esc(s.h), oninput: function () { s.h = h.textContent; save(); renderSide(); } });
+      html: Lantern.esc(s.h), oninput: function () { s.h = h.textContent; saveSoon(); renderSide(); },
+      onkeydown: function (e) {
+        if (e.key === "Enter") { e.preventDefault(); b.focus(); }
+        else if ((e.ctrlKey || e.metaKey) && /^[biu]$/i.test(e.key)) e.preventDefault();
+      } });
+    h.addEventListener("paste", function (e) {
+      var t = e.clipboardData && e.clipboardData.getData("text/plain");
+      if (t == null) return;
+      e.preventDefault(); document.execCommand("insertText", false, t.replace(/\s+/g, " "));
+    });
     var b = Lantern.el("div", { "class": "sb", contenteditable: "true", "aria-label": "Slide body",
-      html: s.body, oninput: function () { s.body = b.innerHTML; save(); } });
+      html: s.body, oninput: function () { s.body = b.innerHTML; saveSoon(); } });
+    // a paste keeps words and lists, not the source's colours and fonts
+    // (black text vanished on the dark theme)
+    b.addEventListener("paste", function (e) {
+      var cd = e.clipboardData, hh = cd && cd.getData("text/html");
+      if (!hh || !Lantern.writerClean) return;
+      e.preventDefault(); document.execCommand("insertHTML", false, Lantern.writerClean(hh));
+    });
     var slideKids = [h];
     if (s.img) slideKids.push(Lantern.el("img", { "class": "simg", src: s.img, alt: "Slide picture" }));
     slideKids.push(b);
@@ -2132,20 +2182,39 @@ Lantern.formula = (function () {
   function renderAll() { renderSide(); renderMain(); }
 
   function stopPresent() {
-    if (presentEl) { document.body.removeChild(presentEl); presentEl = null; }
+    if (presentEl) { if (presentEl.parentNode) presentEl.parentNode.removeChild(presentEl); presentEl = null; }
     if (keyHandler) { document.removeEventListener("keydown", keyHandler); keyHandler = null; }
+    if (fsHandler) { document.removeEventListener("fullscreenchange", fsHandler); fsHandler = null; }
+    if (document.fullscreenElement && document.exitFullscreen) { try { document.exitFullscreen().catch(function () {}); } catch (e) { /* old browser */ } }
   }
+  // present() (1.16.0): one show at a time (Space or Enter on the Present
+  // button started another, and the extra shows covered the app until a
+  // reload); on a touch screen the left third goes back, a swipe goes either
+  // way, and X ends it; leaving full screen ends it too; text shrinks until
+  // the slide fits the screen.
   function present() {
-    var i = cur;
+    if (presentEl) return;
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    var i = cur, touch = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches), tx = null;
+    function plain(html) { var t = document.createElement("div"); t.innerHTML = html || ""; return (t.textContent || "").replace(/\s+/g, ""); }
     function paint() {
       var s = doc.slides[i];
       presentEl.innerHTML = "";
       var pk = [Lantern.el("div", { "class": "st", text: s.h })];
       if (s.img) pk.push(Lantern.el("img", { "class": "psimg", src: s.img, alt: "" }));
-      pk.push(Lantern.el("div", { "class": "sb", html: s.body }));
-      presentEl.appendChild(Lantern.el("div", { "class": "pslide" }, pk));
+      if (plain(s.body) || /<img/i.test(s.body || "")) pk.push(Lantern.el("div", { "class": "sb", html: s.body }));   // no bare bullet on a heading-only slide
+      var ps = Lantern.el("div", { "class": "pslide" }, pk);
+      presentEl.appendChild(ps);
       presentEl.appendChild(Lantern.el("div", { "class": "pnav",
-        text: (i + 1) + " / " + doc.slides.length + "  \u00b7  tap or \u2192 next \u00b7 Esc exits" }));
+        text: (i + 1) + " / " + doc.slides.length + "  \u00b7  " + (touch ? "tap right: next \u00b7 tap left: back" : "tap or \u2192 next \u00b7 \u2190 back \u00b7 Esc exits") }));
+      presentEl.appendChild(Lantern.el("button", { "class": "pclose", text: "\u2715", title: "End the show", "aria-label": "End the show",
+        onclick: function (e) { e.stopPropagation(); stopPresent(); } }));
+      // shrink the words until the slide fits (a picture with 5-6 points ran off the screen)
+      var sb = ps.querySelector(".sb"), fs = 0;
+      for (var k = 0; k < 12 && sb && ps.scrollHeight > presentEl.clientHeight + 2; k++) {
+        fs = (fs || parseFloat(window.getComputedStyle(sb).fontSize) || 20) * 0.9;
+        sb.style.fontSize = fs + "px";
+      }
       // Hook: extension modules decorate the live presentation after each
       // paint (see SLIDES_THEMES, SLIDES_TIMER).
       var hooks = window.Lantern.slidePresentHooks || [];
@@ -2159,16 +2228,34 @@ Lantern.formula = (function () {
       if (i >= doc.slides.length) { stopPresent(); return; }
       paint();
     }
-    presentEl = Lantern.el("div", { "class": "present", onclick: function () { step(1); } });
+    presentEl = Lantern.el("div", { "class": "present", onclick: function (e) {
+      var w = presentEl.clientWidth || window.innerWidth || 1;
+      step(touch && e.clientX < w / 3 ? -1 : 1);
+    } });
+    presentEl.addEventListener("touchstart", function (e) { tx = e.touches && e.touches[0] ? e.touches[0].clientX : null; }, { passive: true });
+    presentEl.addEventListener("touchend", function (e) {
+      var t = e.changedTouches && e.changedTouches[0];
+      if (tx === null || !t) return;
+      var dx = t.clientX - tx; tx = null;
+      if (Math.abs(dx) > 50) { e.preventDefault(); step(dx < 0 ? 1 : -1); }
+    });
     keyHandler = function (e) {
-      if (e.key === "Escape") stopPresent();
-      else if (e.key === "ArrowRight" || e.key === " " || e.key === "PageDown") step(1);
-      else if (e.key === "ArrowLeft" || e.key === "PageUp") step(-1);
+      var k = e.key;
+      if (k === "Escape") stopPresent();
+      else if (k === "ArrowRight" || k === " " || k === "PageDown" || k === "Enter") step(1);
+      else if (k === "ArrowLeft" || k === "PageUp" || k === "Backspace") step(-1);
+      else return;
+      e.preventDefault();
     };
     document.addEventListener("keydown", keyHandler);
     document.body.appendChild(presentEl);
     paint();
-    if (presentEl.requestFullscreen) presentEl.requestFullscreen().catch(function () {});
+    if (presentEl.requestFullscreen) {
+      presentEl.requestFullscreen().then(function () {
+        fsHandler = function () { if (!document.fullscreenElement) stopPresent(); };
+        document.addEventListener("fullscreenchange", fsHandler);
+      }, function () {});
+    }
   }
 
   function editView(id) {
@@ -2178,12 +2265,13 @@ Lantern.formula = (function () {
     ws.innerHTML = "";
     var titleIn = Lantern.el("input", {
       value: doc.title || "", placeholder: "Deck title", style: "flex:1;min-width:120px;font-weight:600;",
-      oninput: function () { doc.title = titleIn.value; save(); }
+      oninput: function () { doc.title = titleIn.value; saveSoon(); }
     });
     var tbKids = [
       Lantern.el("button", { "class": "ghost", text: "\u2190 Decks", onclick: function () { save(); libView(); } }),
       titleIn
     ];
+    opened = JSON.stringify(doc);
     // Hook: extension modules add deck-level tools (see SLIDES_THEMES,
     // SLIDES_EXPORT).
     var dt = window.Lantern.slideDeckTools || [];
@@ -2198,7 +2286,18 @@ Lantern.formula = (function () {
     main = Lantern.el("div", { "class": "smain" });
     ws.appendChild(Lantern.el("div", { "class": "slayout" }, [side, main]));
     renderAll();
+    // Ctrl+Z outside the title and the slide text is not the browser's to
+    // take (it went back to the deck title and emptied it, 1.16.0)
+    if (!undoGuard) {
+      undoGuard = function (e) {
+        if (!(e.ctrlKey || e.metaKey) || !/^[zy]$/i.test(e.key) || !ws || !document.contains(ws)) return;
+        var a = document.activeElement;
+        if (!a || !(a.isContentEditable || a.tagName === "INPUT" || a.tagName === "TEXTAREA")) e.preventDefault();
+      };
+      document.addEventListener("keydown", undoGuard);
+    }
   }
+  var undoGuard = null;
 
   function libView() {
     doc = null;
@@ -2207,7 +2306,7 @@ Lantern.formula = (function () {
       return Lantern.el("div", { "class": "item" }, [
         Lantern.el("div", { "class": "grow", onclick: function () { editView(d.id); } }, [
           Lantern.el("div", { "class": "t", text: d.title || "Untitled deck" }),
-          Lantern.el("div", { "class": "s", text: d.slides.length + " slides \u00b7 " + new Date(d.updated).toLocaleString() })
+          Lantern.el("div", { "class": "s", text: d.slides.length + (d.slides.length === 1 ? " slide" : " slides") + " \u00b7 " + new Date(d.updated).toLocaleString() })
         ]),
         Lantern.el("button", { text: "Delete", onclick: function () {
           if (Lantern.confirmDel('"' + (d.title || "Untitled deck") + '"')) { col.del(d.id); libView(); }
@@ -2278,7 +2377,7 @@ Lantern.formula = (function () {
       Lantern.slidesOpenRequest = null;
       if (want && col.get(want)) editView(want); else libView();
     },
-    unmount: function () { stopPresent(); if (doc) save(); }
+    unmount: function () { stopPresent(); if (doc) save(); if (undoGuard) { document.removeEventListener("keydown", undoGuard); undoGuard = null; } }
   });
 })();
 // ===========================================================================
@@ -5889,7 +5988,7 @@ Lantern.drawShapes = (function () {
 // printed handout with speaker notes.
 (function () {
   function theme(d) {
-    return d.theme || { bg: "#0b0f14", fg: "#ffffff", accent: "#e8833a" };
+    return d.theme || { bg: "#0b0f14", fg: "#ffffff", accent: "#c2410c" };   // the same orange as the show
   }
   function deckHtml(d) {
     var th = theme(d);
@@ -5987,16 +6086,20 @@ Lantern.drawShapes = (function () {
     function build() {
       var lines = ta.value.replace(/\r\n?/g, "\n").split("\n");
       var title = null, slides = [];
+      // (also reads Outline .txt back: "1. Heading" numbers, "[notes] ..."
+      // lines and indented plain text, which used to become slides)
       for (var i = 0; i < lines.length; i++) {
         var t = lines[i].trim();
         if (!t) continue;
+        if (/^\[notes\]/i.test(t) && slides.length) { slides[slides.length - 1].notes = t.replace(/^\[notes\]\s*/i, ""); continue; }
+        if (/^\s/.test(lines[i]) && !/^[-*\u2022]/.test(t) && slides.length && title !== null) { slides[slides.length - 1].text = (slides[slides.length - 1].text ? slides[slides.length - 1].text + " " : "") + t; continue; }
         if (/^[-*\u2022]/.test(t)) {
           if (!slides.length) slides.push({ h: "", bullets: [] });
           slides[slides.length - 1].bullets.push(t.replace(/^[-*\u2022]+\s*/, ""));
         } else if (title === null) {
           title = t;
         } else {
-          slides.push({ h: t.replace(/^#+\s*/, ""), bullets: [] });
+          slides.push({ h: t.replace(/^#+\s*/, "").replace(/^\d{1,3}\.\s+/, ""), bullets: [] });
         }
       }
       if (!slides.length) {
@@ -6006,8 +6109,10 @@ Lantern.drawShapes = (function () {
       var out = slides.map(function (s) {
         var body = s.bullets.length
           ? "<ul>" + s.bullets.map(function (x) { return "<li>" + Lantern.esc(x) + "</li>"; }).join("") + "</ul>"
-          : "<ul><li></li></ul>";
-        return { h: s.h, body: body };
+          : s.text ? "<p>" + Lantern.esc(s.text) + "</p>" : "<ul><li></li></ul>";
+        var o = { h: s.h, body: body };
+        if (s.notes) o.notes = s.notes;
+        return o;
       });
       close();
       api.newDeck(title, out);
@@ -6843,18 +6948,20 @@ if (document.readyState === "loading") {
   Lantern.guide.add("slides", "Slides - Help & Tutorial", [
     ["Templates", "<p>Instead of a blank deck, scroll to <b>Templates</b> on the main Slides screen and tap " +
       "<b>Use</b>: a Business Pitch, Lesson Plan, Community Meeting, or Simple Report deck appears, already " +
-      "structured slide by slide with notes on what belongs where. Replace the placeholder text with your own.</p>"],
-    ["Decks", "<p><b>New</b> makes a deck; the library lists your decks. Changes save automatically.</p>"],
+      "structured slide by slide, with placeholder text that says what belongs where. Replace it with your own.</p>"],
+    ["Decks", "<p><b>+ New deck</b> makes a deck; the library lists your decks. Changes save automatically.</p>"],
     ["Editing slides", "<p>The small thumbnails on the left are your slides - tap one to work on it. " +
       "Tap the big title or body area and type. <b>+ Slide</b> adds a slide after the current one, " +
-      "<b>&#9650;/&#9660;</b> move it earlier or later, <b>Delete</b> removes it.</p>"],
+      "<b>&uarr;/&darr;</b> move it earlier or later, <b>Delete slide</b> removes it. On a keyboard, Tab to a thumbnail and press Enter.</p>"],
     ["Adding a picture", "<p>Tap <b>+ Picture</b> to choose a photo from your device - it appears on the slide and " +
       "in the presentation. The picture is shrunk to keep the file small and is saved <b>inside the deck</b>, so it " +
       "travels with your Backup and needs no internet. <b>Change picture</b> replaces it; <b>Remove picture</b> takes " +
       "it off.</p>"],
     ["Presenting", "<p>Tap <b>Present</b> for full screen. Move forward by tapping the screen, " +
       "or with <kbd>&rarr;</kbd> or <kbd>Space</kbd>; go back with <kbd>&larr;</kbd>; " +
-      "leave with <kbd>Esc</kbd>. It works even on browsers without a fullscreen feature.</p>"],
+      "leave with <kbd>Esc</kbd> or the <b>&#10005;</b> in the corner. On a phone or tablet, tap the right of the screen " +
+      "for the next slide and the left third to go back, or swipe. Words shrink to fit when a slide is full. " +
+      "It works even on browsers without a fullscreen feature.</p>"],
     ["Tips for good slides", "<ul><li>One idea per slide, 3-5 short lines each</li>" +
       "<li>Big claim in the title, support in the body</li>" +
       "<li>Practice with the Present view - it is exactly what your audience sees</li></ul>"]
