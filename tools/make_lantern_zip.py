@@ -30,6 +30,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOP_FILES = ("Lantern_Office_Suite.html", "README.txt", "CHANGELOG.md")
 TOP_DIRS = ("site", "kit", "docs")
 NEVER = ("kit/engine/", "kit/models/", "kit/library/",   # what setup downloads
+         "kit/logs/",                                     # Lantern Watch's load logs (this computer's own)
          "kit/site/", "kit/site.new/", "kit/site.old/", "site.new/", "site.old/")   # Lantern lives in Lantern/site only
 
 

@@ -64,7 +64,7 @@ for rel in ("site", "kit", "docs", "src", "tools", "Lantern_Office_Suite.html", 
             "Install Lantern (Linux).desktop", "Start Lantern (Linux).desktop"):
     cp(rel)
 for junk in ("kit/models/Qwen3.5-35B-A3B.gguf", "kit/engine/windows/llama-server.exe", "kit/library/wikipedia.zim", "kit/site/index.html",
-             "kit/models/big.gguf.part"):
+             "kit/models/big.gguf.part", "kit/logs/loads.csv"):
     p = os.path.join(plain, junk); os.makedirs(os.path.dirname(p), exist_ok=True); open(p, "w").write("downloaded")
 r = subprocess.run([sys.executable, os.path.join(plain, "tools", "make_lantern_zip.py"), os.path.join(tmp, "dist2")], capture_output=True, text=True, cwd=tmp,
                    env=dict(os.environ, GIT_DIR=os.path.join(tmp, "no-git")))

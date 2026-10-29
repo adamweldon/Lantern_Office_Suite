@@ -78,6 +78,32 @@ if "!M!"=="" (
   echo No model in %MODELS%. Run setup-kit.bat, or copy a .gguf file there.
   pause & exit /b 1
 )
+rem Lantern Watch (kit\lantern-watch.ps1): is there room in FREE memory for
+rem this model right now, not just in total? If not, it asks whether to use a
+rem smaller model, load this one anyway, or stop so programs can be closed.
+rem It also gives the engine a gentler priority. Without it nothing changes.
+set "LW=%DIR%lantern-watch.ps1"
+set "LWARGS="
+set "LWSTOP="
+set "LWPICK="
+if not exist "%LW%" goto lw_planned
+set "LWF="
+if defined FORCE set "LWF=-Forced"
+if not "%MODEL%"=="" set "LWF=-Forced"
+set "LWV="
+if not defined VISION set "LWV=-NoVision"
+for /f "usebackq tokens=1,* delims==" %%a in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%LW%" plan -Model "!M!" -Models "%MODELS%" %LWF% %LWV%`) do (
+  if /I "%%a"=="PICK" set "LWPICK=%%b"
+  if /I "%%a"=="ARGS" set "LWARGS=%%b"
+  if /I "%%a"=="STOP" set "LWSTOP=1"
+)
+if defined LWSTOP (
+  echo Stopped so other programs can be closed first. Start Lantern again when ready.
+  pause
+  exit /b 0
+)
+if defined LWPICK if exist "%MODELS%\!LWPICK!" set "M=%MODELS%\!LWPICK!"
+:lw_planned
 rem The model's vision part (mmproj-<model>-F16.gguf, from setup-kit), so the
 rem AI can look at pictures -- the drawings Lantern makes for it to check.
 set "MMPROJ="
@@ -131,14 +157,26 @@ set "MBYTES=0"
 for %%f in ("!M!") do set "MBYTES=%%~zf"
 set "VBYTES=0"
 if defined MMPROJ for %%f in ("!MMPROJ!") do set "VBYTES=%%~zf"
-start "" /b powershell -NoProfile -Command "$t=[DateTimeOffset]::Now.ToUnixTimeMilliseconds(); for($i=0;$i -lt 60;$i++){ try { $c=New-Object Net.Sockets.TcpClient('127.0.0.1',%PORT%); $c.Close(); break } catch { Start-Sleep -Milliseconds 500 } }; Start-Process ('http://127.0.0.1:%PORT%/?kit=1&model=!MNAME!&bytes=!MBYTES!&vbytes=!VBYTES!&t=' + $t)"
+rem Lantern Watch tells the loading screen (and this window's title) what is
+rem really happening while the model loads: bytes read, speed, time left, and
+rem whether Windows is short of memory. JSON at http://127.0.0.1:%LWPORT%/status
+set "LWPORT=%LANTERN_WATCH_PORT%"
+if "%LWPORT%"=="" set "LWPORT=8082"
+set "LWQ="
+set "LWMM="
+if defined MMPROJ set LWMM=-MmProj "!MMPROJ!"
+if exist "%LW%" (
+  set "LWQ=&watch=%LWPORT%"
+  start "" /b powershell -NoProfile -ExecutionPolicy Bypass -File "%LW%" watch -Model "!M!" !LWMM! -Port %PORT% -StatusPort %LWPORT%
+)
+start "" /b powershell -NoProfile -Command "$t=[DateTimeOffset]::Now.ToUnixTimeMilliseconds(); for($i=0;$i -lt 60;$i++){ try { $c=New-Object Net.Sockets.TcpClient('127.0.0.1',%PORT%); $c.Close(); break } catch { Start-Sleep -Milliseconds 500 } }; Start-Process ('http://127.0.0.1:%PORT%/?kit=1&model=!MNAME!&bytes=!MBYTES!&vbytes=!VBYTES!!LWQ!&t=' + $t)"
 echo.
 echo The AI model is loading now. That takes a minute or two, longer from a USB
 echo stick; Lantern's page shows a progress bar until it is ready.
 echo Keep this window open: closing it stops Lantern's AI.
 echo.
 pushd "%DIR%engine\windows"
-"%BIN%" -m "!M!" !MMARG! --path "%SITE%" --host %HOST% --port %PORT% -c 8192 %NGL%
+"%BIN%" -m "!M!" !MMARG! --path "%SITE%" --host %HOST% --port %PORT% -c 8192 %NGL% !LWARGS!
 popd
 pause
 exit /b 0

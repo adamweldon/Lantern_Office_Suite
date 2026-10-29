@@ -37,7 +37,8 @@ def make_kit(name, models):
 if "--version" in sys.argv: print("version: fake"); sys.exit(0)   # setup's check that the engine starts
 port = int(sys.argv[sys.argv.index("--port") + 1]); m = sys.argv[sys.argv.index("-m") + 1]
 mm = sys.argv[sys.argv.index("--mmproj") + 1].replace(chr(92), "/").split("/")[-1] if "--mmproj" in sys.argv else "none"
-print("FAKE model=" + m.replace(chr(92), "/").split("/")[-1] + " mmproj=" + mm, flush=True)
+pr = sys.argv[sys.argv.index("--prio") + 1] if "--prio" in sys.argv else "none"
+print("FAKE model=" + m.replace(chr(92), "/").split("/")[-1] + " mmproj=" + mm + " prio=" + pr, flush=True)
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200); self.end_headers(); self.wfile.write(b'{"status":"ok"}'); raise SystemExit
@@ -115,8 +116,31 @@ q = dict(x.split("=", 1) for x in url.split("?", 1)[-1].split("&")) if "?" in ur
 ok("start-lantern opens Lantern with the model's name, size and start time", url.startswith("http://127.0.0.1:") and q.get("kit") == "1" and
    q.get("model") == "Qwen3.5-9B-Q4_K_M.gguf" and q.get("bytes") == "4004" and q.get("vbytes") == "0" and t_before - 2000 <= int(q.get("t", "0")) <= t_before + 60000, url)
 ok("start-lantern says the model takes a while and the page shows a progress bar", "shows a progress bar" in out and "Keep this window open" in out, out)
+ok("without Lantern Watch in the kit: normal priority, and no watcher port for the page", "prio=none" in out and "watch" not in q, [url, out])
+# 1.15.0: with Lantern Watch (kit/lantern-watch.py) in the kit, start-lantern
+# asks it whether the model fits in FREE memory, gives the engine a gentler
+# priority (--prio -1 on Linux and Mac), starts it watching the load and
+# tells the page its port (&watch=); LANTERN_PRIO=0 keeps normal priority
+kw = make_kit("watch", ["Qwen3.5-35B-A3B-UD-IQ4_XS.gguf", "Qwen3.5-9B-Q4_K_M.gguf"])
+shutil.copy(os.path.join(ROOT, "kit", "lantern-watch.py"), kw)
+# the watcher asks /health too, so this engine answers for 4 s, not just once
+fw = os.path.join(kw, "engine", "linux", "llama-server")
+ftext = open(fw).read()
+open(fw, "w").write(ftext.replace("try: http.server.HTTPServer((\"127.0.0.1\", port), H).handle_request()\nexcept SystemExit: pass",
+  "import time\nsv = http.server.HTTPServer((\"127.0.0.1\", port), H); sv.timeout = 0.5; end = time.time() + 4\nwhile time.time() < end:\n    try: sv.handle_request()\n    except SystemExit: pass"))
+wport = free_port()
+if os.path.exists(opened): os.remove(opened)
+out = run(kw, ["9b"], {"NO_BROWSER": "", "PATH": fb + os.pathsep + os.environ.get("PATH", ""), "LANTERN_AVAIL_MB": "30000", "LANTERN_WATCH_PORT": str(wport)},
+          [os.path.join(kw, "start-lantern.sh")])
+url = open(opened).read().strip() if wait_file(opened, 5) else ""
+q = dict(x.split("=", 1) for x in url.split("?", 1)[-1].split("&")) if "?" in url else {}
+ok("with Lantern Watch: the page is told the watcher's port, next to the other hints", q.get("watch") == str(wport) and q.get("kit") == "1" and
+   q.get("model") == "Qwen3.5-9B-Q4_K_M.gguf" and q.get("t"), url)
+ok("...the engine runs at the gentler priority, the model it was asked for (it fits in free memory)", "FAKE model=Qwen3.5-9B-Q4_K_M.gguf" in out and "prio=-1" in out, out)
+out = run(kw, ["9b"], {"LANTERN_AVAIL_MB": "30000", "LANTERN_PRIO": "0", "LANTERN_WATCH_PORT": str(free_port())}, [os.path.join(kw, "start-lantern.sh")])
+ok("...LANTERN_PRIO=0: normal priority", "FAKE model=Qwen3.5-9B" in out and "prio=none" in out, out)
 bat = open(os.path.join(ROOT, "kit", "start-lantern.bat")).read()
-ok("start-lantern.bat passes the same hints, opening as soon as the server listens", "?kit=1&model=!MNAME!&bytes=!MBYTES!&vbytes=!VBYTES!&t=" in bat and
+ok("start-lantern.bat passes the same hints, opening as soon as the server listens", "?kit=1&model=!MNAME!&bytes=!MBYTES!&vbytes=!VBYTES!!LWQ!&t=" in bat and
    "TcpClient" in bat and "timeout /t 8" not in bat, "")
 # --- the offline library: kiwix-tools + a Kiwix file, from a stand-in for
 # download.kiwix.org (plain directory listings, as its mirrors serve them)

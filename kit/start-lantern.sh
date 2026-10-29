@@ -93,6 +93,29 @@ fi
 if [ -z "${M:-}" ] || [ ! -f "$M" ]; then
   echo "No model in $MODELS. Run ./setup-kit.sh, or copy a .gguf file there."; ui "FAIL nomodel"; exit 1
 fi
+# Lantern Watch (kit/lantern-watch.py): is there room in FREE memory for this
+# model right now, not just in total? If not, it asks (zenity, or a Mac dialog)
+# or takes a smaller model and says why. It also gives the engine a gentler
+# priority. Without python3 or the watcher, nothing changes.
+LW="$DIR/lantern-watch.py"; LWPY=""; LWARGS=""
+if [ -f "$LW" ]; then
+  LWPY=$(command -v python3 2>/dev/null || true)
+  # a Mac without its developer tools has only a python3 stub that pops up an installer
+  if [ "$OS" = mac ] && [ "$LWPY" = /usr/bin/python3 ] && ! xcode-select -p >/dev/null 2>&1; then LWPY=""; fi
+fi
+if [ -n "$LWPY" ]; then
+  LWF=""; if [ -n "$FORCE" ] || [ -n "${MODEL:-}" ]; then LWF="--forced"; fi
+  LWV=""; [ -z "$VISION" ] && LWV="--no-vision"
+  # shellcheck disable=SC2086
+  LWOUT=$("$LWPY" "$LW" plan --model "$M" --models "$MODELS" $LWF $LWV) || LWOUT=""
+  LWPICK=$(printf '%s\n' "$LWOUT" | sed -n 's/^PICK=//p' | head -n 1)
+  LWARGS=$(printf '%s\n' "$LWOUT" | sed -n 's/^ARGS=//p' | head -n 1)
+  if printf '%s\n' "$LWOUT" | grep -q '^STOP=1'; then
+    echo "Stopped so other programs can be closed first. Start Lantern again when ready."
+    ui "FAIL memory"; exit 0
+  fi
+  if [ -n "$LWPICK" ] && [ -f "$MODELS/$LWPICK" ]; then M="$MODELS/$LWPICK"; fi
+fi
 
 NGL="-ngl 0"
 if [ "$OS" = mac ] || [ -n "$GPU" ]; then NGL=""; fi
@@ -146,14 +169,21 @@ echo "stick; Lantern's page shows a progress bar until it is ready."
 echo "Keep this window open: closing it stops Lantern's AI."
 # shellcheck disable=SC2086
 if [ -n "$MMPROJ" ]; then
-  "$BIN" -m "$M" --mmproj "$MMPROJ" --path "$SITE" --host "$HOST" --port "$PORT" -c 8192 $NGL &
+  "$BIN" -m "$M" --mmproj "$MMPROJ" --path "$SITE" --host "$HOST" --port "$PORT" -c 8192 $NGL $LWARGS &
 else
-  "$BIN" -m "$M" --path "$SITE" --host "$HOST" --port "$PORT" -c 8192 $NGL &
+  "$BIN" -m "$M" --path "$SITE" --host "$HOST" --port "$PORT" -c 8192 $NGL $LWARGS &
 fi
 PID=$!
+# Lantern Watch tells the loading screen (and this terminal) what is really
+# happening while the model loads: bytes read, speed, time left, memory.
+WPID=""; LWQ=""
+if [ -n "$LWPY" ]; then
+  "$LWPY" "$LW" watch --model "$M" --mmproj "$MMPROJ" --port "$PORT" --status-port "${LANTERN_WATCH_PORT:-8082}" --engine-pid "$PID" &
+  WPID=$!; LWQ="&watch=${LANTERN_WATCH_PORT:-8082}"
+fi
 # On the way out, stop the servers and wait for them, so the address is free
 # again at once (Lantern's window restarts on it to share with phones).
-trap 'kill $PID $KPID 2>/dev/null; wait' INT TERM EXIT
+trap 'kill $PID $KPID $WPID 2>/dev/null; wait' INT TERM EXIT
 # Open Lantern as soon as the server answers (503 while the model loads):
 # the page shows a progress bar and connects by itself when the model is
 # ready. It is told the model's name and size and when the server started.
@@ -172,7 +202,7 @@ fi
 MBYTES=$(ls -ln "$M" 2>/dev/null | awk '{print $5}')
 VBYTES=0
 [ -n "$MMPROJ" ] && VBYTES=$(ls -ln "$MMPROJ" 2>/dev/null | awk '{print $5}')
-URL="http://127.0.0.1:$PORT/?kit=1&model=$(basename "$M" | sed 's/ /%20/g')&bytes=${MBYTES:-0}&vbytes=${VBYTES:-0}&t=$T0"
+URL="http://127.0.0.1:$PORT/?kit=1&model=$(basename "$M" | sed 's/ /%20/g')&bytes=${MBYTES:-0}&vbytes=${VBYTES:-0}${LWQ}&t=$T0"
 ui "URL $URL"
 if [ -z "${NO_BROWSER:-}" ]; then
   if [ "$OS" = mac ]; then open "$URL"; else xdg-open "$URL" >/dev/null 2>&1 || true; fi

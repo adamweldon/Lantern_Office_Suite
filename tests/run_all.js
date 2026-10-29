@@ -22,6 +22,8 @@ var steps = [
   ["Open modules: shelves (WikiMed, iFixit, Wikivoyage ...), places and distances, codes (1.14)", "node", ["tests/open_modules.js"], /ALL OPEN MODULE TESTS PASS/],
   ["AI makes things (drawings, schematics, tables)", "node", ["tests/ai_actions.js"], /ALL AI ACTION TESTS PASS/],
   ["Waiting for the kit's model to load (progress bar, connects by itself)", "node", ["tests/ai_server_wait.js"], /ALL SERVER WAIT TESTS PASS/],
+  ["Loading screen with Lantern Watch (measured progress, its advice, out-of-memory warning, a hung or missing watcher) (1.15)", "node", ["tests/ai_server_watch.js"], /ALL SERVER WATCH TESTS PASS/],
+  ["Lantern Watch for real: the watcher and the page over HTTP with CORS, ready, the load log (1.15)", "node", ["tests/ai_server_watch_live.js"], /ALL LIVE WATCH TESTS PASS/],
   ["Chat routing (follow-ups, questions about itself, bench conversations)", "node", ["tests/chat_routing.js"], /ALL CHAT ROUTING TESTS PASS/],
   ["AI makes documents, slides, flashcards, plans; READ (1.12)", "node", ["tests/ai_make_docs.js"], /ALL MAKE DOCS TESTS PASS/],
   ["Code Lab (editor, checks, ladder, sandbox, examples; MAKE CODE, EXAMPLE:, code in replies)", "node", ["tests/code_lab.js"], /ALL CODE LAB TESTS PASS/],
@@ -36,6 +38,7 @@ var steps = [
   ["AI modules isolated (rule 11)", "node", ["tests/ai_isolation.js"], /AI MODULES ISOLATED/],
   ["Kit: model choice and bigger-model offer; popups; engine built here", "python3", ["tests/kit_offer.py"], /KIT OFFER TESTS PASS/],
   ["Kit window: Install / Start Lantern by double-click (Linux)", "python3", ["tests/kit_window.py"], /KIT WINDOW TESTS PASS/],
+  ["Lantern Watch: the load watcher's story and plan, Python and PowerShell agree (1.15)", "python3", ["tests/lantern_watch/run_tests.py", "kit"], /^\d+ checks, 0 failed/m],
   ["Lantern.zip: one Lantern folder; laid over the stick's old one", "python3", ["tests/lantern_zip.py"], /LANTERN ZIP TESTS PASS/]
 ];
 var failed = 0;

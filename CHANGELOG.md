@@ -1,5 +1,71 @@
 # Changelog
 
+## 1.15.0 — Lantern Watch: the truth while the model loads, and no freeze from it (2026-10-28)
+
+From Adam's USB kit. The 35B took minutes to load from the stick, parts of
+the laptop froze meanwhile, and people clicked around and made it worse. The
+start scripts picked the model by total memory, and the loading bar was an
+estimate from the file size. (1.14.3 is on main: the 35B scored 118 of 118 on
+it, run 17.) Lantern Watch was written in another thread as a drop-in for
+1.14.3 and merged here:
+
+- **Free memory, not total.** `kit/lantern-watch.ps1` (Windows) and
+  `kit/lantern-watch.py` (Linux, Raspberry Pi, Mac; Python 3, standard library
+  only) check free memory before the engine starts. When the picked model
+  does not fit just then, a small window asks: the largest smaller model that
+  fits (the choice it makes by itself after 60 s), load anyway, or stop to
+  close programs. A model named by hand (`35b`, `MODEL=`) is never switched,
+  only warned about; with no way to ask (Linux without zenity) it takes the
+  first choice and says so. 8 GB laptops are asked only when more than
+  1.5 GB would have to be pushed out.
+- **Gentler.** On Linux and Mac the engine runs at `--prio -1` (nice 5,
+  SCHED_BATCH threads). Windows keeps normal priority: llama.cpp's LOW leaves
+  Windows 11 power throttling on. `LANTERN_PRIO=1` tries the BelowNormal
+  priority class there instead (untested); `LANTERN_PRIO=0` turns `--prio`
+  off.
+- **The real story.** The watcher measures the bytes read from the model's
+  drive, free memory, paging and the engine's memory, once a second. The
+  black window's title counts up ("Lantern AI: loading 43%, about 1 min 29 s
+  left") with a `[Lantern]` line when something changes; on Linux the kit
+  window shows the same with a real progress bar. It answers
+  `http://127.0.0.1:8082/status` (`LANTERN_WATCH_PORT`), for this computer
+  only, with CORS for Lantern's own address only, and the start script tells
+  the page its port (`&watch=8082`).
+- **The loading screen reads it** (`AI_SERVER_WAIT`, `AI_SERVER_WAIT_VIEW`).
+  Beside `/health`, the page asks the watcher (given up after 900 ms, so the
+  loop keeps its pace) and shows its sentence ("Reading the AI model from the
+  USB stick: 7.7 of 18.1 GB at 120 MB/s, about 1 min 29 s left."), its
+  measured progress and time left, and its advice on a line of its own -- a
+  slow USB port, the smaller model and why. When memory has run out the
+  advice comes first, as a warning ("It can look frozen for a minute or two.
+  Please wait, and do not click"), stays for a minute if the busy computer
+  stops answering, and the corner button says "low memory, please wait". The
+  bar never moves back; the watcher's load time is the one remembered; a
+  watcher and a server that both go quiet mean start-lantern has stopped, said
+  within 5 s instead of a minute. With no `&watch=` (an older start script),
+  on a phone on the Wi-Fi (its own 127.0.0.1 is not the laptop's), or with no
+  answer for 5 s, the screen is the 1.12.8 estimate as before.
+- **Stopped for memory.** When the person chooses to stop, start-lantern says
+  why and stops; the Linux kit window (told `FAIL memory`) says what to close
+  and offers Start again.
+- **Logs** of every load in `kit/logs` (`loads.csv`, the last 20 `load-*.csv`,
+  `last-load.json`, `last-plan.json`), written every 30 s, to tune it from real
+  computers. `kit/logs` is in `.gitignore` and never in `Lantern.zip`.
+- Without Python 3 or the watcher files, start-lantern runs exactly as in
+  1.14.3 (no `--prio`, no `&watch=`); a Mac whose `python3` is only the
+  developer-tools stub skips the watcher, so no installer pops up.
+- Tests: `tests/lantern_watch/run_tests.py` (165 checks: the plan cases, seven
+  load stories, and the PowerShell and Python watchers agreeing sample by
+  sample when pwsh is installed); `tests/ai_server_watch.js` (the loading
+  screen against the watcher's own example statuses); `tests/ai_server_watch_live.js`
+  (the real `lantern-watch.py` against a stand-in engine, read by the page
+  over HTTP with CORS enforced, ready, the load log); the kit test runs
+  start-lantern with the watcher in the kit (`&watch=`, `--prio -1`,
+  `LANTERN_PRIO=0`) and without it.
+- Not yet run on Windows itself (the CIM counters, the drive's bus type, the
+  question window, the `.bat` hooks under cmd.exe), on a Mac, or on the Pi with
+  the exFAT stick: the PowerShell watcher ran here under PowerShell 7 on Linux.
+
 ## 1.14.3 — Bench run 15, the 4B again: a sum glued with *, newtons over g, the line that needs the 2 (2026-10-28)
 
 Adam ran the 4B on 1.14.2 with no library: **88 of 96 (92%)** -- core

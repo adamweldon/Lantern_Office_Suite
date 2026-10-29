@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.14.3 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.15.0 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -168,7 +168,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.14.3",
+  version: "1.15.0",
   apps: {},
   order: []
 };
@@ -21413,9 +21413,10 @@ Lantern.RFB = (function () {
 // MODULE: AI_SERVER_WAIT - START
 // Depends: AI_ENGINE (Lantern.ai: detect, server, base, onChange), STORAGE
 //          (Lantern.store) -- feature-detected
-// Exports: Lantern.aiServerWait = {tick(), estimate(now), mode(), W: {POLL,
-//          SLOW, view}} -- AI_SERVER_WAIT_VIEW sets W.view = {paint(snapshot),
-//          done(ok)}
+// Exports: Lantern.aiServerWait = {tick(), estimate(now), mode(), watch(),
+//          W: {POLL, SLOW, view}} -- AI_SERVER_WAIT_VIEW sets W.view =
+//          {paint(snapshot), done(ok)}; watch() is Lantern Watch's last status
+//          or null
 // ===========================================================================
 // Waiting for the kit's model to load (1.12.8). start-lantern launches
 // llama-server and opens Lantern a few seconds later, but a 17 GB model read
@@ -21434,6 +21435,14 @@ Lantern.RFB = (function () {
 //    screen is AI_SERVER_WAIT_VIEW).
 // A page from GitHub Pages or from a file has no model server at its own
 // address, so nothing shows there.
+// Lantern Watch (1.15.0): the kit's lantern-watch.py / .ps1 measures the load
+// (bytes read from the model's drive, free memory, paging) and answers
+// http://127.0.0.1:<port>/status; the start script adds &watch=<port> to the
+// address. While the model loads, tick() asks it too, and estimate() takes the
+// measured progress and time left over the size-based guess. Only the page on
+// the kit's own computer can reach it (a phone on the Wi-Fi has its own
+// 127.0.0.1), so there, or with no watcher, or with no answer in the last 5 s,
+// everything is as before.
 (function () {
   var L = window.Lantern;
   if (!L || !L.ai || !L.ai.detect || !L.ai.base || !L.store) return;
@@ -21452,7 +21461,9 @@ Lantern.RFB = (function () {
     });
     var t = +q.t || 0;
     kit = true;
-    put("ai.server.loading", { model: label(q.model), bytes: +q.bytes || 0, vbytes: +q.vbytes || 0, t: t > now - 30 * 60000 && t < now + 5000 ? t : now, timed: t > now - 30 * 60000 && t < now + 5000 });
+    var wp = Math.floor(+q.watch || 0);
+    put("ai.server.loading", { model: label(q.model), bytes: +q.bytes || 0, vbytes: +q.vbytes || 0, t: t > now - 30 * 60000 && t < now + 5000 ? t : now, timed: t > now - 30 * 60000 && t < now + 5000,
+      watch: wp > 0 && wp < 65536 ? wp : 0 });
     try { history.replaceState(null, "", location.pathname + location.hash); } catch (e) { /* a file: page */ }
   })();
   function saved() { var s = get("ai.server.loading", null); return s && s.t && Date.now() - s.t < 30 * 60000 ? s : null; }
@@ -21467,15 +21478,54 @@ Lantern.RFB = (function () {
   // estimate(now) -> {p: 0..0.99 for the bar, elapsed, left, how, model, bytes}.
   // Past the estimate the bar slows down and never reaches the end until the
   // model answers.
+  // With a fresh status from Lantern Watch: p and left are the measured ones
+  // (how "watch"), and est.watch is the status (its message, advice and
+  // pressure are for the screen). A heavy-pressure status is kept for a minute
+  // after the watcher stops answering (est.watchFresh false): a computer that
+  // is out of memory may be too slow to answer, and "please wait, do not
+  // click" is still true.
   function estimate(now) {
     var s = saved(), t0 = s ? s.t : (start || now), e = expected(), el = Math.max(0, now - t0), p = el / e.ms;
     var shown = p <= 0.92 ? p : 0.92 + 0.07 * (1 - Math.exp(-(p - 0.92) / 0.25));
-    return { p: Math.min(0.99, shown), elapsed: el, left: e.ms - el, total: e.ms, took: e.took, how: e.how, model: e.model, bytes: e.bytes };
+    var out = { p: Math.min(0.99, shown), elapsed: el, left: e.ms - el, total: e.ms, took: e.took, how: e.how, model: e.model, bytes: e.bytes };
+    var w = wlast && now - wat < 5000 ? wlast : null;
+    if (w) {
+      out.watch = w; out.watchFresh = true;
+      if ((w.phase === "reading" || w.phase === "preparing") && typeof w.progress === "number" && w.progress >= 0) {
+        out.p = Math.min(0.99, w.progress); out.how = "watch";
+        if (typeof w.leftMs === "number" && w.leftMs >= 0) out.left = w.leftMs;
+        if (w.bytes > 0) out.bytes = w.bytes;
+      }
+    } else if (wlast && wlast.pressure === "heavy" && wlast.advice && now - wat < 60000) { out.watch = wlast; out.watchFresh = false; }
+    return out;
+  }
+  // askWatch() -> Promise of the last status: one question to the watcher,
+  // given up after 900 ms so the /health loop keeps its pace
+  var wlast = null, wat = 0, wbusy = false, top = 0;
+  function watchPort() { var s = saved(); return s && s.watch > 0 ? s.watch : 0; }
+  function askWatch() {
+    var n = watchPort(), ctl = null, to = null;
+    if (!n || wbusy || !window.fetch || !/^(127\.0\.0\.1|localhost)$/.test(location.hostname)) return Promise.resolve(wlast);
+    wbusy = true;
+    try { ctl = window.AbortController ? new window.AbortController() : null; } catch (e) { ctl = null; }
+    var asked = window.fetch("http://127.0.0.1:" + n + "/status", ctl ? { cache: "no-store", signal: ctl.signal } : { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { if (j && j.v === 1 && typeof j.phase === "string") { wlast = j; wat = Date.now(); } }, function () { /* no watcher, or it has stopped */ })
+      .then(function () { wbusy = false; });
+    var late = new Promise(function (res) { to = setTimeout(function () { if (ctl) { try { ctl.abort(); } catch (e) { /* already done */ } } res(); }, 900); });
+    return Promise.race([asked, late]).then(function () { clearTimeout(to); return wlast; });
   }
   // paint(): the screen is AI_SERVER_WAIT_VIEW's (W.view); without it
-  // Lantern still connects when the model is ready, just without the bar
+  // Lantern still connects when the model is ready, just without the bar.
+  // The bar never moves back (from the size-based guess to the measured
+  // progress, say). A watcher that answered and has gone quiet, with the
+  // server not answering either, means start-lantern has stopped: the screen
+  // says so now instead of after a minute.
   function paint() {
-    if (!gone && W.view) W.view.paint({ state: state, kit: kit, est: estimate(Date.now()), downLong: !!(downSince && Date.now() - downSince > 60000) });
+    if (gone || !W.view) return;
+    var now = Date.now(), est = estimate(now);
+    if (state === "loading") { est.p = Math.max(top, est.p); top = est.p; }
+    W.view.paint({ state: state, kit: kit, est: est, downLong: !!(downSince && (now - downSince > 60000 || (wat && now - wat > 5000 && now - downSince > 5000))) });
   }
   function finish(ok) {
     if (gone) return;
@@ -21483,11 +21533,14 @@ Lantern.RFB = (function () {
     if (timer) clearTimeout(timer);
     if (W.view) W.view.done(ok);
   }
+  // ready(): the load time to remember is the watcher's when it saw the
+  // model ready (it counts from the engine's start), else the time since the
+  // start script's t
   function ready() {
-    var s = saved(), name = AI.server.label || "";
-    if (s && s.timed && name) {
+    var s = saved(), name = AI.server.label || "", wl = wlast && wlast.phase === "ready" && wlast.loadMs > 0 ? wlast.loadMs : 0;
+    if (s && (s.timed || wl) && name) {
       var t = get("ai.server.loadMs", {}) || {}, keys = Object.keys(t);
-      t[name] = Date.now() - s.t;
+      t[name] = wl || Date.now() - s.t;
       if (keys.length > 8) delete t[keys[0]];
       put("ai.server.loadMs", t);
     }
@@ -21495,11 +21548,13 @@ Lantern.RFB = (function () {
     put("ai.server.loading", null); put("ai.server.seen", true);
     finish(true);
   }
-  // tick(): ask /health once; ready -> detect again and connect
+  // tick(): ask /health once (and Lantern Watch, alongside); ready -> detect
+  // again and connect
   function tick() {
     if (gone || busy) return Promise.resolve();
     busy = true;
-    return window.fetch(AI.base() + "health", { cache: "no-store" }).then(function (r) { return r.status; }, function () { return 0; }).then(function (code) {
+    var health = window.fetch(AI.base() + "health", { cache: "no-store" }).then(function (r) { return r.status; }, function () { return 0; });
+    return Promise.all([health, askWatch()]).then(function (got) { return got[0]; }).then(function (code) {
       if (code === 200 || code === 503) downSince = 0; else if (!downSince) downSince = Date.now();
       if (code === 200) return AI.detect().then(function (sv) { if (sv.state === "ready") ready(); else paint(); });
       if (code === 503 && state !== "loading") { state = "loading"; if (!start) start = Date.now(); return AI.detect().then(paint); }
@@ -21532,7 +21587,7 @@ Lantern.RFB = (function () {
     if (first) { downSince = st === "down" ? Date.now() : 0; paint(); timer = setTimeout(loop, W.POLL); } else paint();
   }
   AI.onChange(check);
-  window.Lantern.aiServerWait = { tick: tick, estimate: estimate, mode: function () { return gone ? "done" : state; }, W: W };
+  window.Lantern.aiServerWait = { tick: tick, estimate: estimate, mode: function () { return gone ? "done" : state; }, watch: function () { return wlast; }, W: W };
 })();
 // ===========================================================================
 // MODULE: AI_SERVER_WAIT - END
@@ -21566,7 +21621,9 @@ Lantern.RFB = (function () {
     ".lw-row{display:flex;justify-content:space-between;gap:8px;font-size:.9em;opacity:.8}" +
     ".lw-warn{margin:14px 0 0;padding:10px 12px;border-radius:8px;background:#fef3c7;color:#713f12;font-size:.95em}" +
     ".lw-btns{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap}.lw-btns button{font:inherit;padding:8px 14px;border-radius:8px;border:1px solid var(--line,#d7d7cf);background:var(--soft,#efefe9);color:inherit;cursor:pointer}" +
-    ".lw-pill{position:fixed;right:12px;bottom:12px;z-index:9998;background:var(--paper,#fff);color:var(--ink,#1b2430);border:1px solid var(--line,#d7d7cf);border-radius:999px;padding:7px 14px;font:14px system-ui,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,.2);cursor:pointer}";
+    ".lw-pill{position:fixed;right:12px;bottom:12px;z-index:9998;background:var(--paper,#fff);color:var(--ink,#1b2430);border:1px solid var(--line,#d7d7cf);border-radius:999px;padding:7px 14px;font:14px system-ui,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,.2);cursor:pointer}" +
+    // Lantern Watch's advice (its own prefix: lw- is "Lantern wait")
+    ".wt-advice{margin:8px 0;font-size:.95em}.wt-heavy{padding:10px 12px;border-radius:8px;background:#fee2e2;color:#7f1d1d;font-weight:600}";
   function mk(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   function build() {
     if (veil || !document.body) return;
@@ -21574,45 +21631,57 @@ Lantern.RFB = (function () {
     veil = mk("div", "lw-veil"); veil.setAttribute("role", "dialog"); veil.setAttribute("aria-modal", "true"); veil.setAttribute("aria-labelledby", "lw-title");
     var box = mk("div", "lw-box");
     ui.title = mk("h2"); ui.title.id = "lw-title";
-    ui.what = mk("p"); ui.bar = mk("div", "lw-bar"); ui.fill = mk("div", "lw-fill"); ui.bar.appendChild(ui.fill);
+    ui.what = mk("p"); ui.advice = mk("p", "wt-advice"); ui.advice.style.display = "none"; ui.box = box;
+    ui.bar = mk("div", "lw-bar"); ui.fill = mk("div", "lw-fill"); ui.bar.appendChild(ui.fill);
     ui.bar.setAttribute("role", "progressbar"); ui.bar.setAttribute("aria-valuemin", "0"); ui.bar.setAttribute("aria-valuemax", "100"); ui.bar.setAttribute("aria-label", "Loading the AI model");
     ui.row = mk("div", "lw-row"); ui.so = mk("span"); ui.left = mk("span"); ui.row.appendChild(ui.so); ui.row.appendChild(ui.left);
     ui.warn = mk("p", "lw-warn", "Please keep this page and the black Lantern window open. Closing either one stops the loading, and it starts again from the beginning.");
     var btns = mk("div", "lw-btns"); ui.away = mk("button", "", "Use the other apps while it loads"); ui.away.type = "button";
     ui.away.onclick = function () { hidden = true; paint(last); };
     btns.appendChild(ui.away);
-    [ui.title, ui.what, ui.bar, ui.row, ui.warn, btns].forEach(function (x) { box.appendChild(x); });
+    [ui.title, ui.what, ui.advice, ui.bar, ui.row, ui.warn, btns].forEach(function (x) { box.appendChild(x); });
     veil.appendChild(box);
     pill = mk("button", "lw-pill"); pill.type = "button"; pill.onclick = function () { hidden = false; asked = true; paint(last); };
     document.body.appendChild(veil); document.body.appendChild(pill);
   }
   // paint(snap): snap = {state: "loading" | "down", kit (the start script
-  // opened the page), est (AI_SERVER_WAIT's estimate), downLong}
+  // opened the page), est (AI_SERVER_WAIT's estimate), downLong}. With
+  // est.watch (Lantern Watch's status, 1.15.0) the sentence is the watcher's
+  // own (what is read, from where, how fast), its advice gets a line of its
+  // own, and on heavy memory pressure the advice comes first, as a warning:
+  // the computer may look frozen, and clicking makes it slower.
   function paint(snap) {
     if (done_ || !snap) return;
     last = snap;
     build();
     if (!veil) return;
     var e = snap.est, loading = snap.state === "loading", pct = loading ? Math.round(e.p * 100) : 0;
+    var w = e.watch || null, said = !!(w && e.watchFresh && w.message && w.phase !== "stopped"), heavy = !!(w && w.pressure === "heavy" && w.advice);
     ui.title.textContent = loading ? "Lantern\u2019s AI is loading" : "Starting Lantern\u2019s AI\u2026";
     if (loading) {
       var size = e.bytes ? " (" + (Math.round(e.bytes / 1e8) / 10) + " GB)" : "";
-      ui.what.textContent = "The model" + (e.model ? " " + e.model : "") + size + " is being read from the drive into memory. " +
+      ui.what.textContent = said ? w.message : "The model" + (e.model ? " " + e.model : "") + size + " is being read from the drive into memory. " +
         (e.how === "last" ? "Last time this took " + fmt(e.took) + "." : e.how === "size" ? "This takes about " + fmt(e.total) + " from a USB stick." :
           "This usually takes a minute or two, longer from a USB stick.");
       ui.so.textContent = clock(e.elapsed) + " so far";
       ui.left.textContent = e.left > 4000 ? "about " + fmt(e.left) + " left" : "almost ready\u2026";
     } else {
-      ui.what.textContent = snap.downLong ? "The AI server is not answering. Is the black Lantern window still open? If it was closed, start Lantern again (start-lantern)." :
-        "Waiting for the AI server in the black Lantern window to answer\u2026";
+      ui.what.textContent = snap.downLong || (w && e.watchFresh && w.phase === "stopped") ? "The AI server is not answering. Is the black Lantern window still open? If it was closed, start Lantern again (start-lantern)." :
+        said && w.phase === "starting" ? w.message : "Waiting for the AI server in the black Lantern window to answer\u2026";
       ui.so.textContent = ""; ui.left.textContent = "";
     }
+    var adv = w && w.advice && (e.watchFresh || heavy) && !snap.downLong ? w.advice : "";
+    ui.advice.textContent = adv; ui.advice.style.display = adv ? "" : "none";
+    ui.advice.className = heavy && adv ? "wt-advice wt-heavy" : "wt-advice";
+    ui.advice.setAttribute("role", heavy && adv ? "alert" : "status");
+    var first = heavy && adv;
+    if (first ? ui.what.previousSibling !== ui.advice : ui.what.nextSibling !== ui.advice) ui.box.insertBefore(ui.advice, first ? ui.what : ui.what.nextSibling);
     ui.fill.style.width = pct + "%"; ui.bar.setAttribute("aria-valuenow", String(pct));
     ui.away.textContent = loading ? "Use the other apps while it loads" : "Use the apps without the AI";
     var big = !hidden && (loading || snap.kit || asked);
     veil.style.display = big ? "" : "none";
     pill.style.display = big ? "none" : "";
-    pill.textContent = loading ? "AI loading " + pct + "% \u2014 details" : "AI server not answering";
+    pill.textContent = loading ? "AI loading " + pct + "% \u2014 " + (heavy ? "low memory, please wait" : "details") : "AI server not answering";
   }
   // done(ok): ready -- the bar fills and the screen goes; not ok -- it goes now
   function done(ok) {

@@ -32,6 +32,13 @@ Every time
   Double-click Start Lantern. Lantern opens in the browser at
   http://127.0.0.1:8080 . Keep the Start window open while you use it;
   closing it stops the AI.
+  While the AI model loads, the Start window's title and Lantern's loading
+  screen say how much of it is read, how fast, and the time left. When the
+  computer is short of FREE memory just then, a small window asks first:
+  use a smaller model now (chosen by itself after a minute), load the big
+  one anyway, or stop so you can close other programs. If the loading
+  screen says the computer has run out of memory, wait and do not click:
+  it can look frozen for a minute or two.
 
 Updating to a newer Lantern
   Download the newer Lantern.zip. It holds one folder, Lantern. Extract it

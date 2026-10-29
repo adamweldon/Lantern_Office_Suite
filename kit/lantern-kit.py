@@ -12,7 +12,7 @@
 # For tests: LANTERN_KIT_AUTO="install,yes,never,close" presses those buttons
 # in turn as they appear (after LANTERN_KIT_AUTO_DELAY ms); LANTERN_KIT_TRACE=file
 # logs each page and question.
-import os, re, sys, time, signal, shutil, threading, queue, subprocess, urllib.request, urllib.error, webbrowser
+import os, re, sys, json, time, signal, shutil, threading, queue, subprocess, urllib.request, urllib.error, webbrowser
 
 try:
     import tkinter as tk
@@ -173,6 +173,16 @@ def health():
         return "loading" if e.code == 503 else "ready"
     except Exception:
         return ""
+
+
+def watch_status(port):
+    """Lantern Watch's reading (kit/lantern-watch.py, 1.15.0): what the model load
+    is really doing -- {phase, message, advice, progress, pressure ...} -- or None."""
+    try:
+        with LOCAL.open("http://127.0.0.1:%s/status" % port, timeout=1.0) as r:
+            return json.loads(r.read().decode("utf-8", "replace"))
+    except Exception:
+        return None
 
 
 def computer_name():
@@ -662,16 +672,24 @@ class App(tk.Tk):
         if self.page != "run" or not self.child or not self.child.running():
             return
 
+        m = re.search(r"[?&]watch=(\d+)", self.url)
+        wport = m.group(1) if m else ""
+
         def check():
             s = health()
             self.events.put(("health", s))
+            # Lantern Watch: what is really happening while the model loads
+            if wport and s != "ready":
+                st = watch_status(wport)
+                if st:
+                    self.events.put(("watch", st))
         threading.Thread(target=check, daemon=True).start()
         self.after(1500, self.watch_health)
 
     def on_health(self, s):
         if self.page != "run":
             return
-        if s == "loading":
+        if s == "loading" and time.time() - getattr(self, "watch_at", 0) > 5:
             secs = int(time.time() - self.t0)
             self.now.configure(text="Loading the AI model… (%d s)" % secs)
         elif s == "ready" and self.health_state != "ready":
@@ -685,6 +703,23 @@ class App(tk.Tk):
             trace("ready")
         self.health_state = s or self.health_state
         self.show_addr()
+
+    def on_watch(self, st):
+        """Lantern Watch's message, advice and real progress while the model loads."""
+        if self.page != "run" or self.health_state == "ready" or st.get("phase") not in ("starting", "reading", "preparing"):
+            return
+        self.watch_at = time.time()
+        if st.get("message"):
+            self.now.configure(text=st["message"], foreground=BAD if st.get("pressure") == "heavy" else INK)
+        if st.get("advice"):
+            self.detail.configure(text=st["advice"])
+        p = st.get("progress")
+        if isinstance(p, (int, float)) and p > 0:
+            if self.bar_mode != "determinate":
+                self.bar.stop()
+                self.bar.configure(mode="determinate", maximum=100)
+                self.bar_mode = "determinate"
+            self.bar["value"] = max(self.bar["value"], min(99, p * 100))
 
     def show_addr(self):
         s = "Lantern: " + self.url.split("?")[0]
@@ -836,6 +871,8 @@ class App(tk.Tk):
                     self.on_exit(ev[1])
                 elif kind == "health":
                     self.on_health(ev[1])
+                elif kind == "watch":
+                    self.on_watch(ev[1])
                 elif kind == "restart":
                     self.start_lantern()
                 elif kind == "stopped":
@@ -966,6 +1003,12 @@ class App(tk.Tk):
                 todo = "Choose Install Lantern: it downloads Lantern and its AI (it needs the internet once), then start Lantern again."
                 self.page_failed(lambda: self.goto_install(), "Lantern could not start", what, todo)
                 self.buttons["retry"].configure(text="Install Lantern")
+            elif self.fail == "memory":
+                # Lantern Watch asked, and the person chose to close programs first
+                self.page_failed(self.start_lantern, "Stopped so other programs can be closed first",
+                                 "This computer did not have enough free memory for the AI model just now.",
+                                 "Close the programs you do not need (a web browser with many tabs uses a lot), then choose Start again.")
+                self.buttons["retry"].configure(text="Start again")
             elif self.fail == "noengine" or self.fail == "nomodel":
                 what = "Lantern's AI is not installed in this folder yet."
                 todo = "Double-click “Install Lantern” first (it needs the internet once), then start Lantern again."

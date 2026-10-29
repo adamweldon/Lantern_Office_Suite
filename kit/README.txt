@@ -27,6 +27,8 @@ Folder layout
   start-lantern.bat / .command / .sh   start Lantern (Windows / Mac / Linux)
   setup-kit.bat / .sh                   fetch the engine and models (once)
   lantern-kit.py / .sh                  the Linux window for both (double-click set-up)
+  lantern-watch.py / .ps1               Lantern Watch: free memory before the model
+                                        loads, and the load's real progress (see 2.)
   ../site/                              Lantern itself: the Lantern folder's site/,
                                         beside kit/ (kit/site only for a kit on its own;
                                         when both are there, the folder's is used)
@@ -34,6 +36,7 @@ Folder layout
   engine/<system>/kiwix/                kiwix-serve, for the library (setup fills it)
   models/                               .gguf model files (setup fills it)
   library/                              .zim encyclopedia files (setup library fills it)
+  logs/                                 Lantern Watch's load logs (this computer's own)
 
 1. Set up (needs internet once)
    Windows: double-click setup-kit.bat
@@ -90,6 +93,34 @@ Folder layout
    stick). Lantern shows a progress bar meanwhile and connects as soon as
    the model is ready -- no need to reload the page.
    Keep the window open; closing it stops the AI.
+
+   Lantern Watch (lantern-watch.ps1 on Windows; lantern-watch.py on Linux,
+   the Raspberry Pi and Mac, with Python 3) runs beside the engine:
+    - Before the model loads, it checks FREE memory, not only the total.
+      When the model would not fit just now, a small window asks: use the
+      largest smaller model that fits (the choice it makes by itself after
+      60 s), load it anyway (the computer may freeze for a few minutes), or
+      stop so you can close programs (a web browser with many tabs uses a
+      lot) and start again. A model picked by hand (start-lantern 35b,
+      MODEL=) is never switched, only warned about. Linux without zenity:
+      it takes the first choice and says so.
+    - While it loads, it measures the bytes read from the model's drive,
+      free memory and paging. The window's title shows the progress and the
+      time left ("Lantern AI: loading 43%, about 1 min 29 s left"), a line
+      is printed when something changes, and Lantern's loading screen shows
+      the same: what is read from where at what speed, a slow USB port, and
+      "out of memory, please wait, do not click" when the computer is moving
+      programs to the disk. It answers only this computer
+      (http://127.0.0.1:8082/status); phones keep the estimated bar.
+    - On Linux and Mac the engine runs at a gentler priority (--prio -1),
+      so the desktop stays responsive. Windows keeps normal priority.
+    - Each load is logged in kit/logs (loads.csv, the last 20 load-*.csv,
+      last-load.json): send loads.csv to tune Lantern for real computers.
+      kit/logs is this computer's own and is never in Lantern.zip.
+    - Settings: LANTERN_WATCH_PORT (default 8082); LANTERN_PRIO=0 (Linux,
+      Mac: normal priority); LANTERN_PRIO=1 (Windows: try the BelowNormal
+      priority class, untested). Without Python 3 or the watcher files,
+      start-lantern works as before.
 
    Bigger model, automatically: each start checks what this computer can
    run. If it could run a stronger model than the kit has, there is room on
