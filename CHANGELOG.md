@@ -1,5 +1,85 @@
 # Changelog
 
+## 1.16.0 — The app audit: Draw, Code Lab, Sheets, Writer, Slides, Calculator (2026-10-29)
+
+Adam asked for every module to be gone through, its mistakes fixed and what
+it lacks next to the programs people know listed, so he does not have to find
+them himself. Each app was used for real in Chromium (desktop and phone
+width), its bugs fixed with a test each, and its missing features written up
+for Adam to choose from (the findings PDF that comes with this release).
+Built on 1.15.0 (Lantern Watch); nothing in the watcher changed.
+
+- **Every app: NOT saved is said.** When the browser's storage was full,
+  Lantern's store dropped the save without a word: the apps said "saved" and
+  the work was gone after closing. A refused save is now kept in memory for
+  the session and read back first, `set()` says it failed, and a red bar
+  says Not saved; Writer, Code Lab and the others say NOT saved where they
+  said saved. And when the storage was already full as Lantern started, its
+  test write was refused and Lantern ran as if nothing had ever been saved:
+  every document seemed gone (they were still there). It reads them now,
+  and says Not saved when a change cannot be kept. Esc closes the dialog
+  on top in every app.
+- **Draw.** A real history: Undo and Redo, Ctrl+Z / Ctrl+Y, one eraser drag
+  is one undo, Clear can be undone (Undo after erasing took away a
+  different shape). Filled shapes are erased from inside. Points are kept
+  to a tenth of a pixel, so about three times more drawing fits; past the
+  limit a notice stays on screen (it stopped saving silently).
+- **Calculator.** A number after = starts a new sum (2+3= then 7 gave 57);
+  an operator goes on from the answer itself (1/3= x3= gives 1); an error
+  keeps the sum and says why; open brackets are closed; 2π, 2 MR and 2 e
+  multiply; 50% is 0.5; memory and RAD are kept and shown; the keyboard
+  takes letters, e and comparisons; dialogs keep their keys. Shared with
+  Sheets, Assist and Chat: tiny and huge results keep their digits
+  (Planck's constant x2 was 0, 10^300 Infinity), trig is exact at quarter
+  turns and TAN(90) undefined, LOG(x, base), ROUND and MOD as Excel, FACT of
+  a fraction an error.
+- **Sheets.** Typing is kept when another cell is clicked or the sheet is
+  left (it was thrown away); clicking a cell while a formula is typed puts
+  the cell in it; formulas read text cells; IF guards a division and gives
+  text; IFERROR; =PI(); errors as Excel names them (#DIV/0!, #VALUE!,
+  #NAME?), and an error or a loop inside a range shows in its total (a SUM
+  over a 1/0 looked right); 1,500, $12.50 and 10% are numbers; Excel's
+  keys; CSV import replaces the sheet or opens a new one, and says what did
+  not fit (rows past 100 went without a word); page edges no longer catch
+  clicks meant for cells; the chart prints alone, with its bars.
+- **Writer.** Pasted and imported HTML keeps its structure, not its styling
+  or script; Save .txt has one line per paragraph; Save .html has the title
+  once and table lines; opening a document does not change its date; the
+  last words are saved when the page closes; Normal text and Clear keep the
+  order of headings; the toolbar no longer covers the first item of other
+  apps' lists; Fit width fits a phone; printing on a paper size starts at
+  the top; Backspace at a page edge joins paragraphs.
+- **Slides.** Space or Enter on Present no longer stacks shows that cover
+  the app; on a phone the left third (or a swipe) goes back and an X ends
+  the show; words shrink until the slide fits; pasted text is cleaned;
+  transparent PNGs on white, not black; a picture the browser cannot show
+  (HEIC) is refused; Outline .txt imports back as the same deck; Ctrl+Z no
+  longer empties the deck title; thumbnails work by keyboard.
+- **Code Lab.** Find marks the match in yellow and keeps the cursor in its
+  box (a second Enter typed a line break over the match); Replace all, Tab
+  and Ctrl+/ on hundreds of lines take a moment, not 7 to 27 seconds; Ctrl+Z
+  takes back a word, not a letter; Ctrl+/ takes off one comment marker; red
+  line numbers move with their lines; a typed extension (blink.py) picks
+  the language; JavaScript mistakes have their line; Python one-line blocks
+  and the last item of an Arduino enum are not called mistakes. Ladder: a
+  rung whose ; was left out is said and stays a rung of its own; tags
+  ignore case, as in Logix; OSR and OSF. Ladder -> Structured Text: TOF's
+  .TT, RTO kept until RES, RES on timers and counters, CTU with CTD on one
+  tag (CTUD), CTD as Logix counts, presets changed by MOV, LIM outside a
+  band, Logix names like Local:1:I.Data.0; and not from ladder with
+  mistakes in it. Run prints NaN, Map, Set and errors as they are, waits
+  for its timers (up to 10 s), reports a failed promise, and says when
+  output was cut at 500 lines. The ladder drawing fits wide rungs and long
+  tags and stays readable on a phone.
+- Tests: `tests/storage_full.js`, `tests/draw_symbols.js` (more), `tests/calc_audit.js`,
+  `tests/sheet_audit.js`, `tests/writer_audit.js`, `tests/slides_audit.js`,
+  `tests/codelab_audit.js`, all in `npm test`; each app also checked in
+  Chromium at desktop and phone width.
+- Not changed yet (in the findings PDF): Writer's Save .pdf paper settings,
+  undo for Replace all, the phone toolbar, Find across paragraphs; Slides on
+  a phone with a long deck; Sheets' grid is still 100 rows by A-Z; Draw's
+  delete by touch; the Calculator has no text field on a phone.
+
 ## 1.15.0 — Lantern Watch: the truth while the model loads, and no freeze from it (2026-10-28)
 
 From Adam's USB kit. The 35B took minutes to load from the stick, parts of
