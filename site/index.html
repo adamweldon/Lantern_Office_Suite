@@ -2263,7 +2263,23 @@ Lantern.drawShapes = (function () {
     if (k < 1 && o.w) c.w = Math.max(1, Math.round(o.w * Math.max(k, 0.6)));
     return c;
   }
-  return { render: render, hit: hit, sample: sample, dist: dist, bbox: bbox, transform: transform };
+  // turn(o, q, cx, cy) -> a copy turned q quarter turns clockwise about
+  // (cx, cy): a placed symbol pointing another way (1.15.0). Words stay
+  // upright; only where they sit turns.
+  function turn(o, q, cx, cy) {
+    q = ((q % 4) + 4) % 4;
+    if (!q) return o;
+    function at(p) { var x = p[0] - cx, y = p[1] - cy, i, t; for (i = 0; i < q; i++) { t = x; x = -y; y = t; } return [cx + x, cy + y]; }
+    var c = {}, key, a, b;
+    for (key in o) c[key] = o[key];
+    if (o.t === "group") { c.shapes = o.shapes.map(function (s) { return turn(s, q, cx, cy); }); return c; }
+    if (o.pts) c.pts = o.pts.map(at);
+    if (o.t === "rect") { a = at([o.x, o.y]); b = at([o.x + o.rw, o.y + o.rh]); c.x = Math.min(a[0], b[0]); c.y = Math.min(a[1], b[1]); c.rw = Math.abs(b[0] - a[0]); c.rh = Math.abs(b[1] - a[1]); }
+    if (o.t === "circle") { a = at([o.cx, o.cy]); c.cx = a[0]; c.cy = a[1]; }
+    if (o.t === "text") { a = at([o.x, o.y]); c.x = a[0]; c.y = a[1]; }
+    return c;
+  }
+  return { render: render, hit: hit, sample: sample, dist: dist, bbox: bbox, transform: transform, turn: turn };
 })();
 // ===========================================================================
 // MODULE: DRAW_SHAPES - END
@@ -2278,6 +2294,10 @@ Lantern.drawShapes = (function () {
 // A small vector drawing pad. The scene is a list of shapes (not baked
 // pixels), so each one can be selected and removed: drag the Eraser over a
 // shape, or right-click it. Mouse + touch handlers for oldest-browser reach.
+// Symbols (1.15.0): a faint preview follows the pointer, and Turn (or the R
+// key) turns the next ones a quarter turn -- a flow arrow pointing down, a
+// cylinder standing up. A right-click only deletes: it used to place a symbol
+// first, and then delete that one (Adam, 2026-10-29).
 (function () {
   var COLORS = ["#1b2430", "#2563eb", "#b91c1c", "#16803c", "#f59e0b", "#ffffff"];
   var TOOLS = [["pen", "Pen"], ["line", "Line"], ["rect", "Rect"],
@@ -2291,7 +2311,7 @@ Lantern.drawShapes = (function () {
     mount: function (ws) {
       drawWs = ws;
       var color = COLORS[0], size = 7, tool = "pen", fill = false, alpha = 1;
-      var mode = null, stamp = null;
+      var mode = null, stamp = null, turnQ = 0, hover = null, ARROWS = ["\u2192", "\u2193", "\u2190", "\u2191"];
       var scene = load();
       var draft = null, curvePts = null, dragging = false, start = null;
 
@@ -2330,6 +2350,8 @@ Lantern.drawShapes = (function () {
         }
         for (i = 0; i < scene.length; i++) S.render(ctx, scene[i]);
         if (draft) S.render(ctx, draft);
+        var gh = preview();
+        if (gh) S.render(ctx, gh);
         if (curvePts && curvePts.length) {
           if (curvePts.length >= 2) S.render(ctx, { t: "curve", c: color, w: size, pts: curvePts });
           ctx.fillStyle = color;
@@ -2372,11 +2394,37 @@ Lantern.drawShapes = (function () {
         return false;
       }
 
+      // A symbol as it will be placed at g: turned turnQ quarter turns.
+      function symbolAt(g) {
+        var made = stamp.make(g[0], g[1], color, size);
+        return made && turnQ ? S.turn(made, turnQ, g[0], g[1]) : made;
+      }
+      function fade(o) {
+        if (o.t === "group") return { t: "group", shapes: o.shapes.map(fade) };
+        var c = {}, k;
+        for (k in o) c[k] = o[k];
+        c.o = 0.35;
+        return c;
+      }
+      // the faint symbol under the pointer (not for Label, which asks for its text)
+      function preview() {
+        if (!hover || tool !== "stamp" || !mode || !stamp || stamp.ask) return null;
+        var m = symbolAt(hover);
+        return m ? fade(m) : null;
+      }
+      function symLabel(sym) { return String(sym.label).replace("\u2192", ARROWS[turnQ]); }
+      function turnBy() {
+        turnQ = (turnQ + 1) % 4;
+        if (tool === "stamp") selectTool("stamp"); else paintSyms();
+      }
       function down(ev) {
+        // only the main button draws or places: a right-click (or a Mac's
+        // Ctrl-click) is the contextmenu below, which deletes
+        if (!ev.touches && (ev.button > 0 || ev.ctrlKey)) return;
         var p = pos(ev);
         if (tool === "stamp") {
           if (mode && stamp) {
-            var g = snap(p), made = stamp.make(g[0], g[1], color, size);
+            var made = symbolAt(snap(p));
             if (made) add(made);
           }
           ev.preventDefault(); return;
@@ -2393,7 +2441,13 @@ Lantern.drawShapes = (function () {
         render(); ev.preventDefault();
       }
       function move(ev) {
-        if (!dragging) return;
+        if (!dragging) {
+          if (tool === "stamp" && !ev.touches) {
+            var hp = snap(pos(ev));
+            if (!hover || hp[0] !== hover[0] || hp[1] !== hover[1]) { hover = hp; render(); }
+          }
+          return;
+        }
         var p = pos(ev);
         if (tool === "erase") { deleteAt(p[0], p[1]); ev.preventDefault(); return; }
         if (!draft) return;
@@ -2443,13 +2497,22 @@ Lantern.drawShapes = (function () {
       cv.addEventListener("contextmenu", function (ev) {
         var p = pos(ev); deleteAt(p[0], p[1]); ev.preventDefault();
       });
+      cv.addEventListener("mouseleave", function () { if (hover) { hover = null; render(); } });
+      // R turns the symbol, as in most schematic programs (not while typing)
+      document.addEventListener("keydown", function onKey(ev) {
+        if (!document.contains(cv)) { document.removeEventListener("keydown", onKey); return; }
+        var tag = ev.target && ev.target.tagName, typing = { INPUT: 1, TEXTAREA: 1, SELECT: 1 };
+        if (tool !== "stamp" || ev.ctrlKey || ev.metaKey || ev.altKey || typing[tag]) return;
+        if (ev.key === "r" || ev.key === "R") { turnBy(); ev.preventDefault(); }
+      });
 
       function selectTool(t) {
         if (tool === "curve" && t !== "curve") finishCurve(true);
         tool = t; if (t !== "curve") curvePts = null;
         if (t !== "stamp") stamp = null;
         hint.textContent = t === "stamp"
-          ? (stamp ? "Tap the canvas to place: " + stamp.label + ". Right-click a placed symbol to delete it." : "Pick a symbol below, then tap the canvas to place it.")
+          ? (stamp ? "Tap the canvas to place: " + symLabel(stamp) + (turnQ ? " (turned " + turnQ * 90 + "\u00b0)" : "") +
+              ". Turn \u21bb (or the R key) turns it a quarter turn. Right-click a placed symbol, or use the Eraser, to delete it." : "Pick a symbol below, then tap the canvas to place it.")
           : t === "curve"
           ? "Curve: tap to drop points, then Finish (or double-tap). Undo removes the last point."
           : t === "erase" ? "Eraser: drag over a shape to remove it. (Right-click also deletes a shape.)"
@@ -2458,7 +2521,7 @@ Lantern.drawShapes = (function () {
         paintTools(); paintSyms(); paintAct(); render();
       }
       function setMode(m) {
-        mode = m; stamp = null;
+        mode = m; stamp = null; turnQ = 0; hover = null;
         if (tool === "stamp") tool = "pen";
         if (m && m.hint) hint.textContent = m.hint;
         paintTools(); paintSyms(); paintAct(); render();
@@ -2468,11 +2531,16 @@ Lantern.drawShapes = (function () {
         if (!mode) return;
         mode.symbols.forEach(function (sym) {
           symRow.appendChild(Lantern.el("button", {
-            text: sym.label, style: "font-size:13px;",
+            text: symLabel(sym), style: "font-size:13px;",
             "class": (tool === "stamp" && stamp === sym) ? "primary" : "",
             onclick: function () { stamp = sym; selectTool("stamp"); }
           }));
         });
+        symRow.appendChild(Lantern.el("button", {
+          text: "Turn \u21bb " + turnQ * 90 + "\u00b0", style: "font-size:13px;",
+          title: "Turn the symbols you place a quarter turn clockwise (R)", "aria-label": "Turn symbols, now " + turnQ * 90 + " degrees",
+          onclick: turnBy
+        }));
       }
       function paintTools() {
         toolsRow.innerHTML = "";
@@ -5836,7 +5904,7 @@ Lantern.drawSymbols = (function () {
   }
   // Label stamp shared by every mode: prompts for its text.
   function label() {
-    return { label: "Label", make: function (x, y, c) {
+    return { label: "Label", ask: true, make: function (x, y, c) {
       var s = window.prompt("Label text");
       return s ? txt(c, x, y, s, 16) : null;
     } };
@@ -6134,7 +6202,10 @@ Lantern.drawSymbols = (function () {
       "grid appears, everything you place snaps to it, and the <b>Line</b> tool draws straight " +
       "wires and pipes automatically. <b>Freehand</b> returns to normal sketching.</p>"],
     ["Placing symbols", "<p>In a schematic mode a symbol strip appears: pick a symbol, then tap the " +
-      "canvas to place it - tap again to place more. A symbol is one unit: the Eraser or a " +
+      "canvas to place it - tap again to place more. A faint copy follows the pointer so you " +
+      "see where it will land. <b>Turn</b> (or the <b>R</b> key) turns the symbols you place a " +
+      "quarter turn clockwise: a flow or force arrow pointing down or back, a cylinder standing " +
+      "up; the arrow in the button's name turns with it. A symbol is one unit: the Eraser or a " +
       "right-click removes the whole thing. <b>Label</b> stamps text (component values, " +
       "port names, forces).</p>"],
     ["Symbol sets", "<ul><li><b>Electrical</b>: resistor, capacitor, battery, ground, switch, lamp, " +

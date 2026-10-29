@@ -91,6 +91,16 @@ it, run 17.) Lantern Watch was written in another thread as a drop-in for
   switch: a normally closed Stop or overload has its bit on until it is
   pressed or trips; XIO is for "only while this is off" (an interlock, a
   fault, a counter not yet done).
+- Draw's schematic symbols, from Adam's Hydraulics drawing: right-clicking a
+  placed flow arrow did not delete it -- the right button placed a new arrow
+  first, and the delete took that one (with the Pen it left a dot). Only the
+  main button places or draws now; a right-click (or a Mac's Ctrl-click)
+  only deletes. And a flow arrow could only point right: **Turn** (or the
+  **R** key) turns the symbols you place a quarter turn clockwise -- flow and
+  force arrows any way, a cylinder standing up, a pump on its side -- and the
+  arrow in the button's name turns with it. A faint copy of the symbol
+  follows the pointer, so you see where and which way it will land (not for
+  Label, which asks for its text). `tests/draw_symbols.js`.
 
 ## 1.14.3 — Bench run 15, the 4B again: a sum glued with *, newtons over g, the line that needs the 2 (2026-10-28)
 

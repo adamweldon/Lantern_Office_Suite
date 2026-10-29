@@ -26,6 +26,7 @@ var steps = [
   ["Lantern Watch for real: the watcher and the page over HTTP with CORS, ready, the load log (1.15)", "node", ["tests/ai_server_watch_live.js"], /ALL LIVE WATCH TESTS PASS/],
   ["Chat routing (follow-ups, questions about itself, bench conversations)", "node", ["tests/chat_routing.js"], /ALL CHAT ROUTING TESTS PASS/],
   ["AI makes documents, slides, flashcards, plans; READ (1.12)", "node", ["tests/ai_make_docs.js"], /ALL MAKE DOCS TESTS PASS/],
+  ["Draw's schematic symbols: a right-click only deletes, Turn and R point them any way, the preview (1.15)", "node", ["tests/draw_symbols.js"], /ALL DRAW SYMBOL TESTS PASS/],
   ["Code Lab (editor, checks, ladder, sandbox, examples; MAKE CODE, EXAMPLE:, code in replies)", "node", ["tests/code_lab.js"], /ALL CODE LAB TESTS PASS/],
   ["Puzzles (track, turn, solve; letters; Chat hands puzzles to Lantern)", "node", ["tests/puzzles.js"], /ALL PUZZLE TESTS PASS/],
   ["Bench run 9 replayed (named places, queues, retyped results, READ, dozens, covered shapes, totals, steps)", "node", ["tests/bench_run9.js"], /ALL BENCH RUN 9 CHECKS PASS/],
