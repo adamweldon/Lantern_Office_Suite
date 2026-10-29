@@ -236,6 +236,13 @@ function Invoke-Plan {
   $need = Need-Mb $mb $vb
   $name = Nice-Name $Model
   $plan = [ordered]@{ v = 1; t = (Now-Ms); wanted = [IO.Path]::GetFileName($Model); picked = [IO.Path]::GetFileName($Model); totalMb = [Math]::Round($mem.TotalMb); availMb = [Math]::Round($mem.AvailMb); needMb = [Math]::Round($need); choice = 'fits'; reason = '' }
+  # The drive's kind is worked out now, before the engine starts and while
+  # the drive is idle; the watcher reads it from last-plan.json.
+  if (-not $script:Sim) {
+    $dq = Get-QuickDrive $Model $null
+    if ($dq.name -and $dq.kind -eq 'drive') { $dq = Get-DriveInfo $Model }
+    $plan.drive = [ordered]@{ name = $dq.name; kind = $dq.kind }
+  }
   Say ('Lantern Watch: ' + (Gb $mem.AvailMb) + ' of ' + (Gb $mem.TotalMb) + ' memory is free; ' + $name + ' needs about ' + (Gb $need) + '.')
   if (Fits $need $mem.AvailMb) {
     if ($mem.AvailMb -lt $need) { Say '  A little short: Windows will make room by moving idle programs out. Please do not open other programs while it loads.' }
@@ -419,6 +426,29 @@ function Get-DriveInfo([string]$path) {
   }
   return [pscustomobject]$info
 }
+# Get-QuickDrive: the drive while the model loads. Its letter comes from the
+# path, its kind from the plan (worked out before the engine started) or from
+# Windows' instant drive type. Get-DriveInfo's storage queries are not used
+# while the model loads: on Adam's laptop (the 35B from a USB stick,
+# 2026-10-29) the watcher's start-up took 125 s and its first reading came
+# only as the model was ready.
+function Get-QuickDrive([string]$path, $plan) {
+  if ($script:Sim) { return Get-DriveInfo $path }
+  $info = [ordered]@{ name = $null; kind = 'drive'; word = "this computer's drive" }
+  if ($path -match '^\\\\') { $info.kind = 'network'; $info.word = 'the network drive'; return [pscustomobject]$info }
+  if (-not ($path -match '^([A-Za-z]):')) { return [pscustomobject]$info }
+  $info.name = $Matches[1].ToUpper() + ':'
+  $k = $null
+  try { if ($plan -and $plan.drive -and ([string]$plan.drive.name -eq $info.name)) { $k = [string]$plan.drive.kind } } catch { }
+  if (-not $k) {
+    try {
+      $t = [string](New-Object System.IO.DriveInfo($info.name)).DriveType
+      if ($t -eq 'Removable') { $k = 'usb' } elseif ($t -eq 'Network') { $k = 'network' }
+    } catch { }
+  }
+  if ($k -eq 'usb') { $info.kind = 'usb'; $info.word = 'the USB stick' } elseif ($k -eq 'network') { $info.kind = 'network'; $info.word = 'the network drive' }
+  return [pscustomobject]$info
+}
 
 # =============================================================================
 # watch: the story
@@ -431,7 +461,7 @@ function New-State([string]$model, [string]$mmproj) {
     model = [IO.Path]::GetFileName($model); bytes = $mb + $vb; startedMs = (Now-Ms)
     phase = 'starting'; pressure = 'ok'; upRun = 0; downRun = 0
     rates = New-Object System.Collections.ArrayList; paging = New-Object System.Collections.ArrayList
-    firstReadT = $null; readyT = $null; lowRateRun = 0; slowRun = 0
+    firstReadT = $null; readyT = $null; lowRateRun = 0; slowRun = 0; firstSampleT = $null
     seenEngine = $false; seenHealth = $false; refusedRun = 0
     minAvail = $null; maxPaging = 0; worstPressure = 'ok'; peakWs = 0; peakPriv = 0
     lastSample = $null; lastLineT = -99999; lastKey = ''; story = $null; done = $false
@@ -442,6 +472,7 @@ function Rank([string]$p) { switch ($p) { 'heavy' { return 2 } 'tight' { return 
 
 function Step($st, $s, $drive, $plan) {
   $st.lastSample = $s
+  if ($null -eq $st.firstSampleT) { $st.firstSampleT = $s.t }
   if ($s.engine) { $st.seenEngine = $true }
   if ($s.health -gt 0) { $st.seenHealth = $true }
   [void]$st.history.Add($s); if ($st.history.Count -gt 900) { $st.history.RemoveAt(0) }
@@ -637,33 +668,64 @@ function Show-Console($st, $snap) {
 }
 
 # ---- the log ------------------------------------------------------------------
-function Open-Log($dir) {
-  if (-not $dir) { return $null }
-  $p = Join-Path $dir ('load-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.csv')
-  try {
-    [IO.File]::WriteAllText($p, 'elapsed_s,phase,health,read_mb,progress,mbps,avail_mb,commit_pct,paging_ps,cpu_pct,engine_cpu_pct,engine_ws_mb,engine_priv_mb,pressure,code' + "`r`n")
-    $old = @(Get-ChildItem -LiteralPath $dir -Filter 'load-*.csv' -File | Sort-Object LastWriteTime -Descending | Select-Object -Skip $KEEP_LOGS)
-    foreach ($o in $old) { try { Remove-Item -LiteralPath $o.FullName -Force } catch { } }
-    return $p
-  } catch { return $null }
-}
-function V($x, [string]$fmt) { if ($null -eq $x) { return '' }; return ([double]$x).ToString($fmt, $INV) }
-# Rows are kept in memory and written every LOG_FLUSH_MS (and at ready and
-# stop): a write a second to a USB stick with no write cache slows its reads.
+# While the model loads, nothing is written to the model's drive (a USB stick
+# reading the model at full speed answers one request at a time): rows are
+# kept in memory and every LOG_FLUSH_MS go to a file in the temp folder on the
+# system drive. When the load is over (ready, stopped, or the window closed)
+# they move to kit\logs\load-<time>.csv, with any left in the temp folder by a
+# load that was cut off; after ready, rows go there every LOG_FLUSH_MS.
+$LOG_HEADER = 'elapsed_s,phase,health,read_mb,progress,mbps,avail_mb,commit_pct,paging_ps,cpu_pct,engine_cpu_pct,engine_ws_mb,engine_priv_mb,pressure,code'
+$script:logStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+$script:logTmp = $null
+$script:logFinal = $null
 $script:logBuf = New-Object System.Text.StringBuilder
 $script:logFlushed = [DateTime]::Now
-function Write-LogLine($path, $s, $snap, $st) {
-  if (-not $path) { return }
+function Get-KitLogDir { if ($LogDir) { return $LogDir }; return (Join-Path $PSScriptRoot 'logs') }
+function Get-TempLogDir { return (Join-Path ([IO.Path]::GetTempPath()) 'Lantern-logs') }
+function V($x, [string]$fmt) { if ($null -eq $x) { return '' }; return ([double]$x).ToString($fmt, $INV) }
+function Write-LogLine($s, $snap, $st) {
+  if ($script:Sim) { return }
   $rm = $null; if ($null -ne $s.readBytes) { $rm = [double]$s.readBytes / 1MB }
   $cols = @((V ($s.t / 1000) '0.0'), $st.phase, $s.health, (V $rm '0'), (V $snap.progress '0.000'), (V $snap.mbps '0.0'), (V $s.availMb '0'), (V $s.commitPct '0.0'), (V $snap.mem.pagingPs '0'), (V $s.cpuPct '0'), (V $s.engineCpuPct '0'), (V $s.engineWsMb '0'), (V $s.enginePrivMb '0'), $st.pressure, $snap.code)
   [void]$script:logBuf.Append(($cols -join ',') + "`r`n")
-  if (([DateTime]::Now - $script:logFlushed).TotalMilliseconds -ge $LOG_FLUSH_MS) { Flush-Log $path }
+  if (([DateTime]::Now - $script:logFlushed).TotalMilliseconds -ge $LOG_FLUSH_MS) { Flush-Log }
 }
-function Flush-Log($path) {
+function Flush-Log {
   $script:logFlushed = [DateTime]::Now
-  if (-not $path -or $script:logBuf.Length -eq 0) { return }
-  try { [IO.File]::AppendAllText($path, $script:logBuf.ToString()) } catch { }
-  [void]$script:logBuf.Clear()
+  if ($script:Sim -or $script:logBuf.Length -eq 0) { return }
+  try {
+    if ($script:logFinal) { [IO.File]::AppendAllText($script:logFinal, $script:logBuf.ToString()) }
+    else {
+      if (-not $script:logTmp) {
+        $td = Get-TempLogDir
+        if (-not (Test-Path -LiteralPath $td)) { New-Item -ItemType Directory -Path $td -Force | Out-Null }
+        $script:logTmp = Join-Path $td ('load-' + $script:logStamp + '.csv')
+        [IO.File]::WriteAllText($script:logTmp, $LOG_HEADER + "`r`n")
+      }
+      [IO.File]::AppendAllText($script:logTmp, $script:logBuf.ToString())
+    }
+    [void]$script:logBuf.Clear()
+  } catch { }
+}
+# Move-Log($dir): the load is over; its rows go to $dir (kit\logs) now
+function Move-Log($dir) {
+  if ($script:Sim -or $script:logFinal -or -not $dir) { return }
+  try {
+    $final = Join-Path $dir ('load-' + $script:logStamp + '.csv')
+    $text = $LOG_HEADER + "`r`n"
+    if ($script:logTmp -and (Test-Path -LiteralPath $script:logTmp)) {
+      $text = [IO.File]::ReadAllText($script:logTmp)
+      if ($script:logTmp -ne $final) { Remove-Item -LiteralPath $script:logTmp -Force -ErrorAction SilentlyContinue }
+    }
+    [IO.File]::WriteAllText($final, $text + $script:logBuf.ToString())
+    [void]$script:logBuf.Clear(); $script:logFinal = $final; $script:logFlushed = [DateTime]::Now
+    $td = Get-TempLogDir
+    if ((Test-Path -LiteralPath $td) -and ([IO.Path]::GetFullPath($td).TrimEnd('\') -ne [IO.Path]::GetFullPath($dir).TrimEnd('\'))) {
+      foreach ($o in @(Get-ChildItem -LiteralPath $td -Filter 'load-*.csv' -File)) { try { Move-Item -LiteralPath $o.FullName -Destination (Join-Path $dir $o.Name) -Force } catch { } }
+    }
+    $old = @(Get-ChildItem -LiteralPath $dir -Filter 'load-*.csv' -File | Sort-Object LastWriteTime -Descending | Select-Object -Skip $KEEP_LOGS)
+    foreach ($o in $old) { try { Remove-Item -LiteralPath $o.FullName -Force } catch { } }
+  } catch { }
 }
 function Write-Summary($dir, $st, $drive, $plan) {
   if (-not $dir) { return }
@@ -672,6 +734,7 @@ function Write-Summary($dir, $st, $drive, $plan) {
   $sum = [ordered]@{
     v = 1; when = (Get-Date -Format 's'); os = 'windows'; model = $st.model; bytes = [long]$st.bytes
     loadMs = $(if ($null -ne $st.readyT) { [long]$st.readyT } else { $null }); outcome = $(if ($null -ne $st.readyT) { 'ready' } else { $st.phase })
+    firstSampleMs = $(if ($null -ne $st.firstSampleT) { [long]$st.firstSampleT } else { $null })
     readBytes = $(if ($null -ne $read) { [long]$read } else { $null })
     readRatio = $(if ($null -ne $read -and $st.bytes -gt 0) { [Math]::Round($read / $st.bytes, 2) } else { $null })
     avgMbps = $(if ($null -ne $read -and $null -ne $st.firstReadT -and $null -ne $st.readyT -and $st.readyT -gt $st.firstReadT) { [Math]::Round($read / 1MB / (($st.readyT - $st.firstReadT) / 1000), 1) } else { $null })
@@ -694,6 +757,7 @@ function Read-Plan($dir, [string]$modelName) {
   if (-not $dir) { return $null }
   try {
     $p = Join-Path $dir 'last-plan.json'
+    if (-not (Test-Path -LiteralPath $p)) { $p = Join-Path (Get-TempLogDir) 'last-plan.json' }
     if (-not (Test-Path -LiteralPath $p)) { return $null }
     $j = Get-Content -Raw -LiteralPath $p | ConvertFrom-Json
     if (((Now-Ms) - [double]$j.t) -gt 300000) { return $null }
@@ -712,17 +776,18 @@ function Engine-Gone {
 }
 function Invoke-Watch {
   if (-not $Model) { Say 'Lantern Watch: no -Model given.'; return }
+  # The engine starts reading the model at the same moment, so nothing slow
+  # and nothing on the model's drive comes before the first reading (see
+  # Get-QuickDrive and Move-Log); the parent's id is asked after it.
   $listener = Start-Status $StatusPort   # first, so the page can ask at once
-  $script:parentPid = 0
-  if (-not $script:Sim) { try { $script:parentPid = [int](Get-CimInstance Win32_Process -Filter ('ProcessId=' + $PID) -Property ParentProcessId -OperationTimeoutSec $CIM_TIMEOUT_S).ParentProcessId } catch { } }
-  $dir = Get-LogDir
-  $drive = Get-DriveInfo $Model
+  $script:parentPid = 0; $parentAsked = [bool]$script:Sim
+  $plan = $null
+  if ($script:Sim) { if ($script:Sim.planResult) { $plan = $script:Sim.planResult } }
+  else { $plan = Read-Plan (Get-KitLogDir) ([IO.Path]::GetFileName($Model)) }
+  $drive = Get-QuickDrive $Model $plan
   $sysName = $null
   if (-not $script:Sim) { try { $sysName = ([string]$env:SystemDrive).ToUpper() } catch { } }
-  $plan = $null
-  if ($script:Sim -and $script:Sim.planResult) { $plan = $script:Sim.planResult } else { $plan = Read-Plan $dir ([IO.Path]::GetFileName($Model)) }
   $st = New-State $Model $MmProj
-  $log = $null; if (-not $script:Sim) { $log = Open-Log $dir }
   $total = (Get-MemoryNow).TotalMb
   $snaps = New-Object System.Collections.ArrayList
   $snap = $null; $readyAt = $null; $quit = $false
@@ -735,16 +800,18 @@ function Invoke-Watch {
       if ($script:Sim) { [void]$snaps.Add($snap) }
       Show-Console $st $snap
       if ($st.phase -eq 'ready' -and $null -eq $readyAt) { $readyAt = [DateTime]::Now }
-      if ($null -eq $readyAt -or ([DateTime]::Now - $readyAt).TotalMinutes -lt 10) { Write-LogLine $log $s $snap $st }
-      if ($st.phase -eq 'ready' -and -not $st.done) { $st.done = $true; Flush-Log $log; Write-Summary $dir $st $drive $plan }
+      if ($null -eq $readyAt -or ([DateTime]::Now - $readyAt).TotalMinutes -lt 10) { Write-LogLine $s $snap $st }
+      if ($st.phase -eq 'ready' -and -not $st.done) { $st.done = $true; $dir = Get-LogDir; Move-Log $dir; Write-Summary $dir $st $drive $plan }
       if ($st.phase -eq 'stopped' -or $quit) {
-        Flush-Log $log
+        $dir = Get-LogDir; Move-Log $dir; Flush-Log
         if (-not $st.done) { $st.done = $true; Write-Summary $dir $st $drive $plan }
         Serve $listener $snap $st
         break
       }
       $interval = 1000; if ($st.phase -eq 'ready') { $interval = $READY_INTERVAL_MS }
       if ($script:Sim -and $Fast) { continue }
+      Serve $listener $snap $st
+      if (-not $parentAsked) { $parentAsked = $true; try { $script:parentPid = [int](Get-CimInstance Win32_Process -Filter ('ProcessId=' + $PID) -Property ParentProcessId -OperationTimeoutSec $CIM_TIMEOUT_S).ParentProcessId } catch { } }
       $until = [DateTime]::Now.AddMilliseconds($interval); $k = 0
       while ([DateTime]::Now -lt $until) {
         Serve $listener $snap $st; Start-Sleep -Milliseconds 100; $k++
@@ -755,7 +822,10 @@ function Invoke-Watch {
       }
     }
   } finally {
-    Flush-Log $log
+    if (-not $script:Sim) {
+      if (-not $script:logFinal) { Move-Log (Get-LogDir) }
+      Flush-Log
+    }
     if ($listener) { try { $listener.Stop() } catch { } }
     if (-not $script:Sim) { try { $Host.UI.RawUI.WindowTitle = 'Lantern' } catch { } }
   }
@@ -769,6 +839,8 @@ function Invoke-Selftest {
   if ($Model) {
     $d = Get-DriveInfo $Model
     Say ('  model: ' + $Model + ' (' + (Gb ((File-Bytes $Model) / 1MB)) + ') on ' + $d.name + ' [' + $d.kind + ']')
+    $q = Get-QuickDrive $Model $null
+    Say ('  while loading (the instant check): ' + $q.name + ' [' + $q.kind + ']')
     $sys = $null; try { $sys = ([string]$env:SystemDrive).ToUpper() } catch { }
     $a = Read-Sample $d.name $sys; Start-Sleep -Milliseconds 1100; $b = Read-Sample $d.name $sys
     Say ('  readings: ' + (($script:sources.GetEnumerator() | ForEach-Object { $_.Key + '=' + $(if ($_.Value) { 'yes' } else { 'no' }) }) -join ' '))

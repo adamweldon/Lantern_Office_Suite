@@ -676,6 +676,7 @@ class Watch:
         self.history = []
         self.first_read_t = None
         self.ready_t = None
+        self.first_sample_t = None
         self.low_rate = 0
         self.slow = 0
         self.refused = 0
@@ -692,6 +693,8 @@ class Watch:
 
     def step(self, s):
         self.last = s
+        if self.first_sample_t is None:
+            self.first_sample_t = s["t"]
         if s["engine"]:
             self.seen_engine = True
         if s["health"] > 0:
@@ -1043,6 +1046,7 @@ def write_summary(d, w, sources):
     summ = {
         "v": 1, "when": time.strftime("%Y-%m-%dT%H:%M:%S"), "os": OS_NAME, "model": w.model, "bytes": int(w.bytes),
         "loadMs": int(w.ready_t) if w.ready_t is not None else None,
+        "firstSampleMs": int(w.first_sample_t) if w.first_sample_t is not None else None,
         "outcome": "ready" if w.ready_t is not None else w.phase,
         "readBytes": int(read) if read is not None else None,
         "readRatio": round(read / w.bytes, 2) if read is not None and w.bytes > 0 else None,

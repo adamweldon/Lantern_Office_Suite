@@ -69,6 +69,20 @@ it, run 17.) Lantern Watch was written in another thread as a drop-in for
   as `kit\models\...` had no drive letter, so the drive's read counter was not
   found (`drive=no`). The Windows watcher now makes every path full first
   (start-lantern.bat already passed full paths; `MODEL=` may not).
+- From Adam's first loads on Windows (the 35B from a USB stick, 2026-10-29):
+  the free-memory question, its countdown and "load anyway" worked, but the
+  watcher said nothing until the model was ready. Its log showed why: before
+  its first reading it asked Windows' storage tools what kind of drive the
+  stick is and created its log file there, and with the stick reading the
+  model at full speed that took 125 s (the 4B, read in 30 s, was measured
+  from the start). Now the plan works out the drive's kind before the engine
+  starts, while the stick is idle; the watcher takes its letter from the path
+  and, if needed, Windows' instant drive type, takes its first reading at
+  once, and keeps its log off the stick until the model has loaded (rows go
+  to the temp folder meanwhile, and move to `kit\logs` at ready, with any
+  left there by a load that was cut off). `last-load.json` says how soon the
+  first reading came (`firstSampleMs`). Tested under PowerShell 7 here
+  (`tests/lantern_watch/live_ps.py`); the self-test shows the instant check.
 
 ## 1.14.3 — Bench run 15, the 4B again: a sum glued with *, newtons over g, the line that needs the 2 (2026-10-28)
 

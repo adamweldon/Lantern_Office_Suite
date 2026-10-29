@@ -39,6 +39,7 @@ var steps = [
   ["Kit: model choice and bigger-model offer; popups; engine built here", "python3", ["tests/kit_offer.py"], /KIT OFFER TESTS PASS/],
   ["Kit window: Install / Start Lantern by double-click (Linux)", "python3", ["tests/kit_window.py"], /KIT WINDOW TESTS PASS/],
   ["Lantern Watch: the load watcher's story and plan, Python and PowerShell agree (1.15)", "python3", ["tests/lantern_watch/run_tests.py", "kit"], /^\d+ checks, 0 failed/m],
+  ["Lantern Watch on Windows for real (PowerShell 7): the first reading at once, the log kept off the stick until the model is loaded (1.15)", "python3", ["tests/lantern_watch/live_ps.py", "kit"], /LIVE PS WATCH (TESTS PASS|SKIPPED)/],
   ["Lantern.zip: one Lantern folder; laid over the stick's old one", "python3", ["tests/lantern_zip.py"], /LANTERN ZIP TESTS PASS/]
 ];
 var failed = 0;
