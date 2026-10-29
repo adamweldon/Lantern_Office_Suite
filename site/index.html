@@ -2178,6 +2178,11 @@ Lantern.drawShapes = (function () {
     out.push(pts[pts.length - 1]);
     return out;
   }
+  function inTri(p, x, y) {
+    function side(a, b) { return (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0]); }
+    var d1 = side(p[0], p[1]), d2 = side(p[1], p[2]), d3 = side(p[2], p[0]);
+    return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+  }
   function rectEdges(o) {
     return [[o.x, o.y], [o.x + o.rw, o.y], [o.x + o.rw, o.y + o.rh], [o.x, o.y + o.rh], [o.x, o.y]];
   }
@@ -2225,11 +2230,14 @@ Lantern.drawShapes = (function () {
       for (var g = 0; g < o.shapes.length; g++) if (hit(o.shapes[g], x, y, tol)) return true;
       return false;
     }
+    // A filled shape is hit anywhere inside it; an outline only on its line
+    // (so a shape drawn inside an outline can still be picked out). Filled
+    // ones used to need a tap right on their edge (1.16.0).
     if (o.t === "path") return polyHit(o.pts, x, y, tol);
     if (o.t === "curve") return polyHit(sample(o.pts), x, y, tol);
-    if (o.t === "rect") return polyHit(rectEdges(o), x, y, tol);
-    if (o.t === "tri") return polyHit(o.pts.concat([o.pts[0]]), x, y, tol);
-    if (o.t === "circle") return Math.abs(dist(x, y, o.cx, o.cy) - o.r) <= tol;
+    if (o.t === "rect") return (o.f && x >= o.x && x <= o.x + o.rw && y >= o.y && y <= o.y + o.rh) || polyHit(rectEdges(o), x, y, tol);
+    if (o.t === "tri") return (o.f && inTri(o.pts, x, y)) || polyHit(o.pts.concat([o.pts[0]]), x, y, tol);
+    if (o.t === "circle") return (o.f && dist(x, y, o.cx, o.cy) <= o.r) || Math.abs(dist(x, y, o.cx, o.cy) - o.r) <= tol;
     if (o.t === "text") {
       var fs = o.fs || 16;
       return Math.abs(x - o.x) <= (String(o.s).length * fs * 0.3) + tol && Math.abs(y - o.y) <= fs / 2 + tol;
@@ -2321,6 +2329,7 @@ Lantern.drawShapes = (function () {
       var symRow = Lantern.el("div", { "class": "row", style: "gap:6px" });
       var actRow = Lantern.el("div", { "class": "row", style: "gap:6px" });
       var hint = Lantern.el("div", { "class": "muted", style: "min-height:20px" });
+      var warn = Lantern.el("div", { role: "status", style: "display:none;margin:4px 0;padding:6px 10px;border-radius:8px;background:#fef3c7;color:#713f12" });
 
       function load() { try { var s = Lantern.store.get("draw.scene", []); return (s && s.length) ? s : []; } catch (e) { return []; } }
       function prevScene() { try { var s = Lantern.store.get("draw.scene.prev", []); return (s && s.length) ? s : null; } catch (e) { return null; } }
@@ -2335,7 +2344,21 @@ Lantern.drawShapes = (function () {
         if (k === 1 && b[0] >= 0 && b[1] >= 0 && b[2] <= w && b[3] <= h) return shapes;
         return shapes.map(function (o) { return S.transform(o, k, dx, dy); });
       }
-      function persist() { try { if (JSON.stringify(scene).length < 400000) Lantern.store.set("draw.scene", scene); } catch (e) {} }
+      // A drawing over KEEP characters is not stored (the browser's space is
+      // shared by every app), and the hint says so: it used to stop saving
+      // without a word, and what was drawn after that was gone next time.
+      var KEEP = 400000, tooBig = false;
+      function persist() {
+        var j = "";
+        try { j = JSON.stringify(scene); } catch (e) { return; }
+        if (j.length < KEEP) {
+          try { Lantern.store.set("draw.scene", scene); } catch (e) { /* storage full: the drawing stays on screen */ }
+          tooBig = false; warn.style.display = "none";
+        } else if (!tooBig) {
+          tooBig = true; warn.style.display = "";
+          warn.textContent = "This drawing is now too big for Lantern to keep in the browser: what you add is not saved when Draw closes. Save PNG to keep it, or Undo or erase some freehand strokes.";
+        }
+      }
 
       function render() {
         if (!ctx) return;
@@ -2360,10 +2383,12 @@ Lantern.drawShapes = (function () {
           }
         }
       }
+      // pos(ev): canvas coordinates, to a tenth of a pixel (whole floats with
+      // 15 decimals made a drawing three times bigger to store)
       function pos(ev) {
         var r = cv.getBoundingClientRect(), p = ev.touches ? ev.touches[0] : ev;
-        return [(p.clientX - r.left) * (cv.width / (r.width || 1)),
-                (p.clientY - r.top) * (cv.height / (r.height || 1))];
+        return [Math.round((p.clientX - r.left) * (cv.width / (r.width || 1)) * 10) / 10,
+                Math.round((p.clientY - r.top) * (cv.height / (r.height || 1)) * 10) / 10];
       }
       function snap(p) {
         if (!mode || !mode.grid) return p;
@@ -2387,10 +2412,42 @@ Lantern.drawShapes = (function () {
           canvas: cv
         };
       }
-      function add(o) { scene.push(o); persist(); render(); }
+      // History (1.16.0): every change is an action Undo reverses and Redo
+      // does again -- {k: "add", o}, {k: "del", o, i}, {k: "many", list} (one
+      // eraser drag), {k: "all", before, after} (Clear, Restore). Undo used to
+      // remove the last shape drawn, so after erasing something it removed
+      // another shape instead of bringing the erased one back.
+      var undoList = [], redoList = [], eraseGroup = null;
+      function record(a) { undoList.push(a); if (undoList.length > 300) undoList.shift(); redoList = []; }
+      function apply(a, back) {
+        var i;
+        if (a.k === "add") { if (back) { i = scene.lastIndexOf(a.o); if (i >= 0) scene.splice(i, 1); } else scene.push(a.o); }
+        else if (a.k === "del") { if (back) scene.splice(Math.min(a.i, scene.length), 0, a.o); else { i = scene.indexOf(a.o); if (i >= 0) scene.splice(i, 1); } }
+        else if (a.k === "many") {
+          if (back) for (i = a.list.length - 1; i >= 0; i--) apply(a.list[i], true);
+          else for (i = 0; i < a.list.length; i++) apply(a.list[i], false);
+        } else if (a.k === "all") scene = (back ? a.before : a.after).slice();
+      }
+      function undo() {
+        if (curvePts && curvePts.length) { curvePts.pop(); render(); return; }
+        var a = undoList.pop();
+        if (!a) return;
+        apply(a, true); redoList.push(a); persist(); render();
+      }
+      function redo() {
+        var a = redoList.pop();
+        if (!a) return;
+        apply(a, false); undoList.push(a); persist(); render();
+      }
+      function add(o) { scene.push(o); record({ k: "add", o: o }); persist(); render(); }
       function deleteAt(x, y) {
         for (var i = scene.length - 1; i >= 0; i--)
-          if (S.hit(scene[i], x, y, 9)) { scene.splice(i, 1); persist(); render(); return true; }
+          if (S.hit(scene[i], x, y, 9)) {
+            var a = { k: "del", o: scene[i], i: i };
+            scene.splice(i, 1);
+            if (eraseGroup) eraseGroup.push(a); else record(a);
+            persist(); render(); return true;
+          }
         return false;
       }
 
@@ -2432,7 +2489,7 @@ Lantern.drawShapes = (function () {
         if (tool === "curve") { (curvePts = curvePts || []).push(p); render(); ev.preventDefault(); return; }
         if (mode) p = snap(p);
         dragging = true; start = p;
-        if (tool === "erase") { deleteAt(p[0], p[1]); ev.preventDefault(); return; }
+        if (tool === "erase") { eraseGroup = []; deleteAt(p[0], p[1]); ev.preventDefault(); return; }
         if (tool === "pen") draft = { t: "path", c: color, w: size, o: alpha, pts: [p] };
         else if (tool === "line") draft = { t: "path", c: color, w: size, o: alpha, pts: [p, p] };
         else if (tool === "rect") draft = { t: "rect", c: color, w: size, f: fill, o: alpha, x: p[0], y: p[1], rw: 0, rh: 0 };
@@ -2451,7 +2508,10 @@ Lantern.drawShapes = (function () {
         var p = pos(ev);
         if (tool === "erase") { deleteAt(p[0], p[1]); ev.preventDefault(); return; }
         if (!draft) return;
-        if (tool === "pen") draft.pts.push(p);
+        if (tool === "pen") {
+          var q = draft.pts[draft.pts.length - 1];
+          if (S.dist(q[0], q[1], p[0], p[1]) >= 1.5) draft.pts.push(p);   // a stroke keeps the points that move it
+        }
         else if (tool === "line") {
           if (mode) {
             // Schematic helper: wires/pipes snap to the grid and run straight.
@@ -2475,6 +2535,7 @@ Lantern.drawShapes = (function () {
       function up() {
         if (!dragging) return;
         dragging = false;
+        if (eraseGroup) { if (eraseGroup.length) record(eraseGroup.length === 1 ? eraseGroup[0] : { k: "many", list: eraseGroup }); eraseGroup = null; }
         if (tool === "erase" || !draft) { draft = null; return; }
         var keep = true;
         if (tool === "circle" && draft.r < 2) keep = false;
@@ -2498,12 +2559,16 @@ Lantern.drawShapes = (function () {
         var p = pos(ev); deleteAt(p[0], p[1]); ev.preventDefault();
       });
       cv.addEventListener("mouseleave", function () { if (hover) { hover = null; render(); } });
-      // R turns the symbol, as in most schematic programs (not while typing)
+      // Keys (not while typing in a box): Ctrl+Z undo, Ctrl+Y or
+      // Ctrl+Shift+Z redo (Cmd on a Mac); R turns the symbol, as in most
+      // schematic programs
       document.addEventListener("keydown", function onKey(ev) {
         if (!document.contains(cv)) { document.removeEventListener("keydown", onKey); return; }
         var tag = ev.target && ev.target.tagName, typing = { INPUT: 1, TEXTAREA: 1, SELECT: 1 };
-        if (tool !== "stamp" || ev.ctrlKey || ev.metaKey || ev.altKey || typing[tag]) return;
-        if (ev.key === "r" || ev.key === "R") { turnBy(); ev.preventDefault(); }
+        var k = String(ev.key || "").toLowerCase();
+        if (typing[tag] || ev.altKey) return;
+        if ((ev.ctrlKey || ev.metaKey) && (k === "z" || k === "y")) { if (k === "y" || ev.shiftKey) redo(); else undo(); ev.preventDefault(); return; }
+        if (tool === "stamp" && !ev.ctrlKey && !ev.metaKey && k === "r") { turnBy(); ev.preventDefault(); }
       });
 
       function selectTool(t) {
@@ -2595,11 +2660,8 @@ Lantern.drawShapes = (function () {
           Lantern.el("div", { "class": "wprev", title: "Line width preview" }, [prevBar]),
           slider, num, Lantern.el("span", { "class": "muted", text: "px" })
         ]));
-        actRow.appendChild(Lantern.el("button", { text: "Undo", onclick: function () {
-          if (curvePts && curvePts.length) curvePts.pop();
-          else if (scene.length) { scene.pop(); persist(); }
-          render();
-        } }));
+        actRow.appendChild(Lantern.el("button", { text: "Undo", title: "Undo (Ctrl+Z)", onclick: undo }));
+        actRow.appendChild(Lantern.el("button", { text: "Redo", title: "Redo (Ctrl+Y)", onclick: redo }));
         // Hook: extension modules add style/utility tools (see DRAW_ART).
         var xdt = window.Lantern.drawTools || [];
         xdt.forEach(function (t) {
@@ -2616,11 +2678,13 @@ Lantern.drawShapes = (function () {
           var prev = prevScene();
           if (!prev) return;
           try { Lantern.store.set("draw.scene.prev", scene); } catch (e) {}
+          record({ k: "all", before: scene, after: prev });
           scene = prev; persist(); render(); paintAct();
         } }));
         actRow.appendChild(Lantern.el("span", { style: "flex:1" }));
         actRow.appendChild(Lantern.el("button", { text: "Clear", onclick: function () {
           if (scene.length && !Lantern.confirmDel("this whole drawing")) return;
+          if (scene.length) record({ k: "all", before: scene, after: [] });
           scene = []; curvePts = null; persist(); render();
         } }));
         actRow.appendChild(Lantern.el("button", { "class": "primary", text: "Save PNG", onclick: function () {
@@ -2631,7 +2695,7 @@ Lantern.drawShapes = (function () {
         } }));
       }
 
-      var wrap = Lantern.el("div", { "class": "dwrap" }, [toolsRow, symRow, actRow, hint, cv]);
+      var wrap = Lantern.el("div", { "class": "dwrap" }, [toolsRow, symRow, actRow, hint, warn, cv]);
       ws.appendChild(wrap);
       paintTools(); paintAct();
       selectTool("pen");

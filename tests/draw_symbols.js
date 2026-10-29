@@ -4,7 +4,10 @@
 // that one), and a flow arrow could only point right. Now: only the main
 // button places or draws; Turn (or the R key) turns the symbols a quarter
 // turn, with the arrow in the button's name turning too; a faint preview
-// follows the pointer (not for Label, which asks for its text).
+// follows the pointer (not for Label, which asks for its text). 1.16.0: Undo
+// and Redo (and Ctrl+Z, Ctrl+Y) reverse erasing and Clear; filled shapes are
+// erased from inside; strokes are stored small, and a drawing too big to keep
+// says so.
 "use strict";
 var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
 var fs = require("fs"), path = require("path");
@@ -115,6 +118,64 @@ function pts(o) { return o.t === "group" ? [].concat.apply([], o.shapes.map(pts)
   var t0 = { t: "path", c: "#000", w: 3, pts: [[1, 2]] };
   ok("turn(): no turn is the same shape; four turns come back", S.turn(t0, 0, 5, 5) === t0 && JSON.stringify(S.turn(t0, 4, 5, 5)) === JSON.stringify(t0) &&
     JSON.stringify(S.turn(S.turn(t0, 3, 5, 5), 1, 5, 5).pts) === JSON.stringify(t0.pts));
+
+  // --- editing (1.16.0): undo brings back what was erased; redo; keys ------------------
+  sel.value = "-1"; fire(sel, "change"); await sleep(20);
+  w.Lantern.store.set("draw.scene", []);
+  w.location.hash = "home"; fire(w, "hashchange"); await sleep(40);
+  w.location.hash = "draw"; fire(w, "hashchange"); await sleep(60);
+  cv = d.querySelector("canvas.pad");
+  cv.getBoundingClientRect = function () { return { left: 0, top: 0, width: cv.width, height: cv.height }; };
+  function drag(tool, x0, y0, x1, y1) { btn(new RegExp("^" + tool + "$")).click(); mouse(cv, "mousedown", x0, y0); mouse(cv, "mousemove", x1, y1); mouse(w, "mouseup", x1, y1); }
+  function kinds() { return scene().map(function (o) { return o.t; }).join(","); }
+  drag("Rect", 50, 50, 150, 120); drag("Circle", 300, 200, 340, 200); drag("Line", 400, 300, 500, 300);
+  ok("(a rectangle, a circle and a line)", kinds() === "rect,circle,path", kinds());
+  btn(/^Eraser$/).click(); mouse(cv, "mousedown", 50, 80); mouse(w, "mouseup", 50, 80);
+  ok("(the rectangle erased)", kinds() === "circle,path", kinds());
+  btn(/^Undo$/).click();
+  ok("Undo after erasing brings the rectangle back, in its place, and keeps the rest", kinds() === "rect,circle,path", kinds());
+  btn(/^Redo$/).click();
+  ok("Redo erases it again", kinds() === "circle,path", kinds());
+  d.dispatchEvent(new w.KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true }));
+  ok("Ctrl+Z undoes", kinds() === "rect,circle,path", kinds());
+  d.dispatchEvent(new w.KeyboardEvent("keydown", { key: "y", ctrlKey: true, bubbles: true, cancelable: true }));
+  d.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Z", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+  ok("Ctrl+Y redoes (and Ctrl+Shift+Z with nothing left to redo does nothing)", kinds() === "circle,path", kinds());
+  d.dispatchEvent(new w.KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true })); d.dispatchEvent(new w.KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }));
+  ok("Undo twice: the erase, then the line drawn before it", kinds() === "rect,circle", kinds());
+  btn(/^Redo$/).click();
+  btn(/^Eraser$/).click(); mouse(cv, "mousedown", 50, 80); mouse(cv, "mousemove", 320, 200); mouse(cv, "mousemove", 340, 200); mouse(w, "mouseup", 340, 200);
+  ok("(one eraser drag over the rectangle and the circle)", kinds() === "path", kinds());
+  btn(/^Undo$/).click();
+  ok("one Undo brings back everything that drag erased", kinds() === "rect,circle,path", kinds());
+  btn(/^Clear$/).click();
+  ok("(Clear)", scene().length === 0);
+  btn(/^Undo$/).click();
+  ok("Undo after Clear brings the drawing back", kinds() === "rect,circle,path", kinds());
+  // filled shapes are erased from inside; an outline only on its line
+  w.Lantern.store.set("draw.scene", [{ t: "rect", c: "#000", w: 7, f: true, x: 100, y: 100, rw: 120, rh: 80 }, { t: "rect", c: "#000", w: 7, f: false, x: 400, y: 100, rw: 120, rh: 80 },
+    { t: "circle", c: "#000", w: 7, f: true, cx: 300, cy: 300, r: 50 }, { t: "tri", c: "#000", w: 7, f: true, pts: [[600, 100], [700, 250], [500, 250]] }]);
+  w.location.hash = "home"; fire(w, "hashchange"); await sleep(40); w.location.hash = "draw"; fire(w, "hashchange"); await sleep(60);
+  cv = d.querySelector("canvas.pad"); cv.getBoundingClientRect = function () { return { left: 0, top: 0, width: cv.width, height: cv.height }; };
+  btn(/^Eraser$/).click();
+  [[160, 140], [460, 140], [300, 300], [600, 200]].forEach(function (q) { mouse(cv, "mousedown", q[0], q[1]); mouse(w, "mouseup", q[0], q[1]); });
+  ok("the eraser takes a filled rectangle, circle and triangle from inside, but not an outline rectangle", kinds() === "rect" && scene()[0].f === false, scene());
+  // a freehand stroke is stored small: tenths of a pixel, no points closer than 1.5
+  w.Lantern.store.set("draw.scene", []); w.location.hash = "home"; fire(w, "hashchange"); await sleep(40); w.location.hash = "draw"; fire(w, "hashchange"); await sleep(60);
+  cv = d.querySelector("canvas.pad"); cv.getBoundingClientRect = function () { return { left: 0, top: 0, width: cv.width / 2.3, height: cv.height / 2.3 }; };
+  btn(/^Pen$/).click(); mouse(cv, "mousedown", 10, 10);
+  for (var i = 1; i <= 40; i++) mouse(cv, "mousemove", 10 + i * 0.37, 10 + i * 0.11);
+  mouse(w, "mouseup", 25, 15);
+  var st = scene()[0];
+  ok("a pen stroke keeps tenths of a pixel and drops points closer than 1.5", st && st.pts.every(function (q) { return Math.round(q[0] * 10) === q[0] * 10 && Math.round(q[1] * 10) === q[1] * 10; }) &&
+    st.pts.length < 41 && st.pts.slice(1).every(function (q, j) { var a = st.pts[j]; return Math.hypot(q[0] - a[0], q[1] - a[1]) >= 1.5; }), st && st.pts.slice(0, 5));
+  // too big to keep: said, not silent
+  var big = [], k = 0; while (JSON.stringify(big).length < 399000) { var pp = []; for (var m = 0; m < 20; m++) pp.push([123.456789 + m, 98.7654321 + k]); big.push({ t: "path", c: "#000", w: 5, pts: pp }); k++; }
+  w.Lantern.store.set("draw.scene", big); w.location.hash = "home"; fire(w, "hashchange"); await sleep(40); w.location.hash = "draw"; fire(w, "hashchange"); await sleep(60);
+  cv = d.querySelector("canvas.pad"); cv.getBoundingClientRect = function () { return { left: 0, top: 0, width: cv.width, height: cv.height }; };
+  var before = JSON.stringify(w.Lantern.store.get("draw.scene", [])).length;
+  for (var r = 0; r < 12; r++) drag("Rect", 20 + r * 5, 20, 80 + r * 5, 60);
+  ok("past what the browser can keep, the hint says the drawing is not saved", /too big for Lantern to keep in the browser/.test(d.body.textContent) && before > 398000 && JSON.stringify(w.Lantern.store.get("draw.scene", [])).length < 400000, before);
 
   ok("no page errors", errs.length === 0, errs);
   console.log(fails ? "DRAW SYMBOL TESTS FAILED (" + fails + " of " + (fails + passes) + ")" : "ALL DRAW SYMBOL TESTS PASS (" + passes + ")");
