@@ -45,7 +45,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'   # the Storage module draws progress bars over the shared console
-$LW_VERSION = '1.0'
+$LW_VERSION = '1.1'
 $INV = [Globalization.CultureInfo]::InvariantCulture
 # A path typed by hand can be relative (kit\models\...). The drive letter is
 # what finds the drive's read counter, so every path is made full here.
@@ -53,7 +53,7 @@ function Full-Path([string]$p) {
   if (-not $p -or $Simulate) { return $p }
   try { return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($p) } catch { return $p }
 }
-$Model = Full-Path $Model; $MmProj = Full-Path $MmProj; $Models = Full-Path $Models
+$Model = Full-Path $Model; $MmProj = Full-Path $MmProj; $Models = Full-Path $Models; $LogDir = Full-Path $LogDir
 
 # ---- tuning (first guesses; the load logs are there to refine them) --------
 $ENGINE_OVERHEAD_MB = 1200  # KV cache for -c 8192 plus compute buffers
@@ -64,6 +64,7 @@ $TIGHT_AVAIL_MB     = 1200
 $HEAVY_AVAIL_MB     = 500
 $TIGHT_PAGING_PS    = 250   # pages a second written out to the page file
 $HEAVY_PAGING_PS    = 1000
+$PAGING_AVAIL_MB    = 4096  # paging with more than this free is Windows tidying up, not a shortage (1.1)
 $HEAVY_COMMIT_PCT   = 97
 $PREPARE_TAIL_MS    = 6000  # after the last byte is read, until it answers
 $KEEP_LOGS          = 20
@@ -489,13 +490,17 @@ function Step($st, $s, $drive, $plan) {
   # memory pressure: up after 2 samples in a row, down after 5 (no flicker)
   if ($null -ne $s.pagingPs) { [void]$st.paging.Add([double]$s.pagingPs); if ($st.paging.Count -gt 3) { $st.paging.RemoveAt(0) } }
   $pg = $null; if ($st.paging.Count -gt 0) { $pg = ($st.paging | Measure-Object -Average).Average }
+  # 1.1, from two real laptops: the engine's first read (Windows prefetches
+  # the whole model) took commit to 98% with 5 GB still free, and the laptop
+  # stayed smooth -- commit alone is no longer heavy; paging with 38 GB free
+  # (after loading, on a 64 GB laptop) is no longer tight. Low free memory is.
   $level = 0
   if ($null -ne $s.availMb -and $s.availMb -lt $TIGHT_AVAIL_MB) { $level = 1 }
-  if ($null -ne $pg -and $pg -ge $TIGHT_PAGING_PS) { $level = 1 }
+  if ($null -ne $pg -and $pg -ge $TIGHT_PAGING_PS -and ($null -eq $s.availMb -or $s.availMb -lt $PAGING_AVAIL_MB)) { $level = 1 }
   if ($null -ne $s.psiSome -and $s.psiSome -ge 10) { $level = 1 }
   if ($null -ne $s.availMb -and $s.availMb -lt $HEAVY_AVAIL_MB -and ($null -eq $pg -or $pg -ge $TIGHT_PAGING_PS)) { $level = 2 }
   if ($null -ne $pg -and $pg -ge $HEAVY_PAGING_PS -and $null -ne $s.availMb -and $s.availMb -lt $TIGHT_AVAIL_MB) { $level = 2 }
-  if ($null -ne $s.commitPct -and $s.commitPct -ge $HEAVY_COMMIT_PCT) { $level = 2 }
+  if ($null -ne $s.commitPct -and $s.commitPct -ge $HEAVY_COMMIT_PCT -and $null -ne $s.availMb -and $s.availMb -lt $TIGHT_AVAIL_MB) { $level = 2 }
   if ($null -ne $s.psiFull -and $s.psiFull -ge 10) { $level = 2 }
   $cur = Rank $st.pressure
   if ($level -gt $cur) { $st.upRun++; $st.downRun = 0; if ($st.upRun -ge 2) { $cur = $level; $st.upRun = 0 } }
@@ -582,7 +587,7 @@ function Tell($st, $s, $prog, $rate, $left, $drive, $plan) {
   if ($st.phase -ne 'stopped') {
     if ($st.pressure -eq 'heavy') {
       $code = 'pressure'
-      $adv = 'This computer has run out of free memory, so Windows is moving other programs to the disk. It can look frozen for a minute or two. Please wait, and do not click or open anything: that makes it take longer.'
+      $adv = 'This computer has run out of free memory, so Windows is moving other programs to the disk. It may stop responding for a minute or two, but the AI is still loading. Please wait, and do not click or open anything meanwhile: that makes it take longer.'
       if ($st.phase -eq 'ready') { $adv = 'Free memory has run out, so the computer and the AI may be slow. Closing other programs helps.' }
     } elseif ($st.pressure -eq 'tight' -and $st.phase -ne 'ready') {
       if (-not $adv) { $adv = 'Memory is nearly full, so the computer may respond slowly until this finishes. Please do not open other programs meanwhile.' }
@@ -668,12 +673,13 @@ function Show-Console($st, $snap) {
 }
 
 # ---- the log ------------------------------------------------------------------
-# While the model loads, nothing is written to the model's drive (a USB stick
-# reading the model at full speed answers one request at a time): rows are
-# kept in memory and every LOG_FLUSH_MS go to a file in the temp folder on the
-# system drive. When the load is over (ready, stopped, or the window closed)
-# they move to kit\logs\load-<time>.csv, with any left in the temp folder by a
-# load that was cut off; after ready, rows go there every LOG_FLUSH_MS.
+# While the model loads, nothing is written anywhere: rows are kept in memory.
+# (1.1: the engine asks Windows for the whole model at once, and anything else
+# that touches the stick waits behind it -- from a USB 2.0 port that was 14
+# minutes, and the watcher's first log write, to the temp folder, stopped it
+# for all of them.) When the load is over (ready, stopped, or the window
+# closed) they go to kit\logs\load-<time>.csv, with any left in the temp
+# folder by an older watcher; after ready, rows go there every LOG_FLUSH_MS.
 $LOG_HEADER = 'elapsed_s,phase,health,read_mb,progress,mbps,avail_mb,commit_pct,paging_ps,cpu_pct,engine_cpu_pct,engine_ws_mb,engine_priv_mb,pressure,code'
 $script:logStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $script:logTmp = $null
@@ -687,8 +693,8 @@ function Write-LogLine($s, $snap, $st) {
   if ($script:Sim) { return }
   $rm = $null; if ($null -ne $s.readBytes) { $rm = [double]$s.readBytes / 1MB }
   $cols = @((V ($s.t / 1000) '0.0'), $st.phase, $s.health, (V $rm '0'), (V $snap.progress '0.000'), (V $snap.mbps '0.0'), (V $s.availMb '0'), (V $s.commitPct '0.0'), (V $snap.mem.pagingPs '0'), (V $s.cpuPct '0'), (V $s.engineCpuPct '0'), (V $s.engineWsMb '0'), (V $s.enginePrivMb '0'), $st.pressure, $snap.code)
-  [void]$script:logBuf.Append(($cols -join ',') + "`r`n")
-  if (([DateTime]::Now - $script:logFlushed).TotalMilliseconds -ge $LOG_FLUSH_MS) { Flush-Log }
+  if ($script:logBuf.Length -lt 4MB) { [void]$script:logBuf.Append(($cols -join ',') + "`r`n") }
+  if ($script:logFinal -and ([DateTime]::Now - $script:logFlushed).TotalMilliseconds -ge $LOG_FLUSH_MS) { Flush-Log }
 }
 function Flush-Log {
   $script:logFlushed = [DateTime]::Now
@@ -776,6 +782,10 @@ function Engine-Gone {
 }
 function Invoke-Watch {
   if (-not $Model) { Say 'Lantern Watch: no -Model given.'; return }
+  # nothing in this process may wait on the model's drive while the engine
+  # reads it: its working directory (start-lantern's, on the stick) moves to
+  # the temp folder, so no relative path or library search can go there (1.1)
+  if (-not $script:Sim) { try { $wd = [IO.Path]::GetTempPath(); Set-Location -LiteralPath $wd; [Environment]::CurrentDirectory = $wd } catch { } }
   # The engine starts reading the model at the same moment, so nothing slow
   # and nothing on the model's drive comes before the first reading (see
   # Get-QuickDrive and Move-Log); the parent's id is asked after it.

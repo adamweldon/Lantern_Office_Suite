@@ -102,6 +102,20 @@ def main():
         ok(first is not None and first[1].get("phase") in ("starting", "reading", "preparing"), "...and it is a loading status", first and first[1].get("phase"))
         time.sleep(2.5)
         ok(os.listdir(logs) == [], "while the model loads, nothing is written to the kit's log folder", os.listdir(logs))
+        try:
+            cwd = os.readlink("/proc/%d/cwd" % w.pid)
+        except OSError:
+            cwd = None
+        ok(cwd is None or os.path.realpath(cwd) == os.path.realpath(os.path.join(tmp, "tmp")),
+           "the watcher's working directory is the temp folder, not start-lantern's on the stick (1.1)", cwd)
+        # past the old 30 s flush: still nothing written anywhere, and still answering
+        time.sleep(31)
+        j = status(Q)
+        ok(os.listdir(logs) == [] and sorted(os.listdir(tlogs)) == ["load-20200101-000000.csv"],
+           "35 s into the load: nothing written to the kit's log folder or the temp folder (1.1: the first write stopped the watcher for 14 min)",
+           [os.listdir(logs), os.listdir(tlogs)])
+        ok(j is not None and j.get("phase") in ("reading", "preparing", "starting") and time.time() * 1000 - j.get("t", 0) < 5000,
+           "...and the watcher is still answering with fresh readings", j and (j.get("phase"), j.get("t")))
         open(flag, "w").write("1")
         t1, ph = time.time(), None
         while time.time() - t1 < 20 and ph != "ready":
@@ -117,6 +131,9 @@ def main():
            [have, os.listdir(tlogs)])
         rows = open(os.path.join(logs, mine[0])).read().splitlines() if mine else []
         ok(len(rows) >= 3 and rows[0].startswith("elapsed_s,phase,health,read_mb"), "the load's log has its header and the loading rows", rows[:3])
+        el = [float(r.split(",")[0]) for r in rows[1:] if r and r.split(",")[1] != "ready"]
+        gaps = [round(b - a, 1) for a, b in zip(el, el[1:]) if b - a > 5]
+        ok(len(el) >= 25 and not gaps, "...a row every second or two all through the load, no gap (the home log had none from 30 s to 14 min)", [len(el), gaps])
         ll = json.load(open(os.path.join(logs, "last-load.json"))) if "last-load.json" in have else {}
         ok(ll.get("outcome") == "ready" and isinstance(ll.get("firstSampleMs"), int) and ll["firstSampleMs"] < 8000,
            "last-load.json says how soon the first reading came (firstSampleMs)", ll)

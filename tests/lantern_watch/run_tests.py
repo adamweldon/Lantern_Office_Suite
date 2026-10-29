@@ -112,12 +112,17 @@ def story_checks(name, snaps):
     elif name == "watch_pressure":
         check("pressure" in codes, name + ": memory pressure told")
         hv = next(s for s in snaps if s["pressure"] == "heavy")
-        check("run out of free memory" in hv["advice"] and "do not click" in hv["advice"], name + ": tells the person to wait: " + hv["advice"])
+        check("run out of free memory" in hv["advice"] and "do not click" in hv["advice"] and "still loading" in hv["advice"], name + ": tells the person to wait: " + hv["advice"])
         check(any(s["pressure"] == "tight" for s in snaps), name + ": tight before/after")
         ps = [s["pressure"] for s in snaps]
         flips = sum(1 for a, b in zip(ps, ps[1:]) if a != b)
         check(flips <= 6, name + ": pressure does not flicker (%d changes)" % flips)
         check("ready" in ph and ph[-1] == "stopped", name + ": still gets to ready " + str(ph))
+    elif name in ("watch_work_prefetch", "watch_free_paging"):
+        # real laptops that were fine: no warning (1.1)
+        check(all(s["pressure"] == "ok" for s in snaps), name + ": no memory warning: " + str(sorted(set(s["pressure"] for s in snaps))))
+        check("pressure" not in codes and "reading-tight" not in codes, name + ": no pressure codes " + str(sorted(codes)))
+        check(ph[:4] == ["starting", "reading", "preparing", "ready"], name + ": phases " + str(ph))
     elif name == "watch_cached":
         r = next(i for i, s in enumerate(snaps) if s["phase"] == "ready")
         check(r <= 8, name + ": ready within 8 s")

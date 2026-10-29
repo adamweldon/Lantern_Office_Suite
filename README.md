@@ -88,8 +88,10 @@ loads it measures the bytes read from the model's drive, free memory and
 paging, and says so in the Start window's title and on Lantern's loading
 screen: how much is read, how fast, the time left, a slow USB port, and "out of
 memory: please wait, do not click" when the computer is moving programs to the
-disk. Each load is logged in `kit/logs` (never in the zip). Settings and
-details: `kit/README.txt`.
+disk (only when free memory has really run out, 1.16.1). Each load is logged
+in `kit/logs` (never in the zip). The USB port matters most: the same stick
+loaded the 35B in 2 1/2 minutes from a USB 3 port and in 15 through a USB 2.0
+port or adapter. Settings and details: `kit/README.txt`.
 
 ### Updating: extract the new Lantern.zip over the old Lantern folder
 

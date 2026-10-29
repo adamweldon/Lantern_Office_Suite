@@ -116,8 +116,14 @@ Folder layout
       so the desktop stays responsive. Windows keeps normal priority.
     - Each load is logged in kit/logs (loads.csv, the last 20 load-*.csv,
       last-load.json): send loads.csv to tune Lantern for real computers.
-      On Windows nothing is written to the stick while the model loads (it
-      is busy reading the model); the log is moved there once it has loaded.
+      Nothing is written while the model loads: the engine asks for the
+      whole model at once, and anything else on the stick waits behind it
+      (14 minutes from a USB 2.0 port). The log is written once it has
+      loaded.
+    - The USB port matters most. The same stick read the 35B at 145 MB/s
+      in a USB 3 port (2 1/2 minutes) and at 26 MB/s through a USB 2.0
+      port or adapter (15 minutes). The black window says so when a port
+      is slow.
       kit/logs is this computer's own and is never in Lantern.zip.
     - Settings: LANTERN_WATCH_PORT (default 8082); LANTERN_PRIO=0 (Linux,
       Mac: normal priority); LANTERN_PRIO=1 (Windows: try the BelowNormal

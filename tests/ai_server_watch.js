@@ -125,7 +125,13 @@ var all = [];
     advice(d).nextSibling === what(d) && /do not click/.test(advice(d).textContent), what(d).textContent);
   var calm = L.aiServerWait.estimate(Date.now()); calm.watch = status("reading", { progress: 0.7 });
   A.w.Lantern.aiServerWait.W.view.paint({ state: "loading", kit: true, est: calm, downLong: false });
-  ok("memory frees up: the warning goes and the advice line moves back under the sentence", advice(d).style.display === "none" && what(d).nextSibling === advice(d));
+  ok("memory frees up: the warning stays 20 s, so it can be read (1.16.1: it was gone before Adam had read it)",
+    advice(d).style.display === "" && /do not click/.test(advice(d).textContent) && advice(d).nextSibling === what(d), advice(d).textContent);
+  var realNow0 = A.w.Date.now;
+  A.w.Date.now = function () { return realNow0.call(A.w.Date) + 21000; };
+  A.w.Lantern.aiServerWait.W.view.paint({ state: "loading", kit: true, est: calm, downLong: false });
+  A.w.Date.now = realNow0;
+  ok("...then it goes and the advice line moves back under the sentence", advice(d).style.display === "none" && what(d).nextSibling === advice(d));
 
   // --- ready: the watcher's load time is remembered -----------------------------------------------
   watch.status = function () { return status("ready"); };

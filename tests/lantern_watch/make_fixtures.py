@@ -25,7 +25,7 @@ def lerp(a, b, f):
 
 
 def load(total, mbps_at, avail_at, paging_at=lambda i: 0.0, start_avail=26000.0, prep=5, ready=5, stop=True,
-         ws_final=None, max_s=900):
+         ws_final=None, max_s=900, commit_at=lambda i: 40.0):
     """A load: 1 s starting, then reading at mbps_at(i), then `prep` seconds
     preparing, `ready` seconds answering, then the engine stops."""
     s = [{"engine": True, "health": 0, "readBytes": 0.0, "availMb": start_avail, "pagingPs": 0.0,
@@ -37,7 +37,7 @@ def load(total, mbps_at, avail_at, paging_at=lambda i: 0.0, start_avail=26000.0,
         i += 1
         read = min(total, read + mbps_at(i) * MB)
         s.append({"engine": True, "health": 503, "readBytes": read, "availMb": avail_at(i, read / total),
-                  "pagingPs": paging_at(i), "commitPct": 40.0, "cpuPct": 22.0, "engineCpuPct": 6.0,
+                  "pagingPs": paging_at(i), "commitPct": commit_at(i), "cpuPct": 22.0, "engineCpuPct": 6.0,
                   "engineWsMb": lerp(40.0, ws_final * 0.15, read / total), "enginePrivMb": 900.0})
     last = s[-1]
     for k in range(prep):
@@ -81,6 +81,23 @@ def fixtures():
     fx["watch_pressure"] = {"drive": "usb", "plan": {"totalMb": 16000, "availMb": 6000}, "models": MODELS,
                             "planResult": {"v": 1, "choice": "anyway", "picked": BIG["name"], "wanted": BIG["name"], "availMb": 6000, "totalMb": 16000, "needMb": 20300, "reason": "total"},
                             "samples": load(BIG_TOTAL, p_rate, p_avail, p_paging, start_avail=6000.0)}
+    # two real laptops (1.1). Adam's 32 GB work laptop, the 35B from a USB 3
+    # port at ~145 MB/s: Windows' prefetch of the whole model took commit to
+    # 98% and free memory from 18.8 to 5 GB in 15 s, with a burst of paging,
+    # then it came back -- the laptop stayed smooth (video, Fusion 360, a copy
+    # running). Not a shortage: no warning.
+    def w_avail(i, f):
+        if i <= 15:
+            return lerp(18776, 5009, i / 15.0)
+        return lerp(5009, 14500, (i - 15) / 110.0)
+    fx["watch_work_prefetch"] = {"drive": "usb", "plan": {"totalMb": 32424, "availMb": 19019}, "models": MODELS,
+                                 "samples": load(BIG_TOTAL, lambda i: 145.0, w_avail, lambda i: 2562.0 if 11 <= i <= 13 else 0.0,
+                                                 start_avail=18776.0, commit_at=lambda i: 98.0 if i <= 20 else lerp(92.0, 70.0, (i - 20) / 100.0))}
+    # his 64 GB home laptop: 38 GB free and some paging (Windows tidying up)
+    # -- it was called "tight"; it is not
+    fx["watch_free_paging"] = {"drive": "usb", "plan": {"totalMb": 65243, "availMb": 43385}, "models": MODELS,
+                               "samples": load(BIG_TOTAL, lambda i: 120.0, lambda i, f: lerp(43000, 38500, f),
+                                               lambda i: 315.0 if 20 <= i <= 40 else 0.0, start_avail=43000.0)}
     cached = [{"engine": True, "health": 0, "readBytes": 0.0, "availMb": 27000.0, "engineWsMb": 40.0}]
     for k in range(1, 8):
         cached.append({"engine": True, "health": 503, "readBytes": 0.02 * GB, "availMb": 27000.0,

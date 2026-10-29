@@ -39,7 +39,7 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-LW_VERSION = "1.0"
+LW_VERSION = "1.1"
 MB = 1048576.0
 GB = 1e9           # file sizes in decimal GB, as Lantern's page shows them (memory stays in binary MB/GB, as Task Manager shows it)
 
@@ -52,6 +52,7 @@ TIGHT_AVAIL_MB = 1200
 HEAVY_AVAIL_MB = 500
 TIGHT_PAGING_PS = 250      # pages a second swapped out or in
 HEAVY_PAGING_PS = 1000
+PAGING_AVAIL_MB = 4096      # paging with more than this free is the system tidying up, not a shortage (1.1)
 HEAVY_COMMIT_PCT = 97
 PREPARE_TAIL_MS = 6000     # after the last byte is read, until it answers
 KEEP_LOGS = 20
@@ -721,7 +722,9 @@ class Watch:
         level = 0
         if av is not None and av < TIGHT_AVAIL_MB:
             level = 1
-        if pg is not None and pg >= TIGHT_PAGING_PS:
+        # 1.1, from two real laptops: commit at 98% with 5 GB still free (the
+        # engine's first read) and paging with 38 GB free were not shortages
+        if pg is not None and pg >= TIGHT_PAGING_PS and (av is None or av < PAGING_AVAIL_MB):
             level = 1
         if s["psiSome"] is not None and s["psiSome"] >= 10:
             level = 1
@@ -729,7 +732,7 @@ class Watch:
             level = 2
         if pg is not None and pg >= HEAVY_PAGING_PS and av is not None and av < TIGHT_AVAIL_MB:
             level = 2
-        if s["commitPct"] is not None and s["commitPct"] >= HEAVY_COMMIT_PCT:
+        if s["commitPct"] is not None and s["commitPct"] >= HEAVY_COMMIT_PCT and av is not None and av < TIGHT_AVAIL_MB:
             level = 2
         if s["psiFull"] is not None and s["psiFull"] >= 10:
             level = 2
@@ -861,9 +864,9 @@ class Watch:
         if self.phase != "stopped":
             if self.pressure == "heavy":
                 code = "pressure"
-                adv = ("This computer has run out of free memory, so %s is moving other programs to the disk. It can "
-                       "look frozen for a minute or two. Please wait, and do not click or open anything: that makes "
-                       "it take longer." % SYSTEM_WORD)
+                adv = ("This computer has run out of free memory, so %s is moving other programs to the disk. It may "
+                       "stop responding for a minute or two, but the AI is still loading. Please wait, and do not "
+                       "click or open anything meanwhile: that makes it take longer." % SYSTEM_WORD)
                 if self.phase == "ready":
                     adv = "Free memory has run out, so the computer and the AI may be slow. Closing other programs helps."
             elif self.pressure == "tight" and self.phase != "ready":
@@ -1018,8 +1021,9 @@ def flush_log(path):
 
 
 def write_line(path, s, snap, w):
-    # rows are kept in memory and written every LOG_FLUSH_S (and at ready and
-    # stop): a write a second to a USB stick with no write cache slows its reads
+    # rows are kept in memory while the model loads (the engine's read of the
+    # whole model queues ahead of anything else on the stick, 1.1) and written
+    # at ready or stop, then every LOG_FLUSH_S
     if not path:
         return
     rm = s["readBytes"] / MB if s["readBytes"] is not None else None
@@ -1027,8 +1031,9 @@ def write_line(path, s, snap, w):
             v(snap["mbps"], "%.1f"), v(s["availMb"], "%.0f"), v(s["commitPct"], "%.1f"), v(snap["mem"]["pagingPs"], "%.0f"),
             v(s["psiSome"], "%.2f"), v(s["psiFull"], "%.2f"), v(s["cpuPct"], "%.0f"), v(s["engineCpuPct"], "%.0f"),
             v(s["engineWsMb"], "%.0f"), v(s["enginePrivMb"], "%.0f"), w.pressure, snap["code"]]
-    LogBuf.rows.append(",".join(cols) + "\n")
-    if time.time() - LogBuf.flushed >= LOG_FLUSH_S:
+    if len(LogBuf.rows) < 40000:
+        LogBuf.rows.append(",".join(cols) + "\n")
+    if w.ready_t is not None and time.time() - LogBuf.flushed >= LOG_FLUSH_S:
         flush_log(path)
 
 

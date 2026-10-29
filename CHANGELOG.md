@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.16.1 — Lantern Watch from two real laptops: no stall on a slow port, warnings only for a real shortage (2026-10-29)
+
+Adam loaded the 35B with 1.15.0's watcher on two laptops from the same USB
+stick: his 32 GB work laptop (a USB 3 port, 120-146 MB/s, 2 1/2 minutes) and
+his 64 GB home laptop (a USB-C port through which the stick read at 20-29
+MB/s, 15 minutes). Their logs (kit/logs) showed:
+
+- **The watcher stopped for 14 minutes on the slow port.** Its log has no rows
+  from 30 s until the model was read, and the black window printed nothing
+  meanwhile. llama.cpp asks Windows for the whole model at once (prefetch),
+  and anything else that touches the stick waits behind it -- the library
+  (kiwix-serve) only started then too. The watcher's first log write, at
+  30 s, got stuck in that queue. Now nothing is written while the model
+  loads (the rows stay in memory and are written at ready, stop or exit),
+  and the watcher's working directory moves from start-lantern's, on the
+  stick, to the temp folder. The live test now runs past 30 s and checks
+  that nothing is written, the watcher still answers, and the log has a row
+  every second or two all through the load.
+- **"Heavy" only for a real shortage.** At work the warning came from
+  Windows' commit charge at 98% (the prefetch) while 5 GB was still free --
+  the laptop stayed smooth with a video playing, Fusion 360 open and a copy
+  running. Commit near the limit now counts only when free memory is low
+  too. And "tight" no longer comes from paging alone: at home it came with
+  38 GB free. Paging counts when less than 4 GB is free. Both laptops' loads
+  are new watcher stories (`watch_work_prefetch`, `watch_free_paging`): no
+  warning, in the Python and the PowerShell watcher alike.
+- **The warning stays on the loading screen at least 20 s** (Adam's was gone
+  before he had read it), and says the AI is still loading: "It may stop
+  responding for a minute or two, but the AI is still loading. Please wait,
+  and do not click or open anything meanwhile."
+- **When to ask about memory is unchanged.** The one time it asked (16.7 GB
+  free for the 35B), the model was still in memory from the load before,
+  which the watcher cannot see beforehand; the loads after it confirm the
+  rule.
+- The kit README says what a port does: 145 MB/s in a USB 3 port, 26 MB/s
+  through a USB 2.0 port or adapter, for the same stick. Watcher version 1.1.
+
 ## 1.16.0 — The app audit: Draw, Code Lab, Sheets, Writer, Slides, Calculator (2026-10-29)
 
 Adam asked for every module to be gone through, its mistakes fixed and what
