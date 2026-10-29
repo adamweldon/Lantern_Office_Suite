@@ -34462,6 +34462,15 @@ Lantern.RFB = (function () {
 // of the same text, with line numbers beside it. Tab indents, Shift+Tab
 // outdents, Enter keeps the indent (one more after {, : or THEN), Ctrl+/
 // comments lines out. Lines with problems get a red number.
+// 1.16.0: the editor keeps its own undo (Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z), a
+// word or a pause at a time, because repainting the colours on every key
+// ended the browser's typing groups and Ctrl+Z took back one letter. Edits
+// it makes itself (Tab on many lines, Ctrl+/, Replace all) change only the
+// lines that change: inserting the whole file as typed text froze the page
+// for seconds on a few hundred lines. Find marks the match in yellow and
+// leaves the cursor in the Find box, so a second Enter finds the next one
+// (it used to type a line break over the match). Red line numbers move with
+// the lines when lines are added or taken out above them.
 //   editor = {el, ta, get(), set(text), lang(id), focus(), gotoLine(n),
 //             marks([line numbers]), find(text, opts) -> bool,
 //             replace(find, with, opts), replaceAll(find, with, opts) -> n}
@@ -34473,9 +34482,10 @@ Lantern.RFB = (function () {
     ".cl-gut{flex:none;width:46px;background:#f1f5f9;color:#94a3b8;text-align:right;overflow:hidden;user-select:none;border-right:1px solid #e2e8f0}" +
     ".cl-gut pre{margin:0;padding:8px 8px 40px 0;font:inherit}.cl-gut .bad{color:#dc2626;font-weight:700}" +
     ".cl-area{position:relative;flex:1;min-width:0}" +
-    ".cl-hl,.cl-ta{position:absolute;top:0;left:0;width:100%;height:100%;margin:0;padding:8px 10px;font:inherit;white-space:pre;tab-size:4;" +
+    ".cl-hl,.cl-fd,.cl-ta{position:absolute;top:0;left:0;width:100%;height:100%;margin:0;padding:8px 10px;font:inherit;white-space:pre;tab-size:4;" +
     "border:0;box-sizing:border-box;letter-spacing:0;word-spacing:0}" +
     ".cl-hl{pointer-events:none;color:#0f172a;overflow:hidden}" +
+    ".cl-fd{pointer-events:none;color:transparent;overflow:hidden}.cl-fd mark{background:#fde047;color:transparent;border-radius:2px}" +
     ".cl-ta{color:transparent;background:transparent;caret-color:#0f172a;resize:none;outline:none;overflow:auto}" +
     ".cl-ta::selection{background:rgba(37,99,235,.28);color:transparent}";
   function style() {
@@ -34488,10 +34498,14 @@ Lantern.RFB = (function () {
     style();
     var lang = opts.lang || "javascript", marks = {}, listeners = [];
     var el = mk("div", "cl-ed"), gut = mk("div", "cl-gut"), gpre = mk("pre"), area = mk("div", "cl-area"), hl = mk("pre", "cl-hl"), ta = mk("textarea", "cl-ta");
+    var fd = mk("pre", "cl-fd"), found = null;
+    // the undo history: values before each group of changes; cur is the
+    // value now, last the kind and place of the newest change (for grouping)
+    var undos = [], redos = [], cur = "", last = { kind: "", at: -1, t: 0, ins: "" };
     ta.setAttribute("spellcheck", "false"); ta.setAttribute("wrap", "off"); ta.setAttribute("autocapitalize", "off");
     ta.setAttribute("autocomplete", "off"); ta.setAttribute("aria-label", opts.label || "Code");
-    hl.setAttribute("aria-hidden", "true");
-    gut.appendChild(gpre); area.appendChild(hl); area.appendChild(ta); el.appendChild(gut); el.appendChild(area);
+    hl.setAttribute("aria-hidden", "true"); fd.setAttribute("aria-hidden", "true");
+    gut.appendChild(gpre); area.appendChild(fd); area.appendChild(hl); area.appendChild(ta); el.appendChild(gut); el.appendChild(area);
     if (opts.height) el.style.height = opts.height;
     function paint() {
       var t = ta.value, n = t.split("\n").length, nums = [];
@@ -34500,19 +34514,64 @@ Lantern.RFB = (function () {
       gpre.innerHTML = nums.join("\n");
       sync();
     }
-    function sync() { hl.scrollTop = ta.scrollTop; hl.scrollLeft = ta.scrollLeft; gut.scrollTop = ta.scrollTop; }
-    function changed() { paint(); listeners.forEach(function (f) { try { f(ta.value); } catch (e) { /* a listener's own problem */ } }); }
-    // insert(text): replace the selection the way typing does (undo keeps it)
-    function insert(text) {
-      ta.focus();
-      var ok = false;
-      try { ok = document.execCommand && document.execCommand("insertText", false, text); } catch (e) { ok = false; }
-      if (!ok) {
-        var s = ta.selectionStart, e2 = ta.selectionEnd;
-        ta.value = ta.value.slice(0, s) + text + ta.value.slice(e2);
-        ta.selectionStart = ta.selectionEnd = s + text.length;
-        changed();
+    function sync() { hl.scrollTop = fd.scrollTop = ta.scrollTop; hl.scrollLeft = fd.scrollLeft = ta.scrollLeft; gut.scrollTop = ta.scrollTop; }
+    function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
+    function nlines(s) { var n = 0, i = -1; while ((i = s.indexOf("\n", i + 1)) >= 0) n++; return n; }
+    // diff(a, b) -> {at, del, ins}: b is a with del characters at "at" replaced by ins
+    function diff(a, b) {
+      var p = 0, n = Math.min(a.length, b.length), s = 0;
+      while (p < n && a.charCodeAt(p) === b.charCodeAt(p)) p++;
+      while (s < n - p && a.charCodeAt(a.length - 1 - s) === b.charCodeAt(b.length - 1 - s)) s++;
+      return { at: p, del: a.length - p - s, ins: b.slice(p, b.length - s) };
+    }
+    function showFound() {
+      if (!found) { if (fd.firstChild) fd.innerHTML = ""; return; }
+      var v = ta.value;
+      fd.innerHTML = esc(v.slice(0, found[0])) + "<mark>" + esc(v.slice(found[0], found[1])) + "</mark>" + esc(v.slice(found[1])) + "\n ";
+      sync();
+    }
+    // a change from prev to the value now: one more step of undo (or the same
+    // step, while one word is typed or rubbed out), red numbers moved with
+    // their lines, the colours painted, the listeners told
+    function changed(prev, kind) {
+      var v = ta.value;
+      if (prev === v) return;
+      var d = diff(prev, v), now = Date.now();
+      if (!kind) kind = !d.del && d.ins.length === 1 ? "type" : d.del === 1 && !d.ins ? "del" : "edit";
+      var same = kind !== "edit" && kind === last.kind && now - last.t < 1500 &&
+        (kind === "type" ? d.at === last.at + 1 && !(/\s/.test(d.ins) && !/\s/.test(last.ins)) : d.at === last.at - 1 || d.at === last.at);
+      if (kind !== "undo") {
+        if (!same) { undos.push(prev); if (undos.length > 300) undos.shift(); }
+        redos = [];
       }
+      last = { kind: kind, at: d.at, t: now, ins: d.ins };
+      var gone = nlines(prev.substr(d.at, d.del)), added = nlines(d.ins);
+      if (gone !== added) {
+        var at = nlines(v.slice(0, d.at)) + 1, moved = {};
+        Object.keys(marks).forEach(function (k) { var n = +k; if (n <= at) moved[n] = 1; else if (n > at + gone) moved[n + added - gone] = 1; });
+        marks = moved;
+      }
+      cur = v; found = null; showFound(); paint();
+      listeners.forEach(function (f) { try { f(v); } catch (e) { /* a listener's own problem */ } });
+    }
+    // put(start, end, text): replace that part of the text, the cursor after it
+    function put(s, e, text, kind) {
+      var prev = ta.value;
+      if (ta.setRangeText) ta.setRangeText(text, s, e, "end");
+      else { var top = ta.scrollTop; ta.value = prev.slice(0, s) + text + prev.slice(e); ta.selectionStart = ta.selectionEnd = s + text.length; ta.scrollTop = top; }
+      changed(prev, kind);
+    }
+    // insert(text): replace the selection the way typing does
+    function insert(text) { put(ta.selectionStart, ta.selectionEnd, text); }
+    function step(from, to) {
+      if (!from.length) return false;
+      var v = ta.value, back = from.pop(), d = diff(v, back);
+      to.push(v);
+      put(d.at, d.at + d.del, d.ins, "undo");
+      last.kind = "";
+      var line = nlines(back.slice(0, d.at)) + 1;
+      if (line * 20 < ta.scrollTop + 20 || line * 20 > ta.scrollTop + ta.clientHeight - 20) scrollTo(line);
+      return true;
     }
     function unit() { var l = L.codeLangs.get(lang); return (l && l.indent) || "  "; }
     function lineRange() {
@@ -34521,13 +34580,24 @@ Lantern.RFB = (function () {
     }
     function editLines(fn) {
       var r = lineRange(), v = ta.value, block = v.slice(r[0], r[1]), out = block.split("\n").map(fn).join("\n");
-      ta.selectionStart = r[0]; ta.selectionEnd = r[1]; insert(out);
+      if (out !== block) { var d = diff(block, out); put(r[0] + d.at, r[0] + d.at + d.del, d.ins, "edit"); }
       ta.selectionStart = r[0]; ta.selectionEnd = r[0] + out.length;
     }
-    ta.addEventListener("input", changed);
+    ta.addEventListener("input", function () { changed(cur); });
     ta.addEventListener("scroll", sync);
+    ta.addEventListener("focus", function () { if (found) { found = null; showFound(); } });
+    // the browser's own Undo (its menu, a phone's shake) uses the same history
+    ta.addEventListener("beforeinput", function (e) {
+      if (e.inputType === "historyUndo") { e.preventDefault(); step(undos, redos); }
+      else if (e.inputType === "historyRedo") { e.preventDefault(); step(redos, undos); }
+    });
     ta.addEventListener("keydown", function (e) {
       var u = unit(), k = e.key;
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (k === "z" || k === "Z" || k === "y" || k === "Y")) {
+        e.preventDefault();
+        if ((k === "z" || k === "Z") && !e.shiftKey) step(undos, redos); else step(redos, undos);
+        return;
+      }
       if (k === "Tab" && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         if (e.shiftKey) editLines(function (l) { return l.indexOf(u) === 0 ? l.slice(u.length) : l.replace(/^[ \t]+/, ""); });
@@ -34549,7 +34619,9 @@ Lantern.RFB = (function () {
         var lg = L.codeLangs.get(lang), cm = (lg && lg.comment) || "//";
         e.preventDefault();
         var r = lineRange(), lines = ta.value.slice(r[0], r[1]).split("\n"), all = lines.every(function (l) { return !l.trim() || l.trim().indexOf(cm) === 0; });
-        editLines(function (l) { return !l.trim() ? l : all ? l.replace(cm + " ", "").replace(cm, "") : l.replace(/^(\s*)/, "$1" + cm + " "); });
+        // only the first marker of each line comes off: "// // LED on" keeps its own comment
+        var off = new RegExp("^(\\s*)" + cm.replace(/[.*+?^$|\\\x28\x29\x5B\x5D\x7B\x7D\x2F]/g, "\\$&") + " ?");
+        editLines(function (l) { return !l.trim() ? l : all ? l.replace(off, "$1") : l.replace(/^(\s*)/, "$1" + cm + " "); });
       }
     });
     function find(text, o) {
@@ -34558,16 +34630,22 @@ Lantern.RFB = (function () {
       var v = ta.value, hay = o.caseSensitive ? v : v.toLowerCase(), needle = o.caseSensitive ? text : text.toLowerCase();
       var from = o.from != null ? o.from : ta.selectionEnd, at = hay.indexOf(needle, from);
       if (at < 0) at = hay.indexOf(needle, 0);
-      if (at < 0) return false;
-      ta.focus(); ta.selectionStart = at; ta.selectionEnd = at + text.length;
-      var line = v.slice(0, at).split("\n").length; scrollTo(line);
+      if (at < 0) { if (found) { found = null; showFound(); } return false; }
+      // the match is selected (Replace, and the cursor when the code is
+      // clicked) and marked; the focus stays where it is, in the Find box
+      ta.selectionStart = at; ta.selectionEnd = at + text.length;
+      if (o.focus) ta.focus();
+      found = [at, at + text.length];
+      var line = nlines(v.slice(0, at)) + 1; scrollTo(line); showFound();
       return true;
     }
     function scrollTo(line) { ta.scrollTop = Math.max(0, (line - 4) * 20); sync(); }
     var api = {
       el: el, ta: ta,
       get: function () { return ta.value; },
-      set: function (t) { ta.value = String(t == null ? "" : t); marks = {}; paint(); },
+      set: function (t) { ta.value = cur = String(t == null ? "" : t); marks = {}; undos = []; redos = []; last = { kind: "" }; found = null; showFound(); paint(); },
+      undo: function () { return step(undos, redos); },
+      redo: function () { return step(redos, undos); },
       lang: function (id) { if (id) { lang = id; paint(); } return lang; },
       focus: function () { ta.focus(); },
       onChange: function (f) { listeners.push(f); },
@@ -34588,7 +34666,7 @@ Lantern.RFB = (function () {
       replaceAll: function (text, by, o) {
         if (!text) return 0;
         var re = new RegExp(text.replace(/[.*+?^$|\\\x28\x29\x5B\x5D\x7B\x7D]/g, "\\$&"), o && o.caseSensitive ? "g" : "gi"), n = (ta.value.match(re) || []).length;
-        if (n) { ta.selectionStart = 0; ta.selectionEnd = ta.value.length; insert(ta.value.replace(re, function () { return by; })); }
+        if (n) { var v = ta.value, d = diff(v, v.replace(re, function () { return by; })); put(d.at, d.at + d.del, d.ins, "edit"); }
         return n;
       }
     };
@@ -34621,7 +34699,13 @@ Lantern.RFB = (function () {
   function all() { var a = L.store.get(KEY, []); return Object.prototype.toString.call(a) === "[object Array]" ? a : []; }
   function put(a) { L.store.set(KEY, a); }
   function id() { return "f" + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36); }
-  function clean(name) { return String(name || "untitled").replace(/\.[A-Za-z0-9]{1,5}$/, "").replace(/[\\\x2F:*?\x22<>|]+/g, "-").replace(/^\s+|\s+$/g, "").slice(0, 60) || "untitled"; }
+  // a name loses its extension only when it is one Code Lab knows (or .txt):
+  // "Motor v1.2" stays "Motor v1.2"
+  function clean(name) {
+    var s = String(name || "untitled");
+    if (L.codeLangs.byExt(s) || /\.txt$/i.test(s)) s = s.replace(/\.[A-Za-z0-9]+$/, "");
+    return s.replace(/[\\\x2F:*?\x22<>|]+/g, "-").replace(/^\s+|\s+$/g, "").slice(0, 60) || "untitled";
+  }
   function unique(name, skip) {
     var base = clean(name), n = 1, have = {};
     all().forEach(function (f) { if (f.id !== skip) have[f.name.toLowerCase()] = 1; });
@@ -34633,7 +34717,8 @@ Lantern.RFB = (function () {
     list: function () { return all().slice().sort(function (a, b) { return (b.updated || 0) - (a.updated || 0); }); },
     get: function (fid) { return all().filter(function (f) { return f.id === fid; })[0] || null; },
     add: function (f) {
-      var lang = L.codeLangs.get(f.lang) ? f.lang : (L.codeLangs.byExt(f.name) || L.codeLangs.guess(f.text));
+      // a name typed with an extension (blink.py) says the language
+      var lang = L.codeLangs.byExt(f.name) || (L.codeLangs.get(f.lang) ? f.lang : L.codeLangs.guess(f.text));
       var nf = { id: id(), name: unique(f.name), lang: lang, text: String(f.text == null ? (L.codeLangs.get(lang).template || "") : f.text), updated: Date.now() };
       var a = all(); a.push(nf); put(a); L.store.set(CUR, nf.id);
       return nf;
@@ -34747,11 +34832,23 @@ Lantern.RFB = (function () {
     return out;
   }
   // --- JavaScript: the browser compiles it (Function, never run) ------------
+  // Only Firefox says on which line a compile error is. Elsewhere the line
+  // is found by compiling the first k lines with an ending no code can have
+  // (two names in a row): the smallest k that stops with the same error as
+  // the whole file is the line of the mistake (1.16.0; it had no line).
+  function jsLine(text, msg) {
+    var ls = String(text).split("\n"), END = "\n__LanternEnd__ __LanternEnd__";
+    function same(k) { try { new Function(ls.slice(0, k).join("\n") + END); return false; } catch (e) { return String((e && e.message) || e) === msg; } }
+    if (!same(ls.length)) return 0;
+    var lo = 1, hi = ls.length;
+    while (lo < hi) { var mid = (lo + hi) >> 1; if (same(mid)) hi = mid; else lo = mid + 1; }
+    return lo;
+  }
   add("javascript", function (text) {
     if (/^\s*(import|export)\s/m.test(text)) return [{ line: 1, msg: "import/export need a module: Code Lab runs a plain script", level: "warn" }];
     try { new Function(text); } catch (e) {   // compiled only: Function() does not call it
-      var ln = e && e.lineNumber ? Math.max(1, e.lineNumber - 2) : 0;
-      return [{ line: ln, msg: "JavaScript says: " + ((e && e.message) || e), level: "error" }];
+      var msg = String((e && e.message) || e), ln = e && e.lineNumber ? Math.max(1, e.lineNumber - 2) : jsLine(text, msg);
+      return [{ line: ln, msg: "JavaScript says: " + msg, level: "error" }];
     }
     return [];
   });
@@ -34759,8 +34856,16 @@ Lantern.RFB = (function () {
   // Lines are joined into logical lines (open brackets, a \\ at the end, a
   // triple-quoted text); each logical line is checked for its colon and indent.
   var OPENERS = /^(if|elif|else|for|while|def|class|try|except|finally|with|async\s+(def|for|with))\b/;
+  // a : outside brackets, not :=  ("if not line: continue" is a whole block on one line)
+  function topColon(s) {
+    for (var i = 0, d = 0; i < s.length; i++) {
+      var c = s.charAt(i);
+      if ("([{".indexOf(c) >= 0) d++; else if (")]}".indexOf(c) >= 0) d--; else if (c === ":" && !d && s.charAt(i + 1) !== "=") return i;
+    }
+    return -1;
+  }
   add("python", function (text) {
-    var out = [], lines = String(text).split("\n"), stack = [0], depth = 0, cont = false, triple = "", want = 0, start = 0, head = "", sawTab = false, sawSpace = false;
+    var out = [], lines = String(text).split("\n"), stack = [0], depth = 0, cont = false, triple = "", want = 0, start = 0, head = "", whole = "", sawTab = false, sawSpace = false;
     lines.forEach(function (raw, k) {
       var n = k + 1, code = "", i, q = "";
       // the line without its comment, and the brackets it leaves open
@@ -34777,7 +34882,7 @@ Lantern.RFB = (function () {
       var logicalStart = !start;
       if (logicalStart) {
         if (!raw.trim() || /^\s*#/.test(raw)) return;
-        start = n; head = code.trim();
+        start = n; head = code.trim(); whole = "";
         var ind = /^[ \t]*/.exec(raw)[0], w = ind.replace(/\t/g, "    ").length, top = stack[stack.length - 1];
         if (/\t/.test(ind)) sawTab = true; if (/ /.test(ind)) sawSpace = true;
         if (sawTab && sawSpace) { out.push({ line: n, msg: "tabs and spaces are mixed in the indentation: use spaces only", level: "error" }); sawTab = sawSpace = false; }
@@ -34791,9 +34896,10 @@ Lantern.RFB = (function () {
         if (/^(if|elif|while)\b[^=!<>]*[^=!<>]=[^=]/.test(head.replace(/\x28[^\x29]*\x29/g, "()"))) out.push({ line: n, msg: "= assigns; use == to compare", level: "error" });
       }
       cont = /\\\s*$/.test(code);
+      whole += " " + code;
       if (depth === 0 && !cont && !triple) {   // the logical line ends here
-        var ends = /:\s*$/.test(code);
-        if (OPENERS.test(head) && !ends) out.push({ line: start, msg: "\u201c" + head.split(/[\s:\x28]/)[0] + "\u201d needs a colon : at the end of the line", level: "error" });
+        var ends = /:\s*$/.test(code), oneLine = !ends && topColon(whole) >= 0;
+        if (OPENERS.test(head) && !ends && !oneLine) out.push({ line: start, msg: "\u201c" + head.split(/[\s:\x28]/)[0] + "\u201d needs a colon : at the end of the line", level: "error" });
         want = ends ? start : 0;
         start = 0;
       }
@@ -34858,8 +34964,23 @@ Lantern.RFB = (function () {
     [/\bOneWire\b/, "OneWire.h"], [/\bDallasTemperature\b/, "DallasTemperature.h"], [/\bDHT\s+\w+\s*\x28/, "DHT.h"], [/\bEEPROM\s*\.\s*(read|write|update|get|put)\b/, "EEPROM.h"],
     [/\bSoftwareSerial\b/, "SoftwareSerial.h"], [/\bTMC2209Stepper\b/, "TMCStepper.h"], [/\bP1\s*\.\s*(init|readDiscrete|writeDiscrete|readAnalog|writeAnalog)\b/, "P1AM.h"]];
   var PWM_UNO = { 3: 1, 5: 1, 6: 1, 9: 1, 10: 1, 11: 1 };
+  // inList(code) -> for each line, true when the line ends inside { } that
+  // hold a list (an enum, or values after =), where items end with , or
+  // nothing -- the last one before } is not missing a ; (1.16.0)
+  function inList(code) {
+    var stack = [], out = [], line = 0;
+    for (var i = 0; i <= code.length; i++) {
+      var c = code.charAt(i);
+      if (c === "\n" || i === code.length) { out[line++] = stack.length > 0 && stack[stack.length - 1]; continue; }
+      if (c === "{") {
+        var before = code.slice(Math.max(0, i - 120), i);
+        stack.push(/(=|,|\x7B|\x28|\breturn)\s*$/.test(before) || /\benum\b[^;\x7B\x7D\x28\x29]*$/.test(before));
+      } else if (c === "}") stack.pop();
+    }
+    return out;
+  }
   function check(text) {
-    var out = [], code = strip(text), lines = code.split("\n");
+    var out = [], code = strip(text), lines = code.split("\n"), list = inList(code);
     function at(re) { var m = re.exec(code); return m ? code.slice(0, m.index).split("\n").length : 0; }
     if (/\b(int|void)\s+main\s*\x28/.test(code)) out.push({ line: at(/\b(int|void)\s+main\s*\x28/), msg: "an Arduino sketch has setup() and loop(), not main()", level: "error" });
     else {
@@ -34869,7 +34990,7 @@ Lantern.RFB = (function () {
     // a line that may be missing its ;
     lines.forEach(function (ln, k) {
       var t = ln.replace(/\s+$/, ""), s = t.trim();
-      if (!s || /^#/.test(s) || /[;{},:\x28\x5B&|+\-*\x2F=?<>!\\]$/.test(s) || /^(if|for|while|else|switch|do|case|default|template|public|private|protected)\b/.test(s) || /^\x7D/.test(s)) return;
+      if (!s || list[k] || /^#/.test(s) || /[;{},:\x28\x5B&|+\-*\x2F=?<>!\\]$/.test(s) || /^(if|for|while|else|switch|do|case|default|template|public|private|protected)\b/.test(s) || /^\x7D/.test(s)) return;
       if ((s.match(/\x28/g) || []).length !== (s.match(/\x29/g) || []).length) return;
       var next = "";
       for (var j = k + 1; j < lines.length && !next; j++) next = lines[j].trim();
@@ -35055,7 +35176,12 @@ Lantern.RFB = (function () {
 //     // Start/stop with a seal-in (Stop wired normally closed)
 //     [XIC(Start) ,XIC(Motor) ]XIC(Stop)OTE(Motor);
 // Instructions in a row are in series (AND); [A ,B ] is a branch (OR); each
-// rung ends with ;. A line starting with // is the next rung's comment.
+// rung ends with ;. A line starting with // is the next rung's comment; a
+// // comment after a rung's ; on the same line is that rung's (1.16.0).
+// A new line that starts with a contact or a branch right after an output
+// is a new rung whose ; was left out: it is said, and kept a rung of its
+// own (it used to join the two rungs into one without a word). Tags ignore
+// case, as in Logix: OTE(Motor) and OTE(motor) are the same coil.
 // parse() builds the rungs and finds the problems: unknown instructions,
 // wrong argument counts, an empty branch leg, a rung with no output, the
 // same coil driven by OTE in two rungs (the last one wins -- a classic
@@ -35069,9 +35195,9 @@ Lantern.RFB = (function () {
     EQU: [2, 2, "in"], NEQ: [2, 2, "in"], GRT: [2, 2, "in"], GEQ: [2, 2, "in"], LES: [2, 2, "in"], LEQ: [2, 2, "in"], LIM: [3, 3, "in"],
     OTE: [1, 1, "out"], OTL: [1, 1, "out"], OTU: [1, 1, "out"], TON: [1, 3, "out"], TOF: [1, 3, "out"], RTO: [1, 3, "out"],
     CTU: [1, 3, "out"], CTD: [1, 3, "out"], RES: [1, 1, "out"], MOV: [2, 2, "out"], ADD: [3, 3, "out"], SUB: [3, 3, "out"],
-    MUL: [3, 3, "out"], DIV: [3, 3, "out"], CLR: [1, 1, "out"], JSR: [1, 9, "out"] };
+    MUL: [3, 3, "out"], DIV: [3, 3, "out"], CLR: [1, 1, "out"], JSR: [1, 9, "out"], OSR: [2, 2, "out"], OSF: [2, 2, "out"] };
   function parse(text) {
-    var rungs = [], problems = [], src = String(text || ""), i = 0, n = src.length, line = 1, comment = [];
+    var rungs = [], problems = [], src = String(text || ""), i = 0, n = src.length, line = 1, comment = [], carry = null, endLine = 1;
     function err(msg, ln, level) { problems.push({ line: ln || line, msg: msg, level: level || "error" }); }
     function ws() {
       while (i < n) {
@@ -35107,16 +35233,25 @@ Lantern.RFB = (function () {
       if (args.some(function (a) { return !a; })) err(name + " has an empty argument", ln);
       return { op: name, args: args, kind: spec ? spec[2] : "in", line: ln };
     }
-    function seq(stop) {
-      var list = [];
+    function endsOut(x) { return x.op === "BRANCH" ? x.legs.every(function (lg) { return lg.length && endsOut(lg[lg.length - 1]); }) : x.kind === "out"; }
+    function startsIn() { var m = /^[A-Za-z_]\w*/.exec(src.slice(i, i + 40)), s = m && INSTR[m[0].toUpperCase()]; return !!s && s[2] === "in"; }
+    function seq(stop, top) {
+      var list = [], last = line;
       for (;;) {
+        var cl = comment.length;
         ws();
         if (i >= n) return list;
         var c = src.charAt(i);
         if (stop.indexOf(c) >= 0) return list;
+        // an output, then a new line with a contact or a branch: the ; was left out
+        if (top && list.length && line > last && endsOut(list[list.length - 1]) && (c === "[" || startsIn())) {
+          carry = comment.slice(cl); comment.length = cl;
+          return list;
+        }
         if (c === "[") list.push(branch());
         else if (c === "]" || c === ",") { err("\u201c" + c + "\u201d with no [ before it"); i++; }
         else { var x = instr(); if (x) list.push(x); }
+        last = endLine = line;
       }
     }
     function branch() {
@@ -35130,10 +35265,20 @@ Lantern.RFB = (function () {
     for (;;) {
       ws();
       if (i >= n) break;
-      var ln = line, items = seq([";"]);
-      if (src.charAt(i) === ";") i++;
-      else if (items.length) err("this rung does not end with ;", ln);
-      if (items.length) { rungs.push({ items: items, line: ln, comment: comment.join(" ") }); comment = []; }
+      var ln = line, mine = comment, items;
+      comment = []; carry = null;
+      items = seq([";"], true);
+      if (src.charAt(i) === ";") {
+        i++;
+        var tail = /^[ \t]*\x2F\x2F([^\n]*)/.exec(src.slice(i, i + 400));
+        if (tail) { if (tail[1].trim()) comment.push(tail[1].trim()); i += tail[0].length; }
+        mine = mine.concat(comment); comment = [];
+      } else {
+        if (items.length) err("this rung does not end with ;", endLine);
+        mine = mine.concat(comment); comment = carry || [];
+      }
+      if (items.length) rungs.push({ items: items, line: ln, comment: mine.join(" ") });
+      else comment = mine.concat(comment);
     }
     // rung-level checks
     var ote = {}, kinds = {};
@@ -35142,13 +35287,18 @@ Lantern.RFB = (function () {
       var hasOut = false;
       walk(r.items, function (x) {
         if (x.kind === "out") hasOut = true;
-        if (x.op === "OTE") (ote[x.args[0]] = ote[x.args[0]] || []).push(k + 1);
-        if (/^(TON|TOF|RTO)$/.test(x.op)) kinds[x.args[0]] = (kinds[x.args[0]] || "") + "T";
-        if (/^(CTU|CTD)$/.test(x.op)) kinds[x.args[0]] = (kinds[x.args[0]] || "") + "C";
+        var u = String(x.args[0] || "").toUpperCase();
+        if (x.op === "OTE") (ote[u] = ote[u] || { name: x.args[0], at: [] }).at.push(k + 1);
+        if (/^(TON|TOF|RTO)$/.test(x.op)) kinds[u] = (kinds[u] || "") + "T";
+        if (/^(CTU|CTD)$/.test(x.op)) kinds[u] = (kinds[u] || "") + "C";
       });
       if (!hasOut) err("rung " + (k + 1) + " has no output (OTE, OTL, TON ...)", r.line, "warn");
     });
-    Object.keys(ote).forEach(function (t) { if (ote[t].length > 1) err(t + " is driven by OTE in rungs " + ote[t].join(" and ") + ": only the last one counts (use one rung with a branch, or OTL/OTU)", rungs[ote[t][1] - 1].line, "warn"); });
+    Object.keys(ote).forEach(function (t) {
+      var o = ote[t], at = o.at.filter(function (r, j) { return o.at.indexOf(r) === j; });
+      if (at.length > 1) err(o.name + " is driven by OTE in rungs " + at.join(" and ") + ": only the last one counts (use one rung with a branch, or OTL/OTU)", rungs[at[1] - 1].line, "warn");
+      else if (o.at.length > 1) err(o.name + " is driven by OTE twice in rung " + at[0] + ": only the last one counts (join the conditions in a branch before one OTE)", rungs[at[0] - 1].line, "warn");
+    });
     Object.keys(kinds).forEach(function (t) { if (/T/.test(kinds[t]) && /C/.test(kinds[t])) err(t + " is used as a timer and as a counter", 1); });
     return { rungs: rungs, problems: problems };
   }
@@ -35165,66 +35315,165 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // Ladder rungs written as IEC 61131-3 Structured Text, for OpenPLC, Beremiz
 // or CODESYS: series contacts become AND, branches OR, an OTE an assignment,
-// OTL/OTU an IF, TON/TOF calls with PT in ms, CTU/CTD calls with a reset flag
-// set by RES. Logix member names map to IEC ones: .DN -> .Q, .ACC -> .ET or
-// .CV, .PRE -> .PT or .PV, .EN -> .IN. Every tag is declared (BOOL for bits,
-// DINT for numbers). Lantern's ladder examples, turned into Structured Text
-// this way, compile with matiec (the compiler in OpenPLC and Beremiz).
+// OTL/OTU an IF, TON/TOF calls with PT in ms, CTU calls (CTUD when the tag
+// counts down too: Logix's CTD shares the count and its done bit is "count
+// at or past the preset", which is CTUD's QU, not CTD's). RES calls the
+// timer or counter with its reset; RTO is a TON that keeps the time it has
+// added up until RES. Logix member names map to IEC ones: .DN -> .Q, .ACC ->
+// .ET or .CV, .PRE -> .PT or .PV, .EN -> .IN, .TT -> IN AND NOT Q (a TOF:
+// NOT IN AND Q). A preset that MOV, ADD ... change becomes a variable of its
+// own. Tags are one name whatever their case (Logix and ST ignore it);
+// Local:1:I.Data.0, Pump1.Ready or Bits[3] become Local_1_I_Data_0 ... with
+// the Logix name beside the declaration. Every tag is declared (BOOL for
+// bits, DINT for numbers). Lantern's ladder examples, turned into Structured
+// Text this way, compile with matiec (the compiler in OpenPLC and Beremiz).
 (function () {
   var L = window.Lantern;
   if (!L || !L.codeLadder) return;
   function toST(rungs, name) {
-    var types = {}, out = [], ons = 0, kind = {};
-    function walk(list) { list.forEach(function (x) { if (x.op === "BRANCH") x.legs.forEach(walk); else { if (/^(TON|TOF)$/.test(x.op)) kind[x.args[0]] = x.op; if (/^(CTU|CTD)$/.test(x.op)) kind[x.args[0]] = x.op; } }); }
-    rungs.forEach(function (r) { walk(r.items); });
-    function id(t) { return String(t).replace(/[^\w.\x5B\x5D]/g, "_"); }
+    var types = {}, notes = {}, out = [], ons = 0, kind = {}, spell = {}, preW = {}, preset = {};
+    // a tag's one spelling: the first one written
+    function canon(t) { var u = String(t).toUpperCase(); return spell[u] || (spell[u] = String(t)); }
+    function walk(list, fn) { list.forEach(function (x) { if (x.op === "BRANCH") x.legs.forEach(function (lg) { walk(lg, fn); }); else fn(x); }); }
+    function num(t) { return /^-?\d+$/.test(String(t || "")); }
+    // a name Structured Text takes: letters, digits and single _
+    function id(t) {
+      var c = canon(t), s = c.replace(/[^A-Za-z0-9_]+/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "") || "Tag";
+      if (/^\d/.test(s)) s = "T_" + s;
+      if (s !== c) notes[s] = c;
+      return s;
+    }
+    // what each timer and counter tag is, its preset, and whether a preset is written
+    rungs.forEach(function (r) { walk(r.items, function (x) {
+      if (!x.args[0]) return;
+      var u = canon(x.args[0]).toUpperCase();
+      if (/^(TON|TOF|RTO)$/.test(x.op)) { kind[u] = kind[u] || x.op; preset[u] = x.args[1]; }
+      if (x.op === "CTD") { kind[u] = "CTUD"; if (preset[u] == null) preset[u] = x.args[1]; }
+      if (x.op === "CTU") { kind[u] = kind[u] === "CTUD" ? "CTUD" : "CTU"; preset[u] = x.args[1]; }
+    }); });
+    rungs.forEach(function (r) { walk(r.items, function (x) {
+      var dst = x.op === "MOV" ? x.args[1] : x.op === "CLR" ? x.args[0] : /^(ADD|SUB|MUL|DIV)$/.test(x.op) ? x.args[2] : "";
+      var m = /^(\w+)\.PRE$/i.exec(String(dst || ""));
+      if (m && kind[m[1].toUpperCase()]) preW[m[1].toUpperCase()] = 1;
+    }); });
+    function k(t) { return kind[String(t).toUpperCase()] || ""; }
+    function timer(t) { return /^(TON|TOF|RTO)$/.test(k(t)); }
+    // the preset variable of a timer or counter, declared with its starting value
+    function preVar(t) {
+      var b = id(t), u = String(t).toUpperCase(), p = preset[u];
+      types[b + "_PRE"] = timer(t) ? "TIME := T#" + (num(p) && +p >= 0 ? p : "0") + "ms" : "INT := " + (num(p) ? p : "0");
+      return b + "_PRE";
+    }
     function ref(t, as) {
-      var m = /^([\w]+)\.(DN|TT|EN|ACC|PRE)$/i.exec(t);
+      t = String(t);
       if (/^-?\d+(\.\d+)?$/.test(t)) return t;
-      if (m && kind[m[1]]) {
-        var b = m[1], f = m[2].toUpperCase(), tm = /^T/.test(kind[b]);
-        if (f === "DN") return b + ".Q";
-        if (f === "ACC") return tm ? "TIME_TO_DINT(" + b + ".ET)" : b + ".CV";
-        if (f === "PRE") return tm ? "TIME_TO_DINT(" + b + ".PT)" : b + ".PV";
-        if (f === "EN") return b + ".IN";
-        return "(" + b + ".IN AND NOT " + b + ".Q)";
+      var m = /^(\w+)\.(DN|TT|EN|ACC|PRE)$/i.exec(t), kd = m && k(m[1]);
+      if (kd) {
+        var b = id(m[1]), f = m[2].toUpperCase(), wr = preW[m[1].toUpperCase()];
+        if (kd === "RTO") return f === "DN" ? b + "_DN" : f === "EN" ? b + "_RUN" : f === "TT" ? "(" + b + "_RUN AND NOT " + b + "_DN)" :
+          f === "ACC" ? "TIME_TO_DINT(" + b + "_ACC + " + b + ".ET)" : "TIME_TO_DINT(" + preVar(m[1]) + ")";
+        if (kd === "TON" || kd === "TOF") {
+          if (f === "DN") return b + ".Q";
+          if (f === "EN") return b + ".IN";
+          if (f === "TT") return kd === "TOF" ? "(NOT " + b + ".IN AND " + b + ".Q)" : "(" + b + ".IN AND NOT " + b + ".Q)";
+          if (f === "ACC") return "TIME_TO_DINT(" + b + ".ET)";
+          return "TIME_TO_DINT(" + (wr ? preVar(m[1]) : b + ".PT") + ")";
+        }
+        if (f === "DN") return b + (kd === "CTUD" ? ".QU" : ".Q");
+        if (f === "ACC") return "INT_TO_DINT(" + b + ".CV)";
+        if (f === "PRE") return "INT_TO_DINT(" + (wr ? preVar(m[1]) : b + ".PV") + ")";
       }
-      if (!/\./.test(t)) types[id(t)] = types[id(t)] || as;
-      return id(t);
+      var v = id(t);
+      if (!types[v]) types[v] = as;
+      return v;
+    }
+    // where MOV, CLR, ADD ... write: a tag, a preset variable, or nothing ST can write
+    function dest(t) {
+      var m = /^(\w+)\.(\w+)$/.exec(String(t)), kd = m && k(m[1]);
+      if (!kd) return { v: ref(t, "DINT") };
+      if (m[2].toUpperCase() !== "PRE") return null;
+      return { v: preVar(m[1]), time: timer(m[1]) };
     }
     function and(p, c) { return p === "TRUE" ? c : "(" + p + ") AND " + c; }
+    function write(x, d, expr, p, st) {
+      if (!d) { st.push("(* " + x.op + "(" + x.args.join(", ") + "): a timer\x27s or counter\x27s count is not written in Structured Text -- RES resets it *)"); return; }
+      var v = expr;
+      if (d.time) v = num(expr) ? "T#" + expr + "ms" : "T#1ms * (" + expr + ")";
+      else if (/_PRE$/.test(d.v) && !num(expr)) v = "DINT_TO_INT(" + expr + ")";
+      st.push("IF " + p + " THEN " + d.v + " := " + v + "; END_IF;");
+    }
+    function pt(t, p, st) {
+      if (preW[String(t).toUpperCase()]) return preVar(t);
+      if (num(p) && +p >= 0) return "T#" + p + "ms";
+      if (p && p !== "?") return "T#1ms * " + ref(p, "DINT");
+      st.push("(* " + canon(t) + ": the rung text gives no preset (?): set PT here *)");
+      return "T#0ms";
+    }
+    function pv(t, p, st) {
+      if (preW[String(t).toUpperCase()]) return preVar(t);
+      if (num(p)) return p;
+      if (p && p !== "?") return "DINT_TO_INT(" + ref(p, "DINT") + ")";
+      st.push("(* " + canon(t) + ": the rung text gives no preset (?): set PV here *)");
+      return "0";
+    }
     function seq(list, p, st) {
       list.forEach(function (x) {
-        var a = x.args, cmp = { EQU: "=", NEQ: "<>", GRT: ">", GEQ: ">=", LES: "<", LEQ: "<=" }[x.op];
+        var a = x.args, cmp = { EQU: "=", NEQ: "<>", GRT: ">", GEQ: ">=", LES: "<", LEQ: "<=" }[x.op], b;
         if (x.op === "BRANCH") { var legs = x.legs.map(function (lg) { return seq(lg, p, st); }); p = legs.length === 1 ? legs[0] : "((" + legs.join(") OR (") + "))"; }
         else if (x.op === "XIC") p = and(p, ref(a[0], "BOOL"));
         else if (x.op === "XIO") p = and(p, "NOT " + ref(a[0], "BOOL"));
         else if (cmp) p = and(p, "(" + ref(a[0], "DINT") + " " + cmp + " " + ref(a[1], "DINT") + ")");
-        else if (x.op === "LIM") p = and(p, "(" + ref(a[1], "DINT") + " >= " + ref(a[0], "DINT") + " AND " + ref(a[1], "DINT") + " <= " + ref(a[2], "DINT") + ")");
+        else if (x.op === "LIM") {
+          // Logix: low <= high is a band; low > high is outside the band
+          var lo = ref(a[0], "DINT"), tv = ref(a[1], "DINT"), hi = ref(a[2], "DINT");
+          p = and(p, num(a[0]) && num(a[2]) ? (+a[0] <= +a[2] ? "(" + tv + " >= " + lo + " AND " + tv + " <= " + hi + ")" : "(" + tv + " >= " + lo + " OR " + tv + " <= " + hi + ")") :
+            "((" + lo + " <= " + hi + " AND " + tv + " >= " + lo + " AND " + tv + " <= " + hi + ") OR (" + lo + " > " + hi + " AND (" + tv + " >= " + lo + " OR " + tv + " <= " + hi + ")))");
+        }
         else if (x.op === "AFI") p = "FALSE";
         else if (x.op === "ONS") { ons++; types["ONS_" + ons] = "BOOL"; st.push("ONS_" + ons + " := " + p + " AND NOT " + ref(a[0], "BOOL") + ";", ref(a[0], "BOOL") + " := " + p + ";"); p = "ONS_" + ons; }
+        else if (x.op === "OSR" || x.op === "OSF") {
+          var sto = ref(a[0], "BOOL"), q = ref(a[1], "BOOL");
+          st.push(q + " := " + (x.op === "OSR" ? "(" + p + ") AND NOT " + sto : "NOT (" + p + ") AND " + sto) + ";", sto + " := " + p + ";");
+        }
         else if (x.op === "OTE") st.push(ref(a[0], "BOOL") + " := " + p + ";");
         else if (x.op === "OTL" || x.op === "OTU") st.push("IF " + p + " THEN " + ref(a[0], "BOOL") + " := " + (x.op === "OTL" ? "TRUE" : "FALSE") + "; END_IF;");
-        else if (x.op === "TON" || x.op === "TOF") { types[id(a[0])] = x.op; st.push(id(a[0]) + "(IN := " + p + ", PT := T#" + (a[1] && /^\d+$/.test(a[1]) ? a[1] : "0") + "ms);"); }
-        else if (x.op === "CTU" || x.op === "CTD") {
-          types[id(a[0])] = x.op; types[id(a[0]) + "_RES"] = "BOOL";
-          st.push(id(a[0]) + "(" + (x.op === "CTU" ? "CU" : "CD") + " := " + p + ", " + (x.op === "CTU" ? "R" : "LD") + " := " + id(a[0]) + "_RES, PV := " + (a[1] && /^-?\d+$/.test(a[1]) ? a[1] : "0") + ");");
+        else if (x.op === "TON" || x.op === "TOF") { b = id(a[0]); types[b] = x.op; st.push(b + "(IN := " + p + ", PT := " + pt(a[0], a[1], st) + ");"); }
+        else if (x.op === "RTO") {
+          b = id(a[0]); types[b] = "TON"; types[b + "_ACC"] = "TIME"; types[b + "_DN"] = "BOOL"; types[b + "_RUN"] = "BOOL";
+          var pre = preVar(a[0]);
+          st.push("(* RTO " + canon(a[0]) + ": the time adds up over the rung\x27s true spells until RES *)",
+            "IF " + b + "_RUN AND NOT (" + p + ") THEN " + b + "_ACC := " + b + "_ACC + " + b + ".ET; END_IF;",
+            b + "_RUN := " + p + ";",
+            b + "(IN := " + b + "_RUN AND NOT " + b + "_DN, PT := " + pre + " - " + b + "_ACC);",
+            "IF " + b + ".Q THEN " + b + "_DN := TRUE; " + b + "_ACC := " + pre + "; END_IF;");
         }
-        else if (x.op === "RES") { if (/^C/.test(kind[a[0]] || "")) st.push(id(a[0]) + "_RES := " + p + ";"); else st.push("(* RES(" + a[0] + "): reset a timer by turning its input off *)"); }
-        else if (x.op === "MOV") st.push("IF " + p + " THEN " + ref(a[1], "DINT") + " := " + ref(a[0], "DINT") + "; END_IF;");
-        else if (x.op === "CLR") st.push("IF " + p + " THEN " + ref(a[0], "DINT") + " := 0; END_IF;");
-        else if (/^(ADD|SUB|MUL|DIV)$/.test(x.op)) st.push("IF " + p + " THEN " + ref(a[2], "DINT") + " := " + ref(a[0], "DINT") + " " + { ADD: "+", SUB: "-", MUL: "*", DIV: "/" }[x.op] + " " + ref(a[1], "DINT") + "; END_IF;");
-        else if (x.op === "RTO" || x.op === "JSR") st.push("(* " + x.op + "(" + a.join(", ") + ") has no Structured Text match here *)");
+        else if (x.op === "CTU" || x.op === "CTD") {
+          b = id(a[0]); types[b] = k(a[0]) || x.op;
+          st.push(b + "(" + (x.op === "CTU" ? "CU" : "CD") + " := " + p + ", PV := " + pv(a[0], a[1], st) + ");");
+        }
+        else if (x.op === "RES") {
+          b = id(a[0]);
+          var kd = k(a[0]);
+          if (kd === "RTO") st.push("IF " + p + " THEN " + b + "_ACC := T#0ms; " + b + "_DN := FALSE; " + b + "(IN := FALSE); END_IF;");
+          else if (kd === "TON") st.push("IF " + p + " THEN " + b + "(IN := FALSE); END_IF;");
+          else if (kd === "TOF") st.push("IF " + p + " THEN " + b + "(IN := FALSE, PT := T#0ms); END_IF;");
+          else if (kd) st.push("IF " + p + " THEN " + b + "(R := TRUE); " + b + "(R := FALSE); END_IF;");
+          else st.push("(* RES(" + a[0] + "): " + a[0] + " is not a timer or counter in this ladder *)");
+        }
+        else if (x.op === "MOV") write(x, dest(a[1]), ref(a[0], "DINT"), p, st);
+        else if (x.op === "CLR") write(x, dest(a[0]), "0", p, st);
+        else if (/^(ADD|SUB|MUL|DIV)$/.test(x.op)) write(x, dest(a[2]), ref(a[0], "DINT") + " " + { ADD: "+", SUB: "-", MUL: "*", DIV: "/" }[x.op] + " " + ref(a[1], "DINT"), p, st);
+        else if (x.op === "JSR") st.push("(* " + x.op + "(" + a.join(", ") + ") has no Structured Text match here *)");
       });
       return p;
     }
-    rungs.forEach(function (r, k) {
+    rungs.forEach(function (r, n) {
       var st = [];
       seq(r.items, "TRUE", st);
-      out.push("(* Rung " + (k + 1) + (r.comment ? ": " + r.comment.replace(/\*\x29/g, "* )") : "") + " *)");
+      out.push("(* Rung " + (n + 1) + (r.comment ? ": " + r.comment.replace(/\*\x29/g, "* )") : "") + " *)");
       st.forEach(function (s) { out.push(s); });
     });
-    var decl = Object.keys(types).map(function (t) { return "    " + t + " : " + types[t] + ";"; });
+    var decl = Object.keys(types).map(function (t) { return "    " + t + " : " + types[t] + ";" + (notes[t] ? " (* " + notes[t].replace(/\*\x29/g, "* )") + " *)" : ""); });
     return "PROGRAM " + (name || "Ladder") + "\nVAR\n" + decl.join("\n") + "\nEND_VAR\n\n" + out.join("\n") + "\nEND_PROGRAM\n";
   }
   L.codeLadder.toST = toST;
@@ -35261,7 +35510,25 @@ Lantern.RFB = (function () {
     return e;
   }
   function line(svg, x1, y1, x2, y2, c) { el(svg, "line", { x1: x1, y1: y1, x2: x2, y2: y2, stroke: c || WIRE, "stroke-width": 2 }); }
-  function label(svg, x, y, t, size2, color) { el(svg, "text", { x: x, y: y, "font-size": size2 || 12, "text-anchor": "middle", fill: color || INK, "font-family": "ui-monospace,Consolas,monospace" }, String(t).slice(0, 16)); }
+  // a label fits its cell: a long tag gets smaller letters, then is cut with
+  // ... (the whole tag shows on hover); 16 letters used to run into the next
+  function label(svg, x, y, t, size2, color, full) {
+    t = String(t); size2 = size2 || 12;
+    var fit = (CW - 8) / (0.6 * Math.max(1, t.length)), shown = t, sz = Math.min(size2, Math.max(8, Math.floor(fit * 10) / 10));
+    if (fit < 8) shown = t.slice(0, Math.floor((CW - 8) / (0.6 * 8)) - 1) + "\u2026";
+    var e = el(svg, "text", { x: x, y: y, "font-size": sz, "text-anchor": "middle", fill: color || INK, "font-family": "ui-monospace,Consolas,monospace" }, shown);
+    if (shown !== t || (full && full !== t)) { var ti = document.createElementNS(NS, "title"); ti.textContent = full || t; e.appendChild(ti); }
+  }
+  // a contact's or coil's tag: a long one goes on two lines (split at a _ or
+  // . near the middle) before its letters get smaller
+  function tag(svg, x, y, t) {
+    t = String(t);
+    if (t.length <= 15) { label(svg, x, y, t); return; }
+    var h = Math.ceil(t.length / 2), best = -1;
+    for (var j = 1; j < t.length - 1; j++) if (/[_.:\x5B]/.test(t.charAt(j)) && (best < 0 || Math.abs(j + 1 - h) < Math.abs(best - h))) best = j + 1;
+    var cut = best > 3 && Math.abs(best - h) <= 6 ? best : h;
+    label(svg, x, y - 11, t.slice(0, cut), 11, null, t); label(svg, x, y, t.slice(cut), 11, null, t);
+  }
   // one instruction in the cell whose left edge is x, row centre cy
   function instr(svg, x, cy, it) {
     var a = it.args, mid = x + CW / 2, op = it.op;
@@ -35269,14 +35536,14 @@ Lantern.RFB = (function () {
       line(svg, x, cy, mid - 10, cy); line(svg, mid + 10, cy, x + CW, cy);
       line(svg, mid - 10, cy - 12, mid - 10, cy + 12, INK); line(svg, mid + 10, cy - 12, mid + 10, cy + 12, INK);
       if (op === "XIO") line(svg, mid - 8, cy + 11, mid + 8, cy - 11, INK);
-      label(svg, mid, cy - 18, a[0]);
+      tag(svg, mid, cy - 18, a[0]);
       return;
     }
     if (/^(OTE|OTL|OTU)$/.test(op)) {
       line(svg, x, cy, mid - 12, cy); line(svg, mid + 12, cy, x + CW, cy);
       el(svg, "path", { d: "M" + (mid - 6) + " " + (cy - 12) + " A 14 14 0 0 0 " + (mid - 6) + " " + (cy + 12) + " M" + (mid + 6) + " " + (cy - 12) + " A 14 14 0 0 1 " + (mid + 6) + " " + (cy + 12), stroke: INK, "stroke-width": 2, fill: "none" });
       if (op !== "OTE") label(svg, mid, cy + 4, op === "OTL" ? "L" : "U", 12);
-      label(svg, mid, cy - 18, a[0]);
+      tag(svg, mid, cy - 18, a[0]);
       return;
     }
     // a box: name, then its arguments
@@ -35307,16 +35574,23 @@ Lantern.RFB = (function () {
   function svg(rungs) {
     var cols = 4;
     rungs.forEach(function (r) { cols = Math.max(cols, size(r.items).w); });
-    cols = Math.min(cols, 14);
+    // as wide as the widest rung (a rung of more than 14 cells used to run
+    // past the right rail); the box around it scrolls sideways
     var heights = rungs.map(function (r) { return size(r.items).h * RH + (r.comment ? 20 : 0) + 12; }), H = heights.reduce(function (s, h) { return s + h; }, 10), W = cols * CW + 70;
     var s = document.createElementNS(NS, "svg");
     s.setAttribute("viewBox", "0 0 " + W + " " + H); s.setAttribute("width", W); s.setAttribute("height", H);
     s.setAttribute("role", "img"); s.setAttribute("aria-label", "Ladder diagram, " + rungs.length + " rung" + (rungs.length === 1 ? "" : "s"));
-    s.style.maxWidth = "100%"; s.style.height = "auto"; s.style.background = "#fff";
+    // shrinks to fit, but not below 3/4 size: on a phone the letters stayed 4 to 7 px
+    s.style.maxWidth = "100%"; s.style.minWidth = Math.round(W * 0.75) + "px"; s.style.height = "auto"; s.style.background = "#fff";
     var x0 = 40, y = 6;
     line(s, x0, 4, x0, H - 4, INK); line(s, x0 + cols * CW, 4, x0 + cols * CW, H - 4, INK);
     rungs.forEach(function (r, k) {
-      if (r.comment) { el(s, "text", { x: x0 + 8, y: y + 13, "font-size": 12, fill: "#64748b", "font-style": "italic", "font-family": "system-ui,sans-serif" }, r.comment.slice(0, Math.max(20, Math.floor((cols * CW - 24) / 6.6)))); y += 20; }
+      if (r.comment) {
+        var room = Math.max(20, Math.floor((cols * CW - 24) / 6.6)), cm = r.comment.length > room ? r.comment.slice(0, room - 1) + "\u2026" : r.comment;
+        var ce = el(s, "text", { x: x0 + 8, y: y + 13, "font-size": 12, fill: "#64748b", "font-style": "italic", "font-family": "system-ui,sans-serif" }, cm);
+        if (cm !== r.comment) { var ct = document.createElementNS(NS, "title"); ct.textContent = r.comment; ce.appendChild(ct); }
+        y += 20;
+      }
       label(s, 18, y + RH / 2 + 4, String(k + 1), 12, "#64748b");
       // the outputs at the end of the rung sit at the right rail
       var items = r.items, cut = items.length;
@@ -35344,36 +35618,72 @@ Lantern.RFB = (function () {
 // to read or change. console.log lines come back; the worker is stopped
 // after a time limit (2 s by default), so a loop that never ends cannot
 // hang the page. Code the AI writes runs the same way.
+// 1.16.0: a run lasts until its timers have fired (setTimeout and
+// setInterval are counted; up to 10 s), not 250 ms after the last line;
+// NaN, Infinity, undefined, errors, Map, Set and dates print as they are
+// (JSON turned them into null and {}); a promise that fails with no catch is
+// reported; more than 500 lines says that the rest is not shown.
 (function () {
   var L = window.Lantern;
   if (!L) return;
-  var BOOT = "var __n=0;function __s(v){if(typeof v==='string')return v;try{var j=JSON.stringify(v);return j===undefined?String(v):j}catch(e){return String(v)}}" +
-    "function __p(k,a){if(++__n>500)return;postMessage({t:k,s:Array.prototype.map.call(a,__s).join(' ')})}" +
+  var BOOT = "var __n=0,__pend=0,__main=false,__k=0,__tm={},__iv={},__st=self.setTimeout,__ct=self.clearTimeout,__si=self.setInterval,__ci=self.clearInterval;" +
+    // a value as a console shows it
+    "function __f(v,d,seen){var t=typeof v;if(t==='string')return d?JSON.stringify(v):v;" +
+    "if(v===null||t==='number'||t==='boolean'||t==='undefined'||t==='symbol')return String(v);if(t==='bigint')return String(v)+'n';" +
+    "if(t==='function')return '[Function'+(v.name?': '+v.name:'')+']';if(seen.indexOf(v)>=0)return '[Circular]';" +
+    "if(d>5)return Array.isArray(v)?'[Array]':'[Object]';seen=seen.concat([v]);" +
+    "if(v instanceof Error)return (v.name||'Error')+': '+v.message;" +
+    "if(v instanceof Date)return isNaN(v.getTime())?'Invalid Date':v.toISOString();" +
+    "if(typeof Map!=='undefined'&&v instanceof Map){var a=[];v.forEach(function(x,k){a.push(__f(k,d+1,seen)+' => '+__f(x,d+1,seen))});return 'Map('+v.size+') {'+a.join(', ')+'}'}" +
+    "if(typeof Set!=='undefined'&&v instanceof Set){var b=[];v.forEach(function(x){b.push(__f(x,d+1,seen))});return 'Set('+v.size+') {'+b.join(', ')+'}'}" +
+    "if(Array.isArray(v))return '['+v.map(function(x){return __f(x,d+1,seen)}).join(',')+']';" +
+    "if(typeof v.toJSON==='function'){try{return __f(v.toJSON(),d,seen)}catch(e){}}" +
+    "return '{'+Object.keys(v).map(function(k){return JSON.stringify(k)+':'+__f(v[k],d+1,seen)}).join(',')+'}'}" +
+    "function __s(v){try{return __f(v,0,[])}catch(e){return String(v)}}" +
+    "function __p(k,a){if(++__n>500){if(__n===501)postMessage({t:'cut'});return}postMessage({t:k,s:Array.prototype.map.call(a,__s).join(' ')})}" +
+    "function __fail(err){postMessage({t:'fail',s:err&&err.name?err.name+': '+err.message:String(err)})}" +
+    // done when the code has finished and no timer is waiting (a little
+    // later, so a promise that failed with no catch is reported first)
+    "function __idle(){if(__main&&__pend<=0)__st(function(){__st(function(){if(__pend<=0)postMessage({t:'done'})},20)},0)}" +
+    "self.setTimeout=function(f,ms){var a=Array.prototype.slice.call(arguments,2),k=++__k;__pend++;" +
+    "__tm[k]=__st(function(){if(!(k in __tm))return;delete __tm[k];__pend--;try{if(typeof f==='function')f.apply(null,a)}catch(err){__fail(err);return}__idle()},ms);return k};" +
+    "self.clearTimeout=function(k){if(k in __tm){__ct(__tm[k]);delete __tm[k];__pend--;__idle()}};" +
+    "if(__si){self.setInterval=function(f,ms){var a=Array.prototype.slice.call(arguments,2),k=++__k;__pend++;" +
+    "__iv[k]=__si(function(){try{if(typeof f==='function')f.apply(null,a)}catch(err){__ci(__iv[k]);__fail(err)}},ms);return k};" +
+    "self.clearInterval=function(k){if(k in __iv){__ci(__iv[k]);delete __iv[k];__pend--;__idle()}}}" +
+    "if(self.addEventListener)self.addEventListener('unhandledrejection',function(e){if(e.preventDefault)e.preventDefault();postMessage({t:'fail',s:'a promise failed and nothing caught it: '+__s(e.reason)})});" +
     "var console={log:function(){__p('log',arguments)},info:function(){__p('log',arguments)},warn:function(){__p('warn',arguments)},error:function(){__p('error',arguments)}};" +
-    "self.onmessage=function(e){try{(new Function(e.data))();postMessage({t:'done'})}catch(err){postMessage({t:'fail',s:String(err&&err.name?err.name+': '+err.message:err)})}};";
+    "self.onmessage=function(e){try{(new Function(e.data))()}catch(err){__fail(err);return}__main=true;postMessage({t:'main'});__idle()};";
   function can() { return !!(window.Worker && window.Blob && window.URL && URL.createObjectURL); }
   function js(text, opts) {
     opts = opts || {};
-    var limit = opts.timeout || 2000, t0 = Date.now();
+    var limit = opts.timeout || 2000, wait = Math.max(limit, opts.wait || 10000), t0 = Date.now();
     return new Promise(function (resolve) {
       if (!can()) { resolve({ lines: [], error: "this browser cannot run code in a sandbox here", ms: 0, timedOut: false }); return; }
-      var url = URL.createObjectURL(new Blob([BOOT], { type: "text/javascript" })), w, lines = [], done = false, settle = null;
+      var url = URL.createObjectURL(new Blob([BOOT], { type: "text/javascript" })), w, lines = [], done = false, cut = false, stop = null;
       function finish(err, timedOut) {
         if (done) return;
         done = true;
+        clearTimeout(stop);
         try { w.terminate(); } catch (e) { /* already stopped */ }
         try { URL.revokeObjectURL(url); } catch (e2) { /* gone */ }
-        resolve({ lines: lines, error: err || null, ms: Date.now() - t0, timedOut: !!timedOut });
+        if (cut) lines.push({ kind: "warn", text: "(more than 500 lines were printed: only the first 500 are shown)" });
+        resolve({ lines: lines, error: err || null, ms: Date.now() - t0, timedOut: !!timedOut, cut: cut });
       }
       try { w = new Worker(url); } catch (e) { resolve({ lines: [], error: "the sandbox could not start: " + ((e && e.message) || e), ms: 0, timedOut: false }); return; }
       w.onmessage = function (e) {
         var m = e.data || {};
         if (m.t === "log" || m.t === "warn" || m.t === "error") lines.push({ kind: m.t, text: m.s });
+        else if (m.t === "cut") cut = true;
         else if (m.t === "fail") finish(m.s);
-        else if (m.t === "done") { if (!settle) settle = setTimeout(function () { finish(null); }, opts.settle || 250); }   // timers may still print
+        else if (m.t === "main") {   // the code has run; its timers may still be waiting
+          clearTimeout(stop);
+          stop = setTimeout(function () { finish("stopped after " + (wait / 1000) + " s: a timer (setTimeout or setInterval) was still waiting", true); }, Math.max(50, wait - (Date.now() - t0)));
+        }
+        else if (m.t === "done") finish(null);
       };
       w.onerror = function (e) { if (e && e.preventDefault) e.preventDefault(); finish((e && e.message) || "the code stopped with an error"); };
-      setTimeout(function () { finish(lines.length >= 500 ? "stopped after 500 lines of output" : "stopped after " + (limit / 1000) + " s: does a loop never end?", true); }, limit);
+      stop = setTimeout(function () { finish(cut ? "stopped after 500 lines of output" : "stopped after " + (limit / 1000) + " s: does a loop never end?", true); }, limit);
       w.postMessage(String(text || ""));
     });
   }
@@ -35398,26 +35708,45 @@ Lantern.RFB = (function () {
   var L = window.Lantern;
   if (!L || !L.register || !L.codeLangs || !L.codeEditor || !L.codeFiles) return;
   var F = L.codeFiles, LG = L.codeLangs;
+  // a save that is waiting (typing pauses 600 ms first) happens now when the
+  // page is closed, reloaded or hidden: the last keys used to be lost
+  var flushNow = null;
+  function flush() { if (flushNow) flushNow(); }
+  window.addEventListener("pagehide", flush);
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "hidden") flush(); });
   function el(t, a, k) { return L.el(t, a, k); }
   function mount(ws) {
     var file = F.current() || F.add({ name: "first sketch", lang: "arduino" });
     var wrap = el("div", { "class": "wrap", style: "max-width:1000px" });
-    var fileSel = el("select", { "aria-label": "File" }), langSel = el("select", { "aria-label": "Language" });
+    var fileSel = el("select", { "aria-label": "File", style: "max-width:100%" }), langSel = el("select", { "aria-label": "Language", style: "max-width:100%" });
     LG.list.forEach(function (l) { langSel.appendChild(el("option", { value: l.id, text: l.name })); });
     var ed = L.codeEditor.create({ value: file.text, lang: file.lang, label: "Code" });
     var out = el("div", { "class": "cl-out", "aria-live": "polite", style: "margin-top:8px" }), status = el("span", { "class": "muted", style: "margin-left:8px" });
     var runBtn = el("button", { "class": "primary", text: "\u25b6 Run" }), stBtn = el("button", { text: "Ladder \u2192 Structured Text" }), checkBtn = el("button", { text: "\u2713 Check" });
-    var timer = null;
+    var timer = null, shown = "";
+    flushNow = function () { if (timer) save(); };
     function fillFiles() {
       fileSel.innerHTML = "";
       F.list().forEach(function (f) { var o = el("option", { value: f.id, text: f.name + "." + (LG.get(f.lang) || { ext: "txt" }).ext }); if (f.id === file.id) o.setAttribute("selected", "selected"); fileSel.appendChild(o); });
       fileSel.value = file.id;
     }
-    function save() { file.text = ed.get(); F.save(file); status.textContent = "saved on this device"; }
+    // save(force): only a change is saved (opening a file and leaving it
+    // does not give it a new date); force for a new name or language
+    function save(force) {
+      if (timer) { clearTimeout(timer); timer = null; }
+      var t = ed.get();
+      if (t === file.text && !force) { if (status.textContent === "\u2026") status.textContent = shown; return; }
+      file.text = t; F.save(file);
+      var ok = !L.store.ok || L.store.ok();
+      status.textContent = shown = ok ? "saved on this device" : "NOT saved: this browser\u2019s storage is full (use Save to computer now)";
+      status.style.color = ok ? "" : "var(--bad,#b91c1c)";
+    }
+    // on a phone the results are below the editor: bring them into view
+    function reveal() { try { if ((window.innerWidth || 1000) < 700 && out.scrollIntoView) out.scrollIntoView({ block: "nearest" }); } catch (e) { /* old browser */ } }
     function load(f) {
       if (!f) return;
       file = f; F.setCurrent(f.id); ed.set(f.text); ed.lang(f.lang); langSel.value = f.lang;
-      fillFiles(); out.innerHTML = ""; tools(); status.textContent = "";
+      fillFiles(); out.innerHTML = ""; tools(); status.textContent = shown = ""; status.style.color = "";
       if (L.codePanels) L.codePanels.install(installBox, f.lang);
       if (f.lang === "ladder") check(true);
     }
@@ -35434,6 +35763,7 @@ Lantern.RFB = (function () {
         var row = el("div", { "class": p.level === "error" ? "danger" : "muted", style: "cursor:pointer;margin:2px 0", role: "button", tabindex: "0",
           text: (p.level === "error" ? "\u2717 " : "\u26a0 ") + (p.line ? "line " + p.line + ": " : "") + p.msg });
         row.onclick = function () { if (p.line) ed.gotoLine(p.line); };
+        row.onkeydown = function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); row.onclick(); } };
         box.appendChild(row);
       });
       return box;
@@ -35452,7 +35782,7 @@ Lantern.RFB = (function () {
     runBtn.onclick = function () {
       save(); var list = check(true);
       if (list.some(function (p) { return p.level === "error"; })) return;
-      out.innerHTML = ""; out.appendChild(el("p", { "class": "muted", text: "Running\u2026" }));
+      out.innerHTML = ""; out.appendChild(el("p", { "class": "muted", text: "Running\u2026" })); reveal();
       L.codeRun.js(ed.get()).then(function (r) {
         out.innerHTML = "";
         var con = el("pre", { style: "margin:0;padding:10px;background:#0f172a;color:#e2e8f0;border-radius:8px;max-height:320px;overflow:auto;white-space:pre-wrap;font:13px/18px ui-monospace,Consolas,monospace" });
@@ -35463,14 +35793,20 @@ Lantern.RFB = (function () {
     };
     stBtn.onclick = function () {
       var pr = L.codeLadder.parse(ed.get());
-      if (!pr.rungs.length) { check(); return; }
+      // ladder with mistakes would turn into Structured Text that quietly
+      // leaves things out: the mistakes are shown instead
+      if (!pr.rungs.length || pr.problems.some(function (p) { return p.level === "error"; })) {
+        check();
+        if (pr.rungs.length) out.insertBefore(el("p", { "class": "danger", style: "margin:0 0 6px", text: "Fix the mistakes marked \u2717 first: then it can become Structured Text." }), out.firstChild);
+        reveal(); return;
+      }
       var nf = F.add({ name: file.name + " (ST)", lang: "st", text: L.codeLadder.toST(pr.rungs, "Ladder") });
       load(nf);
       out.appendChild(el("p", { "class": "muted", text: "The same logic as Structured Text, in a new file. Timer done bits (.DN) became .Q, accumulators (.ACC) .ET or .CV." }));
     };
-    ed.onChange(function () { status.textContent = "\u2026"; if (timer) clearTimeout(timer); timer = setTimeout(save, 600); });
+    ed.onChange(function () { status.textContent = "\u2026"; status.style.color = ""; if (timer) clearTimeout(timer); timer = setTimeout(save, 600); });
     fileSel.onchange = function () { save(); load(F.get(fileSel.value)); };
-    langSel.onchange = function () { file.lang = langSel.value; ed.lang(file.lang); save(); fillFiles(); tools(); if (L.codePanels) L.codePanels.install(installBox, file.lang); };
+    langSel.onchange = function () { file.lang = langSel.value; ed.lang(file.lang); save(true); fillFiles(); tools(); if (L.codePanels) L.codePanels.install(installBox, file.lang); };
     var picker = el("input", { type: "file", accept: ".ino,.cpp,.c,.h,.py,.js,.st,.lad,.txt", style: "display:none", "aria-label": "Open a file from this computer" });
     picker.onchange = function () {
       var f = picker.files && picker.files[0];
@@ -35480,7 +35816,14 @@ Lantern.RFB = (function () {
     var bar1 = el("div", { "class": "row", style: "flex-wrap:wrap;gap:6px;align-items:center" }, [
       fileSel,
       el("button", { text: "New", onclick: function () { save(); var nm = window.prompt("Name of the new file:", "sketch"); if (nm) load(F.add({ name: nm, lang: file.lang })); } }),
-      el("button", { text: "Rename", onclick: function () { var nm = window.prompt("New name:", file.name); if (nm) { file.name = nm; save(); file = F.get(file.id); fillFiles(); } } }),
+      el("button", { text: "Rename", onclick: function () {
+        var nm = window.prompt("New name:", file.name); if (!nm) return;
+        // a new extension (.py, .st ...) is a new language, as in New
+        var lx = LG.byExt(nm);
+        file.name = nm;
+        if (lx && lx !== file.lang) { file.lang = lx; ed.lang(lx); langSel.value = lx; tools(); if (L.codePanels) L.codePanels.install(installBox, lx); }
+        save(true); file = F.get(file.id) || file; fillFiles();
+      } }),
       el("button", { text: "Delete", onclick: function () { if (L.confirmDel && !L.confirmDel(file.name)) return; F.remove(file.id); load(F.current() || F.add({ name: "sketch", lang: file.lang })); } }),
       el("button", { text: "Open file\u2026", onclick: function () { picker.click(); } }), picker,
       el("button", { text: "Save to computer", onclick: function () { save(); F.download(file); } }),
@@ -35495,10 +35838,10 @@ Lantern.RFB = (function () {
       L.codePanels ? L.codePanels.examples(function (ex) { save(); load(F.add({ name: ex.file ? ex.file.replace(/\.\w+$/, "") : ex.title, lang: ex.lang, text: ex.text })); out.appendChild(el("p", { "class": "muted", text: "Example: " + ex.desc })); }) : el("span"),
       status
     ]);
-    checkBtn.onclick = function () { save(); check(); };
+    checkBtn.onclick = function () { save(); check(); reveal(); };
     ed.ta.addEventListener("keydown", function (e) {
       if ((e.ctrlKey || e.metaKey) && (e.key === "Enter" || e.keyCode === 13)) { e.preventDefault(); if (runBtn.style.display !== "none") runBtn.onclick(); else { save(); check(); } }
-      if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) { e.preventDefault(); save(); }
+      if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) { e.preventDefault(); save(true); }
       if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) { e.preventDefault(); findBox.style.display = ""; findBox.querySelector("input").focus(); }
     });
     var installBox = el("details", { style: "margin-top:12px" });
@@ -35541,7 +35884,7 @@ Lantern.RFB = (function () {
     var cs = el("input", { type: "checkbox", "aria-label": "Match case" }), msg = el("span", { "class": "muted" });
     function o() { return { caseSensitive: cs.checked }; }
     function next() { msg.textContent = ed.find(f.value, o()) ? "" : "not found"; }
-    f.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); next(); } if (e.key === "Escape") box.style.display = "none"; });
+    f.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); next(); } if (e.key === "Escape") { e.preventDefault(); box.style.display = "none"; ed.focus(); } });
     var box = el("div", { "class": "row", role: "search", style: "flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px" }, [
       f, el("button", { text: "Next", onclick: next }), r,
       el("button", { text: "Replace", onclick: function () { msg.textContent = ed.replace(f.value, r.value, o()) ? "" : "not found"; } }),
@@ -35552,7 +35895,7 @@ Lantern.RFB = (function () {
     return box;
   }
   function examples(onPick) {
-    var EX = window.Lantern.codeExamples || [], sel = el("select", { "aria-label": "Examples" });
+    var EX = window.Lantern.codeExamples || [], sel = el("select", { "aria-label": "Examples", style: "max-width:100%" });
     sel.appendChild(el("option", { value: "", text: "Examples (" + EX.length + ")\u2026" }));
     L.codeLangs.list.forEach(function (lg) {
       var mine = EX.filter(function (x) { return x.lang === lg.id; });
@@ -36228,17 +36571,17 @@ Lantern.RFB = (function () {
   }
   L.guide.add("codelab", "Code Lab - Help & Tutorial", [
     ["What Code Lab is", "<p>Code Lab is where real programs are written: <b>Arduino</b> sketches (including the <b>P1AM-100</b> PLC-style controller), <b>Python</b> (for a computer or a Raspberry Pi), <b>JavaScript</b>, and PLC programs in <b>Structured Text</b> and <b>ladder</b>. It colours the code, numbers the lines, checks it for the mistakes that stop a build or break a machine, and keeps your files on this device. JavaScript runs here; the other languages are built on a computer with the free tools listed below. (For a first program with a child, the <b>Turtle Code</b> tile is the place to start.)</p>"],
-    ["Files", "<p>The top row holds your files: pick one, <b>New</b>, <b>Rename</b>, <b>Delete</b>, <b>Open file\u2026</b> (an .ino, .py, .js, .st or .lad from your computer) and <b>Save to computer</b>. The language box switches the file\u2019s language at any time. Every change is saved on this device as you type.</p>"],
-    ["The editor", "<p><b>Tab</b> and <b>Shift+Tab</b> indent and un-indent (several lines at once when they are selected); <b>Enter</b> keeps the indent; <b>Ctrl+/</b> turns lines into comments and back; <b>Ctrl+F</b> opens Find and replace; <b>Ctrl+S</b> saves at once on this device; <b>Ctrl+Enter</b> runs JavaScript, or checks any other language.</p>"],
+    ["Files", "<p>The top row holds your files: pick one, <b>New</b>, <b>Rename</b>, <b>Delete</b>, <b>Open file\u2026</b> (an .ino, .py, .js, .st or .lad from your computer) and <b>Save to computer</b>. The language box switches the file\u2019s language at any time; a name typed with an extension (blink.py, pump.st) picks the language too. Every change is saved on this device as you type; if the browser\u2019s storage is full, the line under the editor says <b>NOT saved</b> \u2014 press <b>Save to computer</b>.</p>"],
+    ["The editor", "<p><b>Tab</b> and <b>Shift+Tab</b> indent and un-indent (several lines at once when they are selected); <b>Enter</b> keeps the indent; <b>Ctrl+/</b> turns lines into comments and back; <b>Ctrl+Z</b> takes back the last word or change, <b>Ctrl+Y</b> (or Ctrl+Shift+Z) puts it back; <b>Ctrl+F</b> opens Find and replace (<b>Enter</b> finds the next one, marked in yellow; <b>Esc</b> goes back to the code); <b>Ctrl+S</b> saves at once on this device; <b>Ctrl+Enter</b> runs JavaScript, or checks any other language.</p>"],
     ["Checking code", "<p><b>Check</b> lists what Lantern finds, each with its line number (the number turns red in the margin; tap a problem to go there). It finds unbalanced brackets and quotes in every language, and then, by language:</p><ul>" +
       "<li><b>Arduino</b>: no setup() or loop(), a missing ;, a library used without its #include, a pin written before pinMode makes it an OUTPUT, Serial used before Serial.begin, = where == was meant, analogWrite on a pin with no PWM, millis() kept in an int, delay() in a sketch AccelStepper has to keep running, the P1AM used before P1.init().</li>" +
       "<li><b>Python</b>: a missing : after if, for, def ..., wrong or mixed indents, Python 2 print, = in a condition.</li>" +
-      "<li><b>JavaScript</b>: anything that stops it compiling.</li>" +
+      "<li><b>JavaScript</b>: anything that stops it compiling, with its line.</li>" +
       "<li><b>Structured Text</b>: IF, CASE, FOR, VAR ... left open, a missing THEN or DO, = used to set a value, a missing ;, names never declared, reserved words used as names (STEP is one).</li>" +
-      "<li><b>Ladder</b>: unknown instructions, wrong argument counts, an empty branch leg, a rung with no output, the same coil driven in two rungs, a tag used as a timer and a counter.</li></ul>" +
+      "<li><b>Ladder</b>: unknown instructions, wrong argument counts, an empty branch leg, a rung with no output, a rung whose ; was left out, the same coil driven in two rungs (or twice in one), a tag used as a timer and a counter.</li></ul>" +
       "<p>Passing the check is not the same as compiling or testing: the build tools on a computer, and the machine itself, have the last word.</p>"],
-    ["Running JavaScript", "<p><b>Run</b> runs a JavaScript file in a sealed sandbox: what it prints with console.log appears below. A program that never ends is stopped after 2 seconds. The <b>How a PLC scan works</b> example shows a PLC\u2019s read-solve-write cycle in JavaScript.</p>"],
-    ["Ladder", "<p>Ladder is written as rung text, one rung per line, and Code Lab draws the rungs below the editor. <b>Ladder \u2192 Structured Text</b> turns the rungs into a Structured Text program in a new file, for PLC tools that take text. The ladder reference is further down this guide.</p>"],
+    ["Running JavaScript", "<p><b>Run</b> runs a JavaScript file in a sealed sandbox: what it prints with console.log appears below (the first 500 lines). A program that never ends is stopped after 2 seconds; one that waits on setTimeout or setInterval runs until its timers are done, up to 10 seconds. The <b>How a PLC scan works</b> example shows a PLC\u2019s read-solve-write cycle in JavaScript.</p>"],
+    ["Ladder", "<p>Ladder is written as rung text, one rung per line, and Code Lab draws the rungs below the editor. <b>Ladder \u2192 Structured Text</b> turns the rungs into a Structured Text program in a new file, for PLC tools that take text (fix any mistake Check marks first). Timers become TON and TOF, RTO a TON that keeps its time until RES; counters CTU, or CTUD when the tag also counts down; a preset that MOV changes becomes a variable of its own; tag names such as <code>Local:1:I.Data.0</code> become <code>Local_1_I_Data_0</code>, with the Logix name beside them. The ladder reference is further down this guide.</p>"],
     ["Examples", "<p>The <b>Examples</b> menu has " + ((window.Lantern.codeExamples || []).length || "45") + " programs, every one tested: the Arduino sketches compiled and linked for an Uno against the real Arduino core and libraries, the P1AM-100 ones checked against the real P1AM library, the Python and JavaScript run, the Structured Text and ladder compiled with matiec (the compiler inside OpenPLC and Beremiz). Picking one opens it as a new file of your own to change.</p>"],
     ["Languages and where to get the tools", tools()],
     ["The AI and Code Lab", "<p>Ask Chat for a program (\u201can Arduino sketch to run a stepper back and forth with an A4988\u201d, \u201cladder for a duplex pump alternation\u201d). The AI writes it in a MAKE CODE block; Lantern checks it, sends any problems back for one corrected version, and shows it coloured with <b>Open in Code Lab</b>, <b>Save to computer</b>, and for JavaScript <b>Run here</b>. When a tested example fits the question the AI starts from it (it can also ask for one with <code>EXAMPLE: stepper homing</code>), and Chat says which: \u201cadapted from Lantern\u2019s tested example\u201d, or \u201cwritten by the AI from its own knowledge\u201d. Code written straight into a reply is checked too, with the same buttons under it.</p>"],
@@ -36288,14 +36631,14 @@ Lantern.RFB = (function () {
     ["Raspberry Pi and Python", "<p>" + a("https://www.raspberrypi.com/software/", "Raspberry Pi OS") + " comes with Python, the Thonny editor and the <b>gpiozero</b> library the Pi examples use: save the .py file, open it in Thonny and press Run. Pins are numbered as the Pi calls them (GPIO17 is <code>LED(17)</code>), not by their place on the header.</p>" +
       "<p>The serial logger needs <b>pyserial</b>: <code>pip install pyserial</code> on a computer (on a Pi: <code>sudo apt install python3-serial</code>). The DS18B20 example needs 1-Wire turned on: <b>sudo raspi-config \u203a Interface Options \u203a 1-Wire</b>, then restart.</p>"],
     ["Structured Text in a PLC tool", "<p>The Structured Text examples are IEC 61131-3, the standard most PLC tools read. In " + a("https://autonomylogic.com/", "OpenPLC Editor") + " or " + a("https://beremiz.org/", "Beremiz") + " make a program in ST and paste the text in; in " + a("https://www.codesys.com/", "CODESYS") + " the VAR part goes in the declaration pane and the rest in the code pane. Inputs and outputs are tied to real terminals with <code>AT %IX0.0</code> and <code>AT %QX0.0</code> (OpenPLC\u2019s numbering; other PLCs use their own).</p>"],
-    ["Ladder rung text: reference", "<p>One rung per line, ending with <code>;</code>. Instructions written one after another are in series (AND); <code>[A ,B ]</code> is a branch: A or B. A line starting with <code>//</code> is the next rung\u2019s comment.</p>" +
+    ["Ladder rung text: reference", "<p>One rung per line, ending with <code>;</code>. Instructions written one after another are in series (AND); <code>[A ,B ]</code> is a branch: A or B. A line starting with <code>//</code> is the next rung\u2019s comment; a <code>//</code> comment after a rung\u2019s <code>;</code> on the same line is that rung\u2019s. Tags ignore capitals, as in Logix: <code>Motor</code> and <code>motor</code> are one tag.</p>" +
       "<pre>// Start/stop with a seal-in (Stop wired normally closed)\n[XIC(Start) ,XIC(Motor) ]XIC(Stop)OTE(Motor);</pre><ul>" +
       "<li><b>XIC(tag)</b> \u2014 true when the bit is on; <b>XIO(tag)</b> \u2014 true when it is off. They examine the bit, not the switch: a Stop button or overload contact wired normally closed (so a broken wire stops the machine) has its bit on until it is pressed or trips, so it is examined with XIC. XIO is for \u201conly while this is off\u201d: an interlock such as <code>XIO(Reverse)</code>, a fault, a counter not yet done</li>" +
-      "<li><b>ONS(store)</b> \u2014 true for one scan when the rung turns true (store is a spare bit)</li>" +
+      "<li><b>ONS(store)</b> \u2014 true for one scan when the rung turns true (store is a spare bit); <b>OSR(store, output)</b> and <b>OSF(store, output)</b> turn <i>output</i> on for one scan when the rung turns true, or false</li>" +
       "<li><b>OTE(tag)</b> \u2014 the bit follows the rung; <b>OTL(tag)</b> / <b>OTU(tag)</b> \u2014 latch on / unlatch off</li>" +
       "<li><b>TON(timer, preset ms, 0)</b> on-delay, <b>TOF</b> off-delay, <b>RTO</b> retentive (reset with RES). Use <code>timer.DN</code> (done), <code>.TT</code> (timing), <code>.EN</code>, <code>.ACC</code> (ms so far), <code>.PRE</code></li>" +
       "<li><b>CTU(counter, preset, 0)</b> counts up, <b>CTD</b> down; <code>counter.DN</code> is on at the preset; <b>RES(tag)</b> resets a counter or timer</li>" +
-      "<li><b>EQU NEQ GRT GEQ LES LEQ(a, b)</b> compare; <b>LIM(low, value, high)</b> is true between the two</li>" +
+      "<li><b>EQU NEQ GRT GEQ LES LEQ(a, b)</b> compare; <b>LIM(low, value, high)</b> is true between the two (with low above high: true outside them)</li>" +
       "<li><b>MOV(source, dest)</b>, <b>ADD SUB MUL DIV(a, b, dest)</b>, <b>CLR(dest)</b> \u2014 maths and moves</li>" +
       "<li><b>NOP</b> does nothing; <b>AFI</b> is always false (switches a rung off); <b>JSR(routine)</b> calls a routine</li></ul>" +
       "<p>Drive each coil from one rung only: two rungs with OTE on the same tag fight, and the last one wins. Code Lab says so when it sees it.</p>"]

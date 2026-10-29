@@ -32,6 +32,7 @@ var steps = [
   ["Calculator after the audit (after =, errors kept, brackets closed, memory and RAD kept, keyboard and dialogs) and the shared number and formula fixes (1.16)", "node", ["tests/calc_audit.js"], /ALL CALC AUDIT TESTS PASS/],
   ["Draw's schematic symbols: a right-click only deletes, Turn and R point them any way, the preview (1.15)", "node", ["tests/draw_symbols.js"], /ALL DRAW SYMBOL TESTS PASS/],
   ["Code Lab (editor, checks, ladder, sandbox, examples; MAKE CODE, EXAMPLE:, code in replies)", "node", ["tests/code_lab.js"], /ALL CODE LAB TESTS PASS/],
+  ["Code Lab after the audit (Find keeps its focus, quick big edits, undo by word, comments, red lines move, extensions, NOT saved, JS lines, one-line blocks, enums, ladder ; and case, Ladder -> ST for TOF/RTO/RES/CTUD/presets/LIM/tag names, Run output and timers, the drawing) (1.16)", "node", ["tests/codelab_audit.js"], /ALL CODELAB AUDIT TESTS PASS/],
   ["Puzzles (track, turn, solve; letters; Chat hands puzzles to Lantern)", "node", ["tests/puzzles.js"], /ALL PUZZLE TESTS PASS/],
   ["Bench run 9 replayed (named places, queues, retyped results, READ, dozens, covered shapes, totals, steps)", "node", ["tests/bench_run9.js"], /ALL BENCH RUN 9 CHECKS PASS/],
   ["Bench run 11 replayed (results put in, two places, the lesson asked about, EXAMPLE as code, XIO on a closed Stop, fuel the right way round)", "node", ["tests/bench_run11.js"], /ALL BENCH RUN 11 CHECKS PASS/],
