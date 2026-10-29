@@ -80,6 +80,8 @@ function msgs(list, re) { return list.some(function (p) { return re.test(p.msg);
     "https://www.python.org/downloads/", "https://thonny.org/", "https://www.raspberrypi.com/software/", "https://micropython.org/download/", "https://nodejs.org/en/download",
     "https://autonomylogic.com/", "https://beremiz.org/", "https://www.codesys.com/"].forEach(function (u) { ok("the guide links " + u, gtext.indexOf(u) >= 0); });
   ok("the guide has the ladder reference and library setup", /Ladder rung text: reference/.test(gtext) && /AccelStepper/.test(gtext) && /TMCStepper/.test(gtext) && /1-Wire/.test(gtext));
+  ok("the ladder reference examines a normally closed Stop with XIC, and says XIC and XIO examine the bit, not the switch (1.15.0)",
+    /XIC\(Start\) ,XIC\(Motor\) \]XIC\(Stop\)OTE\(Motor\);/.test(gtext) && !/XIO\(Stop\)/.test(gtext) && /examine the bit, not the switch/.test(gtext));
   ok("the Chat and Turtle guides point to Code Lab", L.guide.get("chat").sections.some(function (s) { return /Code Lab/.test(s[0]); }) &&
     L.guide.get("code").sections.some(function (s) { return /Code Lab/.test(s[1]); }));
 
@@ -158,6 +160,9 @@ function msgs(list, re) { return list.some(function (p) { return re.test(p.msg);
   var f2 = F.add({ name: "pump", lang: "arduino", text: "" });
   ok("files: added, names kept unique, the extension comes from the language", F.list().length === n0 + 2 && f2.name === "pump (2)" && F.fileName(f1) === "pump.ino");
   ok("a new file of a language starts from its template", F.add({ name: "x", lang: "st" }).text.indexOf("PROGRAM Main") === 0);
+  var nl = F.add({ name: "y", lang: "ladder" }).text;
+  ok("a new ladder file's start/stop rung examines its normally closed Stop with XIC, and Check finds nothing in it",
+    /\]XIC\(Stop\)OTE\(Motor\);/.test(nl) && !/XIO\(Stop\)/.test(nl) && L.codeCheck.run("ladder", nl).length === 0, [nl, L.codeCheck.run("ladder", nl)]);
   F.download(f1);
   ok("Save to computer names the file", downloads.pop() === "pump.ino");
 

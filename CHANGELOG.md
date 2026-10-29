@@ -83,6 +83,14 @@ it, run 17.) Lantern Watch was written in another thread as a drop-in for
   left there by a load that was cut off). `last-load.json` says how soon the
   first reading came (`firstSampleMs`). Tested under PowerShell 7 here
   (`tests/lantern_watch/live_ps.py`); the self-test shows the instant check.
+- Code Lab's ladder: a new ladder file, the rung-text reference and two
+  comments showed the start/stop rung as `XIO(Stop)`, while the example, the
+  AI's prompt and Lantern's own check (1.13.3) use `XIC(Stop)` for a Stop
+  wired normally closed. Adam asked about it. They all say `XIC(Stop)` now,
+  and the reference explains that XIC and XIO examine the bit, not the
+  switch: a normally closed Stop or overload has its bit on until it is
+  pressed or trips; XIO is for "only while this is off" (an interlock, a
+  fault, a counter not yet done).
 
 ## 1.14.3 — Bench run 15, the 4B again: a sum glued with *, newtons over g, the line that needs the 2 (2026-10-28)
 
