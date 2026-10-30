@@ -92,10 +92,10 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   var ch = S.make({ title: "Groove", lines: ["chords: Em - Am - B7 - Em", "style reggae"] });
   ok("chords alone, with dashes between: four bars in E minor, played in the style", ch.plan && ch.plan.bars === 4 && ch.plan.key === "E minor" && !ch.plan.melody.length &&
     chords(ch.plan) === "Em Am B7 Em" && ch.plan.style === "reggae" && ch.plan.tempo === 76 && ch.plan.drums, ch.plan && chords(ch.plan));
-  var loose = S.make({ title: "x", lines: ["**Key:** D major", "- Chords: I | IV | V7 | I (x2)", "Melody (violin): F-G-A-B D - - - E - - - D"] });
+  var loose = S.make({ title: "x", lines: ["**Key:** D major", "- Chords: I | IV | V7 | I", "Melody (violin): F-G-A-B D - - - E - - - D (x2)"] });
   ok("lines as models write them: bold, a bullet, numerals, x2, B-A-G-E, an instrument in brackets, no bar lines", loose.plan && loose.plan.sound === "strings" &&
-    chords(loose.plan) === "D G A7 D D G A7 D" && loose.plan.bars === 8 && names(loose.plan) === "F#4 G4 A4 B4 D5 E5 D5" && !loose.problems.length, [loose.problems, loose.plan && chords(loose.plan), loose.plan && names(loose.plan)]);
-  ok("...no bar lines: a note a beat, the last held to the end of its bar", lens(loose.plan) === "1 1 1 1 4 4 4", lens(loose.plan));
+    chords(loose.plan) === "D G A7 D D G A7 D" && loose.plan.bars === 8 && names(loose.plan).split(" ").slice(0, 7).join(" ") === "F#4 G4 A4 B4 D5 E5 D5" && !loose.problems.length, [loose.problems, loose.plan && chords(loose.plan), loose.plan && names(loose.plan)]);
+  ok("...no bar lines: a note a beat, the last held to the end of its bar", lens(loose.plan) === "1 1 1 1 4 4 4 1 1 1 1 4 4 4", lens(loose.plan));
   var parts = S.make({ title: "x", lines: ["key G", "Verse:", "chords G | C", "melody G A B - | C - - -", "Chorus:", "chords D | G", "melody A - - - | G - - -"] });
   ok("Verse: and Chorus: make parts, each with its own chords", parts.plan.bars === 4 && chords(parts.plan) === "G C D G" && parts.plan.parts.length === 2, chords(parts.plan));
   var rep = S.make({ title: "x", lines: ["key C", "chords C | G", "melody E D C D | E E E - | D D D - | E G G -"] });
@@ -120,7 +120,7 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   ok("no chords and no melody: nothing to make", !S.make({ title: "x", lines: ["key C", "tempo 90"] }).plan && /there is no chords or melody line/.test(S.make({ title: "x", lines: ["tempo 90"] }).problems[0]));
   var wrong = act.build(song(["key D major", "melody F G A B | A - - -"]), "Write an 8-bar waltz in E minor");
   ok("against the question: its key, a waltz's 3/4, its number of bars", wrong.problems.length === 3 && /the question asks for E minor, but the song is in D major: write key E minor/.test(wrong.problems[0]) &&
-    /a waltz is in 3\/4/.test(wrong.problems[1]) && /the question asks for 8 bars; the song has 2/.test(wrong.problems[2]), wrong.problems);
+    /a waltz is in 3\/4/.test(wrong.problems[1]) && /the question asks for 8 bars; the tune has 2/.test(wrong.problems[2]), wrong.problems);
   ok("...a key asked without major or minor matches either", act.build(song(["key E minor", "chords Em | Am"]), "Play something in E").ok);
   var unread = S.make({ title: "x", lines: ["loudness 11", "key C", "chords C | F", "This is a nice song."] });
   ok("a line Lantern does not read is named, with the lines it reads", /^\u201cloudness 11\u201d: Lantern reads key, tempo, time, style, sound, chords, melody, repeat and note lines$/.test(unread.problems[0]) &&
@@ -170,8 +170,28 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   ok("...Ode to Joy with a wrong note fails, named; in another key it passes", /^note 4 of the theme is wrong/.test(grade("make-music-ode", Q[0].ideal.replace("F# F# G A | A G", "F# F# G B | A G")).why) &&
     grade("make-music-ode", song(["key C", "melody E E F G | G F E D | C C D E | E - - D D - - -"])).pass);
   ok("...the tune of its own: G major, 8 bars, a walking pace, home at the end", /questions it: the question asks for G major, but the song is in D major/.test(grade("make-music-original", song(["key D", "chords D | A | D | A | D | A | D | D", "melody D E F A | A - - - | D E F A | A - - - | D E F A | A - - - | F E D E | D - - -"])).why) &&
-    /questions it: the question asks for 8 bars; the song has 4/.test(grade("make-music-original", song(["key G", "chords G | C | D | G", "melody G A B G | C - - - | A - - - | G - - -"])).why) &&
+    /questions it: the question asks for 8 bars; the tune has 4/.test(grade("make-music-original", song(["key G", "chords G | C | D | G", "melody G A B G | C - - - | A - - - | G - - -"])).why) &&
     grade("make-music-original", song(["key G", "melody G A B G | C - E D | D C B A | B - G - | E5 - C E | D B G B | A F# A C | B - G -"])).pass);
+
+  // --- 1.19.1: the bench run on 1.19.0 (a 35B, fixtures/bench_run_1190_35b.json): both songs were 4 bars of tune under
+  // 8 bars of chords; the Ode's 4th bar had its rhythm evened out. Both passed the bench.
+  var R19 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "bench_run_1190_35b.json"), "utf8"));
+  function row(id) { return R19.rows.filter(function (r) { return r.id === id; })[0]; }
+  var od = act.build(row("make-music-ode").reply, row("make-music-ode").q);
+  var TAIL = "the chords go on 4 bars past the melody (bars 5 to 8 have no tune): write the melody for bars 5 to 8 too, or end the chords at bar 4";
+  ok("chords going on well past the melody: questioned, with the bars to fill", od.plan && !od.ok && od.problems.length === 1 && od.problems[0] === TAIL, od.problems);
+  ok("...a bar or two of chords after the tune is an ending, said", S.make({ title: "x", lines: ["chords C | C | G | C | F | C", "melody E D C D | E E E - | D D E D | C - - -"] }).problems.length === 0 &&
+    /bars 5 to 6 are chords alone/.test(S.make({ title: "x", lines: ["chords C | C | G | C | F | C", "melody E D C D | E E E - | D D E D | C - - -"] }).summary));
+  var oq = Q.filter(function (q) { return q.id === "make-music-ode"; })[0], orig = Q.filter(function (q) { return q.id === "make-music-original"; })[0];
+  ok("...the bench: the 35B's Ode is now questioned, and its 4th bar's rhythm is not the theme's", /^Lantern still questions it: the chords go on 4 bars/.test(grade("make-music-ode", row("make-music-ode").reply).why) &&
+    /^the rhythm is off at note 13/.test(grade("make-music-ode", song(["key C", "chords C | G | Am | F", "melody E E F G | G F E D | C C D E | E D D -"])).why) &&
+    grade("make-music-ode", song(["key C", "chords C | G | Am | F G", "melody E E F G | G F E D | C C D E | E - - D D - - -"])).pass);
+  var o1 = act.build(row("make-music-original").first, orig.q), o2 = act.build(row("make-music-original").reply, orig.q);
+  ok("the 35B's tune of its own: first the short tune and the long F# over G together, then the short tune still", o1.problems.length === 2 && o1.problems[0] === TAIL &&
+    /^bar 4: the melody holds F# over G/.test(o1.problems[1]) && o2.problems.length === 1 && o2.problems[0] === TAIL && !grade("make-music-original", row("make-music-original").reply).pass, [o1.problems, o2.problems]);
+  ok("...the bench needs the tune itself to fill the 8 bars", /^the tune is 4 bars; the chords go on alone to bar 8$/.test(L.aiBench.grade(orig, "x", { made: { ok: true, action: { kind: "MUSIC" }, plan: S.make({ title: "x",
+    lines: ["key G", "chords G | C | D | G | G | C | D | G", "melody G A B G | C - E D | D C B A | G - - - | r | r | r | r"] }).plan } }).why));
+
 
   // Chat: a song is made, played and saved; a bad word goes back once
   await L.ai.detect();

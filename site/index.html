@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.19.0 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.19.1 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -175,7 +175,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.19.0",
+  version: "1.19.1",
   apps: {},
   order: []
 };
@@ -26524,7 +26524,43 @@ Lantern.RFB = (function () {
     }
     return out;
   }
-  function picture(block) {
+  // asked(shapes, question) -> [problems]: what the question names that the
+  // picture lacks, with the line to add (1.19.1, bench run on 1.19.0: the
+  // 35B's house at sunset was a wall with a window and no roof; it looked at
+  // its picture and kept it). A house is a wall with a roof on it; a sun is
+  // a yellow (orange, gold, red or white) circle.
+  var HOUSE = /\b(house|cottage|cabin|hut|barn|farmhouse)\b/i, SUN = /\bsun\b/i;
+  function asked(shapes, q) {
+    q = String(q || "");
+    var out = [];
+    function box(o) { return o.kind === "square" ? [o.nums[0], o.nums[1], o.nums[2], o.nums[2]] : [o.nums[0], o.nums[1], o.nums[2], o.nums[3]]; }
+    if (HOUSE.test(q)) {
+      var walls = shapes.filter(function (o) { if (!/^(rect|square)$/.test(o.kind)) return false; var b = box(o); return b[2] >= 2 && b[2] < 16 && b[3] >= 2 && b[3] < 10 && b[1] >= 1; });   // not the sky or the ground
+      var roofed = walls.some(function (w) {
+        var b = box(w);
+        return shapes.some(function (r) {
+          if (r === w) return false;
+          if (/^(tri|triangle)$/.test(r.kind)) {
+            var xs = [r.nums[0], r.nums[2], r.nums[4]], ys = [r.nums[1], r.nums[3], r.nums[5]];
+            return Math.abs(Math.max.apply(null, ys) - b[1]) <= 1.5 && Math.min.apply(null, ys) < b[1] && Math.min.apply(null, xs) < b[0] + b[2] && Math.max.apply(null, xs) > b[0];
+          }
+          if (!/^(rect|square)$/.test(r.kind) || r.fill === w.fill) return false;
+          var c = box(r);
+          return c[2] < 16 && Math.abs(c[1] + c[3] - b[1]) <= 1 && c[1] < b[1] && c[0] < b[0] + b[2] && c[0] + c[2] > b[0];
+        });
+      });
+      if (!roofed) {
+        var w = walls.slice().sort(function (x, y) { var a = box(x), c = box(y); return c[2] * c[3] - a[2] * a[3]; })[0], b = w ? box(w) : [7, 6, 6, 4];
+        var roof = "tri " + num(b[0] - 1) + " " + num(b[1]) + " " + num(b[0] + b[2] / 2) + " " + num(Math.max(0, b[1] - Math.max(2, b[2] / 2))) + " " + num(b[0] + b[2] + 1) + " " + num(b[1]) + " fill red";
+        out.push(w ? "the question asks for a house, but no roof sits on its wall (\u201c" + w.line + "\u201d): add " + roof + " after the wall" :
+          "the question asks for a house, but nothing is a wall with a roof: add rect 7 6 6 4 fill tan and " + roof);
+      }
+    }
+    if (SUN.test(q) && !shapes.some(function (o) { return /^(circle|oval|ellipse)$/.test(o.kind) && /^#(facc15|f97316|d4a017|dc2626|ffffff)$/i.test(o.fill || o.color || ""); }))
+      out.push("the question asks for a sun, but no circle is one: add circle 16 3 2 fill yellow");
+    return out;
+  }
+  function picture(block, q) {
     var ra = L.aiAct && L.aiAct.runaway ? L.aiAct.runaway(block, offGrid) : null, lines = block.lines;
     if (ra) lines = lines.filter(function (l, k) { return (k < ra.from || k > ra.to) && !(ra.cut && k === lines.length - 1 && k > ra.to); });
     var pic = parsePicture({ lines: lines });
@@ -26537,6 +26573,7 @@ Lantern.RFB = (function () {
     var st = pic.shapes.length <= 60 ? strips(pic.shapes) : [];   // after the runaway's one problem, before the lines' own
     if (st.length) pic.problems = (ra ? pic.problems.slice(0, 1) : []).concat(st, ra ? pic.problems.slice(1) : pic.problems);
     if (!pic.shapes.length || pic.shapes.length > 60) return { problems: pic.problems, plan: null, runaway: ra };
+    pic.problems = pic.problems.concat(asked(pic.shapes, q));
     var plan = { shapes: pic.shapes.map(function (o) { return { kind: o.kind, nums: o.nums, fill: o.fill || null, color: o.color || null, text: o.text || null }; }) };
     var left = block.lines.length - pic.shapes.length;
     var r = result(pictureShapes(pic), plan, pic.shapes.length + " shapes" + (pic.problems.length && left > 0 ? "; " + left + " line" + (left === 1 ? "" : "s") + " left out" : ""),
@@ -26566,7 +26603,7 @@ Lantern.RFB = (function () {
       "rect 9 5 2 5 fill brown",
       "circle 10 4 3 fill green",
       "END"],
-    build: function (block) { return picture(block); }
+    build: function (block, ctx) { return picture(block, ctx && ctx.question); }
   });
 })();
 // ===========================================================================
@@ -41584,7 +41621,7 @@ Lantern.RFB = (function () {
         C[i].forEach(function (m) {
           var bc = Infinity, arg = 0;
           prevC.forEach(function (p, j) { var d = fixed ? 0 : Math.abs(m - p), c = cost[j] + d + Math.max(0, d - 7); if (c < bc) { bc = c; arg = j; } });
-          cur.push(bc + Math.max(0, Math.abs(m - home) - 7) + 0.001 * Math.abs(m - mel[i].midi)); bk.push(arg);
+          cur.push(bc + Math.max(0, Math.abs(m - home) - 9) + 0.001 * Math.abs(m - mel[i].midi)); bk.push(arg);
         });
         back.push(bk); cost = cur; prevC = C[i];
       }
@@ -41667,7 +41704,7 @@ Lantern.RFB = (function () {
       said.push("Lantern found the key: " + key.name + (p1.badC.length ? " (the numerals are read in it)" : ""));
     }
     key.declared = declared;
-    var P = pass(key), chs = P.chs;
+    var P = pass(key), chs = P.chs, tailAsked = false;
     place(P.mel);
     if (P.badN.length) probs.push(P.badN.slice(0, 4).join(", ") + (P.badN.length > 1 ? " are not notes" : " is not a note") +
       ": a note is a letter A to G, # or b, and an octave number only for a leap (F#, Bb, E5); its length is its share of the bar -- the notes in a bar share it equally, - holds the note before one more share, r is a rest");
@@ -41681,7 +41718,11 @@ Lantern.RFB = (function () {
         chs = chs.concat(hs);
         said.push("Lantern chose the chords" + (P.info.length > 1 ? " for bars " + (inf.from + 1) + " to " + (inf.from + inf.n) : "") + ": " + hs.slice(0, 8).map(function (h) { return h.name; }).join(" ") + (hs.length > 8 ? " \u2026" : ""));
       } else if (inf.ch && inf.mel > inf.ch) said.push(inf.ch === 1 ? "the one chord plays on under all " + inf.mel + " bars of the melody" : "the " + inf.ch + " bars of chords play again under the " + inf.mel + " bars of melody");
-      else if (inf.mel && inf.ch > inf.mel) said.push("bars " + (inf.from + inf.mel + 1) + " to " + (inf.from + inf.n) + " are chords alone");
+      else if (inf.mel && inf.ch > inf.mel) {   // a short ending is chords alone; half the song with no tune is a melody cut short (bench run on 1.19.0)
+        var tail = inf.ch - inf.mel, a = inf.from + inf.mel + 1, z = inf.from + inf.n;
+        if (tail >= 2 && tail * 2 > inf.mel) { tailAsked = true; probs.push("the chords go on " + tail + " bars past the melody (bars " + a + " to " + z + " have no tune): write the melody for bars " + a + " to " + z + " too, or end the chords at bar " + (a - 1)); }
+        else said.push(tail > 1 ? "bars " + a + " to " + z + " are chords alone" : "bar " + a + " is chords alone");
+      }
     });
     chs.sort(function (a, b) { return a.at - b.at; });
     if (P.bars > MAXBARS) {
@@ -41727,6 +41768,9 @@ Lantern.RFB = (function () {
       melody: P.mel.map(function (n) { return { midi: n.midi, letter: n.letter, acc: n.acc, oct: n.oct, at: n.at, len: n.len, bar: n.bar, keyed: n.keyed, tok: n.tok }; }),
       chords: chs.map(function (c) { return { name: c.name, root: c.root, pcs: c.pcs, bass: c.bass, at: c.at, len: c.len, bar: c.bar, added: !!c.added }; }) };
     plan.seconds = Math.round(plan.bars * barLen * plan.repeat * 60 / qpm);
+    var mEnd = 0;
+    plan.melody.forEach(function (n) { mEnd = Math.max(mEnd, n.at + n.len); });
+    plan.melodyBars = Math.ceil(mEnd / barLen - 1e-9); plan.tailAsked = tailAsked;
     plan.parts = P.info.map(function (inf) { return { from: inf.from, bars: inf.n, chords: inf.cb.map(function (b) { return b.join(" "); }), melody: inf.mb.map(function (b) { return b.join(" "); }) }; });
     plan.text = text(plan);
     var names = [];
@@ -42435,7 +42479,12 @@ Lantern.RFB = (function () {
     }
     if (/\bwaltz\b/i.test(q) && p.n !== 3) out.push("a waltz is in 3/4, three beats a bar: write time 3/4 and style waltz, with three shares in each bar of the melody");
     var b = /\b(\d+|two|four|six|eight|twelve|sixteen|thirty-two)[- ]bars?\b/i.exec(q);
-    if (b) { var n = /\d/.test(b[1]) ? +b[1] : NUM[b[1].toLowerCase()]; if (n && p.bars !== n) out.push("the question asks for " + n + " bars; the song has " + p.bars + ": write " + n + " bars of melody (and chords), each between |"); }
+    if (b) {   // the tune's bars when there is a tune (bench run on 1.19.0: 8 bars of chords under 4 of melody)
+      var n = /\d/.test(b[1]) ? +b[1] : NUM[b[1].toLowerCase()], have = p.melody.length ? p.melodyBars : p.bars;
+      if (n && (have !== n || p.bars !== n) && !(p.tailAsked && p.bars === n))
+        out.push(have !== n ? "the question asks for " + n + " bars; the " + (p.melody.length ? "tune" : "song") + " has " + have + ": write " + n + " bars of melody (and chords), each between |" :
+          "the question asks for " + n + " bars; the chords go on to bar " + p.bars + ": end them at bar " + n);
+    }
     return out;
   }
   function build(block, ctx) {
@@ -42477,7 +42526,7 @@ Lantern.RFB = (function () {
 // bars, chords, a walking pace, ending on a note of its last chord).
 (function () {
   var Q = window.Lantern.aiBenchQuestions = window.Lantern.aiBenchQuestions || [];
-  var ODE = [0, 1, 2, 0, -2, -1, -2, -2, 0, 2, 2, 0, -2, 0];
+  var ODE = [0, 1, 2, 0, -2, -1, -2, -2, 0, 2, 2, 0, -2, 0], RHY = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.5, 0.5, 2];
   function wrap(d) { return ((d + 6) % 12 + 12) % 12 - 6; }
   function chordAt(p, t) { return p.chords.filter(function (c) { return c.at <= t + 1e-9 && t < c.at + c.len - 1e-9; })[0] || null; }
   [
@@ -42489,6 +42538,8 @@ Lantern.RFB = (function () {
         if (p.mode !== "music") return "not a song";
         if (p.melody.length < 15) return "the melody has " + p.melody.length + " notes; the theme has 15 before its first pause";
         for (var i = 1; i < 15; i++) if (wrap(p.melody[i].midi - p.melody[i - 1].midi) !== ODE[i - 1]) return "note " + (i + 1) + " of the theme is wrong";
+        // its rhythm too, in any note values: the 4th bar is a dotted quarter, an eighth and a half note (1.19.1)
+        for (i = 0; i < 15; i++) { var r = p.melody[i].len / p.melody[0].len; if (i === 14 ? r < RHY[i] - 0.01 : Math.abs(r - RHY[i]) > 0.01) return "the rhythm is off at note " + (i + 1) + ": the theme\u2019s 4th bar is a dotted quarter, an eighth and a half note"; }
         var names = {};
         p.chords.forEach(function (c) { names[c.name] = 1; });
         return Object.keys(names).length >= 2 ? "" : "no chords to go with it";
@@ -42502,6 +42553,8 @@ Lantern.RFB = (function () {
         if (p.tonic !== 7 || p.minor) return "in " + p.key + ", not G major";
         if (!p.melody.length) return "no melody";
         if (p.bars !== 8) return p.bars + " bars, not 8";
+        var end = p.melody[p.melody.length - 1], reach = Math.ceil((end.at + end.len) / p.barLen - 1e-9);
+        if (reach < 8) return "the tune is " + reach + " bars; the chords go on alone to bar 8";
         for (var b = 0; b < 8; b++) if (!chordAt(p, b * p.barLen) && !chordAt(p, (b + 0.5) * p.barLen)) return "bar " + (b + 1) + " has no chord";
         var all = 0, inG = 0;
         p.melody.forEach(function (n) { all += n.len; if ([7, 9, 11, 0, 2, 4, 6].indexOf(n.midi % 12) >= 0) inG += n.len; });

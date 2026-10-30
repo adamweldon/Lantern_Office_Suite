@@ -119,7 +119,8 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   var RA = path.join(__dirname, "fixtures", "chat_runaway");
   var ra1 = fs.readFileSync(path.join(RA, "reply1.txt"), "utf8"), ra2 = fs.readFileSync(path.join(RA, "reply2.txt"), "utf8");
   var m1 = act.build(ra1, "draw a house on a hill at sunset");
-  ok("a loop is found and reported as ONE problem", m1 && !m1.ok && m1.runaway && m1.runaway.n === 110 && m1.runaway.cut && m1.problems.length === 1 &&
+  ok("a loop is found and reported as ONE problem (and, since 1.19.1, the roof the house lacks)", m1 && !m1.ok && m1.runaway && m1.runaway.n === 110 && m1.runaway.cut && m1.problems.length === 2 &&
+    /^the question asks for a house, but no roof sits on its wall \(\u201crect 8 6 4 3 fill brown\u201d\): add tri 7 6 10 4 13 6 fill red after the wall$/.test(m1.problems[1]) &&
     /^the reply ran away: \u201crect 10 6 1 1 fill blue\u201d was written 110 times, its numbers changing up to \u201crect 119 6 1 1 fill brown\u201d, 100 of them off the grid, until the reply was cut off/.test(m1.problems[0]) &&
     /ONE shape -- rect 0 0 20 7 fill orange/.test(m1.problems[0]), m1 && m1.problems);
   ok("what can be drawn is drawn: the hill, the house, its window", m1.plan && m1.plan.shapes.length === 3 && m1.preview && m1.open &&
@@ -127,14 +128,14 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   ok("the loop is cut from what the model sees again", /^Here is a drawing/.test(m1.trimmed) && !/rect 10 6 1 1/.test(m1.trimmed) && !/rect 12$/m.test(m1.trimmed) &&
     /rect 9 6 2 2 fill white\nEND$/.test(m1.trimmed), m1.trimmed);
   var m2 = act.build(ra2, "draw a house on a hill at sunset");
-  ok("the retry's loop too (68 lines, cut off mid-line)", m2.runaway && m2.runaway.n === 68 && m2.problems.length === 1 && m2.plan.shapes.length === 3, m2.problems);
+  ok("the retry's loop too (68 lines, cut off mid-line)", m2.runaway && m2.runaway.n === 68 && m2.problems.length === 2 && m2.plan.shapes.length === 3, m2.problems);
   var fence = act.build(blk("DRAWING", "Fence", [1, 3, 5, 7, 9, 11, 13, 15, 17, 19].map(function (x) { return "rect " + x + " 8 0.5 3 fill brown"; })), "");
   ok("a row of fence posts is not a loop", fence.ok && !fence.runaway && fence.plan.shapes.length === 10, fence.problems);
   // --- 1.18.1: the bench run on 1.18.0 (a 35B, fixtures/bench_run_1180_35b.json): two lines in turn ran away; the
   // corrected block painted the same strip a square at a time, cut short at the frame, and passed the bench
   var RUN = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "bench_run_1180_35b.json"), "utf8")), sh = RUN.rows.filter(function (r) { return r.id === "make-sunset-house"; })[0];
   var s1 = act.build(sh.first, "draw a house on a hill at sunset");
-  ok("two lines written in turn are a loop too: one problem, with the one line that paints their area", s1.runaway && s1.runaway.period === 2 && s1.runaway.n === 44 && s1.problems.length === 1 &&
+  ok("two lines written in turn are a loop too: one problem, with the one line that paints their area", s1.runaway && s1.runaway.period === 2 && s1.runaway.n === 44 && s1.problems.length === 2 &&
     /^the reply ran away: \u201crect 9 7 2 2 fill blue\u201d and \u201crect 10 8 1 1 fill blue\u201d were written in turn, 44 lines, their numbers changing up to \u201crect 52 8 1 1 fill blue\u201d/.test(s1.problems[0]) &&
     /paint it as ONE shape -- rect 9 7 11 2 fill blue --/.test(s1.problems[0]) && s1.plan.shapes.length === 6, s1.problems);
   var s2 = act.build(sh.reply, "draw a house on a hill at sunset");
@@ -143,6 +144,21 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
     s2.problems.some(function (p) { return /^\u201crect 20 8 1 1 fill blue\u201d is off the grid/.test(p); }), s2.problems);
   ok("...drawn, every rect cut to the frame (20 cells of 36 px)", s2.plan && s2.shapes.every(function (x) { return x.t !== "rect" || (x.x >= 0 && x.x + x.rw <= 720.01); }),
     s2.shapes.filter(function (x) { return x.t === "rect"; }).map(function (x) { return [x.x, x.rw]; }));
+  // --- 1.19.1: the bench run on 1.19.0 (a 35B, fixtures/bench_run_1190_35b.json): the corrected sunset left the
+  // squares out and kept a wall and a window with no roof; it looked at its picture and kept it, and failed the bench
+  var R19 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "bench_run_1190_35b.json"), "utf8")), sh19 = R19.rows.filter(function (r) { return r.id === "make-sunset-house"; })[0];
+  var h1 = act.build(sh19.first, sh19.q), h2 = act.build(sh19.reply, sh19.q);
+  ok("a house asked for and no roof on its wall: said with the roof to add, worked out from the wall -- with the loop, in the first correction", h1.problems.length === 2 &&
+    /^the reply ran away/.test(h1.problems[0]) && h1.problems[1] === "the question asks for a house, but no roof sits on its wall (\u201crect 7 6 6 4 fill brown\u201d): add tri 6 6 10 3 14 6 fill red after the wall" &&
+    !h2.ok && h2.problems.length === 1 && h2.problems[0] === h1.problems[1], [h1.problems, h2.problems]);
+  var roofed = act.build(sh19.reply.replace("END", "tri 6 6 10 3 14 6 fill red\nEND"), sh19.q);
+  var shItem = L.aiBenchQuestions.filter(function (q) { return q.id === "make-sunset-house"; })[0];
+  ok("...that roof added, Lantern questions nothing and the bench passes it", roofed.ok && L.aiBench.grade(shItem, "x", { made: roofed }).pass, roofed.problems);
+  ok("...no wall at all: the wall and the roof to add; a flat roof is a roof; a lighthouse is not a house", act.build(blk("DRAWING", "h", ["rect 0 0 20 12 fill orange"]), "Draw a cottage").problems[0] ===
+    "the question asks for a house, but nothing is a wall with a roof: add rect 7 6 6 4 fill tan and tri 6 6 10 3 14 6 fill red" &&
+    act.build(blk("DRAWING", "h", ["rect 7 5 5 4 fill tan", "rect 6 4 7 1 fill red"]), "Draw a house").ok && act.build(blk("DRAWING", "h", ["rect 9 3 2 8 fill white"]), "Draw a lighthouse").ok);
+  ok("a sun asked for and none drawn: the circle to add; a sunset needs none", act.build(blk("DRAWING", "s", ["rect 0 8 20 4 fill blue"]), "Draw a yellow sun above a blue sea.").problems[0] ===
+    "the question asks for a sun, but no circle is one: add circle 16 3 2 fill yellow" && act.build(blk("DRAWING", "s", ["rect 0 0 20 12 fill orange"]), "Draw the sea at sunset").ok);
   var bricks = act.build(blk("DRAWING", "Wall", [0, 2, 4, 6, 8, 10, 12].map(function (x) { return "rect " + x + " 9 2 1 fill red color black"; })), "");
   ok("a row of bricks, each outlined, is not one area", bricks.ok, bricks.problems);
   var path6 = act.build(blk("DRAWING", "Path", [2, 4, 6, 8, 10, 12].map(function (x) { return "rect " + x + " 9 2 1 fill gray"; })), "");
@@ -278,7 +294,7 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   }
   ok("bench: the 35B's corrected sunset (a strip of squares, no roof) fails, questioned; a wall without a roof is no house; a flat roof is", !gradeWith("make-sunset-house", sh.reply).pass &&
     /^Lantern still questions it: \u201crect 9 7 2 2 fill blue\u201d and the 10 lines after it/.test(gradeWith("make-sunset-house", sh.reply).why) &&
-    /^no house \(a wall with a roof on it/.test(gradeWith("make-sunset-house", blk("DRAWING", "h", ["rect 0 0 20 12 fill orange", "rect 0 8 20 4 fill dark green", "rect 7 6 6 4 fill brown", "rect 8 6 4 4 fill white"])).why) &&
+    /^Lantern still questions it: the question asks for a house, but no roof sits on its wall/.test(gradeWith("make-sunset-house", blk("DRAWING", "h", ["rect 0 0 20 12 fill orange", "rect 0 8 20 4 fill dark green", "rect 7 6 6 4 fill brown", "rect 8 6 4 4 fill white"])).why) &&
     gradeWith("make-sunset-house", blk("DRAWING", "h", ["rect 0 0 20 8 fill orange", "rect 0 8 20 4 fill green", "rect 7 5 5 4 fill tan", "rect 6 4 7 1 fill red"])).pass, gradeWith("make-sunset-house", sh.reply).why);
   ok("bench: a sunset sky as one wide rect passes; the run-away reply fails", gradeWith("make-sunset-house", Q.filter(function (q) { return q.id === "make-sunset-house"; })[0].ideal).pass &&
     !gradeWith("make-sunset-house", ra1).pass && /no sunset sky/.test(gradeWith("make-sunset-house", blk("DRAWING", "h", ["rect 0 8 20 4 fill green", "rect 7 5 5 4 fill tan", "tri 6 5 9.5 2 13 5 fill red"])).why));

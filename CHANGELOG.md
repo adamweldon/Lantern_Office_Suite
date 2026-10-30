@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.19.1 — A tune cut short, a house with no roof (2026-10-30)
+
+From Adam's full bench run on 1.19.0 with the 35B: 122 of 123 scored, both new
+song questions passed. Two of those passes were too generous, and the one fail
+was a fair grade that Lantern could have prevented.
+
+- **make-music-ode passed, but only half of it was there.** The 35B wrote the
+  theme's first phrase in C (the notes right) under 8 bars of chords -- bars 5
+  to 8 played chords with no tune -- and evened out the 4th bar (E D D - for the
+  theme's dotted E. D D). **make-music-original** did the same: 4 bars of tune
+  under the 8 bars of chords the question asked for (its long F# over G was
+  caught and fixed). Now **chords that go on well past the melody are sent
+  back** with the bars to fill: "the chords go on 4 bars past the melody (bars 5
+  to 8 have no tune): write the melody for bars 5 to 8 too, or end the chords
+  at bar 4". A bar or two of chords after the tune is an ending, said as before.
+  A question's number of bars is now counted on the tune when there is one.
+- **The bench** checks Ode to Joy's rhythm as well as its notes (in any note
+  values: its 4th bar is a dotted quarter, an eighth and a half note), and the
+  tune of its own must itself fill the 8 bars. The run's two song rows would
+  now be sent back; as written, both fail.
+- **make-sunset-house failed, rightly**: the run-away squares were caught and
+  left out, but the corrected picture was a wall with a window and no roof --
+  and the model, shown its picture, kept it. **A drawing is now set against
+  the question**: a house asked for needs a roof on its wall, and Lantern gives
+  the roof to add, worked out from the wall ("no roof sits on its wall (rect 7 6
+  6 4 fill brown): add tri 6 6 10 3 14 6 fill red after the wall"); with no wall
+  at all, the wall and the roof. A sun asked for needs a sun (circle 16 3 2 fill
+  yellow). These come with the first correction, alongside a run-away's.
+- A note without an octave keeps a little more room around where the tune
+  began (a ninth, not a fifth), so F G A B then D climbs to the D above.
+- Re-grading every make row of both 35B runs with 1.19.1: only the two song
+  rows change grade; the sunset stays a fail, now with the roof to add.
+- Tests: `tests/music.js` (64), `tests/ai_actions.js` (105), from
+  `tests/fixtures/bench_run_1190_35b.json` (the run's three rows).
+
 ## 1.19.0 — Songs you can hear: MAKE MUSIC (2026-10-30)
 
 Adam asked Chat (the 35B) to "create the note progression from One Love so that
