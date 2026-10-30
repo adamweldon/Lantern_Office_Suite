@@ -5,8 +5,12 @@
 # played through Web Audio (the button turns to Stop, the red line moves
 # along the bars); Save MIDI and Save WAV give real files (MThd, RIFF/WAVE
 # at 44.1 kHz with sound in it); Open in Music puts the song in the Make a
-# song card, whose examples all play. Screenshots in the folder given
-# (default: the system temp folder).
+# song card, whose examples all play. 1.20.0: the instruments -- Play first
+# makes the notes in background workers ("Preparing the instruments"), then
+# plays them; a worker's note sounds like the page's own; the waltz for
+# violin and piano is saved as a WAV (little_waltz.wav, to listen to).
+# Screenshots and sound files in the folder given (default: the system temp
+# folder).
 # Usage: python3 tests/browser/music_e2e.py [screenshot folder]
 import json, os, sys, subprocess, tempfile, time, wave, struct
 from playwright.sync_api import sync_playwright
@@ -64,7 +68,12 @@ try:
         ok("...the corrected song is made: 4 bars in D major", "Lantern made a song: Ode to Joy \u2014 4 bars in D major" in t and "still questions" not in t, t[-600:])
         card = pg.locator(".la-make").last
         card.scroll_into_view_if_needed(); pg.screenshot(path=os.path.join(OUT, "music_chat.png"))
-        card.locator("button", has_text="Play").first.click(); time.sleep(1.2)
+        t0 = time.time(); card.locator("button", has_text="Play").first.click(); time.sleep(0.05)
+        prep = pg.evaluate("document.querySelector('.la-make .la-song').innerText")
+        pg.wait_for_function("Array.from(document.querySelectorAll('.la-make .la-song div')).some(function (d) { return d.style.background && d.style.position === 'absolute' && d.style.display !== 'none'; })", timeout=30000)
+        ready = time.time() - t0; time.sleep(1.0)
+        st = pg.evaluate("Lantern.musicSampler.stats()")
+        ok("Play: the instruments' notes are made first, in background workers, and said (%.1f s here)" % ready, "Preparing the instruments" in prep and (st.get("workers") or 0) >= 1 and st["notes"] >= 10 and ready < 12, [prep[:200], st, ready])
         x1 = pg.evaluate("parseFloat(Array.from(document.querySelectorAll('.la-make .la-song div')).filter(function (d) { return d.style.background && d.style.position === 'absolute'; }).pop().style.left)")
         state = pg.evaluate("Array.from(document.querySelectorAll('.la-make .la-song button')).pop().textContent")
         time.sleep(1.5)
@@ -75,6 +84,13 @@ try:
         with pg.expect_download() as dl: card.locator("button", has_text="Save MIDI").click()
         mp = os.path.join(OUT, "ode.mid"); dl.value.save_as(mp); head = open(mp, "rb").read(14)
         ok("Save MIDI: a standard MIDI file (MThd, format 1, 480 a quarter)", head[:4] == b"MThd" and head[9] == 1 and head[12:14] == bytes([1, 224]) and dl.value.suggested_filename == "Ode_to_Joy.mid", [head, dl.value.suggested_filename])
+        cmp = pg.evaluate("""(async function () {
+            var S = Lantern.musicSampler, j = S.job('violin', 69, 0.8, 1), mine = S.bake(j), ws = S.workers(), w = ws[0].w;
+            var theirs = await new Promise(function (ok) { var h = function (e) { if (e.data.id === 'cmp') { w.removeEventListener('message', h); ok(e.data.buf); } }; w.addEventListener('message', h);
+              w.postMessage({ id: 'cmp', engine: j.engine, freq: j.freq, vel: j.vel, params: j.params, sr: j.sr }); });
+            function rms(b) { var s = 0; for (var i = 0; i < b.length; i++) s += b[i] * b[i]; return Math.sqrt(s / b.length); }
+            return [mine.length, theirs.length, rms(mine), rms(theirs)]; })()""")
+        ok("...a worker's note is the page's own: as long, as loud", cmp[0] == cmp[1] and abs(cmp[2] - cmp[3]) < 0.1 * cmp[2], cmp)
         with pg.expect_download(timeout=60000) as dl: card.locator("button", has_text="Save WAV").click()
         wp = os.path.join(OUT, "ode.wav"); dl.value.save_as(wp)
         wv = wave.open(wp); n = wv.getnframes(); data = struct.unpack("<%dh" % n, wv.readframes(n)); peak = max(abs(x) for x in data) / 32768.0
@@ -83,11 +99,17 @@ try:
         ok("Open in Music: the Make a song card has the song", pg.evaluate("location.hash") == "#music" and "title Ode to Joy" in pg.evaluate("document.querySelector('textarea[aria-label=Song]').value"))
         pg.screenshot(path=os.path.join(OUT, "music_card.png"))
         made = []
-        for i in range(5):
+        for i in range(6):
             pg.select_option("select[aria-label='Start from']", str(i)); time.sleep(0.5)
             made.append(pg.evaluate("document.querySelector('textarea[aria-label=Song]').parentNode.innerText.indexOf('\u26a0') < 0 && !!document.querySelector('.la-song canvas')"))
             pg.locator(".la-song canvas").first.screenshot(path=os.path.join(OUT, "music_example_%d.png" % i))
         ok("every example is made, written out, nothing questioned", all(made), made)
+        pg.select_option("select[aria-label='Start from']", "1"); time.sleep(0.6)
+        with pg.expect_download(timeout=90000) as dl: pg.locator("button", has_text="Save WAV").first.click()
+        lw = os.path.join(OUT, "little_waltz.wav"); dl.value.save_as(lw)
+        wv = wave.open(lw); n = wv.getnframes(); data = struct.unpack("<%dh" % n, wv.readframes(n)); peak = max(abs(x) for x in data) / 32768.0
+        rms = (sum(x * x for x in data[:n // 2]) / max(1, n // 2)) ** 0.5 / 32768.0
+        ok("the waltz for violin and piano as a WAV: its 8 bars of 3/4 at 96, sound all through, none clipped", 16 < n / 44100.0 < 20 and 0.2 < peak <= 0.91 and rms > 0.02, [n / 44100.0, peak, rms])
         ok("no page errors", not errs, errs)
         b.close()
 finally:

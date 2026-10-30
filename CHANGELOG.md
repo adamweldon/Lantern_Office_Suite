@@ -1,5 +1,75 @@
 # Changelog
 
+## 1.20.0 — Real instruments for songs (2026-10-30)
+
+Adam asked to borrow the sound of his **Generative Music Studio** so Lantern's
+songs sound like instruments, and so the AI can choose among them. 1.19's songs
+played on a few oscillators each; 1.20.0 plays them on the Studio's instrument
+engines, and the AI writes which instruments play the tune, the chords and the
+bass.
+
+- **57 instruments, carried over from the Studio** (given by their author to
+  Lantern under CC0): piano with stiff-string inharmonicity and a soundboard,
+  electric piano, harpsichord, Hammond organ (full and jazz drawbars), acoustic,
+  nylon and electric guitars, concert and celtic harp, koto, four basses
+  (electric, upright, synth, slap), violin, viola, cello, contrabass and a
+  string section (Helmholtz bowing, body resonances), trumpet, trombone, French
+  horn, tuba, brass section, concert/alto flute, piccolo, recorder, pan flute,
+  shakuhachi, ocarina, clarinet, bass clarinet, oboe, bassoon, four saxophones,
+  harmonica, accordion, melodica, glockenspiel, vibraphone, celesta, chimes,
+  church bell, marimba, xylophone, kalimba, balafon, choir (aah, ooh), solo
+  voice, synth lead and pad. The engines are ported to ES5 unchanged in what
+  they compute (checked sample for sample against the Studio's own), each in
+  its module (MUSIC_INST_*), and the Studio's **drum kit** (kick, snare,
+  hi-hats, clap, rimshot, toms, crash, ride, 808 boom) replaces 1.19's.
+- **The notes are made before the song starts.** Each pitch of each instrument
+  is computed once (a held note as long as its longest note, a struck or
+  plucked one as long as it rings), in background workers -- one for each
+  spare core -- and kept for the next play (MUSIC_SAMPLER). Play says
+  "Preparing the instruments... 40%", then plays; a short song is ready in about
+  half a second. Save WAV does the same. Where the notes cannot be made, 1.19's
+  quick voices still play. The song's last notes ring out.
+- **The AI chooses the instruments by name.** `sound violin` (the tune),
+  `backing piano` (the chords), `bass upright` (the bass), or all at once:
+  `sound violin and piano`, `melody (violin):`, `chords (harp):`. `backing
+  off` and `bass off` leave a part out. Each style keeps its own band unless
+  told otherwise: a ballad's piano and upright bass, folk's guitar, a march's
+  brass and tuba, rock's electric guitar, reggae's organ, pop's electric piano.
+  The AI's prompt lists the instruments by family; the How to write it help in
+  Music shows the same.
+- **Mistakes caught by design.** A melody moves by octaves into its
+  instrument's range (down two octaves for a tuba, said), and the chords and
+  bass into theirs; a tune wider than its instrument plays goes back with the
+  note and the fix ("bar 1's C4 (C5) is below it -- write that part an octave
+  higher, or choose an instrument that plays it all"). An instrument the
+  question names must play: "a waltz for violin and piano" with the tune on
+  the flute goes back with "write sound violin (the melody's instrument) or
+  backing violin (the chords')"; one instrument asked for a tune ("on the
+  cello") plays the tune. A bass line, a lead, the keys or a horn section are
+  not taken as instruments. An instrument Lantern does not have is said, and
+  the flute plays.
+- **MIDI files** carry each part's General MIDI program (violin 40, upright
+  bass 32 ...) and the new drums.
+- **The bench** has a third song: *a gentle 8-bar waltz in D major for violin
+  and piano* (3/4, D major, 8 bars of tune, the tune on the violin and the
+  chords on the piano). The song guide also shows how a dotted rhythm is
+  written in shares.
+- **The 1.19.1 run (35B, 122 of 123 scored):** the sunset house now passes
+  with the roof line Lantern worked out; the tune of its own was sent back for
+  its short melody and passed when filled; Ode to Joy failed fairly -- the 4th
+  bar was evened out (E D D - for E. D D) and the second phrase ended on B
+  instead of D. C C.
+- New examples in Make a song: *Little waltz* (violin and piano), Ode to Joy on
+  the cello, Twinkle on a music box, Frere Jacques on French horn, Harbour
+  lights on melodica.
+- Tests: `tests/music.js` (88: every instrument plays a finite, audible note
+  at a sane level; names in songs and questions; notes made once and kept;
+  sound, backing and bass lines; ranges; MIDI programs; the question's
+  instruments; the waltz); `tests/browser/music_e2e.py` (the notes prepared in
+  workers, a worker's note against the page's own, the waltz as a WAV);
+  `tests/ai_isolation.js` now removes 142 modules in turn, the 12 instrument,
+  drum and sampler modules among them.
+
 ## 1.19.1 — A tune cut short, a house with no roof (2026-10-30)
 
 From Adam's full bench run on 1.19.0 with the 35B: 122 of 123 scored, both new

@@ -93,7 +93,7 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   ok("chords alone, with dashes between: four bars in E minor, played in the style", ch.plan && ch.plan.bars === 4 && ch.plan.key === "E minor" && !ch.plan.melody.length &&
     chords(ch.plan) === "Em Am B7 Em" && ch.plan.style === "reggae" && ch.plan.tempo === 76 && ch.plan.drums, ch.plan && chords(ch.plan));
   var loose = S.make({ title: "x", lines: ["**Key:** D major", "- Chords: I | IV | V7 | I", "Melody (violin): F-G-A-B D - - - E - - - D (x2)"] });
-  ok("lines as models write them: bold, a bullet, numerals, x2, B-A-G-E, an instrument in brackets, no bar lines", loose.plan && loose.plan.sound === "strings" &&
+  ok("lines as models write them: bold, a bullet, numerals, x2, B-A-G-E, an instrument in brackets, no bar lines", loose.plan && loose.plan.sound === "violin" &&
     chords(loose.plan) === "D G A7 D D G A7 D" && loose.plan.bars === 8 && names(loose.plan).split(" ").slice(0, 7).join(" ") === "F#4 G4 A4 B4 D5 E5 D5" && !loose.problems.length, [loose.problems, loose.plan && chords(loose.plan), loose.plan && names(loose.plan)]);
   ok("...no bar lines: a note a beat, the last held to the end of its bar", lens(loose.plan) === "1 1 1 1 4 4 4 1 1 1 1 4 4 4", lens(loose.plan));
   var parts = S.make({ title: "x", lines: ["key G", "Verse:", "chords G | C", "melody G A B - | C - - -", "Chorus:", "chords D | G", "melody A - - - | G - - -"] });
@@ -123,10 +123,10 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     /a waltz is in 3\/4/.test(wrong.problems[1]) && /the question asks for 8 bars; the tune has 2/.test(wrong.problems[2]), wrong.problems);
   ok("...a key asked without major or minor matches either", act.build(song(["key E minor", "chords Em | Am"]), "Play something in E").ok);
   var unread = S.make({ title: "x", lines: ["loudness 11", "key C", "chords C | F", "This is a nice song."] });
-  ok("a line Lantern does not read is named, with the lines it reads", /^\u201cloudness 11\u201d: Lantern reads key, tempo, time, style, sound, chords, melody, repeat and note lines$/.test(unread.problems[0]) &&
+  ok("a line Lantern does not read is named, with the lines it reads", /^\u201cloudness 11\u201d: Lantern reads key, tempo, time, style, sound, backing, bass, drums, chords, melody, repeat and note lines$/.test(unread.problems[0]) &&
     unread.problems.length === 2 && /^\u201cThis is a nice song.\u201d: Lantern reads/.test(unread.problems[1]) && chords(unread.plan) === "C F", unread.problems);
   var words = S.make({ title: "x", lines: ["tempo slow", "style gentle lullaby", "sound violin", "time 3/4", "chords C | G7 | C"] });
-  ok("plain words: slow is 70, a lullaby is a ballad, a violin the strings", words.plan.tempo === 70 && words.plan.style === "ballad" && words.plan.sound === "strings" && words.plan.n === 3);
+  ok("plain words: slow is 70, a lullaby is a ballad, a violin a violin (1.20.0)", words.plan.tempo === 70 && words.plan.style === "ballad" && words.plan.sound === "violin" && words.plan.n === 3);
   ok("a waltz on its own is in 3/4; 3/4 on its own is a waltz", S.make({ title: "x", lines: ["style waltz", "chords C"] }).plan.time === "3/4" && S.make({ title: "x", lines: ["time 3/4", "chords C"] }).plan.style === "waltz");
   var round = S.make({ title: "x", lines: ode.plan.text.split("\n") });
   ok("the song written back as lines makes the same song", names(round.plan) === names(ode.plan) && chords(round.plan) === chords(ode.plan) && lens(round.plan) === lens(ode.plan));
@@ -166,7 +166,7 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     /Lantern reads a MAKE MUSIC block line by line, like this:\nkey E minor/.test(fx) && /Reply with the corrected block only \(MAKE MUSIC: Song \.\.\. END\)/.test(fx), fx);
   var Q = L.aiBenchQuestions.filter(function (q) { return q.kind === "MUSIC"; });
   function grade(id, reply) { var item = Q.filter(function (q) { return q.id === id; })[0]; return L.aiBench.grade(item, reply, { made: act.build(reply, item.q) }); }
-  ok("the bench: two songs, both model answers pass", Q.length === 2 && Q.every(function (q) { return q.cat === "make" && grade(q.id, q.ideal).pass; }), Q.map(function (q) { return grade(q.id, q.ideal).why; }));
+  ok("the bench: three songs, every model answer passes", Q.length === 3 && Q.every(function (q) { return q.cat === "make" && grade(q.id, q.ideal).pass; }), Q.map(function (q) { return grade(q.id, q.ideal).why; }));
   ok("...Ode to Joy with a wrong note fails, named; in another key it passes", /^note 4 of the theme is wrong/.test(grade("make-music-ode", Q[0].ideal.replace("F# F# G A | A G", "F# F# G B | A G")).why) &&
     grade("make-music-ode", song(["key C", "melody E E F G | G F E D | C C D E | E - - D D - - -"])).pass);
   ok("...the tune of its own: G major, 8 bars, a walking pace, home at the end", /questions it: the question asks for G major, but the song is in D major/.test(grade("make-music-original", song(["key D", "chords D | A | D | A | D | A | D | D", "melody D E F A | A - - - | D E F A | A - - - | D E F A | A - - - | F E D E | D - - -"])).why) &&
@@ -191,6 +191,73 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     /^bar 4: the melody holds F# over G/.test(o1.problems[1]) && o2.problems.length === 1 && o2.problems[0] === TAIL && !grade("make-music-original", row("make-music-original").reply).pass, [o1.problems, o2.problems]);
   ok("...the bench needs the tune itself to fill the 8 bars", /^the tune is 4 bars; the chords go on alone to bar 8$/.test(L.aiBench.grade(orig, "x", { made: { ok: true, action: { kind: "MUSIC" }, plan: S.make({ title: "x",
     lines: ["key G", "chords G | C | D | G | G | C | D | G", "melody G A B G | C - E D | D C B A | G - - - | r | r | r | r"] }).plan } }).why));
+
+  // --- 1.20.0: the instruments, from Adam Weldon's Generative Music Studio (MUSIC_INST, MUSIC_SAMPLER) -----------------
+  var I = L.musicInst, SM = L.musicSampler;
+  ok("the instruments: 57, each with its engine, range, General MIDI program, kind and level", I && SM && I.LIST.length === 57 && I.LIST.every(function (k) {
+    var e = I.get(k); return I.engine(e.engine) && e.low < e.high && e.gm >= 0 && e.gm < 128 && e.level > 0 && /^(decay|hold)$/.test(e.kind); }), I && I.LIST.length);
+  var silent = [], t0 = Date.now();
+  I.LIST.forEach(function (k) {   // a half-second note in the middle of each one's range
+    var e = I.get(k), j = SM.job(k, Math.round((e.low + e.high) / 2), 0.8, 0.5), b = SM.bake(j), pk = 0, fin = true;
+    for (var i = 0; i < b.length; i++) { if (!isFinite(b[i])) { fin = false; break; } if (Math.abs(b[i]) > pk) pk = Math.abs(b[i]); }
+    if (!fin || pk < 0.01 || pk * e.level > 1.2 || b.length < 0.5 * SM.SR) silent.push(k + " " + pk.toFixed(3) + " x" + e.level);
+  });
+  ok("...every one plays a note: finite, not silent, not too loud in the mix, as long as asked", !silent.length, silent);
+  console.log("  (57 instruments, a half-second note each: " + (Date.now() - t0) + " ms)");
+  ok("words for them: in the order written, the longer names first, a few names each", I.all("sound violin and piano").map(function (e) { return e.key; }).join() === "violin,piano" &&
+    I.find("electric bass").key === "bass" && I.find("a warm double bass").key === "upright bass" && I.find("fiddle").key === "violin" && I.find("music box").key === "celesta" &&
+    I.find("bell").key === "celesta" && I.find("blues harp").key === "harmonica" && I.find("english horn").key === "oboe" && !I.find("theremin"));
+  ok("...a question's instruments, not a bass line, a lead, the keys or a horn section", I.named("Write a waltz for violin and piano with a bass line, a lead and the keys").join() === "violin,piano" &&
+    !I.named("a barbershop quartet in two keys").length && I.named("for banjo", true)[0].word === "banjo" && I.named("for banjo", true)[0].key === "guitar");
+  var j1 = SM.job("violin", 69, 0.87, 1.1);
+  ok("a note to make: instrument, pitch, loudness to a tenth, length to a quarter second", j1.key === "violin|69|0.9|1" && j1.params.preset === "solo" && Math.abs(j1.freq - 440) < 1e-9);
+  var st0 = SM.stats().made, got = await SM.prepare([j1, SM.job("cello", 48, 0.8, 1), j1]), st1 = SM.stats().made;
+  await SM.prepare([j1]);
+  ok("...prepare makes each note once (here: no workers in this test) and keeps it for next time", Object.keys(got).length === 2 && st1 - st0 === 2 && SM.stats().made === st1 &&
+    SM.stats().workers === 0 && SM.get(j1.key) === got[j1.key], [Object.keys(got), st1 - st0, SM.stats()]);
+  function mk(lines) { return S.make({ title: "x", lines: lines }); }
+  var vw = mk(["key D major", "time 3/4", "sound violin and piano", "chords D | A7", "melody F# - A | G - E"]);
+  ok("sound violin and piano: the tune on the violin, the chords on the piano, the waltz's own bass", vw.plan.sound === "violin" && vw.plan.backing === "piano" &&
+    vw.plan.plays.melody === "violin" && vw.plan.plays.chords === "piano" && vw.plan.plays.bass === "upright bass" && /the melody on a violin, the chords on piano, the bass on upright bass/.test(vw.summary) &&
+    /^sound violin\nbacking piano$/m.test(vw.plan.text.split("\n").slice(4, 6).join("\n")), [vw.summary, vw.plan.text]);
+  var ve = B.events(vw.plan);
+  ok("...and in the band's notes", ve.filter(function (e) { return e.part === "melody"; }).every(function (e) { return e.inst === "violin"; }) &&
+    ve.filter(function (e) { return e.part === "chords"; }).every(function (e) { return e.inst === "piano"; }) && ve.filter(function (e) { return e.part === "bass"; }).every(function (e) { return e.inst === "upright bass"; }));
+  var hb = mk(["style folk", "backing harp", "bass synth", "chords C | G"]), he = B.events(hb.plan);
+  ok("backing harp, bass synth: the chords and the bass on them (in its range), written back", hb.plan.plays.chords === "harp" && hb.plan.plays.bass === "synth bass" &&
+    he.some(function (e) { return e.part === "chords" && e.inst === "harp"; }) && he.filter(function (e) { return e.part === "bass"; }).every(function (e) { return e.inst === "synth bass" && e.midi >= 24 && e.midi <= 67; }) &&
+    /\nbacking harp\n/.test(hb.plan.text) && /\nbass synth bass\n/.test(hb.plan.text + "\n") && mk(hb.plan.text.split("\n")).plan.plays.bass === "synth bass", hb.plan.text);
+  var off = mk(["style pop", "backing off", "chords C | G", "melody C D E F | G - - -"]), oe = B.events(off.plan);
+  ok("backing off: no chords played; the bass and the drums still", off.plan.plays.chords === null && !oe.some(function (e) { return e.part === "chords"; }) && oe.some(function (e) { return e.part === "bass"; }) && oe.some(function (e) { return e.drum; }));
+  ok("each style's own instruments: a march's brass and tuba, rock's electric guitar, reggae's organ, a ballad's piano", ["march", "rock", "reggae", "ballad"].map(function (st) {
+    var p = mk(["style " + st, "chords C | G"]).plan.plays; return p.chords + "/" + p.bass; }).join() === "brass/tuba,electric guitar/bass,organ/bass,piano/upright bass");
+  ok("chords moved into their instrument's range: a flute's backing above middle C", B.events(mk(["style block", "backing flute", "chords C | G"]).plan).filter(function (e) { return e.part === "chords"; }).every(function (e) { return e.midi >= 60; }));
+  var tb = mk(["key F", "sound tuba", "melody F G A F | F G A F"]);
+  ok("a melody goes where its instrument plays: down two octaves for a tuba, said", names(tb.plan) === "F2 G2 A2 F2 F2 G2 A2 F2" && /moved the melody down 2 octaves, where the tuba plays it/.test(tb.summary), [names(tb.plan), tb.summary]);
+  var lw = mk(["key G", "melody G3 A3 B3 C4 | D4 - - -"]);
+  ok("...a flute's tune written below its lowest note goes up an octave", names(lw.plan) === "G4 A4 B4 C5 D5" && !lw.problems.length, names(lw.plan));
+  var pc = mk(["key C", "sound piccolo", "melody C4 G4 C5 G5 | C6 G6 C7 -"]);
+  ok("...a tune wider than its instrument plays goes back, with what to write", pc.problems.length === 1 &&
+    /^the melody goes from C5 to C8, wider than the piccolo plays \(D5 to C8\): bar 1\u2019s \u201cC4\u201d \(C5\) is below it -- write that part an octave higher, or choose an instrument that plays it all \(sound piano does\)$/.test(pc.problems[0]), pc.problems);
+  ok("an instrument Lantern does not have is said, and the flute plays", mk(["sound theremin", "chords C", "melody C D E -"]).plan.sound === "flute" &&
+    /Lantern has no \u201ctheremin\u201d; the melody is on the flute \(Lantern\u2019s 57 instruments are under How to write it, in Music\)/.test(mk(["sound theremin", "chords C", "melody C D E -"]).summary));
+  var vm = Array.prototype.join.call(L.musicMidi.file(vw.plan));
+  ok("MIDI: each part's General MIDI program (violin 40, piano 0, upright bass 32)", vm.indexOf(",192,40,") >= 0 && vm.indexOf(",193,0,") >= 0 && vm.indexOf(",194,32,") >= 0);
+  var nt = L.musicSynth.notes(vw.plan), keys = nt.list.map(function (j) { return j.key; });
+  ok("the notes made for a song: each pitch of each instrument once; a held note as long as its longest, a struck one as long as it rings", keys.length && keys.every(function (k, i) { return keys.indexOf(k) === i; }) &&
+    ve.filter(function (e) { return !e.drum; }).every(function (e) { return nt.keyOf(e); }) && keys.indexOf("violin|66|0.9|1.75") >= 0 &&
+    nt.list.filter(function (j) { return j.inst === "piano"; }).every(function (j) { return j.seconds === 3; }), keys);
+  ok("the AI's lines name the instruments, by family", L.aiMusic.HINT.some(function (l) { return /^sound violin  /.test(l); }) && L.aiMusic.HINT.some(function (l) { return /^backing piano  /.test(l); }) &&
+    L.aiMusic.HINT.some(function (l) { return /^  bowed strings: violin, viola, cello, contrabass, strings$/.test(l); }) && L.aiMusic.HINT.some(function (l) { return /^  basses: bass, upright bass, synth bass, slap bass$/.test(l); }));
+  var WQ = "Write a gentle 8-bar waltz in D major for violin and piano.", WZ = ["key D major", "time 3/4", "style waltz", "chords D | A7 | D | G | D | A7 | D | D",
+    "melody F# - A | G - E | F# - D | B4 - G | A - F# | E - C# | D - - | D - -"], wf = act.build(song(WZ), WQ);
+  ok("the question's instruments: a waltz for violin and piano with the tune on the flute goes back", wf.problems.length === 1 &&
+    /^the question asks for the violin, and the song does not play it: write sound violin \(the melody\u2019s instrument\) or backing violin \(the chords\u2019\)$/.test(wf.problems[0]), wf.problems);
+  ok("...on the violin it passes (the waltz's piano plays the chords), and the bench says so; the chords on a guitar go back for the piano", act.build(song(WZ.concat(["sound violin"])), WQ).ok &&
+    grade("make-music-waltz", song(WZ.concat(["sound violin"]))).pass && /^Lantern still questions it: the question asks for the piano, and the song does not play it: write sound piano/.test(grade("make-music-waltz", song(WZ.concat(["sound violin", "backing guitar"]))).why),
+    grade("make-music-waltz", song(WZ.concat(["sound violin", "backing guitar"]))).why);
+  ok("...one instrument for the tune: on the cello means the melody", /^the question asks for the tune on the cello; the melody is on the flute: write sound cello$/.test(act.build(song(["key C", "melody C D E F | G - - -"]), "Play a short tune on the cello").problems[0] || ""));
+  ok("...guitar chords: the strum's guitar plays them", act.build(song(["style strum", "chords C | G"]), "Give me some guitar chords to hear").ok);
 
 
   // Chat: a song is made, played and saved; a bad word goes back once
@@ -219,9 +286,9 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   go("music"); await sleep(120);
   var ta = d.querySelector("textarea[aria-label=Song]");
   ok("the Make a song card: the song in its box, written out, with Save MIDI, Save WAV and examples", ta && /title Twinkle/.test(ta.value) && d.querySelector(".la-song canvas") &&
-    btn(d, "Save MIDI") && btn(d, "Save WAV") && d.querySelectorAll("select[aria-label='Start from'] option").length === 6, ta && ta.value);
+    btn(d, "Save MIDI") && btn(d, "Save WAV") && d.querySelectorAll("select[aria-label='Start from'] option").length === 7, ta && ta.value);
   var sel = d.querySelector("select[aria-label='Start from']");
-  sel.value = "1"; fire(sel, "change"); await sleep(30);
+  sel.value = "2"; fire(sel, "change"); await sleep(30);
   ok("...an example: Ode to Joy, 8 bars in D major", /title Ode to Joy/.test(ta.value) && /8 bars in D major/.test(d.body.textContent));
   ta.value = "key C\nchords C | Q7"; fire(ta, "input"); await sleep(700);
   ok("...typing redraws: a problem is shown, and what is kept", /\u201cQ7\u201d \(bar 2\) is not a chord/.test(d.body.textContent) && L.store.get("music.song", {}).text === "key C\nchords C | Q7");
