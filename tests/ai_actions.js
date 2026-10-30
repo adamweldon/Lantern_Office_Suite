@@ -223,7 +223,7 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   chatAsk("draw a house on a hill at sunset"); await sleep(300);
   t = logText().slice(before);
   var retryMsg = modelCalls[1] && modelCalls[1].messages[modelCalls[1].messages.length - 1].content, seenReply = modelCalls[1] && modelCalls[1].messages[modelCalls[1].messages.length - 2].content;
-  ok("Chat: the retry gets one short reason, and the model does not see its loop again", modelCalls.length === 2 && retryMsg.length < 700 &&
+  ok("Chat: the retry gets one short reason, and the model does not see its loop again", modelCalls.length === 2 && retryMsg.split("\nLantern reads")[0].length < 700 && /Lantern reads a MAKE DRAWING block/.test(retryMsg) &&
     /the reply ran away/.test(retryMsg) && !/rect 10 6 1 1/.test(seenReply) && /rect 9 6 2 2 fill white/.test(seenReply), { len: retryMsg && retryMsg.length, seen: seenReply });
   ok("Chat: says the reply got stuck, and shows it without the repeats", /got stuck repeating one line \(110 times, until it was cut off\)/.test(t) &&
     /got stuck repeating one line \(68 times/.test(t) && !/rect 30 6 1 1/.test(t) && (t.match(/off the grid/g) || []).length <= 4, t.slice(0, 800));

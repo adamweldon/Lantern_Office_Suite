@@ -46,6 +46,9 @@ ok("asks(): starters, relays, seal-ins and pilot lights; not air, oil, programs 
   !C.asks("Draw a pneumatic circuit with a push button") && !C.asks("Draw an Arduino driving a relay through a transistor") && !/MAKE CONTROL/.test(pe));
 ok("the schematic action is offered for a control question that does not say draw", act.relevant("wiring for a motor starter with a seal-in contact").some(function (a) { return a.id === "schematic"; }));
 
+var lad = act.relevant("Draw a ladder diagram for a motor starter with a seal-in").map(function (a) { return a.id; });
+ok("a ladder diagram to draw is a control circuit (and code may be offered too), never a grid picture", lad.indexOf("schematic") >= 0 && lad.indexOf("drawing") < 0, lad);
+
 // --- the bench question ---------------------------------------------------------------------------
 var ideal = make(item.ideal), g = L.aiBench.grade(item, item.ideal, { made: ideal });
 ok("the bench's model answer is MAKE CONTROL, and passes", /^MAKE CONTROL/.test(item.ideal) && g.pass, g.why);

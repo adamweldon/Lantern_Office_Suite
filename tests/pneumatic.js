@@ -160,7 +160,8 @@ ok("...a hydraulic block gets the MAKE HYDRAULIC lines", /^Lantern checked your 
 var eb = L.aiAct.build("MAKE SCHEMATIC: Lamp\npart B1 battery\npart L1 lamp\nwire B1 L1\nEND", "Draw a lamp circuit"), et = act.fixText(eb, "Draw a lamp circuit");
 ok("...an electrical schematic gets the part and wire lines", /Lantern reads a MAKE SCHEMATIC block/.test(et) && /wire <ID> <ID>/.test(et) && /Electrical types: battery/.test(et), et);
 var db = L.aiAct.build("MAKE DRAWING: x\nrect 1 1\nEND", "draw a house"), dt = act.fixText(db, "draw a house");
-ok("...a kind with no hint keeps the short form", /^Lantern checked your MAKE DRAWING block: /.test(dt) && !/reads a MAKE/.test(dt), dt);
+ok("...a kind with no hint of its own gets its instruction lines (up to END)", /^Lantern checked your MAKE DRAWING block: /.test(dt) && /Lantern reads a MAKE DRAWING block like this:\nMAKE DRAWING: <title>/.test(dt) &&
+  /rect X Y W H/.test(dt) && !/For example/.test(dt), dt);
 (async function () {
   var sent = [], replies = [blk("Push to extend", ["pump P1", "cylinder C1 double", "valve V1 C1 5/2", "button S1 V1"]), item.ideal];
   var out = await act.solve(item.q, function (msgs) { sent.push(msgs.slice()); return Promise.resolve(replies.shift()); });

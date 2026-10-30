@@ -1,5 +1,104 @@
 # Changelog
 
+## 1.18.0 — Pneumatics, control circuits and electronics correct by construction (2026-10-29)
+
+Adam's direction after 1.17.0: every Lantern module should make mistakes
+unlikely by design. The least-effort command any AI writes should give the
+correct drawing, and when the AI writes something that cannot be drawn,
+Lantern should show it where it went wrong, so its second try is right. The AI
+does the fuzzy half (what the question asks for, which parts, what each does);
+Lantern does the exact half (ports, wiring, rules, sizes); the bench measures
+how well the two work together. 1.18.0 does for pneumatics, control circuits
+and electronics what 1.17.0 did for hydraulics, and sharpens the correction
+turn for every MAKE block.
+
+- **The correction turn shows the AI how Lantern reads its block.** When
+  Lantern questions a block, the AI now gets each problem on a numbered line
+  (the line that was wrong, and what to write instead), then the lines of that
+  kind of block -- MAKE PNEUMATIC, HYDRAULIC, CONTROL, ELECTRONICS, SCHEMATIC,
+  or for any other kind its own instruction lines up to END. A small model that
+  has lost the instructions far back in its context has them again where it
+  looks. Chat and the bench use the same message (`Lantern.aiAct.fixText`).
+- **MAKE PNEUMATIC.** The AI names cylinders, the valves working them and the
+  push buttons and rollers whose air signals work those valves: `cylinder C1
+  double`, `valve V1 C1 5/2`, `button S1 V1`, `roller S2 C1 extended`, `flow
+  F1 C1 extend`. Lantern draws the ISO 1219 circuit, bottom to top: the air
+  supply and service unit (filter, regulator, gauge), the supply line to every
+  valve's 1, the signal valves, the valves working the cylinders -- ports
+  numbered the ISO 5599 way, 4 to the cap end, 2 to the rod end, 3 and 5 to
+  exhaust -- and the cylinders, with each roller's mark at the end of stroke
+  that trips it. A signal goes to 14 (works the valve) or 12 (returns it); a
+  valve signalled both ways keeps its position. Two signals on one side are
+  never teed (the air would blow out of the other valve's exhaust): Lantern
+  adds a shuttle valve (OR), or a two-pressure valve (AND) when the AI writes
+  `and` or one is the cylinder's home roller, and says so. Defaults are said
+  (a 5/2 worked by a push button; a 3/2 for a single-acting cylinder;
+  meter-out speed control, meter-in for a single-acting extend); what cannot
+  work goes back with the line to write (a double-pilot valve nothing returns,
+  a pump in an air circuit, three signals on one side). The lines are walked
+  as a check, and what each signal does is said under the drawing: "S1 (push
+  button) switches V1: C1 extends; S2 (roller, C1 fully out) switches it back:
+  C1 retracts". The older MAKE SCHEMATIC pneumatic form is piped too.
+- **MAKE CONTROL.** Relays, contactors, push buttons and pilot lights, drawn
+  as a US ladder between L1 and L2 (+ and 0 V for DC): `stop PB1`, `start PB2
+  M1`, `overload OL1 M1`, `coil M1 "motor starter"`, `lamp LT1 M1 "run"
+  green`. Stops in series, starts in parallel with the coil's own holding
+  (seal-in) contact, the coil at the right with its overload after it,
+  numbered rungs, each coil's contacts listed by rung beside L2. Lantern adds
+  and says the holding contact, a stop for a circuit that holds itself in, a
+  motor starter's overload, the interlocks between a forward and a reverse
+  coil, and a coil a start names; an e-stop, a fuse or one stop for several
+  coils is drawn in L1 ahead of every rung. The least a model can write --
+  `start PB2 M1` and `lamp LT1 M1` -- is a correct, complete starter circuit.
+  The wires are walked: no rung can join L1 to L2 through contacts alone,
+  every coil and light sits between the rails, every contact belongs to a
+  drawn coil, the holding contact is across its start. Timers (on-delay, their
+  timed contacts open or closed), limit, pressure, float and temperature
+  switches, solenoids and horns are drawn too. A part/wire block for a control
+  question goes back pointing at MAKE CONTROL. The ladder symbols are in
+  Draw's Electrical palette.
+- **MAKE ELECTRONICS.** `supply "12 V"`, `pin P1 "Arduino D7"`, `relay K1`,
+  `transistor Q1 K1 P1`, `led D1 P2 green`, `switch S1 P3`, `sensor LDR1
+  P4`. Lantern draws the + rail and 0 V with a branch for each thing powered
+  or read, current flowing down, and adds, sizes and says what such circuits
+  need: an LED's resistor ((V - Vf) / 15 mA, the next E12 value up), a
+  transistor's base resistor (a tenth of the load's current into the base),
+  the diode across a relay coil, motor or solenoid a transistor switches
+  (cathode to +), a transistor between a pin and a load too big for it, a push
+  button's pull-down or pull-up, a sensor's divider, inputs fed from the
+  board's own 3.3 or 5 V when the rail is higher, and the board's GND joined to
+  0 V. A resistor the AI sizes is checked. The wires are walked as a check.
+- **The schematics the AI already writes are checked** (part and wire lines):
+  an LED with no resistor gets one, sized and said; an LED resistor too small,
+  a short (a switch or ammeter straight across the battery), an ammeter across
+  a part or a voltmeter in series goes back to the AI, with the drawing shown.
+  A battery or source is drawn with its + where the current leaves it and a
+  diode with its anode where the current comes in (before, an LED on the top
+  row was drawn backwards against the battery); an LED whose anode the wires
+  put on a named "B1-" goes back as the wrong way round, with what to write.
+- **Each question reaches the right builder.** A control or electronics
+  question reaches MAKE CONTROL or MAKE ELECTRONICS even without the word
+  "circuit", and is never offered as a grid picture; a circuit to draw with an
+  Arduino in it is not offered as a program unless the code is asked for too.
+  The instruction lines line up as the model reads them.
+- **Tables by column name.** MAKE SHEET formulas may name columns:
+  `=[Qty]*[Price]` is this row's cells, `=SUM([Cost])` the rows above. Lantern
+  writes the cell names, so a formula copied down a column cannot point at the
+  wrong row. A formula written with cell names that looks at another row than
+  the rest of its column goes back with the formula to write.
+- **Hydraulics:** a single-acting cylinder's extend speed is metered in (said
+  when meter-out was asked); compressors, exhausts and air in an oil circuit
+  point at MAKE PNEUMATIC.
+- **Bench:** three new make questions -- `make-pneumatic` (push to extend,
+  automatic return), `make-control` (a motor starter with its holding contact,
+  overload and run light) and `make-electronics` (an Arduino pin switching a
+  12 V relay through a transistor: the base resistor and the coil's diode are
+  checked). Each checks what the circuit does, not just its parts. The bench
+  has 24 make questions; totals change from 1.17.0.
+- **Tests:** `tests/pneumatic.js`, `tests/control.js`, `tests/electronics.js`,
+  `tests/sheet_names.js`; `tests/browser/domains_e2e.py` drives all four
+  through Chat in Chromium with a stand-in model.
+
 ## 1.17.0 — Hydraulic circuits correct by construction (2026-10-29)
 
 Adam spotted that the 35B's bench drawing for "a pump takes oil from a tank and

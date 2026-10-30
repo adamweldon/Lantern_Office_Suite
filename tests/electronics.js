@@ -47,6 +47,11 @@ ok("a question about code is not a circuit drawing", !E.asks("Write Arduino code
 ok("asks(): pins, transistors, LEDs, pull-ups; not control circuits, air or oil", E.asks(item.q) && E.asks("Draw an LED with its resistor on a 9 V battery") && E.asks("show a push button with a pull-down on an ESP32 pin") &&
   !E.asks("Draw the control circuit for a motor starter with a seal-in") && !E.asks("Draw a pneumatic circuit") && !/MAKE ELECTRONICS/.test(pe));
 
+var rel = act.relevant("Draw an Arduino pin switching a relay through a transistor").map(function (a) { return a.id; });
+ok("an electronics question without the word circuit reaches MAKE ELECTRONICS, and is never a grid picture", rel.indexOf("schematic") >= 0 && rel.indexOf("drawing") < 0, rel);
+var bq = act.relevant(item.q).map(function (a) { return a.id; }), both = act.relevant("Draw the circuit for an Arduino pin switching a relay, and write the code").map(function (a) { return a.id; });
+ok("a circuit to draw with an Arduino in it is not offered as a program -- unless the code is asked for too", bq.indexOf("schematic") >= 0 && bq.indexOf("code") < 0 && both.indexOf("code") >= 0 && both.indexOf("schematic") >= 0, [bq, both]);
+
 // --- the bench question ---------------------------------------------------------------------------
 var ideal = make(item.ideal), g = L.aiBench.grade(item, item.ideal, { made: ideal });
 ok("the bench's model answer is MAKE ELECTRONICS, and passes", /^MAKE ELECTRONICS/.test(item.ideal) && g.pass, g.why);
@@ -135,6 +140,28 @@ ok("an ammeter in series and a voltmeter across the resistor pass", good.ok, goo
 var loose = make(sch("Lamp", ["part B1 battery", "part S1 switch", "part L1 lamp", "wire B1 S1", "wire L1 S1", "wire L1 B1"]), "Draw a lamp circuit");
 ok("a loop written with one wire backwards (each part with two wires) is no short", loose.ok, loose.problems);
 
+// --- polarity by default: + where the current leaves the battery, the LED's anode where it comes in ---
+function polarity(text) {
+  var r = make(text, "Draw an LED circuit"), groups = r.shapes.filter(function (s) { return s.t === "group"; }), out = {};
+  groups.forEach(function (g) {
+    var tri = g.shapes.filter(function (s) { return s.t === "tri" && s.f; })[0];
+    if (tri) { var xs = tri.pts.map(function (p) { return p[0]; }), tip = tri.pts.filter(function (p) { return p[1] === tri.pts.reduce(function (a, q) { return a + q[1]; }, 0) / 3 || Math.abs(p[1] - (tri.pts[0][1] + tri.pts[1][1] + tri.pts[2][1]) / 3) < 0.01; })[0];
+      out.led = tip && tip[0] > Math.min.apply(null, xs) ? "right" : "left"; }
+    var vs = g.shapes.filter(function (s) { return s.t === "path" && s.pts.length === 2 && s.pts[0][0] === s.pts[1][0]; });
+    if (!tri && vs.length === 2) { var longer = Math.abs(vs[0].pts[0][1] - vs[0].pts[1][1]) > Math.abs(vs[1].pts[0][1] - vs[1].pts[1][1]) ? vs[0] : vs[1], other = longer === vs[0] ? vs[1] : vs[0];
+      out.plus = longer.pts[0][0] > other.pts[0][0] ? "right" : "left"; }
+  });
+  return out;
+}
+var top = polarity(sch("LED", ["part B1 battery \"9 V\"", "part D1 led \"red\"", "part R1 resistor \"470 ohm\"", "wire B1 D1", "wire D1 R1", "wire R1 B1"]));
+ok("an LED on the top row, current flowing right: + on the battery's right, the LED pointing right", top.plus === "right" && top.led === "right", top);
+var bot = polarity(sch("LED", ["part B1 battery \"9 V\"", "part R1 resistor \"470 ohm\"", "part D1 led", "wire B1 R1", "wire R1 D1", "wire D1 B1"]));
+ok("...on the bottom row, current flowing back left: the LED points left", bot.plus === "right" && bot.led === "left", bot);
+var named = polarity(sch("LED", ["part B1 battery", "part D1 led", "part R1 resistor \"470 ohm\"", "wire B1- D1", "wire D1 R1", "wire R1 B1+"]));
+ok("...a terminal named on a wire still wins", named.plus === "left", named);
+var back = make(sch("LED", ["part B1 battery", "part D1 led", "part R1 resistor \"470 ohm\"", "wire B1- D1", "wire D1 R1", "wire R1 B1+"]), "Draw an LED circuit");
+ok("...and an LED whose anode the wires put on the battery's \u2212 goes back: the wrong way round, and what to write", !back.ok && back.problems.some(function (p) { return /D1 is the wrong way round: its anode \(where current goes in\) is on B1\u2019s \u2212, so no current flows -- current leaves \+ and goes in at the anode: write wire B1\+ D1/.test(p); }), back.problems);
+ok("...while the same circuit wired from B1+ is fine", make(sch("LED", ["part B1 battery", "part D1 led", "part R1 resistor \"470 ohm\"", "wire B1+ D1", "wire D1 R1", "wire R1 B1-"]), "Draw an LED circuit").ok);
 ok("no page errors", !errs.length, errs);
 console.log(fails ? fails + " ELECTRONICS TESTS FAILED (" + passes + " passed)" : "ALL ELECTRONICS TESTS PASS (" + passes + ")");
 process.exit(fails ? 1 : 0);
