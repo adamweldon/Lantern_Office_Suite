@@ -1,5 +1,78 @@
 # Changelog
 
+## 1.19.0 — Songs you can hear: MAKE MUSIC (2026-10-30)
+
+Adam asked Chat (the 35B) to "create the note progression from One Love so that
+we can hear it". It answered that it "cannot generate audio files or play
+music", gave chords and note names as prose, wrote a `MAKE: table` block
+Lantern could not read and quoted a library it had not been shown. Lantern had
+a Music tile (a keyboard, frequencies, lessons, the Sheet Music Reader) but
+nothing the AI could write a song with, and nothing that played one. 1.19.0
+adds both, built the same correct-by-construction way as the circuits: the AI
+does the fuzzy half (which song, which chords, which notes), Lantern the exact
+half (timing, octaves, the band, the sound, the sheet music, the files).
+
+- **MAKE MUSIC.** The AI writes the lines a musician jots down:
+  `key E minor`, `tempo 76`, `time 4/4`, `style reggae`, `sound flute`,
+  `chords Em | Am | B7 | Em`, `melody B A G E | A - G F# | E - - r`. Only the
+  lines it needs: chords alone are played in the style; a melody alone gets
+  chords chosen by Lantern; with no key line, Lantern finds the key.
+- **Wrong by construction is impossible where it can be.** A note's length is
+  its share of its bar (the notes of a bar share it equally, `-` holds one more
+  share, `r` rests), so no bar is ever too long or too short and the AI never
+  counts beats or writes fractions. A note without an octave goes where the tune
+  leads -- nearest the note before, and of a fourth down or a fifth up the one
+  that keeps the tune near where it began (Twinkle climbs to G and comes home to
+  the same C); a written octave is where it says and never pulls the notes before
+  it. A plain letter takes the key's sharps and flats (F is F# in D major; `Fn`
+  is natural). Chords: letters and kinds (C, Cm, C7, Cmaj7, Cm7, Cdim, Caug,
+  Csus4, C6, C9, Cadd9, C/G ...) or numerals in the key (I IV V7 vi, i iv V
+  bVII, V/V). A part's chords repeat under a longer melody; a melody too low or
+  high moves by octaves. Everything Lantern added or changed is said.
+- **What cannot be right goes back once, with the line to write**: a word that
+  is not a note or a chord (with how notes and lengths are written), a note far
+  from the rest of the tune, a long note a half step from its chord (with the
+  chords of the key that fit it: "write Am or C there"), and a song that is not
+  what the question asked -- its key, a waltz's 3/4, its number of bars. The
+  correction turn repeats how Lantern reads a MAKE MUSIC block.
+- **Lines as models write them** are read: a colon or not, bold, bullets,
+  "Melody (violin):", `Em - Am - B7`, `B-A-G-E`, no bar lines (a note a beat),
+  `(x2)`, Verse: / Chorus: parts; a stray line is named, not swallowed.
+- **The band**: ballad, block, strum, arpeggio, waltz, march, folk, pop, rock,
+  reggae (the skank off the beat, the one drop) or none; chords voiced below the
+  tune, each voicing nearest the last; bass on the root (or the slash note) and
+  its fifth; drums where the style has them.
+- **The sound**, made in the browser with Web Audio -- nothing to download:
+  flute, piano, organ, strings, bell, guitar, brass, lead, bass and drums.
+  **Play** in Chat starts at once and **Stop** is immediate; a red line moves
+  along the bars. **Save WAV** renders the song (OfflineAudioContext, 44.1 kHz,
+  never clipped); **Save MIDI** writes a standard file (tracks for melody, chords,
+  bass and drums; tempo, time and key signatures) for any music program.
+- **The sheet music**: a lead sheet -- clef, key and time signatures, notes
+  where their time puts them (open heads, stems, flags, beams, dots, sharps and
+  flats as the key and the bar need them, ledger lines, ties over bar lines,
+  rests in the gaps) and the chord names above; with no melody, a slash a beat.
+- **Make a song** in the Music tile: the same lines typed by hand, redrawn as
+  you type, kept (music.song), Save MIDI and WAV, How to write it, and examples
+  to start from -- two Lantern tunes, Beethoven's Ode to Joy (1824), Twinkle
+  Twinkle (1761; Lantern chooses its chords) and Frere Jacques. **Open in Music**
+  from Chat brings the song there, with what Lantern chose written in.
+- **Chat**: music questions ("create the note progression ... so we can hear
+  it", "what are the chords of ...", "play ... for me", "sheet music for ...")
+  get MAKE MUSIC and nothing else; an essay on music, an Arduino buzzer program
+  or meeting notes do not; sheet music is not a drawing or a table. The greeting
+  says songs can be made.
+- **Bench**: two make questions (26 in all): Ode to Joy, checked note for note
+  by the intervals of its theme's first 15 notes in any key, and an original
+  8-bar tune in G major with chords at a walking pace, ending on a note of its
+  last chord.
+- Tests: `tests/music.js` (59 checks), `tests/browser/music_e2e.py` (Chromium:
+  the correction turn, Play and the moving line, Stop, real MIDI and WAV files,
+  Open in Music, every example); `ai_actions.js` (ten actions, 26 make
+  questions), `ai_layer.js` (version, 26 make questions), `ai_isolation.js` (the
+  ten new modules removed in turn).
+- Examples and tests use tunes in the public domain or Lantern's own.
+
 ## 1.18.1 — The circuit set against the question; pictures painted a square at a time (2026-10-30)
 
 From Adam's full bench run on 1.18.0 with the 35B (120 of 121 scored), and
