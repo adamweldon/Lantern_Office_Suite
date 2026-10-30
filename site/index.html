@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.18.0 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.18.1 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -175,7 +175,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.18.0",
+  version: "1.18.1",
   apps: {},
   order: []
 };
@@ -24176,7 +24176,8 @@ Lantern.RFB = (function () {
         el("td", {}, [el("span", { "class": r.pass ? "la-pass" : "la-fail", text: r.pass ? "pass" : "fail" }),
           el("div", { "class": "muted", text: (r.why || (r.value != null ? String(Math.round(r.value * 1e4) / 1e4) : "")) +
             (r.by === "rule" ? " (safety rule)" : "") + (r.claim === "disagrees" ? " \u00b7 its sentence disagreed" : "") +
-            (r.rounds > 1 ? (r.fixed ? " \u00b7 fixed on 2nd try" : " \u00b7 2nd try failed too") : "") +
+            (r.retry ? (r.fixed ? " \u00b7 fixed on 2nd try" : " \u00b7 2nd try failed too") : "") +
+            (r.looked ? " \u00b7 saw its picture and " + r.looked : "") +
             (r.flags && r.flags.length ? " \u00b7 Lantern still questions it" : "") }),
           more = el("button", { text: "Show", title: "What the AI replied, and what Lantern made of it", style: "margin-top:4px;padding:2px 10px;font-size:12px",
             onclick: function () {
@@ -25563,11 +25564,13 @@ Lantern.RFB = (function () {
     });
     return out;
   }
-  // runaway(block, bad) -> {from, to, n, first, last, off, cut} or null: the
-  // longest run of 8 or more lines of one shape where a single number steps
-  // the same way each line ("rect 10 6 1 1 fill blue", "rect 11 6 1 1 fill
-  // blue", ... -- the colour may change on the way), or the same line again
-  // and again. A row of fence posts looks like that too, so the run counts
+  // runaway(block, bad) -> {from, to, n, period, firsts, first, last, off,
+  // cut} or null: the longest run of 8 or more lines of one shape where a
+  // single number steps the same way each line ("rect 10 6 1 1 fill blue",
+  // "rect 11 6 1 1 fill blue", ... -- the colour may change on the way), or
+  // the same line again and again; or two or three lines in turn, each
+  // stepping the same way ("rect 9 7 2 2", "rect 10 8 1 1", "rect 11 7 2 2",
+  // "rect 12 8 1 1", ... -- bench run on 1.18.0, a 35B, period 2). A row of fence posts looks like that too, so the run counts
   // only when the block was cut off (no END), or most of its lines are
   // bad(line) (off the grid), or it is longer than 30 lines.
   function numsOf(l) { return (String(l).match(/-?\d+(\.\d+)?/g) || []).map(Number); }
@@ -25580,16 +25583,20 @@ Lantern.RFB = (function () {
     return diff.length === 1 ? diff[0] + ":" + (nb[diff[0]] - na[diff[0]]) : null;
   }
   function runaway(block, bad) {
-    var ls = block.lines || [], best = null, i = 0, j, st;
-    while (i < ls.length - 1) {
-      st = stepOf(ls[i], ls[i + 1]);
-      if (!st) { i++; continue; }
-      for (j = i + 1; j + 1 < ls.length && stepOf(ls[j], ls[j + 1]) === st; j++) { }
-      if (j - i + 1 >= 8 && (!best || j - i + 1 > best.n)) best = { from: i, to: j, n: j - i + 1 };
-      i = j;
+    var ls = block.lines || [], best = null, p, i, k, st;
+    for (p = 1; p <= 3; p++) {   // a period of one line first: it wins a tie
+      i = 0;
+      while (i + p < ls.length) {
+        st = stepOf(ls[i], ls[i + p]);
+        if (!st) { i++; continue; }
+        for (k = i + 1; k + p < ls.length && stepOf(ls[k], ls[k + p]) === st; k++) { }
+        if (k + p - i >= 8 && (!best || k + p - i > best.n)) best = { from: i, to: k + p - 1, n: k + p - i, period: p };
+        i = k;
+      }
     }
     if (!best) return null;
     var run = ls.slice(best.from, best.to + 1);
+    best.firsts = run.slice(0, best.period);
     best.off = bad ? run.filter(function (l) { try { return bad(l); } catch (e) { return false; } }).length : 0;
     best.cut = !block.closed;
     if (!best.cut && best.off * 2 <= best.n && best.n <= 30) return null;
@@ -25598,8 +25605,10 @@ Lantern.RFB = (function () {
   }
   // runawayText(ra, advice) -> the one problem that replaces a run's many.
   function runawayText(ra, advice) {
-    return "the reply ran away: \u201c" + ra.first + "\u201d was written " + ra.n + " times" +
-      (ra.first !== ra.last ? ", its numbers changing up to \u201c" + ra.last + "\u201d" : "") +
+    var turn = ra.period > 1 && ra.firsts && ra.firsts.length > 1;
+    return "the reply ran away: " + (turn ? ra.firsts.map(function (l) { return "\u201c" + l + "\u201d"; }).join(" and ") + " were written in turn, " + ra.n + " lines" :
+        "\u201c" + ra.first + "\u201d was written " + ra.n + " times") +
+      (ra.first !== ra.last ? (turn ? ", their" : ", its") + " numbers changing up to \u201c" + ra.last + "\u201d" : "") +
       (ra.off ? ", " + ra.off + " of them off the grid" : "") + (ra.cut ? ", until the reply was cut off" : "") +
       ". Lantern left those lines out" + (advice ? ". " + advice : "");
   }
@@ -26358,12 +26367,12 @@ Lantern.RFB = (function () {
         if (key === "fill" || key === "color" || key === "colour" || key === "outline" || key === "stroke") {
           var col = colour(toks, i + 1);
           if (!col) { problems.push("\u201c" + line + "\u201d: unknown colour \u201c" + (toks[i + 1] || "") + "\u201d (use " + Object.keys(COLORS).slice(0, 18).join(", ") + ", or #hex)"); return; }
-          if (key === "fill") o.fill = col.c; else o.color = col.c;
+          if (key === "fill") { o.fill = col.c; o.fillName = toks.slice(i + 1, i + 1 + col.n).join(" ").toLowerCase(); } else o.color = col.c;
           i += 1 + col.n; continue;
         }
         if ((key === "width" || key === "size" || key === "thick") && /^\d+(\.\d+)?$/.test(toks[i + 1] || "")) { o[key === "size" ? "size" : "width"] = parseFloat(toks[i + 1]); i += 2; continue; }
         var bare = colour(toks, i);   // "rect 1 2 3 4 red" -> fill
-        if (bare) { o.fill = o.fill || bare.c; i += bare.n; continue; }
+        if (bare) { if (!o.fill) { o.fill = bare.c; o.fillName = toks.slice(i, i + bare.n).join(" ").toLowerCase(); } i += bare.n; continue; }
         i++;
       }
       var need = NEED[kind];
@@ -26372,8 +26381,12 @@ Lantern.RFB = (function () {
       if (kind === "text" && !quoted) { problems.push("\u201c" + line + "\u201d: text needs its words in quotes"); return; }
       var bad = nums.filter(function (v, k) { var lim = (kind === "rect" || kind === "oval" || kind === "ellipse") && k >= 2 ? Math.max(GW, GH) : (k % 2 ? GH : GW); return v < -1 || v > lim + 1; });
       if (kind === "circle" || kind === "square") bad = nums.slice(0, 2).filter(function (v, k) { return v < -1 || v > (k ? GH : GW) + 1; });
+      if (!bad.length && /^(rect|square|oval|ellipse)$/.test(kind)) {   // wholly outside the frame: "rect 20 8 1 1" starts at its right edge
+        var bw = nums[2], bh = kind === "square" ? nums[2] : nums[3];
+        if (nums[0] >= GW || nums[1] >= GH || nums[0] + bw <= 0 || nums[1] + bh <= 0) bad = [nums[0]];
+      }
       if (bad.length) { problems.push("\u201c" + line + "\u201d is off the grid (x 0 to " + GW + ", y 0 to " + GH + ")"); return; }
-      o.nums = nums; o.text = quoted; shapes.push(o);
+      o.nums = nums; o.text = quoted; o.line = line; shapes.push(o);
     });
     if (!shapes.length && !problems.length) problems.push("the drawing has no shapes: add lines like: rect 4 6 12 5 fill brown");
     if (shapes.length > 60) problems.push("keep it to 60 shapes or fewer");
@@ -26387,8 +26400,10 @@ Lantern.RFB = (function () {
         if (o.fill) { var f = {}, k; for (k in base) f[k] = base[k]; f.c = o.fill; f.f = true; f.w = w; out.push(f); }
         if (stroke) { var s = {}, k2; for (k2 in base) s[k2] = base[k2]; s.c = stroke; s.f = false; s.w = w; out.push(s); }
       }
-      if (o.kind === "rect") both({ t: "rect", x: n[0], y: n[1], rw: n[2], rh: n[3] });
-      else if (o.kind === "square") both({ t: "rect", x: n[0], y: n[1], rw: n[2], rh: n[2] });
+      if (o.kind === "rect" || o.kind === "square") {   // clipped to the frame (1.18.1): nothing hangs past its edge
+        var x0 = Math.max(0, n[0]), y0 = Math.max(0, n[1]), x1 = Math.min(GW * CELL, n[0] + n[2]), y1 = Math.min(GH * CELL, n[1] + (o.kind === "square" ? n[2] : n[3]));
+        if (x1 > x0 && y1 > y0) both({ t: "rect", x: x0, y: y0, rw: x1 - x0, rh: y1 - y0 });
+      }
       else if (o.kind === "oval" || o.kind === "ellipse") {   // a fan of triangles (filled) and its outline
         var cx = n[0] + n[2] / 2, cy = n[1] + n[3] / 2, rx = n[2] / 2, ry = n[3] / 2, pts = [], a;
         for (a = 0; a <= 32; a++) pts.push([cx + rx * Math.cos(a / 32 * 2 * Math.PI), cy + ry * Math.sin(a / 32 * 2 * Math.PI)]);
@@ -26453,15 +26468,68 @@ Lantern.RFB = (function () {
   // repeated lines (a model stuck in a loop: "rect 10 6 1 1 fill blue",
   // "rect 11 6 1 1 ...", up to 119 and cut off) is left out as one problem.
   function offGrid(line) { return parsePicture({ lines: [line] }).problems.some(function (p) { return /off the grid/.test(p); }); }
+  // oneRect(boxes, fill) -> "rect X Y W H fill <fill>": the one line that
+  // covers the boxes ([x0, y0, x1, y1]), cut to the frame; null when none
+  function num(v) { return String(Math.round(v * 100) / 100); }
+  function oneRect(boxes, fill) {
+    var x0 = GW, y0 = GH, x1 = 0, y1 = 0;
+    boxes.forEach(function (b) { x0 = Math.min(x0, b[0]); y0 = Math.min(y0, b[1]); x1 = Math.max(x1, b[2]); y1 = Math.max(y1, b[3]); });
+    x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(GW, x1); y1 = Math.min(GH, y1);
+    return x1 > x0 && y1 > y0 ? "rect " + num(x0) + " " + num(y0) + " " + num(x1 - x0) + " " + num(y1 - y0) + " fill " + fill : null;
+  }
+  // a run's lines, when every one is a rect of one fill and no outline: the
+  // one line that paints the same area ("rect 9 7 2 2 fill blue", "rect 10
+  // 8 1 1 fill blue", ... up to x 53 -> "rect 9 7 11 2 fill blue")
+  function runRect(lines) {
+    var fill = null, boxes = [];
+    for (var k = 0; k < lines.length; k++) {
+      var m = /^\s*(rect|square)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)(?:\s+(\d+(?:\.\d+)?))?\s+fill\s+([a-z]+(?: [a-z]+)?|#[0-9a-f]{3,6})\s*$/i.exec(lines[k]);
+      if (!m || (m[1].toLowerCase() === "rect") !== (m[5] != null)) return null;
+      var f = m[6].toLowerCase(), x = +m[2], y = +m[3], w = +m[4], h = m[5] != null ? +m[5] : w;
+      if (fill !== null && f !== fill) return null;
+      fill = f; boxes.push([x, y, x + w, y + h]);
+    }
+    return boxes.length ? oneRect(boxes, fill) : null;
+  }
+  // strips(shapes) -> [problem]: six or more small rects one after another,
+  // one fill, no outline, each touching the ones before -- on the picture
+  // they are one area, painted a square at a time (bench run on 1.18.0: a
+  // 35B's corrected sunset painted a strip that way, past the frame). The
+  // problem gives the one line that paints that area.
+  function strips(shapes) {
+    var out = [], i = 0;
+    function small(o) { return (o.kind === "rect" || o.kind === "square") && o.fill && !o.color && o.nums[2] * (o.kind === "square" ? o.nums[2] : o.nums[3]) <= 4; }
+    function box(o) { return [o.nums[0], o.nums[1], o.nums[0] + o.nums[2], o.nums[1] + (o.kind === "square" ? o.nums[2] : o.nums[3])]; }
+    while (i < shapes.length) {
+      if (!small(shapes[i])) { i++; continue; }
+      var j = i + 1, bb = box(shapes[i]), boxes = [bb];
+      while (j < shapes.length && small(shapes[j]) && shapes[j].fill === shapes[i].fill) {
+        var b = box(shapes[j]);
+        if (!(b[0] <= bb[2] && bb[0] <= b[2] && b[1] <= bb[3] && bb[1] <= b[3])) break;
+        bb = [Math.min(bb[0], b[0]), Math.min(bb[1], b[1]), Math.max(bb[2], b[2]), Math.max(bb[3], b[3])]; boxes.push(b); j++;
+      }
+      if (j - i >= 6) {
+        var line = oneRect(boxes, shapes[i].fillName || "blue"), past = bb[0] < 0 || bb[1] < 0 || bb[2] > GW || bb[3] > GH;
+        out.push("\u201c" + shapes[i].line + "\u201d and the " + (j - i - 1) + " lines after it paint one " + (shapes[i].fillName || "") + (shapes[i].fillName ? " " : "") +
+          "area a square at a time (x " + num(bb[0]) + " to " + num(bb[2]) + ", y " + num(bb[1]) + " to " + num(bb[3]) + (past ? ", past the edge of the picture" : "") + ")" +
+          (line ? ": paint an area as ONE shape -- " + line + " -- or leave it out if it is not part of the picture" : ""));
+      }
+      i = j;
+    }
+    return out;
+  }
   function picture(block) {
     var ra = L.aiAct && L.aiAct.runaway ? L.aiAct.runaway(block, offGrid) : null, lines = block.lines;
     if (ra) lines = lines.filter(function (l, k) { return (k < ra.from || k > ra.to) && !(ra.cut && k === lines.length - 1 && k > ra.to); });
     var pic = parsePicture({ lines: lines });
     if (ra) {
       pic.problems = pic.problems.filter(function (p) { return !/^keep it to 60 shapes/.test(p) && !/^the drawing has no shapes/.test(p); });
-      pic.problems.unshift(L.aiAct.runawayText(ra, "Paint an area (a sky, the ground, a wall) as ONE shape -- rect 0 0 " + GW + " 7 fill orange -- " +
-        "and keep the drawing to 30 shapes or fewer"));
+      var one = runRect(block.lines.slice(ra.from, ra.to + 1));
+      pic.problems.unshift(L.aiAct.runawayText(ra, one ? "If those squares are one area, paint it as ONE shape -- " + one + " -- or leave it out; keep the drawing to 30 shapes or fewer" :
+        "Paint an area (a sky, the ground, a wall) as ONE shape -- rect 0 0 " + GW + " 7 fill orange -- and keep the drawing to 30 shapes or fewer"));
     }
+    var st = pic.shapes.length <= 60 ? strips(pic.shapes) : [];   // after the runaway's one problem, before the lines' own
+    if (st.length) pic.problems = (ra ? pic.problems.slice(0, 1) : []).concat(st, ra ? pic.problems.slice(1) : pic.problems);
     if (!pic.shapes.length || pic.shapes.length > 60) return { problems: pic.problems, plan: null, runaway: ra };
     var plan = { shapes: pic.shapes.map(function (o) { return { kind: o.kind, nums: o.nums, fill: o.fill || null, color: o.color || null, text: o.text || null }; }) };
     var left = block.lines.length - pic.shapes.length;
@@ -27839,6 +27907,35 @@ Lantern.RFB = (function () {
     return shown;
   }
 
+  // intent(c, question) -> [problems]: what the question asks the circuit
+  // to do, against what Lantern worked out it does (1.18.1, bench run on
+  // 1.18.0: asked for a cylinder that "returns by itself when it reaches the
+  // end of its stroke", the 35B drew a valve that returns on its spring when
+  // the button is let go -- a right circuit for another question, drawn and
+  // passed by every check). Each goes back once, the drawing shown, with the
+  // line to add.
+  var AUTO = /\b(returns?|retracts?|comes? back|goes back)\b[^.?!]{0,50}\b(by itself|on its own|automatically|itself)\b|\bauto(matic)?[- ]?(return|retract)\w*\b|\b(at|reaches|reaching|hits|hitting) (the )?(full |far )?end of (its |the )?stroke\b/i;
+  var CYCLE = /\b(continuous(ly)?|reciprocat\w*|back and forth|keeps? (going|cycling|moving)|over and over)\b/i;
+  var TWOHAND = /\b(two[- ]hand(ed)?|both hands|both (push )?buttons|two (push )?buttons (are |must be )?(pressed|held) (together|at once|at the same time))\b/i;
+  function intent(c, q) {
+    q = String(q || "");
+    var out = [], dbl = c.acts.filter(function (a) { return a.type === "cylinder" && !a.single; });
+    function sid() { var n = 1, ids = {}; c.signals.forEach(function (s) { ids[s.id] = 1; }); while (ids["S" + n]) n++; return "S" + n; }
+    function rollers(a, pos, side) { return a.sig[side].filter(function (s) { return s.kind === "roller" && s.at === a.id && s.pos === pos; }).length; }
+    if (dbl.length && AUTO.test(q) && !CYCLE.test(q) && !dbl.some(function (a) { return rollers(a, "out", "12"); })) {
+      var a = dbl[0], v = a.valve, now = v.right === "spring" ? "it returns only when " + (a.sig["14"].length ? a.sig["14"].map(function (s) { return s.id; }).join(" and ") + (a.sig["14"].length > 1 ? " are" : " is") : v.id + "\u2019s " + OPN[v.left] + " is") + " let go (" + v.id + "\u2019s spring)" : "nothing sends " + v.id + " back when " + a.id + " is fully out";
+      out.push("the question asks for " + a.id + " to return by itself at the end of its stroke, but " + now + ": add a roller valve " + a.id + " trips when fully out -- roller " + sid() + " " + a.id + " extended -- and Lantern makes " + v.id + " hold its position until the roller sends it back");
+    }
+    if (dbl.length && CYCLE.test(q) && !dbl.some(function (a) { return rollers(a, "out", "12") && rollers(a, "in", "14"); })) {
+      var a2 = dbl[0], s1 = sid(), s2 = "S" + (+s1.slice(1) + 1), outR = rollers(a2, "out", "12"), inR = rollers(a2, "in", "14"), need = [];
+      if (!outR) need.push("roller " + s1 + " " + a2.id + " extended (sends it back)");
+      if (!inR) need.push("roller " + (outR ? s1 : s2) + " " + a2.id + " retracted (sends it out again)");
+      out.push("the question asks for " + a2.id + " to keep going back and forth, which needs a roller at each end: add " + need.join(" and "));
+    }
+    if (TWOHAND.test(q) && !c.acts.some(function (a) { return a.logic["14"] && a.logic["14"].kind === "and"; }))
+      out.push("the question asks for both buttons to be pressed together, but either one works the valve here: write and on the second button\u2019s line (button S2 V1 and) -- Lantern adds the two-pressure valve");
+    return out;
+  }
   // build(block, ctx) -> what Chat and the bench take (AI_DRAW's result)
   function build(block, ctx) {
     var pr = parse(block), c = circuit(pr);
@@ -27847,6 +27944,7 @@ Lantern.RFB = (function () {
     var lay = layout(c, block.title), late = [];
     var bad = verify(c, lay);
     if (bad.length) return { problems: ["Lantern could not draw this circuit correctly (" + bad.join("; ") + ")"], plan: null };
+    intent(c, ctx && ctx.question).forEach(function (p) { late.push(p); });
     var shown = notesUnder(lay, (c.notes || []).slice(0, 8), late, false);
     notesUnder(lay, c.steps, late, true);
     var said = (c.added.length ? "Lantern added " + c.added.join(", ") : "") + (c.changed.length ? (c.added.length ? ". " : "") + c.changed.join(". ") : "");
@@ -29906,8 +30004,25 @@ Lantern.RFB = (function () {
         if (p.shapes.length > 30) return "more than 30 shapes";
         var sky = p.shapes.some(function (s) { return /^(rect|square)$/.test(s.kind) && s.nums[2] >= 10 && WARM.test(s.fill || ""); });
         if (!sky) return "no sunset sky (one wide orange, red, pink, purple or yellow rect)";
-        var house = p.shapes.filter(function (s) { return /^(rect|square|tri|triangle)$/.test(s.kind) && !(s.kind === "rect" && s.nums[2] >= 10); }).length;
-        return house >= 2 ? "" : "no house (a rect with a roof)";
+        // a house is a wall with a roof on it: a tri (or a rect) whose base
+        // sits on the wall's top (1.18.1: a 35B's wall with a white rect and
+        // a strip of blue squares in it, and no roof, passed as a house)
+        function wh(s) { return [s.nums[0], s.nums[1], s.nums[2], s.kind === "square" ? s.nums[2] : s.nums[3]]; }
+        var walls = p.shapes.filter(function (s) { return /^(rect|square)$/.test(s.kind) && s.nums[2] < 10; });
+        var house = walls.some(function (w) {
+          var b = wh(w);
+          return p.shapes.some(function (r) {
+            if (r === w) return false;
+            if (/^(tri|triangle)$/.test(r.kind)) {
+              var xs = [r.nums[0], r.nums[2], r.nums[4]], ys = [r.nums[1], r.nums[3], r.nums[5]];
+              return Math.abs(Math.max.apply(null, ys) - b[1]) <= 1.5 && Math.min.apply(null, ys) < b[1] && Math.min.apply(null, xs) < b[0] + b[2] && Math.max.apply(null, xs) > b[0];
+            }
+            if (!/^(rect|square)$/.test(r.kind) || r.fill === w.fill) return false;
+            var c = wh(r);
+            return c[2] < 10 && Math.abs(c[1] + c[3] - b[1]) <= 1 && c[1] < b[1] && c[0] < b[0] + b[2] && c[0] + c[2] > b[0];
+          });
+        });
+        return house ? "" : "no house (a wall with a roof on it: a rect, and a tri whose base sits on its top)";
       } },
     { id: "make-shopping", ideal: "MAKE SHEET: Shopping\nItem | Qty | Price | Cost\nBread | 2 | 1.50 | =B2*C2\nMilk | 1 | 0.99 | =B3*C3\nEggs | 12 | 0.25 | =B4*C4\nTotal | | | =SUM(D2:D4)\nEND", quick: 1, kind: "SHEET", q: "Make a table of my shopping: 2 loaves of bread at 1.50 each, 1 milk at 0.99, and 12 eggs at 0.25 each, with the cost of each line and a total.",
       check: function (p) {

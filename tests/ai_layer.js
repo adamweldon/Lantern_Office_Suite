@@ -373,6 +373,15 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   shows[0].click(); await sleep(5);
   ok("Hide closes it", d.querySelectorAll(".la-tbl tbody tr").length === rowsBefore && shows[0].textContent === "Show");
   ok("a saved run can be opened again", Array.prototype.some.call(d.querySelectorAll("button"), function (b) { return /Open saved results/.test(b.textContent); }));
+  // 1.18.1: a row says "2nd try" only when Lantern questioned the first reply; a look at its own picture
+  // is said as that (bench run on 1.18.0: a 35B's pneumatic row, rounds 2 from the look, read "2nd try failed too")
+  btn(d, "Open saved results").click(); await sleep(5);
+  var finp = d.querySelector("input[type=file]"), fx = fs.readFileSync(path.join(__dirname, "fixtures", "bench_run_1180_35b.json"), "utf8");
+  Object.defineProperty(finp, "files", { value: [new w.File([fx], "bench.json", { type: "application/json" })] });
+  finp.onchange(); await sleep(150);
+  var rowsT = Array.prototype.map.call(d.querySelectorAll(".la-tbl tbody tr"), function (tr) { return tr.textContent; });
+  ok("a saved run's rows: the look turn is said as a look, not a failed 2nd try", rowsT.length === 2 && /Saved run, 2026-10-30 12:24/.test(d.body.textContent) &&
+    /saw its picture and kept it/.test(rowsT[0]) && !/2nd try/.test(rowsT[0]) && /fixed on 2nd try \u00b7 saw its picture and kept it/.test(rowsT[1]), rowsT);
   go("chat"); await sleep(20);
   ok("Chat shows which AI answers", /Using on this device: fake perfect/.test(d.body.textContent));
   // Chat renders a model's markdown readably and says when an answer was cut short

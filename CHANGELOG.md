@@ -1,5 +1,53 @@
 # Changelog
 
+## 1.18.1 — The circuit set against the question; pictures painted a square at a time (2026-10-30)
+
+From Adam's full bench run on 1.18.0 with the 35B (120 of 121 scored), and
+the two rows he was unsure of.
+
+- **make-pneumatic failed, and rightly.** The question asks for a cylinder
+  that "returns by itself when it reaches the end of its stroke". The 35B wrote
+  `cylinder C1 double`, `valve V1 C1 5/2 button`, `flow F1 C1 retract`, which
+  is a right circuit for another question: C1 extends while the button is held
+  and returns on V1's spring when it is let go. Lantern drew that correctly and
+  said what it does, but never set it against the question, so the block was
+  never sent back. **Now a MAKE PNEUMATIC circuit is checked against what the
+  question asks:** a return at the end of the stroke needs a roller the
+  cylinder trips when fully out; a cycle ("keeps going back and forth") needs a
+  roller at each end; two hands ("both buttons pressed together") needs `and`
+  on the second button's line. When the circuit does not do what was asked, it
+  is drawn and shown, and goes back once with the line to add:
+  "...but it returns only when V1's push button is let go (V1's spring): add a
+  roller valve C1 trips when fully out -- roller S1 C1 extended -- and Lantern
+  makes V1 hold its position until the roller sends it back". With that one
+  line the 35B's block passes. A hold-to-extend question, or a single-acting
+  cylinder returning on its spring, is not questioned.
+- **make-sunset-house passed, and should not have.** The first reply ran away:
+  `rect 9 7 2 2 fill blue` and `rect 10 8 1 1 fill blue` written in turn,
+  their x counting up to 52 until the reply was cut off. Lantern's loop check
+  only knew one line repeated, so the AI heard "31 lines are off the grid" and
+  cut the same strip short at x 20, past the frame -- no roof, and the bench
+  passed it because it counted shapes. Now:
+  - **two or three lines written in turn are a loop too**, said as one
+    problem with the one line that paints their area (`rect 9 7 11 2 fill
+    blue`), worked out by Lantern;
+  - **six or more small touching rects of one fill and no outline** are one
+    area painted a square at a time: questioned, with the one line that paints
+    it (a row of outlined bricks is not);
+  - **a rect wholly outside the picture** (`rect 20 8 1 1` starts at its right
+    edge) is off the grid, and rects are cut to the frame when drawn;
+  - **the bench's house needs a roof**: a wall with a tri (or a rect) whose
+    base sits on its top. The 35B's corrected block now fails, questioned.
+- **The bench row says "2nd try" only when Lantern questioned the first
+  reply.** The pneumatic row read "2nd try failed too", but its second round was
+  the AI looking at its own picture (it kept it), not a correction. A look is
+  now said as "saw its picture and kept it" (or "changed it").
+- Re-grading the run's other 22 make rows with 1.18.1 changes nothing.
+- Tests: `tests/pneumatic.js` (the 35B's block questioned, the one-line fix
+  passing, cycles and two hands), `tests/ai_actions.js` (the period-2 loop, the
+  strip, bricks, the frame, the roof), `tests/ai_layer.js` (a saved run's row
+  labels), from `tests/fixtures/bench_run_1180_35b.json` (the run's two rows).
+
 ## 1.18.0 — Pneumatics, control circuits and electronics correct by construction (2026-10-29)
 
 Adam's direction after 1.17.0: every Lantern module should make mistakes

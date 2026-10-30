@@ -11,6 +11,8 @@
 // lines are walked as a check, and what each signal does is said under the
 // drawing. When Lantern questions a block, the correction turn lists each
 // problem and how Lantern reads that kind of block (AI_ACTIONS fixText).
+// Since 1.18.1 the circuit is also set against the question (a return at the
+// end of the stroke, a cycle, two hands), from a 35B's bench reply.
 "use strict";
 var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
 var fs = require("fs"), path = require("path");
@@ -53,16 +55,48 @@ ok("asks(): air is pneumatic; oil is not", P.asks(item.q) && P.asks("Draw a circ
 var g = L.aiBench.grade(item, item.ideal, { made: make(item.ideal, item.q) });
 ok("the bench's model answer is MAKE PNEUMATIC, and passes", /^MAKE PNEUMATIC/.test(item.ideal) && g.pass, g.why);
 var noRet = make(blk("Push", ["cylinder C1 double", "valve V1 C1 5/2", "button S1 V1"]), item.q);
-ok("...a push button alone (nothing returns the cylinder at the end of its stroke) is drawn, and fails the bench", noRet.ok &&
-  /nothing returns the cylinder/.test(L.aiBench.grade(item, "x", { made: noRet }).why), L.aiBench.grade(item, "x", { made: noRet }).why);
+ok("...a push button alone (nothing returns the cylinder at the end of its stroke) is drawn, but questioned against the question, with the roller line (1.18.1)",
+  !noRet.ok && noRet.plan && noRet.preview && noRet.problems.length === 1 && /returns only when S1 is let go \(V1\u2019s spring\)/.test(noRet.problems[0]) && /-- roller S2 C1 extended --/.test(noRet.problems[0]) &&
+  /^Lantern still questions it: the question asks for C1 to return by itself/.test(L.aiBench.grade(item, "x", { made: noRet }).why), noRet.problems);
 var hand = make(blk("Push", ["cylinder C1 double", "valve V1 C1 5/2 button", "roller S2 C1 extended"]), item.q);
 ok("...a valve worked by its own push button, returned by the roller, passes too", hand.ok && L.aiBench.grade(item, "x", { made: hand }).pass && hand.plan.circuit.acts[0].valve.left === "button" &&
   hand.plan.circuit.acts[0].valve.right === "pilot", hand.plan && hand.plan.circuit.acts[0]);
-var oldForm = make("MAKE SCHEMATIC: Air\nmode pneumatic\npart K1 compressor \"6 bar\"\npart V1 valve \"5/2 solenoid\"\npart C1 cylinder\npart E1 exhaust\nwire K1 V1\nwire V1 C1\nwire V1 E1\nEND", item.q);
+
+// --- 1.18.1: the bench run on 1.18.0 (a 35B, tests/fixtures/bench_run_1180_35b.json) -- a right circuit for
+// another question: hold to extend, spring return, when the question asks for a return at the end of the stroke.
+// Lantern drew it and said what it does, but never set that against the question. Now it does, and the block
+// goes back once, its drawing shown, with the line to add.
+var RUN = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "bench_run_1180_35b.json"), "utf8"));
+var r35 = RUN.rows.filter(function (r) { return r.id === "make-pneumatic"; })[0], m35 = make(r35.reply, item.q);
+ok("the 35B's block (hold to extend, spring return) is drawn and said as what it does", m35.plan && m35.preview &&
+  /C1 extends while V1\u2019s push button is held; the spring returns V1 and C1 retracts when let go/.test(m35.summary), m35.summary);
+ok("...and questioned against the question: it returns when the button is let go, not at the end of its stroke; the roller line is given", !m35.ok && m35.problems.length === 1 &&
+  /^the question asks for C1 to return by itself at the end of its stroke, but it returns only when V1\u2019s push button is let go \(V1\u2019s spring\): add a roller valve C1 trips when fully out -- roller S1 C1 extended --/.test(m35.problems[0]), m35.problems);
+ok("...the bench fails it as questioned", /^Lantern still questions it: the question asks for C1/.test(L.aiBench.grade(item, r35.reply, { made: m35 }).why));
+var fixed35 = r35.reply.replace("flow F1", "roller S1 C1 extended\nflow F1"), f35 = make(fixed35, item.q);
+ok("...that one line added, it passes: V1 holds until the roller sends it back", f35.ok && L.aiBench.grade(item, fixed35, { made: f35 }).pass &&
+  /S1 \(roller, C1 fully out\) switches it back: C1 retracts \(V1 stays put between signals\)/.test(f35.summary), [f35.problems, f35.summary]);
+ok("...the 35B's block for a hold-to-extend question is not questioned",
+  make(r35.reply, "Draw a pneumatic circuit: a push button extends a double-acting cylinder while it is held, and the cylinder retracts when the button is let go.").ok);
+ok("...nor a single-acting cylinder that returns by itself on its spring",
+  make(blk("Spring", ["cylinder C1 single", "valve V1 C1 3/2 button"]), "Draw a pneumatic circuit where a single-acting cylinder extends when a button is pressed and returns by itself.").ok);
+var QC = "Draw a pneumatic circuit where a double-acting cylinder keeps going back and forth on its own after a start button is pressed.";
+var cy1 = make(blk("Cycle", ["cylinder C1 double", "valve V1 C1 5/2 pilot", "button S1 V1", "roller S2 C1 extended"]), QC);
+ok("asked to keep going back and forth: a roller at one end only is questioned, with the other end's line", !cy1.ok && cy1.problems.length === 1 &&
+  /keep going back and forth, which needs a roller at each end: add roller S3 C1 retracted \(sends it out again\)$/.test(cy1.problems[0]), cy1.problems);
+var cy2 = make(blk("Cycle", ["cylinder C1 double", "valve V1 C1 5/2 pilot", "button S1 V1", "roller S2 C1 extended", "roller S3 C1 retracted"]), QC);
+ok("...with both, it is drawn unquestioned", cy2.ok, cy2.problems);
+var QT = "Draw a two-hand safety pneumatic circuit: both push buttons must be pressed together to extend a cylinder.";
+var th1 = make(blk("Two hand", ["cylinder C1 double", "valve V1 C1 5/2 pilot", "button S1 V1", "button S2 V1"]), QT);
+ok("asked for both buttons together: either one working the valve (a shuttle) is questioned, with the and to write", !th1.ok &&
+  /either one works the valve here: write and on the second button\u2019s line \(button S2 V1 and\)/.test(th1.problems[0]), th1.problems);
+var th2 = make(blk("Two hand", ["cylinder C1 double", "valve V1 C1 5/2 pilot", "button S1 V1", "button S2 V1 and"]), QT);
+ok("...with and, the two-pressure valve is drawn, unquestioned", th2.ok && /two-pressure valve V2/.test(th2.summary), th2.summary);
+var oldForm = make("MAKE SCHEMATIC: Air\nmode pneumatic\npart K1 compressor \"6 bar\"\npart V1 valve \"5/2 solenoid\"\npart C1 cylinder\npart E1 exhaust\nwire K1 V1\nwire V1 C1\nwire V1 E1\nEND", QP);
 ok("the older MAKE SCHEMATIC pneumatic form is piped by Lantern: a 5/2 solenoid valve working C1", oldForm.ok && oldForm.plan.mode === "pneumatic" && oldForm.plan.circuit.verified &&
   oldForm.plan.circuit.acts[0].valve.way === "5/2" && oldForm.plan.circuit.acts[0].valve.left === "solenoid", oldForm.problems);
 ok("...the test of 1.12 (compressor, valve, cylinder) still makes a pneumatic plan", make("MAKE SCHEMATIC: Air\npart K1 compressor\npart V1 valve\npart C1 cylinder\nwire K1 V1\nwire V1 C1\nEND", "").plan.mode === "pneumatic");
-var roles = make("MAKE SCHEMATIC: Air clamp\ncylinder C1 double\nvalve V1 C1 5/2 button\nEND", item.q);
+var roles = make("MAKE SCHEMATIC: Air clamp\ncylinder C1 double\nvalve V1 C1 5/2 button\nEND", QP);
 ok("role lines in a MAKE SCHEMATIC block, asked about air, are pneumatic", roles.ok && roles.plan.mode === "pneumatic", roles.problems);
 
 // --- the lines, walked ------------------------------------------------------------------------------------
@@ -168,6 +202,11 @@ ok("...a kind with no hint of its own gets its instruction lines (up to END)", /
   var last = sent[1][sent[1].length - 1].content;
   ok("the bench's correction turn is fixText, and the corrected block passes", /a pump is hydraulic/.test(last) && /Lantern reads a MAKE PNEUMATIC block/.test(last) && out.fixed &&
     L.aiBench.grade(item, out.text, out).pass, last);
+  sent = []; replies = [r35.reply, fixed35];
+  var o35 = await act.solve(item.q, function (msgs) { sent.push(msgs.slice()); return Promise.resolve(replies.shift()); });
+  var back35 = sent[1] ? sent[1][sent[1].length - 1].content : "";
+  ok("bench: the 35B's block goes back once with the roller line, and the corrected one passes", o35.rounds === 2 && o35.fixed && /roller S1 C1 extended/.test(back35) &&
+    /Lantern reads a MAKE PNEUMATIC block/.test(back35) && L.aiBench.grade(item, o35.text, o35).pass, [o35.rounds, o35.kind, back35.slice(0, 400)]);
 
   // --- Draw: the ISO pneumatic symbols in the palette ----------------------------------------------------
   var pm = L.drawModes.filter(function (m) { return m.id === "pneumatic"; })[0], labels = pm.symbols.map(function (s) { return s.label; });
