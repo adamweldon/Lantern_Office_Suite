@@ -6769,6 +6769,156 @@ Lantern.drawSymbols = (function () {
 // MODULE: DRAW_HYDRAULIC_ISO - END
 // ===========================================================================
 // ===========================================================================
+// MODULE: DRAW_PNEUMATIC_ISO - START
+// Depends: DRAW_SYMBOLS (Lantern.drawSymbols), DRAW_HYDRAULIC_ISO
+//          (Lantern.hydSym: the cylinder, flow control, check valve and
+//          gauge, which are drawn the same for air), DRAW_PNEUMATIC (the
+//          Pneumatics mode in Lantern.drawModes) -- feature-detected
+// Exports: Lantern.pneuSym = {valve, supply, compressor, frl, exhaust,
+//          shuttle, twin, motor, cylinder, flow, check, gauge} -- each (x, y,
+//          colour, opts) -> {g: a group shape, ports: {name: [x, y]}}; adds
+//          the symbols to Draw's Pneumatics palette
+// ===========================================================================
+// ISO 1219 pneumatic symbols with their ports numbered the ISO 5599 way
+// (1.18.0), so that Lantern's pneumatic builder (AI_PNEUMATIC) joins each
+// line where it belongs: 1 the supply, 2 and 4 the working ports, 3 and 5
+// the exhausts (3 for 2, 5 for 4), 12 and 14 the air signals (14 joins 1
+// to 4, 12 joins 1 to 2). A valve is drawn as its envelopes, one square per
+// position, with the ports on the one it rests in; air flows are open
+// triangles (hydraulics fills them). Signal lines are dashed. Every symbol
+// is drawn the way a pneumatic circuit is laid out: supply at the bottom,
+// signal valves above it, the valves that work the cylinders above those,
+// the cylinders on top.
+(function () {
+  var L = window.Lantern, D = L && L.drawSymbols;
+  if (!D) return;
+  var W = 3, W2 = 2, E = 48, H = 24, GREY = "#64748b";
+  function dash(s) { s.d = [6, 4]; return s; }
+  // what each envelope shows. 5/2 and 5/3: "a14" (1 to 4, 2 to 3), "a12"
+  // (1 to 2, 4 to 5), the 5/3 centres "closed", "exhaust" (2 and 4 to
+  // exhaust) and "pressure" (1 to 2 and 4); 3/2: "on" (1 to 2) and "off"
+  // (2 to 3). Ports on a 5-port envelope: 4 and 2 on top, 5, 1 and 3 below.
+  function paths(c, cx, y, kind) {
+    var t = y - H, b = y + H, s = [];
+    function arr(x1, y1, x2, y2) { s.push(D.arrow(c, W2, x1, y1, x2, y2)); }
+    function blk(x, edge, dir) { var y2 = edge + dir * 9; s.push(D.ln(c, W2, x, edge, x, y2), D.ln(c, W2, x - 5, y2, x + 5, y2)); }
+    if (kind === "a14") { arr(cx, b, cx - 12, t); arr(cx + 12, t, cx + 16, b); blk(cx - 16, b, -1); }
+    else if (kind === "a12") { arr(cx, b, cx + 12, t); arr(cx - 12, t, cx - 16, b); blk(cx + 16, b, -1); }
+    else if (kind === "exhaust") { arr(cx - 12, t, cx - 16, b); arr(cx + 12, t, cx + 16, b); blk(cx, b, -1); }
+    else if (kind === "pressure") { s.push(D.ln(c, W2, cx, b, cx, y + 4, cx - 12, y - 4, cx - 12, t), D.ln(c, W2, cx, y + 4, cx + 12, y - 4, cx + 12, t)); blk(cx - 16, b, -1); blk(cx + 16, b, -1); }
+    else if (kind === "on") { arr(cx - 12, b, cx - 12, t); blk(cx + 12, b, -1); }
+    else if (kind === "off") { arr(cx - 12, t, cx + 12, b); blk(cx - 12, b, -1); }
+    else { blk(cx - 12, t, 1); blk(cx + 12, t, 1); blk(cx - 16, b, -1); blk(cx, b, -1); blk(cx + 16, b, -1); }   // closed
+    return s;
+  }
+  // how a valve is worked, on one side (dir -1 left, 1 right), upper half.
+  // An air signal (pilot) comes in at the port the side names (14 or 12).
+  function operator(c, xe, y, dir, act) {
+    var yy = y - 9;
+    if (act === "solenoid") return [D.rect(c, W2, Math.min(xe, xe + dir * 20), y - 18, 20, 16), D.ln(c, W2, Math.min(xe, xe + dir * 20), y - 2, Math.max(xe, xe + dir * 20), y - 18)];
+    if (act === "pilot") return [dash(D.ln(c, W2, xe + dir * 28, yy, xe + dir * 9, yy)), D.tri(c, W2, [xe, yy], [xe + dir * 9, yy - 5], [xe + dir * 9, yy + 5], false)];
+    if (act === "button") return [D.ln(c, W2, xe, yy, xe + dir * 14, yy), D.ln(c, W2, xe + dir * 14, yy - 7, xe + dir * 14, yy + 7), D.circ(c, W2, xe + dir * 19, yy, 5)];
+    if (act === "roller") return [D.ln(c, W2, xe, yy, xe + dir * 12, yy), D.circ(c, W2, xe + dir * 18, yy, 6), D.circ(c, W2, xe + dir * 18, yy, 1.5, true)];
+    if (act === "pedal") return [D.ln(c, W2, xe, yy, xe + dir * 10, yy), D.ln(c, W2, xe + dir * 10, yy - 8, xe + dir * 10, yy + 8, xe + dir * 24, yy - 2)];
+    return [D.ln(c, W2, xe, yy, xe + dir * 14, yy, xe + dir * 22, yy - 10), D.circ(c, W2, xe + dir * 23, yy - 12, 2.5, true)];   // lever
+  }
+  function spring(c, xe, y, dir) { return D.zig(c, W2, xe, y + 11, xe + dir * 22, 5, 4); }
+
+  // valve(x, y, c, {way: 5/2 | 5/3 | 3/2, centre, left, right, tags}):
+  // left and right are what works each side (lever, button, pedal, roller,
+  // solenoid or pilot; right may be "spring"); ports 1 (and 3, 5) below,
+  // 2 (and 4) above, 14 and 12 at the ends when worked by air
+  function valve(x, y, c, o) {
+    o = o || {};
+    var way = o.way === "5/3" || o.way === "3/2" ? o.way : "5/2", n = way === "5/3" ? 3 : 2, x0 = x - n * E / 2, s = [], k;
+    var kinds = way === "5/3" ? ["a14", o.centre || "closed", "a12"] : way === "5/2" ? ["a14", "a12"] : ["on", "off"];
+    for (k = 0; k < n; k++) { s.push(D.rect(c, W, x0 + k * E, y - H, E, E)); s = s.concat(paths(c, x0 + k * E + E / 2, y, kinds[k])); }
+    var r = x0 + E + E / 2, ports = {};
+    if (way === "3/2") { ports["2"] = [r - 12, y - H - 8]; ports["1"] = [r - 12, y + H + 14]; ports["3"] = [r + 12, y + H + 14]; }
+    else { ports["4"] = [r - 12, y - H - 8]; ports["2"] = [r + 12, y - H - 8]; ports["5"] = [r - 16, y + H + 14]; ports["1"] = [r, y + H + 14]; ports["3"] = [r + 16, y + H + 14]; }
+    Object.keys(ports).forEach(function (p) {
+      var q = ports[p], low = q[1] > y;
+      s.push(D.ln(c, W, q[0], low ? y + H : y - H, q[0], q[1]));
+      s.push(D.txt(GREY, q[0] - 6, low ? y + H + 6 : q[1] - 2, p, 9));
+    });
+    var left = o.left || "button", right = o.right || "spring", xl = x0, xr = x0 + n * E, tags = o.tags || {};
+    s = s.concat(operator(c, xl, y, -1, left));
+    if (right !== "spring") s = s.concat(operator(c, xr, y, 1, right));
+    if (way === "5/3" || right === "spring") s.push(spring(c, xr, y, 1));
+    if (way === "5/3") s.push(spring(c, xl, y, -1));
+    var sig = way === "3/2" ? ["12", "10"] : ["14", "12"];
+    if (left === "pilot") { ports[sig[0]] = [xl - 28, y - 9]; s.push(D.txt(GREY, xl - 28, y - 19, sig[0], 9)); }
+    if (right === "pilot") { ports[sig[1]] = [xr + 28, y - 9]; s.push(D.txt(GREY, xr + 28, y - 19, sig[1], 9)); }
+    if (tags.left) s.push(D.txt(GREY, xl - 10, y - 26, tags.left, 10));
+    if (tags.right) s.push(D.txt(GREY, xr + 10, y - 26, tags.right, 10));
+    return { g: D.grp(s), ports: ports, left: xl - 30, right: xr + 30 };
+  }
+  // the compressed air supply: an energy source, its triangle open (air)
+  function supply(x, y, c) {
+    return { g: D.grp([D.circ(c, W, x, y, 12), D.tri(c, W2, [x - 6, y + 4], [x + 6, y + 4], [x, y - 7], false), D.ln(c, W, x, y - 12, x, y - 22)]), ports: { out: [x, y - 22] } };
+  }
+  // a compressor turned by an electric motor (its shaft to the left)
+  function compressor(x, y, c) {
+    var s = [D.circ(c, W, x, y, 18), D.tri(c, W2, [x - 7, y - 6], [x + 7, y - 6], [x, y - 17], false), D.ln(c, W, x, y - 18, x, y - 28),
+      D.ln(c, W2, x - 18, y - 3, x - 36, y - 3), D.ln(c, W2, x - 18, y + 3, x - 36, y + 3), D.circ(c, W, x - 52, y, 15), D.txt(c, x - 52, y + 1, "M", 13)];
+    return { g: D.grp(s), ports: { out: [x, y - 28] } };
+  }
+  // the service unit: filter, pressure regulator and its gauge in one
+  // dash-dotted box -- air in below, out above
+  function frl(x, y, c) {
+    var s = [D.ln(c, W, x, y + 56, x, y + 38), D.ln(c, W, x, y + 10, x + 14, y + 24, x, y + 38, x - 14, y + 24, x, y + 10), dash(D.ln(c, W2, x - 10, y + 24, x + 10, y + 24)),
+      D.ln(c, W, x, y + 10, x, y - 8), D.rect(c, W, x - 14, y - 36, 28, 28), D.arrow(c, W2, x - 4, y - 11, x - 4, y - 33),
+      D.zig(c, W2, x - 14, y - 22, x - 34, 5, 4), D.arrow(c, W2, x - 36, y - 12, x - 14, y - 31),
+      dash(D.ln(c, W2, x, y - 44, x + 22, y - 44, x + 22, y - 15, x + 14, y - 15)),
+      D.ln(c, W, x, y - 36, x, y - 92), D.ln(c, W2, x, y - 58, x + 40, y - 58, x + 40, y - 66), D.circ(c, W, x + 40, y - 76, 10), D.arrow(c, W2, x + 35, y - 71, x + 46, y - 82)];
+    var box = dash(D.rect(c, 1.5, x - 44, y - 88, 102, 136)); box.d = [10, 3, 2, 3];
+    s.push(box);
+    return { g: D.grp(s), ports: { in: [x, y + 56], out: [x, y - 92] } };
+  }
+  // an exhaust to the open air: an open triangle at the end of the port
+  function exhaust(x, y, c) { return { g: D.tri(c, W2, [x - 6, y], [x + 6, y], [x, y + 10], false), ports: { P: [x, y] } }; }
+  // shuttle(x, y, c): OR -- either air signal in (left or right) passes
+  // out on top, the ball shutting off the other side
+  function body(x, y, c, inside) {
+    var s = [D.rect(c, W, x - 26, y - 9, 52, 18), D.ln(c, W, x - 26, y, x - 40, y), D.ln(c, W, x + 26, y, x + 40, y), D.ln(c, W, x, y - 9, x, y - 23)].concat(inside);
+    return { g: D.grp(s), ports: { a: [x - 40, y], b: [x + 40, y], out: [x, y - 23] } };
+  }
+  function shuttle(x, y, c) {
+    return body(x, y, c, [D.ln(c, W2, x - 22, y - 7, x - 16, y, x - 22, y + 7), D.ln(c, W2, x + 22, y - 7, x + 16, y, x + 22, y + 7), D.circ(c, W2, x + 10, y, 5)]);
+  }
+  // twin(x, y, c): AND (the two-pressure valve) -- out only while both
+  // signals are in
+  function twin(x, y, c) {
+    return body(x, y, c, [D.ln(c, W2, x - 22, y - 7, x - 16, y, x - 22, y + 7), D.ln(c, W2, x + 22, y - 7, x + 16, y, x + 22, y + 7), D.rect(c, W2, x - 9, y - 5, 18, 10, true)]);
+  }
+  // an air motor that turns both ways (open triangles pointing in)
+  function motor(x, y, c) {
+    var s = [D.circ(c, W, x, y, 22), D.tri(c, W2, [x - 7, y - 20], [x + 7, y - 20], [x, y - 9], false), D.tri(c, W2, [x - 7, y + 20], [x + 7, y + 20], [x, y + 9], false),
+      D.ln(c, W, x - 48, y + 26, x - 48, y, x - 22, y), D.ln(c, W, x + 48, y + 26, x + 48, y, x + 22, y)];
+    return { g: D.grp(s), ports: { A: [x - 48, y + 26], B: [x + 48, y + 26] } };
+  }
+  var HS = L.hydSym || {};
+  var SYM = { valve: valve, supply: supply, compressor: compressor, frl: frl, exhaust: exhaust, shuttle: shuttle, twin: twin, motor: motor,
+    cylinder: HS.cylinder, flow: HS.flow, check: HS.check, gauge: HS.gauge };
+  window.Lantern.pneuSym = SYM;
+
+  // Draw's Pneumatics palette: the new symbols beside the old ones
+  var mode = (window.Lantern.drawModes || []).filter(function (m) { return m.id === "pneumatic"; })[0];
+  if (!mode) return;
+  function g(f, o) { return function (x, y, c) { return f(x, y, c, o).g; }; }
+  var add = [["Valve 5/2 button", g(valve, { way: "5/2", left: "button" })], ["Valve 5/2 air pilot", g(valve, { way: "5/2", left: "pilot" })],
+    ["Valve 5/2 double pilot", g(valve, { way: "5/2", left: "pilot", right: "pilot" })], ["Valve 5/2 solenoid", g(valve, { way: "5/2", left: "solenoid" })],
+    ["Valve 5/3 closed centre", g(valve, { way: "5/3", left: "pilot", right: "pilot" })], ["Valve 3/2 push button", g(valve, { way: "3/2", left: "button" })],
+    ["Valve 3/2 roller", g(valve, { way: "3/2", left: "roller" })], ["Air supply", g(supply)], ["Service unit (FRL)", g(frl)],
+    ["Shuttle valve (OR)", g(shuttle)], ["Two-pressure valve (AND)", g(twin)], ["Air motor", g(motor)]];
+  if (HS.cylinder) add.push(["Cylinder, double-acting", g(HS.cylinder, {})], ["One-way flow control", g(HS.flow)]);
+  var at = mode.symbols.length - 1;   // before Label
+  add.forEach(function (a) { if (!mode.symbols.some(function (s) { return s.label === a[0]; })) mode.symbols.splice(at++, 0, { label: a[0], make: a[1] }); });
+})();
+// ===========================================================================
+// MODULE: DRAW_PNEUMATIC_ISO - END
+// ===========================================================================
+// ===========================================================================
 // MODULE: DRAW_MECHANICAL - START
 // Depends: DRAW_SYMBOLS, DRAW
 // Exports: (none) -- registers the Mechanical mode via Lantern.drawModes
@@ -18250,7 +18400,7 @@ Lantern.RFB = (function () {
         if (!made.ok && !questioned) {
           questioned = true;
           note("Lantern checked the MAKE " + made.block.kind + " block: " + made.problems.join("; ") + ". Asking the AI again\u2026");
-          msgs.push({ role: "user", content: "Lantern checked your MAKE " + made.block.kind + " block: " + made.problems.join("; ") +
+          msgs.push({ role: "user", content: window.Lantern.aiAct.fixText ? window.Lantern.aiAct.fixText(made, q) : "Lantern checked your MAKE " + made.block.kind + " block: " + made.problems.join("; ") +
             ".\nReply with the corrected block only (MAKE ... END)." });
           continue;
         }
@@ -25457,6 +25607,22 @@ Lantern.RFB = (function () {
     });
     return out.join("\n").replace(/^\s+|\s+$/g, "");
   }
+  // fixText(made, question) -> what the model is told when Lantern finds
+  // problems in its block (1.18.0, Adam: Lantern shows the AI where it went
+  // wrong, so its second try is the right one): each problem on a line of
+  // its own -- the line that was wrong and what to write instead -- then how
+  // Lantern reads that kind of block (the action's fixHint(block, made,
+  // question), when it has one), so a small model that has lost the
+  // instructions far back in its context has them again where it looks.
+  function fixText(made, q) {
+    var b = made.block || {}, ps = made.problems || [], hint = null;
+    try { hint = b.action && typeof b.action.fixHint === "function" ? b.action.fixHint(b, made, q) : null; } catch (e) { hint = null; }
+    var lines = ["Lantern checked your MAKE " + b.kind + " block" + (ps.length > 1 ? " and found " + ps.length + " things to fix:" : ": " + (ps[0] || "") + ".")];
+    if (ps.length > 1) ps.forEach(function (p, i) { lines.push((i + 1) + ". " + p); });
+    if (hint && hint.length) lines = lines.concat(hint);
+    lines.push("Reply with the corrected block only (MAKE " + b.kind + ": " + (b.title || "<title>") + " ... END).");
+    return lines.join("\n");
+  }
   // The look turn: what the model is told along with the picture.
   var LOOKS = /\bLOOKS RIGHT\b/i;
   function lookText(res, q) {
@@ -25499,8 +25665,7 @@ Lantern.RFB = (function () {
     if (made && !made.ok) {
       out.kind = "questioned"; out.rejected = made.problems.join("; ");
       msgs.push({ role: "assistant", content: made.trimmed || text });
-      msgs.push({ role: "user", content: "Lantern checked your MAKE " + made.block.kind + " block: " + out.rejected +
-        ".\nReply with the corrected block only (MAKE ... END)." });
+      msgs.push({ role: "user", content: fixText(made, q) });
       var text2 = await call(msgs); out.rounds++;
       var made2 = build(text2, q);
       if (made2) { made = made2; out.text = text2; out.fixed = made2.ok; }
@@ -25554,7 +25719,7 @@ Lantern.RFB = (function () {
     return box;
   }
   window.Lantern.aiAct = { find: find, relevant: relevant, prompt: prompt, build: build, fromReply: fromReply, inReply: inReply, replyCode: replyCode, replyCodeText: replyCodeText, solve: solve, view: view, lookText: lookText, LOOKS: LOOKS,
-    runaway: runaway, runawayText: runawayText, compact: compact };
+    runaway: runaway, runawayText: runawayText, compact: compact, fixText: fixText };
 })();
 // ===========================================================================
 // MODULE: AI_ACTIONS - END
@@ -25999,7 +26164,14 @@ Lantern.RFB = (function () {
       "wire R1 D1",
       "wire D1 V1",
       "END"],
-    build: function (block, ctx) { return schematic(block, ctx); }
+    build: function (block, ctx) { return schematic(block, ctx); },
+    // the correction turn (AI_ACTIONS fixText): how Lantern reads the block
+    fixHint: function () {
+      return ["Lantern reads a MAKE SCHEMATIC block line by line, like this:",
+        "part <ID> <type> \x22<value or name>\x22   one line per part; the types are listed below",
+        "wire <ID> <ID>             one line per connection, from part to part the way the current flows; close the loop back to the source",
+        "Electrical types: " + Object.keys(PARTS.electrical).join(", ") + "."];
+    }
   });
 })();
 // ===========================================================================
@@ -26448,6 +26620,7 @@ Lantern.RFB = (function () {
         // words before the part's name say what kind: "directional valve",
         // "pilot operated check valve", "double acting cylinder", "hydraulic motor"
         if (ws.slice(0, 3).some(function (x) { return x.w && NOTYET.test(x.w); })) { problems.push("\u201c" + line + "\u201d is not a part Lantern draws yet (it draws: " + DRAWS + ")"); return; }
+        if (/^(compressor|exhaust|silencer|muffler|air|frl)$/i.test(w0)) { problems.push("\u201c" + line + "\u201d: a " + w0.toLowerCase() + " is pneumatic -- an oil circuit has a pump and tank (drawn for you); for compressed air write MAKE PNEUMATIC"); return; }
         for (var j = 1; j < Math.min(4, ws.length) && !role; j++) {
           var wj = ws[j].w ? ws[j].w.toLowerCase() : "", rj = ROLE[wj];
           if (rj && rj !== "note" && rj !== "pipe" && rj !== "part" && rj !== "mode") {
@@ -26544,7 +26717,12 @@ Lantern.RFB = (function () {
       if (kind === "flow") {
         var out = it.a.meter !== "in", ext = it.a.stroke !== "retract";
         leg = it.a.leg || (ext === out ? "B" : "A");
-        if (a.single && leg === "B") { leg = "A"; changed.push(it.id + " is on " + a.id + "\u2019s only line, A"); }
+        if (a.single) {   // one line: oil in to extend (meter-in sets that speed), out to retract (meter-out) -- 1.18.0
+          var want = ext ? "in" : "out";
+          if (it.a.meter && it.a.meter !== want) changed.push(it.id + " meters the oil " + (ext ? "going in (meter-in): " + a.id + " is single-acting, so its extend speed is set on the oil filling it" : "leaving (meter-out): " + a.id + "\u2019s spring pushes the oil out on the way back"));
+          else if (leg === "B") changed.push(it.id + " is on " + a.id + "\u2019s only line, A");
+          leg = "A"; out = want === "out";
+        }
         // the throttle meters the oil leaving the cylinder (meter-out: down
         // this line, toward the valve) or entering it (meter-in: up); the
         // check beside it lets oil the other way past freely
@@ -26731,7 +26909,7 @@ Lantern.RFB = (function () {
   // what the AI is told when the question is about hydraulics
   var PROMPT = [
     "MAKE HYDRAULIC: <title>   -- a hydraulic circuit. Name the parts and what each does; Lantern draws every pipe and port.",
-    "pump P1 \x22<flow>\x22             the power unit (tank, strainer, electric motor, pump) is always drawn",
+    "pump P1 \x22<flow>\x22               the power unit (tank, strainer, electric motor, pump) is always drawn",
     "relief R1 \x22<pressure>\x22       the relief valve on the pump line (drawn even if you leave it out)",
     "cylinder C1 double \x22<name>\x22  a double-acting cylinder; single = single-acting, spring return",
     "motor M1 \x22<name>\x22            a hydraulic motor (turns both ways)",
@@ -26770,9 +26948,655 @@ Lantern.RFB = (function () {
     return l;
   });
   act.promptFor = function (q) { return asks(q) ? PROMPT : base; };
+  // the correction turn (AI_ACTIONS fixText): how Lantern reads the block
+  var HINT = PROMPT.slice(1, PROMPT.indexOf("END")), hintBefore = act.fixHint;
+  act.fixHint = function (block, made, q) {
+    if (isHydraulic(block)) return ["Lantern reads a MAKE HYDRAULIC block line by line, like this:"].concat(HINT);
+    return typeof hintBefore === "function" ? hintBefore(block, made, q) : null;
+  };
+  window.Lantern.aiHydraulic.HINT = HINT;
 })();
 // ===========================================================================
 // MODULE: AI_HYDRAULIC - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_PNEUMATIC - START
+// Depends: AI_SCHEMATIC (the schematic action in Lantern.aiActions),
+//          AI_DRAW (Lantern.aiDraw.result), DRAW_PNEUMATIC_ISO
+//          (Lantern.pneuSym), AI_SCHEMATIC_MORE (noteText) -- feature-detected
+// Exports: Lantern.aiPneumatic = {isPneumatic(block, question), parse(block),
+//          circuit(parsed) -> {acts, problems, added, changed, steps},
+//          layout(circuit, title) -> {shapes, pipes, parts}, verify(circuit,
+//          layout) -> [problems], build(block, ctx), PROMPT, HINT, asks(q)}
+// ===========================================================================
+// Pneumatic circuits the AI asks for are drawn by Lantern, correct by
+// construction (1.18.0) -- the way hydraulic circuits are (AI_HYDRAULIC).
+// The AI says WHAT the circuit has and what each part does, never a line or
+// a port number:
+//     MAKE PNEUMATIC: Push to extend, automatic return
+//     cylinder C1 double
+//     valve V1 C1 5/2
+//     button S1 V1
+//     roller S2 C1 extended
+//     END
+// Lantern draws the one correct circuit, laid out the ISO 1219-2 way:
+// the air supply and service unit (filter, regulator, gauge) at the bottom,
+// the supply line along the bottom to every valve's 1, the signal valves
+// (push buttons, rollers) above it, the valves that work the cylinders above
+// those -- 4 to the cap end, 2 to the rod end, 3 and 5 to exhaust -- and the
+// cylinders on top, with each roller's mark at the end of stroke that trips
+// it. A signal goes to 14 (what works the valve) or 12 (what returns it); a
+// valve signalled both ways keeps its position (no spring). Two signals to
+// one side are never teed together (the air would blow out of the other
+// valve's exhaust): Lantern joins them with a shuttle valve (OR) or, when
+// the AI says "and" (or one is the cylinder's home roller), a two-pressure
+// valve (AND), and says so. What the AI leaves out it gets by default (a 5/2
+// worked by a push button, a 3/2 for a single-acting cylinder, meter-out
+// speed control) and what cannot work it changes and says so. Then verify()
+// walks the lines -- supply to every valve's 1, each exhaust to the air,
+// each cylinder port to its own valve, each signal to its own pilot port --
+// and Lantern says, under the drawing, what each signal does.
+// The older MAKE SCHEMATIC form with "mode pneumatic" (compressor, valve,
+// cylinder, exhaust and wires) is read for its parts, as for hydraulics.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var INK = "#1b2430", NOTE = "#334155", GREY = "#64748b";
+  var ROLES = {
+    supply: "supply compressor", frl: "frl service conditioning", cylinder: "cylinder ram actuator", motor: "motor",
+    valve: "valve dcv spool directional", button: "button pushbutton push-button start stop pedal foot", roller: "roller limit trip cam",
+    flow: "flow throttle needle speed", gauge: "gauge", or: "shuttle", and: "twin",
+    implied: "exhaust exhausts silencer silencers muffler mufflers filter regulator lubricator receiver reservoir fitting tubing",
+    hydraulic: "pump oil relief accumulator", note: "note text label", mode: "mode", part: "part", pipe: "wire pipe connect line hose tube"
+  };
+  var ROLE = {};
+  Object.keys(ROLES).forEach(function (r) { ROLES[r].split(" ").forEach(function (w) { ROLE[w] = r; }); });
+  var IDRE = /^\d?[A-Za-z]{1,3}\d{1,3}$/;
+  var NOTYET = /^(timer|delay|time-delay|sequence|quick-exhaust|quick|vacuum|venturi|ejector|gripper|proportional|servo|counter|reed|proximity|sensor|pressure-switch|non-return|check)$/i;
+  var DRAWS = "supply, cylinder, motor, valve, button, pedal, roller, flow, gauge";
+  function words(line) {
+    var out = [], re = /\x22([^\x22]*)\x22|\u201c([^\u201d]*)\u201d|(\S+)/g, m;
+    while ((m = re.exec(line))) out.push(m[1] != null ? { q: m[1] } : m[2] != null ? { q: m[2] } : { w: m[3] });
+    return out;
+  }
+  // what a word says about a part of this role: {key: value}
+  function attr(w, role) {
+    w = String(w).toLowerCase().replace(/[.,;:]+$/, "");
+    var m = /^([2345])\x2F([23])$/.exec(w);
+    if (m) return { way: m[1] + "/" + m[2] };
+    if (/^(closed|blocked|closed-centre|closed-center)$/.test(w)) return { centre: "closed" };
+    if (/^(exhaust|exhausted|open|vented|float|floating|open-centre|open-center|exhaust-centre|exhaust-center)$/.test(w)) return { centre: "exhaust" };
+    if (/^(pressure|pressurised|pressurized|pressure-centre|pressure-center)$/.test(w)) return { centre: "pressure" };
+    if (/^(double-pilot|double-solenoid|bistable|memory|impulse|detent)$/.test(w)) return w === "double-solenoid" ? { act: "solenoid", bistable: true } : w === "double-pilot" ? { act: "pilot", bistable: true } : { bistable: true };
+    if (/^(lever|manual|hand|handle)$/.test(w)) return { act: "lever" };
+    if (/^(button|push|push-button|pushbutton|palm|mushroom)$/.test(w)) return { act: "button" };
+    if (/^(pedal|foot|treadle)$/.test(w)) return { act: "pedal" };
+    if (/^(solenoid|solenoids|electric|electrical|sol|electro)$/.test(w)) return { act: "solenoid" };
+    if (/^(pilot|piloted|pilot-operated|air-pilot|air-piloted)$/.test(w)) return { act: "pilot" };
+    if (/^(roller|cam|trip)$/.test(w) && role === "valve") return { act: "roller" };
+    if (/^(single|single-acting|spring-return)$/.test(w)) return { single: true };
+    if (/^(double|double-acting)$/.test(w)) return { single: false };
+    if (/^(and|both|two-hand|two-handed)$/.test(w)) return { logic: "and" };
+    if (/^(or|either)$/.test(w)) return { logic: "or" };
+    if (/^(14|12)$/.test(w)) return { side: w };
+    if (role === "roller") {
+      if (/^(extended|extend|out|outstroke|out-stroke|forward|front|end|fully-out|advanced|plus|\+)$/.test(w)) return { pos: "out" };
+      if (/^(retracted|retract|in|instroke|in-stroke|home|back|rear|rest|fully-in|minus|-)$/.test(w)) return { pos: "in" };
+    }
+    if (/^(return|returns|retract|retracts|back|reset|home|reverse)$/.test(w)) return { side: "12", stroke: "retract" };
+    if (/^(extend|extends|advance|advances|set|forward|go|out-stroke|outstroke)$/.test(w)) return { side: "14", stroke: "extend" };
+    if (/^(meter-out|meterout|out)$/.test(w)) return { meter: "out" };
+    if (/^(meter-in|meterin|in)$/.test(w)) return { meter: "in" };
+    if (/^[ab]$/.test(w)) return { leg: w.toUpperCase() };
+    return null;
+  }
+  function merge(p, a) { Object.keys(a).forEach(function (k) { if (p[k] === undefined) p[k] = a[k]; }); }
+  // asks(question): is this about compressed air?
+  var ASK = /\b(pneumatics?|compressed air|air cylinders?|air valves?|air motors?|air supply|compressor|5\x2F2|5\x2F3|shuttle valve|service unit|frl)\b/i;
+  function asks(q) { return ASK.test(String(q || "")); }
+  var HYD_WORD = /\b(pump|oil|relief|tank|accumulator|hydraulics?|4\x2F3)\b/i, PNEU_WORD = /\b(pneumatic|compressor|air|exhaust|silencer|5\x2F2|5\x2F3|button|pushbutton|roller|pedal|shuttle|supply|frl)\b/i;
+  // isPneumatic(block, question): MAKE PNEUMATIC, a schematic in pneumatic
+  // mode, or the role lines of one (no pump, tank or oil; a 5/2, a roller, a
+  // push-button valve, the air supply -- or the question was about air)
+  function isPneumatic(b, q) {
+    if (/^PNEUMATIC/.test(String(b.kind || ""))) return true;
+    if (/^HYDRAULIC/.test(String(b.kind || ""))) return false;
+    var ls = b.lines || [], all = ls.join("\n");
+    if (ls.some(function (l) { return /^\s*mode\s+pneumatics?\s*$/i.test(l); })) return true;
+    if (ls.some(function (l) { return /^\s*mode\s+\w/i.test(l); })) return false;
+    var heads = ls.map(function (l) { return ((/^\s*([\w-]+)/.exec(l) || [])[1] || "").toLowerCase(); });
+    if (heads.indexOf("part") >= 0) return /\bpart\s+\S+\s+(air\s+)?(compressor|exhaust|silencer)\b/i.test(all) && !/\b(battery|resistor|pump|tank)\b/i.test(all);
+    var roley = heads.some(function (h) { return /^(cylinder|valve|button|roller|supply|compressor)$/.test(h); }) && heads.indexOf("wire") < 0 && heads.indexOf("pipe") < 0;
+    if (!roley || HYD_WORD.test(all)) return false;
+    return PNEU_WORD.test(all) || asks(q);
+  }
+
+  // parse(block) -> {items: [{role, id, label, said, a: {attributes}, refs: [ids]}], pipes, notes, problems}
+  function parse(b) {
+    var items = [], pipes = [], notes = [], problems = [];
+    (b.lines || []).forEach(function (line) {
+      var tidy = line.replace(/\bdouble[- ](pilot|solenoid)s?\b/gi, "double-$1").replace(/\bpush[- ]buttons?\b/gi, "button").replace(/\bfoot[- ](valve|pedal)\b/gi, "pedal")
+        .replace(/\btwo[- ]pressure\b|\band[- ]valve\b/gi, "twin").replace(/\bor[- ]valve\b/gi, "shuttle").replace(/\bservice unit\b/gi, "frl").replace(/\blimit valve\b/gi, "roller")
+        .replace(/\bair supply\b/gi, "supply").replace(/\bquick exhaust\b/gi, "quick-exhaust").replace(/\bnon[- ]return\b/gi, "non-return");
+      var ws = words(tidy), w0 = ws[0] && ws[0].w ? ws[0].w.toLowerCase() : "", role = ROLE[w0] || "";
+      if (role === "mode") return;
+      if (role === "note") { notes.push(line.replace(/^\s*\S+\s*/, "")); return; }
+      if (role === "pipe") { var ids = ws.slice(1).filter(function (x) { return x.w && IDRE.test(x.w.replace(/[.:].*$/, "")); }).map(function (x) { return x.w.replace(/[.:].*$/, "").toUpperCase(); }); for (var k = 0; k + 1 < ids.length; k++) pipes.push([ids[k], ids[k + 1]]); return; }
+      var it = { role: role, id: "", label: "", said: line, a: {}, refs: [] }, rest = ws.slice(1);
+      if (role === "part") {   // the older form: part <ID> <type words> "<label>"
+        it.id = rest[0] && rest[0].w ? rest[0].w.toUpperCase() : "";
+        rest = rest.slice(1);
+        var type = rest.filter(function (x) { return x.w; }).map(function (x) { return x.w.toLowerCase(); }), lab = rest.filter(function (x) { return x.q != null; }).map(function (x) { return x.q; }).join(" ");
+        var all = (type.join(" ") + " " + lab).toLowerCase();
+        it.role = /\b(compressor|supply)\b/.test(all) ? "supply" : /\b(flow control|throttle|needle|speed control)\b/.test(all) ? "flow" :
+          /\b(roller|limit)\b/.test(all) ? "roller" : /\b(push ?button|button|pedal)\b/.test(all) && !/\b5\x2F|\bcylinder\b/.test(all) ? "button" :
+          /\b(exhaust|silencer|muffler|reservoir|receiver|air tank|flow|arrow)\b/.test(all) ? "implied" :
+          ROLE[type.filter(function (t) { return ROLE[t] && ROLE[t] !== "implied"; })[0]] || ROLE[type[0]] || "";
+        if (!it.role || it.role === "hydraulic") { problems.push("\u201c" + line + "\u201d: Lantern does not know a pneumatic " + type.join(" ")); return; }
+        if (it.role === "implied") return;
+        if (/\bcompressor\b/.test(all)) it.a.compressor = true;
+        rest.forEach(function (x) { if (x.q != null) it.label = it.label ? it.label + " " + x.q : x.q; });
+        all.split(/\s+/).forEach(function (t) { var a = attr(t, it.role); if (a) merge(it.a, a); });
+        items.push(it); return;
+      }
+      if (!role) {
+        // words before the part's name say what kind: "directional valve",
+        // "double acting cylinder", "roller operated valve"
+        if (ws.slice(0, 3).some(function (x) { return x.w && NOTYET.test(x.w); })) { problems.push("\u201c" + line + "\u201d is not a part Lantern draws yet (it draws: " + DRAWS + ")"); return; }
+        for (var j = 1; j < Math.min(4, ws.length) && !role; j++) {
+          var wj = ws[j].w ? ws[j].w.toLowerCase() : "", rj = ROLE[wj];
+          if (rj && rj !== "note" && rj !== "pipe" && rj !== "part" && rj !== "mode") {
+            role = it.role = rj; rest = ws.slice(j + 1);
+            ws.slice(0, j).forEach(function (x) { var a0 = x.w && attr(x.w, rj); if (a0) merge(it.a, a0); });
+            if (rj === "valve" && it.a.act === "roller" && ws.slice(0, j).length === 1) role = it.role = "roller";   // "roller valve S2 ..."
+          }
+        }
+        if (!role) { problems.push("\u201c" + line + "\u201d is not a part Lantern draws (it draws: " + DRAWS + ")"); return; }
+      }
+      if (role === "hydraulic") { problems.push("\u201c" + line + "\u201d: a " + w0 + " is hydraulic -- for compressed air the supply and service unit are drawn for you (write supply \x226 bar\x22 to show the pressure), or write MAKE HYDRAULIC for an oil circuit"); return; }
+      if (role === "implied") return;   // drawn where they belong
+      if (role === "button" && /^(pedal|foot)$/.test(w0)) it.a.act = "pedal";
+      if (role === "button" && w0 === "stop") it.a.side = it.a.side || "12";
+      if (role === "supply" && w0 === "compressor") it.a.compressor = true;
+      rest.forEach(function (x) {
+        if (x.q != null) { it.label = it.label ? it.label + " " + x.q : x.q; return; }
+        var t = x.w.replace(/[.,;:]+$/, ""), a = attr(t, role);
+        if (a) { merge(it.a, a); return; }
+        if (IDRE.test(t)) { if (!it.id) it.id = t.toUpperCase(); else it.refs.push(t.toUpperCase()); return; }
+        if (/\d/.test(t)) { it.label = it.label ? it.label + " " + t : t; return; }
+      });
+      items.push(it);
+    });
+    return { items: items, pipes: pipes, notes: notes, problems: problems };
+  }
+
+  // circuit(parsed) -> {supply, frl, gauge, acts: [{id, type, single, label, valve, inline, sig: {14: [], 12: []}, logic, marks}], signals, problems, added, changed, steps}
+  function circuit(pr) {
+    var problems = pr.problems.slice(), added = [], changed = [], used = {}, n = {};
+    function nid(pfx) { n[pfx] = n[pfx] || 0; var id; do { id = pfx + (++n[pfx]); } while (used[id]); used[id] = 1; return id; }
+    function isAct(r) { return r === "cylinder" || r === "motor"; }
+    var actIds = {};
+    pr.items.forEach(function (it) { if (isAct(it.role)) { if (it.id && !actIds[it.id]) actIds[it.id] = 1; else it.id = ""; } });
+    pr.items.forEach(function (it) {
+      if (!isAct(it.role) && it.id && actIds[it.id]) { it.refs.unshift(it.id); it.id = ""; }   // "valve C1 5/2"
+      if (!isAct(it.role) && it.id && used[it.id]) { if (it.role === "valve" || it.role === "button" || it.role === "roller") it.refs.unshift(it.id); it.id = ""; }
+      if (it.id) used[it.id] = 1;
+    });
+    function of(role) { return pr.items.filter(function (it) { return it.role === role; }); }
+    pr.items.forEach(function (it) { if (!it.id) it.id = nid({ supply: "Z", frl: "Z", cylinder: "C", motor: "M", valve: "V", button: "S", roller: "S", flow: "F", gauge: "G", or: "V", and: "V" }[it.role] || "X"); });
+    var acts = of("cylinder").concat(of("motor")).map(function (it) {
+      return { id: it.id, type: it.role, single: it.role === "cylinder" && it.a.single === true, label: it.label, valve: null, inline: { A: [], B: [] }, sig: { "14": [], "12": [] }, logic: {}, marks: [], item: it };
+    });
+    var byAct = {};
+    acts.forEach(function (a) { byAct[a.id] = a; });
+    if (!acts.length) problems.push("there is no cylinder or motor: add one, like: cylinder C1 double \x22clamp\x22");
+    if (acts.length > 4) problems.push("keep it to 4 cylinders and motors or fewer");
+    var adj = {};
+    pr.pipes.forEach(function (p) { (adj[p[0]] = adj[p[0]] || []).push(p[1]); (adj[p[1]] = adj[p[1]] || []).push(p[0]); });
+    var roleOf = {};
+    pr.items.forEach(function (it) { roleOf[it.id] = it.role; });
+    function nearest(id) {   // the older form: the cylinder along the wires
+      var seen = {}, q = [id];
+      seen[id] = 1;
+      while (q.length) {
+        var x = q.shift();
+        if (x !== id && byAct[x]) return byAct[x];
+        if (x !== id && /^(supply|valve)$/.test(roleOf[x] || "")) continue;
+        (adj[x] || []).forEach(function (y) { if (!seen[y]) { seen[y] = 1; q.push(y); } });
+      }
+      return null;
+    }
+    // --- each cylinder or motor gets its valve ---
+    var byValve = {};
+    of("valve").forEach(function (it) {
+      var named = it.refs.filter(function (r) { return byAct[r]; })[0], a = byAct[named] || nearest(it.id);
+      if (it.refs.length && !named) { problems.push("valve " + it.id + " names " + it.refs.join(", ") + ", which is not a cylinder or motor here: write valve " + it.id + " " + (acts[0] ? acts[0].id : "C1") + " 5/2"); return; }
+      if (!a) a = acts.filter(function (x) { return !x.valve; })[0] || null;
+      if (!a) { if (acts.length) problems.push("valve " + it.id + " works no cylinder or motor: name one on its line, like: valve " + it.id + " " + acts[0].id + " 5/2"); return; }
+      if (a.valve) { problems.push(a.id + " has two valves (" + a.valve.id + " and " + it.id + "): one valve works one cylinder or motor -- give the other one its own cylinder, or make it a signal (button " + it.id + " " + a.valve.id + ")"); return; }
+      a.valve = { id: it.id, way: it.a.way || "", centre: it.a.centre || "", act: it.a.act || "", bistable: !!it.a.bistable, label: it.label };
+      byValve[it.id] = a;
+    });
+    acts.forEach(function (a) {
+      if (!a.valve) { a.valve = { id: nid("V"), way: "", centre: "", act: "", bistable: false, label: "" }; byValve[a.valve.id] = a; added.push("a valve " + a.valve.id + " for " + a.id); }
+      var v = a.valve, said = v.way;
+      if (said === "4/2") { v.way = "5/2"; changed.push(v.id + " is drawn as a 5/2 (an air valve exhausts each side through its own port, 3 and 5)"); }
+      if (said === "4/3") { v.way = "5/3"; changed.push(v.id + " is drawn as a 5/3 (an air valve exhausts each side through its own port, 3 and 5)"); }
+      if (said === "2/2") { problems.push(v.id + ": a 2/2 valve cannot work a cylinder (it has no exhaust): write valve " + v.id + " " + a.id + " " + (a.single ? "3/2" : "5/2")); return; }
+      if (a.single) { if (v.way && v.way !== "3/2") changed.push(v.id + " is a 3/2: a single-acting cylinder has one port"); v.way = "3/2"; }
+      else if (!v.way || v.way === "3/2") { if (v.way === "3/2") changed.push(v.id + " is a 5/2: " + a.id + " has two ports"); v.way = a.type === "motor" && !said ? "5/3" : "5/2"; }
+      if (v.way === "5/3" && !v.centre) v.centre = "closed";
+      if (v.way !== "5/3" && v.centre) { changed.push(v.id + " has no centre (a " + v.way + " has two positions)"); v.centre = ""; }
+    });
+    function valveOf(it, what) {   // the valve a signal works: named, or its cylinder's, or the only one
+      var vr = it.refs.filter(function (r) { return byValve[r]; })[0];
+      if (vr) return vr;
+      var ar = it.refs.filter(function (r) { return byAct[r]; });
+      if (what === "roller" && ar.length) return null;   // a roller's cylinder is where it sits
+      if (ar.length) return byAct[ar[0]].valve.id;
+      var vs = Object.keys(byValve);
+      return vs.length === 1 ? vs[0] : "";
+    }
+    // --- the signals: push buttons, pedals and rollers ---
+    var signals = [];
+    of("button").concat(of("roller")).forEach(function (it) {
+      var kind = it.role, s = { id: it.id, kind: kind, op: kind === "roller" ? "roller" : it.a.act === "pedal" ? "pedal" : "button", label: it.label, logic: it.a.logic || "", pos: "", at: "" };
+      var bad = it.refs.filter(function (r) { return !byValve[r] && !byAct[r]; });
+      if (bad.length) { problems.push(kind + " " + it.id + " names " + bad.join(", ") + ", which is not a valve or cylinder here"); return; }
+      var vid = valveOf(it, kind);
+      if (kind === "roller") {
+        var on = it.refs.filter(function (r) { return byAct[r]; })[0] || (acts.length === 1 ? acts[0].id : "");
+        if (!on) { problems.push("roller " + it.id + ": name the cylinder that trips it and where, like: roller " + it.id + " " + (acts[0] ? acts[0].id : "C1") + " extended"); return; }
+        if (byAct[on].type === "motor") { problems.push("roller " + it.id + ": a motor has no end of stroke to trip a roller"); return; }
+        s.at = on; s.pos = it.a.pos || "";
+        if (!s.pos) { s.pos = "out"; changed.push(it.id + " sits where " + on + " is fully out (write retracted if it is at the other end)"); }
+        if (!vid) vid = byAct[on].valve.id;
+        var own = byValve[vid] && byValve[vid].id === on;
+        s.side = it.a.side || (own ? (s.pos === "out" ? "12" : "14") : "14");
+      } else {
+        if (!vid) { problems.push(kind === "button" ? "button " + it.id + ": name the valve it works, like: button " + it.id + " " + (Object.keys(byValve)[0] || "V1") : ""); return; }
+        s.side = it.a.side || "14";
+      }
+      s.valve = vid;
+      var a = byValve[vid];
+      if (a.single && s.side === "12" && kind !== "roller") { problems.push(it.id + " returns " + vid + ", but " + a.id + " is single-acting: its spring returns it when " + vid + "\u2019s signal stops -- leave " + it.id + " out, or give the button only to the valve"); return; }
+      if (a.single && s.side === "12") { problems.push(it.id + " would return " + vid + ", but a single-acting cylinder\u2019s 3/2 returns on its spring: make " + a.id + " double-acting, or leave " + it.id + " out"); return; }
+      a.sig[s.side].push(s);
+      if (kind === "roller") byAct[s.at].marks.push({ id: s.id, pos: s.pos });
+      signals.push(s);
+    });
+    // explicit shuttle or two-pressure valves: they join the two signals on the valve they name
+    of("or").concat(of("and")).forEach(function (it) {
+      var vid = it.refs.filter(function (r) { return byValve[r]; })[0] || (Object.keys(byValve).length === 1 ? Object.keys(byValve)[0] : "");
+      if (!vid) { problems.push((it.role === "or" ? "shuttle " : "two-pressure valve ") + it.id + ": name the valve it signals, like: shuttle " + it.id + " V1"); return; }
+      var a = byValve[vid], side = it.a.side || "14";
+      a.logic[side] = { id: it.id, kind: it.role, said: true };
+    });
+    // --- how each valve is worked, and the logic on two signals ---
+    acts.forEach(function (a) {
+      var v = a.valve, s14 = a.sig["14"], s12 = a.sig["12"], said = v.act;
+      ["14", "12"].forEach(function (side) {
+        var ss = a.sig[side], lg = a.logic[side];
+        if (ss.length > 2) { problems.push(v.id + "\u2019s " + side + " side has " + ss.length + " signals (" + ss.map(function (x) { return x.id; }).join(", ") + "): Lantern joins two with one shuttle or two-pressure valve -- keep it to two"); return; }
+        if (ss.length < 2) { if (lg && lg.said) changed.push(lg.id + " is left out: " + v.id + "\u2019s " + side + " side has " + (ss.length ? "only " + ss[0].id : "no signal")); delete a.logic[side]; return; }
+        var kind = lg ? lg.kind : ss.some(function (x) { return x.logic === "and"; }) ? "and" : ss.some(function (x) { return x.logic === "or"; }) ? "or" :
+          ss.some(function (x) { return x.kind === "roller" && x.at === a.id && x.pos === "in"; }) ? "and" : "or";
+        var id = lg ? lg.id : nid("V");
+        a.logic[side] = { id: id, kind: kind, said: !!(lg && lg.said), ins: [ss[0].id, ss[1].id] };
+        if (!lg || !lg.said) added.push(kind === "or" ? "a shuttle valve " + id + " so " + ss[0].id + " or " + ss[1].id + " signals " + v.id + " (write and on " + ss[1].id + "\u2019s line if both must be pressed)" :
+          "a two-pressure valve " + id + " so " + v.id + " is signalled only with " + ss[0].id + " and " + ss[1].id + " together");
+      });
+      if (v.way === "3/2") {   // a single-acting cylinder's valve: signalled (12) or worked by hand, spring back
+        v.left = s14.length ? "pilot" : said && said !== "pilot" ? said : "button"; v.right = "spring";
+        if (!s14.length && said === "pilot") problems.push(v.id + " is worked by air, but no signal goes to it: add one, like: button S1 " + v.id);
+        if (s14.length && said && said !== "pilot") changed.push(v.id + " is worked by air from " + s14.map(function (x) { return x.id; }).join(" and ") + " (its " + said + " is left out)");
+        if (v.bistable) { changed.push(v.id + " has a spring return: a single-acting cylinder\u2019s valve returns on its spring"); v.bistable = false; }
+        return;
+      }
+      if (s14.length) { v.left = "pilot"; if (said && said !== "pilot" && said !== "solenoid") changed.push(v.id + " is worked by air from " + s14.map(function (x) { return x.id; }).join(" and ") + " (its " + said + " is left out)"); }
+      else if (said === "pilot") { problems.push(v.id + " is worked by air, but no signal goes to it: add one, like: button S1 " + v.id); return; }
+      else v.left = said || "button";
+      if (s12.length) v.right = "pilot";
+      else if (v.bistable && v.left === "solenoid") v.right = "solenoid";
+      else if (v.bistable) { problems.push(v.id + " keeps its position (double pilot), but nothing returns it: add a signal, like: roller S2 " + a.id + " extended, or a button S2 " + v.id + " return"); return; }
+      else v.right = v.way === "5/3" && v.left !== "lever" && v.left !== "pilot" ? v.left : "spring";
+      if (v.way === "5/3" && v.left === "pilot" && !s12.length) v.right = "spring";
+      v.bistable = v.way !== "5/3" && v.right !== "spring";
+      if (v.left === "solenoid") v.tags = { left: "Y1" };
+      if (v.right === "solenoid") v.tags = { left: "Y1", right: "Y2" };
+    });
+    // --- speed control: one-way flow controls on the cylinder lines ---
+    of("flow").forEach(function (it) {
+      var named = it.refs.filter(function (r) { return byAct[r]; })[0], a = byAct[named] || nearest(it.id) || (acts.length === 1 ? acts[0] : null);
+      if (!a) { if (acts.length) problems.push("flow " + it.id + ": name the cylinder or motor it is for, like: flow " + it.id + " " + acts[0].id + " extend"); return; }
+      var ext = it.a.stroke !== "retract", out = it.a.meter !== "in", leg;
+      if (a.single) {
+        leg = "A";
+        var want = ext ? "in" : "out";
+        if (it.a.meter && it.a.meter !== want) changed.push(it.id + " meters the air " + (ext ? "going in (meter-in): " + a.id + " is single-acting, so its extend speed is set on the air filling it" : "leaving (meter-out): " + a.id + "\u2019s spring pushes the air out on the way back"));
+        out = want === "out";
+      } else leg = it.a.leg || (ext === out ? "B" : "A");
+      if (a.inline[leg].length) { problems.push(a.id + "\u2019s " + (leg === "A" ? "cap-end" : "rod-end") + " line already has " + a.inline[leg][0].id + ": one flow control on each line"); return; }
+      a.inline[leg].push({ kind: "flow", id: it.id, label: it.label, free: out ? "up" : "down", meter: out ? "out" : "in", stroke: ext ? "extend" : "retract" });
+    });
+    var sup = of("supply")[0], frl = of("frl")[0];
+    if (of("supply").length > 1) changed.push("one air supply is drawn (" + of("supply").slice(1).map(function (x) { return x.id; }).join(", ") + " left out)");
+    var c = { supply: { id: sup ? sup.id : "Z1", label: sup ? sup.label : "", compressor: !!(sup && sup.a.compressor) }, frl: { id: frl ? frl.id : "Z2", label: frl ? frl.label : "" },
+      gauge: of("gauge")[0] ? { id: of("gauge")[0].id, label: of("gauge")[0].label } : null, acts: acts, signals: signals, problems: problems, added: added, changed: changed, notes: pr.notes };
+    if (c.supply.id === c.frl.id) c.frl.id = nid("Z");
+    if (!problems.length) c.steps = steps(c);
+    return c;
+  }
+  // steps(c): what each signal does, said under the drawing and to the AI
+  var OPN = { button: "push button", pedal: "pedal", roller: "roller", lever: "lever", solenoid: "solenoid", pilot: "air signal" };
+  function steps(c) {
+    var out = [];
+    c.acts.forEach(function (a) {
+      var v = a.valve, cyl = a.type === "cylinder";
+      var go = cyl ? a.id + " extends" : a.id + " turns one way", back = cyl ? a.id + " retracts" : a.id + " turns the other way";
+      function who(side) {
+        var ss = a.sig[side], lg = a.logic[side];
+        if (!ss.length) return "";
+        var names = ss.map(function (s) { return s.id + " (" + OPN[s.op] + (s.kind === "roller" ? ", " + s.at + " " + (s.pos === "out" ? "fully out" : "home") : "") + ")"; });
+        return names.length === 2 ? names[0] + (lg.kind === "and" ? " and " : " or ") + names[1] : names[0];
+      }
+      var w14 = who("14"), w12 = who("12"), both = a.sig["14"].length === 2 && a.logic["14"].kind === "and";
+      var by = w14 || (v.left === "solenoid" ? "solenoid Y1" : v.id + "\u2019s " + OPN[v.left]);
+      var rest = "; at rest the springs centre " + v.id + " and " + a.id + (v.centre === "closed" ? " stops and holds" : v.centre === "exhaust" ? " is free (both sides to exhaust)" : " is pushed both ways at once (it creeps out)");
+      if (v.way === "5/3" && !w14 && (v.left === "lever" || v.right === v.left && v.left !== "solenoid")) { out.push(v.id + "\u2019s " + OPN[v.left] + " one way: " + go + "; the other way: " + back + rest); return; }
+      if (v.way === "5/3") {
+        out.push(by + (both ? " shift " : " shifts ") + v.id + ": " + go + (w12 || v.right !== "spring" ? "; " + (w12 || (v.right === "solenoid" ? "solenoid Y2" : v.id + "\u2019s other " + OPN[v.right])) + " shifts it the other way: " + back : "") + rest);
+        return;
+      }
+      if (v.right === "spring") out.push(go + " while " + by + (both ? " are" : " is") + " held; the spring returns " + v.id + " and " + back + " when let go");
+      else out.push(by + (both ? " together switch " : " switches ") + v.id + ": " + go + "; " + (w12 || (v.right === "solenoid" ? "solenoid Y2" : v.id + "\u2019s other side")) + " switches it back: " + back + " (" + v.id + " stays put between signals)");
+    });
+    return out;
+  }
+
+  // layout(c, title) -> {shapes, pipes: [[id.port, id.port]], parts}: the
+  // ISO 1219-2 way, bottom to top -- supply and service unit, the supply
+  // line, signal valves, shuttle / two-pressure valves, the valves working
+  // the cylinders, flow controls, the cylinders
+  function layout(c, title) {
+    var S = L.pneuSym, shapes = [], pipes = [], parts = [], dots = [], ex = 0;
+    var X0 = 150, YA = 150, m = 0, anyLogic = false, anySig = false;
+    c.acts.forEach(function (a) {
+      m = Math.max(m, a.inline.A.length, a.inline.B.length);
+      if (a.logic["14"] || a.logic["12"]) anyLogic = true;
+      if (a.sig["14"].length || a.sig["12"].length) anySig = true;
+    });
+    var leg = 60 + 56 * m, VY = YA + 26 + 24 + leg + 32, LY = VY + 124, SY = anyLogic ? VY + 214 : VY + 134, YS = anySig ? SY + 84 : VY + 84;
+    function put(sym, id, type, x, y, o, label, lx, ly) {
+      var r = S[sym](x, y, INK, o);
+      shapes.push(r.g);
+      parts.push({ id: id, type: type, ports: r.ports });
+      if (label) shapes.push({ t: "text", c: NOTE, x: lx, y: ly, s: label, fs: 13 });
+      return r;
+    }
+    function pipe(pts, a, b, dashed) {
+      var s = { t: "path", c: INK, w: dashed ? 2 : 3, pts: pts };
+      if (dashed) s.d = [6, 4];
+      shapes.push(s);
+      if (a && b) pipes.push([a, b]);
+    }
+    function exhaust(id, port, p) { var k = "EX" + (++ex); put("exhaust", k, "exhaust", p[0], p[1]); pipes.push([id + "." + port, k + ".P"]); }
+    function name(id, label) { return id + (label ? " " + label : ""); }
+    function tw(s, fs) { return String(s).length * fs * 0.55; }
+    // --- the columns: each cylinder or motor over its valve, its signals
+    // below -- all offsets from the column's x. A signal valve (a 3/2 with
+    // its 2 and 1 at q) sits clear of the valve's own line down to the
+    // supply (at p1): those for 14 to the left, for 12 to the right.
+    var cols = [], cursor = X0 + 170;
+    c.acts.forEach(function (a) {
+      var v = a.valve, n = v.way === "5/3" ? 3 : 2, half = n * 24, r = v.way === "5/3" ? 0 : 24, p1 = v.way === "3/2" ? r - 12 : r;
+      var col = { a: a, half: half, p1: p1, pl: { "14": -(half + 28), "12": half + 28 }, q: { "14": [], "12": [] }, lx: {} };
+      ["14", "12"].forEach(function (side) {
+        var k = a.sig[side].length, left = side === "14";
+        if (!k) return;
+        if (k === 1) { col.q[side] = [left ? col.pl["14"] : p1 + 104]; return; }
+        if (left) { var qb = p1 - 74; col.q[side] = [qb - 170, qb]; col.lx[side] = qb - 52; }
+        else { var qa = p1 + 104; col.q[side] = [qa, qa + 170]; col.lx[side] = qa + 52; }
+      });
+      var lo = -Math.max(half + 30, 70, half + 46 + 16, a.inline.A.length ? 150 : 0), hi = Math.max(half + 30, 104, a.marks.length ? 160 : 0, a.inline.B.length ? 164 : 0);
+      ["14", "12"].forEach(function (side) {
+        col.q[side].forEach(function (q, k) {
+          var s = a.sig[side][k];
+          lo = Math.min(lo, q - 92, q - 22 - tw(s.id + (s.label ? " " + s.label : ""), 12));
+          hi = Math.max(hi, q + 62);
+        });
+      });
+      col.x = cursor - lo;
+      cursor = col.x + hi + 40;
+      cols.push(col);
+    });
+    // --- the supply and service unit ---
+    var fy = YS + 92, fr = put("frl", c.frl.id, "service unit", X0, fy, null, name(c.frl.id, c.frl.label || "service unit"), X0 - 98, fy - 20);
+    var sy = fy + 56 + (c.supply.compressor ? 28 : 22) + 20;
+    var su = put(c.supply.compressor ? "compressor" : "supply", c.supply.id, "air supply", X0, sy, null, name(c.supply.id, (c.supply.compressor ? "compressor" : "air supply") + (c.supply.label ? " " + c.supply.label : "")), X0 + 92, sy + 4);
+    pipe([su.ports.out, fr.ports.in], c.supply.id + ".out", c.frl.id + ".in");
+    parts.push({ id: "SL", type: "supply line", ports: {} });
+    pipe([fr.ports.out, [X0, YS]], c.frl.id + ".out", "SL");
+    var tees = [], lastX = X0;
+    function tee(x) { tees.push(x); lastX = Math.max(lastX, x); }
+    if (c.gauge) { var gg = put("gauge", c.gauge.id, "gauge", X0 + 80, YS - 44, null, c.gauge.id, X0 + 80, YS - 70); pipe([gg.ports.P, [X0 + 80, YS]], c.gauge.id + ".P", "SL"); tee(X0 + 80); }
+    // --- each column ---
+    cols.forEach(function (col) {
+      var a = col.a, v = a.valve, x = col.x;
+      var vp = put("valve", v.id, "valve", x, VY, { way: v.way, centre: v.centre, left: v.left, right: v.right, tags: v.tags }).ports;
+      shapes.push({ t: "text", c: NOTE, x: x - col.half - 46, y: VY + 14, s: v.id, fs: 13 });
+      var ap = put(a.type === "motor" ? "motor" : "cylinder", a.id, a.type, x, YA, { single: a.single }, name(a.id, a.label), x, YA - 38).ports;
+      // a roller's mark where the cylinder trips it: home at the rod's end, fully out beyond it
+      a.marks.forEach(function (mk) {
+        var mx = mk.pos === "out" ? x + 140 : x + 98;
+        shapes.push({ t: "path", c: INK, w: 2, pts: [[mx, YA - 4], [mx, YA - 22]] }, { t: "text", c: NOTE, x: mx, y: YA - 32, s: mk.id, fs: 12 });
+      });
+      // 1 down to the supply line; 3 and 5 to the air
+      pipe([vp["1"], [vp["1"][0], YS]], v.id + ".1", "SL"); tee(vp["1"][0]);
+      ["3", "5"].forEach(function (p) { if (vp[p]) exhaust(v.id, p, vp[p]); });
+      // 4 (or a 3/2's 2) to the cap end, 2 to the rod end, through the flow controls
+      var ends = v.way === "3/2" ? [["2", "A"]] : [["4", "A"], ["2", "B"]];
+      ends.forEach(function (e) {
+        var side = e[1];
+        if (!ap[side] || !vp[e[0]]) return;
+        var vx2 = vp[e[0]][0], ax = ap[side][0], yj = VY - 56, top = ap[side][1], from = vp[e[0]], fromId = v.id + "." + e[0], stack = a.inline[side];
+        var pts = [from, [vx2, yj], [ax, yj]];
+        for (var k = stack.length - 1; k >= 0; k--) {
+          var el = stack[k], ey = top + 24 + 28 + k * 56;
+          var fp = put("flow", el.id, "flow control", ax, ey, { free: el.free }, name(el.id, el.label), ax + (side === "A" ? -62 : 76), ey).ports;
+          pts.push(fp.a); pipe(pts, fromId, el.id + ".a");
+          pts = [fp.b]; fromId = el.id + ".b";
+        }
+        pts.push(ap[side]); pipe(pts, fromId, a.id + "." + side);
+      });
+      // the signals: each signal valve's 2 up to the pilot port (a 3/2's
+      // signal port is 12), through a shuttle or two-pressure valve when two
+      // signals share one side
+      ["14", "12"].forEach(function (side, si) {
+        var ss = a.sig[side], lg = a.logic[side], port = v.way === "3/2" ? "12" : side, pp = vp[port];
+        if (!ss.length || !pp) return;
+        var lane = VY + 64 + si * 12, ins = [];
+        function signal(s, q) {
+          var sp = put("valve", s.id, "signal valve", x + q - 12, SY, { way: "3/2", left: s.op, right: "spring" }).ports, lab = name(s.id, s.label);
+          shapes.push({ t: "text", c: NOTE, x: x + q - 20 - tw(lab, 12) / 2, y: SY + 54, s: lab, fs: 12 });
+          pipe([sp["1"], [sp["1"][0], YS]], s.id + ".1", "SL"); tee(sp["1"][0]);
+          exhaust(s.id, "3", sp["3"]);
+          return sp["2"];
+        }
+        function to(from, at, fromId, toId) {   // up to the lane, across, up into the port
+          pipe(Math.abs(from[0] - at[0]) < 1 ? [from, at] : [from, [from[0], lane], [at[0], lane], at], fromId, toId, true);
+        }
+        if (!lg) { to(signal(ss[0], col.q[side][0]), pp, ss[0].id + ".2", v.id + "." + port); return; }
+        var lp = put(lg.kind === "or" ? "shuttle" : "twin", lg.id, lg.kind === "or" ? "shuttle valve" : "two-pressure valve", x + col.lx[side], LY, null,
+          lg.id + (lg.kind === "or" ? " (OR)" : " (AND)"), x + col.lx[side], LY + 24).ports;
+        to(lp.out, pp, lg.id + ".out", v.id + "." + port);
+        ss.forEach(function (s, k) {
+          var o2 = signal(s, col.q[side][k]), inp = k === 0 ? lp.a : lp.b;
+          pipe([o2, [o2[0], inp[1]], inp], s.id + ".2", lg.id + "." + (k === 0 ? "a" : "b"), true);
+        });
+      });
+    });
+    // the supply line along the bottom, a dot at each tee but the last
+    shapes.push({ t: "path", c: INK, w: 3, pts: [[X0, YS], [lastX, YS]] });
+    tees.sort(function (p, q) { return p - q; }).forEach(function (t2, i) { if (i < tees.length - 1) dots.push([t2, YS]); });
+    dots.forEach(function (d) { shapes.push({ t: "circle", c: INK, w: 2, cx: d[0], cy: d[1], r: 4, f: true }); });
+    var maxX = Math.max(cursor, X0 + 330);
+    if (title) shapes.unshift({ t: "text", c: INK, x: Math.max(280, (X0 - 120 + maxX) / 2), y: 40, s: title, fs: 18 });
+    return { shapes: shapes, pipes: pipes, parts: parts, bottom: sy + 40, left: X0 - 120, right: maxX };
+  }
+
+  // verify(c, lay) -> [problems]: the drawing walked as lines. Air passes
+  // straight through the service unit and flow controls (what matters here
+  // is where a line can reach), never through a valve, whose ports are kept
+  // apart, nor through a shuttle or two-pressure valve, whose two inputs
+  // must stay apart.
+  function verify(c, lay) {
+    var parent = {}, out = [];
+    function f(k) { while (parent[k] && parent[k] !== k) k = parent[k]; return k; }
+    function u(a, b) { a = f(a); b = f(b); if (a !== b) parent[a] = b; }
+    lay.pipes.forEach(function (p) { u(p[0], p[1]); });
+    var byId = {};
+    lay.parts.forEach(function (p) {
+      byId[p.id] = p;
+      if (p.type === "service unit") u(p.id + ".in", p.id + ".out");
+      if (p.type === "flow control") u(p.id + ".a", p.id + ".b");
+    });
+    var air = lay.parts.filter(function (p) { return p.type === "exhaust"; }).map(function (p) { return f(p.id + ".P"); });
+    function toAir(k) { return air.indexOf(f(k)) >= 0; }
+    var SL = f("SL");
+    if (f(c.supply.id + ".out") !== SL) out.push("the supply does not reach the supply line through the service unit");
+    if (toAir("SL")) out.push("the supply line runs straight to exhaust");
+    var valves = lay.parts.filter(function (p) { return p.type === "valve" || p.type === "signal valve"; });
+    valves.forEach(function (v) {
+      if (f(v.id + ".1") !== SL) out.push(v.id + "\u2019s 1 is not on the supply line");
+      ["3", "5"].forEach(function (p) { if (v.ports[p] && (!toAir(v.id + "." + p) || f(v.id + "." + p) === SL)) out.push(v.id + "\u2019s " + p + " does not exhaust to the air"); });
+      ["2", "4"].forEach(function (p) { if (v.ports[p] && (f(v.id + "." + p) === SL || toAir(v.id + "." + p))) out.push(v.id + "\u2019s " + p + " runs straight to the supply or to exhaust"); });
+    });
+    var outs = {};
+    c.acts.forEach(function (a) {
+      var v = a.valve.id, has = byId[a.id];
+      var map = a.valve.way === "3/2" ? [["A", "2"]] : [["A", "4"], ["B", "2"]];
+      map.forEach(function (mp) {
+        if (!has || !has.ports[mp[0]]) return;
+        if (f(a.id + "." + mp[0]) !== f(v + "." + mp[1])) out.push(a.id + "\u2019s " + (mp[0] === "A" ? "cap end" : "rod end") + " is not joined to " + v + "\u2019s " + mp[1]);
+      });
+      ["14", "12"].forEach(function (side) {
+        var ss = a.sig[side], lg = a.logic[side], port = a.valve.way === "3/2" ? "12" : side;
+        if (!ss.length) return;
+        if (!byId[v].ports[port]) { out.push(v + " has no " + port + " port for its signal"); return; }
+        var pk = f(v + "." + port);
+        if (pk === SL) out.push(v + "\u2019s " + port + " is on the supply line: it would always be signalled");
+        if (lg) {
+          if (f(lg.id + ".out") !== pk) out.push(lg.id + " does not signal " + v + "\u2019s " + port);
+          if (f(lg.id + ".a") !== f(ss[0].id + ".2") || f(lg.id + ".b") !== f(ss[1].id + ".2")) out.push(ss[0].id + " and " + ss[1].id + " do not each reach one side of " + lg.id);
+          if (f(lg.id + ".a") === f(lg.id + ".b")) out.push(ss[0].id + " and " + ss[1].id + " are teed together");
+        } else if (f(ss[0].id + ".2") !== pk) out.push(ss[0].id + " does not signal " + v + "\u2019s " + port);
+      });
+    });
+    c.signals.forEach(function (s) { var k = f(s.id + ".2"); if (outs[k]) out.push(s.id + " and " + outs[k] + " are teed together"); outs[k] = s.id; });
+    return out;
+  }
+
+  // wrap(text, n) -> lines of at most about n characters, broken between words
+  function wrap(t, n) {
+    var out = [], cur = "";
+    String(t).split(" ").forEach(function (w) { if (cur && (cur + " " + w).length > n) { out.push(cur); cur = w; } else cur = cur ? cur + " " + w : w; });
+    if (cur) out.push(cur);
+    return out;
+  }
+  function notesUnder(lay, lines, problems, grey) {
+    var y = lay.y || lay.bottom + 30, cx = Math.max(300, (lay.left + lay.right) / 2), shown = [], fs = grey ? 12 : 15;
+    var nt = L.aiSchematicMore && L.aiSchematicMore.noteText;
+    lines.forEach(function (n) {
+      var r = grey ? { text: String(n), problems: [] } : nt ? nt(n) : { text: String(n), problems: [] };
+      r.problems.forEach(function (p) { problems.push(p); });
+      shown.push(r.text.slice(0, 150));
+      wrap(r.text.slice(0, grey ? 400 : 150), grey ? 100 : 80).forEach(function (part) {
+        lay.shapes.push({ t: "text", c: grey ? GREY : NOTE, x: Math.max(cx, part.length * fs * 0.28 + 16), y: y, s: part, fs: fs }); y += grey ? 18 : 24;
+      });
+    });
+    lay.y = y;
+    return shown;
+  }
+
+  // build(block, ctx) -> what Chat and the bench take (AI_DRAW's result)
+  function build(block, ctx) {
+    var pr = parse(block), c = circuit(pr);
+    if (c.problems.length) return { problems: c.problems, plan: null };
+    if (!L.pneuSym || !L.pneuSym.cylinder || !L.aiDraw || !L.aiDraw.result) return { problems: ["Lantern\u2019s pneumatic drawing parts are missing"], plan: null };
+    var lay = layout(c, block.title), late = [];
+    var bad = verify(c, lay);
+    if (bad.length) return { problems: ["Lantern could not draw this circuit correctly (" + bad.join("; ") + ")"], plan: null };
+    var shown = notesUnder(lay, (c.notes || []).slice(0, 8), late, false);
+    notesUnder(lay, c.steps, late, true);
+    var said = (c.added.length ? "Lantern added " + c.added.join(", ") : "") + (c.changed.length ? (c.added.length ? ". " : "") + c.changed.join(". ") : "");
+    if (said) notesUnder(lay, [said], late, true);
+    var wires = lay.pipes.filter(function (p) { return p[0] && p[1]; }).map(function (p) { return [p[0].split(".")[0], p[1].split(".")[0]]; });
+    var plan = { mode: "pneumatic", parts: lay.parts.map(function (p) { return { id: p.id, type: p.type === "supply line" ? "junction" : /valve|flow control|service unit/.test(p.type) ? "valve" : p.type === "air supply" ? "compressor" : p.type, kind: p.type, label: "" }; }),
+      wires: wires, loop: true, notes: shown,
+      circuit: { supply: c.supply.id, acts: c.acts.map(function (a) {
+        var v = a.valve, sig = [];
+        ["14", "12"].forEach(function (side) { a.sig[side].forEach(function (s) { sig.push({ id: s.id, kind: s.kind, op: s.op, side: side, at: s.at, pos: s.pos, logic: a.logic[side] ? a.logic[side].kind : "" }); }); });
+        return { id: a.id, type: a.type, single: a.single, valve: { id: v.id, way: v.way, centre: v.centre, left: v.left, right: v.right, bistable: v.bistable },
+          inline: { A: a.inline.A.map(function (e) { return e.kind + " " + e.id + " " + e.stroke + " meter-" + e.meter; }), B: a.inline.B.map(function (e) { return e.kind + " " + e.id + " " + e.stroke + " meter-" + e.meter; }) },
+          signals: sig, logic: Object.keys(a.logic).map(function (s) { return { side: s, id: a.logic[s].id, kind: a.logic[s].kind }; }) };
+      }), steps: c.steps, added: c.added, changed: c.changed, verified: true } };
+    var n = c.acts.length, cyl = c.acts.filter(function (a) { return a.type === "cylinder"; }).length;
+    var summary = (cyl ? cyl + " cylinder" + (cyl === 1 ? "" : "s") : "") + (n - cyl ? (cyl ? ", " : "") + (n - cyl) + " air motor" + (n - cyl === 1 ? "" : "s") : "") +
+      ", " + n + " valve" + (n === 1 ? "" : "s") + (c.signals.length ? ", " + c.signals.length + " signal valve" + (c.signals.length === 1 ? "" : "s") : "") +
+      "; lines and ports by Lantern. " + c.steps.join(". ") + (said ? ". " + said : "");
+    return L.aiDraw.result(lay.shapes, plan, summary, block.title, late);
+  }
+
+  // what the AI is told when the question is about compressed air
+  var HINT = [
+    "supply \x22<pressure>\x22            the air supply and service unit (filter, regulator, gauge) are always drawn",
+    "cylinder C1 double \x22<name>\x22    a double-acting cylinder; single = single-acting, spring return",
+    "motor M1 \x22<name>\x22              an air motor (turns both ways)",
+    "valve V1 C1 5/2 button           the valve that works C1: 5/2, or 5/3 (centre closed, exhaust or pressure); worked by",
+    "                                 button, lever, pedal, solenoid or pilot (air). A single-acting cylinder gets a 3/2.",
+    "button S1 V1                     a push-button valve whose air signal works V1 (pedal S1 V1: a foot valve)",
+    "button S2 V1 return              a push-button valve that returns V1 (V1 then stays put until signalled back)",
+    "roller S3 C1 extended            a roller valve C1 trips when fully out (or retracted); it returns C1, or works the valve",
+    "                                 you name: roller S3 C1 extended V2",
+    "flow F1 C1 extend                a one-way flow control setting C1\u2019s extend (or retract) speed",
+    "note <text>                      a line of text under the drawing"];
+  var PROMPT = ["MAKE PNEUMATIC: <title>   -- a compressed-air circuit. Name the parts and what each does; Lantern draws every line and port."].concat(HINT, [
+    "END",
+    "One line per part; each cylinder or motor has its own valve. Two signals to one valve are joined by a shuttle valve (either",
+    "one works it); write and on the second (button S2 V1 and) when both are needed. Never write lines or port numbers: Lantern",
+    "joins 1 to the supply, 4 and 2 to the cylinder, 3 and 5 to exhaust, each signal to 14 or 12, and checks the circuit. For example:",
+    "MAKE PNEUMATIC: Clamp with slow close",
+    "cylinder C1 double \x22clamp\x22",
+    "valve V1 C1 5/2 lever",
+    "flow F1 C1 extend",
+    "END"]);
+  window.Lantern.aiPneumatic = { isPneumatic: isPneumatic, parse: parse, circuit: circuit, layout: layout, verify: verify, build: build, PROMPT: PROMPT, HINT: HINT, asks: asks };
+
+  // the schematic action takes MAKE PNEUMATIC, and pneumatic schematic blocks go here
+  var act = (window.Lantern.aiActions || []).filter(function (a) { return a.id === "schematic"; })[0];
+  if (!act) return;
+  ["PNEUMATIC", "PNEUMATICS", "PNEUMATIC CIRCUIT", "PNEUMATIC DIAGRAM", "PNEUMATIC SCHEMATIC", "AIR CIRCUIT"].forEach(function (k) { if (act.kinds.indexOf(k) < 0) act.kinds.push(k); });
+  var before = act.build;
+  act.build = function (block, ctx) { return isPneumatic(block, ctx && ctx.question) ? build(block, ctx) : before(block, ctx); };
+  var hintBefore = act.fixHint;
+  act.fixHint = function (block, made, q) {
+    if (isPneumatic(block, q)) return ["Lantern reads a MAKE PNEUMATIC block line by line, like this:"].concat(HINT);
+    return typeof hintBefore === "function" ? hintBefore(block, made, q) : null;
+  };
+  var pfBefore = act.promptFor;
+  act.promptFor = function (q) {
+    if (asks(q)) return PROMPT;
+    var base = typeof pfBefore === "function" ? pfBefore(q) : act.prompt;
+    return base.map(function (l) {
+      if (/^mode electrical/.test(l)) return "mode electrical";
+      if (/^MAKE SCHEMATIC:/.test(l)) return l.replace(/ or a (hydraulic \x2F )?pneumatic diagram/, "");
+      return l.replace(/\s*Pneumatic: [^.]*\./, "");
+    }).filter(function (l) { return l.replace(/\s+/g, ""); });
+  };
+})();
+// ===========================================================================
+// MODULE: AI_PNEUMATIC - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: AI_DRAW_CHECK - START
@@ -27414,7 +28238,7 @@ Lantern.RFB = (function () {
 // MODULE: AI_MAKE_BENCH_DATA - START
 // Depends: AI_BENCH_DATA (Lantern.aiBenchQuestions, created here if absent),
 //          AI_ACTIONS -- the bench runs these only when AI_ACTIONS is there
-// Exports: (none) -- adds 9 "make" questions to Lantern Bench
+// Exports: (none) -- adds 10 "make" questions to Lantern Bench
 // ===========================================================================
 // Things the AI is asked to make. A question passes when the model writes a
 // MAKE block of the right kind, Lantern's checks pass (after at most one
@@ -27490,6 +28314,23 @@ Lantern.RFB = (function () {
         var cyl = c.acts.filter(function (a) { return a.type === "cylinder"; })[0];
         if (!cyl) return "no cylinder";
         return cyl.valve && cyl.valve.id ? "" : "the cylinder has no valve";
+      } },
+    // (1.18.0) pneumatics the same way: the push button and the roller that
+    // returns the cylinder are signals, and Lantern pipes them to the valve's
+    // 14 and 12 -- the bench checks what the circuit does, not its parts
+    { id: "make-pneumatic", kind: "SCHEMATIC",
+      ideal: "MAKE PNEUMATIC: Push to extend, automatic return\ncylinder C1 double\nvalve V1 C1 5/2\nbutton S1 V1\nroller S2 C1 extended\nEND",
+      q: "Draw a pneumatic circuit: pressing a push button makes a double-acting cylinder extend, and the cylinder returns by itself when it reaches the end of its stroke.",
+      check: function (p) {
+        if (p.mode !== "pneumatic") return "not a pneumatic diagram";
+        var c = p.circuit;
+        if (!c || !c.verified) return "not piped as a pneumatic circuit (a valve\u2019s 1 to the supply, 4 and 2 to the cylinder, 3 and 5 to exhaust)";
+        var cyl = c.acts.filter(function (a) { return a.type === "cylinder" && !a.single; })[0];
+        if (!cyl) return "no double-acting cylinder";
+        var sig = cyl.signals || [];
+        if (!sig.some(function (s) { return s.kind === "button" && s.side === "14"; }) && !/^(button|pedal)$/.test(cyl.valve.left)) return "no push button working the cylinder\u2019s valve";
+        return sig.some(function (s) { return s.kind === "roller" && s.side === "12" && s.at === cyl.id && s.pos === "out"; }) ? "" :
+          "nothing returns the cylinder at the end of its stroke (a roller valve it trips when fully out, signalling its valve back)";
       } },
     { id: "make-house", ideal: "MAKE DRAWING: House\nrect 5 6 10 5 fill tan\ntri 4 6 10 2 16 6 fill red\nrect 9 8 2 3 fill brown\nEND", kind: "DRAWING", q: "Draw a simple house with a red roof and a door.",
       check: function (p) {
