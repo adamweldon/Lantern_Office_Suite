@@ -254,7 +254,7 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
 
   // --- the bench: make questions ---
   var Q = L.aiBenchQuestions.filter(function (q) { return q.cat === "make"; });
-  ok("twenty-one make questions (1.12.7: the power wheel; 1.13.0: seven programs), four quick", Q.length === 21 && Q.filter(function (q) { return q.quick; }).length === 4);
+  ok("twenty-four make questions (1.12.7: the power wheel; 1.13.0: seven programs; 1.18.0: pneumatics, control, electronics), four quick", Q.length === 24 && Q.filter(function (q) { return q.quick; }).length === 4, Q.length);
   function gradeWith(id, reply) {
     var item = Q.filter(function (q) { return q.id === id; })[0];
     return L.aiBench.grade(item, reply, { made: act.build(reply, item.q) });

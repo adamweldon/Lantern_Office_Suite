@@ -26198,7 +26198,8 @@ Lantern.RFB = (function () {
       shapes.push({ t: "circle", c: WIRE, w: 2, cx: +xy[0], cy: +xy[1], r: 4, f: true });
     });
     if (title) shapes.unshift({ t: "text", c: INK, x: Math.max(200, (X0 - 60 + maxX) / 2), y: 40, s: title, fs: 18 });
-    return { shapes: shapes, chain: chain, loop: loop };
+    // node(id, k): the wire node a terminal is on, for the checks after the layout (AI_SCHEMATIC_CHECK)
+    return { shapes: shapes, chain: chain, loop: loop, node: function (id, k) { return find(id + ":" + k); } };
   }
   function mirrorV(o, cy) {
     var c = {}, key;
@@ -26235,7 +26236,10 @@ Lantern.RFB = (function () {
     // what the hooks question (a total drawn as a part, a lamp drawn as a
     // resistor) is drawn all the same, so the person sees what Lantern means;
     // the block still goes back to the AI once (1.13.4)
-    return L.aiDraw.result(lay.shapes, plan, sc.parts.length + " parts, " + sc.wires.length + " connections" + (sc.loop ? ", a closed loop" : ""), block.title, late);
+    // what a hook added or changed (an LED's resistor) is said, as the builders of fluid power say theirs (1.18.0)
+    if (sc.said && sc.said.length) plan.said = sc.said.slice();
+    return L.aiDraw.result(lay.shapes, plan, sc.parts.length + " parts, " + sc.wires.length + " connections" + (sc.loop ? ", a closed loop" : "") +
+      (sc.said && sc.said.length ? ". Lantern " + sc.said.join("; ") : ""), block.title, late);
   }
   window.Lantern.aiSchematic = { schematic: schematic, parse: parseSchematic, norm: norm, PARTS: PARTS, SYN: SYN, hooks: HOOKS };
 
@@ -26587,6 +26591,164 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: AI_SCHEMATIC_MORE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_SCHEMATIC_CHECK - START
+// Depends: AI_SCHEMATIC (Lantern.aiSchematic: PARTS, hooks; the layout's
+//          node(id, k)), AI_SCHEMATIC_MORE (its prep hook runs first: the
+//          junctions folded) -- feature-detected
+// Exports: Lantern.aiSchematicCheck = {ohms(text), volts(text), e12(ohms),
+//          ledVf(text), ohmText(ohms)}
+// ===========================================================================
+// The electrical schematic made safer by construction (1.18.0), for the
+// part and wire lines the AI already writes:
+//  - an LED with no resistor in series gets one, sized by Lantern from the
+//    supply and the LED's colour ((9 V - 2 V) / 15 mA -> 470 ohm, the next
+//    E12 value up), and Lantern says so; an LED's resistor the AI sized is
+//    checked -- too small (more than 30 mA) goes back with the value to use;
+//  - a short (a loop from one end of the battery back to the other through
+//    switches, ammeters and wire alone) goes back, the drawing shown;
+//  - an ammeter across a part and a voltmeter in series go back: an
+//    ammeter goes in the line, a voltmeter across what it measures.
+// The wires are taken as the layout joined them (its node(id, k)), switches
+// as closed -- the worst case.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.aiSchematic || !L.aiSchematic.hooks) return;
+  var S = L.aiSchematic, NOTE = "#64748b";
+  var CONDUCT = /^(switch|ammeter|junction)$/, SRC = /^(battery|source)$/;
+  function isLed(p) { return p.type === "diode" && /\bled\b|light[- ]emitting/i.test((p.said || "") + " " + (p.label || "")); }
+  function volts(t) { var m = /(\d+(?:\.\d+)?)\s*(?:v\b|volts?\b|vdc\b|v dc\b)/i.exec(String(t || "")); return m ? parseFloat(m[1]) : null; }
+  // ohms(text) -> ohms or null: "220 ohm", "4.7 k", "4k7", "1 M", "330R", "10 k\u03a9"
+  function ohms(t) {
+    t = String(t || "");
+    var mult = { k: 1e3, K: 1e3, M: 1e6, R: 1 }, m = /(\d+)([kKMR])(\d+)/.exec(t);
+    if (m) return parseFloat(m[1] + "." + m[3]) * mult[m[2]];
+    m = /(\d+(?:\.\d+)?)\s*(k|K|M|meg|Meg)?\s*(?:ohms?\b|\u03a9|R\b)/.exec(t) || /(\d+(?:\.\d+)?)\s*(k|K|M)\b/.exec(t);
+    if (!m) return null;
+    return parseFloat(m[1]) * (m[2] ? (/^m/i.test(m[2]) && m[2] !== "k" ? 1e6 : 1e3) : 1);
+  }
+  var E12 = [10, 12, 15, 18, 22, 27, 33, 39, 47, 56, 68, 82];
+  function e12(r) {   // the next E12 value up
+    var d = Math.pow(10, Math.floor(Math.log(r) / Math.LN10) - 1);
+    for (var k = 0; k < 3; k++, d *= 10) for (var i = 0; i < 12; i++) if (E12[i] * d >= r - 1e-9) return E12[i] * d;
+    return r;
+  }
+  function ohmText(r) { return r >= 1e6 ? +(r / 1e6).toPrecision(3) + " M\u03a9" : r >= 1000 ? +(r / 1000).toPrecision(3) + " k\u03a9" : Math.round(r) + " \u03a9"; }
+  function ledVf(t) {
+    t = String(t || "");
+    return /\b(blue|white|uv|violet|purple|pink)\b/i.test(t) ? 3.1 : /\b(ir|infra-?red)\b/i.test(t) ? 1.3 : /\bgreen\b/i.test(t) ? 2.2 : /\byellow\b/i.test(t) ? 2.1 : 2.0;
+  }
+  function colour(t) { var m = /\b(red|orange|amber|yellow|green|blue|white|uv|violet|purple|pink|ir|infrared)\b/i.exec(String(t || "")); return m ? m[1].toLowerCase() + " " : ""; }
+  function wiresAt(sc, id) { return sc.wires.filter(function (w) { return w[0].id === id || w[1].id === id; }); }
+  // the parts in series with id: along the wires through parts with two
+  // wires on them, to the source or a branch
+  function series(sc, id) {
+    var out = [], seen = {};
+    seen[id] = 1;
+    wiresAt(sc, id).forEach(function (w0) {
+      var cur = w0[0].id === id ? w0[1].id : w0[0].id, via = w0;
+      while (cur && !seen[cur] && sc.byId[cur]) {
+        seen[cur] = 1; out.push(sc.byId[cur]);
+        var ws = wiresAt(sc, cur);
+        if (SRC.test(sc.byId[cur].type) || ws.length !== 2) break;
+        var nx = ws[0] === via ? ws[1] : ws[0];
+        via = nx; cur = nx[0].id === cur ? nx[1].id : nx[0].id;
+      }
+    });
+    return out;
+  }
+  // --- an LED gets its resistor; one sized too small goes back ----------------------
+  S.hooks.prep.push(function (sc) {
+    if (sc.mode !== "electrical") return;
+    var src = sc.parts.filter(function (p) { return SRC.test(p.type); })[0], vs = src ? volts(src.label) || volts(src.said) : null;
+    sc.parts.filter(isLed).forEach(function (d) {
+      var vf = ledVf(d.label + " " + d.said), ser = series(sc, d.id), r = ser.filter(function (p) { return p.type === "resistor"; })[0];
+      if (r) {
+        var R = ohms(r.label), V = vs;
+        if (R && V && V > vf && (V - vf) / R > 0.03) (sc.lateProblems = sc.lateProblems || []).push(r.id + " (" + ohmText(R) + ") lets about " + Math.round((V - vf) / R * 1000) + " mA through " + d.id +
+          " from " + V + " V: an LED takes about 20 mA at most -- use " + ohmText(e12((V - vf) / 0.015)) + " or more ((" + V + " V - " + vf + " V) / 15 mA)");
+        return;
+      }
+      if (!ser.some(function (p) { return SRC.test(p.type); }) && !wiresAt(sc, d.id).length) return;
+      var V2 = vs || 5;
+      if (V2 <= vf) { (sc.lateProblems = sc.lateProblems || []).push(d.id + " (" + colour(d.label) + "LED, about " + vf + " V) will not light from " + V2 + " V: use a higher supply"); return; }
+      var raw = (V2 - vf) / 0.015, val = e12(raw), n = 1, id;
+      do { id = "R" + n++; } while (sc.byId[id]);
+      var w = sc.wires.filter(function (x) { return x[1].id === d.id; })[0] || sc.wires.filter(function (x) { return x[0].id === d.id; })[0];
+      if (!w) return;
+      var p = { id: id, said: "resistor", type: "resistor", label: ohmText(val), added: true }, at = sc.wires.indexOf(w), mid = { id: id, port: -1, raw: id };
+      sc.parts.push(p); sc.byId[id] = p;
+      if (w[1].id === d.id) sc.wires.splice(at, 1, [w[0], mid], [mid, w[1]]);
+      else sc.wires.splice(at, 1, [w[0], mid], [mid, w[1]]);
+      (sc.said = sc.said || []).push("added " + id + " (" + ohmText(val) + ") in series with " + d.id + ": an LED needs a resistor to limit its current ((" + V2 + " V - " + vf + " V) / 15 mA = " +
+        Math.round(raw) + " \u03a9" + (vs ? "" : ", for a 5 V supply: say the supply\u2019s voltage to size it") + ")");
+    });
+  });
+  // netlist(sc) -> node(id, k): which wire node each terminal is on. A part
+  // with two wires has one on each terminal, whichever way they were
+  // written; with more, the way the current flows says which (wire FROM TO:
+  // FROM's out, TO's in); a terminal named on the wire (B1+) wins; null
+  // when a part's wires cannot be split (all one way).
+  function netlist(sc) {
+    var P = S.PARTS.electrical, parent = {}, end = {}, unsure = false;
+    function f(k) { while (parent[k] && parent[k] !== k) k = parent[k]; return k; }
+    function u(a, b) { a = f(a); b = f(b); if (a !== b) parent[a] = b; }
+    sc.parts.forEach(function (p) {
+      var ws = [], two = P[p.type] && P[p.type].ports.length === 2, src = SRC.test(p.type);
+      sc.wires.forEach(function (w, i) { [0, 1].forEach(function (e) { if (w[e].id === p.id) ws.push({ i: i, e: e, port: w[e].port }); }); });
+      if (!two) { ws.forEach(function (x) { end[x.i + ":" + x.e] = p.id + ":0"; }); return; }
+      var out = ws.filter(function (x) { return x.port < 0 && x.e === 0; }), inn = ws.filter(function (x) { return x.port < 0 && x.e === 1; });
+      ws.forEach(function (x) {
+        var k;
+        if (x.port >= 0) k = src ? (x.port === 0 ? 1 : 0) : x.port;   // a source's + is where the current leaves it
+        else if (ws.length === 2) k = ws.indexOf(x);
+        else if (!out.length || !inn.length) { unsure = true; k = ws.indexOf(x) ? 1 : 0; }
+        else k = x.e === 0 ? 1 : 0;
+        end[x.i + ":" + x.e] = p.id + ":" + k;
+      });
+    });
+    sc.wires.forEach(function (w, i) { if (end[i + ":0"] && end[i + ":1"]) u(end[i + ":0"], end[i + ":1"]); });
+    return unsure ? null : function (id, k) { return f(id + ":" + k); };
+  }
+  // --- after the layout: shorts and meters, the drawing shown ----------------------
+  S.hooks.draw.push(function (sc, lay, late) {
+    (sc.lateProblems || []).forEach(function (p) { late.push(p); });
+    var node = sc.mode === "electrical" ? netlist(sc) : null;
+    if (!node) return;
+    var P = S.PARTS.electrical, parent = {};
+    function two(p) { return P[p.type] && P[p.type].ports.length === 2; }
+    function f(k) { while (parent[k] && parent[k] !== k) k = parent[k]; return k; }
+    function u(a, b) { a = f(a); b = f(b); if (a !== b) parent[a] = b; }
+    sc.parts.forEach(function (p) { if (two(p) && CONDUCT.test(p.type)) u(node(p.id, 0), node(p.id, 1)); });
+    function list(xs) { return xs.length <= 1 ? xs.join("") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1]; }
+    sc.parts.filter(function (p) { return SRC.test(p.type); }).forEach(function (s) {
+      var a = f(node(s.id, 0)), b = f(node(s.id, 1));
+      if (a !== b) return;
+      var via = sc.parts.filter(function (p) { return two(p) && CONDUCT.test(p.type) && f(node(p.id, 0)) === a; }).map(function (p) { return p.id; });
+      late.push(s.id + " is shorted: current can go from one end of " + s.id + " back to the other through " + (via.length ? list(via) + " alone" : "the wires alone") +
+        ", with no lamp, resistor or other load in the way (a short flattens a battery or blows a fuse) -- put the load in that path");
+    });
+    function pair(p) { var a = node(p.id, 0), b = node(p.id, 1); return a < b ? a + "|" + b : b + "|" + a; }
+    sc.parts.filter(function (p) { return p.type === "ammeter"; }).forEach(function (m) {
+      var across = sc.parts.filter(function (q) { return q !== m && two(q) && !/^(ammeter|voltmeter)$/.test(q.type) && pair(q) === pair(m); });
+      if (across.length) late.push(m.id + " is across " + list(across.map(function (q) { return q.id; })) + ": an ammeter goes in series with what it measures (break the line and wire it in), never across it -- across a battery it is a short");
+    });
+    sc.parts.filter(function (p) { return p.type === "voltmeter"; }).forEach(function (v) {
+      if (!sc.parts.some(function (q) { return q !== v && two(q) && q.type !== "voltmeter" && pair(q) === pair(v); }))
+        late.push(v.id + " is in series with the circuit: a voltmeter goes across what it measures, one wire to each end of it (wire R1 " + v.id + " and wire " + v.id + " R1); in series it stops the current");
+    });
+    if (sc.said && sc.said.length) {   // what Lantern added, under the drawing
+      var y = 0, x0 = 1e9, x1 = -1e9;
+      lay.shapes.forEach(function (s) { var bb = L.drawShapes && L.drawShapes.bbox ? L.drawShapes.bbox(s) : null; if (bb) { y = Math.max(y, bb[3]); x0 = Math.min(x0, bb[0]); x1 = Math.max(x1, bb[2]); } });
+      var t = "Lantern " + sc.said.join("; ");
+      lay.shapes.push({ t: "text", c: NOTE, x: Math.max(260, (x0 + x1) / 2, t.length * 3.4 + 16), y: y + 26, s: t.slice(0, 160), fs: 12 });
+    }
+  });
+  window.Lantern.aiSchematicCheck = { ohms: ohms, volts: volts, e12: e12, ledVf: ledVf, ohmText: ohmText };
+})();
+// ===========================================================================
+// MODULE: AI_SCHEMATIC_CHECK - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: AI_HYDRAULIC - START
@@ -28218,6 +28380,582 @@ Lantern.RFB = (function () {
 // MODULE: AI_CONTROL - END
 // ===========================================================================
 // ===========================================================================
+// MODULE: AI_ELECTRONICS - START
+// Depends: AI_SCHEMATIC (the schematic action in Lantern.aiActions),
+//          AI_DRAW (Lantern.aiDraw.result), DRAW_SYMBOLS
+//          (Lantern.drawSymbols), AI_SCHEMATIC_CHECK (ohms, volts, e12,
+//          ledVf), AI_SCHEMATIC_MORE (noteText) -- feature-detected
+// Exports: Lantern.aiElectronics = {isElectronics(block, question),
+//          parse(block), circuit(parsed) -> {branches, problems, added,
+//          changed, steps}, layout(circuit, title) -> {shapes, els},
+//          verify(circuit, layout) -> [problems], build(block, ctx), PROMPT,
+//          HINT, asks(q), sym}
+// ===========================================================================
+// Small electronic circuits -- LEDs, transistors switching relays and
+// motors, push buttons and sensors read by a microcontroller's pins -- drawn
+// by Lantern, correct by construction (1.18.0, as AI_HYDRAULIC, AI_PNEUMATIC
+// and AI_CONTROL draw theirs). The AI names the parts and what drives what:
+//     MAKE ELECTRONICS: Arduino relay driver
+//     supply "12 V"
+//     pin P1 "Arduino D7"
+//     relay K1 "12 V coil"
+//     transistor Q1 K1 P1
+//     END
+// Lantern draws the + rail on top and 0 V (GND) below, a branch for each
+// thing powered or read, current flowing down, and adds and sizes what such
+// circuits always need, saying so: an LED's resistor ((V - Vf) / 15 mA, the
+// next E12 value up), a transistor's base resistor (a tenth of the load's
+// current into the base), the diode across a relay coil, motor or solenoid
+// a transistor switches (its cathode to +, catching the kick when it turns
+// off), a transistor between a pin and a load too big for the pin (a pin
+// gives about 20 mA), the pull-down resistor on a push button read by a pin
+// (or pull-up), the divider resistor under a light or heat sensor, and the
+// board's GND joined to 0 V. A resistor the AI sizes itself is checked.
+// Then verify() walks the wires: every load between + (or a pin) and 0 V,
+// an LED never without its resistor, every inductive load a transistor
+// switches with its diode the right way round, every base through a
+// resistor, no branch joining + to 0 V through switches alone.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.drawSymbols) return;
+  var D = L.drawSymbols, INK = "#1b2430", NOTE = "#334155", GREY = "#64748b", W = 3, W2 = 2;
+  var CK = L.aiSchematicCheck || {};
+  var ohms = CK.ohms || function () { return null; }, volts = CK.volts || function () { return null; }, e12 = CK.e12 || function (r) { return r; }, ledVf = CK.ledVf || function () { return 2; };
+  var ohmText = CK.ohmText || function (r) { return Math.round(r) + " \u03a9"; };
+  var ROLES = {
+    supply: "supply power psu", battery: "battery cell", pin: "pin gpio output input io", led: "led", lamp: "lamp bulb light", relay: "relay coil",
+    motor: "motor fan", buzzer: "buzzer beeper piezo speaker", solenoid: "solenoid", transistor: "transistor npn bjt", switch: "switch button pushbutton push-button",
+    sensor: "sensor ldr photoresistor thermistor ntc", pot: "pot potentiometer trimmer", resistor: "resistor res", capacitor: "capacitor cap",
+    diode: "diode flyback", implied: "ground gnd rail rails wire arduino uno nano esp32 board microcontroller", note: "note text label", mode: "mode", part: "part", pipe: "connect"
+  };
+  var ROLE = {};
+  Object.keys(ROLES).forEach(function (r) { ROLES[r].split(" ").forEach(function (w) { ROLE[w] = r; }); });
+  var LOAD = /^(led|lamp|relay|motor|buzzer|solenoid)$/, KICK = /^(relay|motor|solenoid)$/, SMALL = /^(led|buzzer)$/;
+  var PFX = { battery: "B", pin: "P", led: "D", lamp: "L", relay: "K", motor: "M", buzzer: "BZ", solenoid: "Y", transistor: "Q", switch: "S", sensor: "R", pot: "RV", resistor: "R", capacitor: "C", diode: "D" };
+  var IDRE = /^[A-Za-z]{1,3}\d{1,3}$/;
+  var NOTYET = /^(mosfet|fet|pnp|op-amp|opamp|555|timer|ic|regulator|7805|lm317|h-bridge|l298|optocoupler|triac|scr|zener|crystal|inductor|transformer|servo|stepper)$/i;
+  var DRAWS = "supply, battery, pin, led, lamp, relay, motor, buzzer, solenoid, transistor, switch, sensor, pot, resistor, capacitor, diode";
+  function words(line) {
+    var out = [], re = /\x22([^\x22]*)\x22|\u201c([^\u201d]*)\u201d|(\S+)/g, m;
+    while ((m = re.exec(line))) out.push(m[1] != null ? { q: m[1] } : m[2] != null ? { q: m[2] } : { w: m[3] });
+    return out;
+  }
+  function tidy(line) {
+    return String(line).split(/(\x22[^\x22]*\x22|\u201c[^\u201d]*\u201d)/).map(function (part, k) {
+      return k % 2 ? part : part.replace(/\bpush[- ]?buttons?\b/gi, "button").replace(/\brelay[- ]coil\b/gi, "relay").replace(/\blight[- ](dependent[- ])?(sensor|resistor)\b/gi, "ldr")
+        .replace(/\bpull[- ]?up\b/gi, "pullup").replace(/\bpull[- ]?down\b/gi, "pulldown").replace(/\bnpn[- ]transistor\b/gi, "transistor").replace(/\boutput[- ]pin\b|\binput[- ]pin\b/gi, "pin")
+        .replace(/\bdc[- ]motor\b/gi, "motor").replace(/\bpower[- ]supply\b/gi, "supply").replace(/\b3[.,]3\s*v\b/gi, "3.3V").replace(/\b3v3\b/gi, "3.3V");
+    }).join("");
+  }
+  var ASK = /\b(transistor|npn|arduino|esp32|raspberry pi|pico|microcontroller|leds?|breadboard|flyback|pull[- ]?(up|down)|ldr|photoresistor|thermistor|potentiometer|base resistor|gpio|output pin|input pin|digital pin|relay (driver|module|board))\b/i;
+  var NOT_ASK = /\b(code|program|programs|firmware|script|write a sketch|pneumatic|hydraulic|ladder|plc|contactor|motor starter)\b/i;
+  function asks(q) { q = String(q || ""); return ASK.test(q) && !NOT_ASK.test(q); }
+  var EL_HEAD = /^(pin|led|transistor|npn|ldr|sensor|pot|potentiometer|buzzer|thermistor|gpio)$/;
+  // isElectronics(block, question): MAKE ELECTRONICS, or its role lines in
+  // a MAKE SCHEMATIC block (a pin, an LED, a transistor ...; no part lines)
+  function isElectronics(b, q) {
+    if (/^(ELECTRONICS?|ELECTRONIC CIRCUIT|BREADBOARD)/.test(String(b.kind || ""))) return true;
+    if (/^(HYDRAULIC|PNEUMATIC|CONTROL)/.test(String(b.kind || ""))) return false;
+    var ls = b.lines || [];
+    if (ls.some(function (l) { return /^\s*mode\s+\w/i.test(l); })) return ls.some(function (l) { return /^\s*mode\s+electronics?\s*$/i.test(l); });
+    var heads = ls.map(function (l) { return ((/^\s*([\w-]+)/.exec(tidy(l)) || [])[1] || "").toLowerCase(); });
+    if (heads.indexOf("part") >= 0 || heads.indexOf("wire") >= 0) return false;
+    return heads.some(function (h) { return EL_HEAD.test(h); });
+  }
+
+  // --- the parts, drawn upright: current in at the top, out at the bottom -------------
+  // each (x, y, c, o) -> {g, ports: {a: top, b: bottom, ...}}
+  function lead(c, x, y, h) { return [D.ln(c, W, x, y - 40, x, y - h), D.ln(c, W, x, y + h, x, y + 40)]; }
+  function vout(s, x, y, more) { var p = { a: [x, y - 40], b: [x, y + 40] }; if (more) Object.keys(more).forEach(function (k) { p[k] = more[k]; }); return { g: D.grp(s), ports: p }; }
+  function vzig(c, x, y1, y2) { var pts = [[x, y1]], n = 6, seg = (y2 - y1) / n; for (var i = 0; i < n; i++) pts.push([x + (i % 2 ? 8 : -8), y1 + seg * (i + 0.5)]); pts.push([x, y2]); return { t: "path", c: c, w: W2, pts: pts }; }
+  var SYM = {
+    resistor: function (x, y, c) { return vout(lead(c, x, y, 20).concat([vzig(c, x, y - 20, y + 20)]), x, y); },
+    led: function (x, y, c) {
+      return vout(lead(c, x, y, 10).concat([D.tri(c, W2, [x - 12, y - 10], [x + 12, y - 10], [x, y + 10], true), D.ln(c, W, x - 12, y + 10, x + 12, y + 10),
+        D.arrow(c, 1.5, x + 12, y - 4, x + 26, y - 14), D.arrow(c, 1.5, x + 14, y + 4, x + 28, y - 6)]), x, y);
+    },
+    diode: function (x, y, c, o) {   // up: the cathode at the top (across a coil)
+      var up = o && o.up, t = up ? [[x - 11, y + 9], [x + 11, y + 9], [x, y - 9]] : [[x - 11, y - 9], [x + 11, y - 9], [x, y + 9]];
+      return vout(lead(c, x, y, 9).concat([D.tri(c, W2, t[0], t[1], t[2], true), D.ln(c, W, x - 11, up ? y - 9 : y + 9, x + 11, up ? y - 9 : y + 9)]), x, y);
+    },
+    lamp: function (x, y, c) { return vout(lead(c, x, y, 14).concat([D.circ(c, W, x, y, 14), D.ln(c, W2, x - 10, y - 10, x + 10, y + 10), D.ln(c, W2, x - 10, y + 10, x + 10, y - 10)]), x, y); },
+    relay: function (x, y, c) { return vout(lead(c, x, y, 18).concat([D.rect(c, W, x - 11, y - 18, 22, 36), D.ln(c, W2, x - 11, y + 18, x + 11, y - 18)]), x, y); },
+    motor: function (x, y, c) { return vout(lead(c, x, y, 15).concat([D.circ(c, W, x, y, 15), D.txt(c, x, y + 1, "M", 14)]), x, y); },
+    solenoid: function (x, y, c) { var pts = [[x, y - 18]]; for (var i = 0; i < 3; i++) pts.push([x + 10, y - 12 + i * 12], [x, y - 6 + i * 12]); return vout(lead(c, x, y, 18).concat([{ t: "curve", c: c, w: W2, pts: pts }]), x, y); },
+    buzzer: function (x, y, c) { return vout(lead(c, x, y, 13).concat([D.rect(c, W2, x - 13, y - 13, 26, 26), D.txt(c, x, y + 1, "BZ", 10)]), x, y); },
+    capacitor: function (x, y, c, o) {
+      var s = lead(c, x, y, 5).concat([D.ln(c, W, x - 15, y - 5, x + 15, y - 5)]);
+      if (o && o.polar) s.push({ t: "curve", c: c, w: W, pts: [[x - 15, y + 9], [x, y + 3], [x + 15, y + 9]] }, D.txt(c, x - 20, y - 14, "+", 12));
+      else s.push(D.ln(c, W, x - 15, y + 5, x + 15, y + 5));
+      return vout(s, x, y);
+    },
+    battery: function (x, y, c) { return vout(lead(c, x, y, 6).concat([D.ln(c, W, x - 16, y - 6, x + 16, y - 6), D.ln(c, W, x - 8, y + 6, x + 8, y + 6), D.txt(c, x - 24, y - 12, "+", 13)]), x, y); },
+    switch: function (x, y, c) {   // a push button: open, its bridge off to the left
+      return vout([D.ln(c, W, x, y - 40, x, y - 15), D.ln(c, W, x, y + 15, x, y + 40), D.circ(c, W2, x, y - 12, 3), D.circ(c, W2, x, y + 12, 3),
+        D.ln(c, W2, x - 10, y - 16, x - 10, y + 16), D.ln(c, W2, x - 10, y, x - 22, y), D.ln(c, W2, x - 22, y - 6, x - 22, y + 6)], x, y);
+    },
+    sensor: function (x, y, c, o) {   // an LDR (arrows in) or a thermistor (a bent line through)
+      var s = lead(c, x, y, 20).concat([vzig(c, x, y - 20, y + 20)]);
+      if (o && o.heat) s.push(D.ln(c, W2, x - 14, y + 16, x + 14, y - 16, x + 22, y - 16));
+      else s.push(D.circ(c, W2, x, y, 22), D.arrow(c, 1.5, x - 34, y - 22, x - 16, y - 8), D.arrow(c, 1.5, x - 36, y - 8, x - 18, y + 4));
+      return vout(s, x, y);
+    },
+    pot: function (x, y, c) { return vout(lead(c, x, y, 20).concat([vzig(c, x, y - 20, y + 20), D.arrow(c, W2, x + 34, y, x + 10, y)]), x, y, { w: [x + 34, y] }); },
+    // an NPN transistor: collector up, emitter down (its arrow pointing out), base to the left
+    transistor: function (x, y, c) {
+      var s = [D.circ(c, W2, x - 6, y, 23), D.ln(c, W, x - 14, y - 13, x - 14, y + 13), D.ln(c, W, x - 14, y, x - 44, y),
+        D.ln(c, W, x - 14, y - 6, x, y - 18, x, y - 40), D.ln(c, W, x - 14, y + 6, x, y + 18, x, y + 40), D.tri(c, W2, [x, y + 18], [x - 10, y + 15], [x - 4, y + 9], true)];
+      return { g: D.grp(s), ports: { c: [x, y - 40], e: [x, y + 40], b: [x - 44, y] } };
+    },
+    // a pin's tag: the board's name for it in a box, joined at one end
+    tag: function (x, y, c, o) {   // joined at x: its left end (right), right end (left), or the middle of its bottom (down)
+      var t = o && o.text || "", w = Math.max(40, t.length * 6.6 + 16), at = o && o.at || "left", x0 = at === "right" ? x : at === "down" ? x - w / 2 : x - w;
+      return { g: D.grp([D.ln(c, W2, x0, y - 10, x0 + w, y - 10, x0 + w, y + 10, x0, y + 10, x0, y - 10), D.txt(c, x0 + w / 2, y + 1, t, 11)]),
+        ports: { p: at === "down" ? [x, y + 10] : [at === "right" ? x0 : x0 + w, y] } };
+    }
+  };
+
+  // parse(block) -> {items: [{role, id, label, refs, a}], notes, problems}
+  function parse(b) {
+    var items = [], notes = [], problems = [];
+    (b.lines || []).forEach(function (line) {
+      var ws = words(tidy(line)), w0 = ws[0] && ws[0].w ? ws[0].w.toLowerCase().replace(/[:.,;]+$/, "") : "", role = ROLE[w0] || "", rest = ws.slice(1);
+      if (role === "mode") return;
+      if (role === "note") { notes.push(line.replace(/^\s*\S+\s*/, "")); return; }
+      if (role === "pipe" || w0 === "wire") { problems.push("\u201c" + line + "\u201d: never write wires -- name what drives what (led D1 P2, transistor Q1 K1 P1) and Lantern wires it"); return; }
+      if (role === "part") { problems.push("\u201c" + line + "\u201d: write each part by what it is and what drives it, like: led D1 P2 -- not part lines"); return; }
+      if (!role || role === "implied") {
+        if (ws.slice(0, 3).some(function (x) { return x.w && NOTYET.test(x.w.replace(/[.,;:]+$/, "")); })) { problems.push("\u201c" + line + "\u201d is not something Lantern draws yet (it draws: " + DRAWS + "; a switching transistor is an NPN: transistor Q1 K1 P1)"); return; }
+        if (role === "implied") return;
+        for (var j = 1; j < Math.min(4, ws.length) && !role; j++) {
+          var wj = ws[j].w ? ws[j].w.toLowerCase() : "", rj = ROLE[wj];
+          if (rj && !/^(note|pipe|part|mode|implied)$/.test(rj)) { role = rj; w0 = wj; rest = ws.slice(j + 1).concat(ws.slice(0, j)); }
+        }
+        if (!role) { problems.push("\u201c" + line + "\u201d is not a part Lantern draws (it draws: " + DRAWS + ")"); return; }
+      }
+      var it = { role: role, id: "", label: "", refs: [], a: {}, said: line };
+      if (role === "sensor") it.a.heat = /^(thermistor|ntc)$/.test(w0);
+      if (w0 === "input") it.a.input = true;
+      rest.forEach(function (x) {
+        if (x.q != null) { it.label = it.label ? it.label + " " + x.q : x.q; return; }
+        var t = x.w.replace(/[.,;:]+$/, ""), lw = t.toLowerCase();
+        if (/^(pullup|pulldown)$/.test(lw)) { it.a.pull = lw === "pullup" ? "up" : "down"; return; }
+        if (/^(red|green|blue|yellow|white|orange|amber|uv|ir|infrared|pink|purple|violet)$/.test(lw)) { it.a.colour = lw; return; }
+        if (/^(input|in)$/.test(lw)) { it.a.input = true; return; }
+        if (/^(thermistor|ntc|heat|temperature)$/.test(lw)) { it.a.heat = true; return; }
+        if (/^(electrolytic|polarised|polarized)$/.test(lw)) { it.a.polar = true; return; }
+        if (IDRE.test(t) && !/^\d/.test(t)) { if (!it.id) it.id = t.toUpperCase(); else it.refs.push(t.toUpperCase()); return; }
+        if (/\d/.test(t)) { it.label = it.label ? it.label + " " + t : t; return; }
+      });
+      items.push(it);
+    });
+    return { items: items, notes: notes, problems: problems };
+  }
+  function down(r) { var v = e12(r); return v > r * 1.0001 ? prev(v) : v; }   // the E12 value at or below r
+  function prev(v) {   // the E12 value below v
+    var d = Math.pow(10, Math.floor(Math.log(v) / Math.LN10) - 1), E = [10, 12, 15, 18, 22, 27, 33, 39, 47, 56, 68, 82], k = Math.round(v / d), i = E.indexOf(k);
+    return i > 0 ? E[i - 1] * d : i === 0 ? 82 * d / 10 : v;
+  }
+  function amps(t) { var m = /(\d+(?:\.\d+)?)\s*(m?)a\b/i.exec(String(t || "")); return m ? parseFloat(m[1]) / (m[2] ? 1000 : 1) : null; }
+
+  // circuit(parsed) -> {v, branches: [{kind, id, ...}], problems, added, changed, steps}
+  function circuit(pr) {
+    var problems = pr.problems.slice(), added = [], changed = [], used = {}, n = {}, dev = {};
+    function nid(pfx) { n[pfx] = n[pfx] || 0; var id; do { id = pfx + (++n[pfx]); } while (used[id]); used[id] = 1; return id; }
+    pr.items.forEach(function (it) {
+      if (it.id && dev[it.id]) { if (dev[it.id].role === it.role) { it.refs.forEach(function (r) { dev[it.id].refs.push(r); }); it.dup = true; } else { it.refs.unshift(it.id); it.id = ""; } }
+      if (it.id && !it.dup) { dev[it.id] = it; used[it.id] = 1; }
+    });
+    var items = pr.items.filter(function (it) { return !it.dup; });
+    items.forEach(function (it) { if (!it.id && it.role !== "supply") { it.id = nid(PFX[it.role] || "X"); dev[it.id] = it; } });
+    function of(r) { return items.filter(function (it) { return it.role === r; }); }
+    // the supply: said, or a battery, or what a load's label says, or 5 V
+    var sup = of("supply")[0], bat = of("battery")[0], V = volts(sup && (sup.label + " " + sup.refs.join(" "))) || volts(bat && bat.label);
+    if (!V) items.forEach(function (it) { if (!V && LOAD.test(it.role)) V = volts(it.label); });
+    if (!V) { V = 5; changed.push("the supply is drawn as 5 V (write supply \x229 V\x22 for another)"); }
+    var pins = of("pin");
+    // a pin's voltage: said, or its board's (an ESP32, a Pico or a Pi is 3.3 V); pins not said take the board's
+    pins.forEach(function (p) { p.sv = volts(p.label) || volts(p.said) || (/\b3\.3V\b|esp32|pico|raspberry|\bpi\b/i.test(p.label + " " + p.said) ? 3.3 : 0); });
+    var board = (pins.filter(function (p) { return p.sv; })[0] || {}).sv || 5;
+    pins.forEach(function (p) { p.v = p.sv || board; });
+    function pinOf(id) { return dev[id] && dev[id].role === "pin" ? dev[id] : null; }
+    // who drives each load: a transistor naming it, a pin (either line names
+    // the other), a switch in its line, or nothing (+ to 0 V)
+    var loads = items.filter(function (it) { return LOAD.test(it.role); }), br = [];
+    if (!loads.length && !of("switch").length && !of("sensor").length && !of("pot").length) problems.push("there is nothing to power or read: add a part, like: led D1 \x22power on\x22");
+    loads.forEach(function (ld) {
+      var q = of("transistor").filter(function (t) { return t.refs.indexOf(ld.id) >= 0 || ld.refs.indexOf(t.id) >= 0; })[0];
+      var pin = ld.refs.map(pinOf).filter(function (x) { return x; })[0] || pins.filter(function (p) { return p.refs.indexOf(ld.id) >= 0; })[0];
+      var sw = of("switch").filter(function (s) { return s.refs.indexOf(ld.id) >= 0 || ld.refs.indexOf(s.id) >= 0; })[0];
+      var b = { kind: "load", load: ld, q: null, pin: null, sw: sw || null, r: null, rb: null, d: null };
+      if (q) {
+        b.q = q;
+        var drv = q.refs.map(pinOf).filter(function (x) { return x; })[0] || (pin && pin) || null, qsw = q.refs.map(function (r) { return dev[r] && dev[r].role === "switch" ? dev[r] : null; }).filter(function (x) { return x; })[0];
+        if (!drv && !qsw) {
+          var free = pins.filter(function (p) { return !p.refs.length; });
+          if (pins.length === 1) drv = pins[0]; else if (free.length === 1) drv = free[0];
+        }
+        if (!drv && !qsw) { problems.push(q.id + " needs something driving its base: add pin P1 \x22Arduino D7\x22 and write transistor " + q.id + " " + ld.id + " P1 (or a switch: transistor " + q.id + " " + ld.id + " S1)"); return; }
+        b.pin = drv; b.qsw = qsw || null;
+      } else if (pin) {
+        b.pin = pin;
+        if (!SMALL.test(ld.role)) {
+          b.q = { id: nid("Q"), role: "transistor", label: "", refs: [], added: true };
+          added.push("transistor " + b.q.id + " to switch " + ld.id + " (a pin gives about 20 mA, too little for a " + ld.role + ")");
+        }
+      }
+      br.push(b);
+    });
+    // what each load draws, for the resistors
+    function current(ld) {
+      var a = amps(ld.label), R = ohms(ld.label), v = volts(ld.label) || V;
+      if (a) return a;
+      if (R && ld.role !== "led") return v / R;
+      return { led: 0.015, buzzer: 0.03, lamp: 0.1, relay: V >= 9 ? 0.04 : 0.07, motor: 0.25, solenoid: 0.3 }[ld.role] || 0.05;
+    }
+    var userR = of("resistor");
+    br.forEach(function (b) {
+      var ld = b.load, vdrive = b.pin && !b.q ? b.pin.v : V;
+      if (ld.role === "led") {
+        var vf = ledVf(ld.label + " " + (ld.a.colour || "")), drop = vdrive - vf - (b.q ? 0.2 : 0), mine = userR.filter(function (r) { return r.refs.indexOf(ld.id) >= 0; })[0];
+        if (drop <= 0) { problems.push(ld.id + " (" + (ld.a.colour ? ld.a.colour + " " : "") + "LED, about " + vf + " V) will not light from " + vdrive + " V: use a higher supply"); return; }
+        if (mine) {
+          var R = ohms(mine.label), I = R ? drop / R : null;
+          b.r = { id: mine.id, val: R, label: mine.label || "" };
+          if (!R) problems.push(mine.id + " has no value Lantern can read: write it in ohms, like: resistor " + mine.id + " \x22" + ohmText(e12(drop / 0.015)) + "\x22 " + ld.id);
+          else if (I > 0.03) problems.push(mine.id + " (" + ohmText(R) + ") lets about " + Math.round(I * 1000) + " mA through " + ld.id + ": an LED takes about 20 mA at most -- use " + ohmText(e12(drop / 0.015)) + " or more ((" + vdrive + " V - " + vf + " V" + (b.q ? " - 0.2 V" : "") + ") / 15 mA)");
+          mine.used = true;
+        } else {
+          var val = e12(drop / 0.015);
+          b.r = { id: nid("R"), val: val, added: true };
+          added.push(b.r.id + " (" + ohmText(val) + ") for " + ld.id + " ((" + vdrive + " V - " + vf + " V" + (b.q ? " - 0.2 V" : "") + ") / 15 mA)");
+        }
+      }
+      if (b.q) {
+        var ic = current(ld), vb = b.pin ? b.pin.v : V, rb = Math.max(220, Math.min(10000, down((vb - 0.7) / Math.max(ic / 10, 0.001))));
+        if (ic > 0.5) changed.push(ld.id + " draws about " + Math.round(ic * 1000) + " mA: " + b.q.id + " must be a power transistor (or a MOSFET) for that");
+        b.rb = { id: nid("R"), val: rb };
+        added.push(b.rb.id + " (" + ohmText(rb) + ") into " + b.q.id + "\u2019s base (about " + Math.round((vb - 0.7) / rb * 1000) + " mA, enough to switch " + ld.id + "\u2019s ~" + Math.round(ic * 1000) + " mA)");
+        if (KICK.test(ld.role)) {
+          var dd = of("diode").filter(function (d) { return d.refs.indexOf(ld.id) >= 0; })[0];
+          b.d = dd ? { id: dd.id, label: dd.label || "1N4007" } : { id: nid("D"), label: "1N4007", added: true };
+          if (!dd) added.push("the diode " + b.d.id + " across " + ld.id + " (its cathode to +), so " + b.q.id + " is not killed by " + ld.id + "\u2019s kick when it turns off");
+          if (dd) dd.used = true;
+        }
+      }
+    });
+    of("transistor").forEach(function (t) { if (!br.some(function (b) { return b.q === t; })) problems.push("transistor " + t.id + " switches nothing: name the part it switches and what drives it, like: transistor " + t.id + " " + (loads[0] ? loads[0].id : "K1") + " P1"); });
+    userR.filter(function (r) { return !r.used; }).forEach(function (r) { problems.push("resistor " + r.id + ": name the part it is in series with, like: resistor " + r.id + " \x22" + (r.label || "220 ohm") + "\x22 " + (loads[0] ? loads[0].id : "D1") + " (Lantern sizes LED, base and pull-down resistors itself)"); });
+    of("diode").filter(function (d) { return !d.used; }).forEach(function (d) { problems.push("diode " + d.id + ": Lantern draws a diode across a relay, motor or solenoid a transistor switches (and adds it there itself) -- leave it out, or name the coil: diode " + d.id + " K1"); });
+    // inputs: a push button, a sensor or a pot read by a pin
+    function readBy(it) {
+      var p = it.refs.map(pinOf).filter(function (x) { return x; })[0] || pins.filter(function (x) { return x.refs.indexOf(it.id) >= 0; })[0];
+      if (!p) { var free = pins.filter(function (x) { return !br.some(function (b) { return b.pin === x; }); }); p = free.length === 1 ? free[0] : null; }
+      return p;
+    }
+    of("switch").forEach(function (s) {
+      if (br.some(function (b) { return b.sw === s || b.qsw === s; })) return;   // in a load's line, or driving a base
+      var p = readBy(s);
+      if (!p) { problems.push("switch " + s.id + ": name the pin that reads it, like: switch " + s.id + " P1 (or the part it switches: switch " + s.id + " D1)"); return; }
+      var up = s.a.pull === "up", r = { id: nid("R"), val: 10000 };
+      br.push({ kind: "input", sw: s, pin: p, pull: up ? "up" : "down", r: r });
+      added.push("the pull-" + (up ? "up" : "down") + " resistor " + r.id + " (10 k\u03a9) on " + p.id + ", so it reads " + (up ? p.v + " V" : "0 V") + " -- not a floating pin -- while " + s.id + " is open");
+    });
+    of("sensor").forEach(function (s) {
+      var p = readBy(s);
+      if (!p) { problems.push("sensor " + s.id + ": name the pin that reads it, like: sensor " + s.id + " P1"); return; }
+      var r = { id: nid("R"), val: 10000 };
+      br.push({ kind: "sensor", sensor: s, pin: p, r: r });
+      added.push("the divider resistor " + r.id + " (10 k\u03a9) under " + s.id + ", so " + p.id + " reads a voltage that changes with the " + (s.a.heat ? "heat" : "light"));
+    });
+    of("pot").forEach(function (s) {
+      var p = readBy(s);
+      if (!p) { problems.push("pot " + s.id + ": name the pin that reads its wiper, like: pot " + s.id + " P1"); return; }
+      br.push({ kind: "pot", pot: s, pin: p });
+    });
+    of("capacitor").forEach(function (cp) { var m = /(\d+(?:\.\d+)?)\s*(u|\u00b5)f/i.exec(cp.label); br.push({ kind: "cap", cap: cp, polar: !!(cp.a.polar || m && parseFloat(m[1]) >= 1) }); });
+    pins.forEach(function (p) { if (!br.some(function (b) { return b.pin === p; })) problems.push("pin " + p.id + " drives or reads nothing: name it on a part\u2019s line (led D1 " + p.id + ", transistor Q1 K1 " + p.id + ", switch S1 " + p.id + ")"); });
+    if (br.length > 8) problems.push("keep it to 8 branches (things powered or read) or fewer");
+    var c = { v: V, battery: bat || null, supply: sup || null, pins: pins, branches: br, problems: problems, added: added, changed: changed, notes: pr.notes, dev: dev };
+    if (!problems.length) c.steps = steps(c);
+    return c;
+  }
+  function nm(it) { return it.id + (it.label ? " (" + it.label + ")" : it.a && it.a.colour ? " (" + it.a.colour + ")" : ""); }
+  function steps(c) {
+    var out = [];
+    c.branches.forEach(function (b) {
+      if (b.kind === "load") {
+        var ld = b.load, does = ld.role === "led" || ld.role === "lamp" ? "lights" : ld.role === "relay" ? "pulls in" : ld.role === "motor" ? "runs" : ld.role === "buzzer" ? "sounds" : "pulls in";
+        var by = b.q ? (b.pin ? nm(b.pin) + " high turns " + b.q.id + " on: " : b.qsw ? b.qsw.id + " pressed turns " + b.q.id + " on: " : "") : b.pin ? nm(b.pin) + " high: " : b.sw ? b.sw.id + " pressed: " : "";
+        out.push(by + nm(ld) + " " + does + (b.r ? " through " + b.r.id + " (" + ohmText(b.r.val || 0) + ")" : "") + (b.d ? "; " + b.d.id + " catches its kick when " + b.q.id + " turns off" : ""));
+      } else if (b.kind === "input") out.push(nm(b.pin) + " reads " + (b.pull === "up" ? "0 V while " + b.sw.id + " is pressed, " + b.pin.v + " V when it is let go" : b.pin.v === 3.3 ? "3.3 V" : c.v + " V") + (b.pull === "up" ? "" : " while " + b.sw.id + " is pressed, 0 V when it is let go"));
+      else if (b.kind === "sensor") out.push(nm(b.sensor) + " and " + b.r.id + " (10 k\u03a9) divide " + b.pin.v + " V: " + b.pin.id + " reads more as the " + (b.sensor.a.heat ? "temperature falls (an NTC)" : "light gets brighter"));
+      else if (b.kind === "pot") out.push(b.pin.id + " reads 0 to " + b.pin.v + " V as " + b.pot.id + " is turned");
+    });
+    if (c.pins.length) out.push("The board\u2019s GND is joined to 0 V, so its pins and this circuit share one ground");
+    return out;
+  }
+
+  // layout(c, title) -> {shapes, els: [{id, kind, a, b, ...}]}: + on top,
+  // 0 V below, a branch for each thing powered or read, left to right. A
+  // branch a pin drives starts at the pin's tag, not at +; a push button,
+  // sensor or pot read by a pin runs from the board's own supply (its 5 V
+  // or 3.3 V tag) when the + rail is more than the pin can take.
+  function layout(c, title) {
+    var shapes = [], els = [], dots = [], nn = 0, X0 = 120, YT = 120, STEP = 92;
+    function node() { return "n" + (++nn); }
+    function tw(s, fs) { return String(s).length * fs * 0.55; }
+    function put(sym, id, x, y, o, label, side) {
+      var r = SYM[sym](x, y, INK, o), sd = side || 1;
+      shapes.push(r.g);
+      if (id) shapes.push({ t: "text", c: INK, x: x + sd * (28 + tw(id, 12) / 2), y: label ? y - 8 : y, s: id, fs: 12 });
+      if (label) shapes.push({ t: "text", c: NOTE, x: x + sd * (28 + tw(label, 11) / 2), y: y + 9, s: label, fs: 11 });
+      return r.ports;
+    }
+    function el(id, kind, a, b, more) { var e = { id: id, kind: kind, a: a, b: b }; if (more) Object.keys(more).forEach(function (k) { e[k] = more[k]; }); els.push(e); return e; }
+    function wire(pts) { shapes.push({ t: "path", c: INK, w: 3, pts: pts }); }
+    function pinText(p) { return p.id + (p.label ? " " + p.label : ""); }
+    // the branches: what each holds, top to bottom, and the room it needs
+    var cols = [], x = X0 + (c.battery ? 90 : 60), h = 0;
+    c.branches.forEach(function (b) {
+      var stack = [], left = 30, right = 110, reads = b.kind === "input" || b.kind === "sensor" || b.kind === "pot";
+      if (b.kind === "load") {
+        if (b.pin && !b.q) stack.push("pin");
+        if (b.sw) stack.push("sw");
+        if (b.r) stack.push("r");
+        stack.push("load");
+        if (b.q) { stack.push("q"); left = 40 + 134 + tw(b.pin ? pinText(b.pin) : "", 11) + (b.qsw ? 60 : 0); }
+        if (b.d) right = 190;
+        else right = 60 + Math.max(tw(b.load.id, 12), tw(b.load.label || b.load.a.colour || "", 11)) + (b.r ? 10 : 0);
+        right = Math.max(right, b.r ? 60 + tw(ohmText(b.r.val || 0), 11) : 0, b.pin && !b.q ? tw(pinText(b.pin), 11) / 2 + 30 : 0, 90);
+        left = Math.max(left, b.pin && !b.q ? tw(pinText(b.pin), 11) / 2 + 20 : 0);
+      } else if (b.kind === "input") { stack = b.pull === "up" ? ["r", "node", "sw"] : ["sw", "node", "r"]; right = 70 + tw(pinText(b.pin), 11); }
+      else if (b.kind === "sensor") { stack = ["sensor", "node", "r"]; left = 60; right = 70 + tw(pinText(b.pin), 11); }
+      else if (b.kind === "pot") { stack = ["pot"]; right = 60 + tw(pinText(b.pin), 11); }
+      else stack = ["cap"];
+      if (reads && b.pin.v !== c.v) { stack.unshift("vcc"); left = Math.max(left, 70); }
+      x += left;
+      cols.push({ b: b, x: x, stack: stack });
+      x += right;
+      var hh = 0;
+      stack.forEach(function (s) { hh += s === "node" ? 22 : s === "pin" || s === "vcc" ? 40 : STEP; });
+      h = Math.max(h, hh);
+    });
+    var YB = YT + h + 60, X2 = x;
+    function vt(v) { return (v % 1 ? v : String(v)) + " V"; }
+    // the rails, and the battery
+    wire([[X0, YT], [X2, YT]]); wire([[X0, YB], [X2, YB]]);
+    shapes.push({ t: "text", c: INK, x: X0 - 34, y: YT, s: "+" + vt(c.v), fs: 13 }, { t: "text", c: INK, x: X0 - 30, y: YB, s: "0 V", fs: 13 });
+    if (c.pins.length) shapes.push({ t: "text", c: GREY, x: (X0 + X2) / 2, y: YB + 22, s: "0 V is joined to the board\u2019s GND", fs: 11 });
+    if (c.battery) {
+      var bp = put("battery", c.battery.id, X0 + 40, (YT + YB) / 2, null, c.battery.label || vt(c.v));
+      wire([[X0 + 40, YT], bp.a]); wire([bp.b, [X0 + 40, YB]]); dots.push([X0 + 40, YT], [X0 + 40, YB]);
+      el(c.battery.id, "battery", "PLUS", "GND", { source: true });
+    }
+    cols.forEach(function (col) {
+      var b = col.b, cx = col.x, y = YT + 12, at = "PLUS", top = [cx, YT], fromRail = true;
+      function step(sym, id, kind, o, label, more, side) {
+        var yy = y + 40, p = put(sym, id, cx, yy, o, label, side);
+        wire([top, p.a]);
+        var nx = node(), e = el(id, kind, at, nx, more);
+        at = nx; top = p.b; y = yy + 52;
+        return { p: p, e: e };
+      }
+      function tagTop(text, nodeName) {   // a branch fed from a pin (or the board's supply), not from +
+        put("tag", "", cx, YT + 34, { text: text, at: "down" });
+        top = [cx, YT + 44]; at = nodeName; fromRail = false; y = YT + 44;
+      }
+      col.stack.forEach(function (s) {
+        if (s === "pin") { tagTop(pinText(b.pin), "PIN:" + b.pin.id); return; }
+        if (s === "vcc") { tagTop("board " + vt(b.pin.v), "VCC:" + b.pin.v); return; }
+        if (s === "sw") { step("switch", b.sw.id, "switch", null, b.sw.label); return; }
+        if (s === "r") { step("resistor", b.r.id, "resistor", null, ohmText(b.r.val || 0), { load: true, value: b.r.val, base: false }); return; }
+        if (s === "load") {
+          var ld = b.load, st = step(ld.role, ld.id, ld.role, null, ld.label || ld.a.colour || "", { load: true }, b.d || ld.role === "led" ? -1 : 1);   // (an LED's light points right)
+          if (b.d) {   // the diode beside the coil, its cathode to the + side
+            var dx = cx + 64, dp = put("diode", b.d.id, dx, st.p.a[1] + 40, { up: true }, b.d.label);
+            wire([[cx, st.p.a[1]], [dx, st.p.a[1]], dp.a]); wire([dp.b, [dx, st.p.b[1]], [cx, st.p.b[1]]]);
+            dots.push([cx, st.p.a[1]], [cx, st.p.b[1]]);
+            el(b.d.id, "diode", st.e.b, st.e.a, { blocks: true });   // a = its anode (the coil's lower end), b = its cathode (the upper)
+          }
+          return;
+        }
+        if (s === "q") {
+          var yy = y + 40, qp = put("transistor", b.q.id, cx, yy, null, "NPN");
+          wire([top, qp.c]);
+          var qn = node();
+          el(b.q.id, "transistor", at, "GND", { base: qn });
+          at = "GND"; top = qp.e; y = yy + 52;
+          // the base: through its resistor, from the pin (or a push button from +)
+          var rx = cx - 44 - 50, bn = node();
+          shapes.push({ t: "path", c: INK, w: 3, pts: [[cx - 44, yy], [rx + 20, yy]] }, D.zig(INK, W2, rx - 20, yy, rx + 20, 8, 6), { t: "path", c: INK, w: 3, pts: [[rx - 20, yy], [rx - 40, yy]] });
+          shapes.push({ t: "text", c: INK, x: rx, y: yy - 22, s: b.rb.id, fs: 12 }, { t: "text", c: NOTE, x: rx, y: yy + 22, s: ohmText(b.rb.val), fs: 11 });
+          el(b.rb.id, "resistor", bn, qn, { load: true, base: true, value: b.rb.val });
+          if (b.pin) { put("tag", "", rx - 40, yy, { text: pinText(b.pin), at: "left" }); el("", "wire", "PIN:" + b.pin.id, bn); }
+          else if (b.qsw) {
+            var sx = rx - 40, sp = put("switch", b.qsw.id, sx, YT + 52, null, b.qsw.label, -1);
+            wire([[sx, YT], sp.a]); wire([sp.b, [sx, yy]]); dots.push([sx, YT]);
+            el(b.qsw.id, "switch", "PLUS", bn);
+          }
+          return;
+        }
+        if (s === "node") {   // the pin reads here
+          var ny = y + 6;
+          wire([top, [cx, ny]]);
+          put("tag", "", cx + 46, ny, { text: pinText(b.pin), at: "right" });
+          wire([[cx, ny], [cx + 46, ny]]); dots.push([cx, ny]);
+          el("", "wire", at, "PIN:" + b.pin.id);
+          top = [cx, ny]; y = ny + 4; return;
+        }
+        if (s === "sensor") { step("sensor", b.sensor.id, "sensor", { heat: b.sensor.a.heat }, b.sensor.label || (b.sensor.a.heat ? "thermistor" : "LDR"), { load: true }); return; }
+        if (s === "pot") {
+          var pp = step("pot", b.pot.id, "pot", null, b.pot.label || "10 k\u03a9", { load: true }, -1), w = pp.p.w;
+          put("tag", "", w[0] + 8, w[1], { text: pinText(b.pin), at: "right" });
+          wire([w, [w[0] + 8, w[1]]]);
+          el("", "wire", "WIPER:" + b.pot.id, "PIN:" + b.pin.id, { wiper: true });
+          return;
+        }
+        if (s === "cap") step("capacitor", b.cap.id, "capacitor", { polar: b.polar }, b.cap.label, { blocks: true });
+      });
+      if (fromRail) dots.push([cx, YT]);
+      wire([top, [cx, YB]]); dots.push([cx, YB]);
+      el("", "wire", at, "GND");
+    });
+    dots.forEach(function (d) { shapes.push({ t: "circle", c: INK, w: 2, cx: d[0], cy: d[1], r: 3.5, f: true }); });
+    if (title) shapes.unshift({ t: "text", c: INK, x: Math.max(240, (X0 + X2) / 2), y: 40, s: title, fs: 18 });
+    return { shapes: shapes, els: els, bottom: YB + (c.pins.length ? 30 : 10), left: X0 - 60, right: X2 + 40 };
+  }
+
+  // verify(c, lay) -> [problems]: the wires walked. Switches and transistors
+  // are taken as on (the worst case); resistors, LEDs, lamps, coils, motors,
+  // buzzers and sensors are loads; a capacitor and a diode across a coil
+  // pass no steady current.
+  function verify(c, lay) {
+    var parent = {}, out = [];
+    function f(k) { while (parent[k] && parent[k] !== k) k = parent[k]; return k; }
+    function u(a, b) { a = f(a); b = f(b); if (a !== b) parent[a] = b; }
+    lay.els.forEach(function (e) { if (!e.load && !e.blocks && !e.source && !e.wiper) u(e.a, e.b); });
+    var feeds = ["PLUS"].concat(c.pins.map(function (p) { return "PIN:" + p.id; }), c.pins.map(function (p) { return "VCC:" + p.v; })).map(f);
+    if (f("PLUS") === f("GND")) out.push("+ reaches 0 V through switches and wire alone (a short)");
+    c.pins.forEach(function (p) {   // an output pin never wired straight to a rail (an input reads one through its switch)
+      if (!c.branches.some(function (b) { return b.kind === "load" && b.pin === p; })) return;
+      var k = f("PIN:" + p.id);
+      if (k === f("GND") || k === f("PLUS")) out.push(p.id + " is wired straight to " + (k === f("GND") ? "0 V" : "+") + " (a short when it switches)");
+    });
+    function fed(n) { return feeds.indexOf(f(n)) >= 0; }
+    function byId(id) { return lay.els.filter(function (e) { return e.id === id; })[0]; }
+    c.branches.forEach(function (b) {
+      if (b.kind === "input" || b.kind === "sensor" || b.kind === "pot") {
+        var pin = b.pin, hi = lay.els.filter(function (e) { return e.id === (b.sw || b.sensor || b.pot || {}).id; })[0];
+        if (pin.v < c.v && hi && (f(hi.a) === f("PLUS") || f(hi.b) === f("PLUS"))) out.push(pin.id + " (" + pin.v + " V) would read the " + c.v + " V rail");
+        return;
+      }
+      if (b.kind !== "load") return;
+      var ld = byId(b.load.id);
+      if (!ld) { out.push(b.load.id + " is not drawn"); return; }
+      var above = lay.els.filter(function (e) { return e.load && e !== ld && f(e.b) === f(ld.a); })[0];
+      if (!fed(ld.a) && !(above && fed(above.a))) out.push(b.load.id + " is not fed from + or a pin");
+      if (b.load.role === "led" && !(above && above.kind === "resistor")) out.push(b.load.id + " has no resistor in series");
+      if (b.q) {
+        var q = byId(b.q.id);
+        if (!q || q.a !== ld.b || q.b !== "GND") out.push(b.q.id + " does not switch " + b.load.id + "\u2019s lower end to 0 V");
+        else if (!lay.els.some(function (e) { return e.kind === "resistor" && e.base && e.b === q.base && fed(e.a); })) out.push(b.q.id + "\u2019s base is not driven through a resistor");
+      } else if (f(ld.b) !== f("GND")) out.push(b.load.id + " does not reach 0 V");
+      if (b.d) {
+        var d = byId(b.d.id);
+        if (!d || d.b !== ld.a || d.a !== ld.b) out.push(b.d.id + " is not across " + b.load.id + " with its cathode to +");
+      }
+    });
+    return out;
+  }
+
+  function wrap(t, n) {
+    var out = [], cur = "";
+    String(t).split(" ").forEach(function (w) { if (cur && (cur + " " + w).length > n) { out.push(cur); cur = w; } else cur = cur ? cur + " " + w : w; });
+    if (cur) out.push(cur);
+    return out;
+  }
+  function notesUnder(lay, lines, problems, grey) {
+    var y = lay.y || lay.bottom + 34, cx = Math.max(300, (lay.left + lay.right) / 2), shown = [], fs = grey ? 12 : 15;
+    var nt = L.aiSchematicMore && L.aiSchematicMore.noteText;
+    lines.forEach(function (n) {
+      var r = grey ? { text: String(n), problems: [] } : nt ? nt(n) : { text: String(n), problems: [] };
+      r.problems.forEach(function (p) { problems.push(p); });
+      shown.push(r.text.slice(0, 150));
+      wrap(r.text.slice(0, grey ? 600 : 150), grey ? 110 : 80).forEach(function (part) {
+        lay.shapes.push({ t: "text", c: grey ? GREY : NOTE, x: Math.max(cx, part.length * fs * 0.28 + 16), y: y, s: part, fs: fs }); y += grey ? 18 : 24;
+      });
+    });
+    lay.y = y;
+    return shown;
+  }
+
+  // build(block, ctx) -> what Chat and the bench take (AI_DRAW's result)
+  function build(block, ctx) {
+    var pr = parse(block), c = circuit(pr);
+    if (c.problems.length) return { problems: c.problems, plan: null };
+    if (!L.aiDraw || !L.aiDraw.result) return { problems: ["Lantern\u2019s drawing part (AI_DRAW) is missing"], plan: null };
+    var lay = layout(c, block.title), late = [];
+    var bad = verify(c, lay);
+    if (bad.length) return { problems: ["Lantern could not draw this circuit correctly (" + bad.join("; ") + ")"], plan: null };
+    var shown = notesUnder(lay, (c.notes || []).slice(0, 8), late, false);
+    notesUnder(lay, c.steps, late, true);
+    function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+    var said = (c.added.length ? "Lantern added " + c.added.join("; ") : "") + (c.changed.length ? (c.added.length ? ". " : "") + c.changed.map(cap).join(". ") : "");
+    if (said) notesUnder(lay, [said], late, true);
+    var plan = { mode: "electronics", parts: lay.els.filter(function (e) { return e.id; }).map(function (e) { return { id: e.id, type: e.kind, kind: e.kind, label: "" }; }),
+      wires: lay.els.filter(function (e) { return !e.id; }).map(function (e) { return [e.a, e.b]; }), loop: true, notes: shown,
+      circuit: { v: c.v, pins: c.pins.map(function (p) { return { id: p.id, v: p.v, label: p.label }; }),
+        branches: c.branches.map(function (b) {
+          return { kind: b.kind, load: b.load ? { id: b.load.id, kind: b.load.role } : null, pin: b.pin ? b.pin.id : "", q: b.q ? b.q.id : "", sw: b.sw ? b.sw.id : b.qsw ? b.qsw.id : "",
+            r: b.r ? { id: b.r.id, ohms: b.r.val } : null, rb: b.rb ? { id: b.rb.id, ohms: b.rb.val } : null, diode: b.d ? { id: b.d.id, cathode: "+" } : null, pull: b.pull || "",
+            sensor: b.sensor ? b.sensor.id : b.pot ? b.pot.id : "" };
+        }), steps: c.steps, added: c.added, changed: c.changed, verified: true } };
+    var summary = c.branches.length + " branch" + (c.branches.length === 1 ? "" : "es") + " between +" + c.v + " V and 0 V; wired by Lantern. " + c.steps.join(". ") + (said ? ". " + said : "");
+    return L.aiDraw.result(lay.shapes, plan, summary, block.title, late);
+  }
+
+  var HINT = [
+    "supply \x2212 V\x22                    the + rail and 0 V (GND); battery B1 \x229 V\x22 draws a battery",
+    "pin P1 \x22Arduino D7\x22               a microcontroller pin (5 V; write 3.3V for an ESP32 or a Pi); its board\u2019s GND is joined to 0 V",
+    "led D1 P1 red                     an LED lit by pin P1 (led D1 alone: from + to 0 V). Lantern adds and sizes its resistor",
+    "relay K1 \x2212 V coil\x22              a relay coil; also lamp L1, motor M1, buzzer BZ1, solenoid Y1",
+    "transistor Q1 K1 P1               an NPN transistor switching K1, its base driven by P1 -- Lantern adds the base resistor, and the",
+    "                                  diode across a relay, motor or solenoid. A pin naming a relay or motor gets a transistor added.",
+    "switch S1 P2                      a push button read by pin P2 (Lantern adds the pull-down; write pullup for a pull-up)",
+    "sensor LDR1 P3                    a light sensor read by P3, with its divider resistor (thermistor TH1 P3; pot RV1 P3)",
+    "resistor R1 \x22330 ohm\x22 D1          a resistor you size yourself, in series with D1 (Lantern checks the current)",
+    "capacitor C1 \x22100 uF\x22             across the supply, its + to the + rail",
+    "note <text>                       a line of text under the drawing"];
+  var PROMPT = ["MAKE ELECTRONICS: <title>   -- a small electronic circuit: name the parts and what drives what; Lantern draws the rails, the",
+    "wiring and the resistors and diodes such circuits need, and sizes them."].concat(HINT, [
+    "END",
+    "Never write wires or part lines. For the program the board runs, write MAKE CODE; for the circuit, MAKE ELECTRONICS. For example:",
+    "MAKE ELECTRONICS: Button and LED",
+    "pin P1 \x22D2 input\x22",
+    "pin P2 \x22D13\x22",
+    "switch S1 P1",
+    "led D1 P2 green",
+    "END"]);
+  window.Lantern.aiElectronics = { isElectronics: isElectronics, parse: parse, circuit: circuit, layout: layout, verify: verify, build: build, PROMPT: PROMPT, HINT: HINT, asks: asks, sym: SYM };
+
+  var act = (window.Lantern.aiActions || []).filter(function (a) { return a.id === "schematic"; })[0];
+  if (!act) return;
+  ["ELECTRONICS", "ELECTRONIC", "ELECTRONIC CIRCUIT", "BREADBOARD"].forEach(function (k) { if (act.kinds.indexOf(k) < 0) act.kinds.push(k); });
+  var before = act.build;
+  act.build = function (block, ctx) { return isElectronics(block, ctx && ctx.question) ? build(block, ctx) : before(block, ctx); };
+  var hintBefore = act.fixHint;
+  act.fixHint = function (block, made, q) {
+    if (isElectronics(block, q)) return ["Lantern reads a MAKE ELECTRONICS block line by line, like this:"].concat(HINT);
+    return typeof hintBefore === "function" ? hintBefore(block, made, q) : null;
+  };
+  var pfBefore = act.promptFor;
+  act.promptFor = function (q) { return asks(q) ? PROMPT : typeof pfBefore === "function" ? pfBefore(q) : act.prompt; };
+})();
+// ===========================================================================
+// MODULE: AI_ELECTRONICS - END
+// ===========================================================================
+// ===========================================================================
 // MODULE: AI_DRAW_CHECK - START
 // Depends: AI_DRAW (Lantern.aiDraw), AI_ACTIONS (Lantern.aiActions: the
 //          drawing action) -- feature-detected
@@ -28857,7 +29595,7 @@ Lantern.RFB = (function () {
 // MODULE: AI_MAKE_BENCH_DATA - START
 // Depends: AI_BENCH_DATA (Lantern.aiBenchQuestions, created here if absent),
 //          AI_ACTIONS -- the bench runs these only when AI_ACTIONS is there
-// Exports: (none) -- adds 11 "make" questions to Lantern Bench
+// Exports: (none) -- adds 12 "make" questions to Lantern Bench
 // ===========================================================================
 // Things the AI is asked to make. A question passes when the model writes a
 // MAKE block of the right kind, Lantern's checks pass (after at most one
@@ -28969,6 +29707,25 @@ Lantern.RFB = (function () {
         if (!r.after.concat(r.series).some(function (e) { return e.kind === "ol"; })) return "no overload contact in " + id + "\u2019s rung";
         return c.rungs.some(function (x) { return x.out.kind === "lamp" && x.series.some(function (e) { return e.kind === "contact" && e.of === id && !e.nc; }); }) ? "" :
           "no pilot light on while the motor runs (a lamp through " + id + "\u2019s open contact)";
+      } },
+    // (1.18.0) electronics: a pin switching a relay -- the transistor's base
+    // resistor and the diode across the coil are what such a circuit always
+    // needs, and what a model forgets; Lantern adds them, and the bench
+    // checks that the circuit has them
+    { id: "make-electronics", kind: "SCHEMATIC",
+      ideal: "MAKE ELECTRONICS: Relay driver\nsupply \x2212 V\x22\npin P1 \x22Arduino D7\x22\nrelay K1 \x2212 V coil\x22\ntransistor Q1 K1 P1\nEND",
+      q: "Draw a circuit in which an Arduino output pin switches a 12 V relay coil through an NPN transistor.",
+      check: function (p) {
+        if (p.mode !== "electronics") return "not an electronic circuit (a 12 V supply, the pin, a transistor and the relay)";
+        var c = p.circuit;
+        if (!c || !c.verified) return "not checked as an electronic circuit";
+        var b = c.branches.filter(function (x) { return x.kind === "load" && x.load && x.load.kind === "relay"; })[0];
+        if (!b) return "no relay coil";
+        if (!b.q) return "the relay is not switched by a transistor";
+        if (!b.pin) return "no pin drives the transistor";
+        if (!b.rb) return "no resistor into the transistor\u2019s base";
+        if (!b.diode) return "no diode across the relay coil (the transistor dies when the coil turns off)";
+        return c.v >= 9 ? "" : "the relay is not on a 12 V supply";
       } },
     { id: "make-house", ideal: "MAKE DRAWING: House\nrect 5 6 10 5 fill tan\ntri 4 6 10 2 16 6 fill red\nrect 9 8 2 3 fill brown\nEND", kind: "DRAWING", q: "Draw a simple house with a red roof and a door.",
       check: function (p) {
