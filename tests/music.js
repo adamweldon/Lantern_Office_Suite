@@ -336,9 +336,9 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     "melody E4 E F G | G F E D | C C D E | E - - D D - r - | E E F G | G F E D | C C D E | D - - C C - r - | D D E C | D - E F E - C - | D - E F E - D - | C D r -"];
   var orc = S.make({ title: "Ode to Joy", lines: ODE12.concat(["arrange orchestra"]) }), oa = orc.plan.arrangement;
   ok("arrange orchestra: every player's part from the melody and chords -- an introduction, the tune softly, everyone, the last chord held",
-    !orc.problems.length && oa && oa.players.length === 12 && oa.form.join() === "intro,soft,full,coda" && oa.bars === 30 && orc.plan.seconds === 72 &&
-    orc.summary.indexOf("arranged for orchestra (12 players): an introduction (bars 1–4): the tune’s last phrase on the oboe; the tune softly on the first violins (bars 5–16); " +
-      "everyone (bars 17–28): the tune on the first violins, flute, oboe and trumpet, with the timpani; the last chord held over a timpani roll (bars 29–30) — 30 bars") > 0 &&
+    !orc.problems.length && oa && oa.players.length === 12 && oa.form.join() === "intro,soft,full,coda" && oa.bars === 28 && orc.plan.seconds === 67 &&
+    orc.summary.indexOf("arranged for orchestra (12 players): an introduction (bars 1\u20132): the key\u2019s chord and its dominant, held quietly over a timpani roll; the tune softly on the first violins (bars 3\u201314); " +
+      "everyone (bars 15\u201326): the tune on the first violins, flute, oboe and trumpet, with the timpani; the last chord held over a timpani roll (bars 27\u201328) \u2014 28 bars") > 0 &&
     /\narrange orchestra\n/.test(orc.plan.text) && !/\nstyle /.test(orc.plan.text), [orc.problems, orc.summary, orc.plan.text]);
   var OV = AR.voices(orc.plan, oa.shift), vbad = [];
   OV.forEach(function (v) {
@@ -369,8 +369,16 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   var rbad = oa.events.filter(function (e) { var ie = IN.get(e.inst); return e.midi < ie.low || e.midi > ie.high || e.at < 0 || e.at + e.len > oa.length + 1e-9; });
   ok("...every note in its instrument's range and inside the piece", !rbad.length, rbad.slice(0, 3));
   var tim = oa.events.filter(function (e) { return e.part === "timpani"; });
-  ok("...the timpani on C and G, only when everyone plays, and a roll under the last chord", tim.length > 30 && tim.every(function (e) { return (T.mod(e.midi, 12) === 0 || T.mod(e.midi, 12) === 7) && e.at >= 64 - 1e-9; }) &&
-    tim.filter(function (e) { return e.at >= 112 - 1e-9; }).length === 32, tim.length);
+  ok("...the timpani on C and G: a roll into the tune, when everyone plays, and a roll under the last chord -- not in the soft pass", tim.every(function (e) { return T.mod(e.midi, 12) === 0 || T.mod(e.midi, 12) === 7; }) &&
+    tim.filter(function (e) { return e.at < 8 - 1e-9; }).length === 16 && !tim.some(function (e) { return e.at >= 8 - 1e-9 && e.at < 56 - 1e-9; }) && tim.filter(function (e) { return e.at >= 104 - 1e-9; }).length === 32, tim.length);
+  // 1.22.2: the introduction is the key's chord and its dominant, no tune (the tune's last phrase there sounded like playing from the
+  // middle, Adam's trial); the moving line waits at the first bar through it, and stays at the last bar through the ending
+  var intro = oa.events.filter(function (e) { return e.at < 8 - 1e-9; });
+  ok("...the introduction: the key's chord, then its dominant seventh, no tune; the line waits at bar 1, then follows each pass from its start",
+    intro.length && !intro.some(function (e) { return e.part === "violin 1" || e.part === "flute" || e.part === "oboe" || e.part === "trumpet"; }) &&
+    intro.filter(function (e) { return e.at < 4 - 1e-9 && e.part !== "timpani"; }).every(function (e) { return [0, 4, 7].indexOf(T.mod(e.midi, 12)) >= 0; }) &&
+    intro.filter(function (e) { return e.at >= 4 - 1e-9 && e.part !== "timpani"; }).every(function (e) { return [7, 11, 2, 5].indexOf(T.mod(e.midi, 12)) >= 0; }) &&
+    AR.themeAt(oa, 0) === 0 && AR.themeAt(oa, 7.5) === 0 && AR.themeAt(oa, 9) === 1 && AR.themeAt(oa, 57) === 1 && AR.themeAt(oa, 110) === 44, intro.length);
   var omid = L.musicMidi.file(orc.plan), mtr = 0;
   for (oi = 0; oi + 4 < omid.length; oi++) if (omid[oi] === 77 && omid[oi + 1] === 84 && omid[oi + 2] === 114 && omid[oi + 3] === 107) mtr++;
   ok("...Save MIDI: a track for each player; Play and Save WAV: the arrangement's notes (the band's are left out)", mtr === 13 && L.musicBand.events(orc.plan).length === oa.events.length &&
@@ -379,10 +387,10 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   ok("strings, a string quartet, brass and winds: their own players", ens4.join() === "5,4,5,5", ens4);
   var f1 = S.make({ title: "", lines: ODE12.concat(["arrange strings", "form soft loud"]) }), f2 = S.make({ title: "", lines: ODE12.concat(["arrange strings", "form verse soft"]) });
   ok("form: the order written; a word Lantern does not play goes back", f1.plan.arrangement.form.join() === "soft,full" && f1.plan.arrangement.bars === 24 &&
-    /^form “verse”: Lantern plays intro, soft, full and coda/.test(f2.problems[0]), [f1.plan.arrangement.form, f2.problems]);
+    /^form \u201cverse\u201d: Lantern plays intro, soft, full and coda/.test(f2.problems[0]), [f1.plan.arrangement.form, f2.problems]);
   var VIO = "part viola: C - - - | B - - - | C - - - | B - - - | C - - - | B - - - | C - - - | B - C - | B - C - | B - C - | B - B - | C - B -";
   var pv = S.make({ title: "", lines: ODE12.concat(["arrange orchestra", VIO]) }), pva = pv.plan.arrangement;
-  var violaSoft = pva.events.filter(function (e) { return e.part === "viola" && e.at >= 16 - 1e-9 && e.at < 64 - 1e-9; });
+  var violaSoft = pva.events.filter(function (e) { return e.part === "viola" && e.at >= 8 - 1e-9 && e.at < 56 - 1e-9; });
   ok("a part of the AI's own plays for its player in the tune's passes, checked against the chords", !pv.problems.length && violaSoft.length === 17 && T.mod(violaSoft[0].midi, 12) === 0 &&
     /\npart viola: C - - - \| B - - -/.test(pv.plan.text), [pv.problems, violaSoft.length]);
   var pcl = S.make({ title: "", lines: ODE12.concat(["arrange orchestra", VIO.replace("part viola: C - - -", "part viola: C# - - -")]) });
@@ -396,7 +404,7 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   ok("...without an orchestra, a part joins the band", !pnb.problems.length && !pnb.plan.arrangement && /, a cello part/.test(pnb.summary) && L.musicBand.events(pnb.plan).filter(function (e) { return e.part === "cello"; }).length === 4, [pnb.problems, pnb.summary]);
   var AQ = "Can you arrange it for an orchestra?";
   ok("a question for an orchestra: a song without arrange goes back with the line; with it, it passes; a string quartet asked, an orchestra made, goes back",
-    /the question asks for an orchestra: write arrange orchestra \(Lantern writes every player’s part from the melody and chords\), with the key, chords and melody lines as they are/.test(act.build(song(ODE12), AQ).problems.join("\n")) &&
+    /the question asks for an orchestra: write arrange orchestra \(Lantern writes every player\u2019s part from the melody and chords\), with the key, chords and melody lines as they are/.test(act.build(song(ODE12), AQ).problems.join("\n")) &&
     act.build(song(ODE12.concat(["arrange orchestra"])), AQ).ok && /the question asks for a string quartet; the song is arranged for orchestra: write arrange string quartet/.test(act.build(song(ODE12.concat(["arrange orchestra"])), "Play it with a string quartet").problems.join("\n")),
     act.build(song(ODE12), AQ).problems);
   ok("Adam's questions after the song are about music", L.aiMusic.asks("Can you fill in the missing pieces of the song with an orchestra?") && L.aiMusic.asks("So can you use the lantern tools to create the file of the orchestra as you envision it in your basic framework?") &&
@@ -404,8 +412,8 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   var HIST = [{ role: "user", content: "Play Ode to Joy" }, { role: "assistant", content: "Here it is.\n" + song(ODE12, "Ode to Joy") }], FQ = "Can you fill in the missing pieces of the song with an orchestra?";
   var ab = await MC.about(FQ, HIST);
   ok("a question after a song: the song as made, and how to have an orchestra play it; the music action offered", ab &&
-    /^THE SONG SO FAR: Lantern made this song earlier in this chat -- “Ode to Joy”, 12 bars in C major:\ntitle Ode to Joy\nkey C major\ntime 4\/4\ntempo 100\nchords C \| G7 /.test(ab.prompt) &&
-    /For an orchestra, write a MAKE MUSIC block with these lines and one more: arrange orchestra\. Lantern writes every player’s part/.test(ab.prompt) && /Keep its key, time, chords and melody lines as they are\.$/.test(ab.prompt) &&
+    /^THE SONG SO FAR: Lantern made this song earlier in this chat -- \u201cOde to Joy\u201d, 12 bars in C major:\ntitle Ode to Joy\nkey C major\ntime 4\/4\ntempo 100\nchords C \| G7 /.test(ab.prompt) &&
+    /For an orchestra, write a MAKE MUSIC block with these lines and one more: arrange orchestra\. Lantern writes every player\u2019s part/.test(ab.prompt) && /Keep its key, time, chords and melody lines as they are\.$/.test(ab.prompt) &&
     act.relevant(FQ).some(function (a) { return a.id === "music"; }), ab && ab.prompt);
   ok("...not with no song before it, nor for a question about something else", (await MC.about(FQ, [])) === null && (await MC.about("What is the capital of France?", HIST)) === null);
   var WM = ODE12.slice(); WM[3] = WM[3].replace("D D E C", "D D E D");
@@ -416,7 +424,7 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   var nb2 = MC.noBlock(FQ, "I cannot create a playable orchestral file using Lantern's tools because the available functions do not include a tool capable of generating multi-instrument orchestral audio files.");
   var nb3 = MC.noBlock(FQ, "**Strings:**\n- **Violins I:** E4 E F G | G F E D\n- **Violins II:** C4 C D E | E D C B");
   ok("a reply with no block -- asking whether to go ahead, saying Lantern cannot, writing the parts out -- goes back with the block to write; another question's does not",
-    nb1 && /^The person has already asked for this: make it now\. It plays a song on an orchestra, writes it out and saves it[\s\S]*like this:\nMAKE MUSIC: Ode to Joy\nkey C major\ntime 4\/4\ntempo 100\nchords C \| G7[\s\S]*\narrange orchestra\nEND\nLantern writes every player’s part/.test(nb1.prompt) &&
+    nb1 && /^The person has already asked for this: make it now\. It plays a song on an orchestra, writes it out and saves it[\s\S]*like this:\nMAKE MUSIC: Ode to Joy\nkey C major\ntime 4\/4\ntempo 100\nchords C \| G7[\s\S]*\narrange orchestra\nEND\nLantern writes every player\u2019s part/.test(nb1.prompt) &&
     nb2 && /^Lantern can make this\./.test(nb2.prompt) && nb3 && /^Lantern cannot play parts written out in a reply\./.test(nb3.prompt) && MC.noBlock("What is the capital of France?", "I cannot say.") === null &&
     MC.noBlock(FQ, "Here it is.\n" + song(ODE12.concat(["arrange orchestra"]))) === null, [nb1 && nb1.prompt, nb2 && nb2.why, nb3 && nb3.why]);
   // --- 1.22.1: Adam's second sheet (a web page's preview of a piano arrangement) ---

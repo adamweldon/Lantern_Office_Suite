@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.22.2 — An orchestra starts at the start (2026-10-31)
+
+Adam's trial of 1.22.1: an orchestra's song seemed to start on the second
+line of music, and at other places after Stop and Play.
+
+- **The introduction is a lead-in, not the tune's last phrase.** It played
+  the end of the tune first, so the music -- and the moving line, which went
+  to that phrase on the score -- seemed to start in the middle. Now it is the
+  key's chord and its dominant seventh, held quietly (the orchestra's over a
+  timpani roll into the tune), and the tune starts at its first bar. The line
+  waits at the first bar through the introduction.
+- **The card says which part is playing** -- Introduction, The tune, softly,
+  Everyone, The last chord -- since an orchestra plays the tune twice and the
+  line goes back to the start for the second time.
+- Tests: `tests/music.js` (133: the introduction's chords, no tune in it,
+  where the line stands).
+
 ## 1.22.1 — Another sheet: a banner, a long bar, a beam on a line (2026-10-31)
 
 Adam's trial of 1.22.0 with two more screenshots. The orchestra worked, but

@@ -89,7 +89,7 @@ The Music tile's reader makes a song of it as well. Since v1.22.0 **an
 orchestra plays it**: one line, `arrange orchestra` (or strings, a string
 quartet, brass, winds), and Lantern writes every player's part from the
 melody and chords -- inner voices from each chord under the tune, a real bass
-line, doublings, timpani -- in an introduction, a soft pass, a full one and a
+line, doublings, timpani -- in an introduction (the key's chords, held), a soft pass, a full one and a
 held ending; Save MIDI has a track for each player. A question about a song
 made earlier in a chat gets that song, so "fill it in with an orchestra"
 just works.
