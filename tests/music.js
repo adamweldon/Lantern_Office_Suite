@@ -259,6 +259,33 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   ok("...one instrument for the tune: on the cello means the melody", /^the question asks for the tune on the cello; the melody is on the flute: write sound cello$/.test(act.build(song(["key C", "melody C D E F | G - - -"]), "Play a short tune on the cello").problems[0] || ""));
   ok("...guitar chords: the strum's guitar plays them", act.build(song(["style strum", "chords C | G"]), "Give me some guitar chords to hear").ok);
 
+  // --- 1.21.0: printed music read as a song (SHEET_MUSIC_SONG writes its lines; SHEET_MUSIC_CHAT gives them to the AI and checks the song) ---
+  var SMS = L.sheetMusic && L.sheetMusic._song, SC = L.sheetChat;
+  ok("the sheet-reading parts are there", !!(SMS && SMS.write && L.sheetMusic.song && L.sheetMusic.prepare && SC && SC.compare && SC.remember));
+  function snt(letter, oct, alter, len) { return { letter: letter, oct: oct, alter: alter, midi: (oct + 1) * 12 + [0, 2, 4, 5, 7, 9, 11][letter] + alter, len: len }; }
+  function rd(key, time, bars) { return SMS.write({ found: true, key: key, time: time, bars: bars, problems: [], systems: 1, spacing: 10 }); }
+  var Cl = 0, Dl = 1, El = 2, Fl = 3, Gl = 4, Al = 5, Bl = 6;
+  var odeRead = rd(0, [4, 4], [[snt(El, 4, 0, 1), snt(El, 4, 0, 1), snt(Fl, 4, 0, 1), snt(Gl, 4, 0, 1)], [snt(Gl, 4, 0, 1), snt(Fl, 4, 0, 1), snt(El, 4, 0, 1), snt(Dl, 4, 0, 1)],
+    [snt(Cl, 4, 0, 1), snt(Cl, 4, 0, 1), snt(Dl, 4, 0, 1), snt(El, 4, 0, 1)], [snt(El, 4, 0, 1.5), snt(Dl, 4, 0, 0.5), snt(Dl, 4, 0, 1), { rest: true, len: 1 }]]);
+  ok("a reading written as MAKE MUSIC lines: a bar's shares from its notes' lengths (a dotted quarter is 3 of 8), r for a rest, the octave once",
+    odeRead.lines === "key C major\ntime 4/4\nmelody E4 E F G | G F E D | C C D E | E - - D D - r -" && odeRead.summary === "4 bars in C major, 4/4, 15 notes" && odeRead.tune.length === 15, odeRead.lines);
+  var minRead = rd(0, [4, 4], [[snt(Al, 4, 0, 1), snt(Bl, 4, 0, 1), snt(Cl, 5, 0, 1), snt(Dl, 5, 0, 1)], [snt(Gl, 4, 1, 1), snt(Al, 4, 0, 1), snt(El, 5, 0, 2)], [snt(Al, 4, 0, 4)]]);
+  ok("...A minor from where the tune ends and its raised 7th; the G# written, an octave with each leap past a 4th", minRead.keyName === "A minor" &&
+    minRead.lines === "key A minor\ntime 4/4\nmelody A4 B C D | G#4 A E5 - | A4 - - -", minRead.lines);
+  var gRead = rd(1, [3, 4], [[snt(Gl, 4, 0, 1), snt(Fl, 4, 1, 1), snt(Fl, 4, 0, 1)], [snt(Gl, 4, 0, 3)]]);
+  ok("...in G major a plain F is the key's F#, and an F natural is written Fn", gRead.lines === "key G major\ntime 3/4\nmelody G4 F Fn | G - -", gRead.lines);
+  var QS = "Use your Lantern Tools to read the sheet music and then reproduce a playable music file";
+  SC.remember(QS, odeRead);
+  ok("a song asked of a picture that was read: copying the lines passes", act.build(song(odeRead.lines.split("\n").concat(["style ballad"])), QS).ok);
+  var off = act.build(song(["key C major", "melody E E F G | G F E D | C C D E | D - - r"]), QS);
+  ok("...a tune from memory goes back with the lines as read", off.problems.some(function (x) { return /^the melody is not the one Lantern read in the picture -- from bar 4 \(note 13\): write the key, time and melody lines exactly as read:\nkey C major\ntime 4\/4\nmelody E4 E F G/.test(x); }), off.problems);
+  SC.remember("What is this?", odeRead);
+  ok("...and a question with music read from its picture is offered MAKE MUSIC", act.relevant("What is this?").some(function (a) { return a.id === "music"; }) && !act.relevant("What is that?").some(function (a) { return a.id === "music"; }));
+  var mem = S.make({ title: "x", lines: ["key C major", "style ballad", "sound piano", "chords C | G | F | C", "melody E E F G | G F E D | C C D E | D - - r", "melody E E F G | G F E D | C C D E | D - - r",
+    "melody E G A C | D E D C | B C D | A - - r", "melody D C B A | G B A F | E - - r"] });
+  ok("a long note against a chord that plays again under a longer melody: where to write the chord (the 35B's Ode, 1.20.0)", mem.problems.length === 1 &&
+    /^bar 15: the melody holds E over F \(F A C\).* \(bar 15 plays the chords line\u2019s bar 3 again: write a chord for each of the 15 bars, or leave the chords line out and Lantern chooses them\)$/.test(mem.problems[0]), mem.problems);
+
 
   // Chat: a song is made, played and saved; a bad word goes back once
   await L.ai.detect();

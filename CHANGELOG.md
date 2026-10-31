@@ -1,5 +1,53 @@
 # Changelog
 
+## 1.21.0 — Chat reads sheet music (2026-10-31)
+
+Adam pasted a screenshot of Ode to Joy into Chat and asked it to read the music
+and make a playable file. The 35B made out the title, said it could not see the
+picture, and wrote the tune from memory: right for eight bars, then a third
+phrase that is not Ode to Joy, the 4th bar's dotted rhythm evened out, and a
+4-bar chord loop repeated under 15 bars whose clash it never fixed. Lantern had
+the Studio's sheet music reader in the Music tile, but Chat never ran it, it
+read pitches only, and on that screenshot (staff lines one pixel thin, seven
+apart) it found no staves at all.
+
+- **The Sheet Music Reader reads songs** (SHEET_MUSIC_SONG). Note lengths --
+  filled or open heads (judged in grey, so a small half note's hole counts),
+  stems, flags and beams counted from the ink joined to the stem's tip, dots,
+  whole notes -- bar lines, rests (whole, half, quarter, eighth), the clef, the
+  key signature and the time, and accidentals that last their bar. A picture
+  is first enlarged until its staff lines are 16 pixels apart, with the ink cut
+  eased until thin lines hold; a short last line of music is found too. What
+  only looks like a note is set aside: a flag's curl, time-signature digits, a
+  rest, a bar line's edge. The tune is the treble staff's top notes. The
+  reading is written as MAKE MUSIC lines -- `key C major`, `time 4/4`,
+  `melody E4 E F G | ... | E - - D D - r -` -- with an octave only where
+  Lantern would otherwise place a note elsewhere.
+- **Tested on engraved sheets** (tests/fixtures/sheets, made with Verovio from
+  public-domain tunes and our own): Ode to Joy (alone and for piano, with
+  rests), Twinkle in G, a waltz in F, a tune in B flat with whole and half
+  rests, Frere Jacques in D with eighths, a tune in A minor with G sharps.
+  Read note for note at 7 and 11 pixels a space, most at 5.5; Adam's
+  screenshot reads all 12 bars right. A picture smaller than 6.5 pixels a
+  space is read with a note that a closer picture reads surer.
+- **Chat reads pasted music** (SHEET_MUSIC_CHAT), whether the AI can see
+  pictures or not, and gives the AI the lines as read with MAKE MUSIC, so the
+  least it can write is the right tune. The song it makes is checked against
+  the reading, note for note and length for length; a tune from memory goes
+  back with the lines. A question about a picture of music is offered MAKE
+  MUSIC even when it does not say "play".
+- **A chord that repeats under a longer melody** and clashes says where to
+  write it: "(bar 15 plays the chords line's bar 3 again: write a chord for
+  each of the 15 bars, or leave the chords line out and Lantern chooses
+  them)" -- the 35B's 4-bar loop under 15 bars could not be fixed by changing
+  one chord it never wrote.
+- **The Music tile's reader** shows the tune as song lines with **Make a
+  song from it**, which opens it in the Make a song card to play on any of
+  the 57 instruments. Its pitch view now reads small screenshots too.
+- Tests: `tests/music.js` (96), `tests/browser/sheet_read_e2e.py` (the eight
+  sheets, Chat with a model that sees and one that does not, the 35B's reply
+  sent back, the Music tile), `tests/ai_isolation.js` (144 modules).
+
 ## 1.20.0 — Real instruments for songs (2026-10-30)
 
 Adam asked to borrow the sound of his **Generative Music Studio** so Lantern's
