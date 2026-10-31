@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.21.0 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.21.1 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -175,7 +175,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.21.0",
+  version: "1.21.1",
   apps: {},
   order: []
 };
@@ -35195,8 +35195,10 @@ Lantern.RFB = (function () {
 //          TEXT_READER_IMAGE (Lantern.textReader.image); MUSIC_SONG
 //          (Lantern.musicSong) -- feature-detected
 // Exports: Lantern.sheetMusic.song(canvas, opts) -> reading {found, key,
-//          keyName, time, bars, tune, melody, lines, summary, doubt, text},
-//          .prepare(canvas, opts) -> the picture made ready to read, ._song
+//          keyName, time, bars, bass, tune, melody, chords, chordList, lines,
+//          summary, doubt, text}, .heading(reading) -> Promise<reading with
+//          heading and title>, .prepare(canvas, opts) -> the picture made
+//          ready to read, ._song
 // ===========================================================================
 // Printed music read as a song (1.21.0): the notes' lengths, the bars, the
 // rests, the key and the time, so a picture of a tune becomes MAKE MUSIC
@@ -35219,6 +35221,13 @@ Lantern.RFB = (function () {
 // is what most bars add up to; a bar that comes up short gets a rest (at
 // the start of the first bar, a pick-up), and one that runs over is said.
 // The tune is the treble staves' top notes; an accidental lasts its bar.
+// 1.21.1: piano music's bass staves give the chords -- each bass note (or
+// each half bar of a busy bass) stands for the chord of the key, or one
+// leading to a chord of the key (E7 to Am), that has it in it, best as
+// its root, with the most of the tune over it; a note beyond the staff
+// needs its ledger lines (a "p" between the staves is not a note); and
+// the text printed above the music is read for a title (the biggest line
+// in the middle, not a composer's name at the side).
 // Tested on engraved sheets at 5.5 to 11 pixels a space (tests/browser).
 (function () {
   var L = window.Lantern;
@@ -35598,100 +35607,130 @@ Lantern.RFB = (function () {
     return 0;
   }
   // song(canvas, opts) -> {key, time, bars: [[{midi, letter, alter, oct, len} or {rest, len}]], lines, problems}
+  // staffBars(prepared, staff, clef, start, top) -> {bars: [[event]], spans: [[x0, x1]], barlines} or null: one staff's notes
+  // and rests bar by bar, each a note (the top one of a chord for a tune, the lowest for a bass) or a rest, with its length
+  function staffBars(pr, s, ks, top) {
+    var sp = s.spacing;
+    // the clef, the key and the time come first: what looks like a head there is not one
+    var hs = headsOn(pr.cl, s, 0).filter(function (h) { return h.x > ks.end + 0.4 * sp; });
+    if (!hs.length) return null;
+    var bars = barsOn(pr.im, pr.cl, s, ks.end + 0.5 * sp);
+    hs = hs.filter(function (h) { return !bars.some(function (b) { return Math.abs(b - h.x) < 0.7 * sp; }); });
+    // each head: its look
+    hs.forEach(function (h) { refineX(pr.cl, h, sp); h.filled = filledOf(pr.cl, h, sp, pr.gr); });
+    hs = hs.filter(function (h) { return !fake(pr.cl, h, sp, pr.im); });
+    var firstX = hs.length ? Math.min.apply(null, hs.map(function (h) { return h.x; })) : s.right;
+    hs.forEach(function (h) {
+      h.stem = stemOf(pr.cl, h, sp, bars);
+      h.beams = h.stem ? beamsOf(pr.cl, h, h.stem, sp) : 0;
+      h.dot = dotOf(pr.cl, h, sp);
+      h.len = !h.filled ? (h.stem ? 2 : 4) : Math.pow(2, -h.beams);
+      if (h.dot) h.len *= 1.5;
+      // no stem: a whole note is open with a hole in its middle; a filled patch or one taller than a head is a rest
+      h.wide = outerW(pr.cl, h, sp);
+      if (!h.stem && (h.wide < 1.35 * sp || (h.wide < 1.55 * sp && h.core > 0.5) || extent(pr.im, h, sp) >= 1.5 * sp)) h.drop = true;   // a whole note is wider than a rest, and open
+      if (!h.stem && !h.drop) h.len = h.dot ? 6 : 4;
+    });
+    hs = hs.filter(function (h) { return !h.drop; });
+    // a flag's curl at another note's stem tip is not a note
+    hs = hs.filter(function (f) {
+      return !hs.some(function (r) {
+        if (r === f || !r.stem) return false;
+        var near = f.x > r.stem.x - 0.1 * sp && f.x < r.stem.x + 1.25 * sp, along = (f.y - r.stem.tip) * -r.stem.dir;   // flags hang right of the stem, from its tip towards its head
+        return near && along > -0.6 * sp && along < 2.8 * sp && Math.abs(f.y - r.y) > 0.8 * sp && !(f.stem && Math.abs(f.stem.x - r.stem.x) > 0.3 * sp && attached(pr.cl, f, f.stem));
+      });
+    });
+    // in-bar accidentals: just before a head, at its height
+    var comps = joined(components(pr.cl, firstX - 2 * sp, s.lines[0] - 3 * sp, s.right, s.lines[4] + 3 * sp), sp);
+    hs.forEach(function (h) {
+      comps.forEach(function (c) {
+        if (c.x1 > h.x - 0.45 * sp || c.x1 < h.x - 2.2 * sp || Math.abs((c.y0 + c.y1) / 2 - h.y) > 1.2 * sp) return;
+        var a = accidental(pr.cl, c, sp);
+        if (a) h.acc = a;
+      });
+    });
+    // rests: patches in the staff that are no note's
+    var rests = [];
+    comps.forEach(function (c) {
+      if (c.x0 < firstX - 0.8 * sp) return;
+      if (hs.some(function (h) { return h.x >= c.x0 - 0.2 * sp && h.x <= c.x1 + 0.2 * sp && h.y >= c.y0 - 0.2 * sp && h.y <= c.y1 + 0.2 * sp; })) return;
+      if (bars.some(function (b) { return b >= c.x0 - 1 && b <= c.x1 + 1; })) return;
+      if (hs.some(function (h) { return h.acc && c.x1 <= h.x - 0.45 * sp && c.x1 >= h.x - 2.2 * sp && Math.abs((c.y0 + c.y1) / 2 - h.y) <= 1.2 * sp; })) return;
+      var r = rest(pr.cl, c, s);
+      if (r) rests.push({ x: (c.x0 + c.x1) / 2, rest: true, len: r });
+    });
+    // a note beyond the staff stands on ledger lines (a dynamic's "p" between the staves does not, 1.21.1)
+    hs = hs.filter(function (h) {
+      if (Math.abs(h.off) < 6) return true;
+      var y = Math.round(P.yAt(s, h.off > 0 ? 6 : -6));
+      for (var dy = -2; dy <= 2; dy++) for (var x = Math.round(h.x - 0.8 * sp); x <= Math.round(h.x + 0.8 * sp); x++) if (runW(pr.cl, x, y + dy) >= 1.2 * sp) return true;
+      return false;
+    });
+    // one line of music: the top note of a chord (a tune), or the lowest (a bass)
+    var cols = [], grp = [];
+    hs.sort(function (a, b) { return a.x - b.x; }).forEach(function (h) {
+      var g = grp[grp.length - 1];
+      if (g && h.x - g[g.length - 1].x < 0.6 * sp) g.push(h); else grp.push([h]);
+    });
+    grp.forEach(function (g) { cols.push(g.reduce(function (a, b) { return (top ? b.off > a.off : b.off < a.off) ? b : a; })); });
+    var evs = cols.concat(rests).sort(function (a, b) { return a.x - b.x; });
+    var edges = [firstX - sp].concat(bars.filter(function (b) { return b > firstX; }), [s.right + sp]), out = [], spans = [];
+    for (var b = 0; b + 1 < edges.length; b++) {
+      var inBar = evs.filter(function (e) { return e.x > edges[b] && e.x < edges[b + 1]; });
+      if (inBar.length || (b > 0 && b + 2 < edges.length)) { out.push(inBar); spans.push([edges[b], edges[b + 1]]); }
+    }
+    return { bars: out, spans: spans, barlines: bars };
+  }
+  // pitch(bars, clef, key): each note's letter, octave and pitch -- the key's sharps and flats, an accidental for the rest of its bar
+  function pitch(bars, clef, key) {
+    bars.forEach(function (bar) {
+      var alt = {};
+      bar.forEach(function (e) {
+        if (e.rest) return;
+        var st = stepOf(clef, e.off), k = st.letter + "/" + st.oct;
+        if (e.acc) alt[k] = e.acc === "#" ? 1 : e.acc === "b" ? -1 : 0;
+        e.letter = st.letter; e.oct = st.oct; e.alter = alt[k] != null ? alt[k] : sigAlter(st.letter, key);
+        e.midi = (st.oct + 1) * 12 + NAT[st.letter] + e.alter;
+      });
+    });
+  }
   function song(cv, opts) {
     opts = opts || {};
     var pr = prepare(cv, opts);
     if (!pr) return { found: false, text: "No music staves found." };
     var ss = pr.ss, systems = [], keySig = null;
     // which staves carry the tune: the treble ones (a clef as tall as the staff and more is a treble clef; a bass clef sits
-    // in the staff's top three spaces); with no clef to go by, piano music's upper staves
+    // in the staff's top three spaces); with no clef to go by, piano music's upper staves. The bass staves under them (piano
+    // music's left hand) give the chords (1.21.1).
     var starts = ss.map(function (s) { return startOn(pr.cl, s); }), kinds = starts.map(function (k, i) {
       var c = k.clef, h = c ? (c.y1 - c.y0 + 1) / ss[i].spacing : 0;
       return !c ? (pr.mode === "piano" ? (i % 2 ? "bass" : "treble") : "treble") : h >= 4.8 ? "treble" : "bass";
     }), useT = kinds.indexOf("treble") >= 0, first = true;
     for (var si = 0; si < ss.length; si++) {
-      if (useT && kinds[si] !== "treble") continue;
-      var s = ss[si], sp = s.spacing, clef = kinds[si], ks = starts[si];
-      // the clef, the key and the time come first: what looks like a head there is not one
-      var hs = headsOn(pr.cl, s, 0).filter(function (h) { return h.x > ks.end + 0.4 * sp; });
-      if (!hs.length) continue;
-      if (keySig === null || (!first && ks.acc.length > Math.abs(keySig))) keySig = ks.key;
-      first = false;
-      var bars = barsOn(pr.im, pr.cl, s, ks.end + 0.5 * sp);
-      hs = hs.filter(function (h) { return !bars.some(function (b) { return Math.abs(b - h.x) < 0.7 * sp; }); });
-      // each head: its look
-      hs.forEach(function (h) { refineX(pr.cl, h, sp); h.filled = filledOf(pr.cl, h, sp, pr.gr); });
-      hs = hs.filter(function (h) { return !fake(pr.cl, h, sp, pr.im); });
-      var firstX = hs.length ? Math.min.apply(null, hs.map(function (h) { return h.x; })) : s.right;
-      hs.forEach(function (h) {
-        h.stem = stemOf(pr.cl, h, sp, bars);
-        h.beams = h.stem ? beamsOf(pr.cl, h, h.stem, sp) : 0;
-        h.dot = dotOf(pr.cl, h, sp);
-        h.len = !h.filled ? (h.stem ? 2 : 4) : Math.pow(2, -h.beams);
-        if (h.dot) h.len *= 1.5;
-        // no stem: a whole note is open with a hole in its middle; a filled patch or one taller than a head is a rest
-        h.wide = outerW(pr.cl, h, sp);
-        if (!h.stem && (h.wide < 1.35 * sp || (h.wide < 1.55 * sp && h.core > 0.5) || extent(pr.im, h, sp) >= 1.5 * sp)) h.drop = true;   // a whole note is wider than a rest, and open
-        if (!h.stem && !h.drop) h.len = h.dot ? 6 : 4;
-      });
-      hs = hs.filter(function (h) { return !h.drop; });
-      // a flag's curl at another note's stem tip is not a note
-      hs = hs.filter(function (f) {
-        var curl = hs.some(function (r) {
-          if (r === f || !r.stem) return false;
-          var near = f.x > r.stem.x - 0.1 * sp && f.x < r.stem.x + 1.25 * sp, along = (f.y - r.stem.tip) * -r.stem.dir;   // flags hang right of the stem, from its tip towards its head
-          return near && along > -0.6 * sp && along < 2.8 * sp && Math.abs(f.y - r.y) > 0.8 * sp && !(f.stem && Math.abs(f.stem.x - r.stem.x) > 0.3 * sp && attached(pr.cl, f, f.stem));
-        });
-        return !curl;
-      });
-      // in-bar accidentals: just before a head, at its height
-      var comps = joined(components(pr.cl, firstX - 2 * sp, s.lines[0] - 3 * sp, s.right, s.lines[4] + 3 * sp), sp);
-      hs.forEach(function (h) {
-        comps.forEach(function (c) {
-          if (c.x1 > h.x - 0.45 * sp || c.x1 < h.x - 2.2 * sp || Math.abs((c.y0 + c.y1) / 2 - h.y) > 1.2 * sp) return;
-          var a = accidental(pr.cl, c, sp);
-          if (a) h.acc = a;
-        });
-      });
-      // rests: patches in the staff that are no note's
-      var rests = [];
-      comps.forEach(function (c) {
-        if (c.x0 < firstX - 0.8 * sp) return;
-        if (hs.some(function (h) { return h.x >= c.x0 - 0.2 * sp && h.x <= c.x1 + 0.2 * sp && h.y >= c.y0 - 0.2 * sp && h.y <= c.y1 + 0.2 * sp; })) return;
-        if (bars.some(function (b) { return b >= c.x0 - 1 && b <= c.x1 + 1; })) return;
-        if (hs.some(function (h) { return h.acc && c.x1 <= h.x - 0.45 * sp && c.x1 >= h.x - 2.2 * sp && Math.abs((c.y0 + c.y1) / 2 - h.y) <= 1.2 * sp; })) return;
-        var r = rest(pr.cl, c, s);
-        if (r) rests.push({ x: (c.x0 + c.x1) / 2, rest: true, len: r });
-      });
-      // one melody: the top note of a chord
-      var cols = [];
-      hs.sort(function (a, b) { return a.x - b.x || b.off - a.off; }).forEach(function (h) {
-        var c = cols[cols.length - 1];
-        if (c && Math.abs(h.x - c.x) < 0.6 * sp) return;
-        cols.push(h);
-      });
-      var evs = cols.concat(rests).sort(function (a, b) { return a.x - b.x; });
-      var edges = [firstX - sp].concat(bars.filter(function (b) { return b > firstX; }), [s.right + sp]), sysBars = [];
-      for (var b = 0; b + 1 < edges.length; b++) {
-        var inBar = evs.filter(function (e) { return e.x > edges[b] && e.x < edges[b + 1]; });
-        if (inBar.length || (b > 0 && b + 2 < edges.length)) sysBars.push(inBar);
+      if (useT && kinds[si] !== "treble") {   // a bass staff: the left hand of the treble staff above it
+        var sy = systems[systems.length - 1];
+        if (kinds[si] === "bass" && sy && !sy.bass) { var lb = staffBars(pr, ss[si], starts[si], false); if (lb) sy.bass = lb; }
+        continue;
       }
-      systems.push({ staff: si, clef: clef, bars: sysBars, barlines: bars, spacing: sp, key: ks.key, digits: ks.digits.length });
+      var r = staffBars(pr, ss[si], starts[si], true);
+      if (!r) continue;
+      if (keySig === null || (!first && starts[si].acc.length > Math.abs(keySig))) keySig = starts[si].key;
+      first = false;
+      systems.push({ staff: si, clef: kinds[si], bars: r.bars, spans: r.spans, barlines: r.barlines });
     }
     keySig = keySig || 0;
-    // pitches: the key's sharps and flats, and an accidental for the rest of its bar
-    var all = [];
-    systems.forEach(function (sy) { sy.bars.forEach(function (bar) {
-      var alt = {};
-      bar.forEach(function (e) {
-        if (e.rest) return;
-        var st = stepOf(sy.clef, e.off), k = st.letter + "/" + st.oct;
-        if (e.acc) alt[k] = e.acc === "#" ? 1 : e.acc === "b" ? -1 : 0;
-        e.letter = st.letter; e.oct = st.oct; e.alter = alt[k] != null ? alt[k] : sigAlter(st.letter, keySig);
-        e.midi = (st.oct + 1) * 12 + NAT[st.letter] + e.alter;
+    var all = [], low = [];
+    systems.forEach(function (sy) {
+      pitch(sy.bars, sy.clef, keySig);
+      if (sy.bass) pitch(sy.bass.bars, "bass", keySig);
+      // the bass's bars against the tune's: by where they are across the page
+      sy.bars.forEach(function (bar, i) {
+        all.push(bar);
+        var sp = sy.spans[i], got = null, best = 0;
+        if (sy.bass) sy.bass.spans.forEach(function (q, j) { var ov = Math.min(sp[1], q[1]) - Math.max(sp[0], q[0]); if (ov > best) { best = ov; got = sy.bass.bars[j]; } });
+        low.push(got && best > 0.5 * (sp[1] - sp[0]) ? got : null);
       });
-      all.push(bar);
-    }); });
+    });
     // the time: what most bars add up to
     var sums = {}, best = null;
     all.forEach(function (bar) { var t = 0; bar.forEach(function (e) { t += e.len; }); t = Math.round(t * 4) / 4; sums[t] = (sums[t] || 0) + 1; });
@@ -35706,7 +35745,8 @@ Lantern.RFB = (function () {
       if (t < barLen - 1e-6) { var r = { rest: true, len: barLen - t, added: true }; if (i === 0) bar.unshift(r); else bar.push(r); }
       else if (t > barLen + 1e-6) problems.push("bar " + (i + 1) + " adds up to " + t + " beats, not " + barLen);
     });
-    var res = { found: true, key: keySig, time: time, bars: all, problems: problems, systems: systems.length, spacing: pr.sp0, angle: pr.angle };
+    var res = { found: true, key: keySig, time: time, bars: all, bass: low.some(Boolean) ? low : null, problems: problems, systems: systems.length, spacing: pr.sp0, angle: pr.angle,
+      cv: pr.cv, top: Math.max(0, (ss[0].lines[0] - 3 * ss[0].spacing) / pr.sc) };
     return write(res);
   }
   // write(reading) -> the reading with its lines for MAKE MUSIC: key (major or minor from where the tune ends), time, and
@@ -35714,6 +35754,73 @@ Lantern.RFB = (function () {
   // only where Lantern would otherwise put the note elsewhere
   var MAJ = ["Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#"], MIN = ["Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#", "G#", "D#", "A#"];
   function pcOf(n) { return (NAT[LET.indexOf(n.charAt(0))] + (n.charAt(1) === "#" ? 1 : n.charAt(1) === "b" ? -1 : 0) + 12) % 12; }
+  // chordsOf(reading, bar length) -> {line, list} or null: the chords the left hand's bass notes stand for (1.21.1) -- for
+  // each bass note (or each half bar of a busy bass), the chord of the key, or one leading to a chord of the key (E7 to Am),
+  // that has the bass note in it -- best as its root -- and the most of the tune over it; written as Lantern's chords line
+  var CAND = { major: [["I", 0.5], ["ii", 0.5], ["iii", 0.5], ["IV", 0.5], ["V", 0.5], ["vi", 0.5], ["vii\u00b0", 0.3], ["V7", 0.4],
+    ["V7/ii", 0], ["V7/iii", 0], ["V7/IV", 0], ["V7/V", 0], ["V7/vi", 0], ["V/ii", 0], ["V/iii", 0], ["V/V", 0], ["V/vi", 0]],
+    minor: [["i", 0.5], ["ii\u00b0", 0.3], ["III", 0.5], ["iv", 0.5], ["v", 0.4], ["V", 0.5], ["VI", 0.5], ["VII", 0.5], ["V7", 0.4],
+    ["V7/iv", 0], ["V7/III", 0], ["V7/VI", 0], ["V7/VII", 0], ["V7/V", 0], ["V/iv", 0], ["V/V", 0]] };
+  function chordsOf(res, barLen) {
+    var T = L.musicTheory, E = 1e-6;
+    if (!res.bass || !T) return null;
+    var K = T.keyOf(res.keyName), cands = [];
+    if (!K) return null;
+    CAND[res.minor ? "minor" : "major"].forEach(function (c) { var x = T.chordOf(c[0], K); if (x) cands.push({ c: x, d: c[1] }); });
+    function near(pc, c) { return c.pcs.some(function (p) { var d = ((pc - p) % 12 + 12) % 12; return d === 1 || d === 11; }); }
+    var line = [], list = [], at0 = 0, any = false;
+    res.bars.forEach(function (bar, i) {
+      var low = res.bass[i], mel = [], notes = [], t = 0, segs = [];
+      bar.forEach(function (e) { if (!e.rest) mel.push({ pc: e.midi % 12, at: t, len: e.len }); t += e.len; });
+      t = 0;
+      var lt = 0;
+      (low || []).forEach(function (e) { lt += e.len; });
+      (low || []).forEach(function (e) {   // (a bass bar that came out too long: its rests are left out of the timing)
+        if (e.rest && lt > barLen + E) return;
+        if (!e.rest && t < barLen - E) notes.push({ pc: e.midi % 12, at: t, len: e.len, e: e });
+        t += e.len;
+      });
+      if (!notes.length) { line.push("-"); at0 += barLen; return; }   // nothing read in the left hand: the chord goes on
+      var groups = [];
+      if (notes.length > 2) {   // a busy bass (broken chords, a walking line): a chord each half bar, from all its notes
+        var half = barLen % 2 === 0 ? barLen / 2 : barLen;
+        for (var a = 0; a < barLen - E; a += half) {
+          var ns = notes.filter(function (n) { return n.at >= a - E && n.at < a + half - E; });
+          if (ns.length) groups.push({ at: a, end: a + half, ns: ns });
+        }
+      } else notes.forEach(function (n, j) { groups.push({ at: n.at, end: j + 1 < notes.length ? notes[j + 1].at : barLen, ns: [n] }); });
+      if (groups[0].at > E) segs.push({ at: 0, len: groups[0].at, name: "-" });
+      groups.forEach(function (g) {
+        var b = g.ns[0].pc, best = null;
+        cands.forEach(function (cd) {
+          var c = cd.c, s = cd.d;
+          if (c.pcs.indexOf(b) < 0) return;
+          s += b === c.root ? 2 : b === c.pcs[1] ? 0.5 : 0.2;   // a left hand's lowest note is mostly the chord's root
+          g.ns.slice(1).forEach(function (n) { s += (c.pcs.indexOf(n.pc) >= 0 ? 0.6 : -0.6) * n.len; });
+          mel.forEach(function (m) {
+            var ov = Math.min(g.end, m.at + m.len) - Math.max(g.at, m.at);
+            if (ov <= E) return;
+            var w = ov * (Math.abs(m.at - g.at) < E ? 1.5 : 1);
+            s += c.pcs.indexOf(m.pc) >= 0 ? w : near(m.pc, c) ? -0.8 * w : -0.3 * w;
+          });
+          if (c.pcs.length > 3) s -= 0.25;
+          if (!best || s > best.s) best = { c: c, s: s };
+        });
+        var e = g.ns[0].e, bn = LET.charAt(e.letter) + (e.alter > 0 ? "#" : e.alter < 0 ? "b" : "");
+        var name = !best ? "-" : best.c.name.split("/")[0] + (b === best.c.root ? "" : "/" + bn);
+        segs.push({ at: g.at, len: g.end - g.at, name: name });
+        if (best) { list.push({ at: at0 + g.at, root: best.c.root, bass: b, name: name, bar: i + 1 }); any = true; }
+      });
+      // the bar's tokens: each chord its share (two chords filling half a bar each are just two names)
+      var u = [barLen, barLen / 2, barLen / 3, 1, 0.5, 0.25].filter(function (q) {
+        return Math.abs(barLen / q - Math.round(barLen / q)) < E && segs.every(function (sg) { return Math.abs(sg.len / q - Math.round(sg.len / q)) < E && Math.abs(sg.at / q - Math.round(sg.at / q)) < E; });
+      })[0] || 0.25, out = [];
+      segs.forEach(function (sg) { out.push(sg.name); for (var n = 1; n < Math.round(sg.len / u); n++) out.push("-"); });
+      line.push(out.join(" "));
+      at0 += barLen;
+    });
+    return any ? { line: line.join(" | "), list: list } : null;
+  }
   function write(res) {
     var k = Math.max(-7, Math.min(7, res.key)), ns = [];
     res.bars.forEach(function (b) { b.forEach(function (e) { if (!e.rest) ns.push(e); }); });
@@ -35750,17 +35857,48 @@ Lantern.RFB = (function () {
       if (bad < 0) break;
       withOct[bad] = true; mel = tokens();
     }
-    var nb = res.bars.length;
+    var nb = res.bars.length, ch = chordsOf(res, barLen);
     res.melody = mel;
-    res.lines = "key " + res.keyName + "\ntime " + res.time.join("/") + "\nmelody " + mel;
+    if (ch) { res.chords = ch.line; res.chordList = ch.list; }
+    res.lines = "key " + res.keyName + "\ntime " + res.time.join("/") + (ch ? "\nchords " + ch.line : "") + "\nmelody " + mel;
     res.tune = ns.map(function (n) { return { midi: n.midi, len: n.len }; });
     res.doubt = res.problems.slice();
     if (res.spacing && res.spacing < 6.5) res.doubt.push("the picture is small (its staff lines " + Math.round(res.spacing * 10) / 10 + " pixels apart): a closer picture reads surer");
-    res.summary = nb + " bar" + (nb === 1 ? "" : "s") + " in " + res.keyName + ", " + res.time.join("/") + ", " + ns.length + " notes" + (res.systems > 1 ? " on " + res.systems + " lines of music" : "");
+    res.summary = nb + " bar" + (nb === 1 ? "" : "s") + " in " + res.keyName + ", " + res.time.join("/") + ", " + ns.length + " notes" + (res.systems > 1 ? " on " + res.systems + " lines of music" : "") +
+      (ch ? ", the chords from the left hand" : "");
     res.text = "Sheet music read by Lantern: " + res.summary + (res.doubt.length ? " (" + res.doubt.join("; ") + ")" : "") + ":\n" + res.lines;
     return res;
   }
-  SM.song = song; SM.prepare = prepare; SM._song = { write: write,  prepare: prepare, headsOn: headsOn, components: components, accidental: accidental, rest: rest, barsOn: barsOn, startOn: startOn, refineX: refineX, filledOf: filledOf, fake: fake, stemOf: stemOf, beamsOf: beamsOf, dotOf: dotOf, attached: attached, runW: runW, outerW: outerW, extent: extent };
+  // heading(reading) -> Promise<the reading, with heading (the lines printed above the music) and title (the biggest line in
+  // the middle -- not a composer's name at the side)> (1.21.1): Text Reader reads the strip above the first staff
+  var SMALL = { a: 1, an: 1, and: 1, the: 1, of: 1, to: 1, "in": 1, on: 1, "for": 1, at: 1, by: 1 };
+  function titled(s) {
+    if (/[a-z]/.test(s)) return s;   // as printed, unless it is all capitals
+    return s.toLowerCase().split(" ").map(function (w, i) { return i && SMALL[w] ? w : w.charAt(0).toUpperCase() + w.slice(1); }).join(" ");
+  }
+  function heading(res) {
+    var TR = L.textReader;
+    if (!res || !res.found || !TR || !TR.read || !res.cv || !(res.top > 12) || typeof document === "undefined") return Promise.resolve(res);
+    // the strip on white paper with room below it (Text Reader sizes its letters against the page)
+    var cv = res.cv, h = Math.round(res.top), c = document.createElement("canvas");
+    c.width = cv.width; c.height = h + Math.max(300, 2 * h);
+    try { var x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height); x.drawImage(cv, 0, 0, cv.width, h, 0, 0, cv.width, h); } catch (e) { return Promise.resolve(res); }
+    return TR.read(c, {}).then(function (pg) {
+      var lines = [];
+      ((pg && pg.blocks) || []).forEach(function (b) { (b.lines || []).forEach(function (ln) {
+        var ws = ln.words || [], txt = ws.map(function (w) { return w.text; }).join(" ").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, ""), sum = 0;
+        ws.forEach(function (w) { sum += w.conf == null ? 1 : w.conf; });
+        // only what it is sure of: a display font it half reads ("\u03a9DE TO JOY") is left to the AI
+        if (!ws.length || sum / ws.length < 0.7 || ws.some(function (w) { return w.conf != null && w.conf < 0.5; }) || !/^[A-Za-z0-9 ,.\x27&:!?\x28\x29-]+$/.test(txt) || txt.replace(/[^A-Za-z]/g, "").length < 3 || !ln.box) return;
+        lines.push({ text: txt, h: ln.box[3], cx: ln.box[0] + ln.box[2] / 2 });
+      }); });
+      if (lines.length) res.heading = lines.slice(0, 4).map(function (l) { return l.text; });
+      var mid = lines.filter(function (l) { return Math.abs(l.cx - cv.width / 2) < 0.15 * cv.width; }).sort(function (a, b) { return b.h - a.h; })[0];
+      if (mid) { res.title = titled(mid.text); res.text = "\u201c" + res.title + "\u201d -- " + res.text; }
+      return res;
+    }, function () { return res; });
+  }
+  SM.song = song; SM.prepare = prepare; SM.heading = heading; SM._song = { titled: titled, write: write,  prepare: prepare, headsOn: headsOn, components: components, accidental: accidental, rest: rest, barsOn: barsOn, startOn: startOn, refineX: refineX, filledOf: filledOf, fake: fake, stemOf: stemOf, beamsOf: beamsOf, dotOf: dotOf, attached: attached, runW: runW, outerW: outerW, extent: extent, staffBars: staffBars, chordsOf: chordsOf };
 })();
 // ===========================================================================
 // MODULE: SHEET_MUSIC_SONG - END
@@ -35851,10 +35989,16 @@ Lantern.RFB = (function () {
         (song && song.found ? "" : " Pitches only: note lengths are not read.");
       out.appendChild(draw(res.canvas || cv, res, 760));
       if (song && song.found) {
-        out.appendChild(el("p", { style: "margin:8px 0 2px", text: "Read as a song: " + song.summary + (song.doubt.length ? " \u2014 " + song.doubt.join("; ") : "") }));
-        out.appendChild(el("pre", { "aria-label": "The tune as song lines", style: "white-space:pre-wrap;font-size:13px;background:var(--soft);padding:8px;border-radius:8px", text: song.lines }));
+        var said = el("p", { style: "margin:8px 0 2px", text: "Read as a song: " + song.summary + (song.doubt.length ? " \u2014 " + song.doubt.join("; ") : "") });
+        var shown = el("pre", { "aria-label": "The tune as song lines", style: "white-space:pre-wrap;font-size:13px;background:var(--soft);padding:8px;border-radius:8px", text: song.lines });
+        out.appendChild(said); out.appendChild(shown);
         if (L.musicDocs) out.appendChild(el("div", { "class": "row" }, [el("button", { "class": "primary", text: "Make a song from it", title: "Opens the tune in the Make a song card, to play on any instrument and save",
-          onclick: function () { L.musicDocs.open("title Sheet music\n" + song.lines, "Sheet music"); } })]));
+          onclick: function () { var ti = song.title || "Sheet music"; L.musicDocs.open("title " + ti + "\n" + song.lines, ti); } })]));
+        if (SM.heading) SM.heading(song).then(function (r) {   // the title printed above the music, when Text Reader can read it (1.21.1)
+          if (!r.title) return;
+          said.textContent = "Read as a song: \u201c" + r.title + "\u201d, " + song.summary + (song.doubt.length ? " \u2014 " + song.doubt.join("; ") : "");
+          shown.textContent = "title " + r.title + "\n" + song.lines;
+        });
       }
       out.appendChild(el("pre", { style: "white-space:pre-wrap;font-size:13px;background:var(--soft);padding:8px;border-radius:8px", text: res.text }));
       out.appendChild(el("div", { "class": "row", style: "flex-wrap:wrap" }, [
@@ -47367,7 +47511,7 @@ Lantern.RFB = (function () {
     if (readings.hasOwnProperty(q)) return Promise.resolve(readings[q]);
     var files = L.chatPics && L.chatPics.taken ? L.chatPics.taken(q) : [], best = null, i = 0;
     function next() {
-      if (i >= files.length) { keep(q, best); return Promise.resolve(best); }
+      if (i >= files.length) { keep(q, best); return titled(); }
       var f = files[i++];
       return canvasOf(f).then(function (cv) {
         var r = null;
@@ -47375,26 +47519,43 @@ Lantern.RFB = (function () {
         if (r && r.found && r.tune && r.tune.length >= 4 && (!best || r.tune.length > best.tune.length)) best = r;
       }, function () { }).then(next);
     }
+    function titled() {   // the words printed above the music (a title, a composer)
+      return best && L.sheetMusic.heading ? L.sheetMusic.heading(best).then(function () { keep(q, best); return best; }, function () { keep(q, best); return best; }) : Promise.resolve(best);
+    }
     return next();
   }
   // compare(plan, reading) -> [problems]: the song's tune is the one read, in any octave
   function compare(p, r) {
-    var a = p.melody || [], b = r.tune, n = Math.min(a.length, b.length), bad = -1;
+    var a = p.melody || [], b = r.tune, n = Math.min(a.length, b.length), bad = -1, out = [];
     for (var i = 0; i < n && bad < 0; i++) if (((a[i].midi - b[i].midi) % 12 + 12) % 12 || Math.abs(a[i].len - b[i].len) > 1e-6) bad = i;
-    if (bad < 0 && a.length === b.length) return [];
-    var where = bad >= 0 ? "from bar " + a[bad].bar + " (note " + (bad + 1) + ")" : a.length < b.length ? "it stops after " + a.length + " of the " + b.length + " notes" : "it has " + (a.length - b.length) + " notes more";
-    return ["the melody is not the one Lantern read in the picture -- " + where + ": write the key, time and melody lines exactly as read:\n" + r.lines];
+    if (bad >= 0 || a.length !== b.length) {
+      var where = bad >= 0 ? "from bar " + a[bad].bar + " (note " + (bad + 1) + ")" : a.length < b.length ? "it stops after " + a.length + " of the " + b.length + " notes" : "it has " + (a.length - b.length) + " notes more";
+      out.push("the melody is not the one Lantern read in the picture -- " + where + ": write the " + (r.chords ? "key, time, chords" : "key, time") + " and melody lines exactly as read:\n" + r.lines);
+    }
+    // the chords the left hand plays (1.21.1): each one's root where it begins
+    if (r.chordList && !out.length) {
+      var off = r.chordList.filter(function (c) {
+        var at = (p.chords || []).filter(function (x) { return x.at <= c.at + 1e-6 && c.at < x.at + x.len - 1e-6; })[0];
+        return !at || at.root !== c.root;
+      });
+      if (off.length) out.push("the chords are not the ones the left hand plays in the picture (bar " + off[0].bar + " has " + off[0].name + "): write the chords line exactly as read -- chords " + r.chords);
+    }
+    return out;
   }
   window.Lantern.sheetChat = { read: read, readFor: function (q) { return readings.hasOwnProperty(q) ? readings[q] : null; }, remember: keep, compare: compare };
   // what the AI is given with the question
   (window.Lantern.chatAbout = window.Lantern.chatAbout || []).unshift({ id: "sheet music", provide: function (q) {
     return read(q).then(function (r) {
       if (!r) return null;
+      var what = r.chords ? "key, time, chords and melody" : "key, time and melody";
       return { id: "sheet music",
-        note: "Lantern\u2019s Sheet Music Reader read the picture: " + r.summary + (r.doubt.length ? " (" + r.doubt.join("; ") + ")" : "") + ". The AI is given the notes as read\u2026",
-        prompt: "SHEET MUSIC: Lantern\u2019s Sheet Music Reader read the person\u2019s picture -- " + r.summary + " (the tune: the top notes of the treble staff):\n" + r.lines + "\n" +
+        note: "Lantern\u2019s Sheet Music Reader read the picture: " + (r.title ? "\u201c" + r.title + "\u201d, " : "") + r.summary + (r.doubt.length ? " (" + r.doubt.join("; ") + ")" : "") + ". The AI is given the notes as read\u2026",
+        prompt: "SHEET MUSIC: Lantern\u2019s Sheet Music Reader read the person\u2019s picture -- " + r.summary + " (the tune: the top notes of the treble staff" + (r.chords ? "; the chords: what the left hand\u2019s bass notes stand for" : "") + "):\n" +
+          (r.title ? "title " + r.title + "\n" : "") + r.lines + "\n" +
+          (r.heading && r.heading.length ? "Printed above the music: " + r.heading.join(" / ") + "\n" : "") +
           "These are the notes printed in the picture" + (r.doubt.length ? " (Lantern notes: " + r.doubt.join("; ") + ")" : "") + ". To play it or make a music file of it, write a MAKE MUSIC block " +
-          "with these key, time and melody lines exactly as they are -- you may add title, style, sound and chords lines, and a tempo line (a printed tempo is not read; most tunes go at 90 to 120). " +
+          "with these " + (r.title ? "title, " : "") + what + " lines exactly as they are -- you may add style and sound lines" + (r.chords ? "" : ", chords") + ", and a tempo line (a printed tempo is not read; most tunes go at 90 to 120). " +
+          (r.title ? "" : "Title it with the tune\u2019s name if you know it (not Lantern\u2019s). ") +
           "Do not change the notes, and do not say you cannot see the picture: Lantern read it for you." };
     });
   } });

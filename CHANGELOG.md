@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.21.1 — The left hand's chords, the heading's title (2026-10-31)
+
+From Adam's trial of 1.21.0 with the 35B: Lantern read his Ode to Joy
+screenshot and the 35B copied the tune into MAKE MUSIC on the first try --
+the song matched the sheet note for note. Two of its lines were still guesses:
+the title ("Lantern's Sheet Music Reader") and the chords (C | G | F | C ...
+of its own, so bar 4's D D sat over C), while the sheet's left hand plainly
+plays C | G | C | G ... and G C in the last bars.
+
+- **Chords from the left hand.** Piano music's bass staves are read too, bar
+  for bar against the tune's, and each bass note (or each half bar of a busy
+  bass) becomes the chord of the key -- or one leading to a chord of the key,
+  like E7 to Am -- that has it in it, best as its root, with the most of the
+  tune over it: `chords C | G7 | C | G | C | G7 | C | G C | G C | G7 C | G7 C |
+  G C` for the test Ode, and on Adam's sheet the same until bar 11 (its G#
+  touches the sharp in front of it, so that bar keeps G). A bass note G#
+  under E and D is E7/G#. The AI is given the chords line with the tune, and
+  a song with chords of its own goes back: "the chords are not the ones the
+  left hand plays in the picture (bar 3 has C): write the chords line exactly
+  as read". The same root passes (G for G7).
+- **A note beyond the staff needs its ledger lines**: the "p" printed
+  between Adam's staves was being read as a whole note.
+- **The title from the heading.** Text Reader reads the strip above the
+  music; the biggest line in the middle is the title (a composer's name at
+  the side is not), given to the AI as a `title` line and shown in the
+  Music tile's reader. Only what it reads surely: on Adam's sheet the display
+  capitals come out with an Omega for the O ("[Omega]DE TO JOY"), so no title is given there and the AI is
+  told to title the song with the tune's name, not Lantern's.
+- Tests: `tests/music.js` (99), `tests/browser/sheet_read_e2e.py` (45 checks:
+  the chords of the piano sheets, a sheet with its title and composer, and the
+  35B's 1.21.0 reply sent back for the chords), a ninth test sheet.
+
 ## 1.21.0 — Chat reads sheet music (2026-10-31)
 
 Adam pasted a screenshot of Ode to Joy into Chat and asked it to read the music

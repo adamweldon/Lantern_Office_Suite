@@ -3,7 +3,9 @@
 # space) bar for bar -- notes, lengths, dots, eighths, rests, key and time -- and its lines play back as read; Chat
 # reads a pasted picture of music (with a model that sees and one that does not) and gives the AI the lines; the
 # 35B's Ode to Joy from memory (Adam's screenshot, 1.20.0) goes back with the lines as read, and the copied lines
-# make the song; the Music tile's reader makes a song of it. Screenshots in the folder given (default: temp).
+# make the song; the Music tile's reader makes a song of it. 1.21.1: the chords from the piano's left hand, the title
+# from the heading, and the 35B's 1.21.0 reply (the tune copied, its own chords) sent back for the chords as read.
+# Screenshots in the folder given (default: temp).
 # Usage: python3 tests/browser/sheet_read_e2e.py [screenshot folder]
 import json, os, sys, subprocess, tempfile, time, base64
 from playwright.sync_api import sync_playwright
@@ -63,10 +65,11 @@ try:
           var c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; c.getContext('2d').drawImage(im, 0, 0);
           var t0 = performance.now(), r = Lantern.sheetMusic.song(c), ms = performance.now() - t0, old = Lantern.sheetMusic.read(c);
           if (!r.found) return { found: false, staves: old.staves };
+          await Lantern.sheetMusic.heading(r);
           var m = Lantern.musicSong.make({ title: '', lines: r.lines.split('\\n') }), pl = m.plan, same = !!pl && pl.melody.length === r.tune.length;
           for (var i = 1; same && i < r.tune.length; i++) if (pl.melody[i].midi - pl.melody[i - 1].midi !== r.tune[i].midi - r.tune[i - 1].midi || Math.abs(pl.melody[i].len - r.tune[i].len) > 1e-9) same = false;
           return { found: true, key: r.key, time: r.time, bars: r.bars.map(function (b) { return b.map(function (e) { return [e.rest ? null : e.midi, e.len]; }); }),
-            lines: r.lines, same: same, problems: m.problems, ms: ms, staves: old.staves, spacing: r.spacing }; })"""
+            lines: r.lines, same: same, problems: m.problems, ms: ms, staves: old.staves, spacing: r.spacing, chords: r.chords || null, title: r.title || null, heading: r.heading || null }; })"""
         right = 0
         for f, want in sorted(E["sheets"].items()):
             r = pg.evaluate(READ, b64(f))
@@ -75,17 +78,19 @@ try:
             ok("%s (%.1f px a space): %d bars, key %+d, %s -- every note, length and rest as printed, read in %d ms" % (f, r.get("spacing", 0), len(want["bars"]), want["key"], "/".join(map(str, want["time"])), r.get("ms", 0)), good,
                [r.get("key"), r.get("time"), [(i + 1, g, w) for i, (g, w) in enumerate(zip(r.get("bars", []), want["bars"])) if g != w][:2]])
             ok("...its lines make the same tune again, nothing questioned; the pitch reader finds its staves too", r["found"] and r["same"] and not r["problems"] and r["staves"] >= 1, [r.get("problems"), r.get("staves")])
+            ok("...its chords " + ("from the left hand: " + want["chords"] if want.get("chords") else "left to the song (no left hand)"), r.get("chords") == want.get("chords"), r.get("chords"))
+            ok("...its heading: " + (repr(want["title"]) if want.get("title") else "none"), r.get("title") == want.get("title") and (not want.get("heading") or r.get("heading") == want["heading"]), [r.get("title"), r.get("heading")])
         ode = pg.evaluate(READ, b64("ode_piano_900.png"))
-        ok("Ode to Joy, piano (as in Adam's screenshot): the tune's lines", ode["lines"] == "key C major\ntime 4/4\nmelody E4 E F G | G F E D | C C D E | E - - D D - r - | E E F G | G F E D | C C D E | D - - C C - r - | "
-           "D D E C | D - E F E - C - | D - E F E - D - | C D r -", ode["lines"])
+        ok("Ode to Joy, piano (as in Adam's screenshot): the tune's lines, with the left hand's chords", ode["lines"] == "key C major\ntime 4/4\nchords C | G7 | C | G | C | G7 | C | G C | G C | G7 C | G7 C | G C\n"
+           "melody E4 E F G | G F E D | C C D E | E - - D D - r - | E E F G | G F E D | C C D E | D - - C C - r - | D D E C | D - E F E - C - | D - E F E - D - | C D r -", ode["lines"])
         # --- Chat: the picture pasted, the AI given the lines ---
-        def chat_round(question, rep, see):
+        def chat_round(question, rep, see, sheet="ode_piano_900.png"):
             vision[0] = see; calls.clear(); replies.clear(); replies.extend(rep)
             pg.evaluate("Lantern.ai.detect()"); time.sleep(0.5)
             pg.evaluate("location.hash = 'chat'"); pg.wait_for_selector("input[aria-label='Message']", timeout=15000); time.sleep(0.6)
             pg.evaluate("""(async function (a) {
               var bin = atob(a), u = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
-              await Lantern.chatPics.add([new File([u], 'ode.png', { type: 'image/png' })]); })""", b64("ode_piano_900.png"))
+              await Lantern.chatPics.add([new File([u], 'ode.png', { type: 'image/png' })]); })""", b64(sheet))
             time.sleep(1.2)
             before = pg.evaluate("document.querySelector('[aria-label=Conversation]').innerText.length")
             pg.locator("input[aria-label='Message']").fill(question)
@@ -105,6 +110,16 @@ try:
            ode["lines"] in back and "plays the chords line’s bar 3 again: write a chord for each of the 15 bars, or leave the chords line out" in back, back[:900])
         ok("...the copied lines make the song: 12 bars, nothing questioned", "Lantern made a song: Ode to Joy — 12 bars in C major" in t and "still questions" not in t, t[-500:])
         pg.screenshot(path=os.path.join(OUT, "sheet_chat.png"), full_page=False)
+        # the 35B on 1.21.0 (Adam's trial): the tune copied, octaves on every note, chords of its own -- back for the chords
+        OWN = ("MAKE MUSIC: Lantern\u2019s Sheet Music Reader\nkey C major\ntime 4/4\ntempo 90\nstyle folk\nsound flute\nchords C | G | F | C | C | G | F | C | Dm | G | C | C\n"
+               "melody E4 E4 F4 G4 | G4 F4 E4 D4 | C4 C4 D4 E4 | E4 - - D4 D4 - r - | E4 E4 F4 G4 | G4 F4 E4 D4 | C4 C4 D4 E4 | D4 - - C4 C4 - r - | D4 D4 E4 C4 | D4 - E4 F4 E4 - C4 - | "
+               "D4 - E4 F4 E4 - D4 - | C4 D4 r -\nEND")
+        t3 = chat_round("read the sheetmusic using lanterns tools and produce a playable file from it", [OWN, COPY], True, "ode_title_900.png")
+        first3 = text_of(calls[0]["messages"][-1]) if calls else ""
+        back3 = text_of(calls[1]["messages"][-1]) if len(calls) > 1 else ""
+        ok("Chat, a sheet with its heading: the title and the chords given; the 35B's own chords go back for the left hand's", "title Ode to Joy\nkey C major" in first3 and "Printed above the music: Ode to Joy / Ludwig van Beethoven" in first3 and
+           "\u201cOde to Joy\u201d" in t3 and "the chords are not the ones the left hand plays in the picture (bar 3 has C): write the chords line exactly as read -- chords C | G7 | C | G" in back3 and
+           "Lantern made a song: Ode to Joy" in t3, [first3[:500], back3[:400], t3[-300:]])
         t2 = chat_round("Play this for me", [COPY], False)
         first2 = text_of(calls[0]["messages"][-1]) if calls else ""
         ok("Chat (a model that cannot see): the picture is still read, and the song made at once", "SHEET MUSIC:" in first2 and ode["lines"] in first2 and len(calls) == 1 and "Lantern made a song: Ode to Joy" in t2, [len(calls), t2[-300:]])

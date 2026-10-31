@@ -281,6 +281,22 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   ok("...a tune from memory goes back with the lines as read", off.problems.some(function (x) { return /^the melody is not the one Lantern read in the picture -- from bar 4 \(note 13\): write the key, time and melody lines exactly as read:\nkey C major\ntime 4\/4\nmelody E4 E F G/.test(x); }), off.problems);
   SC.remember("What is this?", odeRead);
   ok("...and a question with music read from its picture is offered MAKE MUSIC", act.relevant("What is this?").some(function (a) { return a.id === "music"; }) && !act.relevant("What is that?").some(function (a) { return a.id === "music"; }));
+  // 1.21.1: the left hand's chords, the heading's title
+  function bassN(letter, oct, alter, len) { return snt(letter, oct, alter, len); }
+  var lh = SMS.write({ found: true, key: 0, time: [4, 4], problems: [], systems: 1, spacing: 10,
+    bars: [[snt(Dl, 4, 0, 1), snt(Dl, 4, 0, 1), snt(El, 4, 0, 1), snt(Cl, 4, 0, 1)], [snt(Dl, 4, 0, 1), snt(El, 4, 0, 0.5), snt(Fl, 4, 0, 0.5), snt(El, 4, 0, 1), snt(Cl, 4, 0, 1)],
+      [snt(Dl, 4, 0, 1), snt(El, 4, 0, 0.5), snt(Fl, 4, 0, 0.5), snt(El, 4, 0, 1), snt(Dl, 4, 0, 1)], [snt(Cl, 4, 0, 1), snt(Dl, 4, 0, 1), { rest: true, len: 2 }]],
+    bass: [[bassN(Gl, 3, 0, 2), bassN(Cl, 3, 0, 2)], [bassN(Gl, 3, 0, 2), bassN(Cl, 3, 0, 2)], [bassN(Gl, 3, 0, 2), bassN(Gl, 3, 1, 2)], [bassN(Al, 3, 0, 2), bassN(Gl, 3, 0, 1), { rest: true, len: 1 }]] });
+  ok("the left hand's bass notes become the chords line: G under D, G7 under F, E7/G# under E and D, Am under C (Ode to Joy's bars 9 to 12)",
+    lh.chords === "G C | G7 C | G7 E7/G# | Am G" && /\nchords G C \| G7 C \| G7 E7\/G# \| Am G\nmelody /.test(lh.lines) && lh.chordList.length === 8 && /the chords from the left hand/.test(lh.summary), [lh.chords, lh.lines]);
+  var QC = "Play the sheet music I pasted";
+  SC.remember(QC, lh);
+  var mel4 = "melody " + lh.melody;
+  ok("...a song with those chords passes (G for G7 too: the same root); one with chords of its own goes back for the left hand's",
+    act.build(song(["key C major", "chords G C | G7 C | G7 E7/G# | Am G", mel4]), QC).ok && act.build(song(["key C major", "chords G C | G C | G E7/G# | Am G", mel4]), QC).ok &&
+    /^the chords are not the ones the left hand plays in the picture \(bar 9|bar 1 has G\)|\(bar 1 has G\): write the chords line exactly as read -- chords G C \| G7 C/.test(act.build(song(["key C major", "chords C | G | F | C", mel4]), QC).problems.join("\n")),
+    act.build(song(["key C major", "chords C | G | F | C", mel4]), QC).problems);
+  ok("the heading's title as printed, or out of capitals", SMS.titled("ODE TO JOY") === "Ode to Joy" && SMS.titled("Ode to Joy") === "Ode to Joy" && SMS.titled("THE WATER IS WIDE") === "The Water Is Wide");
   var mem = S.make({ title: "x", lines: ["key C major", "style ballad", "sound piano", "chords C | G | F | C", "melody E E F G | G F E D | C C D E | D - - r", "melody E E F G | G F E D | C C D E | D - - r",
     "melody E G A C | D E D C | B C D | A - - r", "melody D C B A | G B A F | E - - r"] });
   ok("a long note against a chord that plays again under a longer melody: where to write the chord (the 35B's Ode, 1.20.0)", mem.problems.length === 1 &&
