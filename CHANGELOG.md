@@ -1,5 +1,55 @@
 # Changelog
 
+## 1.22.0 — An orchestra plays it (2026-10-31)
+
+Adam's trial of 1.21.2: Lantern read his Ode to Joy, named it and the 35B made
+it right, chords and all. Then he asked "Can you fill in the missing pieces of
+the song with an orchestra?" The 35B asked whether to go ahead, wrote an
+arrangement in prose -- the second violins, violas, cellos and basses all the
+tune moved down, the basses walking E D C B under G7 -- and, asked to use
+Lantern's tools, said they could not make an orchestral file. It was half
+right: Lantern had the instruments but a song could only name three of them,
+and nothing to write a second part.
+
+- **arrange orchestra.** One line in MAKE MUSIC (or strings, string quartet,
+  brass, winds) and Lantern writes every player's part from the melody and
+  chords, correct by construction (MUSIC_ARRANGE): the inner voices are notes
+  of each chord, below the tune at every moment and above the bass, each the
+  chord's nearest to the one before, the third always there and the seventh
+  when the chord has one, no fifths or octaves moving in parallel; the bass is
+  each chord's bass note, moving root to fifth when everyone plays; every part
+  in its instrument's range. The orchestra's twelve players: flute, oboe,
+  clarinet, bassoon, horns, trumpet, timpani, first and second violins,
+  violas, cellos, double basses. The form: an introduction (the tune's last
+  phrase on the oboe over the strings), the tune softly on the strings, the
+  tune for everyone (violins, flute, oboe and trumpet on it, horns and
+  clarinet in the chords, the timpani), and the last chord held over a
+  timpani roll; `form intro soft full coda` changes the order.
+- **Timpani** (Lantern's own, CC0): a kettle drum's membrane modes, tuned to
+  the key note and its fifth.
+- **Parts of the AI's own**: `part viola: E D C D | ...` -- or the way the 35B
+  wrote them, `Violins II: C4 C D E | ...` -- checked against the chords (a
+  long note a half step from one goes back), the instrument's range and the
+  tune's bars, and played for that player.
+- **Save MIDI** has a track for each player, in score order; Play and Save WAV
+  play every part at its own share of the mix.
+- **Questions after a song** (MUSIC_CHAT): a question about a song made earlier
+  in the chat is given that song as it was made, with how to have an
+  orchestra play it, and the MAKE MUSIC instructions; the new song keeps the
+  earlier melody unless the question asks to change it. "Fill in", "arrange
+  ... for", "orchestra", "string quartet" are music questions now, and a song
+  for an orchestra with no arrange line goes back with the line to add.
+- **A reply with no block** where Lantern can make what was asked (Chat's new
+  hook, Lantern.chatNoBlock): one that asks whether to go ahead, says Lantern
+  cannot, or writes the parts out in prose goes back once, with the block to
+  write -- the song's own lines and `arrange orchestra`.
+- The Music tile: Ode to Joy for orchestra among the examples. The bench: the
+  Ode arranged for orchestra (28 make questions).
+- Tests: `tests/music.js` (130: the arranger's voices, ranges, parallels,
+  timpani, form, parts, MIDI tracks; Adam's two questions replayed in Chat),
+  `tests/browser/sheet_read_e2e.py` (60 checks: the same questions after the
+  pasted sheet), `tests/ai_isolation.js` (147 modules).
+
 ## 1.21.2 — Lantern knows the tune; small screenshots read right (2026-10-31)
 
 Adam pasted a second screenshot of Ode to Joy, this one with no title -- only

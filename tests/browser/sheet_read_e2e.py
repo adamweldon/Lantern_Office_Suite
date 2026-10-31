@@ -110,6 +110,33 @@ try:
            ode["lines"] in back and "plays the chords line’s bar 3 again: write a chord for each of the 15 bars, or leave the chords line out" in back, back[:900])
         ok("...the copied lines make the song: 12 bars, nothing questioned", "Lantern made a song: Ode to Joy — 12 bars in C major" in t and "still questions" not in t, t[-500:])
         pg.screenshot(path=os.path.join(OUT, "sheet_chat.png"), full_page=False)
+        # 1.22.0: Adam's next questions in the same chat (his trial of 1.21.2) -- an orchestra
+        def ask(question, rep):
+            calls.clear(); replies.clear(); replies.extend(rep)
+            before = pg.evaluate("document.querySelector('[aria-label=Conversation]').innerText.length")
+            pg.locator("input[aria-label='Message']").fill(question)
+            pg.locator("button", has_text="Send").first.click()
+            pg.wait_for_function("document.querySelector('[aria-label=Conversation]').innerText.length > %d && /Lantern made a song|still questions|no MAKE/.test(document.querySelector('[aria-label=Conversation]').innerText.slice(%d))" % (before, before), timeout=40000)
+            time.sleep(1.0)
+            return pg.evaluate("document.querySelector('[aria-label=Conversation]').innerText").__getitem__(slice(before, None))
+        NEEDQ = ("NEED: Do you want me to compose an orchestral arrangement for \"Ode to Joy\" based on the sheet music provided, or do you have specific instruments or sections in mind for the orchestra?")
+        ARR = "MAKE MUSIC: Ode to Joy\n" + ode["lines"] + "\ntempo 100\narrange orchestra\nEND"
+        t5 = ask("Can you fill in the missing pieces of the song with an orchestra?", [NEEDQ, ARR])
+        first5 = text_of(calls[0]["messages"][-1]) if calls else ""
+        back5 = text_of(calls[1]["messages"][-1]) if len(calls) > 1 else ""
+        ok("Chat, the question after the song: the AI is given the song and how an orchestra plays it; its NEED goes back; the orchestra plays the tune read",
+           "THE SONG SO FAR: Lantern made this song earlier in this chat -- \u201cOde to Joy\u201d, 12 bars in C major" in first5 and "arrange orchestra" in calls[0]["messages"][0]["content"] and
+           back5.startswith("The person has already asked for this: make it now.") and "The AI asked whether to go ahead" in t5 and
+           "Lantern made a song: Ode to Joy \u2014 12 bars in C major, 4/4 at 100 a minute, arranged for orchestra (12 players)" in t5 and "still questions" not in t5, [first5[:300], back5[:200], t5[-500:]])
+        CANT = ("I cannot create a playable orchestral file using Lantern's tools because the available functions do not include a tool capable of generating "
+                "multi-instrument orchestral audio files or complex MIDI arrangements. From my own knowledge: you would need a DAW like Logic Pro, Cubase or MuseScore.")
+        t6 = ask("So can you use the lantern tools to create the file of the orchestra as you envision it in your basic framework?", [CANT, FROM_MEMORY.split("\n", 1)[1].replace("END", "arrange orchestra\nEND"), ARR])
+        back6 = text_of(calls[1]["messages"][-1]) if len(calls) > 1 else ""
+        back7 = text_of(calls[2]["messages"][-1]) if len(calls) > 2 else ""
+        ok("...the AI says Lantern cannot: back with the block to write; the tune from memory goes back; then the orchestra plays it",
+           back6.startswith("Lantern can make this. It plays a song on an orchestra") and "arrange orchestra\nEND" in back6 and "the melody is not the one" in back7 and
+           "said Lantern could not make it" in t6 and "arranged for orchestra (12 players)" in t6 and "still questions" not in t6, [back6[:300], back7[:300], t6[-400:]])
+        pg.screenshot(path=os.path.join(OUT, "sheet_chat_orchestra.png"), full_page=False)
         # the 35B on 1.21.0 (Adam's trial): the tune copied, octaves on every note, chords of its own -- back for the chords
         OWN = ("MAKE MUSIC: Lantern\u2019s Sheet Music Reader\nkey C major\ntime 4/4\ntempo 90\nstyle folk\nsound flute\nchords C | G | F | C | C | G | F | C | Dm | G | C | C\n"
                "melody E4 E4 F4 G4 | G4 F4 E4 D4 | C4 C4 D4 E4 | E4 - - D4 D4 - r - | E4 E4 F4 G4 | G4 F4 E4 D4 | C4 C4 D4 E4 | D4 - - C4 C4 - r - | D4 D4 E4 C4 | D4 - E4 F4 E4 - C4 - | "

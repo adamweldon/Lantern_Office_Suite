@@ -123,7 +123,7 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     /a waltz is in 3\/4/.test(wrong.problems[1]) && /the question asks for 8 bars; the tune has 2/.test(wrong.problems[2]), wrong.problems);
   ok("...a key asked without major or minor matches either", act.build(song(["key E minor", "chords Em | Am"]), "Play something in E").ok);
   var unread = S.make({ title: "x", lines: ["loudness 11", "key C", "chords C | F", "This is a nice song."] });
-  ok("a line Lantern does not read is named, with the lines it reads", /^\u201cloudness 11\u201d: Lantern reads key, tempo, time, style, sound, backing, bass, drums, chords, melody, repeat and note lines$/.test(unread.problems[0]) &&
+  ok("a line Lantern does not read is named, with the lines it reads", /^\u201cloudness 11\u201d: Lantern reads key, tempo, time, style, sound, backing, bass, drums, chords, melody, repeat, arrange, form, part and note lines$/.test(unread.problems[0]) &&
     unread.problems.length === 2 && /^\u201cThis is a nice song.\u201d: Lantern reads/.test(unread.problems[1]) && chords(unread.plan) === "C F", unread.problems);
   var words = S.make({ title: "x", lines: ["tempo slow", "style gentle lullaby", "sound violin", "time 3/4", "chords C | G7 | C"] });
   ok("plain words: slow is 70, a lullaby is a ballad, a violin a violin (1.20.0)", words.plan.tempo === 70 && words.plan.style === "ballad" && words.plan.sound === "violin" && words.plan.n === 3);
@@ -166,7 +166,7 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     /Lantern reads a MAKE MUSIC block line by line, like this:\nkey E minor/.test(fx) && /Reply with the corrected block only \(MAKE MUSIC: Song \.\.\. END\)/.test(fx), fx);
   var Q = L.aiBenchQuestions.filter(function (q) { return q.kind === "MUSIC"; });
   function grade(id, reply) { var item = Q.filter(function (q) { return q.id === id; })[0]; return L.aiBench.grade(item, reply, { made: act.build(reply, item.q) }); }
-  ok("the bench: three songs, every model answer passes", Q.length === 3 && Q.every(function (q) { return q.cat === "make" && grade(q.id, q.ideal).pass; }), Q.map(function (q) { return grade(q.id, q.ideal).why; }));
+  ok("the bench: four songs (1.22.0: the Ode for an orchestra), every model answer passes", Q.length === 4 && Q.every(function (q) { return q.cat === "make" && grade(q.id, q.ideal).pass; }), Q.map(function (q) { return grade(q.id, q.ideal).why; }));
   ok("...Ode to Joy with a wrong note fails, named; in another key it passes", /^note 4 of the theme is wrong/.test(grade("make-music-ode", Q[0].ideal.replace("F# F# G A | A G", "F# F# G B | A G")).why) &&
     grade("make-music-ode", song(["key C", "melody E E F G | G F E D | C C D E | E - - D D - - -"])).pass);
   ok("...the tune of its own: G major, 8 bars, a walking pace, home at the end", /questions it: the question asks for G major, but the song is in D major/.test(grade("make-music-original", song(["key D", "chords D | A | D | A | D | A | D | D", "melody D E F A | A - - - | D E F A | A - - - | D E F A | A - - - | F E D E | D - - -"])).why) &&
@@ -194,7 +194,7 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
 
   // --- 1.20.0: the instruments, from Adam Weldon's Generative Music Studio (MUSIC_INST, MUSIC_SAMPLER) -----------------
   var I = L.musicInst, SM = L.musicSampler;
-  ok("the instruments: 57, each with its engine, range, General MIDI program, kind and level", I && SM && I.LIST.length === 57 && I.LIST.every(function (k) {
+  ok("the instruments: 58 (1.22.0: the timpani), each with its engine, range, General MIDI program, kind and level", I && SM && I.LIST.length === 58 && I.LIST.every(function (k) {
     var e = I.get(k); return I.engine(e.engine) && e.low < e.high && e.gm >= 0 && e.gm < 128 && e.level > 0 && /^(decay|hold)$/.test(e.kind); }), I && I.LIST.length);
   var silent = [], t0 = Date.now();
   I.LIST.forEach(function (k) {   // a half-second note in the middle of each one's range
@@ -203,7 +203,7 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     if (!fin || pk < 0.01 || pk * e.level > 1.2 || b.length < 0.5 * SM.SR) silent.push(k + " " + pk.toFixed(3) + " x" + e.level);
   });
   ok("...every one plays a note: finite, not silent, not too loud in the mix, as long as asked", !silent.length, silent);
-  console.log("  (57 instruments, a half-second note each: " + (Date.now() - t0) + " ms)");
+  console.log("  (58 instruments, a half-second note each: " + (Date.now() - t0) + " ms)");
   ok("words for them: in the order written, the longer names first, a few names each", I.all("sound violin and piano").map(function (e) { return e.key; }).join() === "violin,piano" &&
     I.find("electric bass").key === "bass" && I.find("a warm double bass").key === "upright bass" && I.find("fiddle").key === "violin" && I.find("music box").key === "celesta" &&
     I.find("bell").key === "celesta" && I.find("blues harp").key === "harmonica" && I.find("english horn").key === "oboe" && !I.find("theremin"));
@@ -240,7 +240,7 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   ok("...a tune wider than its instrument plays goes back, with what to write", pc.problems.length === 1 &&
     /^the melody goes from C5 to C8, wider than the piccolo plays \(D5 to C8\): bar 1\u2019s \u201cC4\u201d \(C5\) is below it -- write that part an octave higher, or choose an instrument that plays it all \(sound piano does\)$/.test(pc.problems[0]), pc.problems);
   ok("an instrument Lantern does not have is said, and the flute plays", mk(["sound theremin", "chords C", "melody C D E -"]).plan.sound === "flute" &&
-    /Lantern has no \u201ctheremin\u201d; the melody is on the flute \(Lantern\u2019s 57 instruments are under How to write it, in Music\)/.test(mk(["sound theremin", "chords C", "melody C D E -"]).summary));
+    /Lantern has no \u201ctheremin\u201d; the melody is on the flute \(Lantern\u2019s 58 instruments are under How to write it, in Music\)/.test(mk(["sound theremin", "chords C", "melody C D E -"]).summary));
   var vm = Array.prototype.join.call(L.musicMidi.file(vw.plan));
   ok("MIDI: each part's General MIDI program (violin 40, piano 0, upright bass 32)", vm.indexOf(",192,40,") >= 0 && vm.indexOf(",193,0,") >= 0 && vm.indexOf(",194,32,") >= 0);
   var nt = L.musicSynth.notes(vw.plan), keys = nt.list.map(function (j) { return j.key; });
@@ -324,6 +324,102 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   ok("...a title printed above the music is the one asked for", SC.compare({ title: "Ode to Joy", melody: titledRead.tune.map(function (n) { return { midi: n.midi, len: n.len, bar: 1 }; }) }, titledRead)[0] ===
     "the song is called \u201cOde to Joy\u201d, but the picture is headed \u201cMorning Song\u201d: write MAKE MUSIC: Morning Song");
 
+  // --- 1.22.0: an orchestra (MUSIC_ARRANGE), the timpani, a song talked about after it is made (MUSIC_CHAT) ---
+  // (Adam's trial of 1.21.2: "Can you fill in the missing pieces of the song with an orchestra?" -- the 35B asked whether
+  // to go ahead, wrote the parts in prose, and said Lantern's tools could not make the file)
+  var AR = L.musicArrange, MC = L.musicChat, IN = L.musicInst, SMP = L.musicSampler;
+  ok("the arranger, the timpani and the follow-up are there", !!(AR && AR.make && MC && MC.about && MC.noBlock && IN.get("timpani") && IN.get("timpani").engine === "TimpaniMath"));
+  var tb = SMP.bake(SMP.job("timpani", 48, 0.8, 1.5)), tpk = 0, tend = 0, ti;
+  for (ti = 0; ti < tb.length; ti++) { tpk = Math.max(tpk, Math.abs(tb[ti])); if (ti > tb.length - 400) tend = Math.max(tend, Math.abs(tb[ti])); }
+  ok("...a timpani note: struck, dying away to silence", tpk > 0.1 && tpk < 1 && tend < 0.02, [tpk, tend]);
+  var ODE12 = ["key C major", "tempo 100", "chords C | G7 | C | G | C | G7 | C | G C | G C | G7 C | G7 E7/G# | Am G",
+    "melody E4 E F G | G F E D | C C D E | E - - D D - r - | E E F G | G F E D | C C D E | D - - C C - r - | D D E C | D - E F E - C - | D - E F E - D - | C D r -"];
+  var orc = S.make({ title: "Ode to Joy", lines: ODE12.concat(["arrange orchestra"]) }), oa = orc.plan.arrangement;
+  ok("arrange orchestra: every player's part from the melody and chords -- an introduction, the tune softly, everyone, the last chord held",
+    !orc.problems.length && oa && oa.players.length === 12 && oa.form.join() === "intro,soft,full,coda" && oa.bars === 30 && orc.plan.seconds === 72 &&
+    orc.summary.indexOf("arranged for orchestra (12 players): an introduction (bars 1–4): the tune’s last phrase on the oboe; the tune softly on the first violins (bars 5–16); " +
+      "everyone (bars 17–28): the tune on the first violins, flute, oboe and trumpet, with the timpani; the last chord held over a timpani roll (bars 29–30) — 30 bars") > 0 &&
+    /\narrange orchestra\n/.test(orc.plan.text) && !/\nstyle /.test(orc.plan.text), [orc.problems, orc.summary, orc.plan.text]);
+  var OV = AR.voices(orc.plan, oa.shift), vbad = [];
+  OV.forEach(function (v) {
+    [v.a, v.t, v.b].forEach(function (m) { if (m == null || v.c.pcs.indexOf(T.mod(m, 12)) < 0) vbad.push(v.c.name + " " + m); });
+    if (!(v.b < v.t && v.t < v.a)) vbad.push("order " + v.c.name);
+    orc.plan.melody.forEach(function (n) { if (n.at < v.at + v.len - 1e-9 && n.at + n.len > v.at + 1e-9 && n.midi + oa.shift <= v.a) vbad.push("above the tune at " + v.c.name); });
+  });
+  ok("...the inner voices are notes of each chord, below the tune all the while and above the bass; E7/G#'s bass is G#", !vbad.length && OV[14].c.name === "E7/G#" && T.mod(OV[14].b, 12) === 8, vbad);
+  function parallel(p, c) {
+    var V = ["l", "s", "a", "t", "b"], n = 0;
+    for (var i = 0; i < V.length; i++) for (var j = i + 1; j < V.length; j++) {
+      var x0 = p[V[i]], y0 = p[V[j]], x1 = c[V[i]], y1 = c[V[j]];
+      if (x0 == null || y0 == null || x1 == null || y1 == null || x0 === x1 || y0 === y1) continue;
+      var a = T.mod(x0 - y0, 12), b = T.mod(x1 - y1, 12);
+      if (a === b && (a === 0 || a === 7) && (x1 - x0 > 0) === (y1 - y0 > 0)) n++;
+    }
+    return n;
+  }
+  var npar = 0, oi;
+  [ODE12, ["key D major", "time 3/4", "chords D | A7 | D | G | D | A7 | D | D", "melody F# - A | G - E | F# - D | B4 - G | A - F# | E - C# | D - - | D - -"],
+    ["key C major", "melody C C G G | A A G - | F F E E | D D C - | G G F F | E E D - | G G F F | E E D - | C C G G | A A G - | F F E E | D D C -"], ["key G major", "chords G | C | D7 | G | Em | C | D | G"]].forEach(function (ls) {
+    ["orchestra", "brass", "winds"].forEach(function (en) {
+      var pp = S.make({ title: "", lines: ls.concat(["arrange " + en]) }).plan, vv = AR.voices(pp, pp.arrangement.shift);
+      for (oi = 1; oi < vv.length; oi++) npar += parallel(vv[oi - 1], vv[oi]);
+    });
+  });
+  ok("...no fifths or octaves in parallel between any two voices (the Ode, a waltz, Twinkle with Lantern's chords, chords alone; orchestra, brass, winds)", npar === 0, npar);
+  var rbad = oa.events.filter(function (e) { var ie = IN.get(e.inst); return e.midi < ie.low || e.midi > ie.high || e.at < 0 || e.at + e.len > oa.length + 1e-9; });
+  ok("...every note in its instrument's range and inside the piece", !rbad.length, rbad.slice(0, 3));
+  var tim = oa.events.filter(function (e) { return e.part === "timpani"; });
+  ok("...the timpani on C and G, only when everyone plays, and a roll under the last chord", tim.length > 30 && tim.every(function (e) { return (T.mod(e.midi, 12) === 0 || T.mod(e.midi, 12) === 7) && e.at >= 64 - 1e-9; }) &&
+    tim.filter(function (e) { return e.at >= 112 - 1e-9; }).length === 32, tim.length);
+  var omid = L.musicMidi.file(orc.plan), mtr = 0;
+  for (oi = 0; oi + 4 < omid.length; oi++) if (omid[oi] === 77 && omid[oi + 1] === 84 && omid[oi + 2] === 114 && omid[oi + 3] === 107) mtr++;
+  ok("...Save MIDI: a track for each player; Play and Save WAV: the arrangement's notes (the band's are left out)", mtr === 13 && L.musicBand.events(orc.plan).length === oa.events.length &&
+    !L.musicBand.events(orc.plan).some(function (e) { return e.part === "melody" || e.part === "chords" || e.drum; }), mtr);
+  var ens4 = ["strings", "string quartet", "brass", "winds"].map(function (en) { var r = S.make({ title: "", lines: ODE12.concat(["arrange " + en]) }); return r.problems.length ? -1 : r.plan.arrangement.players.length; });
+  ok("strings, a string quartet, brass and winds: their own players", ens4.join() === "5,4,5,5", ens4);
+  var f1 = S.make({ title: "", lines: ODE12.concat(["arrange strings", "form soft loud"]) }), f2 = S.make({ title: "", lines: ODE12.concat(["arrange strings", "form verse soft"]) });
+  ok("form: the order written; a word Lantern does not play goes back", f1.plan.arrangement.form.join() === "soft,full" && f1.plan.arrangement.bars === 24 &&
+    /^form “verse”: Lantern plays intro, soft, full and coda/.test(f2.problems[0]), [f1.plan.arrangement.form, f2.problems]);
+  var VIO = "part viola: C - - - | B - - - | C - - - | B - - - | C - - - | B - - - | C - - - | B - C - | B - C - | B - C - | B - B - | C - B -";
+  var pv = S.make({ title: "", lines: ODE12.concat(["arrange orchestra", VIO]) }), pva = pv.plan.arrangement;
+  var violaSoft = pva.events.filter(function (e) { return e.part === "viola" && e.at >= 16 - 1e-9 && e.at < 64 - 1e-9; });
+  ok("a part of the AI's own plays for its player in the tune's passes, checked against the chords", !pv.problems.length && violaSoft.length === 17 && T.mod(violaSoft[0].midi, 12) === 0 &&
+    /\npart viola: C - - - \| B - - -/.test(pv.plan.text), [pv.problems, violaSoft.length]);
+  var pcl = S.make({ title: "", lines: ODE12.concat(["arrange orchestra", VIO.replace("part viola: C - - -", "part viola: C# - - -")]) });
+  ok("...a long note a half step from its chord goes back", /^part viola, bar 1: C# over C \(C E G\), a half step from a note of the chord: write a note of the chord there$/.test(pcl.problems[0]), pcl.problems);
+  var p35 = S.make({ title: "", lines: ODE12.concat(["arrange orchestra", "Violins II: C4 C D E | E D C B | A A B C | C - - B B - r -"]) });
+  ok("...written the 35B's way (Violins II: C4 C D E | ...) it is a part for the second violins; 4 bars of 12 go back", p35.plan.arrangement && p35.plan.partLines.length === 1 &&
+    /^part Violins II has 4 bars; the tune has 12: write a bar for each of them/.test(p35.problems[0]), p35.problems);
+  var pxx = S.make({ title: "", lines: ODE12.concat(["arrange orchestra", "part theremin: C D E F"]) });
+  ok("...an instrument Lantern does not have goes back", /^part theremin: Lantern has no such instrument/.test(pxx.problems[0]), pxx.problems);
+  var pnb = S.make({ title: "", lines: ["key C", "chords C | G | C | C", "melody E D C D | E E E - | D D E D | C - - -", "part cello: C - - - | G - - - | C - - - | C - - -"] });
+  ok("...without an orchestra, a part joins the band", !pnb.problems.length && !pnb.plan.arrangement && /, a cello part/.test(pnb.summary) && L.musicBand.events(pnb.plan).filter(function (e) { return e.part === "cello"; }).length === 4, [pnb.problems, pnb.summary]);
+  var AQ = "Can you arrange it for an orchestra?";
+  ok("a question for an orchestra: a song without arrange goes back with the line; with it, it passes; a string quartet asked, an orchestra made, goes back",
+    /the question asks for an orchestra: write arrange orchestra \(Lantern writes every player’s part from the melody and chords\), with the key, chords and melody lines as they are/.test(act.build(song(ODE12), AQ).problems.join("\n")) &&
+    act.build(song(ODE12.concat(["arrange orchestra"])), AQ).ok && /the question asks for a string quartet; the song is arranged for orchestra: write arrange string quartet/.test(act.build(song(ODE12.concat(["arrange orchestra"])), "Play it with a string quartet").problems.join("\n")),
+    act.build(song(ODE12), AQ).problems);
+  ok("Adam's questions after the song are about music", L.aiMusic.asks("Can you fill in the missing pieces of the song with an orchestra?") && L.aiMusic.asks("So can you use the lantern tools to create the file of the orchestra as you envision it in your basic framework?") &&
+    !L.aiMusic.asks("What is an orchestra?"));
+  var HIST = [{ role: "user", content: "Play Ode to Joy" }, { role: "assistant", content: "Here it is.\n" + song(ODE12, "Ode to Joy") }], FQ = "Can you fill in the missing pieces of the song with an orchestra?";
+  var ab = await MC.about(FQ, HIST);
+  ok("a question after a song: the song as made, and how to have an orchestra play it; the music action offered", ab &&
+    /^THE SONG SO FAR: Lantern made this song earlier in this chat -- “Ode to Joy”, 12 bars in C major:\ntitle Ode to Joy\nkey C major\ntime 4\/4\ntempo 100\nchords C \| G7 /.test(ab.prompt) &&
+    /For an orchestra, write a MAKE MUSIC block with these lines and one more: arrange orchestra\. Lantern writes every player’s part/.test(ab.prompt) && /Keep its key, time, chords and melody lines as they are\.$/.test(ab.prompt) &&
+    act.relevant(FQ).some(function (a) { return a.id === "music"; }), ab && ab.prompt);
+  ok("...not with no song before it, nor for a question about something else", (await MC.about(FQ, [])) === null && (await MC.about("What is the capital of France?", HIST)) === null);
+  var WM = ODE12.slice(); WM[3] = WM[3].replace("D D E C", "D D E D");
+  var kp = act.build(song(WM.concat(["arrange orchestra"]), "Ode to Joy"), FQ), kp2 = act.build(song(ODE12.concat(["arrange orchestra"]), "Ode to Joy"), FQ);
+  ok("...the new song keeps the melody: a note changed goes back with the lines as they were; the same lines with arrange orchestra pass",
+    /^the melody is not the one in the song made before -- from bar 9 \(note 34\): keep its key, time, chords and melody lines as they were:\nkey C major\ntime 4\/4\nchords C \| G7/.test(kp.problems[0]) && kp2.ok, [kp.problems, kp2.problems]);
+  var nb1 = MC.noBlock(FQ, "NEED: Do you want me to compose an orchestral arrangement for \"Ode to Joy\" based on the sheet music provided, or do you have specific instruments or sections in mind for the orchestra?");
+  var nb2 = MC.noBlock(FQ, "I cannot create a playable orchestral file using Lantern's tools because the available functions do not include a tool capable of generating multi-instrument orchestral audio files.");
+  var nb3 = MC.noBlock(FQ, "**Strings:**\n- **Violins I:** E4 E F G | G F E D\n- **Violins II:** C4 C D E | E D C B");
+  ok("a reply with no block -- asking whether to go ahead, saying Lantern cannot, writing the parts out -- goes back with the block to write; another question's does not",
+    nb1 && /^The person has already asked for this: make it now\. It plays a song on an orchestra, writes it out and saves it[\s\S]*like this:\nMAKE MUSIC: Ode to Joy\nkey C major\ntime 4\/4\ntempo 100\nchords C \| G7[\s\S]*\narrange orchestra\nEND\nLantern writes every player’s part/.test(nb1.prompt) &&
+    nb2 && /^Lantern can make this\./.test(nb2.prompt) && nb3 && /^Lantern cannot play parts written out in a reply\./.test(nb3.prompt) && MC.noBlock("What is the capital of France?", "I cannot say.") === null &&
+    MC.noBlock(FQ, "Here it is.\n" + song(ODE12.concat(["arrange orchestra"]))) === null, [nb1 && nb1.prompt, nb2 && nb2.why, nb3 && nb3.why]);
+
 
   // Chat: a song is made, played and saved; a bad word goes back once
   await L.ai.detect();
@@ -344,6 +440,27 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   ok("...Play with no sound on this device says so, and the music is still written out", /no sound available/.test(card.textContent));
   btn(card, "Save MIDI").click();
   ok("...Save MIDI downloads Twinkle.mid", saved.length === 1 && saved[0].name === "Twinkle.mid" && saved[0].mime === "audio/midi", saved.map(function (s) { return s.name; }));
+  // 1.22.0: Adam's next questions, in the same chat (his trial of 1.21.2, with Ode to Joy)
+  function lastUser(i) { var m = modelCalls[i] ? modelCalls[i].messages[modelCalls[i].messages.length - 1].content : ""; return typeof m === "string" ? m : JSON.stringify(m); }
+  var TW = ["key C", "chords C | F C | F C | G C", "melody C C G G | A A G - | F F E E | D D C -", "arrange orchestra"];
+  modelReplies = ["NEED: Do you want me to compose an orchestral arrangement for \"Twinkle\", or do you have specific instruments in mind for the orchestra?", song(TW, "Twinkle")];
+  before = logText().length;
+  chatAsk("Can you fill in the missing pieces of the song with an orchestra?"); await sleep(300);
+  t = logText().slice(before);
+  ok("Chat, the question after the song: the AI is given the song and arrange orchestra; its NEED goes back; the orchestra plays it",
+    modelCalls.length === 2 && /THE SONG SO FAR: Lantern made this song earlier in this chat -- \u201cTwinkle\u201d/.test(lastUser(0)) && /arrange orchestra/.test(modelCalls[0].messages[0].content) &&
+    /^The person has already asked for this: make it now\./.test(lastUser(1)) && /The AI asked whether to go ahead/.test(t) &&
+    /Lantern made a song: Twinkle \u2014 4 bars in C major, 4\/4 at \d+ a minute, arranged for orchestra \(12 players\)/.test(t) && !/still questions/.test(t),
+    [modelCalls.length, lastUser(0).slice(0, 300), lastUser(1).slice(0, 200), t.slice(-400)]);
+  modelReplies = ["I cannot create a playable orchestral file using Lantern's tools; you would need a DAW like MuseScore.",
+    song(TW.map(function (l) { return l.replace("D D C -", "D D D -"); }), "Twinkle"), song(TW, "Twinkle")];
+  before = logText().length;
+  chatAsk("So can you use the lantern tools to create the file of the orchestra as you envision it in your basic framework?"); await sleep(300);
+  t = logText().slice(before);
+  ok("...the AI says Lantern cannot: back with the block to write; a tune from memory goes back for the one made before; then the orchestra plays it",
+    modelCalls.length === 3 && /^Lantern can make this\. It plays a song on an orchestra/.test(lastUser(1)) && /the melody is not the one in the song made before -- from bar 4 \(note 14\)/.test(lastUser(2)) &&
+    /said Lantern could not make it/.test(t) && /Lantern made a song: Twinkle \u2014 4 bars in C major, 4\/4 at \d+ a minute, arranged for orchestra/.test(t) && !/still questions/.test(t),
+    [modelCalls.length, lastUser(1).slice(0, 200), lastUser(2).slice(0, 300), t.slice(-400)]);
   btn(card, "Open in Music").click(); await sleep(80); fire(w, "hashchange"); await sleep(80);
   var song1 = L.store.get("music.song", {});
   ok("Open in Music: the song goes to the Make a song card, with what Lantern wrote in", /^title Twinkle\nkey C major/.test(song1.text) && /melody C C G G \| A A G - \| F F E E \| D D C -/.test(song1.text), song1);
@@ -351,7 +468,7 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   go("music"); await sleep(120);
   var ta = d.querySelector("textarea[aria-label=Song]");
   ok("the Make a song card: the song in its box, written out, with Save MIDI, Save WAV and examples", ta && /title Twinkle/.test(ta.value) && d.querySelector(".la-song canvas") &&
-    btn(d, "Save MIDI") && btn(d, "Save WAV") && d.querySelectorAll("select[aria-label='Start from'] option").length === 7, ta && ta.value);
+    btn(d, "Save MIDI") && btn(d, "Save WAV") && d.querySelectorAll("select[aria-label='Start from'] option").length === 8, ta && ta.value);
   var sel = d.querySelector("select[aria-label='Start from']");
   sel.value = "2"; fire(sel, "change"); await sleep(30);
   ok("...an example: Ode to Joy, 8 bars in D major", /title Ode to Joy/.test(ta.value) && /8 bars in D major/.test(d.body.textContent));
