@@ -419,6 +419,19 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     nb1 && /^The person has already asked for this: make it now\. It plays a song on an orchestra, writes it out and saves it[\s\S]*like this:\nMAKE MUSIC: Ode to Joy\nkey C major\ntime 4\/4\ntempo 100\nchords C \| G7[\s\S]*\narrange orchestra\nEND\nLantern writes every player’s part/.test(nb1.prompt) &&
     nb2 && /^Lantern can make this\./.test(nb2.prompt) && nb3 && /^Lantern cannot play parts written out in a reply\./.test(nb3.prompt) && MC.noBlock("What is the capital of France?", "I cannot say.") === null &&
     MC.noBlock(FQ, "Here it is.\n" + song(ODE12.concat(["arrange orchestra"]))) === null, [nb1 && nb1.prompt, nb2 && nb2.why, nb3 && nb3.why]);
+  // --- 1.22.1: Adam's second sheet (a web page's preview of a piano arrangement) ---
+  // a bar read too long ("bar 1 adds up to 18 beats"): the lines play it in a bar's time, and a song copying them exactly
+  // was sent back for a tune it could not write -- now the check is against the tune as the lines play it
+  var over = rd(0, [4, 4], [[snt(El, 4, 0, 1), snt(El, 4, 0, 1), snt(Fl, 4, 0, 1), snt(Gl, 4, 0, 1)], [snt(Al, 4, 0, 4), snt(El, 5, 0, 4)], [snt(Cl, 5, 0, 4)]]), QO = "turn the screenshot into a playable music file";
+  SC.remember(QO, over);
+  var ov1 = act.build(song(over.lines.split("\n"), "Sheet music"), QO), ov2 = act.build(song(["key C major", "melody E E F G | A - E5 - | D5 - - -"], "Sheet music"), QO);
+  ok("a bar read too long: the lines copied exactly pass; another tune still goes back", over.played && ov1.ok && !ov2.ok && /^the melody is not the one Lantern read/.test(ov2.problems[0]), [ov1.problems, ov2.problems]);
+  // a beam lying along a staff line (its eighths read as quarters): the line is the rows that run furthest
+  var W0 = 600, H0 = 120, bm = new Uint8Array(W0 * H0), yy, xx;
+  for (yy = 0; yy < 5; yy++) for (xx = 20; xx < 580; xx++) { bm[(30 + yy * 16) * W0 + xx] = 1; bm[(31 + yy * 16) * W0 + xx] = 1; }
+  for (yy = 24; yy <= 33; yy++) for (xx = 60; xx < 400; xx++) bm[yy * W0 + xx] = 1;   // the beam, over the top line
+  var sv = L.sheetMusic.staves({ w: W0, h: H0, b: bm });
+  ok("a beam along a staff line leaves the line as thin as the others, where it is", sv.length === 1 && sv[0].thick <= 3 && Math.abs(sv[0].lines[0] - 30.5) < 1 && Math.abs(sv[0].spacing - 16) < 0.5, sv);
 
 
   // Chat: a song is made, played and saved; a bad word goes back once

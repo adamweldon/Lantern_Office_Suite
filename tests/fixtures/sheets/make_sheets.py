@@ -1,7 +1,9 @@
 # make_sheets.py -- remake the test sheets in this folder (Lantern 1.21.0): engrave each tune of expected.json with Verovio
 # (pip install verovio) and rasterise it in Chromium (Playwright) at 1300, 900, 820, 760 and 700 pixels wide (the tests use eleven of
-# them, and ode_title_900.png: the piano Ode with its heading).
+# them, ode_title_900.png: the piano Ode with its heading, and ode_banner_900.png, below).
 # Usage: python3 tests/fixtures/sheets/make_sheets.py   (writes NAME_1300.png, NAME_900.png, NAME_820.png, NAME_760.png, NAME_700.png here)
+# 1.22.1: and ode_banner_900.png -- the piano Ode with a dark banner across its second left hand, as a web page's preview
+# lays one over the music.
 import json, os
 import verovio
 from playwright.sync_api import sync_playwright
@@ -23,3 +25,18 @@ with sync_playwright() as p:
         im = Image.open(big).convert("RGB")
         for w in (900, 820, 760, 700): im.resize((w, round(im.height * w / im.width)), Image.LANCZOS).save(os.path.join(HERE, "%s_%d.png" % (name, w)))
     b.close()
+# the banner (1.22.1): across the fourth staff (the second system's left hand), a space above it to a space below
+from PIL import ImageDraw
+im = Image.open(os.path.join(HERE, "ode_piano_900.png")).convert("RGB")
+g = im.convert("L"); W, H = g.size; px = g.load()
+rows = [y for y in range(H) if sum(1 for x in range(0, W, 2) if px[x, y] < 215) > 0.4 * W / 2]
+bands = []
+for y in rows:
+    if bands and y - bands[-1][1] <= 1: bands[-1][1] = y
+    else: bands.append([y, y])
+lines = [(a + b) / 2 for a, b in bands]
+st = lines[15:20]; sp = (st[4] - st[0]) / 4
+d = ImageDraw.Draw(im); d.rectangle([0, int(st[0] - sp), W, int(st[4] + sp)], fill=(47, 51, 55))
+d.text((W // 2 - 60, int((st[0] + st[4]) / 2) - 6), "Preview ends here", fill=(255, 255, 255))
+im.save(os.path.join(HERE, "ode_banner_900.png"))
+

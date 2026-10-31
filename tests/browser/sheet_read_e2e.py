@@ -69,7 +69,7 @@ try:
           var m = Lantern.musicSong.make({ title: '', lines: r.lines.split('\\n') }), pl = m.plan, same = !!pl && pl.melody.length === r.tune.length;
           for (var i = 1; same && i < r.tune.length; i++) if (pl.melody[i].midi - pl.melody[i - 1].midi !== r.tune[i].midi - r.tune[i - 1].midi || Math.abs(pl.melody[i].len - r.tune[i].len) > 1e-9) same = false;
           return { found: true, key: r.key, time: r.time, bars: r.bars.map(function (b) { return b.map(function (e) { return [e.rest ? null : e.midi, e.len]; }); }),
-            lines: r.lines, same: same, problems: m.problems, ms: ms, staves: old.staves, spacing: r.spacing, chords: r.chords || null, title: r.title || null, heading: r.heading || null }; })"""
+            lines: r.lines, same: same, problems: m.problems, ms: ms, staves: old.staves, spacing: r.spacing, chords: r.chords || null, title: r.title || null, heading: r.heading || null, doubt: r.doubt || [] }; })"""
         right = 0
         for f, want in sorted(E["sheets"].items()):
             r = pg.evaluate(READ, b64(f))
@@ -80,6 +80,9 @@ try:
             ok("...its lines make the same tune again, nothing questioned; the pitch reader finds its staves too", r["found"] and r["same"] and not r["problems"] and r["staves"] >= 1, [r.get("problems"), r.get("staves")])
             ok("...its chords " + ("from the left hand: " + want["chords"] if want.get("chords") else "left to the song (no left hand)"), r.get("chords") == want.get("chords"), r.get("chords"))
             ok("...its heading: " + (repr(want["title"]) if want.get("title") else "none"), r.get("title") == want.get("title") and (not want.get("heading") or r.get("heading") == want["heading"]), [r.get("title"), r.get("heading")])
+            if want.get("covered"):   # 1.22.1: a banner across the music (a web page's preview)
+                ok("...the banner across it is said, and the covered bars' chords are Lantern's", any(d.startswith("a band across the picture covers some of the music") for d in r.get("doubt", [])) and
+                   any(d.startswith("bars 7\u201312 have no left hand in the picture: Lantern chose their chords") for d in r.get("doubt", [])), r.get("doubt"))
         ode = pg.evaluate(READ, b64("ode_piano_900.png"))
         ok("Ode to Joy, piano (as in Adam's screenshot): the tune's lines, with the left hand's chords", ode["lines"] == "key C major\ntime 4/4\nchords C | G7 | C | G | C | G7 | C | G C | G C | G7 C | G7 C | G C\n"
            "melody E4 E F G | G F E D | C C D E | E - - D D - r - | E E F G | G F E D | C C D E | D - - C C - r - | D D E C | D - E F E - C - | D - E F E - D - | C D r -", ode["lines"])

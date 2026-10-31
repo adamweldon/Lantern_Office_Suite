@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.22.0 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.22.1 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -172,7 +172,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.22.0",
+  version: "1.22.1",
   apps: {},
   order: []
 };
@@ -35010,12 +35010,21 @@ Lantern.RFB = (function () {
     all.forEach(function (r) { if (r.n >= Math.max(0.1 * w, Math.min(0.5 * w, 0.12 * most))) rows.push(r); });
     var bands = [], band = null;
     rows.forEach(function (r) {
-      if (!band || r.y - band.y1 > 2) { band = { y0: r.y, y1: r.y, left: r.left, right: r.right }; bands.push(band); }
-      else { band.y1 = r.y; band.left = Math.min(band.left, r.left); band.right = Math.max(band.right, r.right); }
+      if (!band || r.y - band.y1 > 2) { band = { y0: r.y, y1: r.y, left: r.left, right: r.right, rows: [r] }; bands.push(band); }
+      else { band.y1 = r.y; band.left = Math.min(band.left, r.left); band.right = Math.max(band.right, r.right); band.rows.push(r); }
     });
+    // a beam lying along a line makes its band thick: the line is the rows that run furthest (1.22.1)
+    function line(q, thin) {
+      if (q.y1 - q.y0 + 1 <= 2 * thin + 1) return q;
+      var top = 0, ys = [];
+      q.rows.forEach(function (r) { top = Math.max(top, r.n); });
+      q.rows.forEach(function (r) { if (r.n >= 0.9 * top) ys.push(r.y); });
+      return { y0: Math.min.apply(null, ys), y1: Math.max.apply(null, ys), left: q.left, right: q.right, rows: q.rows };
+    }
     var out = [], i = 0;
     while (i + 4 < bands.length) {
-      var g = bands.slice(i, i + 5), sp = [], k;
+      var g = bands.slice(i, i + 5), sp = [], k, th = g.map(function (q) { return q.y1 - q.y0 + 1; }).sort(function (a, b) { return a - b; })[2];
+      g = g.map(function (q) { return line(q, th); });
       for (k = 0; k < 4; k++) sp.push((g[k + 1].y0 + g[k + 1].y1) / 2 - (g[k].y0 + g[k].y1) / 2);
       var avg = (sp[0] + sp[1] + sp[2] + sp[3]) / 4;
       if (avg > 3 && sp.every(function (s) { return Math.abs(s - avg) / avg < 0.15; })) {
@@ -35268,7 +35277,27 @@ Lantern.RFB = (function () {
       for (var k = 0; k + 1 < ss.length; k += 2) gaps.push(ss[k + 1].lines[0] - ss[k].lines[4]);
       mode = ss.length >= 2 && ss.length % 2 === 0 && gaps.every(function (g, j) { return g < 6 * ss[2 * j].spacing; }) ? "piano" : "treble";
     }
-    return { im: im, gr: gr, cl: P.clean(im, ss), ss: ss, sc: sc, mode: mode, sp0: sp0, cv: cv, angle: angle };
+    // a band across the picture (a web page's banner over the music, 1.22.1): left out, as paper, and said
+    var cover = bands(im, med(ss.map(function (s) { return s.spacing; })));
+    cover.forEach(function (b) {
+      for (var y = Math.max(0, b[0] - 1); y <= Math.min(im.h - 1, b[1] + 1); y++) for (var x = 0; x < im.w; x++) { im.b[y * im.w + x] = 0; if (gr.w === im.w) gr.g[y * gr.w + x] = 255; }
+    });
+    return { im: im, gr: gr, cl: P.clean(im, ss), ss: ss, sc: sc, mode: mode, sp0: sp0, cv: cv, angle: angle, cover: cover.map(function (b) { return [b[0] / sc, b[1] / sc]; }) };
+  }
+  // bands(ink, spacing) -> [[top, bottom]]: rows mostly ink right across, more than a space and a half of them
+  function bands(im, sp) {
+    var out = [], run = 0, y, x, n, half = Math.ceil(im.w / 2);
+    for (y = 0; y <= im.h; y++) {
+      n = 0;
+      if (y < im.h) for (x = 0; x < im.w; x += 2) if (im.b[y * im.w + x]) n++;
+      if (y < im.h && n >= 0.8 * half) { run++; continue; }
+      if (run >= 1.5 * sp || (run >= 0.6 * sp && out.length && y - run - out[out.length - 1][1] <= 2 * sp)) {
+        var last = out[out.length - 1];
+        if (last && y - run - last[1] <= 2 * sp) last[1] = y - 1; else out.push([y - run, y - 1]);   // (the banner's own words split it)
+      }
+      run = 0;
+    }
+    return out;
   }
   // headsOn(clean, staff) -> [{x, y, off}] (the engine's way: round patches, then each head's own middle)
   function headsOn(cl, s, skip) {
@@ -35605,15 +35634,20 @@ Lantern.RFB = (function () {
     return best;
   }
   function fake(cl, h, sp, im) {
-    if (extent(im || cl, h, sp) < 0.72 * sp) return true;   // flatter than a head: a half or whole rest, a beam's edge
+    var ext = extent(im || cl, h, sp);
+    if (ext < 0.72 * sp) return true;   // flatter than a head: a half or whole rest, a beam's edge
     if (!h.filled) {   // (the staff lines left in: where one crosses an open head, cleaning them took a piece of its outline)
-      var miss = 0;
-      for (var a = 0; a < 8; a++) {
-        var dx = Math.cos(a * Math.PI / 4), dy = Math.sin(a * Math.PI / 4), hit = false;
-        for (var r = 1; r <= 0.85 * sp; r++) if (dark(im || cl, Math.round(h.x + dx * r), Math.round(h.y + dy * r))) { hit = true; break; }
-        if (!hit) miss++;
-      }
-      return miss > 0;
+      // ink all round it -- from its middle, or a little above or below (a wide, leaning head found low, 1.22.1)
+      var hollow = ext >= 0.95 * sp && !dark(im || cl, Math.round(h.x), Math.round(h.y)) && !dark(im || cl, Math.round(h.x), Math.round(h.y - 0.25 * sp));
+      return !(hollow ? [0, -0.25, 0.25] : [0]).some(function (f) {
+        var cy = h.y + f * sp;
+        for (var a = 0; a < 8; a++) {
+          var dx = Math.cos(a * Math.PI / 4), dy = Math.sin(a * Math.PI / 4), hit = false;
+          for (var r = 1; r <= 0.85 * sp; r++) if (dark(im || cl, Math.round(h.x + dx * r), Math.round(cy + dy * r))) { hit = true; break; }
+          if (!hit) return false;
+        }
+        return true;
+      });
     }
     var wide = 0, rows = 0;
     for (var y = Math.round(h.y - 0.3 * sp); y <= Math.round(h.y + 0.3 * sp); y++) { rows++; if (runW(cl, Math.round(h.x), y) > 2.2 * sp) wide++; }
@@ -35745,7 +35779,7 @@ Lantern.RFB = (function () {
       var g = grp[grp.length - 1];
       if (g && h.x - g[g.length - 1].x < 0.6 * sp) g.push(h); else grp.push([h]);
     });
-    grp.forEach(function (g) { cols.push(g.reduce(function (a, b) { return (top ? b.off > a.off : b.off < a.off) ? b : a; })); });
+    grp.forEach(function (g) { var one = g.reduce(function (a, b) { return (top ? b.off > a.off : b.off < a.off) ? b : a; }); one.with = g.filter(function (h) { return h !== one; }); cols.push(one); });   // (the chord's other notes kept, 1.22.1)
     var evs = cols.concat(rests).sort(function (a, b) { return a.x - b.x; });
     var edges = [firstX - sp].concat(bars.filter(function (b) { return b > firstX; }), [s.right + sp]), out = [], spans = [];
     for (var b = 0; b + 1 < edges.length; b++) {
@@ -35764,6 +35798,11 @@ Lantern.RFB = (function () {
         if (e.acc) alt[k] = e.acc === "#" ? 1 : e.acc === "b" ? -1 : 0;
         e.letter = st.letter; e.oct = st.oct; e.alter = alt[k] != null ? alt[k] : sigAlter(st.letter, key);
         e.midi = (st.oct + 1) * 12 + NAT[st.letter] + e.alter;
+        (e.with || []).forEach(function (h) {   // the other notes of its chord
+          var s2 = stepOf(clef, h.off), k2 = s2.letter + "/" + s2.oct;
+          if (h.acc) alt[k2] = h.acc === "#" ? 1 : h.acc === "b" ? -1 : 0;
+          h.midi = (s2.oct + 1) * 12 + NAT[s2.letter] + (alt[k2] != null ? alt[k2] : sigAlter(s2.letter, key));
+        });
       });
     });
   }
@@ -35775,9 +35814,11 @@ Lantern.RFB = (function () {
     // which staves carry the tune: the treble ones (a clef as tall as the staff and more is a treble clef; a bass clef sits
     // in the staff's top three spaces); with no clef to go by, piano music's upper staves. The bass staves under them (piano
     // music's left hand) give the chords (1.21.1).
+    // (1.22.1: a treble clef cut in pieces by the lines taken out is still one -- a piece of it reaches past the staff,
+    // where a bass clef never goes)
     var starts = ss.map(function (s) { return startOn(pr.cl, s); }), kinds = starts.map(function (k, i) {
-      var c = k.clef, h = c ? (c.y1 - c.y0 + 1) / ss[i].spacing : 0;
-      return !c ? (pr.mode === "piano" ? (i % 2 ? "bass" : "treble") : "treble") : h >= 4.8 ? "treble" : "bass";
+      var c = k.clef, s = ss[i], h = c ? (c.y1 - c.y0 + 1) / s.spacing : 0;
+      return !c ? (pr.mode === "piano" ? (i % 2 ? "bass" : "treble") : "treble") : h >= 4.8 || c.y1 > s.lines[4] + 0.6 * s.spacing || c.y0 < s.lines[0] - 0.6 * s.spacing ? "treble" : "bass";
     }), useT = kinds.indexOf("treble") >= 0, first = true;
     for (var si = 0; si < ss.length; si++) {
       if (useT && kinds[si] !== "treble") {   // a bass staff: the left hand of the treble staff above it
@@ -35818,6 +35859,7 @@ Lantern.RFB = (function () {
       if (t < barLen - 1e-6) { var r = { rest: true, len: barLen - t, added: true }; if (i === 0) bar.unshift(r); else bar.push(r); }
       else if (t > barLen + 1e-6) problems.push("bar " + (i + 1) + " adds up to " + t + " beats, not " + barLen);
     });
+    if (pr.cover && pr.cover.length) problems.push("a band across the picture covers some of the music" + (pr.cover.length > 1 ? " in " + pr.cover.length + " places" : "") + ": notes under it are not read");
     var res = { found: true, key: keySig, time: time, bars: all, bass: low.some(Boolean) ? low : null, problems: problems, systems: systems.length, spacing: pr.sp0, angle: pr.angle,
       cv: pr.cv, top: Math.max(0, (ss[0].lines[0] - 3 * ss[0].spacing) / pr.sc) };
     return write(res);
@@ -35841,7 +35883,7 @@ Lantern.RFB = (function () {
     if (!K) return null;
     CAND[res.minor ? "minor" : "major"].forEach(function (c) { var x = T.chordOf(c[0], K); if (x) cands.push({ c: x, d: c[1] }); });
     function near(pc, c) { return c.pcs.some(function (p) { var d = ((pc - p) % 12 + 12) % 12; return d === 1 || d === 11; }); }
-    var line = [], list = [], at0 = 0, any = false;
+    var line = [], list = [], at0 = 0, any = false, chosen = [], MS = L.musicSong;
     res.bars.forEach(function (bar, i) {
       var low = res.bass[i], mel = [], notes = [], t = 0, segs = [];
       bar.forEach(function (e) { if (!e.rest) mel.push({ pc: e.midi % 12, at: t, len: e.len }); t += e.len; });
@@ -35850,9 +35892,11 @@ Lantern.RFB = (function () {
       (low || []).forEach(function (e) { lt += e.len; });
       (low || []).forEach(function (e) {   // (a bass bar that came out too long: its rests are left out of the timing)
         if (e.rest && lt > barLen + E) return;
-        if (!e.rest && t < barLen - E) notes.push({ pc: e.midi % 12, at: t, len: e.len, e: e });
+        if (!e.rest && t < barLen - E) notes.push({ pc: e.midi % 12, at: t, len: e.len, e: e, also: (e.with || []).filter(function (h) { return h.midi != null; }).map(function (h) { return h.midi % 12; }) });
         t += e.len;
       });
+      // no left hand at all for this bar (covered, cut off; 1.22.1): Lantern chooses its chords from the tune, as for a melody alone
+      if (!low && mel.length && MS && MS.harmonize) { line.push(null); chosen.push(i + 1); at0 += barLen; return; }   // (filled below, a run at a time)
       if (!notes.length) { line.push("-"); at0 += barLen; return; }   // nothing read in the left hand: the chord goes on
       var groups = [];
       if (notes.length > 2) {   // a busy bass (broken chords, a walking line): a chord each half bar, from all its notes
@@ -35870,6 +35914,7 @@ Lantern.RFB = (function () {
           if (c.pcs.indexOf(b) < 0) return;
           s += b === c.root ? 2 : b === c.pcs[1] ? 0.5 : 0.2;   // a left hand's lowest note is mostly the chord's root
           g.ns.slice(1).forEach(function (n) { s += (c.pcs.indexOf(n.pc) >= 0 ? 0.6 : -0.6) * n.len; });
+          g.ns.forEach(function (n) { (n.also || []).forEach(function (pc) { s += (c.pcs.indexOf(pc) >= 0 ? 0.6 : -0.6) * n.len; }); });   // the left hand's chord notes (1.22.1)
           mel.forEach(function (m) {
             var ov = Math.min(g.end, m.at + m.len) - Math.max(g.at, m.at);
             if (ov <= E) return;
@@ -35892,7 +35937,19 @@ Lantern.RFB = (function () {
       line.push(out.join(" "));
       at0 += barLen;
     });
-    return any ? { line: line.join(" | "), list: list } : null;
+    // the bars with no left hand, each run of them harmonized as one stretch of tune (home at its ends)
+    for (var r0 = 0; r0 < line.length; r0++) {
+      if (line[r0] !== null) continue;
+      var r1 = r0;
+      while (r1 + 1 < line.length && line[r1 + 1] === null) r1++;
+      var mr = [];
+      for (var bi = r0; bi <= r1; bi++) { var tt = (bi - r0) * barLen; res.bars[bi].forEach(function (e) { if (!e.rest) mr.push({ midi: e.midi, at: tt, len: e.len }); tt += e.len; }); }
+      var hs = MS.harmonize(mr, K, 0, r1 - r0 + 1, barLen), by = {};
+      hs.forEach(function (h) { (by[h.bar] = by[h.bar] || []).push(h.name); });
+      for (bi = r0; bi <= r1; bi++) line[bi] = (by[bi - r0 + 1] || ["-"]).join(" ");
+      r0 = r1;
+    }
+    return any || chosen.length ? { line: line.join(" | "), list: list, chosen: chosen } : null;
   }
   function write(res) {
     var k = Math.max(-7, Math.min(7, res.key)), ns = [];
@@ -35935,8 +35992,13 @@ Lantern.RFB = (function () {
     if (ch) { res.chords = ch.line; res.chordList = ch.list; }
     res.lines = "key " + res.keyName + "\ntime " + res.time.join("/") + (ch ? "\nchords " + ch.line : "") + "\nmelody " + mel;
     res.tune = ns.map(function (n) { return { midi: n.midi, len: n.len }; });
+    // the tune as its lines play it (1.22.1): a bar read too long plays its notes in a bar's time, and a song copied from the
+    // lines is checked against this, not against what they cannot say
+    var played = MS ? MS.make({ title: "", lines: res.lines.split("\n") }).plan : null;
+    res.played = played && played.melody.length === ns.length ? played.melody.map(function (n) { return { midi: n.midi, len: n.len }; }) : null;
     res.known = L.musicTunes ? L.musicTunes.find(ns.map(function (n) { return n.midi; })) : null;   // (1.21.2) a tune Lantern knows by its opening
     res.doubt = res.problems.slice();
+    if (ch && ch.chosen.length) res.doubt.push((ch.chosen.length > 1 ? "bars " + ch.chosen[0] + "\u2013" + ch.chosen[ch.chosen.length - 1] + " have" : "bar " + ch.chosen[0] + " has") + " no left hand in the picture: Lantern chose " + (ch.chosen.length > 1 ? "their" : "its") + " chords");
     if (res.spacing && res.spacing < 6.5) res.doubt.push("the picture is small (its staff lines " + Math.round(res.spacing * 10) / 10 + " pixels apart): a closer picture reads surer");
     res.summary = nb + " bar" + (nb === 1 ? "" : "s") + " in " + res.keyName + ", " + res.time.join("/") + ", " + ns.length + " notes" + (res.systems > 1 ? " on " + res.systems + " lines of music" : "") +
       (ch ? ", the chords from the left hand" : "");
@@ -48190,7 +48252,7 @@ Lantern.RFB = (function () {
   }
   // compare(plan, reading) -> [problems]: the song's tune is the one read, in any octave
   function compare(p, r) {
-    var a = p.melody || [], b = r.tune, n = Math.min(a.length, b.length), bad = -1, out = [];
+    var a = p.melody || [], b = r.played || r.tune, n = Math.min(a.length, b.length), bad = -1, out = [];
     for (var i = 0; i < n && bad < 0; i++) if (((a[i].midi - b[i].midi) % 12 + 12) % 12 || Math.abs(a[i].len - b[i].len) > 1e-6) bad = i;
     if (bad >= 0 || a.length !== b.length) {
       var where = bad >= 0 ? "from bar " + a[bad].bar + " (note " + (bad + 1) + ")" : a.length < b.length ? "it stops after " + a.length + " of the " + b.length + " notes" : "it has " + (a.length - b.length) + " notes more";

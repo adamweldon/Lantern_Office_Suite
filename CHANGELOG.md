@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.22.1 — Another sheet: a banner, a long bar, a beam on a line (2026-10-31)
+
+Adam's trial of 1.22.0 with two more screenshots. The orchestra worked, but
+Lantern misread both sheets, and then sent the AI back again and again for
+copying its lines exactly:
+
+- **A song copying the lines exactly is never sent back.** A bar read too
+  long ("bar 2 adds up to 8 beats") is written as a bar of the lines, which
+  plays its notes in a bar's time; Lantern then compared the AI's song with
+  what it had read, not with what its own lines play, so a perfect copy went
+  back with "the melody is not the one Lantern read" -- on both of Adam's
+  sheets. Now the check is against the tune as the lines play it.
+- **A banner across the music** (a web page's "Buy & Start Playing" over a
+  preview) is left out as paper and said: "a band across the picture covers
+  some of the music: notes under it are not read". It had stopped the bar
+  lines of the music above it from being found (one bar of 18 beats), and
+  added a note that was not there.
+- **Bars with no left hand in the picture** (covered, or cut off) get chords
+  Lantern chooses from the tune, each run of them as one stretch, and the AI
+  is told which bars those are.
+- **The left hand's chord notes** are used, not only its lowest: C with A
+  over it is F/C, not C.
+- **A beam lying along a staff line** made that line look thick, and the
+  beams were taken out with the lines: the eighths were read as quarters.
+  The line is now the rows that run furthest.
+- **A treble clef in pieces** (cut by the staff lines taken out) was taken
+  for a bass clef, so the first line of music was dropped. A piece that
+  reaches past the staff is a treble clef's.
+- **A wide, leaning open note** found a little low is checked from its own
+  middle.
+- Tests: `tests/music.js` (132), `tests/browser/sheet_read_e2e.py` (65
+  checks, a thirteenth sheet: the piano Ode with a banner across its second
+  left hand, made by make_sheets.py).
+
 ## 1.22.0 — An orchestra plays it (2026-10-31)
 
 Adam's trial of 1.21.2: Lantern read his Ode to Joy, named it and the 35B made
