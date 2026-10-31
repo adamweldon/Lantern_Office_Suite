@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.21.1 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.21.2 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -175,7 +175,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.21.1",
+  version: "1.21.2",
   apps: {},
   order: []
 };
@@ -35274,14 +35274,22 @@ Lantern.RFB = (function () {
       if (c && h.x - c.x1 < sp * 0.8) { c.list.push(h); c.x1 = h.x; } else cols.push({ x1: h.x, list: [h] });
     });
     cols.forEach(function (c) {
-      var xs = 0, ws = 0, mx = -99, mn = 99;
-      c.list.forEach(function (h) { xs += h.x * h.conf; ws += h.conf; mx = Math.max(mx, h.off); mn = Math.min(mn, h.off); });
-      var cx = Math.round(xs / ws), seen = {};
-      P.heads(cl, cx, s, P.yAt(s, mx) - sp, P.yAt(s, mn) + sp).forEach(function (cy) {
-        var o = Math.round((s.lines[2] - cy) / (sp / 2));
-        if (o < -9 || o > 9 || seen[o]) return;
-        seen[o] = 1;
-        out.push({ x: cx, y: cy, off: o });
+      // patches far apart in height (a head and its flag) each get their own middle across (1.21.2)
+      var groups = [], g = null, seen = {};
+      c.list.slice().sort(function (p, q) { return p.off - q.off; }).forEach(function (h) {
+        var mx0 = g ? g.reduce(function (a, q) { return a + q.x; }, 0) / g.length : 0;
+        if (g && h.off - g[g.length - 1].off <= 1 && Math.abs(h.x - mx0) <= 0.5 * sp) g.push(h); else { g = [h]; groups.push(g); }
+      });
+      groups.forEach(function (g) {
+        var xs = 0, ws = 0, mx = -99, mn = 99;
+        g.forEach(function (h) { xs += h.x * h.conf; ws += h.conf; mx = Math.max(mx, h.off); mn = Math.min(mn, h.off); });
+        var cx = Math.round(xs / ws);
+        P.heads(cl, cx, s, P.yAt(s, mx) - sp, P.yAt(s, mn) + sp).forEach(function (cy) {
+          var o = Math.round((s.lines[2] - cy) / (sp / 2));
+          if (o < -9 || o > 9 || seen[o]) return;
+          seen[o] = 1;
+          out.push({ x: cx, y: cy, off: o });
+        });
       });
     });
     return out;
@@ -35312,7 +35320,7 @@ Lantern.RFB = (function () {
     return out;
   }
   // joined(components, spacing) -> pieces one above the other that taking the staff lines out split (a sharp, a flat) put back together
-  function joined(cs, sp) {
+  function joined(cs, sp, side) {
     var out = cs.slice().sort(function (a, b) { return a.y0 - b.y0; }), again = true;
     while (again) {
       again = false;
@@ -35320,7 +35328,11 @@ Lantern.RFB = (function () {
         var a = out[i], b = out[j];
         if (i === j || b.y0 < a.y0) continue;
         var ov = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) + 1, w = Math.min(a.x1 - a.x0, b.x1 - b.x0) + 1;
-        if (ov >= 0.6 * w && b.y0 - a.y1 <= 0.35 * sp && b.y0 - a.y1 >= -1 && (a.y1 - a.y0 < 3 * sp) && (b.y1 - b.y0 < 3 * sp)) {
+        var vo = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) + 1, gap = Math.max(a.x0, b.x0) - Math.min(a.x1, b.x1) - 1;
+        // side by side (side: a flat whose stem and bowl came apart, a natural whose strokes did, 1.21.2)
+        var by = side && vo >= 0.5 * Math.min(a.y1 - a.y0 + 1, b.y1 - b.y0 + 1) && gap >= 0 && gap <= Math.max(1, 0.15 * sp) && Math.max(a.y1, b.y1) - Math.min(a.y0, b.y0) < 3.4 * sp &&
+          Math.min(a.x1 - a.x0, b.x1 - b.x0) + 1 <= 0.5 * sp;
+        if (by || (ov >= 0.6 * w && b.y0 - a.y1 <= 0.35 * sp && b.y0 - a.y1 >= -1 && (a.y1 - a.y0 < 3 * sp) && (b.y1 - b.y0 < 3 * sp))) {
           out[i] = { x0: Math.min(a.x0, b.x0), y0: a.y0, x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1), n: a.n + b.n, px: a.px.concat(b.px) };
           out.splice(j, 1); again = true;
         }
@@ -35349,7 +35361,14 @@ Lantern.RFB = (function () {
     var h = c.y1 - c.y0 + 1, w = c.x1 - c.x0 + 1;
     if (h < 1.6 * sp || h > 3.8 * sp || w > 1.4 * sp || w < 0.4 * sp) return null;
     var s = strokes(im, c, sp);
-    if (s.length === 1) return s[0].x0 - c.x0 < 0.35 * sp ? "b" : null;
+    // one stroke on the left, down to the foot: a flat; one that stops short, with ink below it on the right, is a natural
+    // whose right stroke was too short to count (Adam's second Ode, 1.21.2)
+    if (s.length === 1) {
+      if (s[0].x0 - c.x0 >= 0.35 * sp) return null;
+      if (s[0].bottom >= c.y1 - 0.3 * sp) return c.x1 - s[0].x1 >= 0.3 * sp ? "b" : null;   // (a flat has its bowl; a lone stroke is not one)
+      for (var x = Math.round(c.x0 + 0.5 * w); x <= c.x1; x++) if (dark(im, x, c.y1) || dark(im, x, c.y1 - 1)) return "n";
+      return null;
+    }
     if (s.length === 2) {
       var a = s[0], b = s[1];
       return a.top < b.top - 0.4 * sp && b.bottom > a.bottom + 0.4 * sp ? "n" : "#";
@@ -35432,13 +35451,14 @@ Lantern.RFB = (function () {
     return false;
   }
   // alone(ink, x, y, r): the patch of ink at x, y stays within r of it (a dot; not the tail of a flag)
-  function alone(im, x0, y0, r) {
+  function alone(im, x0, y0, r, cap) {
     var seen = {}, st = [x0, y0], n = 0;
+    cap = cap || 400;
     seen[x0 + "," + y0] = 1;
     while (st.length) {
       var y = st.pop(), x = st.pop();
       if ((x - x0) * (x - x0) + (y - y0) * (y - y0) > r * r) return false;
-      if (++n > 400) return false;
+      if (++n > cap) return false;
       for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) {
         var k = (x + dx) + "," + (y + dy);
         if (!seen[k] && dark(im, x + dx, y + dy)) { seen[k] = 1; st.push(x + dx, y + dy); }
@@ -35490,6 +35510,17 @@ Lantern.RFB = (function () {
       for (var yy = Math.round(y0); yy <= Math.round(y1); yy++) for (var xx = Math.round(x0); xx <= Math.round(x1); xx++) { if (full[xx]) continue; t++; if (dark(cl, xx, yy)) n++; }
       return t ? n / t : 0;
     }
+    function reach(x, side, y0, y1) {   // how far the ink beside the line goes before a gap: a head is on its stem, the next note stands apart (1.21.2)
+      var xx = x, gap = 0, k, last;
+      while (full[xx + side]) xx += side;
+      last = xx;
+      for (k = 1; k <= 1.3 * sp; k++) {
+        var c = xx + side * k, any = false;
+        for (var yy = Math.round(y0); yy <= Math.round(y1) && !any; yy++) if (dark(cl, c, yy)) any = true;
+        if (any) { gap = 0; last = c; } else if (++gap > 0.5 * sp) break;   // (a half note's hollow, its rim cut away with a line, is narrower)
+      }
+      return last;
+    }
     for (x = Math.round(from); x <= s.right + 2; x++) {
       if (!full[x]) continue;
       // thin where it crosses the spaces (a note's head beside a stem is wide)
@@ -35501,7 +35532,11 @@ Lantern.RFB = (function () {
       var ends = false;
       for (var k = 0; k <= 0.7 * sp && !ends; k++) if (runW(cl, x, top + k) > 0.9 * sp || runW(cl, x, bot - k) > 0.9 * sp) ends = true;
       // a head right of the top end (a stem down) or left of the bottom end (a stem up)
-      if (!ends && (cov(x + 0.3 * sp, top - 0.2 * sp, x + 1.3 * sp, top + 1.0 * sp) >= 0.2 || cov(x - 1.3 * sp, bot - 1.0 * sp, x - 0.3 * sp, bot + 0.2 * sp) >= 0.2)) ends = true;
+      if (!ends) {
+        var rx = Math.min(x + 1.3 * sp, reach(x, 1, top - 0.2 * sp, top + 1.0 * sp)), lx = Math.max(x - 1.3 * sp, reach(x, -1, bot - 1.0 * sp, bot + 0.2 * sp));
+        if ((rx >= x + 0.3 * sp && cov(x + 0.3 * sp, top - 0.2 * sp, rx, top + 1.0 * sp) * (rx - x - 0.3 * sp + 1) / (sp + 1) >= 0.2) ||
+            (lx <= x - 0.3 * sp && cov(lx, bot - 1.0 * sp, x - 0.3 * sp, bot + 0.2 * sp) * (x - 0.3 * sp - lx + 1) / (sp + 1) >= 0.2)) ends = true;
+      }
       if (!ends) xs.push(x);
     }
     var out = [], cur = null;
@@ -35550,6 +35585,16 @@ Lantern.RFB = (function () {
     }
     return best;
   }
+  // rightOf(clean, head) -> the head's right edge, the way outerW finds it, over its middle rows (a head leans)
+  function rightOf(cl, h, sp) {
+    var y = Math.round(h.y), best = null, m = Math.round(0.3 * sp);
+    for (var dy = -m; dy <= m; dy++) {
+      var b = null, x0 = Math.round(h.x), gap = 0;
+      for (var k = 0; k <= 2.2 * sp; k++) { if (dark(cl, x0 + k, y + dy)) { b = x0 + k; gap = 0; } else if (b !== null && ++gap > 0.6 * sp) break; }
+      if (b !== null && (best === null || b > best)) best = b;
+    }
+    return best;
+  }
   function fake(cl, h, sp, im) {
     if (extent(im || cl, h, sp) < 0.72 * sp) return true;   // flatter than a head: a half or whole rest, a beam's edge
     if (!h.filled) {   // (the staff lines left in: where one crosses an open head, cleaning them took a piece of its outline)
@@ -35569,12 +35614,12 @@ Lantern.RFB = (function () {
   function thinRows(c, sp) {
     var by = {}, i, n = 0, thin = 0;
     for (i = 0; i < c.px.length; i += 2) { var y = c.px[i + 1]; if (!by[y]) by[y] = [c.px[i], c.px[i]]; else { by[y][0] = Math.min(by[y][0], c.px[i]); by[y][1] = Math.max(by[y][1], c.px[i]); } }
-    for (var k in by) { n++; if (by[k][1] - by[k][0] + 1 <= 0.35 * sp) thin++; }
+    for (var k in by) { n++; if (by[k][1] - by[k][0] + 1 <= 0.45 * sp) thin++; }   // (a stem enlarged from a small picture is a little wider, 1.21.2)
     return n ? thin / n : 0;
   }
   // startOn(clean, staff) -> what opens the staff: the clef, the key signature's sharps or flats, a time signature's digits
   function startOn(im, s) {
-    var sp = s.spacing, cs = joined(components(im, s.left, s.lines[0] - 3 * sp, s.left + 14 * sp, s.lines[4] + 3 * sp), sp), clef = null, acc = [], digits = [];
+    var sp = s.spacing, cs = joined(components(im, s.left, s.lines[0] - 3 * sp, s.left + 14 * sp, s.lines[4] + 3 * sp), sp, true), clef = null, acc = [], digits = [];
     cs.forEach(function (c) { if (c.y1 - c.y0 > 2.8 * sp && c.x1 - c.x0 > 0.8 * sp && c.x0 < s.left + 3 * sp && (!clef || c.x0 < clef.x0)) clef = c; });
     if (!clef) return { key: 0, clef: null, acc: [], digits: [], end: s.left };
     var end = clef.x1, half = function (c) { return c.y0 >= s.lines[0] - 0.4 * sp && c.y1 <= s.lines[2] + 0.4 * sp ? 1 : c.y0 >= s.lines[2] - 0.4 * sp && c.y1 <= s.lines[4] + 0.4 * sp ? 2 : 0; };
@@ -35619,6 +35664,13 @@ Lantern.RFB = (function () {
     // each head: its look
     hs.forEach(function (h) { refineX(pr.cl, h, sp); h.filled = filledOf(pr.cl, h, sp, pr.gr); });
     hs = hs.filter(function (h) { return !fake(pr.cl, h, sp, pr.im); });
+    // a head with its sharp or flat touching it: the patch is both, the head its right part (Adam's second Ode's G#, 1.21.2)
+    hs.forEach(function (h) {
+      if (outerW(pr.cl, h, sp) < 1.6 * sp || stemOf(pr.cl, h, sp, bars)) return;
+      var r = rightOf(pr.cl, h, sp), g = r === null ? null : { x: r - 0.65 * sp, y: h.y, off: h.off, core: h.core };
+      if (!g || g.x <= h.x + 0.3 * sp || hs.some(function (o) { return o !== h && Math.abs(o.x - g.x) < 0.7 * sp && Math.abs(o.y - h.y) < 1.2 * sp; })) return;   // (a head found there already: this is its sharp)
+      if (stemOf(pr.cl, g, sp, bars)) { h.x = g.x; h.filled = filledOf(pr.cl, h, sp, pr.gr); }
+    });
     var firstX = hs.length ? Math.min.apply(null, hs.map(function (h) { return h.x; })) : s.right;
     hs.forEach(function (h) {
       h.stem = stemOf(pr.cl, h, sp, bars);
@@ -35628,8 +35680,14 @@ Lantern.RFB = (function () {
       if (h.dot) h.len *= 1.5;
       // no stem: a whole note is open with a hole in its middle; a filled patch or one taller than a head is a rest
       h.wide = outerW(pr.cl, h, sp);
-      if (!h.stem && (h.wide < 1.35 * sp || (h.wide < 1.55 * sp && h.core > 0.5) || extent(pr.im, h, sp) >= 1.5 * sp)) h.drop = true;   // a whole note is wider than a rest, and open
+      if (!h.stem && (h.wide < 1.35 * sp || (h.wide < 1.55 * sp && (h.core > 0.5 || extent(pr.im, h, sp) >= 1.5 * sp)))) h.drop = true;   // a whole note is wider than a rest, and open
       if (!h.stem && !h.drop) h.len = h.dot ? 6 : 4;
+      // and stands alone: a piece of a beam between two stems is wide and dark too (1.21.2, Adam's second Ode)
+      if (!h.stem && !h.drop) {
+        var y0 = Math.round(h.y), x0 = Math.round(h.x), k = 0;
+        while (k <= 0.9 * sp && !dark(pr.cl, x0 - k, y0)) k++;
+        if (k <= 0.9 * sp && !alone(pr.cl, x0 - k, y0, 1.6 * sp, 4000)) h.drop = true;
+      }
     });
     hs = hs.filter(function (h) { return !h.drop; });
     // a flag's curl at another note's stem tip is not a note
@@ -35641,19 +35699,25 @@ Lantern.RFB = (function () {
       });
     });
     // in-bar accidentals: just before a head, at its height
-    var comps = joined(components(pr.cl, firstX - 2 * sp, s.lines[0] - 3 * sp, s.right, s.lines[4] + 3 * sp), sp);
+    var comps = joined(components(pr.cl, firstX - 2 * sp, s.lines[0] - 3 * sp, s.right, s.lines[4] + 3 * sp), sp, true);
     hs.forEach(function (h) {
       comps.forEach(function (c) {
         if (c.x1 > h.x - 0.45 * sp || c.x1 < h.x - 2.2 * sp || Math.abs((c.y0 + c.y1) / 2 - h.y) > 1.2 * sp) return;
         var a = accidental(pr.cl, c, sp);
-        if (a) h.acc = a;
+        if (a) { h.acc = a; h.accAt = c; }
       });
+    });
+    // ink read as a head's sharp or flat is not a whole note of its own (1.21.2)
+    hs = hs.filter(function (w) {
+      return w.stem || !hs.some(function (h) { var c = h.accAt; return h !== w && c && w.x >= c.x0 - 0.2 * sp && w.x <= c.x1 + 0.2 * sp && w.y >= c.y0 - 0.2 * sp && w.y <= c.y1 + 0.2 * sp; });
     });
     // rests: patches in the staff that are no note's
     var rests = [];
     comps.forEach(function (c) {
       if (c.x0 < firstX - 0.8 * sp) return;
       if (hs.some(function (h) { return h.x >= c.x0 - 0.2 * sp && h.x <= c.x1 + 0.2 * sp && h.y >= c.y0 - 0.2 * sp && h.y <= c.y1 + 0.2 * sp; })) return;
+      // a piece of a head's rim (a whole note cut by the lines around it) is the head's, not a rest (1.21.2)
+      if (hs.some(function (h) { var r = Math.max(0.65 * sp, Math.min(0.5 * (h.wide || 0), sp)); return c.x1 >= h.x - r && c.x0 <= h.x + r && c.y1 >= h.y - 0.6 * sp && c.y0 <= h.y + 0.6 * sp && c.y1 - c.y0 <= 1.3 * sp; })) return;
       if (bars.some(function (b) { return b >= c.x0 - 1 && b <= c.x1 + 1; })) return;
       if (hs.some(function (h) { return h.acc && c.x1 <= h.x - 0.45 * sp && c.x1 >= h.x - 2.2 * sp && Math.abs((c.y0 + c.y1) / 2 - h.y) <= 1.2 * sp; })) return;
       var r = rest(pr.cl, c, s);
@@ -35862,6 +35926,7 @@ Lantern.RFB = (function () {
     if (ch) { res.chords = ch.line; res.chordList = ch.list; }
     res.lines = "key " + res.keyName + "\ntime " + res.time.join("/") + (ch ? "\nchords " + ch.line : "") + "\nmelody " + mel;
     res.tune = ns.map(function (n) { return { midi: n.midi, len: n.len }; });
+    res.known = L.musicTunes ? L.musicTunes.find(ns.map(function (n) { return n.midi; })) : null;   // (1.21.2) a tune Lantern knows by its opening
     res.doubt = res.problems.slice();
     if (res.spacing && res.spacing < 6.5) res.doubt.push("the picture is small (its staff lines " + Math.round(res.spacing * 10) / 10 + " pixels apart): a closer picture reads surer");
     res.summary = nb + " bar" + (nb === 1 ? "" : "s") + " in " + res.keyName + ", " + res.time.join("/") + ", " + ns.length + " notes" + (res.systems > 1 ? " on " + res.systems + " lines of music" : "") +
@@ -35989,11 +36054,11 @@ Lantern.RFB = (function () {
         (song && song.found ? "" : " Pitches only: note lengths are not read.");
       out.appendChild(draw(res.canvas || cv, res, 760));
       if (song && song.found) {
-        var said = el("p", { style: "margin:8px 0 2px", text: "Read as a song: " + song.summary + (song.doubt.length ? " \u2014 " + song.doubt.join("; ") : "") });
+        var said = el("p", { style: "margin:8px 0 2px", text: "Read as a song: " + (song.known ? "\u201c" + song.known.title + "\u201d (Lantern knows the tune), " : "") + song.summary + (song.doubt.length ? " \u2014 " + song.doubt.join("; ") : "") });
         var shown = el("pre", { "aria-label": "The tune as song lines", style: "white-space:pre-wrap;font-size:13px;background:var(--soft);padding:8px;border-radius:8px", text: song.lines });
         out.appendChild(said); out.appendChild(shown);
         if (L.musicDocs) out.appendChild(el("div", { "class": "row" }, [el("button", { "class": "primary", text: "Make a song from it", title: "Opens the tune in the Make a song card, to play on any instrument and save",
-          onclick: function () { var ti = song.title || "Sheet music"; L.musicDocs.open("title " + ti + "\n" + song.lines, ti); } })]));
+          onclick: function () { var ti = song.title || (song.known && song.known.title) || "Sheet music"; L.musicDocs.open("title " + ti + "\n" + song.lines, ti); } })]));
         if (SM.heading) SM.heading(song).then(function (r) {   // the title printed above the music, when Text Reader can read it (1.21.1)
           if (!r.title) return;
           said.textContent = "Read as a song: \u201c" + r.title + "\u201d, " + song.summary + (song.doubt.length ? " \u2014 " + song.doubt.join("; ") : "");
@@ -46099,6 +46164,74 @@ Lantern.RFB = (function () {
 // MODULE: MUSIC_THEORY - END
 // ===========================================================================
 // ===========================================================================
+// MODULE: MUSIC_TUNES - START
+// Depends: CORE (window.Lantern)
+// Exports: Lantern.musicTunes = {find(pitches) -> {title, by, year, notes}
+//          or null, LIST}
+// ===========================================================================
+// Tunes Lantern knows by their opening notes (1.21.2), so a tune read from
+// a picture with no title printed gets its name from Lantern, not a guess:
+// Adam's untitled Ode to Joy (only "Ludwig van Beethoven" above it) was
+// called Fur Elise by the 35B. Only old tunes free for anyone (public
+// domain), each by its first notes; a tune is known when the steps between
+// its notes match one's opening, in any key, for at least seven steps
+// (the first few notes of the reading may be an introduction); no tune
+// that is only a scale, which any exercise could be.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var LIST = [   // [title, by, year, opening notes]
+    ["Ode to Joy", "Beethoven (Symphony No. 9)", "1824", "E4 E4 F4 G4 G4 F4 E4 D4 C4 C4 D4 E4 E4 D4 D4"],
+    ["F\u00fcr Elise", "Beethoven", "1810", "E5 D#5 E5 D#5 E5 B4 D5 C5 A4 C4 E4 A4 B4"],
+    ["Twinkle, Twinkle, Little Star", "a French tune, also the ABC song and Baa, Baa, Black Sheep", "1761", "C4 C4 G4 G4 A4 A4 G4 F4 F4 E4 E4 D4 D4 C4"],
+    ["Fr\u00e8re Jacques", "traditional", "", "C4 D4 E4 C4 C4 D4 E4 C4 E4 F4 G4 E4 F4 G4"],
+    ["Mary Had a Little Lamb", "traditional", "1830", "E4 D4 C4 D4 E4 E4 E4 D4 D4 D4 E4 G4 G4"],
+    ["Jingle Bells", "James Lord Pierpont", "1857", "E4 E4 E4 E4 E4 E4 E4 G4 C4 D4 E4"],
+    ["Jingle Bells", "James Lord Pierpont", "1857", "G4 E5 D5 C5 G4 G4 G4 G4 E5 D5 C5 A4"],
+    ["London Bridge Is Falling Down", "traditional", "", "G4 A4 G4 F4 E4 F4 G4 D4 E4 F4 E4 F4 G4"],
+    ["Row, Row, Row Your Boat", "traditional", "1852", "C4 C4 C4 D4 E4 E4 D4 E4 F4 G4"],
+    ["Happy Birthday to You", "Mildred and Patty Hill", "1893", "G4 G4 A4 G4 C5 B4 G4 G4 A4 G4 D5 C5"],
+    ["Silent Night", "Franz Xaver Gruber", "1818", "G4 A4 G4 E4 G4 A4 G4 E4 D5 D5 B4 C5 C5 G4"],
+    ["Auld Lang Syne", "traditional", "", "C4 F4 F4 F4 A4 G4 F4 G4 A4 F4 F4 A4 C5 D5"],
+    ["Brahms' Lullaby", "Johannes Brahms", "1868", "E4 E4 G4 E4 E4 G4 E4 G4 C5 B4 A4 A4 G4"],
+    ["Greensleeves", "traditional", "", "A4 C5 D5 E5 F5 E5 D5 B4 G4 A4 B4 C5 A4 A4 G#4 A4 B4 G#4 E4"],
+    ["When the Saints Go Marching In", "traditional", "", "C4 E4 F4 G4 C4 E4 F4 G4 C4 E4 F4 G4 E4 C4 E4 D4"],
+    ["Old MacDonald Had a Farm", "traditional", "", "G4 G4 G4 D4 E4 E4 D4 B4 B4 A4 A4 G4"],
+    ["Eine kleine Nachtmusik", "Mozart", "1787", "G4 D4 G4 D4 G4 D4 G4 B4 D5"],
+    ["Minuet in G", "Christian Petzold", "1725", "D5 G4 A4 B4 C5 D5 G4 G4 E5 C5 D5 E5 F#5 G5 G4 G4"],
+    ["In the Hall of the Mountain King", "Edvard Grieg", "1875", "B3 C#4 D4 E4 F#4 D4 F#4 F4 C#4 F4 E4 C4 E4"],
+    ["Rondo alla Turca (Turkish March)", "Mozart", "1783", "B4 A4 G#4 A4 C5 D5 C5 B4 C5 E5 F5 E5 D#5 E5 B5 A5 G#5 A5"],
+    ["Bridal Chorus (Here Comes the Bride)", "Richard Wagner", "1850", "C4 F4 F4 F4 C4 G4 E4 F4"],
+    ["Camptown Races", "Stephen Foster", "1850", "G4 G4 E4 G4 A4 G4 E4 E4 D4 E4 D4"],
+    ["Oh My Darling, Clementine", "traditional", "1884", "F4 F4 F4 C4 A4 A4 A4 F4 F4 A4 C5 C5 A#4 A4 G4"],
+    ["Hot Cross Buns", "traditional", "", "E4 D4 C4 E4 D4 C4 C4 C4 C4 C4 D4 D4 D4 D4 E4 D4 C4"],
+    ["Pop Goes the Weasel", "traditional", "", "C4 C4 D4 D4 E4 G4 E4 C4"],
+    ["The Entertainer", "Scott Joplin", "1902", "D4 D#4 E4 C5 E4 C5 E4 C5"],
+    ["Amazing Grace", "the tune New Britain", "1829", "G3 C4 E4 C4 E4 D4 C4 A3 G3"]];
+  var NAT = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  function midi(n) { return NAT[n.charAt(0)] + (n.charAt(1) === "#" ? 1 : n.charAt(1) === "b" ? -1 : 0) + 12 * (+n.slice(-1) + 1); }
+  var STEPS = LIST.map(function (t) { var m = t[3].split(" ").map(midi), s = []; for (var i = 1; i < m.length; i++) s.push(m[i] - m[i - 1]); return s; });
+  // find(pitches) -> the tune they open (or open after up to three notes), or null
+  function find(ps) {
+    var s = [], best = null;
+    for (var i = 1; i < (ps || []).length; i++) s.push(ps[i] - ps[i - 1]);
+    STEPS.forEach(function (t, k) {
+      for (var o = 0; o <= 3; o++) {
+        var n = Math.min(t.length, 12, s.length - o), same = n >= 7;
+        for (var j = 0; j < n && same; j++) if (s[o + j] !== t[j]) same = false;
+        if (same && (!best || n > best.n)) { best = { n: n, k: k }; break; }
+      }
+    });
+    if (!best) return null;
+    var e = LIST[best.k];
+    return { title: e[0], by: e[1], year: e[2], notes: best.n + 1 };
+  }
+  window.Lantern.musicTunes = { find: find, LIST: LIST };
+})();
+// ===========================================================================
+// MODULE: MUSIC_TUNES - END
+// ===========================================================================
+// ===========================================================================
 // MODULE: MUSIC_SONG_READ - START
 // Depends: MUSIC_THEORY (Lantern.musicTheory)
 // Exports: Lantern.musicRead = {read(block) -> song, bars(text, per) ->
@@ -47540,6 +47673,11 @@ Lantern.RFB = (function () {
       });
       if (off.length) out.push("the chords are not the ones the left hand plays in the picture (bar " + off[0].bar + " has " + off[0].name + "): write the chords line exactly as read -- chords " + r.chords);
     }
+    // its name, when Lantern has one (printed above the music, or a tune it knows): not another piece's (1.21.2)
+    var name = r.title || (r.known && r.known.title);
+    function words(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(" ").filter(function (w) { return w.length >= 3; }); }
+    if (name && p.title && !words(p.title).some(function (w) { return words(name).indexOf(w) >= 0; }))
+      out.push("the song is called \u201c" + p.title + "\u201d, but " + (r.title ? "the picture is headed" : "Lantern knows the tune as") + " \u201c" + name + "\u201d: write MAKE MUSIC: " + name);
     return out;
   }
   window.Lantern.sheetChat = { read: read, readFor: function (q) { return readings.hasOwnProperty(q) ? readings[q] : null; }, remember: keep, compare: compare };
@@ -47547,15 +47685,16 @@ Lantern.RFB = (function () {
   (window.Lantern.chatAbout = window.Lantern.chatAbout || []).unshift({ id: "sheet music", provide: function (q) {
     return read(q).then(function (r) {
       if (!r) return null;
-      var what = r.chords ? "key, time, chords and melody" : "key, time and melody";
+      var what = r.chords ? "key, time, chords and melody" : "key, time and melody", name = r.title || (r.known && r.known.title) || "";
       return { id: "sheet music",
-        note: "Lantern\u2019s Sheet Music Reader read the picture: " + (r.title ? "\u201c" + r.title + "\u201d, " : "") + r.summary + (r.doubt.length ? " (" + r.doubt.join("; ") + ")" : "") + ". The AI is given the notes as read\u2026",
+        note: "Lantern\u2019s Sheet Music Reader read the picture: " + (name ? "\u201c" + name + "\u201d" + (!r.title && r.known ? " (Lantern knows the tune)" : "") + ", " : "") + r.summary + (r.doubt.length ? " (" + r.doubt.join("; ") + ")" : "") + ". The AI is given the notes as read\u2026",
         prompt: "SHEET MUSIC: Lantern\u2019s Sheet Music Reader read the person\u2019s picture -- " + r.summary + " (the tune: the top notes of the treble staff" + (r.chords ? "; the chords: what the left hand\u2019s bass notes stand for" : "") + "):\n" +
-          (r.title ? "title " + r.title + "\n" : "") + r.lines + "\n" +
+          (name ? "title " + name + "\n" : "") + r.lines + "\n" +
           (r.heading && r.heading.length ? "Printed above the music: " + r.heading.join(" / ") + "\n" : "") +
+          (r.known ? "Lantern knows the tune by its first " + r.known.notes + " notes: " + r.known.title + " (" + r.known.by + (r.known.year ? ", " + r.known.year : "") + ").\n" : "") +
           "These are the notes printed in the picture" + (r.doubt.length ? " (Lantern notes: " + r.doubt.join("; ") + ")" : "") + ". To play it or make a music file of it, write a MAKE MUSIC block " +
-          "with these " + (r.title ? "title, " : "") + what + " lines exactly as they are -- you may add style and sound lines" + (r.chords ? "" : ", chords") + ", and a tempo line (a printed tempo is not read; most tunes go at 90 to 120). " +
-          (r.title ? "" : "Title it with the tune\u2019s name if you know it (not Lantern\u2019s). ") +
+          "with these " + (name ? "title, " : "") + what + " lines exactly as they are -- you may add style and sound lines" + (r.chords ? "" : ", chords") + ", and a tempo line (a printed tempo is not read; most tunes go at 90 to 120). " +
+          (name ? "" : "Lantern does not know this tune\u2019s name: title it with words printed above the music, or call it Sheet music -- do not guess a famous piece from its composer. ") +
           "Do not change the notes, and do not say you cannot see the picture: Lantern read it for you." };
     });
   } });

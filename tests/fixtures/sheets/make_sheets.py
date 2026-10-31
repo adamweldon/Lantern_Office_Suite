@@ -1,7 +1,7 @@
 # make_sheets.py -- remake the test sheets in this folder (Lantern 1.21.0): engrave each tune of expected.json with Verovio
-# (pip install verovio) and rasterise it in Chromium (Playwright) at 1300, 900 and 700 pixels wide (the tests use eight of
+# (pip install verovio) and rasterise it in Chromium (Playwright) at 1300, 900, 820, 760 and 700 pixels wide (the tests use eleven of
 # them, and ode_title_900.png: the piano Ode with its heading).
-# Usage: python3 tests/fixtures/sheets/make_sheets.py   (writes NAME_1300.png, NAME_900.png, NAME_700.png here)
+# Usage: python3 tests/fixtures/sheets/make_sheets.py   (writes NAME_1300.png, NAME_900.png, NAME_820.png, NAME_760.png, NAME_700.png here)
 import json, os
 import verovio
 from playwright.sync_api import sync_playwright
@@ -21,5 +21,5 @@ with sync_playwright() as p:
         big = os.path.join(HERE, name + "_1300.png")
         pg.locator("#s").screenshot(path=big)
         im = Image.open(big).convert("RGB")
-        for w in (900, 700): im.resize((w, round(im.height * w / im.width)), Image.LANCZOS).save(os.path.join(HERE, "%s_%d.png" % (name, w)))
+        for w in (900, 820, 760, 700): im.resize((w, round(im.height * w / im.width)), Image.LANCZOS).save(os.path.join(HERE, "%s_%d.png" % (name, w)))
     b.close()

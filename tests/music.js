@@ -276,7 +276,7 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   ok("...in G major a plain F is the key's F#, and an F natural is written Fn", gRead.lines === "key G major\ntime 3/4\nmelody G4 F Fn | G - -", gRead.lines);
   var QS = "Use your Lantern Tools to read the sheet music and then reproduce a playable music file";
   SC.remember(QS, odeRead);
-  ok("a song asked of a picture that was read: copying the lines passes", act.build(song(odeRead.lines.split("\n").concat(["style ballad"])), QS).ok);
+  ok("a song asked of a picture that was read: copying the lines passes", act.build(song(odeRead.lines.split("\n").concat(["style ballad"]), "Ode to Joy"), QS).ok);
   var off = act.build(song(["key C major", "melody E E F G | G F E D | C C D E | D - - r"]), QS);
   ok("...a tune from memory goes back with the lines as read", off.problems.some(function (x) { return /^the melody is not the one Lantern read in the picture -- from bar 4 \(note 13\): write the key, time and melody lines exactly as read:\nkey C major\ntime 4\/4\nmelody E4 E F G/.test(x); }), off.problems);
   SC.remember("What is this?", odeRead);
@@ -301,6 +301,28 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     "melody E G A C | D E D C | B C D | A - - r", "melody D C B A | G B A F | E - - r"] });
   ok("a long note against a chord that plays again under a longer melody: where to write the chord (the 35B's Ode, 1.20.0)", mem.problems.length === 1 &&
     /^bar 15: the melody holds E over F \(F A C\).* \(bar 15 plays the chords line\u2019s bar 3 again: write a chord for each of the 15 bars, or leave the chords line out and Lantern chooses them\)$/.test(mem.problems[0]), mem.problems);
+  // 1.21.2: tunes Lantern knows by their opening (Adam's untitled Ode to Joy was called Fur Elise by the 35B)
+  var TU = L.musicTunes, NM = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  function mids(s) { return s.split(" ").map(function (n) { return NM[n.charAt(0)] + (n.charAt(1) === "#" ? 1 : 0) + 12 * (+n.slice(-1) + 1); }); }
+  ok("the tune finder is there, its tunes all old ones", !!(TU && TU.find && TU.LIST.length >= 25) && TU.LIST.every(function (x) { return !x[2] || +x[2] < 1929; }));
+  ok("...each tune it knows is found from its own opening", TU.LIST.every(function (x) { var f = TU.find(mids(x[3])); return f && f.title === x[0]; }),
+    TU.LIST.filter(function (x) { var f = TU.find(mids(x[3])); return !f || f.title !== x[0]; }).map(function (x) { return x[0]; }));
+  var fOde = TU.find(mids("E4 E4 F4 G4 G4 F4 E4 D4 C4 C4 D4 E4 E4 D4 D4")), fTw = TU.find(mids("G4 G4 D5 D5 E5 E5 D5 C5 C5 B4 B4 A4 A4 G4")),
+    fIntro = TU.find(mids("C4 G4 E4 E4 F4 G4 G4 F4 E4 D4 C4 C4 D4")), fFE = TU.find(mids("E5 D#5 E5 D#5 E5 B4 D5 C5 A4"));
+  ok("...Ode to Joy by its first notes, Twinkle in G, Ode after two notes of introduction, Fur Elise",
+    fOde && fOde.title === "Ode to Joy" && fOde.notes === 13 && /Beethoven/.test(fOde.by) && fTw && /^Twinkle/.test(fTw.title) && fIntro && fIntro.title === "Ode to Joy" && fFE && fFE.title === "F\u00fcr Elise", [fOde, fTw, fIntro, fFE]);
+  ok("...and not a scale, a few notes, or nothing", TU.find(mids("C4 D4 E4 F4 G4 A4 B4 C5 D5")) === null && TU.find(mids("E4 E4 F4 G4 G4")) === null && TU.find([]) === null && TU.find(null) === null);
+  ok("a reading of a tune Lantern knows carries its name", odeRead.known && odeRead.known.title === "Ode to Joy" && lh.known === null, [odeRead.known, lh.known]);
+  var QT = "Make this sheet music into a song";
+  SC.remember(QT, odeRead);
+  var elise = act.build(song(odeRead.lines.split("\n"), "F\u00fcr Elise"), QT);
+  ok("...a song of it called another piece goes back for its name; its own name, in other words too, passes",
+    !elise.ok && elise.problems.length === 1 && elise.problems[0] === "the song is called \u201cF\u00fcr Elise\u201d, but Lantern knows the tune as \u201cOde to Joy\u201d: write MAKE MUSIC: Ode to Joy" &&
+    act.build(song(odeRead.lines.split("\n"), "Ode to Joy"), QT).ok && act.build(song(odeRead.lines.split("\n"), "Beethoven's Ode to Joy (piano)"), QT).ok, elise.problems);
+  var titledRead = rd(0, [4, 4], [[snt(Cl, 4, 0, 1), snt(Dl, 4, 0, 1), snt(El, 4, 0, 1), snt(Cl, 4, 0, 1)], [snt(Gl, 4, 0, 4)]]);
+  titledRead.title = "Morning Song";
+  ok("...a title printed above the music is the one asked for", SC.compare({ title: "Ode to Joy", melody: titledRead.tune.map(function (n) { return { midi: n.midi, len: n.len, bar: 1 }; }) }, titledRead)[0] ===
+    "the song is called \u201cOde to Joy\u201d, but the picture is headed \u201cMorning Song\u201d: write MAKE MUSIC: Morning Song");
 
 
   // Chat: a song is made, played and saved; a bad word goes back once

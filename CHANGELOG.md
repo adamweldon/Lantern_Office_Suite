@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.21.2 — Lantern knows the tune; small screenshots read right (2026-10-31)
+
+Adam pasted a second screenshot of Ode to Joy, this one with no title -- only
+"Ludwig van Beethoven" printed at the top right. The 35B called the song
+Für Elise (a guess from the composer), and the last part had a few wrong
+notes, different from the first time.
+
+- **Lantern knows famous old tunes by their first notes.** A new module,
+  MUSIC_TUNES, holds the openings of 26 public-domain tunes (Ode to Joy,
+  Für Elise, Twinkle Twinkle, Frère Jacques, Jingle Bells, Greensleeves,
+  Minuet in G, Amazing Grace ...), matched by the steps between notes so any
+  key works, after up to three notes of introduction; a tune that is only a
+  scale is not one. A sheet read with no title printed gets the tune's name:
+  Chat tells the AI "Lantern knows the tune by its first 13 notes: Ode to Joy
+  (Beethoven (Symphony No. 9), 1824)" and gives it a `title` line; with no
+  name the AI is told to use words printed above the music or call it Sheet
+  music, not to guess a famous piece from its composer. The Music tile's
+  reader shows the name too.
+- **A song with another name goes back.** When Lantern has the name (printed
+  above the music, or a tune it knows), a song titled otherwise is sent back:
+  "the song is called “Für Elise”, but Lantern knows the tune as
+  “Ode to Joy”: write MAKE MUSIC: Ode to Joy". Other words for it pass
+  ("Beethoven's Ode to Joy (piano)").
+- **The last part's wrong notes.** At this screenshot's size (staff lines 6.75
+  pixels apart) a piece of the beam joining two eighth notes was read as a
+  whole note D5; a note with no stem must now stand alone. Read right now on
+  both of Adam's screenshots, all 12 bars, with the left hand's chords to the
+  end: `... | G7 E7/G# | Am G` (the G# touching its sharp, and the natural
+  touching its G, are read now).
+- **More of the reader, at screenshot sizes** (staff lines 6 to 7 pixels
+  apart): a flag and a head in one patch split by height and place; a key
+  signature's flat whose stem and bowl came apart, and a natural whose two
+  strokes did, joined again; a lone stroke is not a flat; ink taken as a
+  note's sharp is not a whole note of its own; a head with its accidental
+  touching it is found at its right part, with its stem; a piece of a whole
+  note's rim cut off by the staff lines is not a rest; a note just after a bar
+  line no longer hides the bar line (only ink running on from the line counts
+  as its head); a wide, open whole note is not taken for a rest; the first
+  note of a staff with no time signature is not taken for one. 46 of 49 test
+  sheets at 700 to 1300 pixels wide read note for note (all from 760 up).
+- Tests: `tests/music.js` (106: the tune finder, the title check),
+  `tests/browser/sheet_read_e2e.py` (58 checks: three sheets at screenshot
+  sizes, the 35B's "Für Elise" sent back), `tests/ai_isolation.js` (145
+  modules).
+
 ## 1.21.1 — The left hand's chords, the heading's title (2026-10-31)
 
 From Adam's trial of 1.21.0 with the 35B: Lantern read his Ode to Joy

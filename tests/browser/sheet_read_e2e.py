@@ -104,7 +104,7 @@ try:
         first = text_of(calls[0]["messages"][-1]) if calls else ""
         sysm = calls[0]["messages"][0]["content"] if calls else ""
         ok("Chat (a model that sees): the picture is read and the AI is given its lines, with MAKE MUSIC", "SHEET MUSIC: Lantern’s Sheet Music Reader read the person’s picture -- 12 bars in C major, 4/4" in first and
-           ode["lines"] in first and "MAKE MUSIC: <title>" in sysm and "Lantern’s Sheet Music Reader read the picture: 12 bars in C major" in t, [first[:600], t[:400]])
+           ode["lines"] in first and "MAKE MUSIC: <title>" in sysm and "Lantern’s Sheet Music Reader read the picture: \u201cOde to Joy\u201d (Lantern knows the tune), 12 bars in C major" in t, [first[:600], t[:400]])
         back = text_of(calls[1]["messages"][-1]) if len(calls) > 1 else ""
         ok("...the tune from memory goes back: not the tune read (with the lines), and the clash under the repeated chords says where to write", "the melody is not the one Lantern read in the picture" in back and
            ode["lines"] in back and "plays the chords line’s bar 3 again: write a chord for each of the 15 bars, or leave the chords line out" in back, back[:900])
@@ -120,6 +120,16 @@ try:
         ok("Chat, a sheet with its heading: the title and the chords given; the 35B's own chords go back for the left hand's", "title Ode to Joy\nkey C major" in first3 and "Printed above the music: Ode to Joy / Ludwig van Beethoven" in first3 and
            "\u201cOde to Joy\u201d" in t3 and "the chords are not the ones the left hand plays in the picture (bar 3 has C): write the chords line exactly as read -- chords C | G7 | C | G" in back3 and
            "Lantern made a song: Ode to Joy" in t3, [first3[:500], back3[:400], t3[-300:]])
+        # 1.21.2: Adam's untitled Ode (only the composer printed) was called Fur Elise by the 35B -- Lantern knows the tune, and a wrong name goes back
+        ELISE = COPY.replace("MAKE MUSIC: Ode to Joy", "MAKE MUSIC: F\u00fcr Elise")
+        t4 = chat_round(Q, [ELISE, COPY], True)
+        first4 = text_of(calls[0]["messages"][-1]) if calls else ""
+        back4 = text_of(calls[1]["messages"][-1]) if len(calls) > 1 else ""
+        ok("Chat, a sheet with no title: Lantern names the tune it knows; the AI's other name goes back, and the song is made with its own",
+           "Lantern knows the tune by its first 13 notes: Ode to Joy (Beethoven (Symphony No. 9), 1824)." in first4 and "title Ode to Joy\nkey C major" in first4 and
+           "\u201cOde to Joy\u201d (Lantern knows the tune)" in t4 and
+           "the song is called \u201cF\u00fcr Elise\u201d, but Lantern knows the tune as \u201cOde to Joy\u201d: write MAKE MUSIC: Ode to Joy" in back4 and "Lantern made a song: Ode to Joy" in t4,
+           [first4[:700], back4[:400], t4[-300:]])
         t2 = chat_round("Play this for me", [COPY], False)
         first2 = text_of(calls[0]["messages"][-1]) if calls else ""
         ok("Chat (a model that cannot see): the picture is still read, and the song made at once", "SHEET MUSIC:" in first2 and ode["lines"] in first2 and len(calls) == 1 and "Lantern made a song: Ode to Joy" in t2, [len(calls), t2[-300:]])
@@ -132,7 +142,7 @@ try:
         ok("the Music tile's reader: the tune as song lines, with Make a song from it", shown.startswith("key G major\ntime 4/4\nmelody G4 G D5 D") and pg.locator("button", has_text="Make a song from it").count() == 1, shown)
         pg.locator("button", has_text="Make a song from it").first.click(); time.sleep(1.5)
         ta = pg.evaluate("(document.querySelector('textarea[aria-label=Song]') || {}).value || ''")
-        ok("...which opens it in the Make a song card, written out", ta.startswith("title Sheet music\nkey G major") and "melody G4 G D5 D" in ta and "12 bars in G major" in pg.evaluate("document.body.innerText"), ta[:200])
+        ok("...which opens it in the Make a song card, written out", ta.startswith("title Twinkle, Twinkle, Little Star\nkey G major") and "melody G4 G D5 D" in ta and "12 bars in G major" in pg.evaluate("document.body.innerText"), ta[:200])
         pg.screenshot(path=os.path.join(OUT, "sheet_song_card.png"))
         ok("no page errors", not errs, errs)
         b.close()
