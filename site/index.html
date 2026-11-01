@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.22.2 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.22.3 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -179,7 +179,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.22.2",
+  version: "1.22.3",
   apps: {},
   order: []
 };
@@ -47646,14 +47646,24 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // MODULE: MUSIC_MIDI - START
 // Depends: MUSIC_BAND (Lantern.musicBand)
-// Exports: Lantern.musicMidi = {file(plan) -> Uint8Array (a .mid), PROGRAM}
+// Exports: Lantern.musicMidi = {file(plan, opts) -> Uint8Array (a .mid; opts.library:
+//          for orchestral sample libraries), PROGRAM, program, PAN}
 // ===========================================================================
 // The song as a standard MIDI file (1.19.0), for any music program: a
 // track each for the melody, the chords, the bass and the drums (channel
 // 10), with the tempo, the time signature, the key signature and the
 // General MIDI instrument of each part's instrument (MUSIC_INST; 1.20.0).
 // 1.22.0: an arranged song has a track for each player (violin 1, viola,
-// horns, timpani ...), each on a channel of its own.
+// horns, timpani ...), each on a channel of its own. 1.22.3 (Adam, taking
+// the file into a DAW): each track starts with its level from Lantern's own
+// mix (volume, CC7 -- the tune loudest, its doublings and the held chords
+// quieter), its place in an orchestra's seating (pan, CC10: first violins
+// left, cellos and basses right, horns left, trumpets right), and the
+// instrument's name; the soft and full passes are on expression (CC11) as
+// well as velocity. For orchestral sample libraries (opts.library): the
+// dynamics on the mod wheel (CC1) too, and a held instrument's notes overlap
+// the next one a little (legato) -- not for a plain General MIDI player,
+// where CC1 is vibrato and overlaps can cut notes.
 (function () {
   var L = window.Lantern;
   if (!L || !L.musicBand) return;
@@ -47670,8 +47680,16 @@ Lantern.RFB = (function () {
     out = out.concat([0, 0xff, 0x2f, 0]);
     return str("MTrk").concat(u32(out.length), out);
   }
-  function file(plan) {
-    var evs = L.musicBand.events(plan), tracks = [];
+  // each player's place, left (0) to right (127), as an orchestra sits; brass, winds and a quartet sit their own way
+  var PAN = { flute: 56, oboe: 70, clarinet: 52, bassoon: 74, horns: 40, trumpet: 86, trombone: 92, tuba: 100, timpani: 64, "violin 1": 28, "violin 2": 44, viola: 82, cello: 96, contrabass: 104,
+    melody: 64, chords: 50, bass: 64, drums: 64 };
+  var PANS = { brass: { "trumpet 1": 40, "trumpet 2": 52, horn: 64, trombone: 80, tuba: 92 }, winds: { flute: 44, oboe: 56, clarinet: 72, horn: 84, bassoon: 64 },
+    quartet: { "violin 1": 32, "violin 2": 52, viola: 76, cello: 96 } };
+  var MIX = { melody: 1, chords: 0.6, bass: 0.85, drums: 0.8 };   // (as MUSIC_SYNTH plays a song's parts)
+  function cc(ch, c, v) { return [0xb0 | ch, c, Math.max(0, Math.min(127, Math.round(v)))]; }
+  function file(plan, opts) {
+    opts = opts || {};
+    var evs = L.musicBand.events(plan), tracks = [], arr = plan.arrangement, I = L.musicInst;
     var us = Math.round(60000000 / plan.qpm), title = str(plan.title || "Lantern song");
     tracks.push(track([[0, [0xff, 0x03].concat(vlq(title.length), title), 0], [0, [0xff, 0x51, 3, (us >> 16) & 255, (us >> 8) & 255, us & 255], 0],
       [0, [0xff, 0x58, 4, plan.n, Math.round(Math.log(plan.d) / Math.LN2), 24, 8], 0], [0, [0xff, 0x59, 2, (plan.sig + 256) & 255, plan.minor ? 1 : 0], 0]]));
@@ -47685,10 +47703,25 @@ Lantern.RFB = (function () {
     parts.forEach(function (pc) {
       var es = evs.filter(function (e) { return e.part === pc[0]; });
       if (!es.length) return;
-      var ch = pc[1], list = [[0, [0xff, 0x03].concat(vlq(pc[0].length), str(pc[0])), 0]];
+      var ch = pc[1], list = [[0, [0xff, 0x03].concat(vlq(pc[0].length), str(pc[0])), 0]], ie = !es[0].drum && I ? I.get(es[0].inst) : null;
+      if (ie) list.push([0, [0xff, 0x04].concat(vlq(ie.key.length), str(ie.key)), 0]);   // the instrument's name
       if (ch !== 9) list.push([0, [0xc0 | ch, program(es[0].inst)], 0]);
-      es.forEach(function (e) {
-        var key = e.drum ? DRUM[e.drum] : e.midi, t0 = Math.round(e.at * PPQ), t1 = Math.max(t0 + 1, Math.round((e.at + e.len) * PPQ) - 4), vel = Math.max(1, Math.min(127, Math.round((e.vel == null ? 0.8 : e.vel) * 110)));
+      // its level in Lantern's mix (CC7 follows a square law: 100 for the tune, lower as the square root of its share), its seat
+      var gain = es.reduce(function (m, e) { return Math.max(m, e.gain == null ? 1 : e.gain); }, 0) * (arr ? 1 : MIX[pc[0]] || 1);
+      list.push([0, cc(ch, 7, 100 * Math.sqrt(Math.min(1.6, gain))), 0.5]);
+      list.push([0, cc(ch, 10, (arr && PANS[arr.ensemble] && PANS[arr.ensemble][pc[0]] != null) ? PANS[arr.ensemble][pc[0]] : PAN[pc[0]] != null ? PAN[pc[0]] : 64), 0.5]);
+      // the dynamics: an arrangement's soft passes quieter on expression (CC11), and on the mod wheel (CC1) for a sample library
+      var held = ie && ie.kind === "hold";
+      (arr ? arr.sections : [{ at: 0, kind: "full" }]).forEach(function (s) {
+        var soft = s.kind === "soft" || s.kind === "intro", t = Math.round(s.at * PPQ);
+        list.push([t, cc(ch, 11, soft ? 100 : 127), 0.5]);
+        if (opts.library && held) list.push([t, cc(ch, 1, soft ? 60 : 100), 0.5]);
+      });
+      // legato for a sample library: a held instrument's single line overlaps its next note (not the same pitch again)
+      var line = held && opts.library && !es.some(function (e, i) { return es.some(function (f, j) { return j > i && f.at < e.at + e.len - 1e-6 && f.at > e.at - 1e-6; }); });
+      es.forEach(function (e, i) {
+        var key = e.drum ? DRUM[e.drum] : e.midi, t0 = Math.round(e.at * PPQ), end = Math.round((e.at + e.len) * PPQ), nx = line ? es[i + 1] : null;
+        var t1 = Math.max(t0 + 1, nx && Math.abs(nx.at - (e.at + e.len)) < 1e-6 && nx.midi !== e.midi ? end + 24 : end - 4), vel = Math.max(1, Math.min(127, Math.round((e.vel == null ? 0.8 : e.vel) * 110)));
         list.push([t0, [0x90 | ch, key, vel], 1]); list.push([t1, [0x80 | ch, key, 0], 0]);
       });
       tracks.push(track(list));
@@ -47697,7 +47730,7 @@ Lantern.RFB = (function () {
     tracks.forEach(function (t) { all = all.concat(t); });
     return new Uint8Array(all);
   }
-  window.Lantern.musicMidi = { file: file, PROGRAM: PROGRAM, program: program };
+  window.Lantern.musicMidi = { file: file, PROGRAM: PROGRAM, program: program, PAN: PAN };
 })();
 // ===========================================================================
 // MODULE: MUSIC_MIDI - END
@@ -47913,7 +47946,7 @@ Lantern.RFB = (function () {
     say = say || function () {};
     if (kind === "midi") {
       if (!L.musicMidi) return Promise.resolve(say("MIDI files need Lantern\u2019s MIDI part."));
-      L.download(fname(plan, "mid"), new Blob([L.musicMidi.file(plan)], { type: "audio/midi" }), "audio/midi");
+      L.download(fname(plan, "mid"), new Blob([L.musicMidi.file(plan, { library: !!L.store.get("music.midiLibrary", false) })], { type: "audio/midi" }), "audio/midi");
       return Promise.resolve();
     }
     if (!L.musicSynth || !L.musicSynth.render) return Promise.resolve(say("This browser cannot make sound files."));
@@ -48006,6 +48039,12 @@ Lantern.RFB = (function () {
       el("button", { text: "Save MIDI", title: "A file for any music program", onclick: function () { if (plan) save(plan, "midi", function (t) { msg.textContent = t; }); } }),
       el("button", { text: "Save WAV", title: "A sound file to play anywhere", onclick: function () { if (plan) save(plan, "wav", function (t) { msg.textContent = t; }); } }),
       el("button", { text: "How to write it", onclick: function () { help.style.display = help.style.display === "none" ? "" : "none"; } })]));
+    // (1.22.3) the MIDI file for an orchestral sample library: legato overlaps and the dynamics on the mod wheel -- Chat's Save MIDI too
+    var lib = el("input", { type: "checkbox", "aria-label": "MIDI for orchestral sample libraries" });
+    lib.checked = !!L.store.get("music.midiLibrary", false);
+    lib.onchange = function () { L.store.set("music.midiLibrary", !!lib.checked); };
+    card.appendChild(el("label", { "class": "muted", style: "display:block;font-size:13px;margin:4px 0", title: "Notes overlap a little (legato) and the soft and full passes go on the mod wheel (CC1) too, as orchestral sample libraries expect. Leave it off for a plain General MIDI player, where CC1 is vibrato." },
+      [lib, document.createTextNode(" Save MIDI for orchestral sample libraries (legato, dynamics on CC1)")]));
     card.appendChild(help); card.appendChild(ta); card.appendChild(msg); card.appendChild(out);
     update();
     if (L.musicOpenRequest) { L.musicOpenRequest = false; setTimeout(function () { if (card.scrollIntoView) card.scrollIntoView({ block: "start" }); }, 30); }

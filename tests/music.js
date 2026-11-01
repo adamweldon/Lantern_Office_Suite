@@ -440,6 +440,46 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   for (yy = 24; yy <= 33; yy++) for (xx = 60; xx < 400; xx++) bm[yy * W0 + xx] = 1;   // the beam, over the top line
   var sv = L.sheetMusic.staves({ w: W0, h: H0, b: bm });
   ok("a beam along a staff line leaves the line as thin as the others, where it is", sv.length === 1 && sv[0].thick <= 3 && Math.abs(sv[0].lines[0] - 30.5) < 1 && Math.abs(sv[0].spacing - 16) < 0.5, sv);
+  // --- 1.22.3: the MIDI file in a DAW (Adam): each track's level from Lantern's mix (CC7), its seat (CC10), the soft and full
+  // passes on expression (CC11); for orchestral sample libraries, the dynamics on CC1 too and legato overlaps ---
+  function midiTracks(b) {
+    var i = 14, out = [];
+    function vl() { var v = 0, c; do { c = b[i++]; v = (v << 7) | (c & 127); } while (c & 128); return v; }
+    while (i < b.length) {
+      var end = i + 8 + ((b[i + 4] << 24) | (b[i + 5] << 16) | (b[i + 6] << 8) | b[i + 7]), tk = { cc: {}, notes: [], name: "", inst: "" }, tt = 0, on = {}, st = 0;
+      i += 8;
+      while (i < end) {
+        tt += vl();
+        var s = b[i];
+        if (s === 0xff) { var ty = b[i + 1]; i += 2; var n = vl(), txt = String.fromCharCode.apply(null, Array.prototype.slice.call(b, i, i + n)); if (ty === 3) tk.name = txt; if (ty === 4) tk.inst = txt; i += n; continue; }
+        if (s & 0x80) { st = s; i++; }
+        var hi = st & 0xf0, d1 = b[i], d2 = b[i + 1];
+        if (hi === 0xc0) { i += 1; continue; }
+        i += 2;
+        if (hi === 0xb0) (tk.cc[d1] = tk.cc[d1] || []).push([tt, d2]);
+        else if (hi === 0x90 && d2) on[d1] = tt;
+        else if (hi === 0x80 || hi === 0x90) { if (on[d1] != null) { tk.notes.push([on[d1], tt, d1]); delete on[d1]; } }
+      }
+      tk.notes.sort(function (x, y) { return x[0] - y[0]; });
+      out.push(tk); i = end;
+    }
+    return out;
+  }
+  function byName(ts, n) { return ts.filter(function (x) { return x.name === n; })[0]; }
+  function legato(tk) { var o = 0, same = 0; for (var k = 1; k < tk.notes.length; k++) if (tk.notes[k - 1][1] > tk.notes[k][0]) { if (tk.notes[k - 1][2] === tk.notes[k][2]) same++; else o++; } return [o, same]; }
+  var mt0 = midiTracks(L.musicMidi.file(orc.plan)), mt1 = midiTracks(L.musicMidi.file(orc.plan, { library: true })), v1d = byName(mt0, "violin 1"), v1l = byName(mt1, "violin 1");
+  ok("MIDI for a DAW: each player's level from Lantern's mix (the tune 100, its doublings and the held chords lower), its seat, its instrument's name",
+    v1d.cc[7][0][1] === 100 && byName(mt0, "flute").cc[7][0][1] === 65 && byName(mt0, "horns").cc[7][0][1] === 60 && byName(mt0, "cello").cc[7][0][1] === 84 &&
+    v1d.cc[10][0][1] < 64 && byName(mt0, "violin 2").cc[10][0][1] < 64 && byName(mt0, "cello").cc[10][0][1] > 64 && byName(mt0, "contrabass").cc[10][0][1] > 64 && byName(mt0, "trumpet").cc[10][0][1] > 64 &&
+    v1d.inst === "violin" && byName(mt0, "horns").inst === "french horn", mt0.map(function (x) { return [x.name, x.cc[7], x.cc[10]]; }));
+  ok("...the soft passes on expression (CC11 100), the full ones at 127; no mod wheel and no overlapping notes for a plain player",
+    JSON.stringify(v1d.cc[11]) === JSON.stringify([[0, 100], [3840, 100], [26880, 127], [49920, 127]]) && !mt0.some(function (x) { return x.cc[1]; }) && legato(v1d).join() === "0,0", [v1d.cc[11], legato(v1d)]);
+  ok("...for orchestral sample libraries: the dynamics on CC1 too (60 soft, 100 full), a held line's notes overlap the next (not the same pitch again); the timpani not",
+    JSON.stringify(v1l.cc[1]) === JSON.stringify([[0, 60], [3840, 60], [26880, 100], [49920, 100]]) && legato(v1l)[0] > 30 && legato(v1l)[1] === 0 && !byName(mt1, "timpani").cc[1] && legato(byName(mt1, "timpani")).join() === "0,0",
+    [v1l.cc[1], legato(v1l)]);
+  var mtb = midiTracks(L.musicMidi.file(S.make({ title: "", lines: ["key C", "style ballad", "chords C | G", "melody E D C D | E - - -"] }).plan));
+  ok("...a song without an orchestra: the melody loudest, the chords and bass under it", byName(mtb, "melody").cc[7][0][1] === 100 && byName(mtb, "chords").cc[7][0][1] === 77 && byName(mtb, "bass").cc[7][0][1] === 92,
+    mtb.map(function (x) { return [x.name, x.cc[7]]; }));
 
 
   // Chat: a song is made, played and saved; a bad word goes back once
@@ -495,6 +535,13 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   ok("...an example: Ode to Joy, 8 bars in D major", /title Ode to Joy/.test(ta.value) && /8 bars in D major/.test(d.body.textContent));
   ta.value = "key C\nchords C | Q7"; fire(ta, "input"); await sleep(700);
   ok("...typing redraws: a problem is shown, and what is kept", /\u201cQ7\u201d \(bar 2\) is not a chord/.test(d.body.textContent) && L.store.get("music.song", {}).text === "key C\nchords C | Q7");
+  var libBox = d.querySelector("input[aria-label='MIDI for orchestral sample libraries']"), seen = [], mf0 = L.musicMidi.file;
+  L.musicMidi.file = function (p, o) { seen.push(o); return mf0(p, o); };
+  libBox.checked = true; fire(libBox, "change");
+  ta.value = "key C\nchords C | G"; fire(ta, "input"); await sleep(700);
+  btn(d, "Save MIDI").click();
+  ok("...a setting for orchestral sample libraries, kept, and Save MIDI follows it (Chat's too)", libBox && L.store.get("music.midiLibrary", false) === true && seen.length === 1 && seen[0].library === true, seen);
+  L.musicMidi.file = mf0; L.store.set("music.midiLibrary", false);
   L.musicDocs.EXAMPLES.forEach(function (x) { var r = S.make({ title: "", lines: x[1].split("\n") }); ok("example " + x[0] + ": made, nothing questioned", r.plan && !r.problems.length, r.problems); });
 
   ok("no page errors", errs.length === 0, errs);

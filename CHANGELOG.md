@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.22.3 — The orchestra's MIDI file, ready for a DAW (2026-11-01)
+
+Adam took an orchestral song's MIDI file into a DAW: a named track and a
+channel for each player, the General MIDI instruments, tempo, time and key
+were there -- but every track came in at the same level and in the middle,
+and the soft and full passes differed only by velocity.
+
+- **Each track starts with its level in Lantern's own mix** (volume, CC7):
+  the tune 100, the cellos 84, the second violins and violas 74, the
+  doublings of the tune (flute, oboe, trumpet) and the held chords (horns,
+  clarinet) lower -- as Lantern plays it.
+- **Its seat** (pan, CC10), as an orchestra sits: first violins left, second
+  violins left of centre, violas, cellos and double basses to the right,
+  horns left, trumpets right, woodwinds and timpani in the middle. Brass,
+  winds and a string quartet sit their own way.
+- **The instrument's name** on each track, with its player's name.
+- **The soft and full passes on expression** (CC11: 100 and 127) as well as
+  velocity.
+- **For orchestral sample libraries** (a setting in Music, under Make a song;
+  Chat's Save MIDI follows it): the dynamics on the mod wheel too (CC1: 60
+  soft, 100 full), and a held instrument's line overlaps each next note a
+  little (legato), never the same pitch again. Off by default: on a plain
+  General MIDI player the mod wheel is vibrato.
+- Tests: `tests/music.js` (138: each track's level, seat and dynamics, the
+  library setting, legato only for held lines).
+
 ## 1.22.2 — An orchestra starts at the start (2026-10-31)
 
 Adam's trial of 1.22.1: an orchestra's song seemed to start on the second
