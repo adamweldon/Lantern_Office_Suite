@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.22.4 — The Sheet Music Reader on a piece it did not know (2026-11-02)
+
+Adam checked the reader with a piece other than the Ode: a piano sheet in E
+minor with a melody of sixteenths and eighth rests over a left hand of
+chords. It was close in places and far off in others -- the key read as G
+major, the last bar's left hand lost, rests a beat too long, and the
+sharpened chords (D to D#dim, B with its D#) read as other chords.
+
+- **The key's mode from the left hand too**: where its first and last notes
+  sit, and a raised seventh in it, with where the tune ends -- E minor, not
+  G major.
+- **Sharps, flats and naturals first**, taken out of the ink before the notes
+  are read: a sharp just before a chord's note made heads of its own, moved
+  the note's, and lent it a stem. Each one belongs to the note at its height
+  after it (in a chord, the others are not sharpened). A tie running into a
+  sharp is cut off it; a flat's bowl must be at its foot (a note with its
+  stem down is not a flat).
+- **A note tied over the bar line keeps its sharp** (the B chord's D#).
+- **A bar line running on to the other staff** is a bar line even with a
+  tie across it, and a key signature ends where its sharps stop standing
+  close together (a left hand's first chord's D# is not a second sharp in
+  the key); a key's sharp blurred past knowing, close after one, is another.
+- **The notes**: eighth rests are two spaces tall in some fonts (they were
+  read as quarter rests); two beams the picture ran together still count as
+  two (sixteenths, not eighths); a tie lying along a staff line no longer
+  hides the last line's left hand; a stack of whole notes is a chord, not
+  notes with stems or a beam; a head found twice, half a space apart, is one
+  (and the note between two such doubles is kept); a beam below the staff
+  is not a note on a ledger line; a tie's end is not a rest; a repeat bar
+  line is a bar line.
+- **The chords**: a minor key's raised seventh chord (D#dim in E minor), and
+  a bass spelt as its chord has it (E/G#, not E/Ab).
+- Tests: `tests/music.js` (141: the mode from the left hand, D#dim, E/G#);
+  `tests/browser/sheet_read_e2e.py` (75: minor_e_piano_900.png and _760.png,
+  a piece written for the tests -- every note, the key E minor, the chords).
+  Adam's picture stays local (not committed).
+
 ## 1.22.3 — The orchestra's MIDI file, ready for a DAW (2026-11-01)
 
 Adam took an orchestral song's MIDI file into a DAW: a named track and a

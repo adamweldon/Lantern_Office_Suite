@@ -79,6 +79,8 @@ try:
                [r.get("key"), r.get("time"), [(i + 1, g, w) for i, (g, w) in enumerate(zip(r.get("bars", []), want["bars"])) if g != w][:2]])
             ok("...its lines make the same tune again, nothing questioned; the pitch reader finds its staves too", r["found"] and r["same"] and not r["problems"] and r["staves"] >= 1, [r.get("problems"), r.get("staves")])
             ok("...its chords " + ("from the left hand: " + want["chords"] if want.get("chords") else "left to the song (no left hand)"), r.get("chords") == want.get("chords"), r.get("chords"))
+            if want.get("keyName"):   # 1.22.4: a minor key from the left hand
+                ok("...its key: " + want["keyName"], (r.get("lines") or "").startswith("key " + want["keyName"] + "\n"), (r.get("lines") or "")[:40])
             ok("...its heading: " + (repr(want["title"]) if want.get("title") else "none"), r.get("title") == want.get("title") and (not want.get("heading") or r.get("heading") == want["heading"]), [r.get("title"), r.get("heading")])
             if want.get("covered"):   # 1.22.1: a banner across the music (a web page's preview)
                 ok("...the banner across it is said, and the covered bars' chords are Lantern's", any(d.startswith("a band across the picture covers some of the music") for d in r.get("doubt", [])) and

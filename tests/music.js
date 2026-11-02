@@ -440,6 +440,22 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   for (yy = 24; yy <= 33; yy++) for (xx = 60; xx < 400; xx++) bm[yy * W0 + xx] = 1;   // the beam, over the top line
   var sv = L.sheetMusic.staves({ w: W0, h: H0, b: bm });
   ok("a beam along a staff line leaves the line as thin as the others, where it is", sv.length === 1 && sv[0].thick <= 3 && Math.abs(sv[0].lines[0] - 30.5) < 1 && Math.abs(sv[0].spacing - 16) < 0.5, sv);
+  // --- 1.22.4: Adam's piece in E minor (read as G major; its sharpened left-hand chords misread) ---
+  function lhc(root, others) { root.with = others.map(function (n) { return { midi: n.midi }; }); return root; }
+  function emin(l) { return lhc(snt(El, 3, 0, l), [snt(Gl, 3, 0, l), snt(Bl, 3, 0, l)]); }
+  var mel5 = [[snt(Bl, 4, 0, 1), snt(Al, 4, 0, 1), snt(Gl, 4, 0, 1), snt(Fl, 4, 1, 1)], [snt(Gl, 4, 0, 1), snt(Al, 4, 0, 1), snt(Bl, 4, 0, 2)]];
+  var noLh = SMS.write({ found: true, key: 1, time: [4, 4], bars: JSON.parse(JSON.stringify(mel5)), problems: [], systems: 1, spacing: 10 });
+  var withLh = SMS.write({ found: true, key: 1, time: [4, 4], bars: JSON.parse(JSON.stringify(mel5)), bass: [[emin(4)], [emin(4)]], problems: [], systems: 1, spacing: 10 });
+  ok("the key's mode from the left hand too: a tune ending on B in one sharp is G major alone, E minor over a left hand on E", noLh.keyName === "G major" && withLh.keyName === "E minor" &&
+    /^key E minor\n/.test(withLh.lines), [noLh.keyName, withLh.keyName]);
+  var dim = SMS.write({ found: true, key: 1, time: [4, 4], problems: [], systems: 1, spacing: 10,
+    bars: [[snt(El, 5, 0, 2), snt(Bl, 4, 0, 2)], [snt(Fl, 5, 1, 2), snt(Al, 4, 0, 2)], [snt(Gl, 4, 0, 4)], [snt(El, 4, 0, 4)]],
+    bass: [[emin(4)], [lhc(snt(Dl, 3, 1, 4), [snt(Fl, 3, 1, 4), snt(Al, 3, 0, 4)])], [emin(4)], [emin(4)]] });
+  ok("...a minor key's raised seventh chord named from the left hand: D#dim in E minor", dim.chords === "Em | D#dim | Em | Em", dim.chords);
+  var sp8 = SMS.write({ found: true, key: 0, time: [4, 4], problems: [], systems: 1, spacing: 10,
+    bars: [[snt(El, 4, 0, 2), snt(Gl, 4, 0, 2)], [snt(Bl, 4, 0, 2), snt(Gl, 4, 1, 2)], [snt(Al, 4, 0, 4)], [snt(Cl, 5, 0, 4)]],
+    bass: [[snt(Cl, 3, 0, 4)], [snt(Al, 2, -1, 4)], [snt(Al, 2, 0, 4)], [snt(Cl, 3, 0, 4)]] });
+  ok("...a bass read as A flat under an E chord is spelt as the chord has it: E/G#", sp8.chords === "C | E/G# | Am | C", sp8.chords);
   // --- 1.22.3: the MIDI file in a DAW (Adam): each track's level from Lantern's mix (CC7), its seat (CC10), the soft and full
   // passes on expression (CC11); for orchestral sample libraries, the dynamics on CC1 too and legato overlaps ---
   function midiTracks(b) {
