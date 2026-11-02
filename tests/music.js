@@ -456,6 +456,15 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     bars: [[snt(El, 4, 0, 2), snt(Gl, 4, 0, 2)], [snt(Bl, 4, 0, 2), snt(Gl, 4, 1, 2)], [snt(Al, 4, 0, 4)], [snt(Cl, 5, 0, 4)]],
     bass: [[snt(Cl, 3, 0, 4)], [snt(Al, 2, -1, 4)], [snt(Al, 2, 0, 4)], [snt(Cl, 3, 0, 4)]] });
   ok("...a bass read as A flat under an E chord is spelt as the chord has it: E/G#", sp8.chords === "C | E/G# | Am | C", sp8.chords);
+  // --- 1.22.5: a song's sheet (a voice over a piano): the staves of each line of music are joined at their left end ---
+  var W1 = 400, H1 = 560, bm1 = new Uint8Array(W1 * H1);
+  function staff1(top) { for (var l = 0; l < 5; l++) for (var x1 = 40; x1 < 380; x1++) bm1[(top + l * 12) * W1 + x1] = 1; }
+  [20, 110, 190, 330, 420].forEach(staff1);   // a voice and a piano's two staves, then a piano alone
+  for (yy = 20; yy <= 238; yy++) bm1[yy * W1 + 40] = bm1[yy * W1 + 41] = 1;   // the line joining the first three
+  for (yy = 330; yy <= 468; yy++) bm1[yy * W1 + 40] = bm1[yy * W1 + 41] = 1;   // and the last two
+  var im1 = { w: W1, h: H1, b: bm1 }, ss1 = L.sheetMusic.staves(im1);
+  ok("the staves of a song's sheet in their lines of music: a voice and a piano's two staves, then a piano alone", ss1.length === 5 &&
+    JSON.stringify(SMS.groupsOf(im1, ss1)) === "[[0,1,2],[3,4]]", [ss1.length, SMS.groupsOf(im1, ss1)]);
   // --- 1.22.3: the MIDI file in a DAW (Adam): each track's level from Lantern's mix (CC7), its seat (CC10), the soft and full
   // passes on expression (CC11); for orchestral sample libraries, the dynamics on CC1 too and legato overlaps ---
   function midiTracks(b) {

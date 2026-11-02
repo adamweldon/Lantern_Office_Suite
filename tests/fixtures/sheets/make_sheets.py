@@ -1,6 +1,7 @@
 # make_sheets.py -- remake the test sheets in this folder (Lantern 1.21.0): engrave each tune of expected.json with Verovio
 # (pip install verovio) and rasterise it in Chromium (Playwright) at 1300, 900, 820, 760 and 700 pixels wide (the tests use eleven of
-# them, ode_title_900.png: the piano Ode with its heading, and ode_banner_900.png, below; 1.22.4: minor_e_piano at 900 and 760).
+# them, ode_title_900.png: the piano Ode with its heading, and ode_banner_900.png, below; 1.22.4: minor_e_piano at 900 and 760;
+# 1.22.5: voice_e_piano at 900).
 # Usage: python3 tests/fixtures/sheets/make_sheets.py [NAME ...]   (writes NAME_1300.png, NAME_900.png, NAME_820.png, NAME_760.png,
 # NAME_700.png here; with names, only those songs -- the banner is remade when ode_piano is)
 # 1.22.4: minor_e_piano, a piece written for these tests in E minor (minor_e_kern): whole-note chords in the left hand, a sharp a
@@ -15,7 +16,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 E = json.load(open(os.path.join(HERE, "expected.json")))
 songs = [(k, "abc", v, "none") for k, v in E["sources"].items()] + [("ode_piano", "humdrum", E["ode_piano_kern"], "none"),
   ("ode_title", "humdrum", E["ode_title_kern_head"] + E["ode_piano_kern"], "auto"),   # 1.21.1: with its title and composer printed above
-  ("minor_e_piano", "humdrum", E["minor_e_kern"], "none")]
+  ("minor_e_piano", "humdrum", E["minor_e_kern"], "none"),
+  ("voice_e_piano", "humdrum", E["voice_e_kern"], "none")]   # 1.22.5: a voice over a piano (voice_e_kern)
 ONLY = sys.argv[1:]
 if ONLY: songs = [s for s in songs if s[0] in ONLY]
 with sync_playwright() as p:

@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.22.5 — A song's sheet: a voice over a piano (2026-11-02)
+
+Adam tried two more pieces after 1.22.4 played his E minor piece well. One
+was a song's sheet -- a voice with its words over a piano, in B major -- and
+it came out with 18 bars where there are 10, in E major, and with most of
+its chords chosen by Lantern rather than read.
+
+- **A song's sheet is one tune.** The staves of a line of music are joined
+  at their left end; with a voice over a piano's two staves, Lantern read the
+  voice and the piano's right hand as two stretches of tune, one after the
+  other. Now the tune is the voice's, and in a bar where the voice has no
+  note (the piano's introduction, a bar's rest) the right hand's; the left
+  hand gives the chords, bar for bar. A voice's bar of rest that is not seen
+  (a small picture's whole rest) still takes its place.
+- **The key signature as a row of one kind.** Five sharps were read as four
+  (the first too blurred to know), as none on the left hand's staves, and on
+  the voice's staff a sharp was taken for a common-time C. Now the row of
+  sharps or flats after the clef is counted whole, those too blurred to know
+  where their kind would sit; with none known (a small picture's blots),
+  where they sit says which kind they are.
+- **A sharp touching its note** (a small picture's) is cut from it where the
+  least ink joins them -- not the left half of a chord's open heads, which
+  hold on by every rim.
+- Small pictures: the picture of the song is very small (its staff lines
+  4.4 pixels apart), and many of its bars' lengths are still not read. The
+  test piece reads note for note down to about 5 pixels; Lantern says when a
+  closer picture would read surer.
+- Tests: `tests/music.js` (142: a song's staves grouped by the line joining
+  them); `tests/browser/sheet_read_e2e.py` (voice_e_piano_900.png, a song
+  written for the tests: the tune from the voice and the right hand, the key,
+  the chords). Adam's picture stays local (not committed).
+
 ## 1.22.4 — The Sheet Music Reader on a piece it did not know (2026-11-02)
 
 Adam checked the reader with a piece other than the Ode: a piano sheet in E
