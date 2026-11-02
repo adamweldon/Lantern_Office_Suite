@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.22.5 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.22.6 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -147,8 +147,9 @@
 //      the AI can see (Lantern.CHAT.forgetPictures() stops sending them).
 //    Lantern.textReader = {read(source, opts) -> Promise<page>, readAll,
 //      text, ...} reads printed text in pictures (TEXT_READER and its step
-//      modules); Lantern.pdf = {open, pageImage, pageText, searchable}
-//      reads scanned and ordinary PDFs and writes searchable ones (PDF_*);
+//      modules); Lantern.pdf = {open, pageImage, pageDraw, pageText,
+//      searchable} reads scanned and ordinary PDFs, draws a page as it
+//      looks (1.22.6) and writes searchable ones (PDF_*);
 //      Lantern.handwritingReader is where handwriting will go (a stub);
 //      Lantern.musicCards = [{title, mount(el)}] -- extra cards in the Music
 //      app (SHEET_MUSIC_APP).
@@ -172,7 +173,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.22.5",
+  version: "1.22.6",
   apps: {},
   order: []
 };
@@ -33351,7 +33352,8 @@ Lantern.RFB = (function () {
 // Depends: PDF_PARSE, PDF_CCITT (Lantern.pdf) -- feature-detected
 // Exports: Lantern.pdf.open(blobOrBytes) -> Promise<pdf {pages: [{w, h,
 //          rotate, images, hasText}], count, title}>, Lantern.pdf.pageImage(
-//          pdf, i, {maxSide}) -> Promise<canvas|null>
+//          pdf, i, {maxSide}) -> Promise<canvas|null>; pageProgram,
+//          textString, decodeImage(pdf, obj, maxPixels) (PDF_DRAW, 1.22.6)
 // ===========================================================================
 // The pages of a scanned PDF as pictures Text Reader can read. A scanner's
 // PDF is a picture per page (sometimes a few strips), placed on the page by
@@ -33572,7 +33574,7 @@ Lantern.RFB = (function () {
     }
     return cv;
   }
-  P.open = open; P.pageImage = pageImage; P.pageProgram = contents; P.textString = text;
+  P.open = open; P.pageImage = pageImage; P.pageProgram = contents; P.textString = text; P.decodeImage = decode;
 })();
 // ===========================================================================
 // MODULE: PDF_PAGES - END
@@ -33580,7 +33582,8 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // MODULE: PDF_TEXT - START
 // Depends: PDF_PARSE, PDF_PAGES (Lantern.pdf) -- feature-detected
-// Exports: Lantern.pdf.pageText(pdf, i) -> Promise<{text, lines, items}>
+// Exports: Lantern.pdf.pageText(pdf, i) -> Promise<{text, lines, items}>;
+//          cmap, textFont(pdf, fontDict), glyphUni(name) (PDF_DRAW, 1.22.6)
 // ===========================================================================
 // Many PDFs are not pictures at all: a manual saved from a word processor,
 // or a scan that was already read (it carries a hidden text layer) has its
@@ -33772,10 +33775,745 @@ Lantern.RFB = (function () {
     });
     return { text: out.join("\n"), lines: lines.map(function (l) { return { y: l.y, text: l.text, size: l.size }; }), items: pieces.length };
   }
-  P.pageText = pageText; P.cmap = cmap;
+  P.pageText = pageText; P.cmap = cmap; P.textFont = font; P.glyphUni = glyph;
 })();
 // ===========================================================================
 // MODULE: PDF_TEXT - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: PDF_DRAW - START
+// Depends: PDF_PARSE, PDF_PAGES (pageProgram, decodeImage), PDF_TEXT (textFont,
+//          glyphUni) (Lantern.pdf) -- feature-detected
+// Exports: Lantern.pdf.pageDraw(pdf, i, {scale, maxSide}) -> Promise<canvas>
+//          (the page as it looks); Lantern.pdf.fontProgram(bytes, kind) ->
+//          {glyph(key) -> path commands} (tests)
+// ===========================================================================
+// A PDF page drawn the way it looks (1.22.6). PDF_PAGES paints a scanned
+// page's pictures; most PDFs made on a computer have no picture at all: the
+// page is a drawing program of lines, shapes and words, each word drawn in a
+// font the PDF carries inside it. A music program's PDF (Sibelius, Finale,
+// MuseScore, LilyPond) draws its staff lines and stems as lines and its
+// notes, clefs, rests and sharps as letters of a music font -- so its words
+// read as nonsense, and only the page as it looks shows the music. Adam
+// opened such a PDF (Ode to Joy for clarinet) and neither Lantern nor the AI
+// knew it was music. Here, with no library: the drawing program (paths,
+// colours, line widths, dashes, clipping, forms and pictures), and the
+// fonts' own outlines -- TrueType (quadratic curves, composite glyphs),
+// CFF (Type 2 charstrings, CID-keyed too), Type 1 (decrypted, flex and seac)
+// and Type 3 (each letter a little drawing program); a font the PDF does not
+// carry is drawn in the browser's nearest font.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.pdf || !L.pdf.open || !L.pdf.pageProgram) return;
+  var P = L.pdf;
+  var STD = (".notdef space exclam quotedbl numbersign dollar percent ampersand quoteright parenleft parenright asterisk plus comma hyphen period slash zero one two " +
+    "three four five six seven eight nine colon semicolon less equal greater question at A B C D E F G H I J K L M N O P Q R S T U V W X Y Z bracketleft " +
+    "backslash bracketright asciicircum underscore quoteleft a b c d e f g h i j k l m n o p q r s t u v w x y z braceleft bar braceright asciitilde " +
+    "exclamdown cent sterling fraction yen florin section currency quotesingle quotedblleft guillemotleft guilsinglleft guilsinglright fi fl endash dagger " +
+    "daggerdbl periodcentered paragraph bullet quotesinglbase quotedblbase quotedblright guillemotright ellipsis perthousand questiondown grave acute " +
+    "circumflex tilde macron breve dotaccent dieresis ring cedilla hungarumlaut ogonek caron emdash AE ordfeminine Lslash Oslash OE ordmasculine ae " +
+    "dotlessi lslash oslash oe germandbls onesuperior logicalnot mu trademark Eth onehalf plusminus Thorn onequarter divide brokenbar degree thorn " +
+    "threequarters twosuperior registered minus eth multiply threesuperior copyright Aacute Acircumflex Adieresis Agrave Aring Atilde Ccedilla Eacute " +
+    "Ecircumflex Edieresis Egrave Iacute Icircumflex Idieresis Igrave Ntilde Oacute Ocircumflex Odieresis Ograve Otilde Scaron Uacute Ucircumflex Udieresis " +
+    "Ugrave Yacute Ydieresis Zcaron aacute acircumflex adieresis agrave aring atilde ccedilla eacute ecircumflex edieresis egrave iacute icircumflex " +
+    "idieresis igrave ntilde oacute ocircumflex odieresis ograve otilde scaron uacute ucircumflex udieresis ugrave yacute ydieresis zcaron exclamsmall " +
+    "Hungarumlautsmall dollaroldstyle dollarsuperior ampersandsmall Acutesmall parenleftsuperior parenrightsuperior twodotenleader onedotenleader " +
+    "zerooldstyle oneoldstyle twooldstyle threeoldstyle fouroldstyle fiveoldstyle sixoldstyle sevenoldstyle eightoldstyle nineoldstyle commasuperior " +
+    "threequartersemdash periodsuperior questionsmall asuperior bsuperior centsuperior dsuperior esuperior isuperior lsuperior msuperior nsuperior " +
+    "osuperior rsuperior ssuperior tsuperior ff ffi ffl parenleftinferior parenrightinferior Circumflexsmall hyphensuperior Gravesmall Asmall Bsmall Csmall " +
+    "Dsmall Esmall Fsmall Gsmall Hsmall Ismall Jsmall Ksmall Lsmall Msmall Nsmall Osmall Psmall Qsmall Rsmall Ssmall Tsmall Usmall Vsmall Wsmall Xsmall " +
+    "Ysmall Zsmall colonmonetary onefitted rupiah Tildesmall exclamdownsmall centoldstyle Lslashsmall Scaronsmall Zcaronsmall Dieresissmall Brevesmall " +
+    "Caronsmall Dotaccentsmall Macronsmall figuredash hypheninferior Ogoneksmall Ringsmall Cedillasmall questiondownsmall oneeighth threeeighths " +
+    "fiveeighths seveneighths onethird twothirds zerosuperior foursuperior fivesuperior sixsuperior sevensuperior eightsuperior ninesuperior zeroinferior " +
+    "oneinferior twoinferior threeinferior fourinferior fiveinferior sixinferior seveninferior eightinferior nineinferior centinferior dollarinferior " +
+    "periodinferior commainferior Agravesmall Aacutesmall Acircumflexsmall Atildesmall Adieresissmall Aringsmall AEsmall Ccedillasmall Egravesmall " +
+    "Eacutesmall Ecircumflexsmall Edieresissmall Igravesmall Iacutesmall Icircumflexsmall Idieresissmall Ethsmall Ntildesmall Ogravesmall Oacutesmall " +
+    "Ocircumflexsmall Otildesmall Odieresissmall OEsmall Oslashsmall Ugravesmall Uacutesmall Ucircumflexsmall Udieresissmall Yacutesmall Thornsmall " +
+    "Ydieresissmall 001.000 001.001 001.002 001.003 Black Bold Book Light Medium Regular Roman Semibold").split(" ");
+  // the standard encoding (codes 32-126, then the accented and other letters)
+  var SE = {};
+  (function () {
+    var c;
+    for (c = 32; c < 127; c++) SE[c] = STD[c - 31];
+    var up = [], r = [[161, 175], [177, 180], [182, 189], [191, 191], [193, 200], [202, 203], [205, 208], [225, 225], [227, 227], [232, 235], [241, 241], [245, 245], [248, 251]];
+    r.forEach(function (a) { for (c = a[0]; c <= a[1]; c++) up.push(c); });
+    up.forEach(function (code, k) { SE[code] = STD[96 + k]; });
+  })();
+  function U16(b, o) { return (b[o] << 8) | b[o + 1]; }
+  function S16(b, o) { var v = U16(b, o); return v & 0x8000 ? v - 0x10000 : v; }
+  function U32(b, o) { return b[o] * 16777216 + (b[o + 1] << 16) + (b[o + 2] << 8) + b[o + 3]; }
+  function S32(b, o) { return (b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]; }
+  function str(b, a, z) { var s = ""; for (var i = a; i < z; i++) s += String.fromCharCode(b[i]); return s; }
+
+  // --- TrueType: the glyph table's outlines (and OpenType's CFF table) -----
+  function trueType(b) {
+    if (b.length < 12) return null;
+    var base = str(b, 0, 4) === "ttcf" ? U32(b, 12) : 0, n = U16(b, base + 4), T = {}, i;
+    for (i = 0; i < n; i++) { var o = base + 12 + 16 * i; T[str(b, o, o + 4)] = { o: U32(b, o + 8), n: U32(b, o + 12) }; }
+    if (T["CFF "]) return cff(b.subarray(T["CFF "].o, T["CFF "].o + T["CFF "].n));
+    if (!T.glyf || !T.loca) return null;
+    var upm = T.head ? U16(b, T.head.o + 18) || 1000 : 1000, long = T.head ? S16(b, T.head.o + 50) === 1 : false;
+    var ng = Math.floor(T.loca.n / (long ? 4 : 2)) - 1;
+    if (T.maxp) ng = Math.min(ng, U16(b, T.maxp.o + 4));
+    function loca(g) { return long ? U32(b, T.loca.o + 4 * g) : 2 * U16(b, T.loca.o + 2 * g); }
+    function contours(g, depth) {
+      if (g < 0 || g >= ng || depth > 8) return [];
+      var a = loca(g), z = loca(g + 1);
+      if (z <= a || T.glyf.o + a + 10 > b.length) return [];
+      var o = T.glyf.o + a, nc = S16(b, o), p = o + 10, out = [], k, f, d;
+      if (nc >= 0) {
+        var ends = [];
+        for (k = 0; k < nc; k++) { ends.push(U16(b, p)); p += 2; }
+        var np = nc ? ends[nc - 1] + 1 : 0, fl = [], xs = [], ys = [], x = 0, y = 0;
+        p += 2 + U16(b, p);
+        while (fl.length < np && p < b.length) { f = b[p++]; fl.push(f); if (f & 8) { var rep = b[p++]; while (rep-- > 0 && fl.length < np) fl.push(f); } }
+        for (k = 0; k < np; k++) { f = fl[k]; if (f & 2) { d = b[p++]; x += f & 16 ? d : -d; } else if (!(f & 16)) { x += S16(b, p); p += 2; } xs.push(x); }
+        for (k = 0; k < np; k++) { f = fl[k]; if (f & 4) { d = b[p++]; y += f & 32 ? d : -d; } else if (!(f & 32)) { y += S16(b, p); p += 2; } ys.push(y); }
+        var s = 0;
+        ends.forEach(function (e) { var c = []; for (var q = s; q <= e; q++) c.push([xs[q], ys[q], fl[q] & 1]); out.push(c); s = e + 1; });
+        return out;
+      }
+      var more = true;
+      while (more && p + 4 <= b.length) {
+        f = U16(b, p); var gi = U16(b, p + 2), dx, dy, A = 1, B = 0, C = 0, D = 1;
+        p += 4;
+        if (f & 1) { dx = S16(b, p); dy = S16(b, p + 2); p += 4; } else { dx = b[p] > 127 ? b[p] - 256 : b[p]; dy = b[p + 1] > 127 ? b[p + 1] - 256 : b[p + 1]; p += 2; }
+        if (!(f & 2)) { dx = 0; dy = 0; }   // (placed by matching points: rare; left where it is)
+        if (f & 8) { A = D = S16(b, p) / 16384; p += 2; }
+        else if (f & 0x40) { A = S16(b, p) / 16384; D = S16(b, p + 2) / 16384; p += 4; }
+        else if (f & 0x80) { A = S16(b, p) / 16384; B = S16(b, p + 2) / 16384; C = S16(b, p + 4) / 16384; D = S16(b, p + 6) / 16384; p += 8; }
+        contours(gi, depth + 1).forEach(function (c) { out.push(c.map(function (q) { return [A * q[0] + C * q[1] + dx, B * q[0] + D * q[1] + dy, q[2]]; })); });
+        more = !!(f & 0x20);
+      }
+      return out;
+    }
+    function glyph(g) {
+      var cmds = [];
+      contours(g, 0).forEach(function (c) {
+        var n = c.length, s0 = -1, k, seq;
+        if (!n) return;
+        for (k = 0; k < n; k++) if (c[k][2]) { s0 = k; break; }
+        seq = s0 >= 0 ? c.slice(s0).concat(c.slice(0, s0)) : [[(c[n - 1][0] + c[0][0]) / 2, (c[n - 1][1] + c[0][1]) / 2, 1]].concat(c);
+        cmds.push(["M", seq[0][0], seq[0][1]]);
+        var ctl = null;
+        for (k = 1; k <= seq.length; k++) {
+          var q = seq[k % seq.length];
+          if (q[2]) { if (ctl) cmds.push(["Q", ctl[0], ctl[1], q[0], q[1]]); else cmds.push(["L", q[0], q[1]]); ctl = null; }
+          else { if (ctl) cmds.push(["Q", ctl[0], ctl[1], (ctl[0] + q[0]) / 2, (ctl[1] + q[1]) / 2]); ctl = q; }
+        }
+        cmds.push(["Z"]);
+      });
+      return cmds;
+    }
+    var cmaps = {};
+    if (T.cmap) {
+      var co = T.cmap.o, nt = U16(b, co + 2);
+      for (i = 0; i < nt; i++) {
+        var pid = U16(b, co + 4 + 8 * i), eid = U16(b, co + 6 + 8 * i), so = co + U32(b, co + 8 + 8 * i), fmt = U16(b, so), m = {}, k, cc;
+        if (fmt === 0) for (k = 0; k < 256; k++) m[k] = b[so + 6 + k];
+        else if (fmt === 4) {
+          var sc = U16(b, so + 6) / 2, eo = so + 14, so2 = eo + 2 * sc + 2, do2 = so2 + 2 * sc, ro = do2 + 2 * sc;
+          for (k = 0; k < sc; k++) {
+            var e = U16(b, eo + 2 * k), s = U16(b, so2 + 2 * k), dd = U16(b, do2 + 2 * k), rr = U16(b, ro + 2 * k);
+            if (s === 0xFFFF) continue;
+            for (cc = s; cc <= e && cc < 0xFFFF; cc++) {
+              var gg;
+              if (!rr) gg = (cc + dd) & 0xFFFF;
+              else { gg = U16(b, ro + 2 * k + rr + 2 * (cc - s)); if (gg) gg = (gg + dd) & 0xFFFF; }
+              m[cc] = gg;
+            }
+          }
+        }
+        else if (fmt === 6) { var fc = U16(b, so + 6), ec = U16(b, so + 8); for (k = 0; k < ec; k++) m[fc + k] = U16(b, so + 10 + 2 * k); }
+        else if (fmt === 12) {
+          var ngr = U32(b, so + 12);
+          for (k = 0; k < ngr; k++) { var s1 = U32(b, so + 16 + 12 * k), e1 = U32(b, so + 20 + 12 * k), g0 = U32(b, so + 24 + 12 * k); for (cc = s1; cc <= e1 && cc - s1 < 65536; cc++) m[cc] = g0 + cc - s1; }
+        }
+        cmaps[pid + "," + eid] = m;
+      }
+    }
+    return { kind: "tt", matrix: [1 / upm, 0, 0, 1 / upm, 0, 0], glyph: glyph, cmaps: cmaps, numGlyphs: ng };
+  }
+
+  // --- CFF: Type 2 charstrings (OpenType's outlines; PDF's FontFile3) ------
+  function cff(b) {
+    function index(o) {
+      var cnt = U16(b, o);
+      if (!cnt) return { items: [], end: o + 2 };
+      var os = b[o + 2], offs = [], p = o + 3, i, j, v;
+      for (i = 0; i <= cnt; i++) { v = 0; for (j = 0; j < os; j++) v = v * 256 + b[p++]; offs.push(v); }
+      var base = p - 1, items = [];
+      for (i = 0; i < cnt; i++) items.push([base + offs[i], base + offs[i + 1]]);
+      return { items: items, end: base + offs[cnt] };
+    }
+    function dict(a, z) {
+      var d = {}, ops = [], p = a;
+      while (p < z) {
+        var v = b[p];
+        if (v <= 21) { var key = v; p++; if (v === 12) { key = 1200 + b[p]; p++; } d[key] = ops; ops = []; }
+        else if (v === 28) { ops.push(S16(b, p + 1)); p += 3; }
+        else if (v === 29) { ops.push(S32(b, p + 1)); p += 5; }
+        else if (v === 30) {
+          var s = "", done = false;
+          p++;
+          while (!done && p < z) {
+            var by = b[p++];
+            [by >> 4, by & 15].forEach(function (nb) { if (done) return; if (nb < 10) s += nb; else if (nb === 10) s += "."; else if (nb === 11) s += "E"; else if (nb === 12) s += "E-"; else if (nb === 14) s += "-"; else if (nb === 15) done = true; });
+          }
+          ops.push(parseFloat(s) || 0);
+        }
+        else if (v >= 32 && v <= 246) { ops.push(v - 139); p++; }
+        else if (v >= 247 && v <= 250) { ops.push((v - 247) * 256 + b[p + 1] + 108); p += 2; }
+        else if (v >= 251 && v <= 254) { ops.push(-(v - 251) * 256 - b[p + 1] - 108); p += 2; }
+        else p++;
+      }
+      return d;
+    }
+    var nameIx = index(b[2]), topIx = index(nameIx.end), strIx = index(topIx.end), gsubr = index(strIx.end).items, i, k, q;
+    if (!topIx.items.length) return null;
+    function sname(sid) { if (sid < 391) return STD[sid]; var it = strIx.items[sid - 391]; return it ? str(b, it[0], it[1]) : ""; }
+    var top = dict(topIx.items[0][0], topIx.items[0][1]);
+    if (!top[17]) return null;
+    var cs = index(top[17][0]).items, ng = cs.length, isCID = !!top[1230];
+    function priv(d) {
+      var pr = d[18];
+      if (!pr || pr.length < 2) return { subrs: [] };
+      var pd = dict(pr[1], pr[1] + pr[0]);
+      return { subrs: pd[19] ? index(pr[1] + pd[19][0]).items : [] };
+    }
+    var main = priv(top), fds = null, fdsel = null;
+    if (isCID && top[1236] && top[1237]) {
+      fds = index(top[1236][0]).items.map(function (it) { return priv(dict(it[0], it[1])); });
+      var fo = top[1237][0], ff = b[fo];
+      fdsel = new Uint8Array(ng);
+      if (ff === 0) for (i = 0; i < ng; i++) fdsel[i] = b[fo + 1 + i];
+      else if (ff === 3) {
+        var nr = U16(b, fo + 1);
+        q = fo + 3;
+        for (i = 0; i < nr; i++) { var f0 = U16(b, q), fd = b[q + 2], f1 = U16(b, q + 3); for (var g = f0; g < f1 && g < ng; g++) fdsel[g] = fd; q += 3; }
+      }
+    }
+    // charset: each glyph's name (or CID)
+    var cset = [0], co = top[15] ? top[15][0] : 0;
+    if (co > 2) {
+      var cf = b[co];
+      q = co + 1;
+      if (cf === 0) while (cset.length < ng) { cset.push(U16(b, q)); q += 2; }
+      else while (cset.length < ng) {
+        var first = U16(b, q), nl = cf === 1 ? b[q + 2] : U16(b, q + 2);
+        q += cf === 1 ? 3 : 4;
+        for (k = 0; k <= nl && cset.length < ng; k++) cset.push(first + k);
+      }
+    } else for (i = 1; i < ng; i++) cset.push(i);
+    var byName = {}, byCid = {};
+    for (i = 0; i < ng; i++) { if (isCID) byCid[cset[i]] = i; else byName[sname(cset[i])] = i; }
+    // its own encoding: code -> glyph
+    var enc = {}, eo = top[16] ? top[16][0] : 0;
+    if (!isCID) {
+      if (eo === 0) Object.keys(SE).forEach(function (c) { if (byName[SE[c]] != null) enc[c] = byName[SE[c]]; });
+      else if (eo > 1) {
+        var ef = b[eo] & 0x7f;
+        q = eo + 1;
+        if (ef === 0) { var nc = b[q++]; for (i = 1; i <= nc; i++) enc[b[q++]] = i; }
+        else if (ef === 1) { var nr2 = b[q++], gi = 1; for (i = 0; i < nr2; i++) { var fc = b[q], nl2 = b[q + 1]; q += 2; for (k = 0; k <= nl2; k++) enc[fc + k] = gi++; } }
+        if (b[eo] & 0x80) { var ns = b[q++]; for (i = 0; i < ns; i++) { var cd = b[q], nm = sname(U16(b, q + 1)); q += 3; if (byName[nm] != null) enc[cd] = byName[nm]; } }
+      }
+    }
+    function bias(n) { return n < 1240 ? 107 : n < 33900 ? 1131 : 32768; }
+    function glyph(gid, base) {
+      var cmds = [], st = [], x = base ? base[0] : 0, y = base ? base[1] : 0, nStems = 0, haveW = false, open = false, depth = 0;
+      if (gid == null || gid < 0 || gid >= ng) return cmds;
+      var lsub = (isCID && fds ? fds[fdsel[gid]] || main : main).subrs, lb = bias(lsub.length), gb = bias(gsubr.length);
+      function move(dx, dy) { if (open) cmds.push(["Z"]); x += dx; y += dy; cmds.push(["M", x, y]); open = true; }
+      function line(dx, dy) { x += dx; y += dy; cmds.push(["L", x, y]); }
+      function curve(a, b1, c, d, e, f) { var x1 = x + a, y1 = y + b1, x2 = x1 + c, y2 = y1 + d; x = x2 + e; y = y2 + f; cmds.push(["C", x1, y1, x2, y2, x, y]); }
+      function width(n) { if (!haveW && st.length > n) st.shift(); haveW = true; }
+      function stems() { if (!haveW && st.length % 2) st.shift(); haveW = true; nStems += st.length >> 1; st = []; }
+      function run(a, z) {
+        if (++depth > 16) return true;
+        var p = a, i2, n2;
+        while (p < z) {
+          var v = b[p];
+          if (v === 28) { st.push(S16(b, p + 1)); p += 3; continue; }
+          if (v >= 32 && v <= 246) { st.push(v - 139); p++; continue; }
+          if (v >= 247 && v <= 250) { st.push((v - 247) * 256 + b[p + 1] + 108); p += 2; continue; }
+          if (v >= 251 && v <= 254) { st.push(-(v - 251) * 256 - b[p + 1] - 108); p += 2; continue; }
+          if (v === 255) { st.push(S32(b, p + 1) / 65536); p += 5; continue; }
+          p++;
+          if (v === 1 || v === 3 || v === 18 || v === 23) stems();
+          else if (v === 19 || v === 20) { stems(); p += (nStems + 7) >> 3; }
+          else if (v === 21) { width(2); move(st[st.length - 2] || 0, st[st.length - 1] || 0); st = []; }
+          else if (v === 22) { width(1); move(st[st.length - 1] || 0, 0); st = []; }
+          else if (v === 4) { width(1); move(0, st[st.length - 1] || 0); st = []; }
+          else if (v === 5) { for (i2 = 0; i2 + 1 < st.length; i2 += 2) line(st[i2], st[i2 + 1]); st = []; }
+          else if (v === 6 || v === 7) { var hz = v === 6; for (i2 = 0; i2 < st.length; i2++) { if (hz) line(st[i2], 0); else line(0, st[i2]); hz = !hz; } st = []; }
+          else if (v === 8) { for (i2 = 0; i2 + 5 < st.length; i2 += 6) curve(st[i2], st[i2 + 1], st[i2 + 2], st[i2 + 3], st[i2 + 4], st[i2 + 5]); st = []; }
+          else if (v === 24) { for (i2 = 0; i2 + 7 < st.length; i2 += 6) curve(st[i2], st[i2 + 1], st[i2 + 2], st[i2 + 3], st[i2 + 4], st[i2 + 5]); line(st[i2], st[i2 + 1]); st = []; }
+          else if (v === 25) { for (i2 = 0; i2 + 7 < st.length; i2 += 2) line(st[i2], st[i2 + 1]); curve(st[i2], st[i2 + 1], st[i2 + 2], st[i2 + 3], st[i2 + 4], st[i2 + 5]); st = []; }
+          else if (v === 26) { i2 = 0; var d1 = 0; if (st.length % 2) { d1 = st[0]; i2 = 1; } for (; i2 + 3 < st.length; i2 += 4) { curve(d1, st[i2], st[i2 + 1], st[i2 + 2], 0, st[i2 + 3]); d1 = 0; } st = []; }
+          else if (v === 27) { i2 = 0; var e1 = 0; if (st.length % 2) { e1 = st[0]; i2 = 1; } for (; i2 + 3 < st.length; i2 += 4) { curve(st[i2], e1, st[i2 + 1], st[i2 + 2], st[i2 + 3], 0); e1 = 0; } st = []; }
+          else if (v === 30 || v === 31) {
+            var hh = v === 31;
+            i2 = 0;
+            while (i2 + 3 < st.length) {
+              var last = st.length - i2 === 5;
+              if (hh) curve(st[i2], 0, st[i2 + 1], st[i2 + 2], last ? st[i2 + 4] : 0, st[i2 + 3]);
+              else curve(0, st[i2], st[i2 + 1], st[i2 + 2], st[i2 + 3], last ? st[i2 + 4] : 0);
+              i2 += last ? 5 : 4; hh = !hh;
+            }
+            st = [];
+          }
+          else if (v === 10) { n2 = st.pop() + lb; if (lsub[n2] && run(lsub[n2][0], lsub[n2][1])) return true; }
+          else if (v === 29) { n2 = st.pop() + gb; if (gsubr[n2] && run(gsubr[n2][0], gsubr[n2][1])) return true; }
+          else if (v === 11) { depth--; return false; }
+          else if (v === 14) {
+            if (!haveW && (st.length === 1 || st.length === 5)) st.shift();
+            haveW = true;
+            if (open) cmds.push(["Z"]);
+            open = false;
+            if (st.length >= 4 && !isCID) {   // an accented letter made of two (seac)
+              var acc = byName[SE[st[3]]], bas = byName[SE[st[2]]];
+              cmds = glyph(bas).concat(glyph(acc, [st[0], st[1]]));
+            }
+            return true;
+          }
+          else if (v === 12) {
+            var w2 = b[p++], s = st;
+            if (w2 === 35 && s.length >= 12) { curve(s[0], s[1], s[2], s[3], s[4], s[5]); curve(s[6], s[7], s[8], s[9], s[10], s[11]); }
+            else if (w2 === 34 && s.length >= 7) { curve(s[0], 0, s[1], s[2], s[3], 0); curve(s[4], 0, s[5], -s[2], s[6], 0); }
+            else if (w2 === 36 && s.length >= 9) { curve(s[0], s[1], s[2], s[3], s[4], 0); curve(s[5], 0, s[6], s[7], s[8], -(s[1] + s[3] + s[7])); }
+            else if (w2 === 37 && s.length >= 11) {
+              var sx = s[0] + s[2] + s[4] + s[6] + s[8], sy = s[1] + s[3] + s[5] + s[7] + s[9];
+              curve(s[0], s[1], s[2], s[3], s[4], s[5]);
+              if (Math.abs(sx) > Math.abs(sy)) curve(s[6], s[7], s[8], s[9], s[10], -sy); else curve(s[6], s[7], s[8], s[9], -sx, s[10]);
+            }
+            st = [];
+          }
+          else st = [];
+        }
+        depth--;
+        return false;
+      }
+      run(cs[gid][0], cs[gid][1]);
+      if (open) cmds.push(["Z"]);
+      return cmds;
+    }
+    return { kind: "cff", matrix: (top[1207] || [0.001, 0, 0, 0.001, 0, 0]).slice(0, 6), glyph: glyph, byName: byName, byCid: byCid, enc: enc, isCID: isCID, numGlyphs: ng };
+  }
+
+  // --- Type 1: decrypted, then its charstrings ------------------------------
+  function decrypt(b, r, skip) {
+    var out = new Uint8Array(Math.max(0, b.length - skip));
+    for (var i = 0; i < b.length; i++) { var c = b[i], p = c ^ (r >> 8); r = ((c + r) * 52845 + 22719) & 0xFFFF; if (i >= skip) out[i - skip] = p; }
+    return out;
+  }
+  function type1(b) {
+    var s = str(b, 0, Math.min(b.length, 400000)), ee = s.indexOf("eexec");
+    if (ee < 0) return null;
+    var clear = s.slice(0, ee), enc = {}, c;
+    if (/\x2FEncoding\s+StandardEncoding/.test(clear)) for (c in SE) enc[c] = SE[c];
+    clear.replace(/dup\s+(\d+)\s*\x2F([^\s\x2F\x5B\x5D{}\x28\x29<>]+)\s+put/g, function (z, code, nm) { enc[+code] = nm; return ""; });
+    var fm = /\x2FFontMatrix\s*\x5B([^\x5D]*)\x5D/.exec(clear), mat = fm ? fm[1].trim().split(/\s+/).map(Number) : [0.001, 0, 0, 0.001, 0, 0];
+    var p = ee + 5;
+    while (p < b.length && (b[p] === 13 || b[p] === 10 || b[p] === 32 || b[p] === 9)) p++;
+    var body = b.subarray(p), hex = true;
+    for (var k = 0; k < 4 && k < body.length; k++) if (!/[0-9A-Fa-f]/.test(String.fromCharCode(body[k]))) hex = false;
+    if (hex) {
+      var hs = str(body, 0, body.length).replace(/[^0-9A-Fa-f]/g, ""), hb = new Uint8Array(hs.length >> 1);
+      for (k = 0; k < hb.length; k++) hb[k] = parseInt(hs.substr(2 * k, 2), 16);
+      body = hb;
+    }
+    var dec = decrypt(body, 55665, 4), ds = str(dec, 0, dec.length), m;
+    var liv = /\x2FlenIV\s+(\d+)/.exec(ds), lenIV = liv ? +liv[1] : 4, subrs = [], chars = {};
+    var re = /dup\s+(\d+)\s+(\d+)\s+(RD|-\|)\s/g, csAt = ds.indexOf("/CharStrings");
+    while ((m = re.exec(ds)) && (csAt < 0 || m.index < csAt)) { var a = m.index + m[0].length, n = +m[2]; subrs[+m[1]] = decrypt(dec.subarray(a, a + n), 4330, lenIV); re.lastIndex = a + n; }
+    if (csAt >= 0) {
+      var re2 = /\x2F([^\s\x2F\x5B\x5D{}\x28\x29<>]+)\s+(\d+)\s+(RD|-\|)\s/g;
+      re2.lastIndex = csAt + 12;
+      while ((m = re2.exec(ds))) { var a2 = m.index + m[0].length, n2 = +m[2]; chars[m[1]] = decrypt(dec.subarray(a2, a2 + n2), 4330, lenIV); re2.lastIndex = a2 + n2; }
+    }
+    function glyph(name, base) {
+      var cmds = [], st = [], ps = [], x = 0, y = 0, open = false, flex = null, depth = 0, sbx = 0;
+      var cs0 = chars[name];
+      if (!cs0) return cmds;
+      if (base) { x = base[0]; y = base[1]; }
+      function move(dx, dy) {
+        x += dx; y += dy;
+        if (flex) { flex.push([x, y]); return; }
+        if (open) cmds.push(["Z"]);
+        cmds.push(["M", x, y]); open = true;
+      }
+      function line(dx, dy) { x += dx; y += dy; cmds.push(["L", x, y]); }
+      function curve(a, b1, c2, d, e, f) { var x1 = x + a, y1 = y + b1, x2 = x1 + c2, y2 = y1 + d; x = x2 + e; y = y2 + f; cmds.push(["C", x1, y1, x2, y2, x, y]); }
+      function run(cs) {
+        if (++depth > 16) return true;
+        for (var p = 0; p < cs.length;) {
+          var v = cs[p++];
+          if (v >= 32) {
+            if (v <= 246) st.push(v - 139);
+            else if (v <= 250) st.push((v - 247) * 256 + cs[p++] + 108);
+            else if (v <= 254) st.push(-(v - 251) * 256 - cs[p++] - 108);
+            else { st.push(S32(cs, p)); p += 4; }
+            continue;
+          }
+          if (v === 13) { sbx = st[0]; if (!base) { x = st[0]; y = 0; } st = []; }
+          else if (v === 21) { move(st[0], st[1]); st = []; }
+          else if (v === 22) { move(st[0], 0); st = []; }
+          else if (v === 4) { move(0, st[0]); st = []; }
+          else if (v === 5) { line(st[0], st[1]); st = []; }
+          else if (v === 6) { line(st[0], 0); st = []; }
+          else if (v === 7) { line(0, st[0]); st = []; }
+          else if (v === 8) { curve(st[0], st[1], st[2], st[3], st[4], st[5]); st = []; }
+          else if (v === 30) { curve(0, st[0], st[1], st[2], st[3], 0); st = []; }
+          else if (v === 31) { curve(st[0], 0, st[1], st[2], 0, st[3]); st = []; }
+          else if (v === 9) { if (open) cmds.push(["Z"]); open = false; st = []; }
+          else if (v === 10) { var sn = st.pop(); if (subrs[sn] && run(subrs[sn])) return true; }
+          else if (v === 11) { depth--; return false; }
+          else if (v === 14) { if (open) cmds.push(["Z"]); open = false; return true; }
+          else if (v === 12) {
+            var w = cs[p++];
+            if (w === 6) {   // seac: an accented letter made of two
+              var asb = st[0], adx = st[1], ady = st[2], bn = SE[st[3]], an = SE[st[4]];
+              cmds = glyph(bn).concat(glyph(an, [adx - asb + sbx, ady]));
+              return true;
+            }
+            if (w === 7) { sbx = st[0]; if (!base) { x = st[0]; y = st[1]; } st = []; }
+            else if (w === 12) { var dv = st.pop(); st.push(st.pop() / dv); }
+            else if (w === 16) {   // callothersubr: flex and hint replacement
+              var oth = st.pop(), na = st.pop(), args = [];
+              for (var j = 0; j < na; j++) args.unshift(st.pop());
+              if (oth === 1) flex = [];
+              else if (oth === 0 && flex) {
+                var f = flex;
+                flex = null;
+                if (f.length >= 7) { cmds.push(["C", f[1][0], f[1][1], f[2][0], f[2][1], f[3][0], f[3][1]]); cmds.push(["C", f[4][0], f[4][1], f[5][0], f[5][1], f[6][0], f[6][1]]); x = f[6][0]; y = f[6][1]; }
+                ps = [y, x];
+              }
+              else if (oth === 3) ps = [3];
+              else ps = args.reverse();
+            }
+            else if (w === 17) st.push(ps.length ? ps.shift() : 0);
+            else if (w === 33) { x = st[0]; y = st[1]; st = []; }
+            else st = [];
+          }
+          else st = [];
+        }
+        depth--;
+        return false;
+      }
+      run(cs0);
+      if (open) cmds.push(["Z"]);
+      return cmds;
+    }
+    return { kind: "t1", matrix: mat.length === 6 ? mat : [0.001, 0, 0, 0.001, 0, 0], glyph: glyph, enc: enc, has: function (n) { return !!chars[n]; } };
+  }
+
+  // --- the fonts of a page --------------------------------------------------
+  async function loadFont(pdf, ref) {
+    var R = pdf.doc.resolve, f = R(ref) || {}, sub = R(f.Subtype), F = { sub: sub, cache: {} }, i;
+    try { F.info = await P.textFont(pdf, ref); } catch (e) { F.info = { bytes: sub === "/Type0" ? 2 : 1, codes: function (s) { var o = []; for (var k = 0; k < s.length; k++) o.push(s.charCodeAt(k)); return o; }, uni: function (c) { return String.fromCharCode(c); }, width: function () { return 500; } }; }
+    // the names the PDF gives its codes (Differences)
+    var e = R(f.Encoding), diffs = {};
+    if (e && typeof e === "object" && R(e.Differences)) { var code = 0; R(e.Differences).forEach(function (v) { v = R(v); if (typeof v === "number") code = v; else if (typeof v === "string") diffs[code++] = v.slice(1); }); }
+    var baseEnc = typeof e === "string" ? e : e && R(e.BaseEncoding);
+    if (sub === "/Type3") {
+      var procs = R(f.CharProcs) || {};
+      F.matrix = (R(f.FontMatrix) || [0.001, 0, 0, 0.001, 0, 0]).map(function (v) { return +R(v); });
+      F.res = R(f.Resources) || null;
+      F.procs = {};
+      for (var nm in procs) { var o = procs[nm] && procs[nm].r !== undefined ? pdf.doc.get(procs[nm].r) : procs[nm]; try { F.procs[nm] = P.latin1(await pdf.doc.stream(o)); } catch (e2) { } }
+      F.key = function (c) { return diffs[c] || SE[c]; };
+      return F;
+    }
+    var desc = sub === "/Type0" ? R((R(f.DescendantFonts) || [])[0]) || {} : f, fd = R(desc.FontDescriptor) || {}, ff = fd.FontFile2 || fd.FontFile3 || fd.FontFile, prog = null;
+    if (ff) {
+      try {
+        var fo = ff.r !== undefined ? pdf.doc.get(ff.r) : ff, bytes = await pdf.doc.stream(fo);
+        if (fd.FontFile2) prog = trueType(bytes);
+        else if (fd.FontFile3) prog = R(fo.dict.Subtype) === "/OpenType" ? trueType(bytes) : cff(bytes);
+        else prog = type1(bytes);
+      } catch (e3) { prog = null; }
+    }
+    F.prog = prog;
+    F.noWidths = sub === "/Type0" ? !R(desc.W) : !R(f.Widths);   // (the standard fonts: their widths are the reader's own)
+    var bn = String(R(desc.BaseFont) || R(f.BaseFont) || "").replace(/^\x2F([A-Z]{6}\+)?/, "");
+    F.css = (/Bold|Black|Heavy|Semibold/i.test(bn) ? "bold " : "") + (/Italic|Oblique/i.test(bn) ? "italic " : "") + "SIZEpx " +
+      (/Courier|Mono/i.test(bn) ? "monospace" : /Times|Serif|Roman|Georgia|Garamond|Minion|Palatino|Book/i.test(bn) ? "serif" : "sans-serif");
+    if (!prog) { F.key = null; return F; }
+    if (sub === "/Type0") {
+      var c2g = R(desc.CIDToGIDMap), map = null;
+      if (c2g && c2g.r !== undefined) { var mo = pdf.doc.get(c2g.r); if (mo && mo.stream) { try { map = await pdf.doc.stream(mo); } catch (e4) { } } }
+      F.key = function (cid) {
+        if (prog.kind === "cff") return prog.isCID ? prog.byCid[cid] : cid;
+        if (map) return 2 * cid + 1 < map.length ? (map[2 * cid] << 8) | map[2 * cid + 1] : 0;
+        return cid;
+      };
+      return F;
+    }
+    var flags = +R(fd.Flags) || 0;
+    F.key = function (c) {
+      var nm = diffs[c];
+      if (prog.kind === "cff") {
+        if (nm && prog.byName[nm] != null) return prog.byName[nm];
+        if (!nm && (flags & 4 || !baseEnc) && prog.enc[c] != null) return prog.enc[c];
+        var nm2 = nm || (baseEnc === "/StandardEncoding" || !baseEnc ? SE[c] : null) || uniName(F.info.uni(c));
+        return nm2 && prog.byName[nm2] != null ? prog.byName[nm2] : prog.enc[c];
+      }
+      if (prog.kind === "t1") {
+        if (nm && prog.has(nm)) return nm;
+        if (!nm && prog.enc[c] && (flags & 4 || !baseEnc)) return prog.enc[c];
+        return nm || uniName(F.info.uni(c)) || prog.enc[c] || SE[c];
+      }
+      var c30 = prog.cmaps["3,0"], c31 = prog.cmaps["3,1"], c10 = prog.cmaps["1,0"], u;
+      if (nm && c31 && P.glyphUni) { u = P.glyphUni(nm); if (u && c31[u.charCodeAt(0)] != null) return c31[u.charCodeAt(0)]; }
+      if (c30) { var pre = [0xF000, 0xF100, 0xF200, 0]; for (i = 0; i < pre.length; i++) if (c30[pre[i] + c] != null) return c30[pre[i] + c]; }
+      if (c10 && c10[c] != null && (flags & 4 || !c31)) return c10[c];
+      if (c31) { u = F.info.uni(c); if (u && c31[u.charCodeAt(0)] != null) return c31[u.charCodeAt(0)]; }
+      if (c10 && c10[c] != null) return c10[c];
+      return c;
+    };
+    return F;
+  }
+  // the glyph name of a letter (for a Type 1 or CFF font asked by Unicode)
+  var UN = null;
+  function uniName(u) {
+    if (!u) return null;
+    if (!UN) { UN = {}; for (var c in SE) { var g = P.glyphUni ? P.glyphUni(SE[c]) : ""; if (g && !UN[g]) UN[g] = SE[c]; } }
+    return UN[u] || null;
+  }
+  function path2d(cmds) {
+    var p = new Path2D();
+    cmds.forEach(function (c) {
+      if (c[0] === "M") p.moveTo(c[1], c[2]);
+      else if (c[0] === "L") p.lineTo(c[1], c[2]);
+      else if (c[0] === "Q") p.quadraticCurveTo(c[1], c[2], c[3], c[4]);
+      else if (c[0] === "C") p.bezierCurveTo(c[1], c[2], c[3], c[4], c[5], c[6]);
+      else p.closePath();
+    });
+    return p;
+  }
+  function mul(a, b) { return [a[0] * b[0] + a[1] * b[2], a[0] * b[1] + a[1] * b[3], a[2] * b[0] + a[3] * b[2], a[2] * b[1] + a[3] * b[3], a[4] * b[0] + a[5] * b[2] + b[4], a[4] * b[1] + a[5] * b[3] + b[5]]; }
+  function rgb(r, g, b) { return "rgb(" + Math.round(255 * Math.max(0, Math.min(1, r))) + "," + Math.round(255 * Math.max(0, Math.min(1, g))) + "," + Math.round(255 * Math.max(0, Math.min(1, b))) + ")"; }
+  function colour(a, space) {
+    a = a.filter(function (v) { return typeof v === "number"; });
+    if (space === "sep") return a.length ? rgb(1 - a[0], 1 - a[0], 1 - a[0]) : "#000";
+    if (a.length === 1) return rgb(a[0], a[0], a[0]);
+    if (a.length === 3) return rgb(a[0], a[1], a[2]);
+    if (a.length === 4) return rgb((1 - a[0]) * (1 - a[3]), (1 - a[1]) * (1 - a[3]), (1 - a[2]) * (1 - a[3]));
+    return "#000";
+  }
+
+  // pageDraw(pdf, i, {scale, maxSide}) -> Promise<canvas>: the page as it looks
+  async function pageDraw(pdf, i, opts) {
+    opts = opts || {};
+    var pg = pdf.pages[i], R = pdf.doc.resolve;
+    var scale = Math.min(opts.scale || 2, (opts.maxSide || 3400) / Math.max(pg.w, pg.h, 1));
+    var W = Math.max(1, Math.round(pg.w * scale)), H = Math.max(1, Math.round(pg.h * scale)), cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    var x = cv.getContext("2d"), fonts = {}, gcache = {}, ops = 0;
+    x.fillStyle = "#fff"; x.fillRect(0, 0, W, H);
+    var page = [scale, 0, 0, -scale, -pg.box[0] * scale, (pg.h + pg.box[1]) * scale];
+    async function fontOf(res, nm) {
+      var fr = R(res && res.Font) || R(pg.res.Font) || {}, ref = fr[nm], key = ref && ref.r !== undefined ? "r" + ref.r : nm + ":" + (res === pg.res ? "p" : Math.random());
+      if (!fonts[key]) { try { fonts[key] = await loadFont(pdf, ref); fonts[key].id = key; } catch (e) { fonts[key] = null; } }
+      return fonts[key];
+    }
+    async function run(prog, res, ctm0, depth) {
+      var lx = new P.Lexer(prog), args = [], S = { ctm: ctm0.slice(), fill: "#000", stroke: "#000", lw: 1, cap: "butt", join: "miter", dash: [], dashOff: 0, fa: 1, sa: 1, fsp: "", ssp: "",
+        font: null, fs: 10, tc: 0, tw: 0, tz: 1, tl: 0, rise: 0, tr: 0 }, stack = [], path = null, cur = [0, 0], start = [0, 0], clip = null, tm = [1, 0, 0, 1, 0, 0], tlm = tm.slice();
+      var xo = R(res && res.XObject) || {}, gsr = R(res && res.ExtGState) || {}, csr = R(res && res.ColorSpace) || {};
+      function pt(px, py) { var m = S.ctm; return [m[0] * px + m[2] * py + m[4], m[1] * px + m[3] * py + m[5]]; }
+      function np() { if (!path) path = new Path2D(); return path; }
+      function scaleOf(m) { return Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])) || 1; }
+      function strokeStyle() {
+        x.lineWidth = Math.max(1, S.lw * scaleOf(S.ctm)); x.lineCap = S.cap; x.lineJoin = S.join;
+        var k = scaleOf(S.ctm);
+        x.setLineDash(S.dash.length ? S.dash.map(function (v) { return Math.max(0.5, v * k); }) : []); x.lineDashOffset = S.dashOff * k;
+        x.strokeStyle = S.stroke; x.globalAlpha = S.sa;
+      }
+      function paint(fill, stroke, eo) {
+        if (path) {
+          if (fill) { x.fillStyle = S.fill; x.globalAlpha = S.fa; x.fill(path, eo ? "evenodd" : "nonzero"); }
+          if (stroke) { strokeStyle(); x.stroke(path); }
+          x.globalAlpha = 1;
+          if (clip) x.clip(path, clip);
+        }
+        path = null; clip = null;
+      }
+      function space(nm, deflt) {
+        var c = R(nm), cs2 = typeof c === "string" && csr[c.slice(1)] ? R(csr[c.slice(1)]) : c, k = Array.isArray(cs2) ? R(cs2[0]) : cs2;
+        if (k === "/Separation" || k === "/DeviceN") return "sep";
+        if (k === "/Pattern") return "pat";
+        return deflt;
+      }
+      async function glyphs(s) {
+        var F = S.font;
+        if (!F) return;
+        var codes = F.info.codes(s), size = S.fs;
+        for (var k = 0; k < codes.length; k++) {
+          var c = codes[k], trm = mul([size * S.tz, 0, 0, size, 0, S.rise], mul(tm, S.ctm)), w;
+          var mw = null;
+          if (S.tr !== 3 && S.tr !== 7) {
+            if (F.sub === "/Type3") {
+              var pn = F.key(c), pr = pn && F.procs[pn];
+              if (pr && depth < 6) {
+                x.save();
+                var sv = S.fill;
+                await run(pr, F.res || res, mul(F.matrix, trm), depth + 1);
+                S.fill = sv;
+                x.restore();
+              }
+            } else if (F.prog && F.key) {
+              var gk = F.key(c), id = F.id + ":" + gk, p2 = gcache[id];
+              if (p2 === undefined) { try { p2 = gk == null ? null : path2d(F.prog.glyph(gk)); } catch (e) { p2 = null; } gcache[id] = p2; }
+              if (p2) {
+                var gm = mul(F.prog.matrix, trm);
+                x.setTransform(gm[0], gm[1], gm[2], gm[3], gm[4], gm[5]);
+                if (S.tr === 0 || S.tr === 2 || S.tr === 4 || S.tr === 6) { x.fillStyle = S.fill; x.globalAlpha = S.fa; x.fill(p2); }
+                if (S.tr === 1 || S.tr === 2 || S.tr === 5 || S.tr === 6) { x.strokeStyle = S.stroke; x.lineWidth = S.lw / Math.max(1e-6, Math.hypot(gm[0], gm[1])); x.stroke(p2); }
+                x.setTransform(1, 0, 0, 1, 0, 0); x.globalAlpha = 1;
+              }
+            } else {   // a font the PDF does not carry: the browser's nearest
+              var u = F.info.uni(c), sz = Math.hypot(trm[2], trm[3]);
+              if (u && sz > 0.5) {
+                x.setTransform(trm[0] / sz, trm[1] / sz, -trm[2] / sz, -trm[3] / sz, trm[4], trm[5]);
+                x.font = F.css.replace("SIZE", sz.toFixed(2)); x.fillStyle = S.fill;
+                if (u.trim()) x.fillText(u, 0, 0);
+                if (F.noWidths) mw = x.measureText(u).width / sz * 1000;
+                x.setTransform(1, 0, 0, 1, 0, 0);
+              }
+            }
+          }
+          w = mw != null ? mw : F.info.width(c);
+          var adv = F.sub === "/Type3" ? w * F.matrix[0] * size : w / 1000 * size;
+          adv = (adv + S.tc + (c === 32 && F.info.bytes === 1 ? S.tw : 0)) * S.tz;
+          tm = mul([1, 0, 0, 1, adv, 0], tm);
+        }
+      }
+      for (;;) {
+        var t = lx.token();
+        if (!t) break;
+        if (t.t === undefined || t.t === "[" || t.t === "<<") {
+          if (t.t === "[" || t.t === "<<") { lx.p -= t.t.length; args.push(lx.value()); } else args.push(t.v);
+          continue;
+        }
+        var op = t.t, a = args, n = a.map(function (v) { return +v; });
+        args = [];
+        if (++ops > 4e6) break;
+        switch (op) {
+          case "q": stack.push({ S: JSON.parse(JSON.stringify({ ctm: S.ctm, fill: S.fill, stroke: S.stroke, lw: S.lw, cap: S.cap, join: S.join, dash: S.dash, dashOff: S.dashOff, fa: S.fa, sa: S.sa, fsp: S.fsp, ssp: S.ssp, fs: S.fs, tc: S.tc, tw: S.tw, tz: S.tz, tl: S.tl, rise: S.rise, tr: S.tr })), font: S.font }); x.save(); break;
+          case "Q": if (stack.length) { var o = stack.pop(); var keepF = o.font; S = o.S; S.font = keepF; x.restore(); } break;
+          case "cm": if (a.length >= 6) S.ctm = mul(n.slice(-6), S.ctm); break;
+          case "w": S.lw = n[0]; break;
+          case "J": S.cap = ["butt", "round", "square"][n[0]] || "butt"; break;
+          case "j": S.join = ["miter", "round", "bevel"][n[0]] || "miter"; break;
+          case "d": S.dash = Array.isArray(a[0]) ? a[0].map(function (v) { return +R(v); }) : []; S.dashOff = n[1] || 0; break;
+          case "gs": { var g = R(gsr[String(a[0]).slice(1)]) || {}; if (g.LW != null) S.lw = +R(g.LW); if (g.CA != null) S.sa = +R(g.CA); if (g.ca != null) S.fa = +R(g.ca); break; }
+          case "g": S.fill = colour(n); S.fsp = ""; break;
+          case "G": S.stroke = colour(n); S.ssp = ""; break;
+          case "rg": S.fill = colour(n); S.fsp = ""; break;
+          case "RG": S.stroke = colour(n); S.ssp = ""; break;
+          case "k": S.fill = colour(n); S.fsp = ""; break;
+          case "K": S.stroke = colour(n); S.ssp = ""; break;
+          case "cs": S.fsp = space(a[0], ""); S.fill = "#000"; break;
+          case "CS": S.ssp = space(a[0], ""); S.stroke = "#000"; break;
+          case "sc": case "scn": S.fill = S.fsp === "pat" ? "#000" : colour(a.map(function (v) { return typeof v === "number" ? v : NaN; }).filter(function (v) { return !isNaN(v); }), S.fsp); break;
+          case "SC": case "SCN": S.stroke = S.ssp === "pat" ? "#000" : colour(a.map(function (v) { return typeof v === "number" ? v : NaN; }).filter(function (v) { return !isNaN(v); }), S.ssp); break;
+          case "m": { var p1 = pt(n[0], n[1]); np().moveTo(p1[0], p1[1]); cur = [n[0], n[1]]; start = cur.slice(); break; }
+          case "l": { var p3 = pt(n[0], n[1]); np().lineTo(p3[0], p3[1]); cur = [n[0], n[1]]; break; }
+          case "c": { var c1 = pt(n[0], n[1]), c2 = pt(n[2], n[3]), c3 = pt(n[4], n[5]); np().bezierCurveTo(c1[0], c1[1], c2[0], c2[1], c3[0], c3[1]); cur = [n[4], n[5]]; break; }
+          case "v": { var v1 = pt(cur[0], cur[1]), v2 = pt(n[0], n[1]), v3 = pt(n[2], n[3]); np().bezierCurveTo(v1[0], v1[1], v2[0], v2[1], v3[0], v3[1]); cur = [n[2], n[3]]; break; }
+          case "y": { var y1 = pt(n[0], n[1]), y3 = pt(n[2], n[3]); np().bezierCurveTo(y1[0], y1[1], y3[0], y3[1], y3[0], y3[1]); cur = [n[2], n[3]]; break; }
+          case "h": if (path) path.closePath(); cur = start.slice(); break;
+          case "re": { var r0 = pt(n[0], n[1]), r1 = pt(n[0] + n[2], n[1]), r2 = pt(n[0] + n[2], n[1] + n[3]), r3 = pt(n[0], n[1] + n[3]), pp = np();
+            pp.moveTo(r0[0], r0[1]); pp.lineTo(r1[0], r1[1]); pp.lineTo(r2[0], r2[1]); pp.lineTo(r3[0], r3[1]); pp.closePath(); cur = [n[0], n[1]]; start = cur.slice(); break; }
+          case "S": paint(false, true); break;
+          case "s": if (path) path.closePath(); paint(false, true); break;
+          case "f": case "F": paint(true, false); break;
+          case "f*": paint(true, false, true); break;
+          case "B": paint(true, true); break;
+          case "B*": paint(true, true, true); break;
+          case "b": if (path) path.closePath(); paint(true, true); break;
+          case "b*": if (path) path.closePath(); paint(true, true, true); break;
+          case "n": paint(false, false); break;
+          case "W": clip = "nonzero"; break;
+          case "W*": clip = "evenodd"; break;
+          case "BT": tm = [1, 0, 0, 1, 0, 0]; tlm = tm.slice(); break;
+          case "Tf": S.font = await fontOf(res, String(a[0]).slice(1)); S.fs = n[1] || 0; break;
+          case "Tm": if (a.length >= 6) { tm = n.slice(-6); tlm = tm.slice(); } break;
+          case "Td": tlm = mul([1, 0, 0, 1, n[0], n[1]], tlm); tm = tlm.slice(); break;
+          case "TD": S.tl = -n[1]; tlm = mul([1, 0, 0, 1, n[0], n[1]], tlm); tm = tlm.slice(); break;
+          case "T*": tlm = mul([1, 0, 0, 1, 0, -S.tl], tlm); tm = tlm.slice(); break;
+          case "TL": S.tl = n[0]; break;
+          case "Tc": S.tc = n[0]; break;
+          case "Tw": S.tw = n[0]; break;
+          case "Tz": S.tz = n[0] / 100; break;
+          case "Ts": S.rise = n[0]; break;
+          case "Tr": S.tr = n[0]; break;
+          case "Tj": if (a[0] && a[0].s !== undefined) await glyphs(a[0].s); break;
+          case "'": tlm = mul([1, 0, 0, 1, 0, -S.tl], tlm); tm = tlm.slice(); if (a[0] && a[0].s !== undefined) await glyphs(a[0].s); break;
+          case "\x22": S.tw = n[0]; S.tc = n[1]; tlm = mul([1, 0, 0, 1, 0, -S.tl], tlm); tm = tlm.slice(); if (a[2] && a[2].s !== undefined) await glyphs(a[2].s); break;
+          case "TJ":
+            if (Array.isArray(a[0])) for (var j = 0; j < a[0].length; j++) {
+              var it = R(a[0][j]);
+              if (it && it.s !== undefined) await glyphs(it.s);
+              else if (typeof it === "number") tm = mul([1, 0, 0, 1, -it / 1000 * S.fs * S.tz, 0], tm);
+            }
+            break;
+          case "Do": {
+            var ref = xo[String(a[0]).slice(1)], ob = ref && ref.r !== undefined ? pdf.doc.get(ref.r) : null;
+            if (!ob || !ob.stream) break;
+            var st2 = R(ob.dict.Subtype);
+            if (st2 === "/Image" && P.decodeImage) {
+              try {
+                var ic = await P.decodeImage(pdf, ob, 16e6), m2 = S.ctm;
+                if (R(ob.dict.ImageMask)) {   // a stencil: painted in the fill colour, the rest left alone
+                  var ix = ic.getContext("2d"), id = ix.getImageData(0, 0, ic.width, ic.height), dd = id.data;
+                  x.fillStyle = S.fill;
+                  var col = /rgb\((\d+),(\d+),(\d+)\)/.exec(S.fill) || [0, 0, 0, 0];
+                  for (var q2 = 0; q2 < dd.length; q2 += 4) { var on = dd[q2] < 128; dd[q2] = +col[1]; dd[q2 + 1] = +col[2]; dd[q2 + 2] = +col[3]; dd[q2 + 3] = on ? 255 : 0; }
+                  ix.putImageData(id, 0, 0);
+                }
+                x.save();
+                x.setTransform(m2[0], m2[1], m2[2], m2[3], m2[4], m2[5]);
+                x.transform(1 / ic.width, 0, 0, -1 / ic.height, 0, 1);
+                x.globalAlpha = S.fa;
+                x.drawImage(ic, 0, 0);
+                x.restore();
+              } catch (e5) { }
+            } else if (st2 === "/Form" && depth < 8) {
+              var fm = (R(ob.dict.Matrix) || [1, 0, 0, 1, 0, 0]).map(function (v) { return +R(v); }), fctm = mul(fm, S.ctm), bb = R(ob.dict.BBox);
+              x.save();
+              if (Array.isArray(bb) && bb.length === 4) {
+                var bx = bb.map(function (v) { return +R(v); }), cp = new Path2D(), m3 = fctm;
+                [[bx[0], bx[1]], [bx[2], bx[1]], [bx[2], bx[3]], [bx[0], bx[3]]].forEach(function (q, qi) { var X = m3[0] * q[0] + m3[2] * q[1] + m3[4], Y = m3[1] * q[0] + m3[3] * q[1] + m3[5]; if (qi) cp.lineTo(X, Y); else cp.moveTo(X, Y); });
+                cp.closePath(); x.clip(cp);
+              }
+              try { await run(P.latin1(await pdf.doc.stream(ob)), R(ob.dict.Resources) || res, fctm, depth + 1); } catch (e6) { }
+              x.restore();
+            }
+            break;
+          }
+          case "BI": { var ei = prog.indexOf("EI", lx.p); lx.p = ei < 0 ? prog.length : ei + 2; break; }
+          default: break;
+        }
+      }
+    }
+    await run(await P.pageProgram(pdf, pg), pg.res, page, 0);
+    if (pg.rotate) {
+      var rc = document.createElement("canvas"), turned = pg.rotate === 90 || pg.rotate === 270;
+      rc.width = turned ? H : W; rc.height = turned ? W : H;
+      var rx = rc.getContext("2d");
+      rx.translate(rc.width / 2, rc.height / 2); rx.rotate(pg.rotate * Math.PI / 180); rx.drawImage(cv, -W / 2, -H / 2);
+      cv = rc;
+    }
+    return cv;
+  }
+  P.pageDraw = pageDraw;
+  P.fontProgram = function (bytes, kind) { return kind === "cff" ? cff(bytes) : kind === "t1" ? type1(bytes) : trueType(bytes); };
+})();
+// ===========================================================================
+// MODULE: PDF_DRAW - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: PDF_WRITE - START
@@ -34250,7 +34988,8 @@ Lantern.RFB = (function () {
   }
   // picture(doc, i) -> Promise<canvas|null>: page i as a picture again
   async function picture(doc, i) {
-    if (doc.kind === "pdf") return L.pdf.pageImage(doc.pdf, i);
+    // (1.22.6) a page with no picture -- lines, shapes and words in the PDF's own fonts -- drawn as it looks (PDF_DRAW)
+    if (doc.kind === "pdf") { var pi = await L.pdf.pageImage(doc.pdf, i); return pi || (L.pdf.pageDraw ? L.pdf.pageDraw(doc.pdf, i, { scale: 2.5, maxSide: 3400 }) : null); }
     return TR.image.load(doc.files[i]);
   }
   // readSection(doc, k, {onPage(i, page), onStep, signal, keep}) -> reads
@@ -34629,6 +35368,9 @@ Lantern.RFB = (function () {
     per.onchange = function () { if (L.store) L.store.set("textReader.per", +per.value); if (doc) { doc.per = +per.value; paint(); } };
     root.appendChild(el("p", { "class": "muted" }, [el("span", { text: "Long documents are read in sections of " }), per, el("span", { text: " (fewer on a small phone)." })]));
     root.status = el("div", { "class": "muted", style: "min-height:20px", "aria-live": "polite" });
+    if (doc && doc.music) root.appendChild(el("p", { style: "border:1px solid var(--line);border-radius:10px;padding:8px 11px;background:var(--soft)" }, [
+      el("span", { text: "This PDF is printed music (" + doc.music.pages.length + " page" + (doc.music.pages.length === 1 ? "" : "s") + " of it): its notes are letters of a music font, not words. " }),
+      el("button", { "class": "primary", text: "Read the music", onclick: function () { L.sheetMusic.pending = doc.music.pages; location.hash = "music"; } })]));
     root.appendChild(root.status);
     if (doc) paintDoc();
   }
@@ -34638,6 +35380,11 @@ Lantern.RFB = (function () {
       if (ctrl) ctrl.abort();
       status("opening\u2026");
       doc = await D.open(files, { per: L.store ? +L.store.get("textReader.per", 10) : 10 });
+      // (1.22.6) a PDF of printed music: its notes are a music font's letters, nonsense as words -- read it as music
+      if (doc.kind === "pdf" && L.sheetMusic && L.sheetMusic.pdfMusic) {
+        status("looking at the PDF\u2026");
+        try { doc.music = await L.sheetMusic.pdfMusic(files[0]); } catch (e1) { doc.music = null; }
+      }
       cur = 0; paint();
       await readSec(0);
     } catch (e) { status("Could not open it: " + (e.message || e)); }
@@ -34857,6 +35604,14 @@ Lantern.RFB = (function () {
   }
   async function attach(api, files) {
     var doc = null;
+    // (1.22.6) a PDF of printed music is pictures of music for Chat (CHAT_PICTURES and SHEET_MUSIC_CHAT), not a document
+    if (files.length === 1 && /pdf$/i.test(files[0].type || files[0].name || "") && L.sheetMusic && L.sheetMusic.pdfMusic && L.chatPics && L.chatPics.add) {
+      api.status("looking at the PDF\u2026");
+      var m = null;
+      try { m = await L.sheetMusic.pdfMusic(files[0], { max: 1 }); } catch (e) { m = null; }
+      api.status("");
+      if (m) return L.chatPics.add(files);
+    }
     try {
       api.status("reading\u2026");
       if (files.length === 1) doc = await musicDoc(files[0]);
@@ -35224,11 +35979,14 @@ Lantern.RFB = (function () {
 // Depends: SHEET_MUSIC_ENGINE (Lantern.sheetMusic and its _parts),
 //          TEXT_READER_IMAGE (Lantern.textReader.image); MUSIC_SONG
 //          (Lantern.musicSong) -- feature-detected
-// Exports: Lantern.sheetMusic.song(canvas, opts) -> reading {found, key,
-//          keyName, time, bars, bass, tune, melody, chords, chordList, lines,
-//          summary, doubt, text}, .heading(reading) -> Promise<reading with
-//          heading and title>, .prepare(canvas, opts) -> the picture made
-//          ready to read, ._song
+// Exports: Lantern.sheetMusic.song(canvas or [canvas] (a piece's pages),
+//          opts) -> reading {found, key, keyName, time, bars, bass, tune,
+//          melody, chords, chordList, lines, summary, doubt, text},
+//          .heading(reading) -> Promise<reading with heading and title>,
+//          .prepare(canvas, opts) -> the picture made ready to read,
+//          .pdfMusic(file, {max}) -> Promise<{pages, count, title}|null>,
+//          .pdfPictures(file) -> Promise<[File]|null>, .isPdf(file) (1.22.6;
+//          PDF_DRAW, feature-detected), ._song
 // ===========================================================================
 // Printed music read as a song (1.21.0): the notes' lengths, the bars, the
 // rests, the key and the time, so a picture of a tune becomes MAKE MUSIC
@@ -35974,10 +36732,13 @@ Lantern.RFB = (function () {
     });
     grp.forEach(function (g) { var one = g.reduce(function (a, b) { return (top ? b.off > a.off : b.off < a.off) ? b : a; }); one.with = g.filter(function (h) { return h !== one; }); cols.push(one); });   // (the chord's other notes kept, 1.22.1)
     var evs = cols.concat(rests).sort(function (a, b) { return a.x - b.x; });
-    var edges = [firstX - sp].concat(bars.filter(function (b) { return b > firstX; }), [s.right + sp]), out = [], spans = [];
+    // (1.22.6) the bars from where the key and time end: a first bar where nothing was read (a part's rest under another
+    // instrument's small cue notes) is a bar still, and so is a last one whose bar line was not found -- a bar's room or more
+    var x0 = Math.min(firstX - sp, ks.end + 0.5 * sp);
+    var edges = [x0].concat(bars.filter(function (b) { return b > x0 + 0.5 * sp; }), [s.right + sp]), out = [], spans = [];
     for (var b = 0; b + 1 < edges.length; b++) {
       var inBar = evs.filter(function (e) { return e.x > edges[b] && e.x < edges[b + 1]; });
-      if (inBar.length || (b > 0 && b + 2 < edges.length)) { out.push(inBar); spans.push([edges[b], edges[b + 1]]); }
+      if (inBar.length || (b > 0 && b + 2 < edges.length) || edges[b + 1] - edges[b] >= 4 * sp) { out.push(inBar); spans.push([edges[b], edges[b + 1]]); }
     }
     // a note tied over the bar line keeps its sharp or flat (1.22.4): from the last chord of a bar to the first of the next, a
     // line of ink at the note's height most of the way across (the tie, its ends cut by the lines taken out)
@@ -36039,57 +36800,69 @@ Lantern.RFB = (function () {
   }
   function song(cv, opts) {
     opts = opts || {};
-    var pr = prepare(cv, opts);
-    if (!pr) return { found: false, text: "No music staves found." };
-    var ss = pr.ss, systems = [], keySig = null;
-    // which staves carry the tune: the treble ones (a clef as tall as the staff and more is a treble clef; a bass clef sits
-    // in the staff's top three spaces); with no clef to go by, piano music's upper staves. The bass staves under them (piano
-    // music's left hand) give the chords (1.21.1).
-    // (1.22.1: a treble clef cut in pieces by the lines taken out is still one -- a piece of it reaches past the staff,
-    // where a bass clef never goes)
-    var starts = ss.map(function (s) { return startOn(pr.cl, s); }), kinds = starts.map(function (k, i) {
-      var c = k.clef, s = ss[i], h = c ? (c.y1 - c.y0 + 1) / s.spacing : 0;
-      return !c ? (pr.mode === "piano" ? (i % 2 ? "bass" : "treble") : "treble") : h >= 4.8 || c.y1 > s.lines[4] + 0.6 * s.spacing || c.y0 < s.lines[0] - 0.6 * s.spacing ? "treble" : "bass";
-    }), useT = kinds.indexOf("treble") >= 0, first = true;
-    // (1.22.5) the staves of one line of music are joined at their left end; a song's sheet (a voice over a piano) has the tune
-    // in its top staff, the piano's right hand under it and its left hand at the bottom: the tune is the voice's, and where the
-    // voice has no note in a bar (the piano's introduction, a bar's rest), the right hand's -- not both, one after the other
-    var voice = {}, fill = {}, skip = {};
-    groupsOf(pr.im, ss).forEach(function (g) {
-      var n = g.length;
-      if (n >= 3 && kinds[g[n - 1]] === "bass" && kinds[g[n - 2]] === "treble") { voice[g[0]] = true; fill[g[0]] = g[n - 2]; for (var k = 1; k < n - 1; k++) skip[g[k]] = true; }
-      else if (n === 2 && kinds[g[0]] === "treble" && kinds[g[1]] === "treble") { fill[g[0]] = g[1]; skip[g[1]] = true; }
-    });
-    for (var si = 0; si < ss.length; si++) {
-      if (skip[si]) continue;
-      if (useT && kinds[si] !== "treble" && !voice[si]) {   // a bass staff: the left hand of the treble staff above it
-        var sy = systems[systems.length - 1];
-        if (kinds[si] === "bass" && sy && !sy.bass) { var lb = staffBars(pr, ss[si], starts[si], false); if (lb) sy.bass = lb; }
-        continue;
-      }
-      var r = staffBars(pr, ss[si], starts[si], true), clefs = null;
-      if (!r) continue;
-      if (fill[si] != null) {
-        // bar by bar as the piano has them (a voice's bar of rest can go unseen, a small picture's whole rest): the voice's bar
-        // where it sings, the right hand's where it does not
-        var rp = staffBars(pr, ss[fill[si]], starts[fill[si]], true);
-        clefs = r.bars.map(function () { return kinds[si]; });
-        if (rp && rp.bars.length >= r.bars.length) {
-          var vb = r;
-          clefs = [];
-          r = { bars: [], spans: rp.spans, barlines: rp.barlines };
-          rp.bars.forEach(function (bar, j) {
-            var q = rp.spans[j], got = null, best = 0;
-            vb.spans.forEach(function (v, i) { var ov = Math.min(q[1], v[1]) - Math.max(q[0], v[0]); if (ov > best) { best = ov; got = vb.bars[i]; } });
-            var sings = got && best >= 0.5 * (q[1] - q[0]) && got.some(function (e) { return !e.rest; });
-            r.bars.push(sings ? got : bar); clefs.push(sings ? kinds[si] : kinds[fill[si]]);
-          });
+    // (1.22.6) the pages of a piece one after another (a PDF's pages): their lines of music in order, the key and the heading
+    // from the first
+    var pages = Array.isArray(cv) ? cv : [cv], systems = [], keySig = null, first = true, pr0 = null, cover = [];
+    for (var pgi = 0; pgi < pages.length; pgi++) {
+      var pr = prepare(pages[pgi], opts);
+      if (!pr) continue;
+      if (!pr0) pr0 = pr;
+      if (pr.cover) cover = cover.concat(pr.cover);
+      var ss = pr.ss;
+      // which staves carry the tune: the treble ones (a clef as tall as the staff and more is a treble clef; a bass clef sits
+      // in the staff's top three spaces); with no clef to go by, piano music's upper staves. The bass staves under them (piano
+      // music's left hand) give the chords (1.21.1).
+      // (1.22.1: a treble clef cut in pieces by the lines taken out is still one -- a piece of it reaches past the staff,
+      // where a bass clef never goes)
+      var starts = ss.map(function (s) { return startOn(pr.cl, s); }), kinds = starts.map(function (k, i) {
+        var c = k.clef, s = ss[i], h = c ? (c.y1 - c.y0 + 1) / s.spacing : 0;
+        return !c ? (pr.mode === "piano" ? (i % 2 ? "bass" : "treble") : "treble") : h >= 4.8 || c.y1 > s.lines[4] + 0.6 * s.spacing || c.y0 < s.lines[0] - 0.6 * s.spacing ? "treble" : "bass";
+      }), useT = kinds.indexOf("treble") >= 0;
+      // (1.22.5) the staves of one line of music are joined at their left end; a song's sheet (a voice over a piano) has the tune
+      // in its top staff, the piano's right hand under it and its left hand at the bottom: the tune is the voice's, and where the
+      // voice has no note in a bar (the piano's introduction, a bar's rest), the right hand's -- not both, one after the other
+      var voice = {}, fill = {}, skip = {}, alone = {}, grp = groupsOf(pr.im, ss), joins = grp.some(function (g) { return g.length > 1; });
+      // (1.22.6) a staff of its own -- a part for one instrument, its lines not joined to another's -- is a tune in whatever
+      // clef (a bassoon's line, a cello's); a bass staff is a left hand only under a treble one it is joined to (or, with
+      // nothing joined on the page, in a piano's pairs)
+      grp.forEach(function (g) { if (g.length === 1 && (joins || pr.mode !== "piano")) alone[g[0]] = true; });
+      grp.forEach(function (g) {
+        var n = g.length;
+        if (n >= 3 && kinds[g[n - 1]] === "bass" && kinds[g[n - 2]] === "treble") { voice[g[0]] = true; fill[g[0]] = g[n - 2]; for (var k = 1; k < n - 1; k++) skip[g[k]] = true; }
+        else if (n === 2 && kinds[g[0]] === "treble" && kinds[g[1]] === "treble") { fill[g[0]] = g[1]; skip[g[1]] = true; }
+      });
+      for (var si = 0; si < ss.length; si++) {
+        if (skip[si]) continue;
+        if (useT && kinds[si] !== "treble" && !voice[si] && !alone[si]) {   // a bass staff: the left hand of the treble staff above it
+          var sy = systems[systems.length - 1];
+          if (kinds[si] === "bass" && sy && !sy.bass) { var lb = staffBars(pr, ss[si], starts[si], false); if (lb) sy.bass = lb; }
+          continue;
         }
+        var r = staffBars(pr, ss[si], starts[si], true), clefs = null;
+        if (!r) continue;
+        if (fill[si] != null) {
+          // bar by bar as the piano has them (a voice's bar of rest can go unseen, a small picture's whole rest): the voice's bar
+          // where it sings, the right hand's where it does not
+          var rp = staffBars(pr, ss[fill[si]], starts[fill[si]], true);
+          clefs = r.bars.map(function () { return kinds[si]; });
+          if (rp && rp.bars.length >= r.bars.length) {
+            var vb = r;
+            clefs = [];
+            r = { bars: [], spans: rp.spans, barlines: rp.barlines };
+            rp.bars.forEach(function (bar, j) {
+              var q = rp.spans[j], got = null, best = 0;
+              vb.spans.forEach(function (v, i) { var ov = Math.min(q[1], v[1]) - Math.max(q[0], v[0]); if (ov > best) { best = ov; got = vb.bars[i]; } });
+              var sings = got && best >= 0.5 * (q[1] - q[0]) && got.some(function (e) { return !e.rest; });
+              r.bars.push(sings ? got : bar); clefs.push(sings ? kinds[si] : kinds[fill[si]]);
+            });
+          }
+        }
+        if (keySig === null || (!first && starts[si].acc.length > Math.abs(keySig))) keySig = starts[si].key;
+        first = false;
+        systems.push({ staff: si, clef: kinds[si], clefs: clefs, bars: r.bars, spans: r.spans, barlines: r.barlines });
       }
-      if (keySig === null || (!first && starts[si].acc.length > Math.abs(keySig))) keySig = starts[si].key;
-      first = false;
-      systems.push({ staff: si, clef: kinds[si], clefs: clefs, bars: r.bars, spans: r.spans, barlines: r.barlines });
     }
+    if (!pr0) return { found: false, text: "No music staves found." };
     keySig = keySig || 0;
     var all = [], low = [];
     systems.forEach(function (sy) {
@@ -36117,9 +36890,9 @@ Lantern.RFB = (function () {
       if (t < barLen - 1e-6) { var r = { rest: true, len: barLen - t, added: true }; if (i === 0) bar.unshift(r); else bar.push(r); }
       else if (t > barLen + 1e-6) problems.push("bar " + (i + 1) + " adds up to " + t + " beats, not " + barLen);
     });
-    if (pr.cover && pr.cover.length) problems.push("a band across the picture covers some of the music" + (pr.cover.length > 1 ? " in " + pr.cover.length + " places" : "") + ": notes under it are not read");
-    var res = { found: true, key: keySig, time: time, bars: all, bass: low.some(Boolean) ? low : null, problems: problems, systems: systems.length, spacing: pr.sp0, angle: pr.angle,
-      cv: pr.cv, top: Math.max(0, (ss[0].lines[0] - 3 * ss[0].spacing) / pr.sc) };
+    if (cover.length) problems.push("a band across the picture covers some of the music" + (cover.length > 1 ? " in " + cover.length + " places" : "") + ": notes under it are not read");
+    var res = { found: true, key: keySig, time: time, bars: all, bass: low.some(Boolean) ? low : null, problems: problems, systems: systems.length, spacing: pr0.sp0, angle: pr0.angle,
+      cv: pr0.cv, top: Math.max(0, (pr0.ss[0].lines[0] - 3 * pr0.ss[0].spacing) / pr0.sc), pages: pages.length, pdfHeading: Array.isArray(cv) && cv.heading ? cv.heading : null };
     return write(res);
   }
   // write(reading) -> the reading with its lines for MAKE MUSIC: key (major or minor from where the tune ends), time, and
@@ -36225,7 +36998,13 @@ Lantern.RFB = (function () {
     if (!ns.length) { res.found = false; res.text = "Staves were found, but no notes on them."; return res; }
     var maj = pcOf(MAJ[k + 7]), min = (maj + 9) % 12, sc = 0, first = ns[0].midi % 12, last = ns[ns.length - 1].midi % 12;
     if (last === min) sc += 2; if (last === maj) sc -= 2; if (first === min) sc += 1; if (first === maj) sc -= 1;
-    if (ns.some(function (n) { return n.midi % 12 === (min + 11) % 12 && n.alter !== sigAlter(n.letter, k); })) sc += 1.5;
+    // the minor key's raised seventh -- by its letter (C# minor's B#, not a C natural, 1.22.6)
+    var ml = LET.indexOf(MIN[k + 7].charAt(0)), lt = (ml + 6) % 7;
+    if (ns.some(function (n) { return n.letter === lt && n.alter === sigAlter(lt, k) + 1; })) sc += 1.5;
+    // and where the tune stays: how long it holds each key note (a part that ends on neither, 1.22.6)
+    var onMaj = 0, onMin = 0;
+    ns.forEach(function (n) { if (n.midi % 12 === maj) onMaj += n.len; else if (n.midi % 12 === min) onMin += n.len; });
+    if (onMaj > 1.3 * onMin) sc -= 1; else if (onMin > 1.3 * onMaj) sc += 1;
     // the left hand says it too (1.22.4: an E minor piece that begins and ends on B was read as G major): where its first
     // and last notes are, and the minor key's raised seventh in it
     var bs = [];
@@ -36278,7 +37057,7 @@ Lantern.RFB = (function () {
     if (ch && ch.chosen.length) res.doubt.push((ch.chosen.length > 1 ? "bars " + ch.chosen[0] + "\u2013" + ch.chosen[ch.chosen.length - 1] + " have" : "bar " + ch.chosen[0] + " has") + " no left hand in the picture: Lantern chose " + (ch.chosen.length > 1 ? "their" : "its") + " chords");
     if (res.spacing && res.spacing < 6.5) res.doubt.push("the picture is small (its staff lines " + Math.round(res.spacing * 10) / 10 + " pixels apart): a closer picture reads surer");
     res.summary = nb + " bar" + (nb === 1 ? "" : "s") + " in " + res.keyName + ", " + res.time.join("/") + ", " + ns.length + " notes" + (res.systems > 1 ? " on " + res.systems + " lines of music" : "") +
-      (ch ? ", the chords from the left hand" : "");
+      (ch ? ", the chords from the left hand" : "") + (res.transposed ? ", as it sounds (written for " + res.transposed.name + ": " + res.transposed.how + ")" : "");
     res.text = "Sheet music read by Lantern: " + res.summary + (res.doubt.length ? " (" + res.doubt.join("; ") + ")" : "") + ":\n" + res.lines;
     return res;
   }
@@ -36289,8 +37068,56 @@ Lantern.RFB = (function () {
     if (/[a-z]/.test(s)) return s;   // as printed, unless it is all capitals
     return s.toLowerCase().split(" ").map(function (w, i) { return i && SMALL[w] ? w : w.charAt(0).toUpperCase() + w.slice(1); }).join(" ");
   }
+  // transposing(heading lines) -> how a part for an instrument "in B\u266d" (a clarinet, a trumpet), "in E\u266d" (an alto
+  // saxophone), "in F" (a horn), "in A" sounds against its printed notes (1.22.6): Lantern plays what is heard
+  var TRANS = [
+    [/\b(tenor\s+sax(ophone)?|bass\s+clarinet|baritone|euphonium)\b[^]*\bin\s+B\s*(b|\u266d|-?\s*flat)(?![A-Za-z])/i, -14, -8, -2, "an octave and a whole step lower"],
+    [/\bbaritone\s+sax(ophone)?\b[^]*\bin\s+E\s*(b|\u266d|-?\s*flat)(?![A-Za-z])/i, -21, -12, -3, "an octave and a major sixth lower"],
+    [/\b(clarinet|trumpet|cornet)\b[^]*\bin\s+E\s*(b|\u266d|-?\s*flat)(?![A-Za-z])/i, 3, 2, -3, "a minor third higher"],
+    [/\bin\s+E\s*(b|\u266d|-?\s*flat)(?![A-Za-z])/i, -9, -5, -3, "a major sixth lower"],
+    [/\bin\s+B\s*(b|\u266d|-?\s*flat)(?![A-Za-z])/i, -2, -1, -2, "a whole step lower"],
+    [/\b(horn|english\s+horn|cor\s+anglais|mellophone)\b[^]*\bin\s+F\b/i, -7, -4, -1, "a fifth lower"],
+    [/\b(clarinet|trumpet)\b[^]*\bin\s+A\b/i, -3, -2, 3, "a minor third lower"],
+    [/\btrumpet\b[^]*\bin\s+D\b/i, 2, 1, 2, "a whole step higher"],
+    [/\b(alto\s+flute)\b[^]*\bin\s+G\b/i, -5, -3, 1, "a fourth lower"]];
+  function transposing(lines) {
+    var s = (lines || []).join("\n"), out = null;
+    if (!/\b(clarinet|trumpet|cornet|flugelhorn|horn|sax(ophone)?|euphonium|baritone|anglais|mellophone|flute)\b/i.test(s)) return null;
+    TRANS.forEach(function (r) {
+      var m;
+      if (out || !(m = r[0].exec(s))) return;
+      var ln = String((lines || []).filter(function (l) { return r[0].test(l) || /\bin\s+[A-G]/i.test(l); })[0] || m[0]).replace(/\s+/g, " ");
+      // the instrument and its key, from the line (a composer's name printed on the same line is not part of it)
+      var nm = /(?:[A-Za-z]+\s+){0,3}in\s+[A-G](?:\s*(?:b|\u266d|-?\s*flat)(?![A-Za-z]))?/i.exec(ln);
+      out = { semis: r[1], letters: r[2], keyShift: r[3], how: r[4], name: (nm ? nm[0] : ln).trim().replace(/\b([BE])\s*(b|-?\s*flat)$/i, "$1\u266d") };
+    });
+    return out;
+  }
+  function transpose(res, t) {
+    function mv(e) {
+      if (!e || e.rest || e.midi == null) return;
+      e.midi += t.semis;
+      if (e.letter != null) { var d = e.oct * 7 + e.letter + t.letters; e.letter = ((d % 7) + 7) % 7; e.oct = Math.floor(d / 7); e.alter = e.midi - ((e.oct + 1) * 12 + NAT[e.letter]); }
+      (e.with || []).forEach(function (h) { if (h.midi != null) h.midi += t.semis; });
+    }
+    res.bars.forEach(function (b) { b.forEach(mv); });
+    (res.bass || []).forEach(function (b) { (b || []).forEach(mv); });
+    res.key = Math.max(-7, Math.min(7, res.key + t.keyShift));
+    res.transposed = t;
+    return write(res);
+  }
   function heading(res) {
     var TR = L.textReader;
+    // (1.22.6) a PDF's own words above the music: exact
+    if (res && res.found && res.pdfHeading && res.pdfHeading.length) {
+      var hl = res.pdfHeading;
+      res.heading = hl.slice(0, 5).map(function (l) { return l.text; });
+      var tt = transposing(res.heading);
+      if (tt && !res.transposed) transpose(res, tt);
+      var big = hl.slice().sort(function (a, b) { return b.size - a.size; })[0];
+      if (big) { res.title = titled(big.text); res.text = "\u201c" + res.title + "\u201d -- " + res.text; }
+      return Promise.resolve(res);
+    }
     if (!res || !res.found || !TR || !TR.read || !res.cv || !(res.top > 12) || typeof document === "undefined") return Promise.resolve(res);
     // the strip on white paper with room below it (Text Reader sizes its letters against the page)
     var cv = res.cv, h = Math.round(res.top), c = document.createElement("canvas");
@@ -36306,12 +37133,62 @@ Lantern.RFB = (function () {
         lines.push({ text: txt, h: ln.box[3], cx: ln.box[0] + ln.box[2] / 2 });
       }); });
       if (lines.length) res.heading = lines.slice(0, 4).map(function (l) { return l.text; });
+      var tt2 = transposing(lines.map(function (l) { return l.text; }));
+      if (tt2 && !res.transposed) transpose(res, tt2);
       var mid = lines.filter(function (l) { return Math.abs(l.cx - cv.width / 2) < 0.15 * cv.width; }).sort(function (a, b) { return b.h - a.h; })[0];
       if (mid) { res.title = titled(mid.text); res.text = "\u201c" + res.title + "\u201d -- " + res.text; }
       return res;
     }, function () { return res; });
   }
-  SM.song = song; SM.prepare = prepare; SM.heading = heading; SM._song = { titled: titled, write: write,  prepare: prepare, headsOn: headsOn, components: components, accidental: accidental, rest: rest, barsOn: barsOn, startOn: startOn, refineX: refineX, filledOf: filledOf, fake: fake, stemOf: stemOf, beamsOf: beamsOf, dotOf: dotOf, attached: attached, runW: runW, outerW: outerW, extent: extent, staffBars: staffBars, chordsOf: chordsOf, groupsOf: groupsOf };
+  // pdfMusic(file or bytes, {max}) -> Promise<{pages: [canvas], count, title} or null> (1.22.6): the pages of a PDF that are
+  // printed music, drawn as they look (PDF_DRAW: a music program's PDF has no picture -- its notes are letters of a music
+  // font), each with two staves or more; the pages after the music ends are not read
+  SM.isPdf = function (f) { return !!f && (/pdf$/i.test(f.type || "") || /\.pdf$/i.test(f.name || "")); };
+  SM.pdfMusic = async function (src, opts) {
+    opts = opts || {};
+    if (!L.pdf || !L.pdf.open || !(L.pdf.pageDraw || L.pdf.pageImage)) return null;
+    var pdf = await L.pdf.open(src), out = [], max = opts.max || 8;
+    for (var i = 0; i < pdf.count && out.length < max; i++) {
+      var cv = null;
+      try { cv = L.pdf.pageDraw ? await L.pdf.pageDraw(pdf, i, { scale: 2.5, maxSide: 3000 }) : await L.pdf.pageImage(pdf, i, { maxSide: 3000 }); } catch (e) { cv = null; }
+      var n = 0;
+      try { n = cv ? SM.staves(cv).length : 0; } catch (e2) { n = 0; }
+      if (n >= 2) {
+        if (!out.length && L.pdf.pageText) {   // the words printed above the music, as the PDF has them (a music font's letters are not words)
+          try {
+            var pt = await L.pdf.pageText(pdf, i), hd = [];
+            for (var k = 0; k < pt.lines.length && hd.length < 8; k++) {
+              var tx = pt.lines[k].text.replace(/\s+/g, " ").trim(), letters = tx.replace(/[^A-Za-z]/g, "").length;
+              if (!tx) continue;
+              if (/[^\x20-\x7e\u00c0-\u017f\u2018-\u201d\u266d\u266f]/.test(tx) || letters < 0.5 * tx.replace(/\s/g, "").length) { if (hd.length) break; continue; }
+              if (letters >= 3) hd.push({ text: tx, size: pt.lines[k].size || 0 });
+            }
+            out.heading = hd;
+          } catch (e3) { }
+        }
+        out.push(cv);
+      }
+      else if (out.length) break;
+    }
+    if (out.length && !out.heading) out.heading = [];
+    return out.length ? { pages: out, count: pdf.count, title: pdf.title || "" } : null;
+  };
+  // pdfPictures(file) -> Promise<[File] or null>: a music PDF's pages as pictures (PNG), for Chat to show the AI and to read --
+  // each picture carries all the music pages, so the piece is read whole
+  SM.pdfPictures = async function (file) {
+    var m = await SM.pdfMusic(file);
+    if (!m) return null;
+    var base = (file.name || "music").replace(/\.pdf$/i, ""), files = [];
+    for (var i = 0; i < m.pages.length; i++) {
+      var cv = m.pages[i], blob = await new Promise(function (ok) { cv.toBlob(ok, "image/png"); });
+      if (!blob) continue;
+      var f = new File([blob], base + (m.pages.length > 1 ? " (page " + (i + 1) + ")" : "") + ".png", { type: "image/png" });
+      f.musicPages = m.pages; f.musicPdf = file.name || "music.pdf";
+      files.push(f);
+    }
+    return files.length ? files : null;
+  };
+  SM.song = song; SM.prepare = prepare; SM.heading = heading; SM._song = { titled: titled, write: write,  prepare: prepare, headsOn: headsOn, components: components, accidental: accidental, rest: rest, barsOn: barsOn, startOn: startOn, refineX: refineX, filledOf: filledOf, fake: fake, stemOf: stemOf, beamsOf: beamsOf, dotOf: dotOf, attached: attached, runW: runW, outerW: outerW, extent: extent, staffBars: staffBars, chordsOf: chordsOf, groupsOf: groupsOf, transposing: transposing, transpose: transpose };
 })();
 // ===========================================================================
 // MODULE: SHEET_MUSIC_SONG - END
@@ -36381,13 +37258,27 @@ Lantern.RFB = (function () {
     return c;
   }
   function mount(box) {
-    var cv = null, res = null;
+    var cv = null, res = null, pages = null;
     var keySel = el("select", { "aria-label": "Key signature" }, SM.KEYS.map(function (k) { return el("option", { value: String(k[0]), text: k[1] }); }));
     var clefSel = el("select", { "aria-label": "Staves" }, [["auto", "Staves: find out"], ["piano", "Piano (treble + bass)"], ["treble", "All treble clef"], ["bass", "All bass clef"]].map(function (o) { return el("option", { value: o[0], text: o[1] }); }));
     var bpm = el("input", { type: "number", min: "30", max: "240", value: "80", style: "width:70px", "aria-label": "Beats per minute" });
     var out = el("div", {}), msg = el("p", { "class": "muted", "aria-live": "polite" });
-    var inp = el("input", { type: "file", accept: "image/*", style: "display:none" });
-    inp.onchange = async function () { if (inp.files && inp.files[0]) { try { cv = await load(inp.files[0]); go(); } catch (e) { msg.textContent = "Could not open it: " + (e.message || e); } } inp.value = ""; };
+    var inp = el("input", { type: "file", accept: "image/*,application/pdf,.pdf", style: "display:none" });
+    inp.onchange = async function () {
+      var f = inp.files && inp.files[0];
+      inp.value = "";
+      if (!f) return;
+      try {
+        pages = null;
+        if (SM.isPdf && SM.isPdf(f)) {   // (1.22.6) a PDF of music: its pages drawn as they look, read as one piece
+          msg.textContent = "Drawing the PDF\u2019s pages\u2026";
+          var m = SM.pdfMusic ? await SM.pdfMusic(f) : null;
+          if (!m) { msg.textContent = "No music staves found in that PDF" + (L.pdf && L.pdf.pageDraw ? "." : ": this copy of Lantern cannot draw PDF pages."); return; }
+          pages = m.pages; cv = pages[0];
+        } else cv = await load(f);
+        go();
+      } catch (e) { msg.textContent = "Could not open it: " + (e.message || e); }
+    };
     async function load(f) {
       if (L.textReader && L.textReader.image) return L.textReader.image.load(f);
       return new Promise(function (ok, bad) { var u = URL.createObjectURL(f), im = new Image(); im.onload = function () { var c = document.createElement("canvas"); c.width = im.naturalWidth; c.height = im.naturalHeight; c.getContext("2d").drawImage(im, 0, 0); URL.revokeObjectURL(u); ok(c); }; im.onerror = function () { bad(new Error("not a picture")); }; im.src = u; });
@@ -36397,8 +37288,8 @@ Lantern.RFB = (function () {
       out.innerHTML = "";
       res = SM.read(cv, { key: +keySel.value, clefs: clefSel.value });
       if (!res.staves) { msg.textContent = "No music staves found. The five lines of each staff need to run most of the way across the picture; crop it to the music and keep it level."; return; }
-      var song = SM.song ? SM.song(cv) : null;
-      msg.textContent = "Found " + res.staves + " staves and " + res.notes.length + " notes" + (res.mode === "piano" ? " (piano: treble and bass)" : "") + "." +
+      var song = SM.song ? SM.song(pages || cv) : null;
+      msg.textContent = (pages && pages.length > 1 ? "Page 1 of " + pages.length + " pages of music: f" : "F") + "ound " + res.staves + " staves and " + res.notes.length + " notes" + (res.mode === "piano" ? " (piano: treble and bass)" : "") + "." +
         (song && song.found ? "" : " Pitches only: note lengths are not read.");
       out.appendChild(draw(res.canvas || cv, res, 760));
       if (song && song.found) {
@@ -36427,10 +37318,10 @@ Lantern.RFB = (function () {
       ].filter(Boolean)));
     }
     keySel.onchange = go; clefSel.onchange = go;
-    box.appendChild(el("p", { "class": "muted", text: "A photo or scan of printed music becomes notes you can see, hear and save. Crop to the music and keep the lines level for the best reading." }));
-    box.appendChild(el("div", { "class": "row", style: "flex-wrap:wrap" }, [inp, el("button", { "class": "primary", text: "Open a picture of music", onclick: function () { inp.click(); } }), keySel, clefSel]));
+    box.appendChild(el("p", { "class": "muted", text: "A photo, scan or PDF of printed music becomes notes you can see, hear and save. Crop a photo to the music and keep the lines level for the best reading." }));
+    box.appendChild(el("div", { "class": "row", style: "flex-wrap:wrap" }, [inp, el("button", { "class": "primary", text: "Open a picture or PDF of music", onclick: function () { inp.click(); } }), keySel, clefSel]));
     box.appendChild(msg); box.appendChild(out);
-    if (SM.pending) { cv = SM.pending; SM.pending = null; go(); }
+    if (SM.pending) { var pd = SM.pending; SM.pending = null; if (Array.isArray(pd)) { pages = pd; cv = pd[0]; } else { cv = pd; pages = null; } go(); }
   }
   var MC = window.Lantern.musicCards = window.Lantern.musicCards || [];
   MC.push({ title: "Read sheet music", mount: mount });
@@ -36451,19 +37342,19 @@ Lantern.RFB = (function () {
     ["Give it pages", "<p><b>Open pictures or a PDF</b> (several pictures at once are one document, in the order chosen), <b>Take a photo</b> on a phone, drop files on the box, or <b>paste a screenshot</b> with Ctrl+V while the tile is open.</p>" +
       "<p>Example: photograph a motor's nameplate, open it, and the plate's lines come back as text (MODEL PX-2200, 400V 3PH 50HZ ...).</p>"],
     ["Long documents", "<p>A long PDF is read in <b>sections</b> (10 pages unless you choose 5, 20 or 50). Each section is a button: tap one to read those pages. Pictures of earlier sections are let go, so a whole manual can be worked through on a small device. <b>Stop</b> halts reading.</p>" +
-      "<p>Pages of a PDF that already carry their own words (made on a computer, or scanned and read before) use those words: exact and instant. Only pages that are pictures are read.</p>"],
+      "<p>Pages of a PDF that already carry their own words (made on a computer, or scanned and read before) use those words: exact and instant. Only pages that are pictures are read; a page with no picture and no words (its letters drawn as shapes) is drawn as it looks and read like a picture.</p>"],
     ["How sure it is", "<p>Each page shows the picture with a box round every word: <b>green</b> sure, <b>amber</b> fairly sure, <b>red</b> guessing, and how sure Lantern is of the page. A page scanned sideways or upside down is turned first; italic print is stood upright.</p>" +
       "<p>Correct the text in the box under the picture and press <b>Keep my corrections</b>: words you add are learnt and remembered for next time.</p>"],
     ["Second reader", "<p>When the AI in use can see pictures, <b>Second reader (AI)</b> asks it to read the same page on its own. Lantern lines the two readings up word by word and marks every place they differ in yellow; tap one to take the AI's words there.</p>"],
     ["Saving and sharing", "<p><b>Copy text</b>, <b>Save .txt</b>, <b>Open in Writer</b>; <b>Searchable PDF</b> saves the pages exactly as they look with the words hidden behind them, so any PDF viewer can search, select and copy them; <b>Words + positions</b> saves every word with its box and certainty (JSON).</p>"],
     ["Ask Chat about it", "<p><b>Ask Chat about it</b> hands the document to Chat. In Chat the \ud83d\udcc4 button does the same from there. Each question then gets the document's most relevant passages, numbered [1], [2] ..., and Lantern checks the AI's quotes and sentences against them. Name a page (\u201cwhat does page 57 say about the pump?\u201d) and Lantern reads that part first.</p>"],
     ["What it cannot read yet", "<p><b>Handwriting</b> is not read yet: it needs its own reader (a separate module waits for it). A page that is mostly guesses says so; the Second reader can help there. PDF pictures in JBIG2 or JPEG 2000 packing cannot be opened yet. Very small, blurred or curved text reads worse: photograph pages flat, in good light, filling the frame.</p>"],
-    ["Sheet music", "<p>A page with music staves offers <b>Read the music</b>, which opens the Sheet Music Reader in the Music tile.</p>"]
+    ["Sheet music", "<p>A page with music staves offers <b>Read the music</b>, which opens the Sheet Music Reader in the Music tile. A PDF of printed music (from Sibelius, Finale, MuseScore, LilyPond or a scan) is drawn as it looks and offered the same way: its notes are letters of a music font, so its \u201cwords\u201d would be nonsense.</p>"]
   ]);
   if (L.guide.append) {
     try {
-      L.guide.append("music", [["Read sheet music", "<p>Open a photo or scan of printed music: Lantern finds the staves, names every note head (drawn over the picture), lists the notes line by line, plays them, and saves them as MIDI or JSON. Choose the <b>key signature</b> and whether the staves are piano (treble and bass) or one clef. Pitches are read, not note lengths, so playback gives each chord one beat. <b>Ask Chat about it</b> gives the notes to the AI.</p>"]]);
-      L.guide.append("chat", [["Documents (\ud83d\udcc4)", "<p>The \ud83d\udcc4 button gives Chat a picture of a page, a label, a screenshot or a PDF. Text Reader reads it, and every question after that gets the document's passages first, checked like library passages. A picture of sheet music is read as notes. <b>Stop using it</b> returns Chat to the library.</p>"]]);
+      L.guide.append("music", [["Read sheet music", "<p>Open a photo, scan or PDF of printed music (a PDF's pages are drawn as they look and read as one piece): Lantern finds the staves, names every note head (drawn over the picture), lists the notes line by line, plays them, and saves them as MIDI or JSON. Choose the <b>key signature</b> and whether the staves are piano (treble and bass) or one clef. Pitches are read, not note lengths, so playback gives each chord one beat. <b>Ask Chat about it</b> gives the notes to the AI.</p>"]]);
+      L.guide.append("chat", [["Documents (\ud83d\udcc4)", "<p>The \ud83d\udcc4 button gives Chat a picture of a page, a label, a screenshot or a PDF. Text Reader reads it, and every question after that gets the document's passages first, checked like library passages. A picture of sheet music is read as notes, and so is a PDF of printed music: Lantern draws its pages and reads them as one piece (a part for a clarinet or trumpet in B\u266d, a horn in F, a saxophone in E\u266d is given as it sounds). <b>Stop using it</b> returns Chat to the library.</p>"]]);
     } catch (e) { }
   }
 })();
@@ -37554,8 +38445,21 @@ Lantern.RFB = (function () {
     note("The AI in use cannot see pictures, and Text Reader is not in this copy of Lantern, so the picture was not used.", "danger");
     return Promise.resolve();
   }
+  function isPdf(f) { return !!f && (/pdf$/i.test(f.type || "") || /\.pdf$/i.test(f.name || "")); }
   async function add(files) {
-    files = (files || []).filter(function (f) { return f && /^image\x2F/i.test(f.type || "image/"); });
+    files = (files || []).filter(Boolean);
+    // (1.22.6) a PDF of printed music: its pages drawn as pictures, for the AI to see and Lantern to read as one piece; any
+    // other PDF is a document for Text Reader
+    var pdfs = files.filter(isPdf);
+    files = files.filter(function (f) { return !isPdf(f) && /^image\x2F/i.test(f.type || "image/"); });
+    for (var pi = 0; pi < pdfs.length && api; pi++) {
+      var pics = null;
+      if (api.status) api.status("looking at the PDF\u2026");
+      try { pics = L.sheetMusic && L.sheetMusic.pdfPictures ? await L.sheetMusic.pdfPictures(pdfs[pi]) : null; } catch (e) { pics = null; }
+      if (api.status) api.status("");
+      if (pics) { note("\u201c" + (pdfs[pi].name || "The PDF") + "\u201d is printed music: Lantern drew its " + (pics.length === 1 ? "page" : pics.length + " pages of music") + " as " + (pics.length === 1 ? "a picture" : "pictures") + ", to read as one piece."); files = files.concat(pics); }
+      else if (L.textReader && L.textReader.chatAttach) L.textReader.chatAttach(api, [pdfs[pi]]);
+    }
     if (!files.length || !api) return;
     var room = MAXN - pending.length;
     if (room <= 0) { note("Chat takes up to " + MAXN + " pictures with one message."); return; }
@@ -37612,9 +38516,9 @@ Lantern.RFB = (function () {
     if (!dt) return out;
     if (dt.items && dt.items.length) for (i = 0; i < dt.items.length; i++) {
       var it = dt.items[i];
-      if (it && it.kind === "file" && /^image\x2F/i.test(it.type || "")) { var f = it.getAsFile && it.getAsFile(); if (f) out.push(f); }
+      if (it && it.kind === "file" && /^image\x2F|pdf$/i.test(it.type || "")) { var f = it.getAsFile && it.getAsFile(); if (f) out.push(f); }
     }
-    if (!out.length && dt.files) for (i = 0; i < dt.files.length; i++) if (/^image\x2F/i.test(dt.files[i].type || "")) out.push(dt.files[i]);
+    if (!out.length && dt.files) for (i = 0; i < dt.files.length; i++) if (/^image\x2F|pdf$/i.test(dt.files[i].type || "") || isPdf(dt.files[i])) out.push(dt.files[i]);
     return out;
   }
   document.addEventListener("paste", function (e) {
@@ -37649,7 +38553,7 @@ Lantern.RFB = (function () {
     },
     run: function (a) {
       api = a;
-      var inp = el("input", { type: "file", accept: "image/*", multiple: "multiple", style: "display:none" });
+      var inp = el("input", { type: "file", accept: "image/*,application/pdf,.pdf", multiple: "multiple", style: "display:none" });
       inp.onchange = function () { if (inp.files && inp.files.length) add(Array.prototype.slice.call(inp.files)); };
       document.body.appendChild(inp); inp.click();
       setTimeout(function () { if (inp.parentNode) inp.parentNode.removeChild(inp); }, 60000);
@@ -48576,10 +49480,18 @@ Lantern.RFB = (function () {
   // read(question) -> Promise<the reading of the music in the pictures sent with it, or null>
   function read(q) {
     if (readings.hasOwnProperty(q)) return Promise.resolve(readings[q]);
-    var files = L.chatPics && L.chatPics.taken ? L.chatPics.taken(q) : [], best = null, i = 0;
+    var files = L.chatPics && L.chatPics.taken ? L.chatPics.taken(q) : [], best = null, i = 0, pdfs = [];
     function next() {
       if (i >= files.length) { keep(q, best); return titled(); }
       var f = files[i++];
+      if (f.musicPages) {   // (1.22.6) a music PDF's pages: read together, once
+        if (pdfs.indexOf(f.musicPages) >= 0) return next();
+        pdfs.push(f.musicPages);
+        var rp = null;
+        try { rp = L.sheetMusic.song(f.musicPages); } catch (e) { rp = null; }
+        if (rp && rp.found && rp.tune && rp.tune.length >= 4 && (!best || rp.tune.length > best.tune.length)) best = rp;
+        return next();
+      }
       return canvasOf(f).then(function (cv) {
         var r = null;
         try { r = L.sheetMusic.song(cv); } catch (e) { r = null; }

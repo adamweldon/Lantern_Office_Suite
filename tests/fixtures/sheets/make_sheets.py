@@ -33,6 +33,20 @@ with sync_playwright() as p:
         im = Image.open(big).convert("RGB")
         for w in (900, 820, 760, 700): im.resize((w, round(im.height * w / im.width)), Image.LANCZOS).save(os.path.join(HERE, "%s_%d.png" % (name, w)))
     b.close()
+# 1.22.6: ode_clarinet.pdf -- the Ode as a clarinet part in B flat (printed a whole step higher, in D major) under its title and
+# instrument, made into a PDF by Chromium: a music program's PDF has no picture -- its notes are drawn
+if not ONLY or "ode_clarinet" in ONLY:
+    tk = verovio.toolkit()
+    tk.setOptions({"pageWidth": 2100, "pageHeight": 60000, "scale": 60, "adjustPageHeight": True, "footer": "none", "header": "none", "breaks": "auto", "inputFrom": "abc", "svgViewBox": False})
+    tk.loadData(E["ode_clarinet_abc"])
+    with sync_playwright() as p:
+        b = p.chromium.launch(); pg = b.new_page()
+        pg.set_content("<html><body style='margin:0;background:#fff;font-family:serif'><div style='padding:30px 40px'><div style='text-align:center;font-size:30px'>Ode to Joy</div>"
+                       "<div style='display:flex;justify-content:space-between;font-size:15px;margin:6px 0 10px'><span>Clarinet in B\u266d</span><span>Ludwig van Beethoven</span></div>"
+                       "<div id=s>" + tk.renderToSVG(1) + "</div></div></body></html>")
+        pg.eval_on_selector("#s svg", "s => { s.style.width = '720px'; s.style.height = 'auto'; }")
+        pg.pdf(path=os.path.join(HERE, "ode_clarinet.pdf"), format="Letter")
+        b.close()
 # the banner (1.22.1): across the fourth staff (the second system's left hand), a space above it to a space below
 if ONLY and "ode_piano" not in ONLY: sys.exit(0)
 from PIL import ImageDraw
@@ -48,4 +62,3 @@ st = lines[15:20]; sp = (st[4] - st[0]) / 4
 d = ImageDraw.Draw(im); d.rectangle([0, int(st[0] - sp), W, int(st[4] + sp)], fill=(47, 51, 55))
 d.text((W // 2 - 60, int((st[0] + st[4]) / 2) - 6), "Preview ends here", fill=(255, 255, 255))
 im.save(os.path.join(HERE, "ode_banner_900.png"))
-

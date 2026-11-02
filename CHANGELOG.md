@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.22.6 — A PDF of printed music (2026-11-02)
+
+Adam opened a PDF of Ode to Joy for clarinet (a Sibelius file from IMSLP)
+in Lantern: it loaded, but neither Lantern nor the AI knew it was music. A
+music program's PDF has no picture in it -- its staff lines and stems are
+drawn as lines, and its notes, clefs, rests and sharps as letters of a music
+font -- so Text Reader took its "words" (nonsense) and there was no page to
+read music from.
+
+- **A PDF page drawn as it looks** (PDF_DRAW, new): the page's drawing
+  program -- lines, curves, fills, line widths, dashes, colours, clipping,
+  forms and pictures -- and its words in the fonts the PDF carries, from the
+  fonts' own outlines: TrueType (and CID-keyed TrueType), CFF (Type 1C, and
+  CID-keyed), Type 1 (decrypted; flex, accented letters) and Type 3; a font
+  the PDF does not carry is drawn in the browser's nearest, spaced by its own
+  widths. No library: it stays offline.
+- **Music PDFs read as music**: in Chat (the page button, dropped or pasted,
+  or the picture button), the Music tile (Open a picture or PDF of music) and
+  Text Reader (This PDF is printed music: Read the music). The pages with
+  staves are drawn and read as one piece; the AI is shown the pages and given
+  the tune's lines; the title comes from the PDF's own words.
+- **A part for a transposing instrument is given as it sounds**: a clarinet
+  or trumpet in B♭ (a whole step lower), a horn in F, a saxophone in E♭,
+  a clarinet in A, named above the music. Adam's clarinet part, printed in E
+  major, plays in D major as the orchestra hears it.
+- The Sheet Music Reader: a staff of its own (a part's, in any clef) is a
+  tune, not a left hand; a first or last bar with nothing read in it (a
+  part's rest under another instrument's cue notes) is a bar still; the minor
+  key's raised seventh is known by its letter (C# minor's B#, not a C), and
+  how long the tune holds each key note helps choose major or minor.
+- Text Reader draws a PDF page that has no picture and no words of its own,
+  and reads it like a picture.
+- Tests: `tests/music.js` (144: transposing parts); `tests/browser/sheet_read_e2e.py`
+  (ode_clarinet.pdf, made by make_sheets.py: drawn, read as it sounds, in
+  the Music tile, and in Chat dropped and through the page button);
+  `tests/browser/text_reader_e2e.py` (fonts_tt_t1.pdf, fonts_cff.pdf,
+  fonts_web.pdf, made by make_pdfs.py: each font kind drawn and read back).
+  Adam's PDF stays local (not committed).
+
 ## 1.22.5 — A song's sheet: a voice over a piano (2026-11-02)
 
 Adam tried two more pieces after 1.22.4 played his E minor piece well. One

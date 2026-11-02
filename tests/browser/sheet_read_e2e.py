@@ -169,13 +169,53 @@ try:
         vision[0] = True
         pg.evaluate("location.hash = 'music'"); time.sleep(1.2)
         path = os.path.join(SHEETS, "twinkle_g_900.png")
-        pg.locator("input[type=file][accept='image/*']").first.set_input_files(path); time.sleep(2.0)
+        pg.locator("input[type=file][accept='image/*,application/pdf,.pdf']").first.set_input_files(path); time.sleep(2.0)
         shown = pg.evaluate("(document.querySelector('pre[aria-label=\"The tune as song lines\"]') || {}).textContent || ''")
         ok("the Music tile's reader: the tune as song lines, with Make a song from it", shown.startswith("key G major\ntime 4/4\nmelody G4 G D5 D") and pg.locator("button", has_text="Make a song from it").count() == 1, shown)
         pg.locator("button", has_text="Make a song from it").first.click(); time.sleep(1.5)
         ta = pg.evaluate("(document.querySelector('textarea[aria-label=Song]') || {}).value || ''")
         ok("...which opens it in the Make a song card, written out", ta.startswith("title Twinkle, Twinkle, Little Star\nkey G major") and "melody G4 G D5 D" in ta and "12 bars in G major" in pg.evaluate("document.body.innerText"), ta[:200])
         pg.screenshot(path=os.path.join(OUT, "sheet_song_card.png"))
+        # --- 1.22.6: a PDF of printed music (Adam's clarinet part from IMSLP: Lantern and the AI did not know it was music) ---
+        PDF = os.path.join(SHEETS, "ode_clarinet.pdf"); WANT = E["pdfs"]["ode_clarinet.pdf"]
+        rp = pg.evaluate("""(async function (a) {
+          var bin = atob(a), u = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+          var f = new File([u], 'ode_clarinet.pdf', { type: 'application/pdf' }), pdf = await Lantern.pdf.open(f), pic = await Lantern.pdf.pageImage(pdf, 0), m = await Lantern.sheetMusic.pdfMusic(f);
+          if (!m) return { none: true, picture: !!pic };
+          var r = Lantern.sheetMusic.song(m.pages); await Lantern.sheetMusic.heading(r);
+          return { picture: !!pic, pages: m.pages.length, key: r.key, keyName: r.keyName, time: r.time, title: r.title || null, summary: r.summary, lines: r.lines,
+            bars: r.bars.map(function (b) { return b.map(function (e) { return [e.rest ? null : e.midi, e.len]; }); }) }; })""", base64.b64encode(open(PDF, "rb").read()).decode())
+        ok("a music program's PDF (no picture in it: its notes drawn) is drawn, found to be music and read: the Ode for clarinet in B flat, printed in D major, read as it sounds in C major, every note",
+           not rp.get("none") and not rp["picture"] and rp["pages"] == 1 and rp["bars"] == WANT["bars"] and rp["keyName"] == WANT["keyName"] and rp["time"] == WANT["time"] and rp["title"] == WANT["title"] and
+           "as it sounds (written for Clarinet in B\u266d: a whole step lower)" in rp["summary"], [rp.get("summary"), rp.get("lines"), rp.get("title")])
+        pg.locator("input[type=file][accept='image/*,application/pdf,.pdf']").first.set_input_files(PDF); time.sleep(4.0)
+        shown2 = pg.evaluate("(document.querySelector('pre[aria-label=\"The tune as song lines\"]') || {}).textContent || ''")
+        ok("...the Music tile's reader opens the PDF too: the tune as it sounds", "key C major\ntime 4/4\nmelody E4 E F G" in shown2, shown2[:200])
+        def pdf_round(question, rep, via):
+            vision[0] = True; calls.clear(); replies.clear(); replies.extend(rep)
+            pg.evaluate("Lantern.ai.detect()"); time.sleep(0.5)
+            pg.evaluate("location.hash = 'chat'"); pg.wait_for_selector("input[aria-label='Message']", timeout=15000); time.sleep(0.6)
+            before = pg.evaluate("document.querySelector('[aria-label=Conversation]').innerText.length")
+            if via == "drop":   # dropped or pasted on Chat, or given with the picture button
+                pg.evaluate("""(async function (a) {
+                  var bin = atob(a), u = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+                  await Lantern.chatPics.add([new File([u], 'ode_clarinet.pdf', { type: 'application/pdf' })]); })""", base64.b64encode(open(PDF, "rb").read()).decode())
+            else:   # Text Reader's page button
+                with pg.expect_file_chooser() as fc: pg.locator("button[title^='Give Chat a page to read']").first.click()
+                fc.value.set_files(PDF)
+            pg.wait_for_function("/is printed music: Lantern drew its page as a picture/.test(document.querySelector('[aria-label=Conversation]').innerText.slice(%d))" % before, timeout=30000)
+            time.sleep(1.5)
+            pg.locator("input[aria-label='Message']").fill(question)
+            pg.locator("button", has_text="Send").first.click()
+            pg.wait_for_function("/Lantern made a song|still questions|no MAKE/.test(document.querySelector('[aria-label=Conversation]').innerText.slice(%d))" % before, timeout=40000)
+            time.sleep(1.0)
+            return pg.evaluate("document.querySelector('[aria-label=Conversation]').innerText").__getitem__(slice(before, None))
+        CLAR = "MAKE MUSIC: Ode to Joy\n" + rp["lines"] + "\nstyle ballad\nsound clarinet\nEND"
+        for via in ("drop", "page button"):
+            tp = pdf_round("Can you turn this into a playable file for us?", [CLAR], via)
+            fp = text_of(calls[0]["messages"][-1]) if calls else ""
+            ok("Chat, the PDF given (%s): Lantern draws its page, reads it as music and gives the AI the tune as it sounds; the song is made" % via,
+               "SHEET MUSIC:" in fp and "key C major\ntime 4/4\nmelody E4 E F G" in fp and "Clarinet in B\u266d" in fp and "Lantern made a song: Ode to Joy" in tp and "still questions" not in tp, [fp[:700], tp[-400:]])
         ok("no page errors", not errs, errs)
         b.close()
 finally:

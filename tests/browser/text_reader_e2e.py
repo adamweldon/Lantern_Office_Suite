@@ -67,6 +67,21 @@ with sync_playwright() as p:
         back = subprocess.run(["pdftotext", out, "-"], capture_output=True, text=True).stdout
         check("searchable PDF: its hidden words read back", cer(back, r["text"]) < 0.02, back[:200])
     os.remove(out)
+    # 1.22.6: pages made on a computer, with no picture -- drawn as they look (PDF_DRAW): each font kind a PDF carries, read back
+    # by Text Reader as the PDF's own words (make_pdfs.py)
+    LINES = {"fonts_tt_t1.pdf": ["TrueType: quick brown foxes 0123", "Type 1: jumps over the lazy dog", "Standard Helvetica, not embedded"],
+             "fonts_cff.pdf": ["CFF Type 1C: waltz, bad nymph, for quick jigs vex 0123"],
+             "fonts_web.pdf": ["Type 3 letters: waltz, bad nymph", "Type 3 again: for quick jigs vex", "CID TrueType: sphinx of black quartz"]}
+    for f, kinds, lim in (("fonts_tt_t1.pdf", "TrueType, Type 1 and a standard font not embedded", 8.0), ("fonts_cff.pdf", "CFF (Type 1C)", 8.0), ("fonts_web.pdf", "Type 3 and CID-keyed TrueType", 8.0)):
+        r = pg.evaluate("""async function (f) {
+          var pdf = await Lantern.pdf.open(await (await fetch(f)).blob()), pi = await Lantern.pdf.pageImage(pdf, 0), t0 = performance.now(), cv = await Lantern.pdf.pageDraw(pdf, 0, { scale: 2.5 }), ms = performance.now() - t0;
+          var rd = await Lantern.textReader.read(cv), own = await Lantern.pdf.pageText(pdf, 0), x = cv.getContext('2d'), d = x.getImageData(0, 0, cv.width, cv.height).data, ink = 0;
+          for (var i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] < 384) ink++;
+          return { picture: !!pi, text: rd.text, own: own.text, ms: Math.round(ms), ink: ink / (cv.width * cv.height), w: cv.width }; }""", f)
+        got = [l for l in r["text"].split("\n") if l.strip()]
+        c = max(min(cer(g, want) for g in got) if got else 1 for want in LINES[f])   # each line, against the line read nearest it
+        check("%s, drawn as it looks (%s; no picture in it): its worst line %.2f%% misread (limit %.1f%%), drawn in %d ms" % (f, kinds, 100 * c, lim, r["ms"]),
+              not r["picture"] and 100 * c <= lim and r["ink"] > 0.005, [r["text"][:200], r["own"][:200]])
     m = pg.evaluate("""async function () { var cv = await Lantern.textReader.image.load(await (await fetch('pages/piano.png')).blob()); var res = Lantern.sheetMusic.read(cv, {});
       return {staves: res.staves, mode: res.mode, names: [].concat.apply([], res.chords.map(function (c) { return c.notes.map(function (n) { return n.name; }); }))}; }""")
     want = TRUTH["music"]["piano.png"]

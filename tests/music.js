@@ -463,6 +463,16 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   for (yy = 20; yy <= 238; yy++) bm1[yy * W1 + 40] = bm1[yy * W1 + 41] = 1;   // the line joining the first three
   for (yy = 330; yy <= 468; yy++) bm1[yy * W1 + 40] = bm1[yy * W1 + 41] = 1;   // and the last two
   var im1 = { w: W1, h: H1, b: bm1 }, ss1 = L.sheetMusic.staves(im1);
+  // --- 1.22.6: a part for an instrument in B flat (Adam's clarinet PDF): printed a whole step higher than it sounds ---
+  var tp = SMS.transposing(["Ode to Joy", "Clarinet in Bb Ludwig van Beethoven"]), th = SMS.transposing(["Horn in F"]), ta = SMS.transposing(["Alto Saxophone in E\u266d"]);
+  ok("a transposing instrument named above the music: clarinet in B flat a whole step lower, horn in F a fifth, alto saxophone in E flat a major sixth; a piano none",
+    tp && tp.semis === -2 && tp.name === "Clarinet in B\u266d" && th && th.semis === -7 && ta && ta.semis === -9 && SMS.transposing(["Piano", "Allegro"]) === null && SMS.transposing(["Tenor Saxophone in Bb"]).semis === -14,
+    [tp, th, ta]);
+  var clar = SMS.write({ found: true, key: 2, time: [4, 4], problems: [], systems: 1, spacing: 10,
+    bars: [[snt(Fl, 4, 1, 1), snt(Fl, 4, 1, 1), snt(Gl, 4, 0, 1), snt(Al, 4, 0, 1)], [snt(Al, 4, 0, 1), snt(Gl, 4, 0, 1), snt(Fl, 4, 1, 1), snt(El, 4, 0, 1)], [snt(Dl, 4, 0, 4)]] });
+  SMS.transpose(clar, tp);
+  ok("...its notes as they sound: the Ode printed in D major for the clarinet plays in C major", clar.keyName === "C major" && /^key C major\ntime 4\/4\nmelody E4 E F G \| G F E D \| C - - -$/.test(clar.lines) &&
+    /as it sounds \(written for Clarinet in B\u266d: a whole step lower\)/.test(clar.summary), [clar.lines, clar.summary]);
   ok("the staves of a song's sheet in their lines of music: a voice and a piano's two staves, then a piano alone", ss1.length === 5 &&
     JSON.stringify(SMS.groupsOf(im1, ss1)) === "[[0,1,2],[3,4]]", [ss1.length, SMS.groupsOf(im1, ss1)]);
   // --- 1.22.3: the MIDI file in a DAW (Adam): each track's level from Lantern's mix (CC7), its seat (CC10), the soft and full
