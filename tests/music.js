@@ -475,6 +475,14 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     /as it sounds \(written for Clarinet in B\u266d: a whole step lower\)/.test(clar.summary), [clar.lines, clar.summary]);
   ok("the staves of a song's sheet in their lines of music: a voice and a piano's two staves, then a piano alone", ss1.length === 5 &&
     JSON.stringify(SMS.groupsOf(im1, ss1)) === "[[0,1,2],[3,4]]", [ss1.length, SMS.groupsOf(im1, ss1)]);
+  // --- 1.22.7: Adam's 12/8 sheet (read as 4/4, every bar said to add up wrong): the time as printed; a bar that holds too much
+  // said once, in plain words, for the person -- and the AI given the notes alone ---
+  ok("bars read holding more than a bar: named once, runs joined", SMS.barsSaid([4, 5, 6, 8, 11]) === "bars 4\u20136, 8 and 11" && SMS.barsSaid([3]) === "bar 3" &&
+    SMS.barsSaid([1, 2, 9]) === "bars 1, 2 and 9", [SMS.barsSaid([4, 5, 6, 8, 11]), SMS.barsSaid([1, 2, 9])]);
+  var bc = SMS.write({ found: true, key: -2, time: [12, 8], problems: [], systems: 1, spacing: 10,
+    bars: [[snt(Dl, 4, 0, 1.5), snt(Gl, 4, 0, 1.5), snt(Bl, 4, -1, 0.5), snt(Al, 4, 0, 0.5), snt(Gl, 4, 0, 0.5), snt(Dl, 4, 0, 1.5)], [snt(Fl, 4, 1, 1.5), snt(Al, 4, 0, 1.5), snt(Gl, 4, 0, 3)]] });
+  ok("...a 12/8 reading's lines: a share an eighth, and they play the tune as read", /^key G minor\ntime 12\/8\nmelody D4 - - G - - B A G D - - \| F# - - A - - G - - - - -$/.test(bc.lines) &&
+    bc.played && bc.played.length === 9 && bc.played[0].len === 1.5 && bc.played[8].len === 3, [bc.lines, bc.played]);
   // --- 1.22.3: the MIDI file in a DAW (Adam): each track's level from Lantern's mix (CC7), its seat (CC10), the soft and full
   // passes on expression (CC11); for orchestral sample libraries, the dynamics on CC1 too and legato overlaps ---
   function midiTracks(b) {

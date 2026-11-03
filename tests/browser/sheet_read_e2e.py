@@ -4,7 +4,9 @@
 # reads a pasted picture of music (with a model that sees and one that does not) and gives the AI the lines; the
 # 35B's Ode to Joy from memory (Adam's screenshot, 1.20.0) goes back with the lines as read, and the copied lines
 # make the song; the Music tile's reader makes a song of it. 1.21.1: the chords from the piano's left hand, the title
-# from the heading, and the 35B's 1.21.0 reply (the tune copied, its own chords) sent back for the chords as read.
+# from the heading, and the 35B's 1.21.0 reply (the tune copied, its own chords) sent back for the chords as read. 1.22.7: each
+# sheet's time read from its printed digits (a 12/8 piano piece and a 6/8 tune in Leland among them); the AI given the notes,
+# not Lantern's doubts about them.
 # Screenshots in the folder given (default: temp).
 # Usage: python3 tests/browser/sheet_read_e2e.py [screenshot folder]
 import json, os, sys, subprocess, tempfile, time, base64
@@ -69,7 +71,8 @@ try:
           var m = Lantern.musicSong.make({ title: '', lines: r.lines.split('\\n') }), pl = m.plan, same = !!pl && pl.melody.length === r.tune.length;
           for (var i = 1; same && i < r.tune.length; i++) if (pl.melody[i].midi - pl.melody[i - 1].midi !== r.tune[i].midi - r.tune[i - 1].midi || Math.abs(pl.melody[i].len - r.tune[i].len) > 1e-9) same = false;
           return { found: true, key: r.key, time: r.time, bars: r.bars.map(function (b) { return b.map(function (e) { return [e.rest ? null : e.midi, e.len]; }); }),
-            lines: r.lines, same: same, problems: m.problems, ms: ms, staves: old.staves, spacing: r.spacing, chords: r.chords || null, title: r.title || null, heading: r.heading || null, doubt: r.doubt || [] }; })"""
+            lines: r.lines, same: same, problems: m.problems, ms: ms, staves: old.staves, spacing: r.spacing, chords: r.chords || null, title: r.title || null, heading: r.heading || null, doubt: r.doubt || [],
+            timeRead: !!r.timeRead }; })"""
         right = 0
         for f, want in sorted(E["sheets"].items()):
             r = pg.evaluate(READ, b64(f))
@@ -78,6 +81,7 @@ try:
             ok("%s (%.1f px a space): %d bars, key %+d, %s -- every note, length and rest as printed, read in %d ms" % (f, r.get("spacing", 0), len(want["bars"]), want["key"], "/".join(map(str, want["time"])), r.get("ms", 0)), good,
                [r.get("key"), r.get("time"), [(i + 1, g, w) for i, (g, w) in enumerate(zip(r.get("bars", []), want["bars"])) if g != w][:2]])
             ok("...its lines make the same tune again, nothing questioned; the pitch reader finds its staves too", r["found"] and r["same"] and not r["problems"] and r["staves"] >= 1, [r.get("problems"), r.get("staves")])
+            ok("...its time read from the digits printed after the key (1.22.7: not what most bars add up to)", r.get("timeRead") is True, r.get("time"))
             ok("...its chords " + ("from the left hand: " + want["chords"] if want.get("chords") else "left to the song (no left hand)"), r.get("chords") == want.get("chords"), r.get("chords"))
             if want.get("keyName"):   # 1.22.4: a minor key from the left hand
                 ok("...its key: " + want["keyName"], (r.get("lines") or "").startswith("key " + want["keyName"] + "\n"), (r.get("lines") or "")[:40])
@@ -162,6 +166,14 @@ try:
            "\u201cOde to Joy\u201d (Lantern knows the tune)" in t4 and
            "the song is called \u201cF\u00fcr Elise\u201d, but Lantern knows the tune as \u201cOde to Joy\u201d: write MAKE MUSIC: Ode to Joy" in back4 and "Lantern made a song: Ode to Joy" in t4,
            [first4[:700], back4[:400], t4[-300:]])
+        # 1.22.7: Adam asked whether Lantern's parenthesis (“bar 4 adds up to 52 beats, not 4”) helps the AI -- it did not: the AI
+        # is given the notes alone, the person what Lantern is unsure of, in plain words
+        ban = pg.evaluate(READ, b64("ode_banner_900.png"))
+        tb = chat_round("Read this screenshot of sheet music and make a playable file of it", ["MAKE MUSIC: Ode to Joy\n" + ban["lines"] + "\nstyle ballad\nsound piano\nEND"], True, "ode_banner_900.png")
+        firstb = text_of(calls[0]["messages"][-1]) if calls else ""
+        ok("Chat, a sheet Lantern is unsure of in places: the person is told where; the AI is given the notes as read, and not Lantern's doubts",
+           "a band across the picture covers some of the music" in tb and "SHEET MUSIC:" in firstb and ban["lines"] in firstb and "a band across" not in firstb and
+           "Lantern notes" not in firstb and "These are the notes printed in the picture. To play it" in firstb and "Lantern made a song: Ode to Joy" in tb, [firstb[:900], tb[:500]])
         t2 = chat_round("Play this for me", [COPY], False)
         first2 = text_of(calls[0]["messages"][-1]) if calls else ""
         ok("Chat (a model that cannot see): the picture is still read, and the song made at once", "SHEET MUSIC:" in first2 and ode["lines"] in first2 and len(calls) == 1 and "Lantern made a song: Ode to Joy" in t2, [len(calls), t2[-300:]])

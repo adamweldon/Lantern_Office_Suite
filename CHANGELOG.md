@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.22.7 — The time signature as printed; the AI given the notes alone (2026-11-03)
+
+Adam's next test: a 12/8 piece in G minor (a melody staff resting over a
+piano). Lantern read it as 4/4, and the note Chat showed was full of
+“bar 4 adds up to 52 beats, not 4”. He asked whether that helps the AI,
+and what Lantern was disagreeing with -- a reader should report what it read.
+It was Lantern checking its own reading against a time it had guessed from
+what most bars added up to; it never read the 12/8 printed after the key, so
+almost every bar looked wrong, and the AI, handed the list, “corrected” the
+music.
+
+- **The time signature is read as printed**: the digits after the key (12/8,
+  6/8, 3/4, 5/4, 6/16 ...), a C for 4/4 and a C struck through for 2/2. The
+  digits are read the way Text Reader reads letters -- Lantern draws 0 to 9 in
+  the computer's bold serif fonts and compares their shapes -- with their
+  holes counted (a 6's low, a 9's high, an 8's two; a 6 curled shut on itself,
+  as MuseScore 4's Leland draws it). Read on the first line of music only;
+  where the digits leave two readings close, what the bars add up to chooses;
+  with none printed, the bars decide as before. Adam's sheet now reads 9 bars
+  in G minor, 12/8, its left hand exact.
+- **The AI is given the notes alone.** Bars Lantern read too much into are
+  said once, for the person, in plain words (“the rhythm of bars 1, 2 and 4
+  is unsure: more was read in each than a bar of 12/8 holds”); each still
+  plays in a bar's time. Lantern's doubts are no longer in the AI's prompt --
+  it cannot see the picture to put them right.
+- A singer's staff resting through the piano's lines gives way to the piano,
+  and a small staff over a piano's (its spaces narrower) is joined to it; a
+  staff on its own with no note on it is not the tune.
+- A beam below the staff rising to its last note is no longer read as a note
+  under the staff (and that note no longer taken for its flag).
+- MAKE MUSIC takes any time the reader reads (up to 16 beats; 2, 4, 8 or 16).
+- Tests: `tests/music.js` (146: the bars named once, a 12/8 reading's lines);
+  `tests/browser/sheet_read_e2e.py` (every sheet's time read from its digits;
+  barcarolle_g_piano_900.png, a 12/8 piece written for the tests, and
+  jig_d_900/760.png, a 6/8 tune engraved in Leland, made by make_sheets.py;
+  Chat gives the AI the notes and the person the doubts). Adam's sheet stays
+  local (a published arrangement).
+
 ## 1.22.6 — A PDF of printed music (2026-11-02)
 
 Adam opened a PDF of Ode to Joy for clarinet (a Sibelius file from IMSLP)

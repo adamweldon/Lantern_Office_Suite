@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.22.6 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.22.7 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -173,7 +173,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.22.6",
+  version: "1.22.7",
   apps: {},
   order: []
 };
@@ -35981,7 +35981,8 @@ Lantern.RFB = (function () {
 //          (Lantern.musicSong) -- feature-detected
 // Exports: Lantern.sheetMusic.song(canvas or [canvas] (a piece's pages),
 //          opts) -> reading {found, key, keyName, time, bars, bass, tune,
-//          melody, chords, chordList, lines, summary, doubt, text},
+//          melody, chords, chordList, lines, summary, doubt, text, timeRead
+//          (1.22.7: the time from the digits printed after the key)},
 //          .heading(reading) -> Promise<reading with heading and title>,
 //          .prepare(canvas, opts) -> the picture made ready to read,
 //          .pdfMusic(file, {max}) -> Promise<{pages, count, title}|null>,
@@ -36006,8 +36007,9 @@ Lantern.RFB = (function () {
 // another note's stem, a patch flatter than a head (a half or whole rest),
 // a stemless patch narrower or taller than a whole note (a rest), an open
 // patch with no closed outline. Rests are read from their shapes; the time
-// is what most bars add up to; a bar that comes up short gets a rest (at
-// the start of the first bar, a pick-up), and one that runs over is said.
+// is what most bars add up to (1.22.7: as printed, its digits read); a bar
+// that comes up short gets a rest (at the start of the first bar, a pick-up),
+// and one that runs over is said.
 // The tune is the treble staves' top notes; an accidental lasts its bar.
 // 1.21.1: piano music's bass staves give the chords -- each bass note (or
 // each half bar of a busy bass) stands for the chord of the key, or one
@@ -36498,8 +36500,299 @@ Lantern.RFB = (function () {
     for (var k in by) { n++; if (by[k][1] - by[k][0] + 1 <= 0.45 * sp) thin++; }   // (a stem enlarged from a small picture is a little wider, 1.21.2)
     return n ? thin / n : 0;
   }
-  // startOn(clean, staff) -> what opens the staff: the clef, the key signature's sharps or flats, a time signature's digits
-  function startOn(im, s) {
+  // --- the time signature, as printed (1.22.7) --------------------------------------------------------------------------
+  // From Adam's 12/8 sheet, read as 4/4 with every bar said to add up wrong: the time was what most bars added up to, and the
+  // digits printed after the key were not read at all. Now they are read the way Text Reader reads letters -- Lantern draws
+  // 0 to 9 in the bold serif fonts the computer has and compares their shapes on a 12 x 12 grid, and counts their holes and
+  // where they are (a 6's low, a 9's high, an 8's two). A 4/4 printed as a C, a 2/2 as a C struck through. Where the digits
+  // leave two readings close, what the bars add up to chooses (song).
+  var TG = 12, TPL = null, TFAMS = ["serif", "Times New Roman", "Georgia", "Cambria", "Palatino Linotype", "Book Antiqua", "Century Schoolbook",
+    "Bookman Old Style", "DejaVu Serif", "Liberation Serif", "Nimbus Roman", "Noto Serif"];
+  function tGrid(bm) {
+    var out = new Float32Array(TG * TG), vw = Math.max(bm.w, 0.4 * bm.h), vh = Math.max(bm.h, 0.4 * bm.w), ox = (vw - bm.w) / 2, oy = (vh - bm.h) / 2;
+    for (var cy = 0; cy < TG; cy++) for (var cx = 0; cx < TG; cx++) {
+      var n = 0;
+      for (var sy = 0; sy < 3; sy++) for (var sx = 0; sx < 3; sx++) {
+        var x = Math.floor((cx + (sx + 0.5) / 3) / TG * vw - ox), y = Math.floor((cy + (sy + 0.5) / 3) / TG * vh - oy);
+        if (x >= 0 && y >= 0 && x < bm.w && y < bm.h) n += bm.b[y * bm.w + x];
+      }
+      out[cy * TG + cx] = n / 9;
+    }
+    return out;
+  }
+  function tCorr(a, b) {
+    var n = a.length, ma = 0, mb = 0, i, ab = 0, aa = 0, bb = 0;
+    for (i = 0; i < n; i++) { ma += a[i]; mb += b[i]; }
+    ma /= n; mb /= n;
+    for (i = 0; i < n; i++) { var da = a[i] - ma, db = b[i] - mb; ab += da * db; aa += da * da; bb += db * db; }
+    return ab / Math.sqrt(aa * bb || 1);
+  }
+  // holesOf(bitmap) -> [{cy, h, w, n}]: paper shut in by ink (0 one, 6 low, 9 high, 8 two), as shares of the digit's height/width
+  function holesOf(bm) {
+    var w = bm.w + 2, h = bm.h + 2, m = new Uint8Array(w * h), seen = new Uint8Array(w * h), out = [], x, y;
+    for (y = 0; y < bm.h; y++) for (x = 0; x < bm.w; x++) m[(y + 1) * w + x + 1] = bm.b[y * bm.w + x];
+    for (var i = 0; i < w * h; i++) {
+      if (m[i] || seen[i]) continue;
+      var st = [i], n = 0, edge = false, ys = 0, y0 = h, y1 = -1, x0 = w, x1 = -1;
+      seen[i] = 1;
+      while (st.length) {
+        var k = st.pop(), kx = k % w, ky = (k - kx) / w;
+        n++; ys += ky; y0 = Math.min(y0, ky); y1 = Math.max(y1, ky); x0 = Math.min(x0, kx); x1 = Math.max(x1, kx);
+        if (kx === 0 || ky === 0 || kx === w - 1 || ky === h - 1) edge = true;
+        if (kx > 0 && !m[k - 1] && !seen[k - 1]) { seen[k - 1] = 1; st.push(k - 1); }
+        if (kx < w - 1 && !m[k + 1] && !seen[k + 1]) { seen[k + 1] = 1; st.push(k + 1); }
+        if (ky > 0 && !m[k - w] && !seen[k - w]) { seen[k - w] = 1; st.push(k - w); }
+        if (ky < h - 1 && !m[k + w] && !seen[k + w]) { seen[k + w] = 1; st.push(k + w); }
+      }
+      if (!edge && n >= Math.max(3, 0.012 * bm.w * bm.h)) out.push({ n: n, cy: (ys / n - 1) / bm.h, h: (y1 - y0 + 1) / bm.h, w: (x1 - x0 + 1) / bm.w });
+    }
+    return out.sort(function (p, q) { return p.cy - q.cy; });
+  }
+  // the digits drawn in the computer's bold serif fonts (each font once: one not there is drawn in the browser's own)
+  function templates() {
+    if (TPL) return TPL;
+    TPL = [];
+    var c = typeof document !== "undefined" && document.createElement ? document.createElement("canvas") : null, g = c && c.getContext ? c.getContext("2d") : null, seen = {};
+    if (!g) return TPL;
+    c.width = 120; c.height = 150;
+    TFAMS.forEach(function (f) {
+      for (var d = 0; d <= 9; d++) {
+        g.fillStyle = "#fff"; g.fillRect(0, 0, 120, 150); g.fillStyle = "#000";
+        g.font = "bold 90px " + (f === "serif" ? "serif" : "\x22" + f + "\x22, serif");
+        g.textBaseline = "alphabetic"; g.fillText(String(d), 15, 115);
+        var px = g.getImageData(0, 0, 120, 150).data, x0 = 120, y0 = 150, x1 = -1, y1 = -1, x, y;
+        for (y = 0; y < 150; y++) for (x = 0; x < 120; x++) if (px[(y * 120 + x) * 4] < 128) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        if (x1 < 0) continue;
+        var bm = { w: x1 - x0 + 1, h: y1 - y0 + 1 };
+        bm.b = new Uint8Array(bm.w * bm.h);
+        for (y = y0; y <= y1; y++) for (x = x0; x <= x1; x++) bm.b[(y - y0) * bm.w + x - x0] = px[(y * 120 + x) * 4] < 128 ? 1 : 0;
+        var gr = tGrid(bm), key = d + ":" + Array.prototype.map.call(gr, function (v) { return Math.round(v * 9); }).join("");
+        if (seen[key]) continue;
+        seen[key] = 1;
+        TPL.push({ d: d, g: gr, ar: bm.w / bm.h });
+      }
+    });
+    return TPL;
+  }
+  // digitOf(bitmap) -> {0: score, ... 9: score}: how like each digit it is
+  function digitOf(bm) {
+    var gg = tGrid(bm), ar = bm.w / bm.h, hs = holesOf(bm), sc = {}, d;
+    templates().forEach(function (t) {
+      var s = tCorr(gg, t.g) - 0.5 * Math.abs(Math.log(Math.max(ar, 0.3) / Math.max(t.ar, 0.3)));
+      if (sc[t.d] == null || s > sc[t.d]) sc[t.d] = s;
+    });
+    // the holes: one low a 6, one high a 9 (or a 4's, above its bar), two an 8 -- a 6 or 9 curled shut has a small second one;
+    // a small picture fills them in (no hole is no proof), but a hole is never in a 1, 2, 3, 5 or 7
+    var n = hs.length, lo = n === 1 && hs[0].cy > 0.52 && hs[0].h < 0.6, hi = n === 1 && hs[0].cy < 0.48 && hs[0].h < 0.6;
+    var big = function (q) { return q.w >= 0.3; }, two = n === 2;
+    // (a 6 curled shut on itself -- Leland's, MuseScore's -- has one tall hole, as a 0 has: but its right side comes in above
+    // the middle, where a 0's does not; a 9 so curled, its left side below the middle)
+    function edge(a, b, right, inmost) {
+      var v = null;
+      for (var y = Math.round(a * (bm.h - 1)); y <= Math.round(b * (bm.h - 1)); y++) {
+        var f = -1, l = -1;
+        for (var x = 0; x < bm.w; x++) if (bm.b[y * bm.w + x]) { if (f < 0) f = x; l = x; }
+        if (f < 0) continue;
+        var e = right ? l / Math.max(1, bm.w - 1) : f / Math.max(1, bm.w - 1);
+        if (v === null || (inmost === right ? e < v : e > v)) v = e;
+      }
+      return v === null ? 0 : v;
+    }
+    var inR = edge(0.6, 0.9, true, false) - edge(0.3, 0.55, true, true), inL = edge(0.45, 0.7, false, true) - edge(0.1, 0.4, false, false);
+    var tall = n === 1 && hs[0].h >= 0.6, curl6 = tall && inR >= 0.15 && inL < 0.1, curl9 = tall && inL >= 0.15 && inR < 0.1;
+    for (d = 0; d <= 9; d++) {
+      if (sc[d] == null) sc[d] = -1;
+      var pen = 0;
+      if (/[12357]/.test(d)) pen = n ? 0.35 : 0;
+      else if (d === 0) pen = n === 1 ? (hs[0].h >= 0.4 && Math.abs(hs[0].cy - 0.5) < 0.15 && !curl6 && !curl9 ? 0 : 0.3) : n ? 0.35 : 0.1;
+      else if (d === 4) pen = n === 0 ? 0 : n === 1 && hs[0].cy < 0.62 && hs[0].h < 0.5 ? 0 : 0.35;
+      else if (d === 6) pen = lo || curl6 ? 0 : two && !big(hs[0]) && big(hs[1]) ? 0 : n ? 0.35 : 0.1;
+      else if (d === 9) pen = hi || curl9 ? 0 : two && big(hs[0]) && !big(hs[1]) ? 0 : n ? 0.35 : 0.1;
+      else if (d === 8) pen = two && big(hs[0]) && big(hs[1]) ? 0 : two ? 0.15 : n === 1 ? 0.15 : 0.2;
+      sc[d] -= pen;
+    }
+    return sc;
+  }
+  // timeSig(gray, ink, staff, from) -> {n, d, sym, x0, x1, sure, alt: [[n, d, score]]} or null -- what is printed after the
+  // clef and key, before the music
+  var TNUM = { 1: 0.5, 2: 1, 3: 1, 4: 1, 5: 0.95, 6: 1, 7: 0.95, 8: 0.9, 9: 1, 10: 0.8, 11: 0.8, 12: 1, 13: 0.75, 15: 0.75, 16: 0.75 }, TDEN = { 1: 0.3, 2: 1, 4: 1, 8: 1, 16: 0.9, 32: 0.5 };
+  function timeSig(gr, im, s, from) {
+    var sp = s.spacing, L = s.lines, x, y;
+    if (!gr || !gr.g || gr.w !== im.w) return null;
+    var yT = Math.max(0, Math.round(L[0] - 0.7 * sp)), yB = Math.min(im.h - 1, Math.round(L[4] + 0.7 * sp));
+    function inkCol(x) { for (var y = yT; y <= yB; y++) if (im.b[y * im.w + x]) return true; return false; }
+    var a = -1, b, gap = 0, x0 = Math.max(0, Math.round(from + 1));
+    for (x = x0; x < Math.min(im.w, x0 + 2.5 * sp); x++) if (inkCol(x)) { a = x; break; }
+    if (a < 0) return null;
+    b = a;
+    for (x = a; x < Math.min(im.w, a + 6 * sp); x++) { if (inkCol(x)) { b = x; gap = 0; } else if (++gap > 0.45 * sp) break; }
+    var W = b - a + 1, H = yB - yT + 1;
+    if (W < 0.3 * sp || W > 5 * sp) return null;
+    // the picture's own grey, cut half way between paper and ink (a small picture's 6 keeps its hole)
+    var lo = 255, m = new Uint8Array(W * H);
+    for (y = yT; y <= yB; y++) for (x = a; x <= b; x++) lo = Math.min(lo, gr.g[y * gr.w + x]);
+    var thr = (lo + 245) / 2;
+    for (y = yT; y <= yB; y++) for (x = a; x <= b; x++) m[(y - yT) * W + x - a] = gr.g[y * gr.w + x] < thr ? 1 : 0;
+    // each line's rows, as dark as it is here: the rows dark in the paper just before and after the signature, nearest the line
+    function dk(x, y) { return x >= 0 && x < gr.w && gr.g[y * gr.w + x] < thr ? 1 : 0; }
+    var bands = L.map(function (ly) {
+      var r0 = null, r1 = null;
+      for (var yy = Math.round(ly - 0.35 * sp); yy <= Math.round(ly + 0.35 * sp); yy++) {
+        if (yy < yT + 1 || yy > yB - 1) continue;
+        var n = dk(a - 2, yy) + dk(a - 3, yy) + dk(a - 4, yy) + dk(b + 2, yy) + dk(b + 3, yy) + dk(b + 4, yy);
+        if (n >= 4) { if (r0 === null) r0 = yy; r1 = yy; }
+      }
+      if (r0 === null) { r0 = Math.round(ly - 0.5); r1 = Math.round(ly + 0.5); }
+      return [r0 - yT, r1 - yT];
+    });
+    var half = Math.max.apply(null, bands.map(function (q) { return q[1] - q[0] + 1; })) / 2;
+    // a line's rows: the top and bottom lines' kept where a digit goes on inside them, the middle line's halves where the number
+    // above or below goes on into it, the other two where ink goes on both above and below (a digit's stroke across them,
+    // leaning as far as the line is thick)
+    var rm = Math.round(L[2] - yT);
+    bands.forEach(function (q, k) {
+      var r0 = Math.max(1, q[0]), r1 = Math.min(H - 2, q[1]), t = k === 1 || k === 3 ? Math.max(1, Math.round((r1 - r0 + 1) / 2)) : 0;
+      if (r1 < r0) return;
+      var keepAll = [];
+      for (var xx = 0; xx < W; xx++) {
+        var up = false, dn = false;
+        for (var dx = -t; dx <= t; dx++) {
+          var qx = xx + dx;
+          if (qx < 0 || qx >= W) continue;
+          if (m[(r0 - 1) * W + qx]) up = true;
+          if (m[(r1 + 1) * W + qx]) dn = true;
+        }
+        keepAll.push([up, dn]);
+      }
+      for (var r = r0; r <= r1; r++) for (xx = 0; xx < W; xx++) {
+        var u = keepAll[xx][0], d = keepAll[xx][1];
+        var keep = k === 0 ? d : k === 4 ? u : k === 2 ? (r <= rm ? u : d) : u && d;
+        if (!keep) m[r * W + xx] = 0;
+      }
+    });
+    function boxOf(r0, r1, c0, c1) {
+      var bx = null;
+      for (var y = r0; y <= r1; y++) for (var x = c0; x <= c1; x++) if (m[y * W + x]) {
+        if (!bx) bx = [x, y, x, y];
+        else { if (x < bx[0]) bx[0] = x; if (y < bx[1]) bx[1] = y; if (x > bx[2]) bx[2] = x; if (y > bx[3]) bx[3] = y; }
+      }
+      return bx;
+    }
+    function bitmap(bx) {
+      var bm = { w: bx[2] - bx[0] + 1, h: bx[3] - bx[1] + 1 };
+      bm.b = new Uint8Array(bm.w * bm.h);
+      for (var y = bx[1]; y <= bx[3]; y++) for (var x = bx[0]; x <= bx[2]; x++) bm.b[(y - bx[1]) * bm.w + x - bx[0]] = m[y * W + x];
+      return bm;
+    }
+    var all = boxOf(0, H - 1, 0, W - 1);
+    if (!all) return null;
+    var hAll = (all[3] - all[1] + 1) / sp, mid = (all[1] + all[3]) / 2 + yT;
+    // a C (4/4) or a C struck through (2/2): one sign about the middle line, two spaces tall -- struck through, a thin stroke
+    // down its middle, through its open side (and on past it above and below)
+    var c1 = Math.round(L[1] - 0.25 * sp - yT), c3 = Math.round(L[3] + 0.25 * sp - yT);
+    var body = boxOf(Math.max(0, c1), Math.min(H - 1, c3), 0, W - 1);
+    if (body && Math.abs(mid - L[2]) < 0.6 * sp) {
+      var thinOut = function (r0, r1) {   // only a thin stroke (or nothing) in these rows
+        var any = false;
+        for (var y = r0; y <= r1; y++) {
+          var f = -1, l = -1;
+          for (var x = 0; x < W; x++) if (m[y * W + x]) { if (f < 0) f = x; l = x; }
+          if (f >= 0) { any = true; if (l - f + 1 > 0.45 * sp) return null; }
+        }
+        return any;
+      };
+      var up = thinOut(0, Math.max(0, c1 - 1)), dn = thinOut(Math.min(H - 1, c3 + 1), H - 1);
+      var bw = (body[2] - body[0] + 1) / sp;
+      // (and two spaces tall where it is wide -- a note's head on the middle line, its stem up, is one)
+      var wide = 0;
+      for (y = body[1]; y <= body[3]; y++) {
+        var f0 = -1, l0 = -1;
+        for (x = body[0]; x <= body[2]; x++) if (m[y * W + x]) { if (f0 < 0) f0 = x; l0 = x; }
+        if (f0 >= 0 && l0 - f0 + 1 >= 0.4 * (body[2] - body[0] + 1)) wide++;
+      }
+      if (up !== null && dn !== null && bw >= 0.9 && bw <= 2.4 && hAll <= 4.4 && wide >= 1.4 * sp) {
+        // (its middle rows: a C's back and then its open side; struck through, ink again past the back -- the stroke)
+        var cut = up && dn, bh = body[3] - body[1] + 1, struck = 0, rows = 0;
+        for (y = Math.round(body[1] + 0.4 * bh); y <= Math.round(body[1] + 0.6 * bh); y++) {
+          var xb = body[0];
+          while (xb <= body[2] && !m[y * W + xb]) xb++;
+          while (xb <= body[2] && m[y * W + xb]) xb++;
+          var more = false;
+          for (x = xb + 1; x <= body[2]; x++) if (m[y * W + x]) more = true;
+          rows++; if (more) struck++;
+        }
+        if (rows && struck >= 0.7 * rows) cut = true;
+        return { n: cut ? 2 : 4, d: cut ? 2 : 4, sym: cut ? "cut" : "C", x0: a, x1: b, sure: true, alt: [[cut ? 2 : 4, cut ? 2 : 4, 1]] };
+      }
+    }
+    // digits: one number over the middle line, one under it, each about two spaces tall
+    function number(r0, r1) {
+      // its pieces of ink, without specks and a line's leftover ends; its digits by its width: one, or two run together or
+      // apart (a 12, a 16 -- cut where the least ink is, in the first half or so: the 1 is the narrow one)
+      var seen = new Uint8Array(W * H), parts = [], big = 0;
+      for (var y = r0; y <= r1; y++) for (var x = 0; x < W; x++) {
+        if (!m[y * W + x] || seen[y * W + x]) continue;
+        var st = [y * W + x], p = { x0: x, y0: y, x1: x, y1: y, n: 0 };
+        seen[y * W + x] = 1;
+        while (st.length) {
+          var k = st.pop(), kx = k % W, ky = (k - kx) / W;
+          p.n++; if (kx < p.x0) p.x0 = kx; if (kx > p.x1) p.x1 = kx; if (ky < p.y0) p.y0 = ky; if (ky > p.y1) p.y1 = ky;
+          for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) {
+            var qx = kx + dx, qy = ky + dy, q = qy * W + qx;
+            if (qx < 0 || qx >= W || qy < r0 || qy > r1 || seen[q] || !m[q]) continue;
+            seen[q] = 1; st.push(q);
+          }
+        }
+        parts.push(p); big = Math.max(big, p.y1 - p.y0 + 1);
+      }
+      parts = parts.filter(function (p) { return p.y1 - p.y0 + 1 >= 0.3 * big && p.n >= 0.02 * sp * sp; });
+      if (!parts.length) return null;
+      var bx = [W, H, -1, -1];
+      parts.forEach(function (p) { bx[0] = Math.min(bx[0], p.x0); bx[1] = Math.min(bx[1], p.y0); bx[2] = Math.max(bx[2], p.x1); bx[3] = Math.max(bx[3], p.y1); });
+      var hh = bx[3] - bx[1] + 1, w = bx[2] - bx[0] + 1;
+      if (hh < 1.2 * sp || hh > 3.2 * sp || w < 0.25 * sp) return null;
+      var out = [bx];
+      if (w > 1.05 * Math.max(hh, 1.9 * sp)) {
+        var best = -1, bn = 1e9;
+        for (x = bx[0] + Math.round(0.25 * w); x <= bx[0] + Math.round(0.62 * w); x++) {
+          var n = 0;
+          for (y = bx[1]; y <= bx[3]; y++) n += m[y * W + x];
+          if (n < bn) { bn = n; best = x; }
+        }
+        out = [boxOf(bx[1], bx[3], bx[0], best - 1), boxOf(bx[1], bx[3], best + 1, bx[2])].filter(Boolean);
+        if (out.length < 2) return null;
+      }
+      return { box: bx, digits: out.map(function (q) { return digitOf(bitmap(q)); }) };
+    }
+    // the two numbers part at the middle line
+    var top = number(0, rm), bot = number(rm + 1, H - 1);
+    if (!top || !bot) return null;
+    // the readings: the best few for each digit, put together; a time signature's numbers are ones music uses
+    function reads(num) {
+      var lists = num.digits.map(function (sc) {   // (a number of one digit is never 0)
+        var ks = Object.keys(sc).map(function (d) { return [+d, sc[d]]; }).filter(function (c) { return num.digits.length > 1 || c[0]; }).sort(function (p, q) { return q[1] - p[1]; });
+        return ks.filter(function (c, i) { return i < 2 || c[1] >= ks[0][1] - 0.3; }).slice(0, 5);
+      });
+      var out = [];
+      if (lists.length === 1) lists[0].forEach(function (c) { out.push([c[0], c[1]]); });
+      else lists[0].forEach(function (c0) { lists[1].forEach(function (c1) { out.push([c0[0] * 10 + c1[0], (c0[1] + c1[1]) / 2]); }); });
+      return out;
+    }
+    var alt = [];
+    reads(top).forEach(function (p) {
+      reads(bot).forEach(function (q) {
+        if (TNUM[p[0]] && TDEN[q[0]]) alt.push([p[0], q[0], (p[1] + q[1]) / 2 + 0.15 * (TNUM[p[0]] + TDEN[q[0]] - 2)]);
+      });
+    });
+    if (!alt.length) return null;
+    alt.sort(function (p, q) { return q[2] - p[2]; });
+    var best = alt[0];
+    if (best[2] < 0.25) return null;
+    return { n: best[0], d: best[1], sym: null, x0: a, x1: b, sure: best[2] >= 0.45 && (alt.length < 2 || best[2] - alt[1][2] >= 0.06), alt: alt.slice(0, 6) };
+  }
+  // startOn(clean, staff, grey) -> what opens the staff: the clef, the key signature's sharps or flats, a time signature (its
+  // digits read from the grey picture, 1.22.7)
+  function startOn(im, s, gr) {
     var sp = s.spacing, cs = joined(components(im, s.left, s.lines[0] - 3 * sp, s.left + 14 * sp, s.lines[4] + 3 * sp), sp, true), clef = null, acc = [], digits = [];
     cs.forEach(function (c) { if (c.y1 - c.y0 > 2.8 * sp && c.x1 - c.x0 > 0.8 * sp && c.x0 < s.left + 3 * sp && (!clef || c.x0 < clef.x0)) clef = c; });
     if (!clef) return { key: 0, clef: null, acc: [], digits: [], end: s.left };
@@ -36548,7 +36841,11 @@ Lantern.RFB = (function () {
     // all sharps or all flats: the more of them, or where the first one sits (sharps begin on the top line, flats on the middle)
     var sh = acc.filter(function (a) { return a.a === "#"; }).length, fl = acc.length - sh, n = Math.min(7, acc.length);
     if (sh === fl && n) sh = (acc[0].c.y0 + acc[0].c.y1) / 2 < s.lines[1] ? sh + 1 : sh - 1;
-    return { key: sh > fl ? n : -n, clef: clef, acc: acc, digits: digits, end: end };
+    // (1.22.7) the time signature after the key, read: the music begins after it (Adam's 12 and 8 touched, one blot too wide to
+    // be taken for digits)
+    var time = gr ? timeSig(gr, im, s, acc.length ? acc[acc.length - 1].c.x1 : clef.x1) : null, end0 = end;
+    if (time) end = Math.max(end, time.x1);
+    return { key: sh > fl ? n : -n, clef: clef, acc: acc, digits: digits, end: end, end0: end0, time: time };
   }
   var LET = "CDEFGAB", NAT = [0, 2, 4, 5, 7, 9, 11], SHARPS = [3, 0, 4, 1, 5, 2, 6], FLATS = [6, 2, 5, 1, 4, 0, 3];   // letter indexes F C G D A E B / B E A D G C F
   // letter and octave of a step on a staff: treble middle line B4, bass D3
@@ -36645,6 +36942,14 @@ Lantern.RFB = (function () {
           if ((dark(pr.cl, Math.round(h.x) - k, y + dy) && thin(Math.round(h.x) - k, y + dy)) || (dark(pr.cl, Math.round(h.x) + k, y + dy) && thin(Math.round(h.x) + k, y + dy))) return true;
       }
       return false;
+    });
+    // (1.22.7) a beam's end at a filled note's stem tip, taken for an open head, either side of the stem, is not a note (a beam
+    // below the staff rising to its last note: a D under the staff that was not there -- and the real note, on the same stem,
+    // was then taken for its flag)
+    hs = hs.filter(function (f) {
+      return f.filled || !hs.some(function (r) {
+        return r !== f && r.filled && r.stem && Math.abs(f.x - r.stem.x) < 1.25 * sp && Math.abs(f.y - r.stem.tip) < 0.8 * sp && Math.abs(f.y - r.y) > 0.8 * sp;
+      });
     });
     // a flag's curl at another note's stem tip is not a note
     hs = hs.filter(function (f) {
@@ -36787,7 +37092,7 @@ Lantern.RFB = (function () {
   function groupsOf(im, ss) {
     var out = [], cur = [0];
     for (var i = 1; i < ss.length; i++) {
-      var a = ss[i - 1], b = ss[i], sp = a.spacing, best = 0, y0 = Math.round(a.lines[4]), y1 = Math.round(b.lines[0]);
+      var a = ss[i - 1], b = ss[i], sp = Math.max(a.spacing, b.spacing), best = 0, y0 = Math.round(a.lines[4]), y1 = Math.round(b.lines[0]);   // (1.22.7: a small staff over a piano's, its spaces narrower)
       for (var x = Math.round(Math.min(a.left, b.left) - 1.5 * sp); x <= Math.round(Math.max(a.left, b.left) + 0.6 * sp) && best < 0.95; x++) {
         var n = 0;
         for (var y = y0; y <= y1; y++) if (dark(im, x, y)) n++;
@@ -36798,11 +37103,19 @@ Lantern.RFB = (function () {
     out.push(cur);
     return out;
   }
+  // barsSaid([4, 5, 7, 8, 9, 11]) -> "bars 4, 5, 7\u20139 and 11" (1.22.7)
+  function barsSaid(ns) {
+    var runs = [];
+    ns.forEach(function (n) { var r = runs[runs.length - 1]; if (r && n === r[1] + 1) r[1] = n; else runs.push([n, n]); });
+    var ws = [];
+    runs.forEach(function (r) { if (r[1] - r[0] >= 2) ws.push(r[0] + "\u2013" + r[1]); else for (var n = r[0]; n <= r[1]; n++) ws.push(String(n)); });
+    return (ns.length > 1 ? "bars " : "bar ") + (ws.length > 1 ? ws.slice(0, -1).join(", ") + " and " + ws[ws.length - 1] : ws[0]);
+  }
   function song(cv, opts) {
     opts = opts || {};
     // (1.22.6) the pages of a piece one after another (a PDF's pages): their lines of music in order, the key and the heading
     // from the first
-    var pages = Array.isArray(cv) ? cv : [cv], systems = [], keySig = null, first = true, pr0 = null, cover = [];
+    var pages = Array.isArray(cv) ? cv : [cv], systems = [], keySig = null, first = true, pr0 = null, cover = [], printed = [];
     for (var pgi = 0; pgi < pages.length; pgi++) {
       var pr = prepare(pages[pgi], opts);
       if (!pr) continue;
@@ -36814,7 +37127,7 @@ Lantern.RFB = (function () {
       // music's left hand) give the chords (1.21.1).
       // (1.22.1: a treble clef cut in pieces by the lines taken out is still one -- a piece of it reaches past the staff,
       // where a bass clef never goes)
-      var starts = ss.map(function (s) { return startOn(pr.cl, s); }), kinds = starts.map(function (k, i) {
+      var starts = ss.map(function (s) { return startOn(pr.cl, s, pr.gr); }), kinds = starts.map(function (k, i) {
         var c = k.clef, s = ss[i], h = c ? (c.y1 - c.y0 + 1) / s.spacing : 0;
         return !c ? (pr.mode === "piano" ? (i % 2 ? "bass" : "treble") : "treble") : h >= 4.8 || c.y1 > s.lines[4] + 0.6 * s.spacing || c.y0 < s.lines[0] - 0.6 * s.spacing ? "treble" : "bass";
       }), useT = kinds.indexOf("treble") >= 0;
@@ -36822,6 +37135,12 @@ Lantern.RFB = (function () {
       // in its top staff, the piano's right hand under it and its left hand at the bottom: the tune is the voice's, and where the
       // voice has no note in a bar (the piano's introduction, a bar's rest), the right hand's -- not both, one after the other
       var voice = {}, fill = {}, skip = {}, alone = {}, grp = groupsOf(pr.im, ss), joins = grp.some(function (g) { return g.length > 1; });
+      // (1.22.7) the time as printed at the start of the piece: on the first line of music's staves (one read further on would be
+      // a change of time -- or a note taken for a C: there the music begins where it did before)
+      starts.forEach(function (st, i) {
+        if (!st.time) return;
+        if (pr === pr0 && grp[0].indexOf(i) >= 0) printed.push(st.time); else st.end = st.end0;
+      });
       // (1.22.6) a staff of its own -- a part for one instrument, its lines not joined to another's -- is a tune in whatever
       // clef (a bassoon's line, a cello's); a bass staff is a left hand only under a treble one it is joined to (or, with
       // nothing joined on the page, in a piano's pairs)
@@ -36840,12 +37159,16 @@ Lantern.RFB = (function () {
         }
         var r = staffBars(pr, ss[si], starts[si], true), clefs = null;
         if (!r) continue;
+        // (1.22.7) a staff of its own with no note on it (a singer's line, resting through a page of the piano's) is not the tune
+        if (alone[si] && ss.length > 1 && !r.bars.some(function (b) { return b.some(function (e) { return !e.rest; }); })) continue;
         if (fill[si] != null) {
           // bar by bar as the piano has them (a voice's bar of rest can go unseen, a small picture's whole rest): the voice's bar
           // where it sings, the right hand's where it does not
           var rp = staffBars(pr, ss[fill[si]], starts[fill[si]], true);
           clefs = r.bars.map(function () { return kinds[si]; });
-          if (rp && rp.bars.length >= r.bars.length) {
+          // (1.22.7: a voice with no note in the whole line -- its bars' rests read however they are -- gives way to the piano)
+          var sung = r.bars.some(function (b) { return b.some(function (e) { return !e.rest; }); });
+          if (rp && (rp.bars.length >= r.bars.length || !sung)) {
             var vb = r;
             clefs = [];
             r = { bars: [], spans: rp.spans, barlines: rp.barlines };
@@ -36876,22 +37199,36 @@ Lantern.RFB = (function () {
         low.push(got && best > 0.5 * (sp[1] - sp[0]) ? got : null);
       });
     });
-    // the time: what most bars add up to
-    var sums = {}, best = null;
-    all.forEach(function (bar) { var t = 0; bar.forEach(function (e) { t += e.len; }); t = Math.round(t * 4) / 4; sums[t] = (sums[t] || 0) + 1; });
+    // the time: what most bars add up to -- or (1.22.7) as printed, its digits read on each staff that has it: of Lantern's few
+    // readings of them, the one the digits favour, unless what the bars add up to makes a close second the better one
+    var sums = {}, best = null, nb = all.length;
+    function sumOf(bar) { var t = 0; bar.forEach(function (e) { t += e.len; }); return t; }
+    all.forEach(function (bar) { var t = Math.round(sumOf(bar) * 4) / 4; sums[t] = (sums[t] || 0) + 1; });
     Object.keys(sums).forEach(function (k) { if (!best || sums[k] > sums[best]) best = k; });
     var B = +best || 4, eighths = 0, quarters = 0;
     all.forEach(function (bar) { bar.forEach(function (e) { if (e.len === 0.5 || e.len === 1.5) eighths++; else quarters++; }); });
-    var time = B === 3 && eighths > quarters ? [6, 8] : B === 1.5 ? [3, 8] : B === 2 ? [2, 4] : B === 3 ? [3, 4] : B === 6 ? [6, 4] : [4, 4];
-    var barLen = time[0] * 4 / time[1], problems = [];
-    // bars that do not add up: short ones get a rest (the first bar's before, a pick-up), long ones are said
+    var time = B === 3 && eighths > quarters ? [6, 8] : B === 1.5 ? [3, 8] : B === 2 ? [2, 4] : B === 3 ? [3, 4] : B === 6 ? [6, 4] : [4, 4], timeRead = false;
+    if (printed.length) {
+      var cand = {}, pick = null;
+      printed.forEach(function (t) { t.alt.forEach(function (q) { var k = q[0] + "/" + q[1]; cand[k] = (cand[k] || 0) + q[2]; }); });
+      Object.keys(cand).forEach(function (k) {
+        var nd = k.split("/"), len = nd[0] * 4 / nd[1], fit = nb ? all.filter(function (bar) { return Math.abs(sumOf(bar) - len) < 1e-6; }).length / nb : 0;
+        var sc = cand[k] / printed.length + 0.25 * fit;
+        if (!pick || sc > pick.sc) pick = { t: [+nd[0], +nd[1]], sc: sc };
+      });
+      if (pick) { time = pick.t; timeRead = true; }
+    }
+    var barLen = time[0] * 4 / time[1], problems = [], over = [];
+    // bars that do not add up: short ones get a rest (the first bar's before, a pick-up); long ones (1.22.7) are said once, in
+    // plain words, for the person -- each plays its notes in a bar's time
     all.forEach(function (bar, i) {
-      var t = 0; bar.forEach(function (e) { t += e.len; });
+      var t = sumOf(bar);
       if (t < barLen - 1e-6) { var r = { rest: true, len: barLen - t, added: true }; if (i === 0) bar.unshift(r); else bar.push(r); }
-      else if (t > barLen + 1e-6) problems.push("bar " + (i + 1) + " adds up to " + t + " beats, not " + barLen);
+      else if (t > barLen + 1e-6) over.push(i + 1);
     });
+    if (over.length) problems.push("the rhythm of " + barsSaid(over) + " is unsure: more was read in " + (over.length > 1 ? "each" : "it") + " than a bar of " + time.join("/") + " holds");
     if (cover.length) problems.push("a band across the picture covers some of the music" + (cover.length > 1 ? " in " + cover.length + " places" : "") + ": notes under it are not read");
-    var res = { found: true, key: keySig, time: time, bars: all, bass: low.some(Boolean) ? low : null, problems: problems, systems: systems.length, spacing: pr0.sp0, angle: pr0.angle,
+    var res = { found: true, key: keySig, time: time, timeRead: timeRead, bars: all, bass: low.some(Boolean) ? low : null, problems: problems, systems: systems.length, spacing: pr0.sp0, angle: pr0.angle,
       cv: pr0.cv, top: Math.max(0, (pr0.ss[0].lines[0] - 3 * pr0.ss[0].spacing) / pr0.sc), pages: pages.length, pdfHeading: Array.isArray(cv) && cv.heading ? cv.heading : null };
     return write(res);
   }
@@ -37188,7 +37525,8 @@ Lantern.RFB = (function () {
     }
     return files.length ? files : null;
   };
-  SM.song = song; SM.prepare = prepare; SM.heading = heading; SM._song = { titled: titled, write: write,  prepare: prepare, headsOn: headsOn, components: components, accidental: accidental, rest: rest, barsOn: barsOn, startOn: startOn, refineX: refineX, filledOf: filledOf, fake: fake, stemOf: stemOf, beamsOf: beamsOf, dotOf: dotOf, attached: attached, runW: runW, outerW: outerW, extent: extent, staffBars: staffBars, chordsOf: chordsOf, groupsOf: groupsOf, transposing: transposing, transpose: transpose };
+  SM.song = song; SM.prepare = prepare; SM.heading = heading; SM._song = { titled: titled, write: write,  prepare: prepare, headsOn: headsOn, components: components, accidental: accidental, rest: rest, barsOn: barsOn, startOn: startOn, refineX: refineX, filledOf: filledOf, fake: fake, stemOf: stemOf, beamsOf: beamsOf, dotOf: dotOf, attached: attached, runW: runW, outerW: outerW, extent: extent, staffBars: staffBars, chordsOf: chordsOf, groupsOf: groupsOf, transposing: transposing, transpose: transpose,
+    timeSig: timeSig, digitOf: digitOf, holesOf: holesOf, barsSaid: barsSaid };
 })();
 // ===========================================================================
 // MODULE: SHEET_MUSIC_SONG - END
@@ -47707,7 +48045,7 @@ Lantern.RFB = (function () {
   function q(t) { return "\u201c" + t + "\u201d"; }
   function timeOf(v) {
     var t = String(v || "").toLowerCase(), m = /(\d+)\s*\x2F\s*(\d+)/.exec(t);
-    if (m && +m[1] >= 1 && +m[1] <= 12 && /^(2|4|8)$/.test(m[2])) return [+m[1], +m[2]];
+    if (m && +m[1] >= 1 && +m[1] <= 16 && /^(2|4|8|16)$/.test(m[2])) return [+m[1], +m[2]];   // (1.22.7: any time the Sheet Music Reader reads -- 6/16, 15/8)
     if (/common|^c$/.test(t)) return [4, 4];
     if (/cut/.test(t)) return [2, 2];
     return /waltz/.test(t) ? [3, 4] : null;
@@ -49538,7 +49876,7 @@ Lantern.RFB = (function () {
           (name ? "title " + name + "\n" : "") + r.lines + "\n" +
           (r.heading && r.heading.length ? "Printed above the music: " + r.heading.join(" / ") + "\n" : "") +
           (r.known ? "Lantern knows the tune by its first " + r.known.notes + " notes: " + r.known.title + " (" + r.known.by + (r.known.year ? ", " + r.known.year : "") + ").\n" : "") +
-          "These are the notes printed in the picture" + (r.doubt.length ? " (Lantern notes: " + r.doubt.join("; ") + ")" : "") + ". To play it or make a music file of it, write a MAKE MUSIC block " +
+          "These are the notes printed in the picture. To play it or make a music file of it, write a MAKE MUSIC block " +
           "with these " + (name ? "title, " : "") + what + " lines exactly as they are -- you may add style and sound lines" + (r.chords ? "" : ", chords") + ", and a tempo line (a printed tempo is not read; most tunes go at 90 to 120). " +
           (name ? "" : "Lantern does not know this tune\u2019s name: title it with words printed above the music, or call it Sheet music -- do not guess a famous piece from its composer. ") +
           "Do not change the notes, and do not say you cannot see the picture: Lantern read it for you." };
