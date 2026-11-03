@@ -479,6 +479,30 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   // said once, in plain words, for the person -- and the AI given the notes alone ---
   ok("bars read holding more than a bar: named once, runs joined", SMS.barsSaid([4, 5, 6, 8, 11]) === "bars 4\u20136, 8 and 11" && SMS.barsSaid([3]) === "bar 3" &&
     SMS.barsSaid([1, 2, 9]) === "bars 1, 2 and 9", [SMS.barsSaid([4, 5, 6, 8, 11]), SMS.barsSaid([1, 2, 9])]);
+  // --- 1.22.8: Adam's screenshot of a PDF viewer (the page on dark grey) was not read; nothing was said, and the 35B wrote the
+  // guide's example tune under the printed title, arranged for an orchestra nobody asked for ---
+  var QP = "can you make this into a playable song for us?";
+  var ex1 = act.build(song(["key E minor", "melody B A G E | A - G F# | E - - r | B A G E | A - G F# | E - - r"], "The Final Countdown"), QP);
+  var ex2 = act.build(song(["key E minor", "melody B A G E | A - G F# | E - - r"], "Song"), "play this melody: B A G E | A - G F# | E - - r");
+  ok("the guide's example tune goes back -- unless the question gives those notes itself", ex1.problems.some(function (x) { return /is the example in Lantern\u2019s guide, not a tune for this question/.test(x); }) &&
+    !ex2.problems.some(function (x) { return /example in Lantern/.test(x); }), [ex1.problems, ex2.problems]);
+  var or1 = act.build(song(["key C major", "chords C | G | C | C", "melody C D E F | G - - - | E D C D | C - - -", "arrange orchestra", "form intro soft full coda"], "Song"), QP);
+  var or2 = act.build(song(["key C major", "chords C | G | C | C", "melody C D E F | G - - - | E D C D | C - - -", "arrange orchestra"], "Song"), "make this into a playable song for an orchestra");
+  ok("an orchestra the question did not ask for goes back; one it asked for does not", or1.problems.some(function (x) { return /^the question does not ask for an orchestra: leave out the arrange and form lines/.test(x); }) &&
+    !or2.problems.some(function (x) { return /does not ask for an orchestra/.test(x); }), [or1.problems, or2.problems]);
+  var takenWas = L.chatPics && L.chatPics.taken, QU = "make this sheet music into a playable song please";
+  if (L.chatPics) L.chatPics.taken = function (q) { return q === QU || q === "write a song about this picture" ? [new w.File([new Uint8Array([1, 2, 3])], "page.png", { type: "image/png" })] : []; };
+  var unr = await SC.read(QU), sAbout = (L.chatAbout || []).filter(function (x) { return x.id === "sheet music"; })[0], given = sAbout ? await sAbout.provide(QU) : null;
+  await SC.read("write a song about this picture");
+  var un1 = act.build(song(["key C major", "melody C D E F | G - - -"], "Song"), QU);
+  ok("a picture sent for a song with no music read in it: the person is told, the AI told not to write a tune as the picture's; a song made anyway goes back; " +
+    "saying so is not sent back for having no block; a song about a picture is another question",
+    unr === null && SC.unread(QU) && given && /^Lantern\u2019s Sheet Music Reader found no printed music it could read in the picture/.test(given.note) &&
+    /^SHEET MUSIC: Lantern\u2019s Sheet Music Reader found no printed music it could read/.test(given.prompt) && /ask for a closer picture of the page alone/.test(given.prompt) &&
+    un1.problems.some(function (x) { return /^Lantern could not read the notes in the person\u2019s picture/.test(x); }) &&
+    MC.noBlock(QU, "I can't read the notes in that picture; could you send a closer one?") === null && !SC.unread("write a song about this picture"),
+    [unr, SC.unread(QU), given, un1.problems]);
+  if (L.chatPics) L.chatPics.taken = takenWas;
   var bc = SMS.write({ found: true, key: -2, time: [12, 8], problems: [], systems: 1, spacing: 10,
     bars: [[snt(Dl, 4, 0, 1.5), snt(Gl, 4, 0, 1.5), snt(Bl, 4, -1, 0.5), snt(Al, 4, 0, 0.5), snt(Gl, 4, 0, 0.5), snt(Dl, 4, 0, 1.5)], [snt(Fl, 4, 1, 1.5), snt(Al, 4, 0, 1.5), snt(Gl, 4, 0, 3)]] });
   ok("...a 12/8 reading's lines: a share an eighth, and they play the tune as read", /^key G minor\ntime 12\/8\nmelody D4 - - G - - B A G D - - \| F# - - A - - G - - - - -$/.test(bc.lines) &&

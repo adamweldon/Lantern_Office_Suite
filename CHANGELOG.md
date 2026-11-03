@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.22.8 — A page on a dark ground; a picture not read is said (2026-11-03)
+
+Adam pasted a screenshot of a piano sheet in a PDF viewer -- the page on the
+viewer's dark grey -- and asked Chat to make it a playable song. The song
+made did not match the picture. Lantern had read nothing: the grey's rows
+were ink across most of the picture, so no staff line was found. Nothing was
+said, and the 35B (which sees the picture, but cannot read its notes
+reliably) wrote the example melody from Lantern's own MAKE MUSIC guide four
+times under the printed title -- with every other line of the guide too,
+an orchestra and its form among them.
+
+- **The page cut out of a dark ground** (SHEET_MUSIC_SONG): the columns
+  mostly paper, then the rows mostly paper between them, cut only when what
+  is left out is dark. The same sheet, cropped, had read note for note
+  before; now the viewer's screenshot does too (12 bars, its chords as
+  printed).
+- **A picture not read is said.** When pictures go with a question asking
+  for them as music (“make this into a playable song”, “play the sheet
+  music”) and Lantern reads no music in them, the person is told, and the
+  AI is told not to write a tune as the picture's -- to say Lantern could not
+  read the notes and ask for a closer picture of the page alone. A song made
+  anyway goes back; saying so is not sent back for having no MAKE block. (A
+  song about a picture is another question.)
+- **The guide's example tune goes back** when a song is made of it, unless
+  the question gives those notes.
+- **An orchestra nobody asked for goes back** (leave out the arrange and form
+  lines), unless the question asks for one or to arrange it, or the song so
+  far was arranged. The guide now says the arrange and form lines are only
+  for when the person asks.
+- Tests: `tests/music.js` (149: the example tune, the unasked orchestra, a
+  picture not read); `tests/browser/sheet_read_e2e.py` (ode_viewer.png, the
+  piano Ode on a PDF viewer's dark ground, made by make_sheets.py; Chat with a
+  picture that has no music in it). Adam's screenshot stays local (a
+  copyrighted song).
+
 ## 1.22.7 — The time signature as printed; the AI given the notes alone (2026-11-03)
 
 Adam's next test: a 12/8 piece in G minor (a melody staff resting over a

@@ -1,7 +1,7 @@
 # make_sheets.py -- remake the test sheets in this folder (Lantern 1.21.0): engrave each tune of expected.json with Verovio
 # (pip install verovio) and rasterise it in Chromium (Playwright) at 1300, 900, 820, 760 and 700 pixels wide (the tests use eleven of
 # them, ode_title_900.png: the piano Ode with its heading, and ode_banner_900.png, below; 1.22.4: minor_e_piano at 900 and 760;
-# 1.22.5: voice_e_piano at 900; 1.22.7: barcarolle_g_piano and jig_d at 900).
+# 1.22.5: voice_e_piano at 900; 1.22.7: barcarolle_g_piano and jig_d at 900; 1.22.8: ode_viewer.png, below).
 # Usage: python3 tests/fixtures/sheets/make_sheets.py [NAME ...]   (writes NAME_1300.png, NAME_900.png, NAME_820.png, NAME_760.png,
 # NAME_700.png here; with names, only those songs -- the banner is remade when ode_piano is)
 # 1.22.7: barcarolle_g_piano, a piece written for these tests in G minor and 12/8 (as Adam's sheet): the left hand a quarter and
@@ -53,6 +53,13 @@ if not ONLY or "ode_clarinet" in ONLY:
         pg.eval_on_selector("#s svg", "s => { s.style.width = '720px'; s.style.height = 'auto'; }")
         pg.pdf(path=os.path.join(HERE, "ode_clarinet.pdf"), format="Letter")
         b.close()
+# 1.22.8: ode_viewer.png -- the piano Ode as a PDF viewer shows it (Adam's screenshot): the sheet on a white page, the page on a
+# dark grey ground three times its width
+if not ONLY or "ode_viewer" in ONLY:
+    sheet = Image.open(os.path.join(HERE, "ode_piano_900.png")).convert("RGB")
+    page = Image.new("RGB", (1000, 1294), (255, 255, 255)); page.paste(sheet, (50, 90))
+    ground = Image.new("RGB", (2520, 1400), (31, 31, 31)); ground.paste(page, ((2520 - 1000) // 2, 53))
+    ground.save(os.path.join(HERE, "ode_viewer.png"))
 # the banner (1.22.1): across the fourth staff (the second system's left hand), a space above it to a space below
 if ONLY and "ode_piano" not in ONLY: sys.exit(0)
 from PIL import ImageDraw

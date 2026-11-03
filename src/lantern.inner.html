@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.22.7 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.22.8 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -173,7 +173,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.22.7",
+  version: "1.22.8",
   apps: {},
   order: []
 };
@@ -36028,8 +36028,37 @@ Lantern.RFB = (function () {
   function inkMid(gr, mid) { return TI.ink(gr, mid); }
   function dark(im, x, y) { return x >= 0 && y >= 0 && x < im.w && y < im.h && im.b[y * im.w + x] === 1; }
   // prepare(canvas) -> the picture at a size where the staff lines are 16 px apart, in black and white
+  // paperOf(canvas) -> the page cut out of a dark ground around it, or null (1.22.8: Adam's screenshot of a PDF viewer, its page
+  // on dark grey -- the grey's rows were ink across most of the picture, so no staff line was found, Lantern read nothing,
+  // and the AI wrote a tune of its own): the columns mostly paper, then the rows mostly paper between them; cut only when
+  // what is left out is dark
+  function paperOf(cv) {
+    if (!cv || !cv.width || !cv.height || typeof document === "undefined") return null;
+    var sc = Math.min(1, 600 / Math.max(cv.width, cv.height)), g = TI.gray(cv, sc), w = g.w, h = g.h, x, y;
+    function lightCol(x, y0, y1) { var k = 0; for (var y = y0; y <= y1; y++) if (g.g[y * w + x] > 200) k++; return k / (y1 - y0 + 1); }
+    function lightRow(y, x0, x1) { var k = 0; for (var x = x0; x <= x1; x++) if (g.g[y * w + x] > 200) k++; return k / (x1 - x0 + 1); }
+    var x0 = -1, x1 = -1, y0 = -1, y1 = -1;
+    for (x = 0; x < w; x++) if (lightCol(x, 0, h - 1) > 0.3) { if (x0 < 0) x0 = x; x1 = x; }
+    if (x0 < 0) return null;
+    for (y = 0; y < h; y++) if (lightRow(y, x0, x1) > 0.3) { if (y0 < 0) y0 = y; y1 = y; }
+    if (y0 < 0 || (x0 === 0 && x1 === w - 1 && y0 === 0 && y1 === h - 1)) return null;
+    if (x1 - x0 + 1 < 0.15 * w || y1 - y0 + 1 < 0.15 * h) return null;
+    // what is cut away: dark ground (a page's own margin is paper; a margin of music would not be cut)
+    var cut = 0, dark = 0;
+    function ground(x, y) { cut++; if (g.g[y * w + x] < 100) dark++; }
+    for (y = 0; y < h; y += 2) for (x = 0; x < w; x += 2) if (x < x0 || x > x1 || y < y0 || y > y1) ground(x, y);
+    if (!cut || dark < 0.8 * cut) return null;
+    var X0 = Math.max(0, Math.floor(x0 / sc) - 1), Y0 = Math.max(0, Math.floor(y0 / sc) - 1), W = Math.min(cv.width, Math.ceil((x1 + 1) / sc) + 1) - X0, H = Math.min(cv.height, Math.ceil((y1 + 1) / sc) + 1) - Y0;
+    var c = document.createElement("canvas");
+    c.width = W; c.height = H;
+    var cx = c.getContext("2d");
+    cx.fillStyle = "#fff"; cx.fillRect(0, 0, W, H);
+    cx.drawImage(cv, X0, Y0, W, H, 0, 0, W, H);
+    return c;
+  }
   function prepare(cv, opts) {
     opts = opts || {};
+    cv = paperOf(cv) || cv;
     var big = Math.max(cv.width, cv.height), sc0 = Math.min(1, 2400 / big), im0 = inkMid(TI.gray(cv, sc0), 0.75), angle = 0;
     // a tilted photo is levelled first (staff lines must run straight across)
     if (opts.level !== false && TI.skew && TI.rotate) {
@@ -49596,6 +49625,8 @@ Lantern.RFB = (function () {
   var L = window.Lantern;
   if (!L || !L.musicSong) return;
   var ACTS = window.Lantern.aiActions = window.Lantern.aiActions || [], I = L.musicInst;
+  // (1.22.8) the guide's example tunes: a song made of them was not made for the question (intent)
+  var EXAMPLE_TUNES = ["B A G E | A - G F# | E - - r", "F G A C | D - C B | A G F G | F - - r"];
   var HINT = [
     "key E minor               the key; a plain letter takes its sharps and flats (F is F# in E minor; Fn is F natural)",
     "tempo 76                  beats a minute",
@@ -49609,10 +49640,10 @@ Lantern.RFB = (function () {
     "                          - holds the note before one more share, r is a rest; a note goes nearest the one before",
     "                          (write the octave, E5 or B3, only for a leap of more than a fourth); a dotted rhythm",
     "                          is finer shares: C - - D E - F - is a dotted quarter, an eighth and two quarters",
-    "arrange orchestra         an orchestra plays the song (or strings, string quartet, brass, winds): Lantern writes every",
-    "                          player's part from the melody and chords -- write the key, chords and melody lines as usual",
-    "form intro soft full coda the order with arrange (this one when not said): the tune's last phrase, the tune softly,",
-    "                          the tune for everyone, the last chord held",
+    "arrange orchestra         only when the person asks for an orchestra (or strings, string quartet, brass, winds): Lantern",
+    "                          writes every player's part from the melody and chords -- write the key, chords and melody as usual",
+    "form intro soft full coda only with arrange, to change its order (this one when not said): the tune's last phrase, the tune",
+    "                          softly, the tune for everyone, the last chord held",
     "part viola: E D C D | ... a part of your own for one player, a bar for each of the tune's (only when the person asks)"];
   if (I && I.menu) HINT = HINT.concat(["instruments (" + I.LIST.length + "), by their names:"], I.menu().map(function (l) { return "  " + l; }));
   else HINT.splice(4, 3, "sound flute               the melody: flute, piano, organ, strings, bell, guitar, brass, lead");
@@ -49638,6 +49669,10 @@ Lantern.RFB = (function () {
         out.push("the question asks for " + (mode ? want.name : want.short.replace(/m$/, "")) + ", but the song is in " + p.key + ": write key " + want.name + ", and the chords and melody in it");
     }
     if (/\bwaltz\b/i.test(q) && p.n !== 3) out.push("a waltz is in 3/4, three beats a bar: write time 3/4 and style waltz, with three shares in each bar of the melody");
+    // (1.22.8) the guide's own example tune is not a tune for the question (Adam's picture, not read: the 35B wrote the guide's
+    // melody line four times, under the printed title) -- unless the question gives those notes itself
+    var mel = (p.parts || []).map(function (pt) { return (pt.melody || []).join(" | "); }).join(" | ").replace(/\s+/g, " "), qs = q.replace(/\s+/g, " ");
+    EXAMPLE_TUNES.forEach(function (x) { if (mel.indexOf(x) >= 0 && qs.indexOf(x) < 0) out.push("the melody (" + x + ") is the example in Lantern\u2019s guide, not a tune for this question: write the tune asked for"); });
     var b = /\b(\d+|two|four|six|eight|twelve|sixteen|thirty-two)[- ]bars?\b/i.exec(q);
     if (b) {   // the tune's bars when there is a tune (bench run on 1.19.0: 8 bars of chords under 4 of melody)
       var n = /\d/.test(b[1]) ? +b[1] : NUM[b[1].toLowerCase()], have = p.melody.length ? p.melodyBars : p.bars;
@@ -49794,7 +49829,8 @@ Lantern.RFB = (function () {
 //          hook Lantern.chatAbout
 // Exports: Lantern.sheetChat = {read(question) -> Promise<reading or null>,
 //          readFor(question), remember(question, reading) (another reader's,
-//          or a test's), compare(plan, reading) -> [problems]}
+//          or a test's), compare(plan, reading) -> [problems],
+//          unread(question) -> a picture sent for a song, no music read (1.22.8)}
 // ===========================================================================
 // Sheet music pasted into Chat (1.21.0). Adam pasted a screenshot of Ode to
 // Joy and asked Chat to play it: the 35B made out the title, said it could
@@ -49809,8 +49845,8 @@ Lantern.RFB = (function () {
 (function () {
   var L = window.Lantern;
   if (!L || !L.sheetMusic || !L.sheetMusic.song) return;
-  var readings = {}, order = [];
-  function keep(q, r) { if (!readings.hasOwnProperty(q)) order.push(q); readings[q] = r; while (order.length > 8) delete readings[order.shift()]; }
+  var readings = {}, order = [], sent = {};
+  function keep(q, r) { if (!readings.hasOwnProperty(q)) order.push(q); readings[q] = r; while (order.length > 8) { var o = order.shift(); delete readings[o]; delete sent[o]; } }
   function canvasOf(f) {
     if (L.textReader && L.textReader.image && L.textReader.image.load) return L.textReader.image.load(f);
     return Promise.reject(new Error("no picture loader"));
@@ -49819,6 +49855,7 @@ Lantern.RFB = (function () {
   function read(q) {
     if (readings.hasOwnProperty(q)) return Promise.resolve(readings[q]);
     var files = L.chatPics && L.chatPics.taken ? L.chatPics.taken(q) : [], best = null, i = 0, pdfs = [];
+    sent[q] = files.length;
     function next() {
       if (i >= files.length) { keep(q, best); return titled(); }
       var f = files[i++];
@@ -49864,10 +49901,21 @@ Lantern.RFB = (function () {
       out.push("the song is called \u201c" + p.title + "\u201d, but " + (r.title ? "the picture is headed" : "Lantern knows the tune as") + " \u201c" + name + "\u201d: write MAKE MUSIC: " + name);
     return out;
   }
-  window.Lantern.sheetChat = { read: read, readFor: function (q) { return readings.hasOwnProperty(q) ? readings[q] : null; }, remember: keep, compare: compare };
+  // unread(question) -> true when pictures went with a question asking for them as music -- "make this into a playable song",
+  // "play the sheet music" -- and Lantern read no music in them (1.22.8; a song about a picture is another question)
+  var SHEETQ = /\b(sheet music|music sheet|score|the notes|transcrib\w*|playable|midi|play (this|it|them)|(this|it|them) (in|into|to) (a |an )?(song|tune|music|melody|midi|file|sound)|from (this|the) (picture|image|screenshot|page|sheet|pdf))\b/i;
+  function unread(q) { return !!(sent[q] && readings.hasOwnProperty(q) && !readings[q] && SHEETQ.test(q) && !/\babout\b/i.test(q)); }
+  window.Lantern.sheetChat = { read: read, readFor: function (q) { return readings.hasOwnProperty(q) ? readings[q] : null; }, remember: keep, compare: compare, unread: unread };
   // what the AI is given with the question
   (window.Lantern.chatAbout = window.Lantern.chatAbout || []).unshift({ id: "sheet music", provide: function (q) {
     return read(q).then(function (r) {
+      // (1.22.8) a picture sent for a song, and no music read in it: said, to the person and to the AI -- Adam's screenshot of
+      // a PDF viewer was not read, nothing was said, and the 35B wrote Lantern's own example tune under the printed title
+      if (!r && unread(q)) return { id: "sheet music",
+        note: "Lantern\u2019s Sheet Music Reader found no printed music it could read in the picture, so the AI is not given its notes: a song it writes is not read from the picture\u2026",
+        prompt: "SHEET MUSIC: Lantern\u2019s Sheet Music Reader found no printed music it could read in the person\u2019s picture (it may not be sheet music, or the page is too small, cut off or tilted). " +
+          "Do not write a tune as the picture\u2019s: you cannot read its notes reliably, and a tune from memory -- or the example in Lantern\u2019s guide -- is not the one printed. " +
+          "Say that Lantern could not read the notes in the picture, and ask for a closer picture of the page alone (or a PDF of it). If the person wants a song anyway, say where its tune comes from." };
       if (!r) return null;
       var what = r.chords ? "key, time, chords and melody" : "key, time and melody", name = r.title || (r.known && r.known.title) || "";
       return { id: "sheet music",
@@ -49883,7 +49931,11 @@ Lantern.RFB = (function () {
     });
   } });
   // a song asked of a picture of music is a song, and must be the tune read
-  (window.Lantern.musicIntent = window.Lantern.musicIntent || []).push(function (p, q) { var r = readings.hasOwnProperty(q) ? readings[q] : null; return r ? compare(p, r) : []; });
+  (window.Lantern.musicIntent = window.Lantern.musicIntent || []).push(function (p, q) {
+    var r = readings.hasOwnProperty(q) ? readings[q] : null;
+    if (!r && unread(q)) return ["Lantern could not read the notes in the person\u2019s picture, so this tune is not the one printed in it: do not make a song as the picture\u2019s -- say Lantern could not read its notes, and ask for a closer picture of the page alone (or a PDF of it)"];
+    return r ? compare(p, r) : [];
+  });
   (window.Lantern.aiActions || []).forEach(function (a) {
     if (a.id !== "music" || a.sheetAware) return;
     var m0 = a.match;
@@ -49995,6 +50047,7 @@ Lantern.RFB = (function () {
   function offered(q) { return follows.hasOwnProperty(q) || L.aiMusic.asks(q) || !!(L.sheetChat && L.sheetChat.readFor && L.sheetChat.readFor(q)); }
   function noBlock(q, reply) {
     if (!offered(q) || /\bMAKE\s+MUSIC\b/i.test(reply || "")) return null;
+    if (L.sheetChat && L.sheetChat.unread && L.sheetChat.unread(q)) return null;   // (1.22.8) the picture's music was not read: saying so is the answer
     var why = CANT.test(reply) ? "cant" : PARTS.test(reply) ? "parts" : ASKS.test(reply) ? "asks" : null;
     if (!why) return null;
     var f = follows.hasOwnProperty(q) ? follows[q] : null, ens = ensFor(q) || (f && f.ens) || null, AR = L.musicArrange, e = f ? f.plan : null, title = AR && ens ? AR.ENSEMBLES[ens].title : "";
@@ -50013,6 +50066,14 @@ Lantern.RFB = (function () {
   AB.forEach(function (x, i) { if (x && x.id === "sheet music") at = i; });
   AB.splice(at + 1, 0, { id: "song so far", provide: about });
   (window.Lantern.musicIntent = window.Lantern.musicIntent || []).push(kept);
+  // (1.22.8) an orchestra the question did not ask for -- the 35B wrote every line of the guide, arrange and form too, for
+  // "make this into a playable song" -- goes back, unless the song so far was arranged or the question asks to arrange it
+  (window.Lantern.musicIntent = window.Lantern.musicIntent || []).push(function (p, q) {
+    if (!p.arrangement || ensFor(q) || /\barrang\w*/i.test(String(q || ""))) return [];
+    var f = follows.hasOwnProperty(q) ? follows[q] : null;
+    if (f && f.plan && f.plan.arrangement) return [];
+    return ["the question does not ask for an orchestra: leave out the arrange and form lines (the song plays on its sound, backing and bass lines)"];
+  });
   (window.Lantern.chatNoBlock = window.Lantern.chatNoBlock || []).push(noBlock);
   (window.Lantern.aiActions || []).forEach(function (a) {
     if (a.id !== "music" || a.followAware) return;

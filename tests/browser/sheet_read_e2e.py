@@ -6,7 +6,8 @@
 # make the song; the Music tile's reader makes a song of it. 1.21.1: the chords from the piano's left hand, the title
 # from the heading, and the 35B's 1.21.0 reply (the tune copied, its own chords) sent back for the chords as read. 1.22.7: each
 # sheet's time read from its printed digits (a 12/8 piano piece and a 6/8 tune in Leland among them); the AI given the notes,
-# not Lantern's doubts about them.
+# not Lantern's doubts about them. 1.22.8: a page on a dark ground (a PDF viewer's screenshot) cut out and read; a picture with
+# no music Lantern can read, sent for a song, said to the person and the AI.
 # Screenshots in the folder given (default: temp).
 # Usage: python3 tests/browser/sheet_read_e2e.py [screenshot folder]
 import json, os, sys, subprocess, tempfile, time, base64
@@ -174,6 +175,29 @@ try:
         ok("Chat, a sheet Lantern is unsure of in places: the person is told where; the AI is given the notes as read, and not Lantern's doubts",
            "a band across the picture covers some of the music" in tb and "SHEET MUSIC:" in firstb and ban["lines"] in firstb and "a band across" not in firstb and
            "Lantern notes" not in firstb and "These are the notes printed in the picture. To play it" in firstb and "Lantern made a song: Ode to Joy" in tb, [firstb[:900], tb[:500]])
+        # 1.22.8: Adam's screenshot of a PDF viewer was not read and nothing was said; the 35B wrote the guide's example tune. A
+        # picture with no music Lantern can read, sent for a playable song: the person is told, the AI asked to say so, and its
+        # answer (no song) is not sent back
+        vision[0] = True; calls.clear(); replies.clear()
+        replies.append("Lantern could not read the notes in your picture. Could you send a closer screenshot of the page alone, or a PDF of it?")
+        pg.evaluate("Lantern.ai.detect()"); time.sleep(0.5)
+        pg.evaluate("location.hash = 'chat'"); pg.wait_for_selector("input[aria-label='Message']", timeout=15000); time.sleep(0.6)
+        pg.evaluate("""(async function () {
+          var c = document.createElement('canvas'); c.width = 600; c.height = 400; var x = c.getContext('2d');
+          x.fillStyle = '#335'; x.fillRect(0, 0, 600, 400); x.fillStyle = '#fc6'; x.beginPath(); x.arc(300, 200, 120, 0, 7); x.fill();
+          var b = await new Promise(function (r) { c.toBlob(r, 'image/png'); });
+          await Lantern.chatPics.add([new File([b], 'sun.png', { type: 'image/png' })]); })()""")
+        time.sleep(1.0)
+        beforeU = pg.evaluate("document.querySelector('[aria-label=Conversation]').innerText.length")
+        pg.locator("input[aria-label='Message']").fill("make this sheet music into a playable song please")
+        pg.locator("button", has_text="Send").first.click()
+        pg.wait_for_function("/closer screenshot/.test(document.querySelector('[aria-label=Conversation]').innerText.slice(%d))" % beforeU, timeout=40000)
+        time.sleep(1.5)
+        tu = pg.evaluate("document.querySelector('[aria-label=Conversation]').innerText").__getitem__(slice(beforeU, None))
+        firstu = text_of(calls[0]["messages"][-1]) if calls else ""
+        ok("Chat, a picture with no music Lantern can read, sent for a playable song: the person is told, the AI told not to write a tune as the picture's, and its answer stands",
+           "found no printed music it could read in the picture" in tu and "SHEET MUSIC: Lantern\u2019s Sheet Music Reader found no printed music it could read" in firstu and
+           "ask for a closer picture of the page alone" in firstu and len(calls) == 1 and "Lantern made a song" not in tu, [len(calls), firstu[:500], tu[-500:]])
         t2 = chat_round("Play this for me", [COPY], False)
         first2 = text_of(calls[0]["messages"][-1]) if calls else ""
         ok("Chat (a model that cannot see): the picture is still read, and the song made at once", "SHEET MUSIC:" in first2 and ode["lines"] in first2 and len(calls) == 1 and "Lantern made a song: Ode to Joy" in t2, [len(calls), t2[-300:]])
