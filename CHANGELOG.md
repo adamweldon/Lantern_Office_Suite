@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.22.9 — A song of its own; a block you write, made as written (2026-11-03)
+
+Adam's next trial: the Final Countdown screenshot read (1.22.8) and played,
+then arranged for orchestra -- then “make your own song in this same style
+and feel”. The 35B wrote a new tune, The Dawn Breaker; Lantern sent it back
+for not being the song made before (it took any question after a song as
+“keep the tune” unless it asked to change the melody), and the AI wrote the
+old tune again under the new title. Adam pasted the AI's own block back to
+hear it: Lantern gave the AI the song so far instead, and the old tune was
+made again.
+
+- **A new song in the same style is a new tune**: “your own song”, “in the
+  same style and feel”, “a new piece like it”. The AI is told to keep the
+  key, time, tempo, style and sound (and arrange) lines and write a title,
+  melody and chords of its own; the old melody under a new title goes back.
+- **A MAKE MUSIC block you write in Chat is made as you wrote it** (on one
+  line, as Chat's box takes it, its lines found by their first words): the
+  AI is given it to write again, and a song with another tune goes back with
+  your lines.
+- Tests: `tests/music.js` (151); `tests/browser/sheet_read_e2e.py` (a new song
+  in the same style after the orchestra; a block written on one line).
+
 ## 1.22.8 — A page on a dark ground; a picture not read is said (2026-11-03)
 
 Adam pasted a screenshot of a piano sheet in a PDF viewer -- the page on the

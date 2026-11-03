@@ -112,7 +112,9 @@ bar holds it says so once, in plain words, for you, and the AI is given the
 notes alone. Since v1.22.8 it reads a page shown on a dark ground (a PDF
 viewer's screenshot), and when it finds no music it can read in a picture sent
 for a song, it says so -- to you and to the AI -- rather than letting a tune
-from memory pass as the picture's.
+from memory pass as the picture's. Since v1.22.9 “make your own song in this style” gets a
+new tune (the old one under a new title goes back), and a MAKE MUSIC block you
+write in Chat yourself is made as you wrote it.
 
 ## Install on a computer (with its AI) -- two double-clicks
 

@@ -7,7 +7,8 @@
 # from the heading, and the 35B's 1.21.0 reply (the tune copied, its own chords) sent back for the chords as read. 1.22.7: each
 # sheet's time read from its printed digits (a 12/8 piano piece and a 6/8 tune in Leland among them); the AI given the notes,
 # not Lantern's doubts about them. 1.22.8: a page on a dark ground (a PDF viewer's screenshot) cut out and read; a picture with
-# no music Lantern can read, sent for a song, said to the person and the AI.
+# no music Lantern can read, sent for a song, said to the person and the AI. 1.22.9: a new song in the same style, and a block
+# the person writes.
 # Screenshots in the folder given (default: temp).
 # Usage: python3 tests/browser/sheet_read_e2e.py [screenshot folder]
 import json, os, sys, subprocess, tempfile, time, base64
@@ -147,6 +148,22 @@ try:
            back6.startswith("Lantern can make this. It plays a song on an orchestra") and "arrange orchestra\nEND" in back6 and "the melody is not the one" in back7 and
            "said Lantern could not make it" in t6 and "arranged for orchestra (12 players)" in t6 and "still questions" not in t6, [back6[:300], back7[:300], t6[-400:]])
         pg.screenshot(path=os.path.join(OUT, "sheet_chat_orchestra.png"), full_page=False)
+        # 1.22.9: Adam's next questions -- "make your own song in this same style and feel": the old tune under a new title goes
+        # back, a tune of its own is made; then the block he pasted (on one line, as Chat's box takes it) is made as he wrote it
+        OWNS = "MAKE MUSIC: Morning Light\nkey C major\ntime 4/4\ntempo 100\narrange orchestra\nchords C | F | G | C\nmelody G A G E | F - A - | G F E D | C - - -\nEND"
+        OWNS2 = "MAKE MUSIC: Evening Light\nkey C major\ntime 4/4\ntempo 100\narrange orchestra\nchords C | C | G | C\nmelody E D C D | E - G - | F E D B | C - - -\nEND"
+        t7 = ask("make your own song in this same style and feel", [ARR.replace("MAKE MUSIC: Ode to Joy", "MAKE MUSIC: Morning Light"), OWNS])
+        first7 = text_of(calls[0]["messages"][-1]) if calls else ""
+        back7b = text_of(calls[1]["messages"][-1]) if len(calls) > 1 else ""
+        ok("Chat, a new song in the same style asked: the AI told to write a tune of its own; the old tune under a new title goes back; its own is made",
+           "For a new song of your own in its style and feel" in first7 and "but the melody is the song made before\u2019s" in back7b and "Lantern made a song: Morning Light" in t7 and "still questions" not in t7,
+           [first7[-400:], back7b[:300], t7[-400:]])
+        t8 = ask(OWNS2.replace("\n", " "), [OWNS, OWNS2])
+        first8 = text_of(calls[0]["messages"][-1]) if calls else ""
+        back8 = text_of(calls[1]["messages"][-1]) if len(calls) > 1 else ""
+        ok("Chat, a MAKE MUSIC block the person wrote on one line: given to the AI to make as it is; the song so far copied instead goes back; the person's song is made",
+           "THE PERSON\u2019S SONG: the person wrote this MAKE MUSIC block" in first8 and "melody E D C D | E - G - | F E D B | C - - -" in first8 and
+           "the melody is not the one in the person\u2019s MAKE MUSIC block" in back8 and "Lantern made a song: Evening Light" in t8 and "still questions" not in t8, [first8[:500], back8[:300], t8[-400:]])
         # the 35B on 1.21.0 (Adam's trial): the tune copied, octaves on every note, chords of its own -- back for the chords
         OWN = ("MAKE MUSIC: Lantern\u2019s Sheet Music Reader\nkey C major\ntime 4/4\ntempo 90\nstyle folk\nsound flute\nchords C | G | F | C | C | G | F | C | Dm | G | C | C\n"
                "melody E4 E4 F4 G4 | G4 F4 E4 D4 | C4 C4 D4 E4 | E4 - - D4 D4 - r - | E4 E4 F4 G4 | G4 F4 E4 D4 | C4 C4 D4 E4 | D4 - - C4 C4 - r - | D4 D4 E4 C4 | D4 - E4 F4 E4 - C4 - | "

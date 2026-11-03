@@ -416,6 +416,21 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     /For an orchestra, write a MAKE MUSIC block with these lines and one more: arrange orchestra\. Lantern writes every player\u2019s part/.test(ab.prompt) && /Keep its key, time, chords and melody lines as they are\.$/.test(ab.prompt) &&
     act.relevant(FQ).some(function (a) { return a.id === "music"; }), ab && ab.prompt);
   ok("...not with no song before it, nor for a question about something else", (await MC.about(FQ, [])) === null && (await MC.about("What is the capital of France?", HIST)) === null);
+  // 1.22.9: "make your own song in this same style and feel" (Adam): a new tune -- the 35B's was sent back for not being the
+  // song made before, and the old tune came back under its new title; then the block he pasted to hear it was not the one made
+  var NQ = "make your own song in this same style and feel", nab = await MC.about(NQ, HIST);
+  var NEW = ["key C major", "time 4/4", "tempo 100", "chords C | F | G | C", "melody G A G E | F - A - | G F E D | C - - -"];
+  var nb1 = act.build(song(NEW, "Morning Light"), NQ), nb2 = act.build(song(ODE12, "Morning Light"), NQ);
+  ok("a new song in the same style asked: the AI told to write a melody of its own; a new one is not sent back for not being the old; the old tune under a new title is",
+    nab && /For a new song of your own in its style and feel, write a MAKE MUSIC block with a new title, and a melody and chords of your own/.test(nab.prompt) && !/Keep its key, time, chords and melody lines as they are/.test(nab.prompt) &&
+    !nb1.problems.some(function (x) { return /song made before/.test(x); }) && nb2.problems.some(function (x) { return /^the question asks for a new song of your own in this one\u2019s style, but the melody is the song made before\u2019s/.test(x); }),
+    [nab && nab.prompt.slice(-400), nb1.problems, nb2.problems]);
+  var PQ = "MAKE MUSIC: Morning Light key C major time 4/4 tempo 100 chords C | F | G | C melody G A G E | F - A - | G F E D | C - - - END", yb = await MC.yours(PQ);
+  var pb1 = act.build(song(NEW, "Morning Light"), PQ), pb2 = act.build(song(ODE12, "Morning Light"), PQ);
+  ok("a MAKE MUSIC block the person wrote (on one line, as Chat's box takes it): given to the AI to make as it is; the song made of it passes; another tune goes back",
+    yb && /^THE PERSON\u2019S SONG: the person wrote this MAKE MUSIC block in the question -- make it as it is written:\nMAKE MUSIC: Morning Light\nkey C major\ntime 4\/4\ntempo 100\nchords C \| F \| G \| C\nmelody G A G E \| F - A - \| G F E D \| C - - -\nEND\n/.test(yb.prompt) &&
+    !pb1.problems.some(function (x) { return /MAKE MUSIC block -- |song made before/.test(x); }) && pb2.problems.some(function (x) { return /^the melody is not the one in the person\u2019s MAKE MUSIC block -- /.test(x); }) &&
+    (await MC.yours("Play Ode to Joy")) === null, [yb && yb.prompt, pb1.problems, pb2.problems]);
   var WM = ODE12.slice(); WM[3] = WM[3].replace("D D E C", "D D E D");
   var kp = act.build(song(WM.concat(["arrange orchestra"]), "Ode to Joy"), FQ), kp2 = act.build(song(ODE12.concat(["arrange orchestra"]), "Ode to Joy"), FQ);
   ok("...the new song keeps the melody: a note changed goes back with the lines as they were; the same lines with arrange orchestra pass",
