@@ -114,7 +114,10 @@ viewer's screenshot), and when it finds no music it can read in a picture sent
 for a song, it says so -- to you and to the AI -- rather than letting a tune
 from memory pass as the picture's. Since v1.22.9 “make your own song in this style” gets a
 new tune (the old one under a new title goes back), and a MAKE MUSIC block you
-write in Chat yourself is made as you wrote it.
+write in Chat yourself is made as you wrote it. Since v1.22.10 the sheet music drawn under a song
+is written as it plays: each note and rest a length that can be written (tied
+where it must be, triplets marked), sixteenths beamed as sixteenths, and each
+note given room for its head.
 
 ## Install on a computer (with its AI) -- two double-clicks
 

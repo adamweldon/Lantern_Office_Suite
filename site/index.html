@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.22.9 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.22.10 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -180,7 +180,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.22.9",
+  version: "1.22.10",
   apps: {},
   order: []
 };
@@ -49287,7 +49287,8 @@ Lantern.RFB = (function () {
 // MODULE: MUSIC_SCORE - START
 // Depends: MUSIC_THEORY (Lantern.musicTheory)
 // Exports: Lantern.musicScore = {draw(canvas, plan, width) -> layout,
-//          where(layout, quarters) -> {x, y, h} or null, value(quarters)}
+//          where(layout, quarters) -> {x, y, h} or null, value(quarters),
+//          pieces(plan) -> each bar's notes and rests as written (1.22.10)}
 // ===========================================================================
 // The song written out as a lead sheet (1.19.0): one treble staff with the
 // clef, key signature and time signature, the melody's notes where their
@@ -49302,12 +49303,27 @@ Lantern.RFB = (function () {
   if (!L || !L.musicTheory) return;
   var T = L.musicTheory, INK = "#111827", SOFT = "#475569", SP = 8, SYS = 112, E = 1e-6;
   var SHARPS = [38, 35, 39, 36, 33, 37, 34], FLATS = [34, 37, 33, 36, 32, 35, 31];   // F5 C5 G5 D5 A4 E5 B4 / B4 E5 A4 D5 G4 C5 F4
-  var VALUES = [[4, "w", 0], [3, "h", 1], [2, "h", 0], [1.5, "q", 1], [1, "q", 0], [0.75, "e", 1], [0.5, "e", 0], [0.375, "s", 1], [0.25, "s", 0]];
-  // value(quarters) -> [length, w|h|q|e|s, dotted]: the written note nearest a length
+  var VALUES = [[4, "w", 0], [3, "h", 1], [2, "h", 0], [1.5, "q", 1], [1, "q", 0], [0.75, "e", 1], [0.5, "e", 0], [0.375, "s", 1], [0.25, "s", 0], [0.125, "t", 0]];
+  var LEVEL = { e: 1, s: 2, t: 3 };
+  // value(quarters) -> [length, w|h|q|e|s|t, dotted]: the written note nearest a length
   function value(len) {
     var best = VALUES[0];
     VALUES.forEach(function (v) { if (Math.abs(Math.log(len / v[0])) < Math.abs(Math.log(len / best[0]))) best = v; });
     return best;
+  }
+  // (1.22.10) a length as notes that can be written: Adam's sheet drew a note of five sixteenths as the nearest one, so a bar
+  // looked to hold too much or too little -- now a quarter tied to a sixteenth; a third of a beat a triplet's eighth
+  function bin(x) { return Math.abs(x * 32 - Math.round(x * 32)) < 1e-4; }
+  function writ(len) {   // -> [{len, w, trip}]: greedy, the longest first
+    var trip = !bin(len) && bin(len * 1.5), r = trip ? len * 1.5 : bin(len) ? len : Math.max(0.125, Math.round(len * 8) / 8), out = [];
+    while (r > E) {
+      var v = null;
+      for (var i = 0; i < VALUES.length && !v; i++) if (VALUES[i][0] <= r + E) v = VALUES[i];
+      if (!v) break;
+      out.push({ len: trip ? v[0] / 1.5 : v[0], w: v[0], trip: trip });
+      r -= v[0];
+    }
+    return out;
   }
   function stepOf(n) { return n.oct * 7 + T.LET.indexOf(n.letter); }   // E4 (the bottom line) is 30
   function clef(c, x, y) {   // the G clef, drawn round the G line at y
@@ -49342,16 +49358,22 @@ Lantern.RFB = (function () {
     }
     if (v[2]) { c.beginPath(); c.arc(x + 8, yOf(35), 1.6, 0, 2 * Math.PI); c.fill(); }
   }
-  // pieces(plan) -> per bar, the notes cut at bar lines (tied) and the rests between
+  // pieces(plan) -> per bar, the notes cut at bar lines (tied) and the rests between, each as lengths that can be written
+  // (1.22.10: tied within the bar too; a rest written from the beat it starts on)
+  function beatOf(plan) { return plan.d === 8 && plan.n % 3 === 0 ? 1.5 : 4 / plan.d; }
   function pieces(plan) {
-    var B = plan.barLen, out = [];
+    var B = plan.barLen, out = [], bt = beatOf(plan);
     for (var b = 0; b < plan.bars; b++) out.push([]);
     plan.melody.forEach(function (n) {
       var t = n.at, end = n.at + n.len, first = true;
       while (t < end - E) {
         var b = Math.floor(t / B + E), stop = Math.min(end, (b + 1) * B);
         if (b >= plan.bars) break;
-        out[b].push({ n: n, at: t, len: stop - t, tieIn: !first, tieOut: stop < end - E });
+        var ws = writ(stop - t), at = t;
+        ws.forEach(function (w, i) {
+          out[b].push({ n: n, at: at, len: w.len, w: w.w, trip: w.trip, tieIn: !first || i > 0, tieOut: i < ws.length - 1 || stop < end - E });
+          at += w.len;
+        });
         t = stop; first = false;
       }
     });
@@ -49359,20 +49381,61 @@ Lantern.RFB = (function () {
       var t = b * B, gaps = [];
       ps.slice().sort(function (p, q) { return p.at - q.at; }).forEach(function (p) { if (p.at > t + E) gaps.push([t, p.at]); t = Math.max(t, p.at + p.len); });
       if (t < (b + 1) * B - E) gaps.push([t, (b + 1) * B]);
-      gaps.forEach(function (g) { ps.push({ rest: true, at: g[0], len: g[1] - g[0], whole: g[1] - g[0] >= B - E }); });
+      gaps.forEach(function (g) {
+        if (g[1] - g[0] >= B - E) { ps.push({ rest: true, at: g[0], len: B, w: B, whole: true }); return; }
+        // to the next beat first, then a beat at a time (two together where the bar's halves begin)
+        for (var at = g[0]; at < g[1] - E;) {
+          var rel = at - b * B, next = Math.min(g[1], b * B + Math.ceil(rel / bt - E) * bt), len;
+          if (next > at + E) len = next - at;
+          else len = Math.abs(rel / (2 * bt) - Math.round(rel / (2 * bt))) < E && g[1] - at >= 2 * bt - E && 2 * bt < B - E ? 2 * bt : Math.min(bt, g[1] - at);
+          var r0 = at;
+          writ(len).forEach(function (w) { ps.push({ rest: true, at: r0, len: w.len, w: w.w, trip: w.trip }); r0 += w.len; });
+          at += len;
+        }
+      });
+      ps.sort(function (p, q) { return p.at - q.at; });
     });
     return out;
   }
+  // (1.22.10) each bar's notes and rests placed by how long they last, each with room for its head (a sixteenth's is about two
+  // thirds of a quarter's), and an accidental's or dot's room besides -- placed by time alone, Adam's sixteenths sat on the
+  // notes after them and a bar looked to hold the wrong number
+  function room(p) { return 1 + 0.6 * Math.log(1 + p.len / 0.25) / Math.LN2 + (p.mark != null ? 0.7 : 0) + (value(p.w || p.len)[2] ? 0.3 : 0); }
+  function marks(plan, items) {   // the accidental each note needs, as the key and the bar have it
+    var acc = {};
+    items.forEach(function (p) {
+      if (p.rest) return;
+      var n = p.n, slot = n.letter + n.oct, cur = acc[slot] != null ? acc[slot] : T.sigAlter(n.letter, plan.sig);
+      p.mark = null;
+      if (n.acc !== cur && !p.tieIn) { p.mark = n.acc; acc[slot] = n.acc; }
+    });
+  }
   function draw(cv, plan, width) {
-    var W = Math.max(280, width || 640), per = Math.max(1, Math.min(4, Math.floor((W - 70) / 130))), nsys = Math.ceil(plan.bars / per), H = nsys * SYS + 8;
+    var W = Math.max(280, width || 640), ps = pieces(plan), need = 0;
+    ps.forEach(function (items) { marks(plan, items); var n = 30; items.forEach(function (p) { n += 15 + (p.mark != null ? 9 : 0) + (value(p.w || p.len)[2] ? 5 : 0); }); need = Math.max(need, n); });
+    var per = Math.max(1, Math.min(4, Math.floor((W - 70) / Math.max(130, need)))), nsys = Math.ceil(plan.bars / per), H = nsys * SYS + 8;
     var dpr = window.devicePixelRatio || 1;
     cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); cv.style.width = W + "px"; cv.style.height = H + "px";
     var c = cv.getContext ? cv.getContext("2d") : null, lay = { systems: [], width: W, height: H, per: per, barLen: plan.barLen };
-    var ks = Math.abs(plan.sig), melody = plan.melody.length > 0, ps = pieces(plan);
+    var ks = Math.abs(plan.sig), melody = plan.melody.length > 0;
     for (var s = 0; s < nsys; s++) {
       var top = s * SYS + 44, yOf = (function (t) { return function (st) { return t + 4 * SP - (st - 30) * SP / 2; }; })(top);
       var x0 = 8 + 30 + ks * 8 + (s === 0 ? 24 : 6), bw = (W - 10 - x0) / per, sys = { y: top - 4 * SP, h: 12 * SP, bars: [] };
-      for (var k = 0; k < per && s * per + k < plan.bars; k++) sys.bars.push({ bar: s * per + k, x: x0 + k * bw, w: bw });
+      for (var k = 0; k < per && s * per + k < plan.bars; k++) {
+        var sb0 = { bar: s * per + k, x: x0 + k * bw, w: bw }, items0 = ps[sb0.bar], tot = 0, cum = 0;
+        // where each note and rest goes, and so where any moment of the bar is (knots: [time, x])
+        items0.forEach(function (p) { tot += room(p); });
+        sb0.knots = [];
+        items0.forEach(function (p) {
+          var r = room(p), pre = p.mark != null ? 0.7 : 0;
+          p.x = sb0.x + 14 + (melody && tot ? (cum + pre) / tot : (p.at - sb0.bar * plan.barLen) / plan.barLen) * (sb0.w - 24);
+          sb0.knots.push([p.at, p.x]);
+          cum += r;
+        });
+        if (!sb0.knots.length) sb0.knots.push([sb0.bar * plan.barLen, sb0.x + 14]);
+        sb0.knots.push([(sb0.bar + 1) * plan.barLen, sb0.x + sb0.w - 10]);
+        sys.bars.push(sb0);
+      }
       lay.systems.push(sys);
       if (!c) continue;
       if (s === 0) { c.setTransform(dpr, 0, 0, dpr, 0, 0); c.fillStyle = "#ffffff"; c.fillRect(0, 0, W, H); }
@@ -49392,7 +49455,7 @@ Lantern.RFB = (function () {
         c.strokeStyle = INK; c.lineWidth = last ? 1 : 1; c.beginPath(); c.moveTo(bx, top); c.lineTo(bx, top + 4 * SP); c.stroke();
         if (last) { c.fillStyle = INK; c.fillRect(bx - 3.5, top, 3.5, 4 * SP); c.beginPath(); c.moveTo(bx - 6, top); c.lineTo(bx - 6, top + 4 * SP); c.stroke();
           if (plan.repeat > 1) { c.font = "bold 12px sans-serif"; c.textAlign = "right"; c.fillText("\u00d7" + plan.repeat, bx, top - 8); } }
-        var X = function (t) { return sb.x + 14 + (t - sb.bar * plan.barLen) / plan.barLen * (sb.w - 24); }, lastName = -99;
+        var X = function (t) { return at(sb, t); }, lastName = -99;
         plan.chords.forEach(function (ch) {
           if (ch.at < sb.bar * plan.barLen - E || ch.at >= (sb.bar + 1) * plan.barLen - E) return;
           var x = Math.max(X(ch.at) - 4, lastName);
@@ -49401,67 +49464,98 @@ Lantern.RFB = (function () {
         });
         if (!melody) {   // a slash a beat
           var p = 4 / plan.d;
-          for (var t = 0; t < plan.barLen - E; t += p) { var sx = X(sb.bar * plan.barLen + t); c.lineWidth = 3; c.beginPath(); c.moveTo(sx - 3, yOf(33)); c.lineTo(sx + 3, yOf(35)); c.stroke(); }
+          for (var t = 0; t < plan.barLen - E; t += p) { var sx = sb.x + 14 + t / plan.barLen * (sb.w - 24); c.lineWidth = 3; c.beginPath(); c.moveTo(sx - 3, yOf(33)); c.lineTo(sx + 3, yOf(35)); c.stroke(); }
           return;
         }
-        var acc = {}, items = ps[sb.bar].sort(function (p, q) { return p.at - q.at; });
-        // eighths and sixteenths in one beat (half a 4/4 bar) share a beam
-        var G = plan.d === 8 && plan.n % 3 === 0 ? 1.5 : plan.n === 4 && plan.d === 4 ? 2 : 4 / plan.d, run = [];
+        var items = ps[sb.bar], B0 = sb.bar * plan.barLen, bt = beatOf(plan);
+        // beams: eighths and shorter in one group -- half a 4/4 bar, or one beat where there are sixteenths or triplets in it,
+        // a dotted quarter in 6/8, 9/8 and 12/8 -- a second beam between sixteenths, a short one for a sixteenth on its own
+        var fine = {};
+        items.forEach(function (p) { if (!p.rest && (LEVEL[value(p.w)[1]] > 1 || p.trip)) fine[Math.floor((p.at - B0) / 2 + E)] = true; });
+        function grp(p) { var rel = p.at - B0, G = plan.n === 4 && plan.d === 4 && !fine[Math.floor(rel / 2 + E)] ? 2 : bt; return Math.floor(rel / G + E) + (G === 2 ? 100 : 0); }
+        function lv(p) { var v = value(p.w); return v[2] ? 0 : LEVEL[v[1]] || 0; }
+        var run = [];
         function beam() {
           if (run.length > 1) {
             var ys = run.map(function (p) { return yOf(stepOf(p.n)); }), avg = 0;
             run.forEach(function (p) { avg += stepOf(p.n); }); avg /= run.length;
             var up = avg < 34, by = up ? Math.min.apply(null, ys) - 3.5 * SP : Math.max.apply(null, ys) + 3.5 * SP, xs = [];
-            run.forEach(function (p, i) { p.stem = { up: up, y: by }; xs.push(X(p.at) + (up ? SP * 0.55 : -SP * 0.55)); });
-            c.fillStyle = INK; c.fillRect(xs[0], up ? by : by - 3.5, xs[xs.length - 1] - xs[0] + 1, 3.5);
-            if (run.every(function (p) { return value(p.len)[1] === "s"; })) c.fillRect(xs[0], up ? by + 5.5 : by - 9, xs[xs.length - 1] - xs[0] + 1, 3.5);
+            run.forEach(function (p) { p.stem = { up: up, y: by }; xs.push(p.x + (up ? SP * 0.55 : -SP * 0.55)); });
+            c.fillStyle = INK;
+            for (var level = 1; level <= 3; level++) {
+              var yb = up ? by + (level - 1) * 5.5 : by - 3.5 - (level - 1) * 5.5;
+              if (level === 1) { c.fillRect(xs[0], yb, xs[xs.length - 1] - xs[0] + 1, 3.5); continue; }
+              run.forEach(function (p, i) {
+                if (lv(p) < level) return;
+                if (i + 1 < run.length && lv(run[i + 1]) >= level) c.fillRect(xs[i], yb, xs[i + 1] - xs[i] + 1, 3.5);
+                else if (!(i > 0 && lv(run[i - 1]) >= level)) { var stub = Math.min(SP, Math.abs((i + 1 < run.length ? xs[i + 1] : xs[i - 1]) - xs[i]) / 2); c.fillRect(i + 1 < run.length ? xs[i] : xs[i] - stub, yb, stub + 1, 3.5); }
+              });
+            }
           }
           run = [];
         }
         items.forEach(function (p) {
-          var v = value(p.len), g = Math.floor((p.at - sb.bar * plan.barLen) / G + 1e-6);
-          if (!p.rest && !v[2] && (v[1] === "e" || v[1] === "s") && (!run.length || run[0].g === g)) { p.g = g; run.push(p); }
-          else { beam(); if (!p.rest && !v[2] && (v[1] === "e" || v[1] === "s")) { p.g = g; run.push(p); } }
+          var ok = !p.rest && lv(p) > 0, g = ok ? grp(p) : null;
+          if (ok && (!run.length || run[0].g === g)) { p.g = g; run.push(p); }
+          else { beam(); if (ok) { p.g = g; run.push(p); } }
         });
         beam();
-        items.forEach(function (p) {
-          var v = value(p.len), x = X(p.at);
+        items.forEach(function (p, i) {
+          var v = value(p.w || p.len), x = p.x;
           if (p.rest) { rest(c, p.whole ? sb.x + sb.w / 2 : x, yOf, p.whole ? [4, "w", 0] : v); return; }
-          var n = p.n, st = stepOf(n), y = yOf(st), up = p.stem ? p.stem.up : st < 34, slot = n.letter + n.oct, cur = acc[slot] != null ? acc[slot] : T.sigAlter(n.letter, plan.sig);
+          var n = p.n, st = stepOf(n), y = yOf(st), up = p.stem ? p.stem.up : st < 34;
           c.strokeStyle = INK; c.lineWidth = 1;
           for (var g = 28; g >= st; g -= 2) { c.beginPath(); c.moveTo(x - 7, yOf(g)); c.lineTo(x + 7, yOf(g)); c.stroke(); }
           for (g = 40; g <= st; g += 2) { c.beginPath(); c.moveTo(x - 7, yOf(g)); c.lineTo(x + 7, yOf(g)); c.stroke(); }
-          if (n.acc !== cur && !p.tieIn) {
+          if (p.mark != null) {
             c.font = "15px serif"; c.textAlign = "center"; c.fillStyle = INK;
-            c.fillText(n.acc === 0 ? "\u266e" : n.acc > 0 ? (n.acc > 1 ? "x" : "\u266f") : (n.acc < -1 ? "\u266d\u266d" : "\u266d"), x - 12, y - (n.acc < 0 ? 3 : 0));
-            acc[slot] = n.acc;
+            c.fillText(p.mark === 0 ? "\u266e" : p.mark > 0 ? (p.mark > 1 ? "x" : "\u266f") : (p.mark < -1 ? "\u266d\u266d" : "\u266d"), x - 12, y - (p.mark < 0 ? 3 : 0));
           }
           head(c, x, y, v[1] === "w" || v[1] === "h");
           if (v[2]) { c.beginPath(); c.arc(x + 9, y - (st % 2 ? 0 : SP / 2), 1.6, 0, 2 * Math.PI); c.fill(); }
           if (v[1] !== "w") {
             var sx2 = up ? x + SP * 0.55 : x - SP * 0.55, ey = p.stem ? p.stem.y : up ? y - 3.5 * SP : y + 3.5 * SP;
             c.lineWidth = 1.2; c.beginPath(); c.moveTo(sx2, y); c.lineTo(sx2, ey); c.stroke();
-            for (var f = 0; f < (p.stem ? 0 : v[1] === "e" ? 1 : v[1] === "s" ? 2 : 0); f++) {
+            for (var f = 0; f < (p.stem ? 0 : LEVEL[v[1]] || 0); f++) {
               var fy = ey + (up ? 1 : -1) * f * SP * 0.8;
               c.lineWidth = 1.6; c.beginPath(); c.moveTo(sx2, fy); c.bezierCurveTo(sx2 + 1, fy + (up ? 1 : -1) * SP * 0.9, sx2 + SP * 1.1, fy + (up ? 1 : -1) * SP * 1.1, sx2 + SP * 0.8, fy + (up ? 1 : -1) * SP * 2.2); c.stroke();
             }
           }
-          if (p.tieOut) {
-            var tx = sb.w - (x - sb.x) - 4, ty = y + (up ? SP * 0.8 : -SP * 0.8);
-            c.lineWidth = 1.2; c.beginPath(); c.moveTo(x + 5, ty); c.quadraticCurveTo(x + tx / 2 + 4, ty + (up ? 6 : -6), x + tx + 8, ty); c.stroke();
+          if (p.tieOut) {   // to the next note in the bar, or on to the bar line (the next bar has its end)
+            var nx = null;
+            for (var j = i + 1; j < items.length && nx === null; j++) if (!items[j].rest && items[j].n === p.n) nx = items[j].x;
+            var x2 = nx !== null ? nx - 5 : sb.x + sb.w + 4, ty = y + (up ? SP * 0.8 : -SP * 0.8);
+            c.lineWidth = 1.2; c.beginPath(); c.moveTo(x + 5, ty); c.quadraticCurveTo((x + 5 + x2) / 2, ty + (up ? 6 : -6), x2, ty); c.stroke();
           }
         });
+        // triplets: a 3 over each beat of them (a quarter's, or two beats of quarter-note triplets)
+        for (var i2 = 0; i2 < items.length;) {
+          if (!items[i2].trip) { i2++; continue; }
+          var j2 = i2, sum = 0;
+          while (j2 < items.length && items[j2].trip) { sum += items[j2].len; j2++; if (Math.abs(sum / bt - Math.round(sum / bt)) < 1e-4 && sum >= bt - E) break; }
+          var xa = items[i2].x, xb = items[j2 - 1].x, ya = top - 6;
+          c.font = "italic 11px serif"; c.textAlign = "center"; c.fillStyle = INK; c.fillText("3", (xa + xb) / 2, ya);
+          i2 = j2;
+        }
       });
     }
     return lay;
   }
+  // at(bar, quarters) -> x of a moment in a drawn bar, between the notes either side of it
+  function at(sb, t) {
+    var ks = sb.knots || [];
+    if (!ks.length) return sb.x + 14;
+    if (t <= ks[0][0]) return ks[0][1];
+    for (var i = 1; i < ks.length; i++) if (t <= ks[i][0] + E) return ks[i - 1][1] + (ks[i][1] - ks[i - 1][1]) * (t - ks[i - 1][0]) / Math.max(E, ks[i][0] - ks[i - 1][0]);
+    return ks[ks.length - 1][1];
+  }
   // where(layout, quarters) -> the place in the drawing a moment of the song is
   function where(lay, t) {
     var b = Math.floor(t / lay.barLen + E), out = null;
-    lay.systems.forEach(function (s) { s.bars.forEach(function (sb) { if (sb.bar === b) out = { x: sb.x + 14 + (t - b * lay.barLen) / lay.barLen * (sb.w - 24), y: s.y, h: s.h }; }); });
+    lay.systems.forEach(function (s) { s.bars.forEach(function (sb) { if (sb.bar === b) out = { x: sb.knots ? at(sb, t) : sb.x + 14 + (t - b * lay.barLen) / lay.barLen * (sb.w - 24), y: s.y, h: s.h }; }); });
     return out;
   }
-  window.Lantern.musicScore = { draw: draw, where: where, value: value };
+  window.Lantern.musicScore = { draw: draw, where: where, value: value, pieces: pieces };
 })();
 // ===========================================================================
 // MODULE: MUSIC_SCORE - END

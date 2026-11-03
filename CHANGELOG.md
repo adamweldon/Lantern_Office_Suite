@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.22.10 — The sheet music written as the song plays (2026-11-03)
+
+Adam: the song Lantern made from the Final Countdown screenshot sounded
+right, but the sheet music drawn under it looked wrong for 4/4 -- some bars
+seemed to hold the wrong number of notes. The notes were placed by time
+alone, so two sixteenths sat on top of the note after them and read as a
+chord; two sixteenths beamed after eighths got no second beam and read as
+eighths; and a length with no single written note (five sixteenths, a beat
+and a half of rest) was drawn as the nearest one.
+
+- **Each note and rest is a length that can be written** (MUSIC_SCORE): a
+  note too long for one is tied (five eighths: a half and an eighth; five
+  sixteenths: a quarter and a sixteenth); a rest is written from the beat it starts on (a
+  quarter and an eighth); a third of a beat is a triplet's, with a 3 over it.
+- **Beams as a player reads them**: eighths share a beam across half a 4/4
+  bar, but a beat with sixteenths (or triplets) in it is beamed on its own;
+  a second beam joins sixteenths, a short one marks a sixteenth beside an
+  eighth; 6/8, 9/8 and 12/8 by the dotted quarter.
+- **Room for every head**: notes and rests spaced by how long they last, a
+  sixteenth about two thirds of a quarter's room, more for a sharp or a dot;
+  fewer bars to a line when a bar needs it. The moving line follows the
+  notes where they are drawn.
+- Tests: `tests/music.js` (152: Adam's song's bars add up as written, its
+  sixteenths and rests, a tied note, every note at least 12 px from the
+  last).
+
 ## 1.22.9 — A song of its own; a block you write, made as written (2026-11-03)
 
 Adam's next trial: the Final Countdown screenshot read (1.22.8) and played,

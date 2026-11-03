@@ -147,6 +147,22 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   ok("a MIDI file: MThd, five tracks (tempo, melody, chords, bass, drums for a ballad), the tempo 108", String.fromCharCode(mid[0], mid[1], mid[2], mid[3]) === "MThd" && mid[11] === 5 &&
     Array.prototype.join.call(mid.slice(0, 80)).indexOf("255,81,3,8,122,36") >= 0, Array.prototype.slice.call(mid, 0, 16));
   var lay = L.musicScore.draw(d.createElement("canvas"), ode.plan, 640);
+  // 1.22.10: Adam's song from the Final Countdown screenshot sounded right, but its sheet looked to have the wrong number of
+  // notes in some bars: sixteenths placed by time alone sat on the notes after them, and two sixteenths after eighths in one
+  // beam got no second beam
+  var FCL = ["key E minor", "time 4/4", "chords Em | C | Am | D D#dim | Em | C | Am | D D#dim | Em D | G C | B | B",
+    "melody r - - - - - B4 A B - - - E4 - - - | r - - - r - C5 B C - B - A - - - | r - - - r - C B C - - - E4 - - - | r - - - r - A G A - G - F - A - | G - - - r - B A B - - - E4 - - - | " +
+    "r - - - r - C5 B C - B - A - - - | r - - - r - C B C - - - E4 - - - | r - - - r - A G A - G - F - A - | G - - - - - F G A - - - - - G A | B A G F E - C5 - | B - - - - - - - B - C - C - B A | B - - -"];
+  var fcp = S.make({ title: "", lines: FCL }).plan, fps = L.musicScore.pieces(fcp), WR = [4, 3, 2, 1.5, 1, 0.75, 0.5, 0.375, 0.25, 0.125];
+  var adds = fps.every(function (items) { var t = 0; items.forEach(function (p) { t += p.len; }); return Math.abs(t - 4) < 1e-6 && items.every(function (p) { return WR.indexOf(p.w) >= 0; }); });
+  var flay = L.musicScore.draw(d.createElement("canvas"), fcp, 640), gaps = [];
+  flay.systems.forEach(function (sy) { sy.bars.forEach(function (sb) { for (var i = 1; i < sb.knots.length - 1; i++) gaps.push(sb.knots[i][1] - sb.knots[i - 1][1]); }); });
+  var tie5 = L.musicScore.pieces(S.make({ title: "", lines: ["key C", "melody C - - - - D E F | G - - -"] }).plan)[0];
+  ok("the sheet as written: every bar's notes and rests add up to it, each a length that can be written (two sixteenths after eighths are sixteenths; a rest of a beat and a half, " +
+    "a quarter and an eighth; five eighths, a half tied to an eighth); every note and rest at least 12 px from the one before at 640 px",
+    adds && fps[10].slice(-2).every(function (p) { return p.w === 0.25; }) && fps[1][0].rest && fps[1][0].w === 1 && fps[1][1].rest && fps[1][1].w === 0.5 &&
+    tie5[0].w === 2 && tie5[0].tieOut && tie5[1].w === 0.5 && tie5[1].tieIn && Math.min.apply(null, gaps) >= 12,
+    [adds, fps[10].map(function (p) { return p.w; }), Math.min.apply(null, gaps)]);
   ok("the sheet music: four bars a line at 640 px, two lines; a moment of the song maps to its place", lay.systems.length === 2 && lay.systems[0].bars.length === 4 &&
     L.musicScore.where(lay, 16).y === lay.systems[1].y && L.musicScore.where(lay, 1).x > L.musicScore.where(lay, 0).x && calls.indexOf("bezierCurveTo") >= 0 && calls.indexOf("ellipse") >= 0);
   ok("note values: 1.5 a dotted quarter, 3 a dotted half, 0.5 an eighth", L.musicScore.value(1.5).join() === "1.5,q,1" && L.musicScore.value(3).join() === "3,h,1" && L.musicScore.value(0.5)[1] === "e");
