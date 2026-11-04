@@ -4,6 +4,9 @@
 # 1.22.5: voice_e_piano at 900; 1.22.7: barcarolle_g_piano and jig_d at 900; 1.22.8: ode_viewer.png, below).
 # Usage: python3 tests/fixtures/sheets/make_sheets.py [NAME ...]   (writes NAME_1300.png, NAME_900.png, NAME_820.png, NAME_760.png,
 # NAME_700.png here; with names, only those songs -- the banner is remade when ode_piano is)
+# 1.23.1: piano_b_lyrics, a piece written for these tests in B major as MusicXML (piano_b_musicxml), with what Adam's piano page
+# had: words under the right hand, chords tied into shorter ones, dotted rhythms, high notes beamed inside the staff, a sixteenth
+# rest, a dotted eighth rest, a lone sixteenth, an octave sign under a left hand of quarters over whole notes (its 900 is tested).
 # 1.22.7: barcarolle_g_piano, a piece written for these tests in G minor and 12/8 (as Adam's sheet): the left hand a quarter and
 # an eighth four times a bar, the right hand dotted quarters and eighths beamed in threes; jig_d, a 6/8 tune in Leland.
 # 1.22.4: minor_e_piano, a piece written for these tests in E minor (minor_e_kern): whole-note chords in the left hand, a sharp a
@@ -20,7 +23,8 @@ songs = [(k, "abc", v, "none") for k, v in E["sources"].items()] + [("ode_piano"
   ("ode_title", "humdrum", E["ode_title_kern_head"] + E["ode_piano_kern"], "auto"),   # 1.21.1: with its title and composer printed above
   ("minor_e_piano", "humdrum", E["minor_e_kern"], "none"),
   ("voice_e_piano", "humdrum", E["voice_e_kern"], "none"),   # 1.22.5: a voice over a piano (voice_e_kern)
-  ("barcarolle_g_piano", "humdrum", E["barcarolle_g_kern"], "none")]   # 1.22.7: 12/8 (barcarolle_g_kern)
+  ("barcarolle_g_piano", "humdrum", E["barcarolle_g_kern"], "none"),   # 1.22.7: 12/8 (barcarolle_g_kern)
+  ("piano_b_lyrics", "musicxml", E["piano_b_musicxml"], "none")]   # 1.23.1: words, ties, an octave sign, two voices (piano_b_musicxml)
 # 1.22.7: a time signature in another font -- jig_d (6/8) in Leland, MuseScore 4's
 FONT = {"jig_d": "Leland"}
 ONLY = sys.argv[1:]

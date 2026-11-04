@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.23.0 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.23.1 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -173,7 +173,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.23.0",
+  version: "1.23.1",
   apps: {},
   order: []
 };
@@ -35796,7 +35796,11 @@ Lantern.RFB = (function () {
       }
       if (ok) {
         var g = ok.g;
-        out.push({ lines: g.map(function (q) { return (q.y0 + q.y1) / 2; }), spacing: ok.avg, thick: Math.max.apply(null, g.map(function (q) { return q.y1 - q.y0 + 1; })),
+        // (1.23.1) how thick its lines are: the thickest, but not more than the middle one and two -- beams lying along a
+        // line for a whole bar (Adam's piano page, its stems down into the staff) made a band ten rows thick, and the beams
+        // were taken out with the lines: the bar's sixteenths read as quarters
+        var ths = g.map(function (q) { return q.y1 - q.y0 + 1; }), thm = ths.slice().sort(function (a, b) { return a - b; })[2];
+        out.push({ lines: g.map(function (q) { return (q.y0 + q.y1) / 2; }), spacing: ok.avg, thick: Math.min(Math.max.apply(null, ths), thm + 2),
           left: Math.min.apply(null, g.map(function (q) { return q.left; })), right: Math.max.apply(null, g.map(function (q) { return q.right; })) });
         i += used;
       } else i++;
@@ -36262,8 +36266,18 @@ Lantern.RFB = (function () {
   // rest(component) -> its length in quarters, or 0
   function rest(im, c, s) {
     var sp = s.spacing, h = c.y1 - c.y0 + 1, w = c.x1 - c.x0 + 1, cy = (c.y0 + c.y1) / 2, off = (s.lines[2] - cy) / (sp / 2), fill = c.n / (w * h);
-    if (h >= 0.3 * sp && h <= 0.8 * sp && w >= 0.8 * sp && w <= 1.8 * sp && fill > 0.7) return off > 1 ? 4 : 2;   // whole hangs from the 4th line, half sits on the 3rd
+    // whole hangs from the 4th line, half sits on the 3rd -- inside the staff (1.23.1, Adam's piano page: a lyric's hyphen, the
+    // dashes of an octave sign and a beam's end under the staff were read as rests, and its bars as two bars long)
+    if (h >= 0.3 * sp && h <= 0.8 * sp && w >= 0.8 * sp && w <= 1.8 * sp && fill > 0.7) return c.y0 >= s.lines[0] - 0.35 * sp && c.y1 <= s.lines[4] + 0.35 * sp ? (off > 1 ? 4 : 2) : 0;
     if (accidental(im, c, sp)) return 0;
+    // (1.23.1) a sixteenth rest is as tall as a quarter rest: its foot is a thin stroke, a quarter rest's a thick hook (Adam's
+    // piano page: a sixteenth rest was not read, and the bar came out short)
+    if (h >= 2.5 * sp && h <= 3.6 * sp && w >= 0.5 * sp && w <= 1.8 * sp && Math.abs(off) < 3 && c.px) {   // (an eighth rest, blurred, is up to 2.3)
+      var rw = {}, ws = [], y0 = c.y1 - 0.3 * h;
+      for (var i = 0; i < c.px.length; i += 2) if (c.px[i + 1] >= y0) rw[c.px[i + 1]] = (rw[c.px[i + 1]] || 0) + 1;
+      for (var k in rw) ws.push(rw[k]);
+      if (ws.length && med(ws) <= 0.4 * sp) return 0.25;
+    }
     // a quarter rest is three spaces tall, an eighth rest about two (1.22.4: some fonts' eighth rests reach 2.2)
     if (h >= 2.5 * sp && h <= 3.6 * sp && w >= 0.5 * sp && w <= 1.3 * sp && Math.abs(off) < 2.5) return 1;
     if (h >= 1.3 * sp && h < 2.5 * sp && w >= 0.5 * sp && w <= 1.4 * sp && Math.abs(off) < 3) return 0.5;
@@ -36306,7 +36320,7 @@ Lantern.RFB = (function () {
         if (!got[k]) { got[k] = 1; stack.push(nx, ny); }
       }
     }
-    var most = 0;
+    var most = 0, long2 = false;
     [-1, 1].forEach(function (side) {
       var xc = Math.round(st.x + side * 0.4 * sp), runs = 0, run = 0;
       // (1.22.4) two beams the picture ran together (small sixteenths): a beam's block as thick as two -- a flag is a thin curl
@@ -36315,17 +36329,24 @@ Lantern.RFB = (function () {
         if (run < 0.95 * sp) return 1;
         var ym = Math.round(st.tip + tw * (j1 - run / 2 - 0.2 * sp)), w = 0;
         while (w <= sp && xc + side * w >= X0 && xc + side * w <= X1 && got[(ym - Y0) * W + (xc + side * w - X0)]) w++;
+        // (1.23.1) a flag's run as tall as two flags: a sixteenth's, the picture running them together -- or an eighth's, blurred;
+        // the bar's length decides (song: voiced)
+        if (w < 0.8 * sp && run >= 1.1 * sp) long2 = true;
         return w >= 0.8 * sp ? Math.max(1, Math.round((run / sp + 0.25) / 0.75)) : 1;
       }
-      for (var j = 0; j <= 1.6 * sp; j++) {
+      // (1.23.1: a sixteenth's two flags, hung a space up a stem down -- the second crossed the column past where it was looked for)
+      // (further only just past a flag found already: a quarter has none, and a flag's next is close above it)
+      for (var j = 0, start = 0, last = -1e9; j <= 2.2 * sp; j++) {
+        if (j > 1.6 * sp && !run && j - last > 1.2 * sp) break;
         var yy = Math.round(st.tip + tw * (j - 0.2 * sp));
         var on = yy >= Y0 && yy <= Y1 && got[(yy - Y0) * W + (xc - X0)];
-        if (on) run++;
-        else { runs += count(j); run = 0; }
+        if (on) { if (!run) start = j; run++; }
+        else { var got1 = count(j); if (got1) last = start; runs += got1; run = 0; }
       }
       runs += count(j);
       most = Math.max(most, runs);
     });
+    hd.flags2 = most === 1 && long2;
     return most;
   }
   // a dot: a small round spot of ink with paper all round it, just right of the head (in the space above, for a head on a line)
@@ -36339,9 +36360,30 @@ Lantern.RFB = (function () {
         if (d2 <= r1 * r1) { an++; if (dark(cl, x + dx, y + dy)) a++; }
         else if (d2 >= r2 * r2 && d2 <= r3 * r3) { bn++; if (dark(cl, x + dx, y + dy)) b++; }
       }
-      if (a >= 0.8 * an && b <= 0.2 * bn && alone(cl, x, y, 0.6 * sp)) return true;
+      if (a >= 0.8 * an && b <= 0.2 * bn && alone(cl, x, y, 0.6 * sp) && round(cl, x, y, sp)) return { x: x, y: y };   // (where it is, 1.23.1)
     }
-    return false;
+    return null;
+  }
+  // round(ink, x, y, sp): the patch at x, y is as tall as it is wide, and small -- a dot (1.23.1: the start of a tie between two
+  // sixteenths, cut short by the staff line taken out, was read as a dot, and the bar as an eighth too long)
+  function round(im, x0, y0, sp) {
+    var seen = {}, st = [x0, y0], rows = {}, n = 0;
+    seen[x0 + "," + y0] = 1;
+    while (st.length && n < 400) {
+      var y = st.pop(), x = st.pop(); n++;
+      var r = rows[y] || (rows[y] = [x, x]);
+      if (x < r[0]) r[0] = x; if (x > r[1]) r[1] = x;
+      for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) {
+        var k = (x + dx) + "," + (y + dy);
+        if (!seen[k] && dark(im, x + dx, y + dy)) { seen[k] = 1; st.push(x + dx, y + dy); }
+      }
+    }
+    // (a dot just under a staff line keeps a sliver of the line above it: rows much narrower than the dot are left out)
+    var ys = Object.keys(rows).map(Number), a = 1e9, b = -1e9, wide = 0, h = 0;
+    ys.forEach(function (y) { wide = Math.max(wide, rows[y][1] - rows[y][0] + 1); });
+    ys.forEach(function (y) { if (rows[y][1] - rows[y][0] + 1 >= 0.45 * wide) { h++; a = Math.min(a, rows[y][0]); b = Math.max(b, rows[y][1]); } });
+    var w = b - a + 1;
+    return w <= Math.max(3, 0.8 * sp) && w <= 1.6 * h + 1 && h <= 1.6 * w + 1;   // (a small picture's dot, enlarged, is blurred wider)
   }
   // alone(ink, x, y, r): the patch of ink at x, y stays within r of it (a dot; not the tail of a flag)
   function alone(im, x0, y0, r, cap) {
@@ -36950,6 +36992,13 @@ Lantern.RFB = (function () {
       }
     });
     hs = hs.filter(function (h) { return !h.drop; });
+    // (1.23.1) a "dot" as near the next note at its pitch as its own is the middle of a short tie between them (two sixteenths
+    // tied): a dot sits close after its note, with room after it
+    hs.forEach(function (h) {
+      var d = h.dot;
+      if (!d || !d.x) return;
+      if (hs.some(function (o) { return o !== h && o.x > d.x && Math.abs(o.off - h.off) <= 1 && o.x - d.x < 1.25 * (d.x - h.x); })) { h.dot = null; h.len /= 1.5; }
+    });
     // a head found twice, half a space apart in one place (1.22.4): the one on a stem, the filled one, else the one sitting on
     // its line or space
     // (the best first, each kept unless one kept already sits there -- a chord's note between two half-space doubles stays, 1.22.4)
@@ -36981,6 +37030,15 @@ Lantern.RFB = (function () {
         return r !== f && r.filled && r.stem && Math.abs(f.x - r.stem.x) < 1.25 * sp && Math.abs(f.y - r.stem.tip) < 0.8 * sp && Math.abs(f.y - r.y) > 0.8 * sp;
       });
     });
+    // (1.23.1) nor filled, when the "stem" it seems to have is that note's own, back up to its head (a beam's end under the staff,
+    // taken for a note below it: the note above was then taken for its flag)
+    hs = hs.filter(function (f) {
+      return !f.filled || !f.stem || !hs.some(function (r) {
+        return r !== f && r.filled && r.stem && Math.abs(f.x - r.stem.x) < 1.25 * sp && Math.abs(f.y - r.stem.tip) < 0.8 * sp && Math.abs(f.y - r.y) > 2 * sp &&
+          Math.abs(f.stem.x - r.stem.x) <= 0.4 * sp && f.stem.dir === -r.stem.dir && Math.abs(f.stem.tip - r.y) < 1.2 * sp &&
+          runW(pr.cl, Math.round(f.x), Math.round(f.y)) > runW(pr.cl, Math.round(r.x), Math.round(r.y));   // (of the two, the one lying along the beam)
+      });
+    });
     // a flag's curl at another note's stem tip is not a note
     hs = hs.filter(function (f) {
       return !hs.some(function (r) {
@@ -36988,6 +37046,15 @@ Lantern.RFB = (function () {
         var near = f.x > r.stem.x - 0.1 * sp && f.x < r.stem.x + 1.25 * sp, along = (f.y - r.stem.tip) * -r.stem.dir;   // flags hang right of the stem, from its tip towards its head
         return near && along > -0.6 * sp && along < 2.8 * sp && Math.abs(f.y - r.y) > 0.8 * sp && !(f.stem && Math.abs(f.stem.x - r.stem.x) > 0.3 * sp && attached(pr.cl, f, f.stem));
       });
+    });
+    // (1.23.1) a head with no stem, its own or its chord's, close between two notes is the middle of a tie (or a slur) joining
+    // them -- thick where it bends, read as a whole note (Adam's piano page: a bar read as two bars long); a whole note has room
+    function chordStem(h) { return hs.some(function (o) { return o !== h && o.stem && Math.abs(o.x - h.x) < 0.6 * sp && Math.abs(o.y - h.y) <= 4 * sp; }); }
+    hs = hs.filter(function (h) {
+      if (h.stem || chordStem(h)) return true;
+      var l = hs.some(function (o) { return o.stem && o.x < h.x - 0.6 * sp && o.x > h.x - 2.4 * sp && Math.abs(o.y - h.y) <= 3 * sp; }),
+        r = hs.some(function (o) { return o.stem && o.x > h.x + 0.6 * sp && o.x < h.x + 2.4 * sp && Math.abs(o.y - h.y) <= 3 * sp; });
+      return !(l && r);
     });
     // in-bar accidentals: just before a head, at its height
     var comps = joined(components(pr.cl, firstX - 2 * sp, s.lines[0] - 3 * sp, s.right, s.lines[4] + 3 * sp), sp, true);
@@ -37046,9 +37113,24 @@ Lantern.RFB = (function () {
     });
     // rests: patches in the staff that are no note's
     var rests = [];
+    function restDot(c) {   // a dot just right of a rest, about its top's height
+      for (var y = Math.round(c.y0 - 0.2 * sp); y <= Math.round(c.y0 + 1.3 * sp); y++) for (var x = Math.round(c.x1 + 0.15 * sp); x <= Math.round(c.x1 + 1.1 * sp); x++)
+        if (dark(pr.cl, x, y) && alone(pr.cl, x, y, 0.5 * sp) && round(pr.cl, x, y, sp)) return true;
+      return false;
+    }
     comps.forEach(function (c) {
       if (c.x0 < firstX - 0.8 * sp) return;
-      if (hs.some(function (h) { return h.x >= c.x0 - 0.2 * sp && h.x <= c.x1 + 0.2 * sp && h.y >= c.y0 - 0.2 * sp && h.y <= c.y1 + 0.2 * sp; })) return;
+      var inside = hs.filter(function (h) { return h.x >= c.x0 - 0.2 * sp && h.x <= c.x1 + 0.2 * sp && h.y >= c.y0 - 0.2 * sp && h.y <= c.y1 + 0.2 * sp; });
+      if (inside.length) {
+        // (1.23.1) a rest's ball taken for a head (Adam's piano page: an eighth rest and its dot read as a whole note held a bar and a
+        // half): the patch has a rest's shape and nothing in it a stem
+        // (a whole note's halves, cut apart where the lines were taken out, are each a patch an eighth rest's width -- but not its height)
+        // (and one ball: a chord of whole notes, cut apart the same way, is a tall patch of several)
+        if (c.y1 - c.y0 + 1 < 1.6 * sp || inside.length > 1 || inside.some(function (h) { return h.stem || chordStem(h); })) return;
+        var r0 = rest(pr.cl, c, s);
+        if (r0 !== 0.5 && r0 !== 0.25) return;   // (an eighth's or a sixteenth's: the rests with a ball)
+        inside.forEach(function (h) { h.restInk = true; });
+      }
       // a piece of a head's rim (a whole note cut by the lines around it) is the head's, not a rest (1.21.2)
       if (hs.some(function (h) { var r = Math.max(0.65 * sp, Math.min(0.5 * (h.wide || 0), sp)); return c.x1 >= h.x - r && c.x0 <= h.x + r && c.y1 >= h.y - 0.6 * sp && c.y0 <= h.y + 0.6 * sp && c.y1 - c.y0 <= 1.3 * sp; })) return;
       if (bars.some(function (b) { return b >= c.x0 - 1 && b <= c.x1 + 1; })) return;
@@ -37057,15 +37139,26 @@ Lantern.RFB = (function () {
       // the start of a tie, just after its note, cut in pieces by the lines taken out (1.22.4)
       if (hs.some(function (h) { var e = h.x + (h.stem ? 0.7 : 0.95) * sp; return c.x0 >= h.x && c.x0 - e < 0.6 * sp && c.y1 >= h.y - 1.5 * sp && c.y0 <= h.y + 1.5 * sp; })) return;
       var r = rest(pr.cl, c, s);
-      if (r) rests.push({ x: (c.x0 + c.x1) / 2, rest: true, len: r });
+      if (r && r <= 1 && restDot(c)) r *= 1.5;   // (1.23.1) a dotted rest
+      if (r) rests.push({ x: (c.x0 + c.x1) / 2, y: (c.y0 + c.y1) / 2, mid: s.lines[2], sp: sp, rest: true, len: r });
     });
+    hs = hs.filter(function (h) { return !h.restInk; });
     // one line of music: the top note of a chord (a tune), or the lowest (a bass)
     var cols = [], grp = [];
     hs.sort(function (a, b) { return a.x - b.x; }).forEach(function (h) {
       var g = grp[grp.length - 1];
       if (g && h.x - g[g.length - 1].x < 0.6 * sp) g.push(h); else grp.push([h]);
     });
-    grp.forEach(function (g) { var one = g.reduce(function (a, b) { return (top ? b.off > a.off : b.off < a.off) ? b : a; }); one.with = g.filter(function (h) { return h !== one; }); cols.push(one); });   // (the chord's other notes kept, 1.22.1)
+    grp.forEach(function (g) {
+      var one = g.reduce(function (a, b) { return (top ? b.off > a.off : b.off < a.off) ? b : a; });
+      one.with = g.filter(function (h) { return h !== one; });   // (the chord's other notes kept, 1.22.1)
+      // (1.23.1) its length from its stem: the top note of a chord whose stem was found on another of its notes
+      // (a filled head's: an open one with no stem is a whole note -- another voice's, under a hand's quarters)
+      var st = one.stem || !one.filled ? one : g.filter(function (h) { return h.stem; })[0];
+      if (st && st !== one) { one.len = st.len; one.dir = st.stem.dir; one.flags2 = st.flags2 && !st.dot; } else if (one.stem) one.dir = one.stem.dir;
+      if (one.flags2 && one.dot) one.flags2 = false;
+      cols.push(one);
+    });
     var evs = cols.concat(rests).sort(function (a, b) { return a.x - b.x; });
     // (1.22.6) the bars from where the key and time end: a first bar where nothing was read (a part's rest under another
     // instrument's small cue notes) is a bar still, and so is a last one whose bar line was not found -- a bar's room or more
@@ -37087,9 +37180,34 @@ Lantern.RFB = (function () {
       }
       return best >= 0.55 * (xb - xa);
     }
+    // (1.23.1) a note tied to the one after it at its pitch is held, not played again (Adam's piano page: chords tied an eighth
+    // into a sixteenth, struck twice): a short arc between them, near their heads -- a patch of its own, wider than tall, not
+    // reaching a stem, beam or flag -- under most of the way from one to the other
+    function tieTo(a, b) {
+      var x0 = a.x + 0.75 * sp, x1 = b.x - 0.75 * sp, ys = [a, b].reduce(function (m, e) { return m.concat([e.y], (e.with || []).map(function (h) { return h.y; })); }, []);
+      var ya = Math.min.apply(null, ys) - 1.5 * sp, yb = Math.max.apply(null, ys) + 1.5 * sp;
+      if (x1 - x0 < 0.5 * sp || b.x - a.x > 7 * sp) return false;
+      var cover = {}, n = 0;
+      components(pr.cl, x0, ya - 3 * sp, x1, yb + 3 * sp).forEach(function (c) {
+        var w = c.x1 - c.x0 + 1, h = c.y1 - c.y0 + 1;
+        // (an arc's pieces, cut where it crossed the lines taken out: the long middle, and slivers at its ends -- not a dot)
+        if (c.y0 < ya || c.y1 > yb || h > 0.9 * sp) return;
+        if (!((w >= 1.2 * h && w >= 0.25 * sp) || (w <= 0.2 * sp && h <= 0.5 * sp))) return;
+        for (var x = c.x0; x <= c.x1; x++) if (!cover[x]) { cover[x] = 1; n++; }
+      });
+      return n >= 0.55 * (Math.round(x1) - Math.round(x0) + 1);
+    }
+    out.forEach(function (bar) {
+      var ns = bar.filter(function (e) { return !e.rest; });
+      for (var j = 1; j < ns.length; j++) {
+        var a = ns[j - 1], b = ns[j];
+        if (bar.indexOf(b) === bar.indexOf(a) + 1 && a.off === b.off && !b.acc && tieTo(a, b)) b.tie = true;
+      }
+    });
     for (var bi = 1; bi < out.length; bi++) {
       var last = out[bi - 1].filter(function (e) { return !e.rest; }).pop(), next = out[bi].filter(function (e) { return !e.rest; })[0];
       if (!last || !next || out[bi].indexOf(next) !== 0) continue;
+      if (out[bi - 1].indexOf(last) === out[bi - 1].length - 1 && last.off === next.off && !next.acc && tied(last, next)) next.tie = true;   // (over the bar line)
       var from = [last].concat(last.with || []).filter(function (h) { return h.acc; });
       [next].concat(next.with || []).forEach(function (h) {
         if (h.acc) return;
@@ -37132,6 +37250,24 @@ Lantern.RFB = (function () {
     }
     out.push(cur);
     return out;
+  }
+  // voiced(bar, bar's length, top) -> the bar as one voice, or null (1.23.1): two voices on one staff -- a left hand's whole note
+  // under its quarters, a right hand's tune over a line of its own -- read as one made the bar too long; the voice that fills
+  // the bar is the one meant, the stems up for a tune (and the rests above the middle line), the stems down for a bass
+  function voiced(bar, barLen, top) {
+    var up = [], dn = [], none = [], ru = [], rd = [];
+    bar.forEach(function (e) {
+      if (e.rest) { if (e.y == null || Math.abs(e.y - e.mid) < 0.75 * e.sp) { ru.push(e); rd.push(e); } else (e.y < e.mid ? ru : rd).push(e); return; }
+      (e.dir == null ? none : e.dir < 0 ? up : dn).push(e);
+    });
+    function v(ns, rs) { return ns.concat(rs).sort(function (a, b) { return a.x - b.x; }); }
+    var tries = top ? [v(up, ru), v(up.concat(none), ru), v(dn, rd), v(none, [])] : [v(dn, rd), v(none, rd), v(dn.concat(none), rd), v(up, ru)];
+    for (var i = 0; i < tries.length; i++) {
+      var t = 0;
+      tries[i].forEach(function (e) { t += e.len; });
+      if (Math.abs(t - barLen) < 1e-6 && tries[i].some(function (e) { return !e.rest; })) return tries[i];
+    }
+    return null;
   }
   // barsSaid([4, 5, 7, 8, 9, 11]) -> "bars 4, 5, 7\u20139 and 11" (1.22.7)
   function barsSaid(ns) {
@@ -37253,8 +37389,14 @@ Lantern.RFB = (function () {
     // plain words, for the person -- each plays its notes in a bar's time
     all.forEach(function (bar, i) {
       var t = sumOf(bar);
+      if (t > barLen + 1e-6) { var one = voiced(bar, barLen, true); if (one) { bar.splice.apply(bar, [0, bar.length].concat(one)); t = barLen; } }
+      // (1.23.1) a bar too long by half a flagged note's length, where that note's flag may be two run together: a sixteenth
+      if (t > barLen + 1e-6) bar.forEach(function (e) { if (t > barLen + 1e-6 && e.flags2 && Math.abs(t - barLen - e.len / 2) < 1e-6) { t -= e.len / 2; e.len /= 2; } });
       if (t < barLen - 1e-6) { var r = { rest: true, len: barLen - t, added: true }; if (i === 0) bar.unshift(r); else bar.push(r); }
       else if (t > barLen + 1e-6) over.push(i + 1);
+    });
+    low.forEach(function (bar) {   // (a left hand's two voices too)
+      if (bar && sumOf(bar) > barLen + 1e-6) { var one = voiced(bar, barLen, false); if (one) bar.splice.apply(bar, [0, bar.length].concat(one)); }
     });
     if (over.length) problems.push("the rhythm of " + barsSaid(over) + " is unsure: more was read in " + (over.length > 1 ? "each" : "it") + " than a bar of " + time.join("/") + " holds");
     if (cover.length) problems.push("a band across the picture covers some of the music" + (cover.length > 1 ? " in " + cover.length + " places" : "") + ": notes under it are not read");
@@ -37360,8 +37502,14 @@ Lantern.RFB = (function () {
     return any || chosen.length ? { line: line.join(" | "), list: list, chosen: chosen } : null;
   }
   function write(res) {
-    var k = Math.max(-7, Math.min(7, res.key)), ns = [];
-    res.bars.forEach(function (b) { b.forEach(function (e) { if (!e.rest) ns.push(e); }); });
+    var k = Math.max(-7, Math.min(7, res.key)), ns = [], held = [], prevE = null;
+    // (1.23.1) a note tied to the one before it at its pitch holds that one on: its shares are written "-", and the tune has one
+    // note the longer
+    res.bars.forEach(function (b) { b.forEach(function (e) {
+      if (e.rest) { prevE = null; return; }
+      if (e.tie && prevE && prevE.midi === e.midi) { held.push(e); prevE.heldLen = (prevE.heldLen || prevE.len) + e.len; e.holds = prevE; return; }
+      e.heldLen = null; ns.push(e); prevE = e;
+    }); });
     if (!ns.length) { res.found = false; res.text = "Staves were found, but no notes on them."; return res; }
     var maj = pcOf(MAJ[k + 7]), min = (maj + 9) % 12, sc = 0, first = ns[0].midi % 12, last = ns[ns.length - 1].midi % 12;
     if (last === min) sc += 2; if (last === maj) sc -= 2; if (first === min) sc += 1; if (first === maj) sc -= 1;
@@ -37390,6 +37538,7 @@ Lantern.RFB = (function () {
         var out = [];
         bar.forEach(function (e) {
           var n = Math.max(1, Math.round(e.len / u)), t = "r";
+          if (e.holds) { for (var h = 0; h < n; h++) out.push("-"); return; }
           if (!e.rest) {
             t = LET.charAt(e.letter) + (e.alter === sigAlter(e.letter, k) ? "" : e.alter > 0 ? "#" : e.alter < 0 ? "b" : "n");
             if (prev === null || withOct[ns.indexOf(e)] || Math.abs(e.midi - prev) > 5) t += e.oct;
@@ -37414,14 +37563,15 @@ Lantern.RFB = (function () {
     res.melody = mel;
     if (ch) { res.chords = ch.line; res.chordList = ch.list; }
     res.lines = "key " + res.keyName + "\ntime " + res.time.join("/") + (ch ? "\nchords " + ch.line : "") + "\nmelody " + mel;
-    res.tune = ns.map(function (n) { return { midi: n.midi, len: n.len }; });
+    res.tune = ns.map(function (n) { return { midi: n.midi, len: n.heldLen || n.len }; });
+    res.ties = held.length;
     // the tune as its lines play it (1.22.1): a bar read too long plays its notes in a bar's time, and a song copied from the
     // lines is checked against this, not against what they cannot say
     var played = MS ? MS.make({ title: "", lines: res.lines.split("\n") }).plan : null;
     res.played = played && played.melody.length === ns.length ? played.melody.map(function (n) { return { midi: n.midi, len: n.len }; }) : null;
     res.known = L.musicTunes ? L.musicTunes.find(ns.map(function (n) { return n.midi; })) : null;   // (1.21.2) a tune Lantern knows by its opening
     res.doubt = res.problems.slice();
-    if (ch && ch.chosen.length) res.doubt.push((ch.chosen.length > 1 ? "bars " + ch.chosen[0] + "\u2013" + ch.chosen[ch.chosen.length - 1] + " have" : "bar " + ch.chosen[0] + " has") + " no left hand in the picture: Lantern chose " + (ch.chosen.length > 1 ? "their" : "its") + " chords");
+    if (ch && ch.chosen.length) res.doubt.push(barsSaid(ch.chosen) + (ch.chosen.length > 1 ? " have" : " has") + " no left hand in the picture: Lantern chose " + (ch.chosen.length > 1 ? "their" : "its") + " chords");
     if (res.spacing && res.spacing < 6.5) res.doubt.push("the picture is small (its staff lines " + Math.round(res.spacing * 10) / 10 + " pixels apart): a closer picture reads surer");
     res.summary = nb + " bar" + (nb === 1 ? "" : "s") + " in " + res.keyName + ", " + res.time.join("/") + ", " + ns.length + " notes" + (res.systems > 1 ? " on " + res.systems + " lines of music" : "") +
       (ch ? ", the chords from the left hand" : "") + (res.transposed ? ", as it sounds (written for " + res.transposed.name + ": " + res.transposed.how + ")" : "");

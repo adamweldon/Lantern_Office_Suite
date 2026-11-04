@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.23.1 — A piano page read with its bars adding up (2026-11-03)
+
+Adam's second test piece -- a piano arrangement in B major, with the words
+printed under the right hand -- "came out with some recognizable notes with
+the timing of playback not quite correct". Every bar but one was read as
+longer than 4/4 (some as two or three bars long), so each played its notes
+squeezed into a bar's time, and three bars were said to have no left hand.
+What the reader took for music that was not, and what it missed:
+
+- **Words under the music**: a hyphen between syllables was read as a half
+  rest. A half or whole rest is now only read inside the staff -- so are not
+  the dotted line of an octave sign under the left hand, or a beam's end
+  under the staff.
+- **Ties**: the middle of a short tie, thick where it bends, was read as a
+  whole note; the start of one, cut short by the staff line taken out, as a
+  dot. A note with no stem close between two notes is a tie's middle; a dot
+  is small and round, and sits close after its note, not halfway to the
+  next. And a note tied to the next at its pitch is now **held, not struck
+  again**: the melody line writes it "-" (16 ties on Adam's page).
+- **Beams inside the staff** (high notes with their stems down): a bar of
+  them made one staff line's band look ten rows thick, and the beams were
+  taken out with the lines -- the sixteenths read as quarters, and that
+  line's key signature short of a sharp. A staff's line thickness is now
+  never more than the middle one's and two.
+- **Rests**: a sixteenth rest (as tall as a quarter rest, its foot a thin
+  stroke) is read; an eighth rest whose ball was taken for a head, and the
+  dot after it, is a dotted eighth rest; a lone sixteenth's two flags run
+  together, where the bar's length says so, are two.
+- **Two voices on a staff**: a left hand's quarters over its whole notes (or
+  a right hand's tune over a line of its own) made the bar twice as long. A
+  bar that reads too long is now the voice that fills it -- the stems up for
+  a tune, the stems down or the whole notes for a bass; a whole note in a
+  chord keeps its own length.
+- A beam's end under the staff, taken for a note whose stem was the note
+  above's, is not a note.
+- The bars with no left hand are named as the time signature's doubts are
+  (bars 7 and 9, not "7–9" for two bars apart).
+
+Adam's page now reads 15 bars of 4/4 with every bar adding up and the
+chords from the left hand in every bar. Tests: a piece written for them,
+`piano_b_lyrics_900.png` (MusicXML in `expected.json`: words with hyphens,
+ties, dotted rhythms, beams inside the staff, a sixteenth rest, a dotted
+eighth rest, an octave sign, a left hand in two voices) -- every note, length
+and rest, its chords, its three ties (`tests/browser/sheet_read_e2e.py`);
+the earlier sheets read as before.
+
 ## 1.23.0 — Every player's part, for a class; the drums kept (2026-11-03)
 
 Adam: “We should have another button to export all the sheet music pieces

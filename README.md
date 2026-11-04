@@ -124,7 +124,12 @@ B♭ a tone up, a horn in F a fifth, a viola's alto clef), with bar numbers,
 section letters, rests for the bars a player waits and the drums on a
 percussion staff -- and **Save MusicXML** gives the same parts to MuseScore,
 Finale, Sibelius or Dorico. An orchestra keeps the band's drums when the song's
-style has them (style rock, pop, march, reggae).
+style has them (style rock, pop, march, reggae). Since v1.23.1 a piano page with
+the words printed under the right hand reads with every bar adding up: the
+words' hyphens and an octave sign's dotted line are not rests, a tie's middle is
+not a whole note nor its start a dot, beams inside the staff are kept, a
+sixteenth rest and a dotted rest are read, two voices on a staff are one voice
+each -- and a note tied to the next is held, not struck again.
 
 ## Install on a computer (with its AI) -- two double-clicks
 

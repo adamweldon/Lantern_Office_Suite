@@ -74,7 +74,7 @@ try:
           for (var i = 1; same && i < r.tune.length; i++) if (pl.melody[i].midi - pl.melody[i - 1].midi !== r.tune[i].midi - r.tune[i - 1].midi || Math.abs(pl.melody[i].len - r.tune[i].len) > 1e-9) same = false;
           return { found: true, key: r.key, time: r.time, bars: r.bars.map(function (b) { return b.map(function (e) { return [e.rest ? null : e.midi, e.len]; }); }),
             lines: r.lines, same: same, problems: m.problems, ms: ms, staves: old.staves, spacing: r.spacing, chords: r.chords || null, title: r.title || null, heading: r.heading || null, doubt: r.doubt || [],
-            timeRead: !!r.timeRead }; })"""
+            timeRead: !!r.timeRead, ties: r.ties || 0, tune: r.tune.length }; })"""
         right = 0
         for f, want in sorted(E["sheets"].items()):
             r = pg.evaluate(READ, b64(f))
@@ -85,6 +85,9 @@ try:
             ok("...its lines make the same tune again, nothing questioned; the pitch reader finds its staves too", r["found"] and r["same"] and not r["problems"] and r["staves"] >= 1, [r.get("problems"), r.get("staves")])
             ok("...its time read from the digits printed after the key (1.22.7: not what most bars add up to)", r.get("timeRead") is True, r.get("time"))
             ok("...its chords " + ("from the left hand: " + want["chords"] if want.get("chords") else "left to the song (no left hand)"), r.get("chords") == want.get("chords"), r.get("chords"))
+            if want.get("ties") is not None:   # 1.23.1: notes tied to the next at their pitch are held, not struck again
+                ok("...its ties: %d notes held on into the next, the tune %d notes" % (want["ties"], sum(len([e for e in b if e[0] is not None]) for b in want["bars"]) - want["ties"]),
+                   r.get("ties") == want["ties"] and r.get("tune") == sum(len([e for e in b if e[0] is not None]) for b in want["bars"]) - want["ties"], [r.get("ties"), r.get("tune")])
             if want.get("keyName"):   # 1.22.4: a minor key from the left hand
                 ok("...its key: " + want["keyName"], (r.get("lines") or "").startswith("key " + want["keyName"] + "\n"), (r.get("lines") or "")[:40])
             ok("...its heading: " + (repr(want["title"]) if want.get("title") else "none"), r.get("title") == want.get("title") and (not want.get("heading") or r.get("heading") == want["heading"]), [r.get("title"), r.get("heading")])
