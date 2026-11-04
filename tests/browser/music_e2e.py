@@ -9,6 +9,8 @@
 # makes the notes in background workers ("Preparing the instruments"), then
 # plays them; a worker's note sounds like the page's own; the waltz for
 # violin and piano is saved as a WAV (little_waltz.wav, to listen to).
+# 1.23.0: Save parts -- a PDF of the score and each player's part, the drums
+# too (frere_jacques_parts.pdf) -- and Save MusicXML.
 # Screenshots and sound files in the folder given (default: the system temp
 # folder).
 # Usage: python3 tests/browser/music_e2e.py [screenshot folder]
@@ -110,6 +112,23 @@ try:
         wv = wave.open(lw); n = wv.getnframes(); data = struct.unpack("<%dh" % n, wv.readframes(n)); peak = max(abs(x) for x in data) / 32768.0
         rms = (sum(x * x for x in data[:n // 2]) / max(1, n // 2)) ** 0.5 / 32768.0
         ok("the waltz for violin and piano as a WAV: its 8 bars of 3/4 at 96, sound all through, none clipped", 16 < n / 44100.0 < 20 and 0.2 < peak <= 0.91 and rms > 0.02, [n / 44100.0, peak, rms])
+        # 1.23.0: every player's part for a class (Adam), the drums too -- Frere Jacques, a march: horn, brass, tuba and drums
+        pg.select_option("select[aria-label='Start from']", "5"); time.sleep(0.6)
+        want = pg.evaluate("(function () { var p = Lantern.musicSong.make({ title: '', lines: document.querySelector('textarea[aria-label=Song]').value.split('\\n') }).plan; " +
+                           "return [Lantern.musicParts.parts(p).map(function (x) { return x.name + '/' + x.clef; }), Lantern.musicParts.pages(p).length]; })()")
+        with pg.expect_download(timeout=60000) as dl: pg.locator("button", has_text="Save parts").first.click()
+        pp = os.path.join(OUT, "frere_jacques_parts.pdf"); dl.value.save_as(pp)
+        raw = open(pp, "rb").read(); npg = raw.count(b"/Type /Page ")
+        ok("Save parts: a PDF to print -- the score, then each player's part (%s), the drums too" % ", ".join(want[0]),
+           raw[:5] == b"%PDF-" and npg == want[1] and npg >= 5 and "Drum Kit/perc" in want[0] and "Horn in F/treble" in want[0] and
+           dl.value.suggested_filename == "Frere_Jacques_parts.pdf" and b"/Producer (Lantern Music)" in raw, [npg, want, dl.value.suggested_filename])
+        with pg.expect_download() as dl: pg.locator("button", has_text="Save MusicXML").first.click()
+        xp = os.path.join(OUT, "frere_jacques.musicxml"); dl.value.save_as(xp)
+        import xml.dom.minidom
+        xd = xml.dom.minidom.parse(xp)
+        ok("Save MusicXML: well formed, a part for each player, the horn written a fifth up", xd.documentElement.tagName == "score-partwise" and
+           len(xd.getElementsByTagName("part")) == len(want[0]) and dl.value.suggested_filename == "Frere_Jacques.musicxml" and
+           any(c.firstChild.data == "-7" for c in xd.getElementsByTagName("chromatic")), [len(xd.getElementsByTagName("part")), dl.value.suggested_filename])
         ok("no page errors", not errs, errs)
         b.close()
 finally:

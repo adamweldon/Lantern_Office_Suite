@@ -399,6 +399,57 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   for (oi = 0; oi + 4 < omid.length; oi++) if (omid[oi] === 77 && omid[oi + 1] === 84 && omid[oi + 2] === 114 && omid[oi + 3] === 107) mtr++;
   ok("...Save MIDI: a track for each player; Play and Save WAV: the arrangement's notes (the band's are left out)", mtr === 13 && L.musicBand.events(orc.plan).length === oa.events.length &&
     !L.musicBand.events(orc.plan).some(function (e) { return e.part === "melody" || e.part === "chords" || e.drum; }), mtr);
+  // --- 1.23.0: every player's part for a class (MUSIC_PARTS), and the drums kept in an orchestra (Adam: "another button to
+  // export all the sheet music pieces that all the instruments would have to play for a band or orchestra for a class that a
+  // teacher could give to the students. We should include drums also as those seem to be missing from some of these pieces")
+  var MP = L.musicParts;
+  function barsAdd(ps, B) { return ps.every(function (p) { return p.bars.every(function (b) { return Math.abs(b.reduce(function (s, it) { return s + it.len; }, 0) - B) < 1e-6; }); }); }
+  function wn(h) { return h.note.letter + (h.note.acc > 0 ? "#" : h.note.acc < 0 ? "b" : "") + h.note.oct; }
+  var rk = S.make({ title: "Ode to Joy", lines: ODE12.concat(["style rock"]) }).plan, rps = MP.parts(rk);
+  ok("parts: a rock band's four players -- the tune, the chords, the bass, the drums -- each bar adding up, the drums on a percussion staff",
+    rps.map(function (p) { return p.name + "/" + p.clef; }).join(", ") === "Flute/treble, Electric Guitar/treble, Bass Guitar/bass, Drum Kit/perc" && barsAdd(rps, 4) &&
+    rps[3].bars[0].map(function (it) { return it.n.heads.map(function (h) { return h.drum + (h.x ? "x" : ""); }).join("+"); }).join(" ") === "kick+hatx hatx snare+hatx hatx kick+hatx kick+hatx snare+hatx hatx",
+    rps.map(function (p) { return p.name + "/" + p.clef; }));
+  var b11 = function (p) { return p.bars[10].filter(function (it) { return it.at >= 42 - 1e-9; })[0].n.heads.map(wn).join("+"); };
+  ok("...a guitar and a bass written an octave above they sound; E7/G# on G sharp (it was A flat, the key's way), the guitar's power chord on E (it was on G#: G# D# against the tune's D)",
+    rps[1].tr === 12 && rps[2].tr === 12 && b11(rps[2]) === "G#3" && b11(rps[1]) === "E4+B4+E5" && rps[1].chords && !rps[2].chords, [b11(rps[1]), b11(rps[2])]);
+  var oc = S.make({ title: "Ode to Joy", lines: ODE12.concat(["arrange orchestra", "style rock"]) }), ops = MP.parts(oc.plan), byId = {};
+  ops.forEach(function (p) { byId[p.id] = p; });
+  ok("an orchestra with style rock: the drums kept, a player of their own after the timpani, playing the rock beat in the soft and full passes, none in the introduction",
+    oc.plan.arrangement.drums && /the drums play a rock beat in the soft and full passes/.test(oc.summary) && ops.length === 13 && ops[7].id === "drums" && ops[6].id === "timpani" &&
+    byId.drums.bars[0].every(function (it) { return it.rest; }) && byId.drums.bars[2].some(function (it) { return !it.rest; }) && barsAdd(ops, 4), [oc.summary.slice(-120), ops.map(function (p) { return p.id; })]);
+  var omid2 = L.musicMidi.file(oc.plan), dch = 0;
+  for (oi = 0; oi + 2 < omid2.length; oi++) if (omid2[oi] === 0x99 && omid2[oi + 1] === 36) dch++;
+  ok("...Save MIDI: the drums on the drum channel (10), the bass drum heard", dch > 20, dch);
+  var cl = byId.clarinet, hn = byId.horns, cb = byId.contrabass, va = byId.viola, sounding = oc.plan.arrangement.events.filter(function (e) { return e.part === "clarinet"; })[0];
+  var clFirst = cl.bars.map(function (b) { return b.filter(function (it) { return !it.rest; })[0]; }).filter(Boolean)[0];
+  ok("...each part in its player's clef and key: a clarinet in B flat a tone above it sounds (D major), a horn in F a fifth (G major), a viola's alto clef, a double bass an octave",
+    cl.name === "Clarinet in B\u266d" && cl.key.name === "D major" && clFirst.n.heads[0].note.midi === sounding.midi + 2 && hn.name === "Horn in F" && hn.key.name === "G major" &&
+    va.clef === "alto" && cb.clef === "bass" && cb.tr === 12 && byId["violin 1"].name === "Violin I" && byId["violin 2"].short === "Vln. II", [cl.key.name, hn.key.name, clFirst && clFirst.n.heads.map(wn)]);
+  ok("...no drums when the song has none (and none for strings)", !MP.parts(orc.plan).some(function (p) { return p.drum; }) &&
+    !MP.parts(S.make({ title: "", lines: ODE12.concat(["arrange strings", "style rock"]) }).plan).some(function (p) { return p.drum; }));
+  ok("the drums in every style: a waltz's bass drum on 1 and hi-hats on 2 and 3; folk's snare on 2 and 4",
+    L.musicBand.drumBar("waltz", { n: 3, d: 4 }).map(function (x) { return x.at + x.drum; }).join(" ") === "0kick 1hat 2hat" &&
+    L.musicBand.drumBar("folk", { n: 4, d: 4 }).filter(function (x) { return x.drum === "snare"; }).map(function (x) { return x.at; }).join(" ") === "1 3",
+    [L.musicBand.drumBar("waltz", { n: 3, d: 4 }), L.musicBand.drumBar("folk", { n: 4, d: 4 })]);
+  var xml = MP.musicxml(oc.plan), xd = new w.DOMParser().parseFromString(xml, "application/xml"), xparts = xd.querySelectorAll("part"), xbad = [];
+  Array.prototype.forEach.call(xparts, function (pt) {
+    Array.prototype.forEach.call(pt.querySelectorAll("measure"), function (m) {
+      var sum = 0;
+      Array.prototype.forEach.call(m.querySelectorAll("note"), function (n) { if (!n.querySelector("chord")) sum += +n.querySelector("duration").textContent; });
+      if (sum !== 96) xbad.push(pt.getAttribute("id") + ":" + m.getAttribute("number") + "=" + sum);
+    });
+  });
+  var xcl = xd.querySelector("part[id=P3] attributes"), xdr = xd.querySelector("part[id=P8]");
+  ok("Save MusicXML: well formed, a part for each player, every bar four quarters (24 a quarter); the clarinet sounds a tone below as written; the drums unpitched on a percussion clef",
+    !xd.querySelector("parsererror") && xparts.length === 13 && xd.querySelectorAll("score-part").length === 13 && xparts[0].querySelectorAll("measure").length === 28 && !xbad.length &&
+    xcl.querySelector("transpose chromatic").textContent === "-2" && xcl.querySelector("transpose diatonic").textContent === "-1" && xcl.querySelector("key fifths").textContent === "2" &&
+    xdr.querySelector("clef sign").textContent === "percussion" && xdr.querySelectorAll("unpitched").length > 100 && !xdr.querySelector("pitch") &&
+    xd.querySelectorAll("rehearsal").length === 13 * 4, [xbad.slice(0, 5), xparts.length]);
+  var bxml = new w.DOMParser().parseFromString(MP.musicxml(rk), "application/xml");
+  ok("...a band's: the chord names over the tune and the chords (E7/G#: bass G sharp), none over the bass", bxml.querySelectorAll("part[id=P1] harmony").length === rk.chords.length &&
+    bxml.querySelector("part[id=P1] harmony kind").textContent === "major" && Array.prototype.some.call(bxml.querySelectorAll("harmony bass-step"), function (x) { return x.textContent === "G"; }) &&
+    !bxml.querySelector("part[id=P3] harmony"));
   var ens4 = ["strings", "string quartet", "brass", "winds"].map(function (en) { var r = S.make({ title: "", lines: ODE12.concat(["arrange " + en]) }); return r.problems.length ? -1 : r.plan.arrangement.players.length; });
   ok("strings, a string quartet, brass and winds: their own players", ens4.join() === "5,4,5,5", ens4);
   var f1 = S.make({ title: "", lines: ODE12.concat(["arrange strings", "form soft loud"]) }), f2 = S.make({ title: "", lines: ODE12.concat(["arrange strings", "form verse soft"]) });
@@ -594,11 +645,14 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     /Lantern checked the MAKE MUSIC block: \u201ch\u201d \(bar 4\) is not a note/.test(t) && /Lantern made a song: Twinkle \u2014 4 bars in C major/.test(t) && !/still questions/.test(t),
     [modelCalls.length, /MAKE MUSIC: <title>/.test(modelCalls[0].messages[0].content), t.slice(-300)]);
   var card = Array.prototype.slice.call(d.querySelectorAll(".la-make")).pop();
-  ok("...with the sheet music, Play, Open in Music, Save MIDI and Save WAV", card && card.querySelector("canvas") && btn(card, "\u25b6 Play") && btn(card, "Open in Music") && btn(card, "Save MIDI") && btn(card, "Save WAV"));
+  ok("...with the sheet music, Play, Open in Music, Save MIDI, Save WAV and (1.23.0) Save parts and Save MusicXML", card && card.querySelector("canvas") && btn(card, "\u25b6 Play") && btn(card, "Open in Music") && btn(card, "Save MIDI") && btn(card, "Save WAV") &&
+    btn(card, "Save parts") && btn(card, "Save MusicXML"));
   btn(card, "\u25b6 Play").click(); await sleep(20);
   ok("...Play with no sound on this device says so, and the music is still written out", /no sound available/.test(card.textContent));
   btn(card, "Save MIDI").click();
   ok("...Save MIDI downloads Twinkle.mid", saved.length === 1 && saved[0].name === "Twinkle.mid" && saved[0].mime === "audio/midi", saved.map(function (s) { return s.name; }));
+  btn(card, "Save MusicXML").click();
+  ok("...Save MusicXML downloads Twinkle.musicxml: every player's part", saved.length === 2 && saved[1].name === "Twinkle.musicxml" && saved[1].mime === "application/vnd.recordare.musicxml+xml", saved.map(function (s) { return s.name; }));
   // 1.22.0: Adam's next questions, in the same chat (his trial of 1.21.2, with Ode to Joy)
   function lastUser(i) { var m = modelCalls[i] ? modelCalls[i].messages[modelCalls[i].messages.length - 1].content : ""; return typeof m === "string" ? m : JSON.stringify(m); }
   var TW = ["key C", "chords C | F C | F C | G C", "melody C C G G | A A G - | F F E E | D D C -", "arrange orchestra"];

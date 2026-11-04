@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.22.10 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.23.0 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -173,7 +173,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.22.10",
+  version: "1.23.0",
   apps: {},
   order: []
 };
@@ -24425,7 +24425,8 @@ Lantern.RFB = (function () {
       "<code>bass upright</code>. Ask for \u201ca waltz for violin and piano\u201d and Lantern checks the song plays them. 1.21: paste a picture of printed music and " +
       "Lantern reads it \u2014 notes, lengths, rests, key and time \u2014 and gives the AI the tune\u2019s lines, so the song it makes is the one printed (and is checked " +
       "against it). <b>Play</b> in Chat, <b>Save MIDI</b> for any music program, " +
-      "<b>Save WAV</b> to play anywhere, or <b>Open in Music</b> to change it. Chords alone are played in the style; a melody alone gets " +
+      "<b>Save WAV</b> to play anywhere, <b>Save parts</b> for the score and every player\u2019s part to print for a class (in each " +
+      "player\u2019s clef and key, the drums on a percussion staff), <b>Save MusicXML</b> for MuseScore, Finale, Sibelius or Dorico, or <b>Open in Music</b> to change it. Chords alone are played in the style; a melody alone gets " +
       "chords chosen by Lantern. The <b>Make a song</b> card in the Music tile takes the same lines, typed by hand.</p>" +
       "<p><b>Seeing its drawing:</b> the Qwen3.5 models can look at pictures when the kit has their vision part " +
       "(<code>setup-kit vision</code>, 0.7\u20130.9 GB). Then the AI is shown the finished drawing once and says whether it matches the " +
@@ -34518,7 +34519,7 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // MODULE: PDF_WRITE - START
 // Depends: CORE (window.Lantern) -- feature-detected
-// Exports: Lantern.pdf.searchable(pages, {title, quality}) -> Promise<Blob>
+// Exports: Lantern.pdf.searchable(pages, {title, quality, producer}) -> Promise<Blob>
 //          pages: [{canvas, read: Text Reader page, pt: {w, h} (optional)}]
 //          (read.canvas, the upright picture, is used when present)
 // ===========================================================================
@@ -34600,7 +34601,7 @@ Lantern.RFB = (function () {
     obj(2, "<< /Type /Pages /Count " + pages.length + " /Kids [" + kids.join(" ") + "] >>");
     obj(3, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
     var title = codes(String(opts.title || "Searchable PDF"));
-    obj(4, "<< /Producer (Lantern Text Reader) /Title " + lit(title) + " >>");
+    obj(4, "<< /Producer " + lit(codes(String(opts.producer || "Lantern Text Reader"))) + " /Title " + lit(title) + " >>");
     for (i = 0; i < pages.length; i++) {
       // the upright picture Text Reader read (a sideways scan was turned)
       var pg = pages[i], cv = pg.read && pg.read.canvas || pg.canvas, W = cv.width, H = cv.height, pt = pg.pt;
@@ -48355,13 +48356,16 @@ Lantern.RFB = (function () {
     // an orchestra, and parts of the AI's own (1.22.0)
     plan.arrangeText = s.arrangeText; plan.formText = s.formText; plan.partLines = s.partLines; plan.arrangement = null; plan.extra = [];
     if (AR && (s.arrangeText || s.formText || s.partLines.length)) {
-      var ar = AR.make(plan, { ensembleText: s.arrangeText, formText: s.formText, parts: s.partLines });
+      // (1.23.0) the drums of a style that has them (or a drums line) play with an orchestra, a brass or a wind band
+      var withDrums = s.drums === false ? null : s.drums === true ? style : s.styleText && /^(march|pop|rock|reggae)$/.test(style) ? style : null;
+      var ar = AR.make(plan, { ensembleText: s.arrangeText, formText: s.formText, parts: s.partLines, drums: withDrums });
       probs = probs.concat(ar.problems); ar.said.forEach(function (x) { said.push(x); });
       plan.arrangement = ar.arrangement; plan.extra = ar.extra || [];
       if (plan.arrangement) {
         plan.seconds = Math.round(plan.arrangement.length * 60 / qpm);
         if (s.repeat > 1) said.push("with an arrangement the form says how often the tune plays; repeat is left out");
-        if (s.styleText || s.backingText || s.bassText || s.drums) said.push("the " + plan.arrangement.title + " plays everything: the style, backing, bass and drums lines are left out");
+        var kit = plan.arrangement.players.some(function (pl) { return pl.name === "drums"; });
+        if (s.backingText || s.bassText || (s.styleText && !kit) || (s.drums && !kit)) said.push("the " + plan.arrangement.title + " plays everything: the " + (kit ? "backing and bass lines are" : "style, backing, bass and drums lines are") + " left out" + (kit ? " (the drums play the " + withDrums + " beat with it)" : ""));
       }
     }
     plan.text = text(plan);
@@ -48770,13 +48774,26 @@ Lantern.RFB = (function () {
       });
       at += len;
     });
+    // (1.23.0) the drums -- an orchestra, a brass or a wind band playing a rock song, a march: the style's beat in the soft
+    // passes (lighter) and the full ones, a crash and the bass drum on the last chord; none in a string group
+    if (ask.drums && L.musicBand && L.musicBand.drumBar && /^(orchestra|brass|winds)$/.test(ens)) {
+      var beat = L.musicBand.drumBar(ask.drums, plan);
+      sections.forEach(function (sec) {
+        if (sec.kind === "intro") return;
+        if (sec.kind === "coda") { events.push({ at: sec.at, len: 0.25, drum: "crash", vel: 0.7, part: "drums", inst: "drums", gain: 0.8 }); events.push({ at: sec.at, len: 0.25, drum: "kick", vel: 0.8, part: "drums", inst: "drums", gain: 0.8 }); return; }
+        for (var bi = 0; bi < sec.bars; bi++) beat.forEach(function (h) {
+          events.push({ at: sec.at + bi * B + h.at, len: 0.25, drum: h.drum, vel: h.vel * (sec.kind === "soft" ? 0.6 : 1), part: "drums", inst: "drums", gain: 0.8 });
+        });
+        if (sec.kind === "full") events.push({ at: sec.at, len: 0.25, drum: "crash", vel: 0.6, part: "drums", inst: "drums", gain: 0.8 });
+      });
+    }
     events.sort(function (a, b) { return a.at - b.at; });
     var players = [];
     events.forEach(function (e) { if (!players.some(function (p) { return p.name === e.part; })) players.push({ name: e.part, inst: e.inst }); });
     var order = EN.players.map(function (p) { return p[0]; });
     players.sort(function (a, b) { var i = order.indexOf(a.name), j = order.indexOf(b.name); return (i < 0 ? 99 : i) - (j < 0 ? 99 : j); });
     var arr = { ensemble: ens, title: EN.title, form: form, sections: sections, length: at, bars: Math.round(at / B), players: players, events: events, map: map, shift: shift,
-      written: mine.map(function (p) { return p.name; }) };
+      written: mine.map(function (p) { return p.name; }), drums: players.some(function (p) { return p.name === "drums"; }) ? ask.drums : null };
     arr.text = describe(arr, EN);
     return { arrangement: arr, extra: [], problems: problems, said: said };
   }
@@ -48797,7 +48814,7 @@ Lantern.RFB = (function () {
       else out.push("the last chord held" + (tex.some(function (p) { return p[1] === "timp"; }) ? " over a timpani roll" : "") + " (" + span + ")");
       bar += s.bars;
     });
-    return "arranged for " + EN.title + " (" + arr.players.length + " players): " + out.join("; ");
+    return "arranged for " + EN.title + " (" + arr.players.length + " players): " + out.join("; ") + (arr.drums ? "; the drums play a " + arr.drums + " beat in the soft and full passes" : "");
   }
   // themeAt(arrangement, quarter) -> where in the written tune the music is
   function themeAt(arr, q) {
@@ -48813,7 +48830,7 @@ Lantern.RFB = (function () {
 // MODULE: MUSIC_BAND - START
 // Depends: MUSIC_THEORY (Lantern.musicTheory)
 // Exports: Lantern.musicBand = {events(plan) -> [{at, len, midi, vel, part,
-//          inst, drum}], voicing(chord, previous), INST}
+//          inst, drum}], voicing(chord, previous), drumBar(style, plan), INST}
 // ===========================================================================
 // The band behind the tune (1.19.0): from the chords and a style, the
 // notes a player would play -- times in quarter notes from the start.
@@ -48896,8 +48913,21 @@ Lantern.RFB = (function () {
     }
     if (st === "march") for (i = 0; i < P; i++) { add({ at: i * p, drum: "snare", vel: i ? 0.3 : 0.5 }); if (i % 2 === 0) add({ at: i * p, drum: "kick", vel: 0.7 }); }
     if (st === "reggae") { for (i = 0; i * sub < P * p - E; i++) add({ at: i * sub, drum: "hat", vel: 0.18 }); add({ at: half, drum: "kick", vel: 0.85 }); add({ at: half, drum: "rim", vel: 0.6 }); }
-    if (st === "ballad") { add({ at: 0, drum: "kick", vel: 0.45 }); if (P >= 2) add({ at: half, drum: "rim", vel: 0.3 }); for (i = 0; i < P; i++) add({ at: i * p, drum: "hat", vel: 0.12 }); }
+    if (st === "ballad" || st === "block" || st === "arpeggio") { add({ at: 0, drum: "kick", vel: 0.45 }); if (P >= 2) add({ at: half, drum: "rim", vel: 0.3 }); for (i = 0; i < P; i++) add({ at: i * p, drum: "hat", vel: 0.12 }); }
+    // (1.23.0) the styles with no drums of their own have a beat for a drums line (drums on) and for a band's drum part
+    if (st === "waltz") { add({ at: 0, drum: "kick", vel: 0.55 }); for (i = 1; i < P; i++) add({ at: i * p, drum: "hat", vel: 0.25 }); }
+    if (st === "folk" || st === "strum") for (i = 0; i * sub < P * p - E; i++) {
+      var tf = i * sub, bf = tf / p;
+      add({ at: tf, drum: "hat", vel: i % 2 ? 0.18 : 0.28 });
+      if (Math.abs(bf - Math.round(bf)) < E && Math.round(bf) % 2 === 0) add({ at: tf, drum: "kick", vel: 0.6 });
+      if (Math.abs(bf - Math.round(bf)) < E && Math.round(bf) % 2 === 1) add({ at: tf, drum: "snare", vel: 0.45 });
+    }
     return h;
+  }
+  // drumBar(style, plan) -> one bar of the style's drums: [{at, drum, vel}] (1.23.0: for an orchestra's or a band's drum part)
+  function drumBar(st, plan) {
+    var p = 4 / plan.d;
+    return hits(st, plan.n, p, p >= 1 ? p / 2 : p).filter(function (x) { return x.drum; }).map(function (x) { return { at: x.at, drum: x.drum, vel: x.vel }; });
   }
   // events(plan) -> every note of the song, repeats included
   function events(plan) {
@@ -48931,14 +48961,15 @@ Lantern.RFB = (function () {
         if (h.bass) { if (plan.bass && !held) ev.push({ at: t, len: len, midi: bassOf(c, h.bass), vel: h.vel || 0.72, part: "bass", inst: bassInst }); return; }
         if (!inst) return;
         if (h.arp != null) { var up = v.concat([v[0] + 12]), seq = []; for (var k = 0; k < up.length; k++) seq.push(k); for (k = up.length - 2; k > 0; k--) seq.push(k); ev.push({ at: t, len: len, midi: up[seq[h.arp % seq.length]], vel: h.vel, part: "chords", inst: inst }); return; }
-        (h.power ? [bassNote(c, "root") + 12, bassNote(c, "root") + 19, bassNote(c, "root") + 24].map(function (m) { return fit(m, inst); }) : v).forEach(function (m) { ev.push({ at: t, len: len, midi: m, vel: h.vel, part: "chords", inst: inst }); });
+        // (1.23.0) a power chord on the chord's root: built on the note after a slash, E7/G# played G# D# against the tune's D
+        (h.power ? [12, 19, 24].map(function (k) { return 36 + T.mod(c.root - 36, 12) + k; }).map(function (m) { return fit(m, inst); }) : v).forEach(function (m) { ev.push({ at: t, len: len, midi: m, vel: h.vel, part: "chords", inst: inst }); });
       });
     }
     var total = plan.bars * B, once = ev.slice();
     for (var r = 1; r < (plan.repeat || 1); r++) once.forEach(function (e) { var x = {}, k; for (k in e) x[k] = e[k]; x.at += r * total; ev.push(x); });
     return ev.sort(function (a, b) { return a.at - b.at; });
   }
-  window.Lantern.musicBand = { events: events, voicing: voicing, INST: INST, BASS: BASS };
+  window.Lantern.musicBand = { events: events, voicing: voicing, drumBar: drumBar, INST: INST, BASS: BASS };
 })();
 // ===========================================================================
 // MODULE: MUSIC_BAND - END
@@ -49240,7 +49271,10 @@ Lantern.RFB = (function () {
       if (ch === 9) ch++;
       parts.push([e.part, Math.min(ch++, 15)]);
     });
-    if (plan.arrangement) parts = plan.arrangement.players.map(function (p, i) { var c = i >= 9 ? i + 1 : i; return [p.name, Math.min(c, 15)]; });   // an orchestra, in score order
+    if (plan.arrangement) {   // an orchestra, in score order (1.23.0: its drums on the drum channel)
+      var cn = 0;
+      parts = plan.arrangement.players.map(function (p) { if (p.name === "drums") return [p.name, 9]; if (cn === 9) cn++; return [p.name, Math.min(cn++, 15)]; });
+    }
     parts.forEach(function (pc) {
       var es = evs.filter(function (e) { return e.part === pc[0]; });
       if (!es.length) return;
@@ -49354,11 +49388,15 @@ Lantern.RFB = (function () {
   // pieces(plan) -> per bar, the notes cut at bar lines (tied) and the rests between, each as lengths that can be written
   // (1.22.10: tied within the bar too; a rest written from the beat it starts on)
   function beatOf(plan) { return plan.d === 8 && plan.n % 3 === 0 ? 1.5 : 4 / plan.d; }
-  function pieces(plan) {
+  function pieces(plan) { return barsOf(plan.melody.map(function (n) { return { at: n.at, len: n.len, n: n }; }), plan); }
+  // barsOf([{at, len, n}], {barLen, bars, n, d}) -> per bar, what each is as written (n: what it carries -- a note, or a
+  // part's chord or drums, MUSIC_PARTS), and the rests between (1.23.0: for every player's part too)
+  function barsOf(list, plan) {
     var B = plan.barLen, out = [], bt = beatOf(plan);
     for (var b = 0; b < plan.bars; b++) out.push([]);
-    plan.melody.forEach(function (n) {
-      var t = n.at, end = n.at + n.len, first = true;
+    list.forEach(function (it) {
+      var n = it.n;
+      var t = it.at, end = it.at + it.len, first = true;
       while (t < end - E) {
         var b = Math.floor(t / B + E), stop = Math.min(end, (b + 1) * B);
         if (b >= plan.bars) break;
@@ -49548,10 +49586,683 @@ Lantern.RFB = (function () {
     lay.systems.forEach(function (s) { s.bars.forEach(function (sb) { if (sb.bar === b) out = { x: sb.knots ? at(sb, t) : sb.x + 14 + (t - b * lay.barLen) / lay.barLen * (sb.w - 24), y: s.y, h: s.h }; }); });
     return out;
   }
-  window.Lantern.musicScore = { draw: draw, where: where, value: value, pieces: pieces };
+  window.Lantern.musicScore = { draw: draw, where: where, value: value, pieces: pieces,
+    // (1.23.0) for MUSIC_PARTS: the written lengths, the bars as written, the shapes drawn
+    writ: writ, barsOf: barsOf, beatOf: beatOf, head: head, rest: rest, clef: clef, room: room, VALUES: VALUES, LEVEL: LEVEL, SP: SP, SHARPS: SHARPS, FLATS: FLATS };
 })();
 // ===========================================================================
 // MODULE: MUSIC_SCORE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: MUSIC_PARTS - START
+// Depends: MUSIC_BAND (Lantern.musicBand), MUSIC_SCORE (Lantern.musicScore),
+//          MUSIC_THEORY (Lantern.musicTheory); MUSIC_INST, PDF_WRITE
+//          (Lantern.pdf.searchable) -- feature-detected
+// Exports: Lantern.musicParts = {parts(plan) -> [part], pages(plan, opts) ->
+//          [canvas], pdf(plan, opts) -> Promise<Blob>, musicxml(plan) -> text,
+//          INFO}
+// ===========================================================================
+// Every player's part, written out (1.23.0). Adam: a button that saves the
+// sheet music every instrument plays, for a band or an orchestra, so a
+// teacher can hand the parts to a class -- with the drums, missing from some
+// songs. A part is what one player plays (MUSIC_BAND's notes for a band,
+// MUSIC_ARRANGE's for an orchestra), written as a player reads it:
+//   - in its instrument's clef (a viola's alto clef, a cello's bass clef)
+//     and key: a clarinet or a trumpet in B flat a whole step above what it
+//     sounds, a horn in F a fifth, an alto saxophone a major sixth, a guitar
+//     and a bass an octave;
+//   - a chord's notes on one stem; a note held over a bar line tied; the
+//     rests where it waits, a stretch of bars' rest as one bar with their
+//     number over it; the drums on a percussion staff (bass drum in the
+//     bottom space, snare in the third, hi-hat over the staff with x heads);
+//   - the section letters an orchestra's parts share (A, B, C ...) and how
+//     loud each comes in; the chord names over a band's tune and chords.
+// The score comes first -- every part as it sounds ("in C") -- then each
+// part on pages of its own: a PDF to print, and MusicXML for MuseScore,
+// Finale, Sibelius or Dorico.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.musicBand || !L.musicScore || !L.musicTheory) return;
+  var T = L.musicTheory, SC = L.musicScore, E = 1e-6, SP = SC.SP, INK = "#111827";
+  // INFO: instrument -> [name as printed, short name, clef (auto: by where its notes lie), written minus sounding (semitones)]
+  var INFO = {
+    piano: ["Piano", "Pno.", "auto", 0], "electric piano": ["Electric Piano", "E.Pno.", "auto", 0], harpsichord: ["Harpsichord", "Hpsd.", "auto", 0],
+    organ: ["Organ", "Org.", "auto", 0], "jazz organ": ["Organ", "Org.", "auto", 0], accordion: ["Accordion", "Acc.", "auto", 0],
+    guitar: ["Guitar", "Gtr.", "treble", 12], "nylon guitar": ["Classical Guitar", "Gtr.", "treble", 12], "electric guitar": ["Electric Guitar", "E.Gtr.", "treble", 12],
+    bass: ["Bass Guitar", "B.Gtr.", "bass", 12], "upright bass": ["Double Bass", "Db.", "bass", 12], "synth bass": ["Synth Bass", "S.B.", "bass", 12], "slap bass": ["Bass Guitar", "B.Gtr.", "bass", 12],
+    violin: ["Violin", "Vln.", "treble", 0], viola: ["Viola", "Vla.", "alto", 0], cello: ["Cello", "Vc.", "bass", 0], contrabass: ["Double Bass", "Cb.", "bass", 12],
+    strings: ["Strings", "Str.", "auto", 0], harp: ["Harp", "Hp.", "auto", 0], "celtic harp": ["Harp", "Hp.", "auto", 0],
+    flute: ["Flute", "Fl.", "treble", 0], piccolo: ["Piccolo", "Picc.", "treble", -12], "alto flute": ["Alto Flute in G", "A.Fl.", "treble", 5], recorder: ["Recorder", "Rec.", "treble", -12],
+    oboe: ["Oboe", "Ob.", "treble", 0], clarinet: ["Clarinet in B\u266d", "Cl.", "treble", 2], "bass clarinet": ["Bass Clarinet in B\u266d", "B.Cl.", "treble", 14], bassoon: ["Bassoon", "Bsn.", "bass", 0],
+    saxophone: ["Alto Saxophone in E\u266d", "A.Sx.", "treble", 9], "soprano sax": ["Soprano Saxophone in B\u266d", "S.Sx.", "treble", 2], "tenor sax": ["Tenor Saxophone in B\u266d", "T.Sx.", "treble", 14],
+    "baritone sax": ["Baritone Saxophone in E\u266d", "Bar.Sx.", "treble", 21],
+    trumpet: ["Trumpet in B\u266d", "Tpt.", "treble", 2], "french horn": ["Horn in F", "Hn.", "treble", 7], trombone: ["Trombone", "Tbn.", "bass", 0], tuba: ["Tuba", "Tba.", "bass", 0],
+    brass: ["Brass", "Br.", "auto", 0], timpani: ["Timpani", "Timp.", "bass", 0], glockenspiel: ["Glockenspiel", "Glk.", "treble", -24], xylophone: ["Xylophone", "Xyl.", "treble", -12],
+    marimba: ["Marimba", "Mar.", "auto", 0], vibraphone: ["Vibraphone", "Vib.", "treble", 0], celesta: ["Celesta", "Cel.", "treble", -12], chimes: ["Chimes", "Chm.", "treble", 0],
+    choir: ["Choir", "Ch.", "auto", 0], "choir ooh": ["Choir", "Ch.", "auto", 0], voice: ["Voice", "V.", "treble", 0], harmonica: ["Harmonica", "Hca.", "treble", 0],
+    melodica: ["Melodica", "Mel.", "treble", 0], lead: ["Synth Lead", "Syn.", "treble", 0], pad: ["Synth Pad", "Pad", "auto", 0] };
+  var DRUMKIT = { name: "Drum Kit", short: "Dr.", clef: "perc", tr: 0 };
+  // a drum's place on the percussion staff (E4's line is 30, the middle line 34) and whether its head is an x
+  var DRUM = { kick: [31, 0], boom: [31, 0], snare: [35, 0], rim: [35, 1], clap: [35, 1], hat: [39, 1], open: [39, 1], pedal: [29, 1], crash: [40, 1], ride: [38, 1],
+    tom: [36, 0], "tom high": [37, 0], "tom low": [33, 0] };
+  var DRUMNAME = { kick: "bass drum", boom: "bass drum", snare: "snare drum", rim: "cross-stick", clap: "clap", hat: "hi-hat", open: "open hi-hat", pedal: "hi-hat (foot)",
+    crash: "crash cymbal", ride: "ride cymbal", tom: "tom", "tom high": "high tom", "tom low": "floor tom" };
+  var GMKEY = { kick: 36, boom: 35, snare: 38, rim: 37, clap: 39, hat: 42, open: 46, pedal: 44, crash: 49, ride: 51, tom: 47, "tom high": 50, "tom low": 45 };
+  var CLEFAT = { treble: 0, bass: 12, alto: 6 }, LET = "CDEFGAB", NAT = [0, 2, 4, 5, 7, 9, 11], ROMAN = { 1: "I", 2: "II", 3: "III", 4: "IV" };
+  function info(inst) {
+    var x = INFO[inst];
+    if (x) return { name: x[0], short: x[1], clef: x[2], tr: x[3] };
+    var nm = String(inst || "part");
+    return { name: nm.charAt(0).toUpperCase() + nm.slice(1), short: nm.slice(0, 4) + ".", clef: "auto", tr: 0 };
+  }
+  // spelt(midi, key) -> {midi, letter, acc, oct, step}: a written note, spelled the key's way
+  function spelt(midi, key) {
+    var nm = T.spell(T.mod(midi, 12), key), letter = nm.charAt(0), acc = 0;
+    for (var i = 1; i < nm.length; i++) acc += nm.charAt(i) === "#" ? 1 : nm.charAt(i) === "b" ? -1 : 0;
+    var oct = Math.round((midi - NAT[LET.indexOf(letter)] - acc) / 12) - 1;
+    return { midi: midi, letter: letter, acc: acc, oct: oct, step: oct * 7 + LET.indexOf(letter) };
+  }
+  // (Adam's band score: E7/G# had its G# written A flat, the key's way) a note of the tune on the letter the song wrote it
+  // with; a chord's note on the letter its place in the chord gives (E7/G#: E G# B D); else the key's way
+  var DEG = [0, 1, 1, 2, 2, 3, 4, 4, 4, 5, 6, 6];
+  function letterOf(name) { var m = /^([A-G])/.exec(name || ""); return m ? m[1] : null; }
+  function onLetter(midi, letter) {
+    var li = LET.indexOf(letter), acc = T.mod(midi - NAT[li] + 6, 12) - 6;
+    if (Math.abs(acc) > 2) return null;
+    var oct = Math.round((midi - NAT[li] - acc) / 12) - 1;
+    return { midi: midi, letter: letter, acc: acc, oct: oct, step: oct * 7 + li };
+  }
+  // speller(plan) -> spell(written midi, written key, tr, at): the tune's own letters (where the tune is played -- an
+  // orchestra's soft and full passes), then the chord's, then the key's
+  function speller(plan) {
+    var tune = {}, arr = plan.arrangement, B = plan.barLen;
+    (plan.melody || []).forEach(function (n) { tune[Math.round(n.at * 96) + ":" + T.mod(n.midi, 12)] = n.letter; });
+    function tuneAt(t) {
+      if (!arr) return t;
+      for (var i = 0; i < arr.sections.length; i++) { var sc = arr.sections[i]; if ((sc.kind === "soft" || sc.kind === "full") && t >= sc.at - E && t < sc.at + sc.len - E) return t - sc.at; }
+      return null;
+    }
+    function chordAt(t) {
+      var u = tuneAt(t);
+      if (u === null) return null;
+      u = T.mod(u, plan.bars * B);
+      for (var i = 0; i < plan.chords.length; i++) { var ch = plan.chords[i]; if (u >= ch.at - E && u < ch.at + ch.len - E) return ch; }
+      return null;
+    }
+    return function (w, key, tr, t) {
+      var pc = T.mod(w - tr, 12), u = tuneAt(t), n = null;
+      if (tr % 12 === 0 && u !== null && tune[Math.round(u * 96) + ":" + pc]) n = onLetter(w, tune[Math.round(u * 96) + ":" + pc]);
+      var ch = !n ? chordAt(t) : null;
+      if (ch) {
+        var parts = String(ch.name).split("\x2F"), root = tr % 12 === 0 ? letterOf(parts[0]) : T.spell(ch.root + tr, key).charAt(0);
+        if (parts[1] && T.mod(ch.bass != null ? ch.bass : -1, 12) === pc && letterOf(parts[1])) n = onLetter(w, tr % 12 === 0 ? letterOf(parts[1]) : T.spell(pc + tr, key).charAt(0));
+        else if (root && ch.pcs && ch.pcs.indexOf(pc) >= 0) {
+          var iv = T.mod(pc - ch.root, 12), dg = DEG[iv], nm = ch.name;
+          if (iv === 9 && /dim7/.test(nm)) dg = 6;
+          if (iv === 8 && !/aug|\+|#5/.test(nm)) dg = 5;
+          if (iv === 3 && /#9/.test(nm)) dg = 1;
+          if (iv === 6 && !/dim|b5|o/.test(nm)) dg = 3;
+          n = onLetter(w, LET.charAt((LET.indexOf(root) + dg) % 7));
+        }
+      }
+      if (n) return n;
+      n = spelt(w, key); n.byKey = true;
+      return n;
+    };
+  }
+  // onsets(notes, end, beat) -> what one player starts together, each held to the next (a note let go early -- a strum, a
+  // plucked bass -- is written to the next one; one let go much earlier keeps its rest), drums a beat at most
+  function onsets(es, end, beat) {
+    var by = {}, ats = [];
+    es.forEach(function (e) { var a = Math.round(e.at * 96) / 96; if (!by[a]) { by[a] = []; ats.push(a); } by[a].push(e); });
+    ats.sort(function (x, y) { return x - y; });
+    return ats.map(function (a, i) {
+      var g = by[a], next = i + 1 < ats.length ? ats[i + 1] : end, len = Math.max.apply(null, g.map(function (e) { return e.len; }));
+      if (g[0].drum != null) len = Math.min(next - a, beat);
+      else if (next - (a + len) < Math.max(0.13, 0.3 * (next - a))) len = next - a;
+      else {   // let go well before the next: as the plain written note it nearly fills (a march's bass of 0.9 a quarter, a quarter -- not a
+        // dotted eighth tied to a 32nd; a reggae chord's 0.3, an eighth), a dotted one if no plain one fits
+        var fit = function (dot) { return SC.VALUES.filter(function (v) { return !v[2] === !dot && v[0] >= len * 0.95 - E && v[0] <= next - a + E; }).map(function (v) { return v[0]; }); };
+        var f0 = fit(false).length ? fit(false) : fit(true);
+        len = f0.length ? Math.min.apply(null, f0) : next - a;
+      }
+      return { at: a, len: Math.max(E, Math.min(len, next - a)), es: g };
+    });
+  }
+  // parts(plan) -> each player's part: {id, inst, name, short, clef, tr, key, drum, bars: [[item]], bars written once}
+  function parts(plan) {
+    var B = plan.barLen, arr = plan.arrangement, total = arr ? arr.length : plan.bars * B, nb = Math.round(total / B), beat = SC.beatOf(plan);
+    var evs = L.musicBand.events(plan).filter(function (e) { return e.at < total - E; }), by = {}, ids = [], count = {};
+    evs.forEach(function (e) { if (!by[e.part]) { by[e.part] = []; ids.push(e.part); } by[e.part].push(e); });
+    var order = arr ? arr.players.map(function (p) { return p.name; }) : ["melody"].concat((plan.extra || []).map(function (p) { return p.name; }), ["chords", "bass", "drums"]);
+    if (arr && order.indexOf("timpani") >= 0) {   // the percussion together, above the strings
+      order = order.filter(function (n) { return n !== "drums"; });
+      order.splice(order.indexOf("timpani") + 1, 0, "drums");
+    }
+    ids.sort(function (a, b) { var i = order.indexOf(a), j = order.indexOf(b); return (i < 0 ? 99 : i) - (j < 0 ? 99 : j); });
+    ids.forEach(function (id) { var k = by[id][0].drum != null ? "drums" : by[id][0].inst; count[k] = (count[k] || 0) + 1; });
+    var meta = { barLen: B, bars: nb, n: plan.n, d: plan.d }, home = T.keyAt(plan.tonic, plan.minor), spell = speller(plan);
+    return ids.map(function (id) {
+      var es = by[id], drum = es[0].drum != null, inst = drum ? "drums" : es[0].inst, f = drum ? DRUMKIT : info(inst), name = f.name, num = /\s(\d)$/.exec(id);
+      var short = f.short;
+      if (num) { var nn = /^violin/.test(id) ? ROMAN[num[1]] || num[1] : num[1]; name += " " + nn; short += " " + nn; }
+      else if (!arr && !drum && count[inst] > 1 && (id === "melody" || id === "chords" || id === "bass")) name += " (" + (id === "melody" ? "tune" : id) + ")";
+      var clef = f.clef, key = drum ? null : T.keyAt(T.mod(plan.tonic + f.tr, 12), plan.minor);
+      if (clef === "auto") {   // the clef its notes sit nearest the middle of (a piano's chords round middle C in the bass clef)
+        var avg = 0;
+        es.forEach(function (e) { avg += spelt(e.midi + f.tr, key).step; });
+        avg /= es.length;
+        clef = Math.abs(avg + CLEFAT.bass - 34) < Math.abs(avg - 34) ? "bass" : "treble";
+      }
+      var list = onsets(es, total, beat).map(function (o) {
+        var heads = [];
+        if (drum) o.es.forEach(function (e) { var d = DRUM[e.drum] || [35, 0]; if (!heads.some(function (h) { return h.pos === d[0]; })) heads.push({ pos: d[0], x: !!d[1], open: e.drum === "open", drum: e.drum }); });
+        else o.es.forEach(function (e) {
+          var w = e.midi + f.tr;
+          if (heads.some(function (h) { return h.note.midi === w; })) return;
+          var n = spell(w, key, f.tr, o.at);
+          // (and as it sounds, for the score in C)
+          heads.push({ pos: n.step + CLEFAT[clef], note: n, concert: f.tr % 12 ? spell(e.midi, home, 0, o.at) : null });
+        });
+        if (!drum) heads.forEach(function (h) {   // a note neither the tune nor the chord spells: as an octave, fifth or fourth of one that is
+          heads.forEach(function (q) {
+            if (q === h || !h.note.byKey || q.note.byKey) return;
+            var d = { 0: 0, 7: 4, 5: 3 }[T.mod(h.note.midi - q.note.midi, 12)], n2 = d == null ? null : onLetter(h.note.midi, LET.charAt((LET.indexOf(q.note.letter) + d) % 7));
+            if (n2) { h.note = n2; h.pos = n2.step + CLEFAT[clef]; }
+          });
+        });
+        heads.sort(function (a, b) { return a.pos - b.pos; });
+        return { at: o.at, len: o.len, n: { heads: heads } };
+      });
+      return { id: id, inst: inst, name: name, short: short, clef: clef, tr: f.tr, key: key, sig: key ? key.sig : 0, drum: drum,
+        bars: SC.barsOf(list, meta), chords: !arr && (id === "melody" || id === "chords") && f.tr % 12 === 0 ? plan.chords : null, home: home };
+    });
+  }
+  // ---- drawing --------------------------------------------------------------------------------------------------------
+  function xhead(c, x, y) {
+    var r = SP * 0.42;
+    c.lineWidth = 1.5; c.strokeStyle = INK; c.beginPath(); c.moveTo(x - r, y - r); c.lineTo(x + r, y + r); c.moveTo(x - r, y + r); c.lineTo(x + r, y - r); c.stroke();
+  }
+  function bassClef(c, x, top) {
+    var u = SP, yF = top + SP;   // the F line, second from the top
+    c.fillStyle = INK; c.strokeStyle = INK;
+    c.beginPath(); c.arc(x + 0.35 * u, yF + 0.1 * u, 0.36 * u, 0, 2 * Math.PI); c.fill();
+    c.lineWidth = 2.2; c.beginPath(); c.moveTo(x + 0.05 * u, yF); c.bezierCurveTo(x + 0.3 * u, yF - 1.25 * u, x + 2.1 * u, yF - 1.15 * u, x + 2.05 * u, yF + 0.45 * u);
+    c.bezierCurveTo(x + 2.0 * u, yF + 1.8 * u, x + 1.0 * u, yF + 2.6 * u, x - 0.25 * u, yF + 3.1 * u); c.stroke();
+    c.beginPath(); c.arc(x + 2.65 * u, yF - 0.5 * u, 0.2 * u, 0, 2 * Math.PI); c.fill();
+    c.beginPath(); c.arc(x + 2.65 * u, yF + 0.5 * u, 0.2 * u, 0, 2 * Math.PI); c.fill();
+  }
+  function altoClef(c, x, top) {
+    var u = SP, mid = top + 2 * u;
+    c.fillStyle = INK; c.strokeStyle = INK;
+    c.fillRect(x, top, 0.5 * u, 4 * u); c.fillRect(x + 0.8 * u, top, 0.16 * u, 4 * u);
+    c.lineWidth = 2;
+    [-1, 1].forEach(function (s) {
+      c.beginPath(); c.moveTo(x + 0.96 * u, mid); c.lineTo(x + 1.35 * u, mid + s * 0.45 * u);
+      c.bezierCurveTo(x + 1.6 * u, mid + s * 1.5 * u, x + 2.9 * u, mid + s * 2.3 * u, x + 2.6 * u, mid + s * 1.55 * u); c.stroke();
+      c.beginPath(); c.arc(x + 2.35 * u, mid + s * 1.55 * u, 0.25 * u, 0, 2 * Math.PI); c.fill();
+    });
+  }
+  function percClef(c, x, top) { c.fillStyle = INK; c.fillRect(x + 4, top + SP, 3.5, 2 * SP); c.fillRect(x + 10, top + SP, 3.5, 2 * SP); }
+  // staff(c, part, x, xEnd, top, first, opts) -> where the bars begin: lines, clef, key, time
+  function staff(c, part, x, xEnd, top, first) {
+    var yOf = function (st) { return top + 4 * SP - (st - 30) * SP / 2; }, ks = Math.abs(part.sig);
+    c.strokeStyle = INK; c.lineWidth = 1;
+    for (var l = 0; l < 5; l++) { c.beginPath(); c.moveTo(x, top + l * SP); c.lineTo(xEnd, top + l * SP); c.stroke(); }
+    if (part.clef === "treble") SC.clef(c, x + 14, yOf(32));
+    else if (part.clef === "bass") bassClef(c, x + 6, top);
+    else if (part.clef === "alto") altoClef(c, x + 6, top);
+    else percClef(c, x + 6, top);
+    var shift = part.clef === "bass" ? -2 : part.clef === "alto" ? -1 : 0;
+    c.fillStyle = INK; c.font = "17px serif"; c.textAlign = "center"; c.textBaseline = "middle";
+    for (var a = 0; a < ks; a++) c.fillText(part.sig > 0 ? "\u266f" : "\u266d", x + 32 + a * 8, yOf((part.sig > 0 ? SC.SHARPS : SC.FLATS)[a] + shift) - (part.sig > 0 ? 0 : 3));
+    var bx = x + 32 + ks * 8;
+    if (first) {
+      c.font = "bold 15px serif";
+      c.fillText(String(part.n), bx + 8, top + SP); c.fillText(String(part.d), bx + 8, top + 3 * SP);
+      bx += 20;
+    }
+    return { at: bx + 6, yOf: yOf };
+  }
+  // need(items) -> the room a bar wants, across (a note's head, an accidental's, a dot's)
+  function need(items) {
+    var n = 34;
+    items.forEach(function (p) { n += 15 + (p.mark != null ? 9 : 0) + (SC.value(p.w || p.len)[2] ? 5 : 0); });
+    return n;
+  }
+  function marks(part, items) {   // the accidentals a bar needs: as the key, and the bar so far, have each letter
+    var acc = {};
+    items.forEach(function (p) {   // (on the piece: a note tied over a bar line shares its heads with the piece before)
+      p.mark = null; p.marks = [];
+      if (p.rest || part.drum) return;
+      p.n.heads.forEach(function (h, k) {
+        var n = h.note, slot = n.letter + n.oct, cur = acc[slot] != null ? acc[slot] : T.sigAlter(n.letter, part.sig);
+        p.marks[k] = null;
+        if (n.acc !== cur && !p.tieIn) { p.marks[k] = n.acc; acc[slot] = n.acc; p.mark = 1; }
+        else if (p.tieIn) acc[slot] = n.acc;
+      });
+    });
+  }
+  // spots(lists, sb, B0, barLen) -> where each moment of a bar is drawn: room for each from it to the next (as MUSIC_SCORE's
+  // room()), the same for every staff of a score so what is played together lines up
+  function spots(lists, sb, B0, barLen) {
+    var ts = {}, keys, tot = 0, cum = 0;
+    lists.forEach(function (items) {
+      items.forEach(function (p) {
+        var k = Math.round(p.at * 96), s = ts[k] || (ts[k] = { at: p.at, mark: false, dot: false });
+        if (p.mark != null) s.mark = true;
+        if (!p.rest && SC.value(p.w || p.len)[2]) s.dot = true;
+      });
+    });
+    keys = Object.keys(ts).map(Number).sort(function (a, b) { return a - b; });
+    keys.forEach(function (k, i) {
+      var s = ts[k], end = i + 1 < keys.length ? ts[keys[i + 1]].at : B0 + barLen;
+      s.room = 1 + 0.6 * Math.log(1 + Math.max(0, end - s.at) / 0.25) / Math.LN2 + (s.mark ? 0.7 : 0) + (s.dot ? 0.3 : 0);
+      tot += s.room;
+    });
+    sb.knots = [];
+    keys.forEach(function (k) { var s = ts[k]; s.x = sb.x + 14 + (tot ? (cum + (s.mark ? 0.7 : 0)) / tot : 0) * (sb.w - 24); sb.knots.push([s.at, s.x]); cum += s.room; });
+    sb.knots.push([B0 + barLen, sb.x + sb.w - 10]);
+    lists.forEach(function (items) { items.forEach(function (p) { p.x = ts[Math.round(p.at * 96)].x; }); });
+  }
+  // layout(list, x0, xEnd, widthOf) -> each unit's place on the line: [{bar, x, w}]
+  function layout(list, x0, xEnd, widthOf) {
+    var ws = list.map(widthOf), tot = ws.reduce(function (a, b) { return a + b; }, 0), bx = x0;
+    return list.map(function (u, k) { var sb = { bar: u.from, x: bx, w: ws[k] / tot * (xEnd - x0) }; bx += sb.w; return sb; });
+  }
+  function startOf(part, x, first) { return x + 32 + Math.abs(part.sig) * 8 + (first ? 20 : 0) + 6; }
+  function at(sb, t) {
+    var ks = sb.knots || [];
+    if (!ks.length) return sb.x + 14;
+    if (t <= ks[0][0]) return ks[0][1];
+    for (var i = 1; i < ks.length; i++) if (t <= ks[i][0] + E) return ks[i - 1][1] + (ks[i][1] - ks[i - 1][1]) * (t - ks[i - 1][0]) / Math.max(E, ks[i][0] - ks[i - 1][0]);
+    return ks[ks.length - 1][1];
+  }
+  // bar(c, part, items, sb, yOf, meta) -> one bar's notes and rests: beams (a half 4/4 bar, a beat with sixteenths), chords on a
+  // stem, x heads for the cymbals, ties, triplet marks
+  function bar(c, part, items, sb, yOf, meta) {
+    var B0 = sb.bar * meta.barLen, bt = SC.beatOf(meta), LV = SC.LEVEL;
+    var fine = {};
+    items.forEach(function (p) { p.stem = null; p.g = null; });   // (a score drew these items before)
+    items.forEach(function (p) { if (!p.rest && (LV[SC.value(p.w)[1]] > 1 || p.trip)) fine[Math.floor((p.at - B0) / 2 + E)] = true; });
+    function grp(p) { var rel = p.at - B0, G = meta.n === 4 && meta.d === 4 && !fine[Math.floor(rel / 2 + E)] ? 2 : bt; return Math.floor(rel / G + E) + (G === 2 ? 100 : 0); }
+    function lv(p) { var v = SC.value(p.w); return v[2] ? 0 : LV[v[1]] || 0; }
+    function lo(p) { return yOf(p.n.heads[0].pos); }
+    function hi(p) { return yOf(p.n.heads[p.n.heads.length - 1].pos); }
+    function mid(p) { return (p.n.heads[0].pos + p.n.heads[p.n.heads.length - 1].pos) / 2; }
+    var run = [];
+    function beam() {
+      if (run.length > 1) {
+        var avg = 0;
+        run.forEach(function (p) { avg += mid(p); }); avg /= run.length;
+        var up = part.drum || avg < 34, by = up ? Math.min.apply(null, run.map(hi)) - 3.5 * SP : Math.max.apply(null, run.map(lo)) + 3.5 * SP, xs = [];
+        run.forEach(function (p) { p.stem = { up: up, y: by }; xs.push(p.x + (up ? SP * 0.55 : -SP * 0.55)); });
+        c.fillStyle = INK;
+        for (var level = 1; level <= 3; level++) {
+          var yb = up ? by + (level - 1) * 5.5 : by - 3.5 - (level - 1) * 5.5;
+          if (level === 1) { c.fillRect(xs[0], yb, xs[xs.length - 1] - xs[0] + 1, 3.5); continue; }
+          run.forEach(function (p, i) {
+            if (lv(p) < level) return;
+            if (i + 1 < run.length && lv(run[i + 1]) >= level) c.fillRect(xs[i], yb, xs[i + 1] - xs[i] + 1, 3.5);
+            else if (!(i > 0 && lv(run[i - 1]) >= level)) { var stub = Math.min(SP, Math.abs((i + 1 < run.length ? xs[i + 1] : xs[i - 1]) - xs[i]) / 2); c.fillRect(i + 1 < run.length ? xs[i] : xs[i] - stub, yb, stub + 1, 3.5); }
+          });
+        }
+      }
+      run = [];
+    }
+    items.forEach(function (p) {
+      var ok = !p.rest && lv(p) > 0, g = ok ? grp(p) : null;
+      if (ok && (!run.length || run[0].g === g)) { p.g = g; run.push(p); }
+      else { beam(); if (ok) { p.g = g; run.push(p); } }
+    });
+    beam();
+    items.forEach(function (p, i) {
+      var v = SC.value(p.w || p.len), x = p.x;
+      if (p.rest) { SC.rest(c, p.whole ? sb.x + sb.w / 2 : x, yOf, p.whole ? [4, "w", 0] : v); return; }
+      var hs = p.n.heads, low = hs[0].pos, top = hs[hs.length - 1].pos, up = p.stem ? p.stem.up : part.drum || (low + top) / 2 < 34;
+      c.strokeStyle = INK; c.lineWidth = 1;
+      for (var g = 28; g >= low; g -= 2) { c.beginPath(); c.moveTo(x - 8, yOf(g)); c.lineTo(x + 8, yOf(g)); c.stroke(); }
+      for (g = 40; g <= top; g += 2) { c.beginPath(); c.moveTo(x - 8, yOf(g)); c.lineTo(x + 8, yOf(g)); c.stroke(); }
+      // a second's two heads either side of the stem
+      var side = [], col = 0;
+      hs.forEach(function (h, k) { side[k] = k > 0 && h.pos - hs[k - 1].pos === 1 && !side[k - 1] ? 1 : 0; });
+      hs.forEach(function (h, k) {
+        var hx = x + (side[k] ? (up ? 1 : -1) * SP * 1.15 : 0), y = yOf(h.pos);
+        if (h.x) xhead(c, hx, y); else SC.head(c, hx, y, v[1] === "w" || v[1] === "h");
+        if (h.open) { c.lineWidth = 1.2; c.beginPath(); c.arc(hx, yOf(top) - 2.2 * SP, 3, 0, 2 * Math.PI); c.stroke(); }
+        if (v[2]) { c.fillStyle = INK; c.beginPath(); c.arc(x + 9 + (side.some(Boolean) && up ? SP * 1.15 : 0), y - (h.pos % 2 ? 0 : SP / 2), 1.6, 0, 2 * Math.PI); c.fill(); }
+      });
+      for (var k2 = hs.length - 1; k2 >= 0; k2--) {   // accidentals, from the top note down, each column further left
+        var h2 = hs[k2], mk = p.marks ? p.marks[k2] : null;
+        if (mk == null) continue;
+        c.font = "15px serif"; c.textAlign = "center"; c.textBaseline = "middle"; c.fillStyle = INK;
+        c.fillText(mk === 0 ? "\u266e" : mk > 0 ? (mk > 1 ? "x" : "\u266f") : (mk < -1 ? "\u266d\u266d" : "\u266d"), x - 12 - col * 8, yOf(h2.pos) - (mk < 0 ? 3 : 0));
+        col = (col + 1) % 3;
+      }
+      if (v[1] !== "w") {
+        var sx = up ? x + SP * 0.55 : x - SP * 0.55, y0 = up ? yOf(low) : yOf(top), ey = p.stem ? p.stem.y : up ? yOf(top) - 3.5 * SP : yOf(low) + 3.5 * SP;
+        c.lineWidth = 1.2; c.beginPath(); c.moveTo(sx, y0); c.lineTo(sx, ey); c.stroke();
+        for (var f = 0; f < (p.stem ? 0 : LV[v[1]] || 0); f++) {
+          var fy = ey + (up ? 1 : -1) * f * SP * 0.8;
+          c.lineWidth = 1.6; c.beginPath(); c.moveTo(sx, fy); c.bezierCurveTo(sx + 1, fy + (up ? 1 : -1) * SP * 0.9, sx + SP * 1.1, fy + (up ? 1 : -1) * SP * 1.1, sx + SP * 0.8, fy + (up ? 1 : -1) * SP * 2.2); c.stroke();
+        }
+      }
+      if (p.tieOut && !part.drum) hs.forEach(function (h) {   // each note held on: to the same note next, or on to the bar line
+        var nx = null;
+        for (var j = i + 1; j < items.length && nx === null; j++) if (!items[j].rest && items[j].n.heads.some(function (q) { return q.note && q.note.midi === h.note.midi; })) nx = items[j].x;
+        var x2 = nx !== null ? nx - 5 : sb.x + sb.w + 4, y = yOf(h.pos), dir = hs.length > 1 ? (h.pos >= (low + top) / 2 ? -1 : 1) : (up ? 1 : -1), ty = y + dir * SP * 0.8;
+        c.lineWidth = 1.2; c.beginPath(); c.moveTo(x + 5, ty); c.quadraticCurveTo((x + 5 + x2) / 2, ty + dir * 6, x2, ty); c.stroke();
+      });
+    });
+    for (var i2 = 0; i2 < items.length;) {
+      if (!items[i2].trip) { i2++; continue; }
+      var j2 = i2, sum = 0;
+      while (j2 < items.length && items[j2].trip) { sum += items[j2].len; j2++; if (Math.abs(sum / bt - Math.round(sum / bt)) < 1e-4 && sum >= bt - E) break; }
+      c.font = "italic 11px serif"; c.textAlign = "center"; c.fillStyle = INK; c.fillText("3", (items[i2].x + items[j2 - 1].x) / 2, yOf(42) - 2);
+      i2 = j2;
+    }
+  }
+  function multi(c, sb, top, n) {
+    var x0 = sb.x + 12, x1 = sb.x + sb.w - 12, y = top + 2 * SP;
+    c.fillStyle = INK; c.fillRect(x0, y - 3.5, x1 - x0, 7); c.fillRect(x0, top + SP, 1.6, 2 * SP); c.fillRect(x1 - 1.6, top + SP, 1.6, 2 * SP);
+    c.font = "bold 16px serif"; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText(String(n), (x0 + x1) / 2, top - 9);
+  }
+  // units(part, breaks) -> the bars as a part shows them: each bar, or a stretch of bars' rest as one (not across a section letter)
+  function units(part, breaks) {
+    var out = [];
+    part.bars.forEach(function (items, b) {
+      var empty = items.every(function (p) { return p.rest; }), last = out[out.length - 1];
+      if (empty && last && last.empty && !breaks[b]) { last.to = b; return; }
+      out.push({ from: b, to: b, empty: empty });
+    });
+    out.forEach(function (u) { u.multi = u.empty && u.to > u.from ? u.to - u.from + 1 : 0; });
+    return out;
+  }
+  // sections(plan) -> where each section letter goes, and how loud it is played: {bar: {letter, name, dyn}}
+  var SECT = { intro: "Introduction", soft: "The tune, softly", full: "Everyone", coda: "Ending" };
+  function sections(plan) {
+    var out = {}, arr = plan.arrangement;
+    if (!arr) return out;
+    arr.sections.forEach(function (s, i) { out[Math.round(s.at / plan.barLen)] = { letter: String.fromCharCode(65 + i), name: SECT[s.kind] || s.kind, dyn: s.kind === "full" || s.kind === "coda" ? "f" : "p" }; });
+    return out;
+  }
+  function quarterNote(c, x, y) { SC.head(c, x, y, false); c.lineWidth = 1.2; c.beginPath(); c.moveTo(x + SP * 0.55, y); c.lineTo(x + SP * 0.55, y - 3 * SP); c.stroke(); }
+  function plays(items) { return items.some(function (p) { return !p.rest; }); }
+  // drawLine(c, part, list, x, xEnd, top, first, meta, sects, opts) -> one line of a part: its units side by side (opts.lay: a
+  // score's places, shared by its staves; opts.top: the staff a score's letters, bar numbers and chord names go over)
+  function drawLine(c, part, list, x, xEnd, top, first, meta, sects, opts) {
+    var s0 = staff(c, part, x, xEnd, top, first), yOf = s0.yOf, lay = opts.lay, head = opts.top !== false;
+    if (!lay) {
+      lay = layout(list, s0.at, xEnd, function (u) { return u.multi ? 80 : need(part.bars[u.from]); });
+      lay.forEach(function (sb, k) { if (!list[k].multi) spots([part.bars[list[k].from]], sb, list[k].from * meta.barLen, meta.barLen); });
+    }
+    if (head && list.length && list[0].from > 0) { c.font = "11px sans-serif"; c.fillStyle = "#475569"; c.textAlign = "left"; c.textBaseline = "alphabetic"; c.fillText(String(list[0].from + 1), x + 2, top - 10); }
+    list.forEach(function (u, k) {
+      var sb = lay[k];
+      c.strokeStyle = INK; c.lineWidth = 1;
+      var lastBar = u.to === meta.bars - 1;
+      c.beginPath(); c.moveTo(sb.x + sb.w, top); c.lineTo(sb.x + sb.w, top + 4 * SP); c.stroke();
+      if (lastBar) {
+        c.fillStyle = INK; c.fillRect(sb.x + sb.w - 3.5, top, 3.5, 4 * SP); c.beginPath(); c.moveTo(sb.x + sb.w - 6, top); c.lineTo(sb.x + sb.w - 6, top + 4 * SP); c.stroke();
+        if (meta.repeat > 1) [1.5, 2.5].forEach(function (q) { c.beginPath(); c.arc(sb.x + sb.w - 11, top + q * SP, 1.9, 0, 2 * Math.PI); c.fill(); });   // back to the start
+      }
+      var sec = sects[u.from];
+      if (sec && head) {   // (over a drum part's beams)
+        c.font = "bold 14px sans-serif"; c.textAlign = "center"; c.textBaseline = "middle";
+        var hiPos = 38;   // over the bar's highest note (a flute's ledger lines)
+        if (!u.multi) part.bars[u.from].forEach(function (p) { if (!p.rest) hiPos = Math.max(hiPos, p.n.heads[p.n.heads.length - 1].pos); });
+        var lx = sb.x + 10, ly = Math.min(top - (part.drum ? 50 : 30), yOf(hiPos) - 22);
+        c.strokeStyle = INK; c.lineWidth = 1.4; c.strokeRect(lx - 9, ly - 10, 18, 20); c.fillStyle = INK; c.fillText(sec.letter, lx, ly);
+      }
+      if (u.multi) { multi(c, sb, top, u.multi); return; }
+      var items = part.bars[u.from], B0 = u.from * meta.barLen;
+      if (part.chords && head) {
+        var lastName = -99;
+        part.chords.forEach(function (ch) {
+          if (ch.at < B0 - E || ch.at >= B0 + meta.barLen - E) return;
+          var cx = Math.max(at(sb, ch.at) - 4, lastName);
+          c.font = "bold 13px sans-serif"; c.textAlign = "left"; c.textBaseline = "middle"; c.fillStyle = INK; c.fillText(ch.name, cx, top - 16);
+          lastName = cx + c.measureText(ch.name).width + 6;
+        });
+      }
+      bar(c, part, items, sb, yOf, meta);
+      // how loud: where a section begins and this player plays in it (a band's first bar mf)
+      var dyn = sec && plays(items) ? sec.dyn : !Object.keys(sects).length && u.from === 0 && plays(items) ? "mf" : null;
+      if (dyn) {
+        var first0 = items.filter(function (p) { return !p.rest; })[0], low = first0 ? Math.min(30, first0.n.heads[0].pos) : 30;   // below the note's ledger lines
+        c.font = "bold italic 15px serif"; c.textAlign = "center"; c.textBaseline = "middle"; c.fillStyle = INK;
+        c.fillText(dyn, first0 ? first0.x : sb.x + 14, opts.lay ? top + 4 * SP + 14 : Math.max(top + 4 * SP + 18, yOf(low) + 16));   // (a score's staves are close)
+      }
+    });
+  }
+  // lines(part, width, meta, sects) -> the part's lines: units that fit side by side (four bars at most, a long rest one)
+  function lines(part, avail, sects) {
+    var us = units(part, sects), out = [], cur = [], used = 0;
+    us.forEach(function (u) {
+      if (!u.multi) marks(part, part.bars[u.from]);
+      var w = u.multi ? 80 : need(part.bars[u.from]);
+      if (cur.length && (used + w > avail || cur.length >= 4)) { out.push(cur); cur = []; used = 0; }
+      cur.push(u); used += w;
+    });
+    if (cur.length) out.push(cur);
+    return out;
+  }
+  var DPI = 200, PW = 8.5 * DPI, PH = 11 * DPI, MARGIN = 0.55 * DPI;
+  function page() {
+    var cv = document.createElement("canvas");
+    cv.width = PW; cv.height = PH;
+    var c = cv.getContext("2d");
+    c.fillStyle = "#ffffff"; c.fillRect(0, 0, PW, PH);
+    return { cv: cv, c: c };
+  }
+  // header(c, k, plan, left, sub, right) -> where the music begins: the title, the part's name (top left, where a player looks),
+  // the tempo as a quarter note's beats a minute
+  function header(c, k, plan, left, sub, right) {   // (in the page's units: width PW / k)
+    var W = PW / k, m = MARGIN / k;
+    c.fillStyle = INK; c.textAlign = "center"; c.textBaseline = "alphabetic";
+    c.font = "bold 26px serif"; c.fillText(plan.title || "Song", W / 2, m + 22);
+    if (sub) { c.font = "italic 14px serif"; c.fillText(sub, W / 2, m + 44); }
+    if (left) { c.textAlign = "left"; c.font = "bold 16px serif"; c.fillText(left, m, m + 44); }
+    if (right) { c.textAlign = "right"; c.font = "12px serif"; c.fillText(right, W - m, m + 44); }
+    var y = m + 76;
+    quarterNote(c, m + 6, y);
+    c.font = "13px serif"; c.textAlign = "left"; c.textBaseline = "middle"; c.fillText("= " + Math.round(plan.qpm || plan.tempo), m + 16, y - 6);
+    return m + 100;
+  }
+  function footer(c, k, text, n) {
+    c.fillStyle = "#475569"; c.font = "11px sans-serif"; c.textAlign = "center"; c.textBaseline = "alphabetic";
+    c.fillText(text + " \u2014 page " + n, PW / k / 2, (PH - MARGIN / 2) / k);
+  }
+  // partPages(plan, part) -> the part's pages
+  function partPages(plan, part, meta, sects) {
+    var k = 1.7, W = PW / k, H = PH / k, x = MARGIN / k, xEnd = W - MARGIN / k, out = [], pg = null, y = 0, n = 0, SYS = 112;
+    var avail = xEnd - x - 80, ls = lines(part, avail, sects);
+    ls.forEach(function (list, li) {
+      if (!pg || y + SYS > H - MARGIN / k) {
+        pg = page(); out.push(pg.cv); n++;
+        pg.c.setTransform(k, 0, 0, k, 0, 0);
+        y = n === 1 ? header(pg.c, k, plan, part.name, plan.arrangement ? "for " + plan.arrangement.title : "", meta.repeat > 1 ? "Play " + meta.repeat + " times" : "") :
+          (function () { pg.c.fillStyle = INK; pg.c.font = "bold 14px serif"; pg.c.textAlign = "left"; pg.c.textBaseline = "alphabetic"; pg.c.fillText(part.name + " \u2014 " + (plan.title || "Song"), x, MARGIN / k + 10); return MARGIN / k + 40; })();
+        footer(pg.c, k, (plan.title || "Song") + " \u2014 " + part.name, n);
+      }
+      drawLine(pg.c, part, list, x, xEnd, y + 36, li === 0, meta, sects, {});
+      y += SYS;
+    });
+    return out;
+  }
+  // scorePages(plan, parts) -> every part as it sounds, a line of music for all of them together
+  function scorePages(plan, ps, meta, sects) {
+    var sc = ps.map(function (p) {   // in C: an octave's transposition stays (a guitar, a bass, a piccolo), others as they sound
+      if (p.drum || !p.tr || p.tr % 12 === 0) return p;
+      var q = {}, kk;
+      for (kk in p) q[kk] = p[kk];
+      q.key = p.home; q.sig = p.home.sig; q.tr = 0; q.name = p.name.replace(/ in [A-G]\u266d?/, "");
+      q.bars = p.bars.map(function (items) {
+        return items.map(function (it) {
+          if (it.rest) return it;
+          var o = {}, k2;
+          for (k2 in it) o[k2] = it[k2];
+          var heads = it.n.heads.map(function (h) { var nn = h.concert || spelt(h.note.midi - p.tr, p.home); return { pos: nn.step + CLEFAT[q.clef], note: nn }; });
+          o.n = { heads: heads.sort(function (a, b) { return a.pos - b.pos; }) };
+          return o;
+        });
+      });
+      return q;
+    });
+    // each staff's top in a system (a drum part's beams want more room above), and the chord names over the top staff only
+    var tops = [], yy = 0;
+    sc.forEach(function (p, i) { if (i) yy += 66 + (p.drum ? 16 : 0); tops.push(yy); });
+    var n = sc.length, sysH = yy + 4 * SP + 70, k = Math.min(1.7, (PH - 2 * MARGIN - 260) / (2 * sysH)), W = PW / k, H = PH / k, x = MARGIN / k + 44, xEnd = W - MARGIN / k, out = [];
+    sc = sc.map(function (p, i) { if (!i || !p.chords) return p; var q = {}, kk; for (kk in p) q[kk] = p[kk]; q.chords = null; return q; });
+    var avail = xEnd - x - 80, systems = [], cur = [], used = 0;
+    for (var b = 0; b < meta.bars; b++) {
+      sc.forEach(function (p) { marks(p, p.bars[b]); });
+      var w = Math.max.apply(null, sc.map(function (p) { return need(p.bars[b]); }));
+      if (cur.length && (used + w > avail || cur.length >= 4)) { systems.push(cur); cur = []; used = 0; }
+      cur.push({ from: b, to: b, multi: 0, w: w }); used += w;
+    }
+    if (cur.length) systems.push(cur);
+    var pg = null, y = 0, pn = 0;
+    systems.forEach(function (list, si) {
+      if (!pg || y + sysH > H - MARGIN / k) {
+        pg = page(); out.push(pg.cv); pn++;
+        pg.c.setTransform(k, 0, 0, k, 0, 0);
+        y = pn === 1 ? header(pg.c, k, plan, "", (ps.some(function (p) { return p.tr % 12; }) ? "Score in C" : "Score") + (plan.arrangement ? " \u2014 for " + plan.arrangement.title : ""), meta.repeat > 1 ? "Play " + meta.repeat + " times" : "") : MARGIN / k + 20;
+        footer(pg.c, k, (plan.title || "Song") + " \u2014 score", pn);
+      }
+      var x0 = Math.max.apply(null, sc.map(function (p) { return startOf(p, x, si === 0); })), lay = layout(list, x0, xEnd, function (u) { return u.w; });
+      lay.forEach(function (sb, j) { spots(sc.map(function (p) { return p.bars[list[j].from]; }), sb, list[j].from * meta.barLen, meta.barLen); });
+      sc.forEach(function (p, pi) {
+        var top = y + 30 + tops[pi];
+        drawLine(pg.c, p, list, x, xEnd, top, si === 0, meta, sects, { lay: lay, top: pi === 0 });
+        pg.c.font = "12px serif"; pg.c.fillStyle = INK; pg.c.textAlign = "right"; pg.c.textBaseline = "middle";
+        pg.c.fillText(si === 0 ? p.name : p.short, x - 6, top + 2 * SP);
+      });
+      pg.c.strokeStyle = INK; pg.c.lineWidth = 1.5; pg.c.beginPath(); pg.c.moveTo(x, y + 30); pg.c.lineTo(x, y + 30 + tops[n - 1] + 4 * SP); pg.c.stroke();
+      y += sysH;
+    });
+    return out;
+  }
+  // pages(plan, {score, parts}) -> [canvas]: the score, then each part
+  function pages(plan, opts) {
+    opts = opts || {};
+    if (typeof document === "undefined" || !document.createElement) return [];
+    var ps = parts(plan), meta = { barLen: plan.barLen, bars: ps.length ? ps[0].bars.length : plan.bars, n: plan.n, d: plan.d, repeat: plan.arrangement ? 1 : plan.repeat || 1 }, sects = sections(plan), out = [];
+    ps.forEach(function (p) { p.n = plan.n; p.d = plan.d; });
+    if (opts.score !== false && ps.length > 1) out = out.concat(scorePages(plan, ps, meta, sects));
+    ps.forEach(function (p) { if (!opts.only || opts.only === p.id) out = out.concat(partPages(plan, p, meta, sects)); });
+    return out;
+  }
+  // pdf(plan, opts) -> Promise<Blob>: the pages to print, letter size
+  function pdf(plan, opts) {
+    var pg = pages(plan, opts);
+    if (!L.pdf || !L.pdf.searchable) return Promise.reject(new Error("Lantern\u2019s PDF writer is not here"));
+    return L.pdf.searchable(pg.map(function (cv) { return { canvas: cv, pt: { w: 612, h: 792 } }; }), { title: (plan.title || "Song") + ": score and parts", quality: 0.9, producer: "Lantern Music",
+      onPage: opts && opts.onPage });
+  }
+  // ---- MusicXML ---------------------------------------------------------------------------------------------------------
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  var TYPE = { w: "whole", h: "half", q: "quarter", e: "eighth", s: "16th", t: "32nd" };
+  var KIND = { "": "major", m: "minor", "7": "dominant", maj7: "major-seventh", m7: "minor-seventh", dim: "diminished", dim7: "diminished-seventh", m7b5: "half-diminished",
+    aug: "augmented", sus2: "suspended-second", sus4: "suspended-fourth", "6": "major-sixth", m6: "minor-sixth", "9": "dominant-ninth", maj9: "major-ninth", m9: "minor-ninth", "5": "power" };
+  var DIA = { 0: 0, 1: 1, 2: 1, 3: 2, 4: 2, 5: 3, 6: 3, 7: 4, 8: 5, 9: 5, 10: 6, 11: 6 };
+  function musicxml(plan) {
+    var ps = parts(plan), D = 24, nb = ps.length ? ps[0].bars.length : plan.bars, sects = sections(plan), out = [];
+    out.push("<?xml version=\x221.0\x22 encoding=\x22UTF-8\x22 standalone=\x22no\x22?>");
+    out.push("<!DOCTYPE score-partwise PUBLIC \x22-//Recordare//DTD MusicXML 4.0 Partwise//EN\x22 \x22http://www.musicxml.org/dtds/partwise.dtd\x22>");
+    out.push("<score-partwise version=\x224.0\x22>");
+    out.push("<work><work-title>" + esc(plan.title || "Song") + "</work-title></work>");
+    out.push("<identification><creator type=\x22arranger\x22>Lantern</creator><encoding><software>Lantern Office Suite</software></encoding></identification>");
+    out.push("<part-list>");
+    ps.forEach(function (p, i) {
+      var id = "P" + (i + 1);
+      out.push("<score-part id=\x22" + id + "\x22><part-name>" + esc(p.name.replace(/\u266d/g, "b")) + "</part-name><part-abbreviation>" + esc(p.short) + "</part-abbreviation>");
+      if (p.drum) Object.keys(GMKEY).forEach(function (d) { out.push("<score-instrument id=\x22" + id + "-" + d.replace(/ /g, "") + "\x22><instrument-name>" + esc(DRUMNAME[d]) + "</instrument-name></score-instrument>"); });
+      else out.push("<score-instrument id=\x22" + id + "-I1\x22><instrument-name>" + esc(p.name.replace(/\u266d/g, "b")) + "</instrument-name></score-instrument>");
+      if (p.drum) Object.keys(GMKEY).forEach(function (d) { out.push("<midi-instrument id=\x22" + id + "-" + d.replace(/ /g, "") + "\x22><midi-channel>10</midi-channel><midi-unpitched>" + (GMKEY[d] + 1) + "</midi-unpitched></midi-instrument>"); });
+      else { var e = L.musicInst ? L.musicInst.get(p.inst) : null; out.push("<midi-instrument id=\x22" + id + "-I1\x22><midi-channel>" + (i >= 9 ? i + 2 : i + 1) + "</midi-channel><midi-program>" + ((e ? e.gm : 0) + 1) + "</midi-program></midi-instrument>"); }
+      out.push("</score-part>");
+    });
+    out.push("</part-list>");
+    ps.forEach(function (p, i) {
+      var id = "P" + (i + 1);
+      out.push("<part id=\x22" + id + "\x22>");
+      for (var b = 0; b < nb; b++) {
+        out.push("<measure number=\x22" + (b + 1) + "\x22>");
+        if (b === 0) {
+          var att = ["<attributes><divisions>" + D + "</divisions>"];
+          if (!p.drum) att.push("<key><fifths>" + p.sig + "</fifths><mode>" + (plan.minor ? "minor" : "major") + "</mode></key>");
+          att.push("<time><beats>" + plan.n + "</beats><beat-type>" + plan.d + "</beat-type></time>");
+          att.push(p.clef === "perc" ? "<clef><sign>percussion</sign></clef>" : p.clef === "bass" ? "<clef><sign>F</sign><line>4</line></clef>" : p.clef === "alto" ? "<clef><sign>C</sign><line>3</line></clef>" : "<clef><sign>G</sign><line>2</line></clef>");
+          if (p.tr) {
+            var oc = p.tr > 0 ? Math.floor(p.tr / 12) : -Math.floor(-p.tr / 12), r = p.tr - 12 * oc;
+            att.push("<transpose><diatonic>" + (-DIA[r]) + "</diatonic><chromatic>" + (-r) + "</chromatic>" + (oc ? "<octave-change>" + (-oc) + "</octave-change>" : "") + "</transpose>");
+          }
+          att.push("</attributes>");
+          if (plan.repeat > 1 && !plan.arrangement) out.push("<barline location=\x22left\x22><bar-style>heavy-light</bar-style><repeat direction=\x22forward\x22/></barline>");
+          out.push(att.join(""));
+          out.push("<direction placement=\x22above\x22><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>" + Math.round(plan.qpm) + "</per-minute></metronome></direction-type><sound tempo=\x22" + Math.round(plan.qpm) + "\x22/></direction>");
+        }
+        var sec = sects[b];
+        if (sec) out.push("<direction placement=\x22above\x22><direction-type><rehearsal>" + sec.letter + "</rehearsal></direction-type></direction>");
+        var items = p.bars[b], B0 = b * plan.barLen;
+        marks(p, items);
+        if (sec && items.some(function (x) { return !x.rest; })) out.push("<direction placement=\x22below\x22><direction-type><dynamics><" + sec.dyn + "/></dynamics></direction-type></direction>");
+        var chordsHere = p.chords ? p.chords.filter(function (ch) { return ch.at >= B0 - E && ch.at < B0 + plan.barLen - E; }) : [];
+        items.forEach(function (it) {
+          chordsHere.forEach(function (ch) {
+            if (ch.done || ch.at < it.at - E || ch.at >= it.at + it.len - E) return;
+            ch.done = true;
+            var nm = ch.name.split("\x2F"), m = /^([A-G])(#|b)?(.*)$/.exec(nm[0]);
+            if (!m) return;
+            var bm = nm[1] ? /^([A-G])(#|b)?/.exec(nm[1]) : null, off = Math.round((ch.at - it.at) * D);
+            out.push("<harmony><root><root-step>" + m[1] + "</root-step>" + (m[2] ? "<root-alter>" + (m[2] === "#" ? 1 : -1) + "</root-alter>" : "") + "</root><kind text=\x22" + esc(m[3]) + "\x22>" + (KIND[m[3]] || "major") + "</kind>" +
+              (bm ? "<bass><bass-step>" + bm[1] + "</bass-step>" + (bm[2] ? "<bass-alter>" + (bm[2] === "#" ? 1 : -1) + "</bass-alter>" : "") + "</bass>" : "") + (off ? "<offset>" + off + "</offset>" : "") + "</harmony>");
+          });
+          var v = SC.value(it.w || it.len), dur = Math.round(it.len * D), typ = TYPE[v[1]] || "quarter", tm = it.trip ? "<time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>" : "";
+          if (it.rest) {
+            if (it.whole) out.push("<note><rest measure=\x22yes\x22/><duration>" + Math.round(plan.barLen * D) + "</duration><voice>1</voice></note>");
+            else out.push("<note><rest/><duration>" + dur + "</duration><voice>1</voice><type>" + typ + "</type>" + (v[2] ? "<dot/>" : "") + tm + "</note>");
+            return;
+          }
+          it.n.heads.forEach(function (h, k) {
+            var x = ["<note>"];
+            if (k) x.push("<chord/>");
+            if (p.drum) {
+              var dp = h.pos, dst = dp - CLEFAT.treble, dl = LET.charAt(T.mod(dst, 7)), dot = Math.floor(dst / 7);
+              x.push("<unpitched><display-step>" + dl + "</display-step><display-octave>" + dot + "</display-octave></unpitched>");
+            } else {
+              var n = h.note;
+              x.push("<pitch><step>" + n.letter + "</step>" + (n.acc ? "<alter>" + n.acc + "</alter>" : "") + "<octave>" + n.oct + "</octave></pitch>");
+            }
+            x.push("<duration>" + dur + "</duration>");
+            if (it.tieIn) x.push("<tie type=\x22stop\x22/>");
+            if (it.tieOut) x.push("<tie type=\x22start\x22/>");
+            if (p.drum) x.push("<instrument id=\x22" + id + "-" + String(h.drum).replace(/ /g, "") + "\x22/>");
+            x.push("<voice>1</voice><type>" + typ + "</type>" + (v[2] ? "<dot/>" : ""));
+            var mk = it.marks ? it.marks[k] : null;
+            if (!p.drum && mk != null) x.push("<accidental>" + (mk === 0 ? "natural" : mk > 1 ? "double-sharp" : mk > 0 ? "sharp" : mk < -1 ? "flat-flat" : "flat") + "</accidental>");
+            x.push(tm);
+            if (p.drum) x.push("<stem>up</stem>" + (h.x ? "<notehead>x</notehead>" : ""));
+            if (it.tieIn || it.tieOut) x.push("<notations>" + (it.tieIn ? "<tied type=\x22stop\x22/>" : "") + (it.tieOut ? "<tied type=\x22start\x22/>" : "") + "</notations>");
+            x.push("</note>");
+            out.push(x.join(""));
+          });
+        });
+        chordsHere.forEach(function (ch) { delete ch.done; });
+        if (b === nb - 1) out.push(plan.repeat > 1 && !plan.arrangement ? "<barline location=\x22right\x22><bar-style>light-heavy</bar-style><repeat direction=\x22backward\x22 times=\x22" + plan.repeat + "\x22/></barline>" :
+          "<barline location=\x22right\x22><bar-style>light-heavy</bar-style></barline>");
+        out.push("</measure>");
+      }
+      out.push("</part>");
+    });
+    out.push("</score-partwise>");
+    return out.join("\n");
+  }
+  window.Lantern.musicParts = { parts: parts, pages: pages, pdf: pdf, musicxml: musicxml, INFO: INFO };
+})();
+// ===========================================================================
+// MODULE: MUSIC_PARTS - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: MUSIC_SONG_APP - START
@@ -49575,10 +50286,25 @@ Lantern.RFB = (function () {
   var L = window.Lantern;
   if (!L || !L.el || !L.musicSong) return;
   var el = L.el;
+  var PARTS_TITLE = "Sheet music for a class (PDF): the score, then each player\u2019s part on its own pages \u2014 in the player\u2019s clef and key, the drums too",
+    XML_TITLE = "Every part as MusicXML, for MuseScore, Finale, Sibelius or Dorico";
   function fname(plan, ext) { return (String(plan.title || "song").replace(/[^A-Za-z0-9 _-]+/g, "").replace(/\s+/g, "_").slice(0, 40) || "song") + "." + ext; }
-  // save(plan, "midi"|"wav") -> Promise
+  // save(plan, "midi"|"wav"|"parts"|"musicxml") -> Promise
   function save(plan, kind, say) {
     say = say || function () {};
+    // (1.23.0) every player's part for a class: the score and the parts to print (PDF), and MusicXML for a notation program
+    if (kind === "parts" || kind === "musicxml") {
+      var MP = L.musicParts;
+      if (!MP) return Promise.resolve(say("Writing out the parts needs Lantern\u2019s parts module."));
+      if (kind === "musicxml") {
+        L.download(fname(plan, "musicxml"), new Blob([MP.musicxml(plan)], { type: "application/vnd.recordare.musicxml+xml" }), "application/vnd.recordare.musicxml+xml");
+        return Promise.resolve();
+      }
+      say("Writing out the parts\u2026");
+      return MP.pdf(plan, { onPage: function (i, n) { say("Writing out the parts\u2026 page " + (i + 1) + " of " + n); } })
+        .then(function (b) { L.download(fname(plan, "pdf").replace(/\.pdf$/, "_parts.pdf"), b, "application/pdf"); say(""); },
+          function (e) { say("Could not write out the parts: " + ((e && e.message) || e)); });
+    }
     if (kind === "midi") {
       if (!L.musicMidi) return Promise.resolve(say("MIDI files need Lantern\u2019s MIDI part."));
       L.download(fname(plan, "mid"), new Blob([L.musicMidi.file(plan, { library: !!L.store.get("music.midiLibrary", false) })], { type: "audio/midi" }), "audio/midi");
@@ -49673,6 +50399,8 @@ Lantern.RFB = (function () {
     card.appendChild(el("div", { "class": "row" }, [pick,
       el("button", { text: "Save MIDI", title: "A file for any music program", onclick: function () { if (plan) save(plan, "midi", function (t) { msg.textContent = t; }); } }),
       el("button", { text: "Save WAV", title: "A sound file to play anywhere", onclick: function () { if (plan) save(plan, "wav", function (t) { msg.textContent = t; }); } }),
+      el("button", { text: "Save parts", title: PARTS_TITLE, onclick: function () { if (plan) save(plan, "parts", function (t) { msg.textContent = t; }); } }),
+      el("button", { text: "Save MusicXML", title: XML_TITLE, onclick: function () { if (plan) save(plan, "musicxml", function (t) { msg.textContent = t; }); } }),
       el("button", { text: "How to write it", onclick: function () { help.style.display = help.style.display === "none" ? "" : "none"; } })]));
     // (1.22.3) the MIDI file for an orchestral sample library: legato overlaps and the dynamics on the mod wheel -- Chat's Save MIDI too
     var lib = el("input", { type: "checkbox", "aria-label": "MIDI for orchestral sample libraries" });
@@ -49685,7 +50413,7 @@ Lantern.RFB = (function () {
     if (L.musicOpenRequest) { L.musicOpenRequest = false; setTimeout(function () { if (card.scrollIntoView) card.scrollIntoView({ block: "start" }); }, 30); }
   }
   window.Lantern.musicView = view;
-  window.Lantern.musicDocs = { open: open, save: save, EXAMPLES: EXAMPLES };
+  window.Lantern.musicDocs = { open: open, save: save, EXAMPLES: EXAMPLES, PARTS_TITLE: PARTS_TITLE, XML_TITLE: XML_TITLE };
   (window.Lantern.musicCards = window.Lantern.musicCards || []).unshift({ title: "Make a song", mount: mount });
 })();
 // ===========================================================================
@@ -49802,7 +50530,9 @@ Lantern.RFB = (function () {
       preview: function () { return L.musicView ? L.musicView(plan) : null; },
       open: function () { if (L.musicDocs) L.musicDocs.open("title " + title + "\n" + plan.text, title); },
       extra: L.musicDocs ? [{ label: "Save MIDI", title: "A file for any music program", run: function () { L.musicDocs.save(plan, "midi"); } },
-        { label: "Save WAV", title: "A sound file to play anywhere", run: function () { L.musicDocs.save(plan, "wav"); } }] : [] };
+        { label: "Save WAV", title: "A sound file to play anywhere", run: function () { L.musicDocs.save(plan, "wav"); } }].concat(L.musicParts ? [
+        { label: "Save parts", title: L.musicDocs.PARTS_TITLE, run: function () { L.musicDocs.save(plan, "parts"); } },
+        { label: "Save MusicXML", title: L.musicDocs.XML_TITLE, run: function () { L.musicDocs.save(plan, "musicxml"); } }] : []) : [] };
   }
   window.Lantern.aiMusic = { build: build, asks: asks, intent: intent, PROMPT: PROMPT, HINT: HINT };
   if (!ACTS.some(function (a) { return a.id === "music"; })) ACTS.push({
@@ -50125,7 +50855,7 @@ Lantern.RFB = (function () {
           "keeping its key, time, tempo, style and sound lines" + (p.arrangement ? " and its arrange line" : "") + "." :
         ens ? "For " + an(ens) + ", write a MAKE MUSIC block with these lines and one more: arrange " + title + ". Lantern writes every player\u2019s part from the melody and chords " +
           "(an introduction, the tune softly, then everyone, the last chord held; form intro soft full coda changes the order), plays it, writes it out and saves it " +
-          "(Save MIDI: a track for each player; Save WAV: the sound). Do not write the players\u2019 parts yourself, and do not say Lantern cannot make it." :
+          "(Save MIDI: a track for each player; Save WAV: the sound; Save parts: the score and each player\u2019s part to print, the drums too). Do not write the players\u2019 parts yourself, and do not say Lantern cannot make it." :
           "To change it, write the whole MAKE MUSIC block again with the change. For an orchestra, add one line, arrange orchestra (or strings, string quartet, brass, winds): Lantern writes every player\u2019s part.") +
         (keepTune ? " Keep its key, time, chords and melody lines as they are." : "") });
   }
@@ -50190,7 +50920,7 @@ Lantern.RFB = (function () {
       note: why === "cant" ? "The AI said Lantern could not make it \u2014 it can, so Lantern told it what to write\u2026" : why === "parts" ? "The AI wrote the parts out in its reply; Lantern asked for a MAKE MUSIC block, which it plays and saves\u2026" :
         "The AI asked whether to go ahead; the question already asks for it, so Lantern told it to make the song\u2026",
       prompt: (why === "asks" ? "The person has already asked for this: make it now. " : why === "parts" ? "Lantern cannot play parts written out in a reply. " : "Lantern can make this. ") +
-        "It plays a song" + (ens ? " on " + an(ens) : "") + ", writes it out and saves it (Save MIDI: a track for each player; Save WAV: the sound). Reply with one MAKE MUSIC block" +
+        "It plays a song" + (ens ? " on " + an(ens) : "") + ", writes it out and saves it (Save MIDI: a track for each player; Save WAV: the sound; Save parts: the score and each player\u2019s part to print, the drums too). Reply with one MAKE MUSIC block" +
         (block ? ", like this:\n" + block + "\n" : ": the key, time, chords and melody lines" + (ens ? " and arrange " + title : "") + ". ") +
         (ens ? "Lantern writes every player\u2019s part from the melody and chords; do not write the parts yourself." : "") };
   }

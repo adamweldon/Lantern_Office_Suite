@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.23.0 — Every player's part, for a class; the drums kept (2026-11-03)
+
+Adam: “We should have another button to export all the sheet music pieces
+that all the instruments would have to play for a band or orchestra for a
+class that a teacher could give to the students. We should include drums
+also as those seem to be missing from some of these pieces.”
+
+- **Save parts** (Chat's song card and the Music tile, MUSIC_PARTS): a PDF
+  to print, letter size -- the score first (every part as it sounds, “in
+  C”; the staves of a bar lined up), then each player's part on pages of
+  its own, written as that player reads it:
+  - in its clef (a viola's alto clef, a cello's, bassoon's, tuba's and
+    timpani's bass clef; a piano's or a harp's by where its notes lie) and
+    key: a clarinet or trumpet in B♭ a tone above it sounds, a horn in F a
+    fifth, an alto sax a sixth, a guitar and a bass an octave;
+  - the notes a player starts together on one stem, beamed and tied as the
+    lead sheet is (1.22.10), each note spelled the way the tune wrote it or
+    the chord gives it (E7/G#'s G#, not A♭);
+  - bar numbers, the sections' letters (A, B, C, D) with how loud each comes
+    in (p, f), a stretch of bars' rest as one bar with its number, the
+    chord names over a band's tune and chords, “Play 2 times” and the
+    repeat sign for a song that repeats;
+  - **the drums** on a percussion staff: bass drum in the bottom space,
+    snare in the third, hi-hat and cymbals over the staff with x heads.
+- **Save MusicXML**: the same parts for MuseScore, Finale, Sibelius or
+  Dorico -- each part's transposition, clef and key, ties, triplets, chord
+  symbols, rehearsal letters and dynamics; the drums unpitched, each on its
+  General MIDI key.
+- **Drums kept in an orchestra** (MUSIC_ARRANGE, MUSIC_SONG): a song whose
+  style has drums (rock, pop, march, reggae, or a drums line) keeps them as
+  a player of its own -- the beat in the soft and full passes, a crash where
+  everyone comes in, none in the introduction; Save MIDI puts them on the
+  drum channel (10). Every band style now has its drums (MUSIC_BAND): a
+  ballad's and a waltz's soft kick and hi-hat, folk's snare on 2 and 4.
+- **A rock guitar's power chord on the chord's root** (MUSIC_BAND): built on
+  the note after a slash, E7/G# played G# D# against the tune's D.
+- The PDF writer takes the producer's name (`Lantern.pdf.searchable(pages,
+  {producer})`).
+- Tests: `tests/music.js` (162: the parts of a rock band and of an orchestra
+  with its drums, each bar adding up; transpositions, clefs and keys; E7/G#
+  spelled; the MusicXML well formed, every bar four quarters, the clarinet's
+  transposition, the drums unpitched; Save parts and Save MusicXML in Chat's
+  card), `tests/browser/music_e2e.py` (Save parts gives a PDF of the score
+  and each part for Frère Jacques -- horn, brass, tuba, drums; Save MusicXML a
+  well-formed file).
+
 ## 1.22.10 — The sheet music written as the song plays (2026-11-03)
 
 Adam: the song Lantern made from the Final Countdown screenshot sounded

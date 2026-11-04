@@ -117,7 +117,14 @@ new tune (the old one under a new title goes back), and a MAKE MUSIC block you
 write in Chat yourself is made as you wrote it. Since v1.22.10 the sheet music drawn under a song
 is written as it plays: each note and rest a length that can be written (tied
 where it must be, triplets marked), sixteenths beamed as sixteenths, and each
-note given room for its head.
+note given room for its head. Since v1.23.0 **Save parts** (in Chat's song card
+and the Music tile) prints the sheet music for a class: the score, then each
+player's part on pages of its own -- in the player's clef and key (a clarinet in
+B♭ a tone up, a horn in F a fifth, a viola's alto clef), with bar numbers,
+section letters, rests for the bars a player waits and the drums on a
+percussion staff -- and **Save MusicXML** gives the same parts to MuseScore,
+Finale, Sibelius or Dorico. An orchestra keeps the band's drums when the song's
+style has them (style rock, pop, march, reggae).
 
 ## Install on a computer (with its AI) -- two double-clicks
 
