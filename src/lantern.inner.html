@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.23.1 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.24.0 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -173,7 +173,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.23.1",
+  version: "1.24.0",
   apps: {},
   order: []
 };
@@ -24426,7 +24426,7 @@ Lantern.RFB = (function () {
       "Lantern reads it \u2014 notes, lengths, rests, key and time \u2014 and gives the AI the tune\u2019s lines, so the song it makes is the one printed (and is checked " +
       "against it). <b>Play</b> in Chat, <b>Save MIDI</b> for any music program, " +
       "<b>Save WAV</b> to play anywhere, <b>Save parts</b> for the score and every player\u2019s part to print for a class (in each " +
-      "player\u2019s clef and key, the drums on a percussion staff), <b>Save MusicXML</b> for MuseScore, Finale, Sibelius or Dorico, or <b>Open in Music</b> to change it. Chords alone are played in the style; a melody alone gets " +
+      "player\u2019s clef and key, the drums on a percussion staff), <b>Save MusicXML</b> for MuseScore, Finale, Sibelius or Dorico, <b>Save GMS project</b> to open the song in Generative Music Studio, or <b>Open in Music</b> to change it. Chords alone are played in the style; a melody alone gets " +
       "chords chosen by Lantern. The <b>Make a song</b> card in the Music tile takes the same lines, typed by hand.</p>" +
       "<p><b>Seeing its drawing:</b> the Qwen3.5 models can look at pictures when the kit has their vision part " +
       "(<code>setup-kit vision</code>, 0.7\u20130.9 GB). Then the AI is shown the finished drawing once and says whether it matches the " +
@@ -50415,6 +50415,155 @@ Lantern.RFB = (function () {
 // MODULE: MUSIC_PARTS - END
 // ===========================================================================
 // ===========================================================================
+// MODULE: MUSIC_GMS - START
+// Depends: MUSIC_BAND (Lantern.musicBand); MUSIC_MIDI (Lantern.musicMidi.PAN)
+//          -- feature-detected
+// Exports: Lantern.musicGms = {project(plan) -> a Generative Music Studio
+//          project, json(plan) -> its file's text, PRESETS, OF}
+// ===========================================================================
+// A song as a Generative Music Studio project (1.24.0). Adam: a button that
+// saves the song as a project the standalone Generative_Music_Studio.html
+// opens -- most of the sounds are made the same way there, so there should be
+// a light way. GMS keeps a song as tracks of sixteenth-note steps, each step
+// the notes struck there and how hard; it makes every note's sound itself
+// when the project is loaded (its Load button: "Synthesizing n/total").
+// So the file is only the notes: each player of the song (the band's tune,
+// chords, bass and drums, or an orchestra's players) a track with the GMS
+// instrument nearest its own, each note on the step its time puts it (a
+// triplet's on the nearest sixteenth), the drums on GMS's drum track by their
+// General MIDI numbers (the ones GMS reads). A GMS note sounds for its
+// track's length, not the note's: for an instrument that holds its note (a
+// violin, a flute, a choir) the track's length is set to the part's notes
+// (three in four held to their end), so short notes do not run into the
+// next ones; a piano's, a guitar's or a bell's rings half a second past
+// them, up to its GMS preset's length. The format is GMS's own file save (ProjectPersist, format
+// "gms-project", version 2); the instruments' settings are GMS's presets as
+// they were on 2026-11-04 (CONFIG.presets).
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.musicBand) return;
+  // GMS preset -> [name, engine, attack, decay, sustain, release, duration (seconds), extra]
+  var PRESETS = {
+    piano: ["Piano", "piano", 0.01, 0.3, 0.4, 0.5, 3],
+    electricPiano: ["Electric Piano", "electricPiano", 0.01, 0.25, 0.5, 0.4, 2.5],
+    harpsichord: ["Harpsichord", "guitar", 0.002, 0.1, 0.2, 0.2, 2],
+    organ: ["Organ", "organ", 0.01, 0.1, 0.8, 0.08, 2, { drawbars: [8, 8, 8, 0, 0, 0, 0, 0, 0] }],
+    guitar: ["Acoustic Guitar", "guitar", 0.005, 0.2, 0.3, 0.3, 3],
+    electricGuitar: ["Electric Guitar", "guitar", 0.005, 0.15, 0.4, 0.25, 2.5],
+    harp: ["Harp", "harp", 0.003, 0.3, 0.2, 0.5, 4],
+    bass: ["Electric Bass", "bass", 0.01, 0.2, 0.5, 0.15, 1.5],
+    synthBass: ["Synth Bass", "bass", 0.01, 0.15, 0.6, 0.1, 1.5],
+    strings: ["Strings", "strings", 0.15, 0.2, 0.7, 0.4, 4],
+    violin: ["Solo Violin", "strings", 0.1, 0.15, 0.8, 0.3, 3],
+    cello: ["Cello", "strings", 0.12, 0.2, 0.75, 0.35, 3.5],
+    brass: ["Brass Section", "brass", 0.05, 0.1, 0.7, 0.2, 2],
+    trumpet: ["Trumpet", "brass", 0.04, 0.1, 0.75, 0.15, 2],
+    trombone: ["Trombone", "brass", 0.06, 0.12, 0.7, 0.2, 2.5],
+    flute: ["Flute", "flute", 0.08, 0.1, 0.85, 0.15, 2],
+    panFlute: ["Pan Flute", "flute", 0.1, 0.15, 0.7, 0.2, 2.5],
+    recorder: ["Recorder", "flute", 0.06, 0.08, 0.8, 0.12, 2],
+    clarinet: ["Clarinet", "clarinet", 0.04, 0.1, 0.85, 0.12, 2],
+    sopranoSax: ["Soprano Saxophone", "saxophone", 0.03, 0.08, 0.82, 0.12, 2],
+    saxophone: ["Alto Saxophone", "saxophone", 0.035, 0.1, 0.8, 0.15, 2],
+    tenorSax: ["Tenor Saxophone", "saxophone", 0.04, 0.12, 0.78, 0.18, 2.5],
+    harmonica: ["Harmonica", "harmonica", 0.03, 0.1, 0.8, 0.1, 2],
+    accordion: ["Accordion", "harmonica", 0.05, 0.1, 0.85, 0.15, 2.5],
+    bells: ["Tubular Bells", "bells", 0.01, 0.3, 0.2, 0.5, 4],
+    glockenspiel: ["Glockenspiel", "bells", 0.005, 0.2, 0.1, 0.3, 2],
+    vibraphone: ["Vibraphone", "bells", 0.01, 0.25, 0.3, 0.4, 3],
+    celesta: ["Celesta", "bells", 0.008, 0.18, 0.15, 0.25, 1.5],
+    marimba: ["Marimba", "marimba", 0.005, 0.2, 0.15, 0.3, 2.5],
+    xylophone: ["Xylophone", "marimba", 0.003, 0.15, 0.1, 0.2, 1],
+    kalimba: ["Kalimba", "marimba", 0.002, 0.25, 0.2, 0.4, 3],
+    choir: ["Choir Aah", "choir", 0.2, 0.15, 0.75, 0.5, 4],
+    choirOoh: ["Choir Ooh", "choir", 0.25, 0.15, 0.7, 0.5, 4],
+    synth: ["Synth", "synth", 0.05, 0.2, 0.6, 0.3, 2, { waveform: "sawtooth" }],
+    pad: ["Pad", "synth", 0.5, 0.3, 0.7, 1, 4, { waveform: "triangle" }],
+    lead: ["Lead", "synth", 0.02, 0.15, 0.5, 0.2, 2, { waveform: "square" }] };
+  // Lantern's instrument -> the GMS preset nearest it (GMS has no oboe, bassoon, horn, tuba or upright bass: the nearest of its
+  // family); timpani play on a drum track (GMS's toms), as GMS has no pitched drum
+  var OF = { piano: "piano", "electric piano": "electricPiano", harpsichord: "harpsichord", organ: "organ", "jazz organ": "organ", accordion: "accordion",
+    guitar: "guitar", "nylon guitar": "guitar", "electric guitar": "electricGuitar", harp: "harp", "celtic harp": "harp", koto: "harp",
+    bass: "bass", "slap bass": "bass", "upright bass": "bass", "synth bass": "synthBass",
+    violin: "violin", viola: "violin", cello: "cello", contrabass: "cello", strings: "strings",
+    trumpet: "trumpet", trombone: "trombone", "french horn": "brass", tuba: "trombone", brass: "brass",
+    flute: "flute", piccolo: "flute", "alto flute": "flute", recorder: "recorder", "pan flute": "panFlute", shakuhachi: "panFlute", ocarina: "panFlute",
+    clarinet: "clarinet", "bass clarinet": "clarinet", oboe: "clarinet", bassoon: "clarinet",
+    saxophone: "saxophone", "soprano sax": "sopranoSax", "tenor sax": "tenorSax", "baritone sax": "tenorSax",
+    harmonica: "harmonica", melodica: "harmonica",
+    glockenspiel: "glockenspiel", vibraphone: "vibraphone", celesta: "celesta", chimes: "bells", "church bell": "bells",
+    marimba: "marimba", balafon: "marimba", xylophone: "xylophone", kalimba: "kalimba",
+    choir: "choir", voice: "choir", "choir ooh": "choirOoh", lead: "lead", pad: "pad" };
+  var HOLDS = { strings: 1, brass: 1, flute: 1, clarinet: 1, saxophone: 1, harmonica: 1, organ: 1, choir: 1, synth: 1 };   // (engines that hold a note)
+  var DRUMS = { kick: 36, boom: 35, snare: 38, rim: 37, clap: 39, hat: 42, open: 46, pedal: 44, crash: 49, ride: 51, tom: 47, "tom low": 45, "tom high": 50 };
+  var COLORS = ["#ff6b35", "#3b82f6", "#22c55e", "#a855f7", "#ec4899", "#eab308", "#06b6d4", "#f97316"];
+  var FX = { enabled: false, eqLow: 0, eqMid: 0, eqHigh: 0, compThreshold: -24, compRatio: 1, compAttack: 0.003, compRelease: 0.25, reverbDecay: 1.5, reverbMix: 0,
+    delayTime: 0.3, delayFeedback: 0.3, delayMix: 0 };
+  var LEVEL = { melody: 0.85, chords: 0.6, bass: 0.75, drums: 0.7 };
+  var NAMES = { melody: "Tune", chords: "Chords", bass: "Bass", drums: "Drums" };
+  function cap(s) { return String(s).replace(/(^|\s)([a-z])/g, function (m, a, b) { return a + b.toUpperCase(); }); }
+  function q(x, n) { return Math.round(x * n) / n; }
+  // project(plan) -> the song as GMS saves a project: its tracks, the tempo, the pattern as long as the song
+  function project(plan) {
+    var evs = L.musicBand.events(plan), qpm = Math.max(40, Math.min(240, Math.round(plan.qpm || plan.tempo || 120))), sec = 60 / qpm;
+    var by = {}, ids = [];
+    evs.forEach(function (e) {
+      var k = e.part;
+      if (!by[k]) { by[k] = []; ids.push(k); }
+      by[k].push(e);
+    });
+    // (in score order: an orchestra's players as it lists them, the drums after the timpani; a band's tune, its other parts, chords,
+    // bass, drums)
+    var arr = plan.arrangement, order = arr ? arr.players.map(function (p) { return p.name; }) : ["melody"].concat((plan.extra || []).map(function (p) { return p.name; }), ["chords", "bass", "drums"]);
+    if (arr && order.indexOf("timpani") >= 0) { order = order.filter(function (n) { return n !== "drums"; }); order.splice(order.indexOf("timpani") + 1, 0, "drums"); }
+    ids.sort(function (a, b) { var i = order.indexOf(a), j = order.indexOf(b); return (i < 0 ? 99 : i) - (j < 0 ? 99 : j); });
+    var steps = 0;
+    evs.forEach(function (e) { steps = Math.max(steps, Math.round(e.at * 4) + 1); });
+    var total = Math.max(16, Math.ceil(Math.max(steps, Math.round((plan.arrangement ? plan.arrangement.length : plan.bars * plan.barLen * (plan.repeat || 1)) * 4)) / 4) * 4);
+    var tracks = ids.map(function (id, i) {
+      var es = by[id], first = es[0], drum = first.drum != null || first.inst === "timpani", key = drum ? "drum" : OF[first.inst] || "piano";
+      var pattern = [];
+      for (var s = 0; s < total; s++) pattern.push({ notes: [], velocity: 0.7 });
+      var vel = {};
+      es.forEach(function (e) {
+        var st = Math.max(0, Math.min(total - 1, Math.round(e.at * 4))), m;
+        if (e.drum != null) m = DRUMS[e.drum] || 38;
+        else if (first.inst === "timpani") m = e.midi < 48 ? 45 : 47;   // (the low tom under the C below middle C)
+        else { m = e.midi; while (m < 21) m += 12; while (m > 108) m -= 12; }
+        if (pattern[st].notes.indexOf(m) < 0) pattern[st].notes.push(m);
+        vel[st] = Math.max(vel[st] || 0, e.vel == null ? 0.7 : e.vel);
+      });
+      pattern.forEach(function (p, s) { p.notes.sort(function (a, b) { return a - b; }); if (vel[s] != null) p.velocity = q(Math.max(0.2, Math.min(1, vel[s])), 100); });
+      var pan = L.musicMidi && L.musicMidi.PAN && L.musicMidi.PAN[id] != null ? q((L.musicMidi.PAN[id] - 64) / 64, 100) : 0;
+      var name = plan.arrangement ? cap(id) : (NAMES[id] || cap(id)) + (drum ? "" : " \u2014 " + cap(first.inst));
+      var t = { id: i + 1, name: name, type: "synth", preset: key, color: COLORS[i % COLORS.length], pattern: pattern, patternLength: total, muted: false, solo: false,
+        volume: LEVEL[id] || 0.7, pan: pan, fx: JSON.parse(JSON.stringify(FX)) };
+      if (drum) {
+        t.engine = "drum"; t.isDrum = true;
+        ["boom", "kick", "snare", "hihat_closed", "hihat_open", "clap", "tom_low", "tom_mid", "tom_high", "crash", "ride"].forEach(function (d) { t["drumTone_" + d] = 50; });
+        return t;
+      }
+      var p = PRESETS[key];
+      t.engine = p[1]; t.attack = p[2]; t.decay = p[3]; t.sustain = p[4]; t.release = p[5]; t.duration = p[6]; t.isDrum = false;
+      if (p[7]) for (var x in p[7]) t[x] = JSON.parse(JSON.stringify(p[7][x]));
+      // a held note sounds as long as the part's notes do (three in four of them to their end), and its release; a struck or
+      // plucked one rings half a second past that, up to its own length (a rock guitar's eighths do not run together for 2.5 s)
+      var ls = es.map(function (e) { return e.len * sec; }).sort(function (a, b) { return a - b; }), held = ls[Math.min(ls.length - 1, Math.floor(0.75 * ls.length))];
+      t.duration = HOLDS[p[1]] ? q(Math.max(0.3, Math.min(8, held + t.release)), 100) : q(Math.max(0.6, Math.min(p[6], held + t.release + 0.5)), 100);
+      return t;
+    });
+    return { format: "gms-project", version: 2, savedAt: Date.now(), tempo: qpm, viewMode: "pattern", patternLength: total, noteDensity: 0.4, chordProbability: 0.2,
+      nextTrackId: tracks.length + 1, selectedTrackId: tracks.length ? 1 : null, tracks: tracks,
+      arrangement: { clips: [], nextClipId: 1, length: 32, loopStart: 0, loopEnd: 8, loopEnabled: false, zoom: 40 }, samples: [],
+      lantern: { title: plan.title || "", key: plan.key || "", time: plan.time || "", made: "Lantern Office Suite" } };
+  }
+  function json(plan) { return JSON.stringify(project(plan)); }
+  window.Lantern.musicGms = { project: project, json: json, PRESETS: PRESETS, OF: OF, DRUMS: DRUMS };
+})();
+// ===========================================================================
+// MODULE: MUSIC_GMS - END
+// ===========================================================================
+// ===========================================================================
 // MODULE: MUSIC_SONG_APP - START
 // Depends: CORE, MUSIC_SONG (Lantern.musicSong); MUSIC_SYNTH, MUSIC_MIDI,
 //          MUSIC_SCORE -- feature-detected; MUSIC's hook Lantern.musicCards
@@ -50437,11 +50586,18 @@ Lantern.RFB = (function () {
   if (!L || !L.el || !L.musicSong) return;
   var el = L.el;
   var PARTS_TITLE = "Sheet music for a class (PDF): the score, then each player\u2019s part on its own pages \u2014 in the player\u2019s clef and key, the drums too",
-    XML_TITLE = "Every part as MusicXML, for MuseScore, Finale, Sibelius or Dorico";
+    XML_TITLE = "Every part as MusicXML, for MuseScore, Finale, Sibelius or Dorico",
+    GMS_TITLE = "A project for Generative Music Studio: open it there with its Load button, and it makes each player's sounds";
   function fname(plan, ext) { return (String(plan.title || "song").replace(/[^A-Za-z0-9 _-]+/g, "").replace(/\s+/g, "_").slice(0, 40) || "song") + "." + ext; }
-  // save(plan, "midi"|"wav"|"parts"|"musicxml") -> Promise
+  // save(plan, "midi"|"wav"|"parts"|"musicxml"|"gms") -> Promise
   function save(plan, kind, say) {
     say = say || function () {};
+    // (1.24.0) a Generative Music Studio project: the song's notes, which GMS makes the sounds of when it loads it
+    if (kind === "gms") {
+      if (!L.musicGms) return Promise.resolve(say("Saving for Generative Music Studio needs Lantern\u2019s GMS module."));
+      L.download(fname(plan, "json").replace(/\.json$/, "_GMS.json"), new Blob([L.musicGms.json(plan)], { type: "application/json" }), "application/json");
+      return Promise.resolve();
+    }
     // (1.23.0) every player's part for a class: the score and the parts to print (PDF), and MusicXML for a notation program
     if (kind === "parts" || kind === "musicxml") {
       var MP = L.musicParts;
@@ -50551,6 +50707,7 @@ Lantern.RFB = (function () {
       el("button", { text: "Save WAV", title: "A sound file to play anywhere", onclick: function () { if (plan) save(plan, "wav", function (t) { msg.textContent = t; }); } }),
       el("button", { text: "Save parts", title: PARTS_TITLE, onclick: function () { if (plan) save(plan, "parts", function (t) { msg.textContent = t; }); } }),
       el("button", { text: "Save MusicXML", title: XML_TITLE, onclick: function () { if (plan) save(plan, "musicxml", function (t) { msg.textContent = t; }); } }),
+      el("button", { text: "Save GMS project", title: GMS_TITLE, onclick: function () { if (plan) save(plan, "gms", function (t) { msg.textContent = t; }); } }),
       el("button", { text: "How to write it", onclick: function () { help.style.display = help.style.display === "none" ? "" : "none"; } })]));
     // (1.22.3) the MIDI file for an orchestral sample library: legato overlaps and the dynamics on the mod wheel -- Chat's Save MIDI too
     var lib = el("input", { type: "checkbox", "aria-label": "MIDI for orchestral sample libraries" });
@@ -50563,7 +50720,7 @@ Lantern.RFB = (function () {
     if (L.musicOpenRequest) { L.musicOpenRequest = false; setTimeout(function () { if (card.scrollIntoView) card.scrollIntoView({ block: "start" }); }, 30); }
   }
   window.Lantern.musicView = view;
-  window.Lantern.musicDocs = { open: open, save: save, EXAMPLES: EXAMPLES, PARTS_TITLE: PARTS_TITLE, XML_TITLE: XML_TITLE };
+  window.Lantern.musicDocs = { open: open, save: save, EXAMPLES: EXAMPLES, PARTS_TITLE: PARTS_TITLE, XML_TITLE: XML_TITLE, GMS_TITLE: GMS_TITLE };
   (window.Lantern.musicCards = window.Lantern.musicCards || []).unshift({ title: "Make a song", mount: mount });
 })();
 // ===========================================================================
@@ -50682,7 +50839,8 @@ Lantern.RFB = (function () {
       extra: L.musicDocs ? [{ label: "Save MIDI", title: "A file for any music program", run: function () { L.musicDocs.save(plan, "midi"); } },
         { label: "Save WAV", title: "A sound file to play anywhere", run: function () { L.musicDocs.save(plan, "wav"); } }].concat(L.musicParts ? [
         { label: "Save parts", title: L.musicDocs.PARTS_TITLE, run: function () { L.musicDocs.save(plan, "parts"); } },
-        { label: "Save MusicXML", title: L.musicDocs.XML_TITLE, run: function () { L.musicDocs.save(plan, "musicxml"); } }] : []) : [] };
+        { label: "Save MusicXML", title: L.musicDocs.XML_TITLE, run: function () { L.musicDocs.save(plan, "musicxml"); } }] : []).concat(L.musicGms ? [
+        { label: "Save GMS project", title: L.musicDocs.GMS_TITLE, run: function () { L.musicDocs.save(plan, "gms"); } }] : []) : [] };
   }
   window.Lantern.aiMusic = { build: build, asks: asks, intent: intent, PROMPT: PROMPT, HINT: HINT };
   if (!ACTS.some(function (a) { return a.id === "music"; })) ACTS.push({
@@ -51005,7 +51163,7 @@ Lantern.RFB = (function () {
           "keeping its key, time, tempo, style and sound lines" + (p.arrangement ? " and its arrange line" : "") + "." :
         ens ? "For " + an(ens) + ", write a MAKE MUSIC block with these lines and one more: arrange " + title + ". Lantern writes every player\u2019s part from the melody and chords " +
           "(an introduction, the tune softly, then everyone, the last chord held; form intro soft full coda changes the order), plays it, writes it out and saves it " +
-          "(Save MIDI: a track for each player; Save WAV: the sound; Save parts: the score and each player\u2019s part to print, the drums too). Do not write the players\u2019 parts yourself, and do not say Lantern cannot make it." :
+          "(Save MIDI: a track for each player; Save WAV: the sound; Save parts: the score and each player\u2019s part to print, the drums too; Save GMS project: for Generative Music Studio). Do not write the players\u2019 parts yourself, and do not say Lantern cannot make it." :
           "To change it, write the whole MAKE MUSIC block again with the change. For an orchestra, add one line, arrange orchestra (or strings, string quartet, brass, winds): Lantern writes every player\u2019s part.") +
         (keepTune ? " Keep its key, time, chords and melody lines as they are." : "") });
   }
@@ -51070,7 +51228,7 @@ Lantern.RFB = (function () {
       note: why === "cant" ? "The AI said Lantern could not make it \u2014 it can, so Lantern told it what to write\u2026" : why === "parts" ? "The AI wrote the parts out in its reply; Lantern asked for a MAKE MUSIC block, which it plays and saves\u2026" :
         "The AI asked whether to go ahead; the question already asks for it, so Lantern told it to make the song\u2026",
       prompt: (why === "asks" ? "The person has already asked for this: make it now. " : why === "parts" ? "Lantern cannot play parts written out in a reply. " : "Lantern can make this. ") +
-        "It plays a song" + (ens ? " on " + an(ens) : "") + ", writes it out and saves it (Save MIDI: a track for each player; Save WAV: the sound; Save parts: the score and each player\u2019s part to print, the drums too). Reply with one MAKE MUSIC block" +
+        "It plays a song" + (ens ? " on " + an(ens) : "") + ", writes it out and saves it (Save MIDI: a track for each player; Save WAV: the sound; Save parts: the score and each player\u2019s part to print, the drums too; Save GMS project: for Generative Music Studio). Reply with one MAKE MUSIC block" +
         (block ? ", like this:\n" + block + "\n" : ": the key, time, chords and melody lines" + (ens ? " and arrange " + title : "") + ". ") +
         (ens ? "Lantern writes every player\u2019s part from the melody and chords; do not write the parts yourself." : "") };
   }

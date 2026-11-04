@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.24.0 — Save a song as a Generative Music Studio project (2026-11-04)
+
+Adam: "we should also add a button that exports the song as a generative
+music studio project that will open in the standalone
+Generative_Music_Studio html since most of the sounds are generated the same
+there should be a lightweight way to achieve this?"
+
+- **Save GMS project** (Chat's song card and the Music tile, MUSIC_GMS): the
+  song as GMS's own project file (`format: "gms-project"`, version 2 -- what
+  GMS's 💾 Save writes and its 📂 Load reads). Only the notes travel: GMS
+  makes every note's sound itself as it loads the file ("Synthesizing
+  n/total"), as it does for a project from another device.
+  - A track for each player -- a band's tune, chords, bass and drums, or an
+    orchestra's players in score order -- with the GMS instrument nearest
+    its own (GMS's presets: violin, cello, trumpet, flute, clarinet, harp,
+    electric guitar ...; an oboe or a bassoon on its clarinet, a horn on its
+    brass section, a tuba on its trombone).
+  - Each note on the sixteenth-note step its time puts it (a triplet's on
+    the nearest), a chord's notes on one step, how hard on the step; the
+    drums on GMS's drum track by the General MIDI numbers it reads; the
+    timpani on its toms (GMS has no pitched drum); the tempo; a song played
+    twice written out twice (GMS has no repeat).
+  - A GMS note sounds for its track's length, not the note's: an instrument
+    that holds a note (strings, winds, brass, organ, choir) is set to the
+    part's notes, so short ones do not run together; a struck or plucked one
+    rings half a second past them, up to its GMS preset's length.
+- Tests: `tests/music.js` (167: the band's and the orchestra's projects --
+  the file's format, tracks, instruments, steps, drum numbers, lengths; the
+  button in Chat and the Music tile); `tests/browser/gms_e2e.py` (new: the
+  standalone Generative_Music_Studio.html loads Lantern's projects with its
+  own Load -- every track, every note's sound made, its mix not silent; give
+  it the path to GMS).
+
 ## 1.23.1 — A piano page read with its bars adding up (2026-11-03)
 
 Adam's second test piece -- a piano arrangement in B major, with the words

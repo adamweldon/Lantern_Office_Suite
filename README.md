@@ -129,7 +129,10 @@ the words printed under the right hand reads with every bar adding up: the
 words' hyphens and an octave sign's dotted line are not rests, a tie's middle is
 not a whole note nor its start a dot, beams inside the staff are kept, a
 sixteenth rest and a dotted rest are read, two voices on a staff are one voice
-each -- and a note tied to the next is held, not struck again.
+each -- and a note tied to the next is held, not struck again. Since v1.24.0
+**Save GMS project** saves the song for Adam Weldon's Generative Music Studio:
+its 📂 Load opens it, a track for each player on the GMS instrument nearest
+its own, and GMS makes the sounds.
 
 ## Install on a computer (with its AI) -- two double-clicks
 

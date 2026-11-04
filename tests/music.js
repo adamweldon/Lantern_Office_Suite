@@ -450,6 +450,27 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   ok("...a band's: the chord names over the tune and the chords (E7/G#: bass G sharp), none over the bass", bxml.querySelectorAll("part[id=P1] harmony").length === rk.chords.length &&
     bxml.querySelector("part[id=P1] harmony kind").textContent === "major" && Array.prototype.some.call(bxml.querySelectorAll("harmony bass-step"), function (x) { return x.textContent === "G"; }) &&
     !bxml.querySelector("part[id=P3] harmony"));
+  // --- 1.24.0: the song as a Generative Music Studio project (MUSIC_GMS; Adam: "a button that exports the song as a generative
+  // music studio project that will open in the standalone Generative_Music_Studio html")
+  var G = L.musicGms, gp = JSON.parse(G.json(rk)), gt = gp.tracks, gstep = function (t, s) { return t.pattern[s].notes.join("+"); };
+  var gdrums = [35, 36, 37, 38, 39, 42, 44, 45, 46, 47, 49, 50, 51];
+  ok("a GMS project: GMS's own file (gms-project, version 2), the tempo, a pattern the song's length in sixteenths, a track for each player with GMS's nearest instrument",
+    gp.format === "gms-project" && gp.version === 2 && gp.tempo === 100 && gp.patternLength === 12 * 16 && gp.viewMode === "pattern" && gp.nextTrackId === 5 &&
+    gt.map(function (t) { return t.name + "/" + t.preset; }).join(", ") === "Tune \u2014 Flute/flute, Chords \u2014 Electric Guitar/electricGuitar, Bass \u2014 Bass/bass, Drums/drum" &&
+    gt.every(function (t) { return t.pattern.length === gp.patternLength && t.patternLength === gp.patternLength && t.type === "synth" && t.fx && (t.isDrum || G.PRESETS[t.preset]); }),
+    [gp.format, gp.tempo, gp.patternLength, gt.map(function (t) { return t.name + "/" + t.preset; })]);
+  ok("...each note on the step its time puts it (the tune E E F G on 0, 4, 8, 12), the drums by the General MIDI numbers GMS reads, a held instrument as long as its notes, a struck one ringing a little past them",
+    [0, 4, 8, 12].map(function (st) { return gstep(gt[0], st); }).join(" ") === "64 64 65 67" && gstep(gt[3], 0) === "36+42" && gstep(gt[3], 4) === "38+42" &&
+    gt[3].isDrum && gt[3].engine === "drum" && gt[3].pattern.every(function (st) { return st.notes.every(function (m) { return gdrums.indexOf(m) >= 0; }); }) &&
+    gt[0].engine === "flute" && gt[0].duration === 0.75 && gt[1].duration === 1 && gt[2].duration === 0.92 && gt[0].velocity === undefined,
+    [[0, 4, 8, 12].map(function (st) { return gstep(gt[0], st); }), gstep(gt[3], 0), gt[0].duration, gt[1].duration, gt[2].duration]);
+  var gor = G.project(oc.plan);
+  ok("...an orchestra's: its players in score order, the timpani on GMS's toms (it has no pitched drum), the drums after them, a pattern its 28 bars long",
+    gor.tracks.length === 13 && gor.patternLength === 28 * 16 && gor.tracks[0].name === "Flute" && gor.tracks[6].name === "Timpani" && gor.tracks[7].name === "Drums" && gor.tracks[8].name === "Violin 1" &&
+    gor.tracks[6].isDrum && gor.tracks[6].pattern.every(function (st) { return st.notes.every(function (m) { return m === 45 || m === 47; }); }) &&
+    gor.tracks[8].preset === "violin" && gor.tracks[12].preset === "cello", gor.tracks.map(function (t) { return t.name + "/" + t.preset; }));
+  var g2 = G.project(S.make({ title: "", lines: ["key C", "chords C | G", "melody C D E F | G - - -", "repeat 2"] }).plan);
+  ok("...a song played twice: both times (GMS has no repeat)", g2.patternLength === 4 * 16 && g2.tracks[0].pattern[32].notes[0] === g2.tracks[0].pattern[0].notes[0], g2.patternLength);
   var ens4 = ["strings", "string quartet", "brass", "winds"].map(function (en) { var r = S.make({ title: "", lines: ODE12.concat(["arrange " + en]) }); return r.problems.length ? -1 : r.plan.arrangement.players.length; });
   ok("strings, a string quartet, brass and winds: their own players", ens4.join() === "5,4,5,5", ens4);
   var f1 = S.make({ title: "", lines: ODE12.concat(["arrange strings", "form soft loud"]) }), f2 = S.make({ title: "", lines: ODE12.concat(["arrange strings", "form verse soft"]) });
@@ -645,14 +666,16 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     /Lantern checked the MAKE MUSIC block: \u201ch\u201d \(bar 4\) is not a note/.test(t) && /Lantern made a song: Twinkle \u2014 4 bars in C major/.test(t) && !/still questions/.test(t),
     [modelCalls.length, /MAKE MUSIC: <title>/.test(modelCalls[0].messages[0].content), t.slice(-300)]);
   var card = Array.prototype.slice.call(d.querySelectorAll(".la-make")).pop();
-  ok("...with the sheet music, Play, Open in Music, Save MIDI, Save WAV and (1.23.0) Save parts and Save MusicXML", card && card.querySelector("canvas") && btn(card, "\u25b6 Play") && btn(card, "Open in Music") && btn(card, "Save MIDI") && btn(card, "Save WAV") &&
-    btn(card, "Save parts") && btn(card, "Save MusicXML"));
+  ok("...with the sheet music, Play, Open in Music, Save MIDI, Save WAV, (1.23.0) Save parts and Save MusicXML, (1.24.0) Save GMS project", card && card.querySelector("canvas") && btn(card, "\u25b6 Play") && btn(card, "Open in Music") && btn(card, "Save MIDI") && btn(card, "Save WAV") &&
+    btn(card, "Save parts") && btn(card, "Save MusicXML") && btn(card, "Save GMS project"));
   btn(card, "\u25b6 Play").click(); await sleep(20);
   ok("...Play with no sound on this device says so, and the music is still written out", /no sound available/.test(card.textContent));
   btn(card, "Save MIDI").click();
   ok("...Save MIDI downloads Twinkle.mid", saved.length === 1 && saved[0].name === "Twinkle.mid" && saved[0].mime === "audio/midi", saved.map(function (s) { return s.name; }));
   btn(card, "Save MusicXML").click();
   ok("...Save MusicXML downloads Twinkle.musicxml: every player's part", saved.length === 2 && saved[1].name === "Twinkle.musicxml" && saved[1].mime === "application/vnd.recordare.musicxml+xml", saved.map(function (s) { return s.name; }));
+  btn(card, "Save GMS project").click();
+  ok("...Save GMS project downloads Twinkle_GMS.json, for Generative Music Studio's Load", saved.length === 3 && saved[2].name === "Twinkle_GMS.json" && saved[2].mime === "application/json", saved.map(function (s) { return s.name; }));
   // 1.22.0: Adam's next questions, in the same chat (his trial of 1.21.2, with Ode to Joy)
   function lastUser(i) { var m = modelCalls[i] ? modelCalls[i].messages[modelCalls[i].messages.length - 1].content : ""; return typeof m === "string" ? m : JSON.stringify(m); }
   var TW = ["key C", "chords C | F C | F C | G C", "melody C C G G | A A G - | F F E E | D D C -", "arrange orchestra"];
@@ -681,7 +704,7 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   go("music"); await sleep(120);
   var ta = d.querySelector("textarea[aria-label=Song]");
   ok("the Make a song card: the song in its box, written out, with Save MIDI, Save WAV and examples", ta && /title Twinkle/.test(ta.value) && d.querySelector(".la-song canvas") &&
-    btn(d, "Save MIDI") && btn(d, "Save WAV") && d.querySelectorAll("select[aria-label='Start from'] option").length === 8, ta && ta.value);
+    btn(d, "Save MIDI") && btn(d, "Save WAV") && btn(d, "Save parts") && btn(d, "Save GMS project") && d.querySelectorAll("select[aria-label='Start from'] option").length === 8, ta && ta.value);
   var sel = d.querySelector("select[aria-label='Start from']");
   sel.value = "2"; fire(sel, "change"); await sleep(30);
   ok("...an example: Ode to Joy, 8 bars in D major", /title Ode to Joy/.test(ta.value) && /8 bars in D major/.test(d.body.textContent));
