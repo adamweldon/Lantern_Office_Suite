@@ -7,7 +7,9 @@
 import json, os, sys, subprocess, time
 from playwright.sync_api import sync_playwright
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-GMS = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("GMS_HTML") or os.path.join(os.path.dirname(os.path.dirname(ROOT)), "generative_music_studio", "Generative_Music_Studio.html")
+# (a folder given -- the screenshot folder the other browser tests take -- is passed over)
+ARG = [a for a in sys.argv[1:] if a.lower().endswith(".html")]
+GMS = ARG[0] if ARG else os.environ.get("GMS_HTML") or os.path.join(os.path.dirname(os.path.dirname(ROOT)), "generative_music_studio", "Generative_Music_Studio.html")
 if not os.path.exists(GMS):
     GMS = os.path.join(os.path.dirname(ROOT), "generative_music_studio", "Generative_Music_Studio.html")
 PORT = 8126
