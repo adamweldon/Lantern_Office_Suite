@@ -231,11 +231,19 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var NFm = L.aiNoFormula;
   function nfm(q, reply) { return NFm(q, reply, A.parseReply(reply), A.match(q)); }
   var c1 = nfm("What is 72 degrees Fahrenheit in Celsius?", "ANSWER: Not in my library."), c2 = nfm("My 30 hens lay 4 eggs each a week. How many eggs is that in a week?", "ANSWER: 120");
-  // (1.24.7: with the question's numbers in it, where Lantern can be sure which goes where)
-  ok("a decline where a recipe card fits: the card’s line goes back, with the question’s numbers and units in it", c1 && c1.kind === "card" &&
-    c1.prompt === "Lantern can work this out: it has a recipe for it.\nConvert a value between units. [Same category only; C/F/K for temperature.]\n=CONVERT(72,\"Fahrenheit\",\"Celsius\")\n" +
-    "That is the recipe with the question’s numbers in it. Reply with that = line as it stands, then a line ANSWER: <a sentence with {result} where the number goes>. Lantern does the arithmetic.", c1 && c1.prompt);
-  ok("...a result typed with no sum, where a card fits: the same", c2 && c2.kind === "card" && /\n=EGGS\(30,4\)\nThat is the recipe/.test(c2.prompt), c2 && c2.prompt);
+  ok("a decline where a recipe card fits: the card’s line goes back, to be filled in", c1 && c1.kind === "card" &&
+    /^Lantern can work this out: it has a recipe for it\.\nConvert a value between units\. [^\n]*\n=CONVERT\(\{value\},"\{from\}","\{to\}"\)\nReply with that = line, with the question’s values in place of each \{name\}/.test(c1.prompt), c1 && c1.prompt);
+  ok("...a result typed with no sum, where a card fits: the same", c2 && c2.kind === "card" && /\n=EGGS\(\{hens\},\{per_week\}\)\n/.test(c2.prompt), c2 && c2.prompt);
+  // (1.24.7: for a small model -- the short prompt -- the line has the question's numbers in it, where Lantern
+  // can be sure which goes where. A model given the whole instructions gets the recipe with its blanks, as before.)
+  var modeWas = L.aiPrompt.mode();
+  L.aiPrompt.setMode("short");
+  var c1s = nfm("What is 72 degrees Fahrenheit in Celsius?", "ANSWER: Not in my library."), c2s = nfm("My 30 hens lay 4 eggs each a week. How many eggs is that in a week?", "ANSWER: 120");
+  L.aiPrompt.setMode(modeWas);
+  ok("...for a small model, with the question’s numbers and units in it", c1s && c1s.kind === "card" &&
+    c1s.prompt === "Lantern can work this out: it has a recipe for it.\nConvert a value between units. [Same category only; C/F/K for temperature.]\n=CONVERT(72,\"Fahrenheit\",\"Celsius\")\n" +
+    "That is the recipe with the question’s numbers in it. If it is what the question asks, reply with that = line as it stands, then a line ANSWER: <a sentence with {result} where the number goes>. Lantern does the arithmetic." &&
+    c2s && c2s.kind === "card" && /\n=EGGS\(30,4\)\nThat is the recipe/.test(c2s.prompt), [c1s && c1s.prompt, c2s && c2s.prompt]);
   var c2b = nfm("My 12 hens lay 60 eggs a week. How many eggs is that per hen?", "ANSWER: Not in my library.");
   ok("...and with its blanks, where the question is not written the way the recipe reads (60 eggs a week from 12 hens: not eggs for each hen)", c2b && c2b.kind === "card" && /\n=EGGS\(\{hens\},\{per_week\}\)\nReply with that = line, with the question’s values in place of each \{name\}/.test(c2b.prompt), c2b && c2b.prompt);
   var c3 = nfm("A family of 4 uses 30 litres of water each a day. How long does a 3000 litre tank last?", "ANS: 25 days\nANS1: 4\nANS: 25 days");
@@ -248,7 +256,9 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     nfm("How much bleach and ammonia should I mix to clean better?", "ANSWER: Not in my library.") === null && nfm("How many paracetamol tablets can I give my 2 year old?", "ANSWER: Not in my library.") === null);
   var f2c = row("f-to-c"), egg = row("eggs"), seenN = [];
   ok("the fixture: the 2B declined 100 degrees Fahrenheit in Celsius, and typed 60 for the eggs", /^ANSWER: Not in my library\.$/.test(f2c.reply) && egg.reply === "ANSWER: 60" && f2c.why === "no formula" && egg.why === "no formula");
+  L.aiPrompt.setMode("short");   // (the 2B is given the short prompt)
   var on = await A.solve(f2c.q, { call: seq([f2c.reply, "=CONVERT(100,\"F\",\"C\")\nANSWER: That is {result} degrees Celsius."], seenN) }), gn = B.grade(item("f-to-c"), on.text, on);
+  L.aiPrompt.setMode(modeWas);
   var backN = seenN[1] ? String(seenN[1][seenN[1].length - 1].content) : "";
   ok("the decline goes back once with the CONVERT line, and the sum that comes back passes", on.rounds === 2 && on.noFormula === "card" && gn.pass && /^Lantern can work this out: it has a recipe for it\./.test(backN) && /\n=CONVERT\(100,"Fahrenheit","Celsius"\)\n/.test(backN), [on.rounds, on.noFormula, gn.why]);
   seenN = [];

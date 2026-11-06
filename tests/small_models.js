@@ -135,7 +135,7 @@ function needOf(r) { var m = /^\s*NEED:\s*(.+)$/m.exec(r.reply || ""); return m 
     /EXAMPLE\nQ: Fuel costs 65 a litre\. How much do 35 litres cost\?\n=65\*35\nANSWER: They cost \{result\}\./.test(sp) && /The question gives these numbers: 12 V; 5 A; 3 hours\.$/.test(sp), [sp.length, sp.slice(-160)]);
   // (1.24.7: with the question's numbers in it, where each blank's unit names its number -- 20 goats, 30 days, 800 g each per day)
   ok("...a sum with a recipe Lantern can fill (feed for goats): the recipe with the question’s numbers in it, to copy as it stands; no blanks, no example, no decline and no NEED beside it",
-    /- The recipe below is the sum for this question, with the question's numbers already in it: copy its = line as it stands\./.test(sf) && /\nRECIPE\n- How much feed do animals need[^\n]*\n  gives: kg\n  =FEEDKG\(20,30,800\)\n/.test(sf) && !/->/.test(sf.slice(sf.indexOf("\nRECIPE\n"))) &&
+    /- The recipe below has this question's numbers in it already\. If it is what the question asks, copy its = line as it stands\./.test(sf) && /\nRECIPE\n- How much feed do animals need[^\n]*\n  gives: kg\n  =FEEDKG\(20,30,800\)\n/.test(sf) && !/->/.test(sf.slice(sf.indexOf("\nRECIPE\n"))) &&
     !/\{animals\}/.test(sf) && !/needs:/.test(sf) && !/EXAMPLE/.test(sf) && !/Not in my library/.test(sf) && !/NEED/.test(sf) && sf.length < 1700, [sf.length, sf.slice(-420)]);
   var sq = "How much feed for 50 chickens for 7 days at 120 g each?", sf2 = A.buildPrompt(sq, A.match(sq));
   ok("...and a recipe it cannot be sure of (120 g each: a day is not said): the recipe with its blanks, to fill in", /- A recipe below fits: copy its = line and put the question's value in place of each \{name\}\./.test(sf2) &&

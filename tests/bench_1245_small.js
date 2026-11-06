@@ -128,8 +128,8 @@ function lastOf(seen, k) { var s = seen[k]; return s ? s[s.length - 1] : ""; }
   await A.solve(edq, { call: seq(["ANSWER: Not in my library.", right(item("egg-dozens"))], seenE) });
   ok("...the recipe as it goes back: what it is for and its line -- with the question\u2019s numbers in it where Lantern can be sure which goes where (10 m, 1.2 m, 30 cm; 2 tonnes in 50 kg bags), with its blanks and what goes in each where it cannot (3 dozen: a number in words)",
     lastOf(seenP, 1).indexOf("Lantern can work this out: it has a recipe for it.\n") === 0 &&
-    /\n=PLANTS\x2810,1\.2,30\x29\nThat is the recipe with the question\u2019s numbers in it\. Reply with that = line as it stands, then a line ANSWER: /.test(lastOf(seenP, 1)) &&
-    /\n=CEIL\x282000\/50\x29\nThat is the recipe with the question\u2019s numbers in it\. Reply with that = line as it stands, then a line ANSWER: /.test(lastOf(seenM, 1)) &&
+    /\n=PLANTS\x2810,1\.2,30\x29\nThat is the recipe with the question\u2019s numbers in it\. If it is what the question asks, reply with that = line as it stands, then a line ANSWER: /.test(lastOf(seenP, 1)) &&
+    /\n=CEIL\x282000\/50\x29\nThat is the recipe with the question\u2019s numbers in it\. If it is what the question asks, reply with that = line as it stands, then a line ANSWER: /.test(lastOf(seenM, 1)) &&
     /\n=\{price\}\*\{qty\}\nReply with that = line, with the question\u2019s values in place of each \{name\} \x28price; qty\x29, then a line ANSWER: /.test(lastOf(seenE, 1)),
     [lastOf(seenP, 1), lastOf(seenM, 1), lastOf(seenE, 1)]);
   var pa = item("pump-ah"), seenA = [];

@@ -10,15 +10,24 @@
 //
 // A line handed over "as it stands" must be right, so this file is mostly
 // about when Lantern fills NOTHING:
-//  - a number written as a word ("Two 12 V batteries");
+//  - a number written as a word ("Two 12 V batteries"), or said twice;
 //  - a card's own plain case (bleach for cloudy water, feed with no "a day");
 //  - two numbers in one unit whose order matters; a unit to change first;
 //  - a question that asks for a unit the recipe cannot be said in;
 //  - a question not written the way a filler reads it (60 eggs a week from
-//    12 hens is not eggs for each hen; days for workers go the other way).
+//    12 hens is not eggs for each hen; days for workers go the other way);
+//  - a question that asks another thing of the same numbers, or a step more.
 // Each question has its truth as a formula written apart from the recipe.
 // None of them is the bench's own wording; the bench's sums are replayed
 // against the bench's own answers at the end.
+//
+// The last three kinds came from an independent review of the first 1.24.7:
+// 160 of its 199 questions were filled, 86 of them wrongly ("How many
+// teaspoons of bleach for 200 litres" got the recipe for drops). Its
+// questions are in fixtures/fill_review_1247.json and are replayed here: a
+// recipe is filled now only when a rule for its card says the question asks
+// for what the recipe gives (AI_RECIPE_FILL's assistFillRules), and the
+// filled line goes only to a model on the short prompt.
 "use strict";
 var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
 var fs = require("fs"), path = require("path");
@@ -174,16 +183,21 @@ var FILLS = [
   // --- the short prompt: the filled line alone, to copy as it stands ---
   var pm = P.assist(qm, A.match(qm)), qe = "How much do 3 dozen eggs cost at 12 shillings each?", pe = P.assist(qe, A.match(qe));
   ok("the short prompt for a recipe Lantern fills: the line with the numbers in it and what it gives, no blanks and nothing to fill in",
-    /- The recipe below is the sum for this question, with the question's numbers already in it: copy its = line as it stands\./.test(pm) &&
+    /- The recipe below has this question's numbers in it already\. If it is what the question asks, copy its = line as it stands\./.test(pm) &&
     /\nRECIPE\n- How long will a battery run a load\?[^\n]*\n  gives: minutes, as the question asks\n  =CONVERT\(\(100\*12\)\/60,"hours","minutes"\)\n/.test(pm) && !/\{ah\}/.test(pm) && !/needs:/.test(pm), pm.slice(-500));
   ok("...and for one it does not fill (3 dozen): the recipe with its blanks, as before", /- A recipe below fits: copy its = line and put the question's value in place of each \{name\}\./.test(pe) && /\n  needs: price; qty\n  gives: total, same currency\n  =\{price\}\*\{qty\}\n/.test(pe), pe.slice(-400));
 
   // --- what goes back: a decline, with the filled line; the reply that copies it passes ---
-  var qd = "How far is it from Nairobi to Mombasa in miles?", seenD = [];
+  // (the filled line is for the model that was given the short prompt; a model given the whole instructions gets
+  // the recipe with its blanks, as on 1.24.6)
+  var qd = "How far is it from Nairobi to Mombasa in miles?", seenD = [], seenDF = [], modeWas = P.mode();
+  var odf = await A.solve(qd, { call: seq(["ANSWER: Not in my library.", "=CONVERT(DISTKM(\"Nairobi\",\"Mombasa\"),\"km\",\"miles\")\nANSWER: It is about {result} miles."], seenDF) });
+  P.setMode("short");
   var od = await A.solve(qd, { call: seq(["ANSWER: Not in my library.", "=CONVERT(DISTKM(\"Nairobi\",\"Mombasa\"),\"km\",\"miles\")\nANSWER: It is about {result} miles."], seenD) });
-  ok("a decline where Lantern fills the recipe: the line goes back with the towns and the miles in it, and the reply that copies it is read",
-    od.rounds === 2 && od.noFormula === "card" && /\n=CONVERT\(DISTKM\("Nairobi","Mombasa"\),"km","miles"\)\nThat is the recipe with the question\u2019s numbers in it\. Reply with that = line as it stands/.test(lastOf(seenD, 1)) &&
+  ok("a decline where Lantern fills the recipe (a small model, on the short prompt): the line goes back with the towns and the miles in it, and the reply that copies it is read",
+    od.rounds === 2 && od.noFormula === "card" && /\n=CONVERT\(DISTKM\("Nairobi","Mombasa"\),"km","miles"\)\nThat is the recipe with the question\u2019s numbers in it\. If it is what the question asks, reply with that = line as it stands/.test(lastOf(seenD, 1)) &&
     Math.abs(od.run.value - 274.95) < 0.1, [od.rounds, od.noFormula, od.run && od.run.value, lastOf(seenD, 1)]);
+  ok("...a model given the whole instructions gets the recipe with its blanks", odf.rounds === 2 && odf.noFormula === "card" && /\n=DISTKM\("\{from\}","\{to\}"\)\nReply with that = line, with the question\u2019s values in place of each \{name\}/.test(lastOf(seenDF, 1)), lastOf(seenDF, 1));
 
   // --- a sum that gives another number than the recipe ---
   var RD = L.assistChecks.filter(function (c) { return c.id === "recipe-differs"; })[0];
@@ -202,6 +216,10 @@ var FILLS = [
     fill(qf) === "=FEEDKG(15,20,900)" && af.length === 1 && /divide by 1000 \(=900\*15\*20\/1000\)$/.test(af[0]) && rd(qf, "=900*15*20") === null && /write =FEEDKG\(15,20,900\)$/.test(rd(qf, "=900*15")), af);
   var qt = "How many hours does a Hohmann transfer take from a 250 km orbit to a 20200 km orbit?", at = all(qt, "=HOHMANNT(CONVERT(250,\"km\",\"m\")+6371000,CONVERT(20200,\"km\",\"m\"))/3600");
   ok("...and where a height was left as a radius: the heights check writes the line, once", at.join("; ").split("write =").length === 2 && /20200 km is a height/.test(at.join("; ")), at);
+  P.setMode("full");
+  ok("a model given the whole instructions wrote its own sum: the recipe check says nothing to it (the review: =MOMENTUM(1500,30), a right sum, was told to be the recipe\u2019s =KE(1500,30))",
+    rd(qm, "=(100*12)/60") === null && rd(qw, "=7.1*10^6/299792458") === null && rd(qf, "=900*15") === null);
+  P.setMode(modeWas);
 
   // --- the bench's own sums: what Lantern fills is the bench's answer ---
   var bRight = 0, bWrong = [], bOne = 0;
@@ -217,18 +235,74 @@ var FILLS = [
   });
   ok("the bench\u2019s sums with one recipe (" + bOne + "): Lantern fills 31 of them, and each is the bench\u2019s own answer; it fills none wrongly", bOne === 35 && bRight === 31 && bWrong.length === 0, [bOne, bRight, bWrong]);
   var S35 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "bench_run_1244_35b_sums.json"), "utf8")), touched = [];
+  P.setMode("short");
   S35.rows.forEach(function (r) { var p = A.parseReply(r.reply), why = RD(r.q, p.exprText, A.run(p.exprText), {}); if (why) touched.push([r.id, why]); });
-  ok("the 35B\u2019s 45 right sums of 1.24.4: the recipe check questions none of them", S35.rows.length === 45 && touched.length === 0, touched);
+  P.setMode(modeWas);
+  ok("the 35B\u2019s 45 right sums of 1.24.4: the recipe check questions none of them, even as it runs for a small model", S35.rows.length === 45 && touched.length === 0, touched);
+
+  // --- the review's questions ---
+  var RV = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "fill_review_1247.json"), "utf8")), rvWrong = [], rvMoved = [], rvN = { filled: 0, none: 0, many: 0 };
+  RV.rows.forEach(function (r) {
+    var cs = A.match(r.q), line = cs.length === 1 ? FL(cs[0], r.q) : "", now = cs.length !== 1 ? (cs.length ? "more than one recipe" : "no recipe") : line ? "filled" : "not filled";
+    if (cs.length !== 1) rvN.many++; else if (line) rvN.filled++; else rvN.none++;
+    if (now !== r.now || (line && line !== r.line)) rvMoved.push([r.q, now, line]);
+    if (line && !r.table) { var v = A.run(line).value; if (typeof r.truth !== "number" || Math.abs(v - r.truth) > Math.abs(r.truth) * 0.01 + 1e-9) rvWrong.push([r.q, line, v, r.truth]); }
+  });
+  ok("the review\u2019s 199 questions (the first 1.24.7 filled 160 of them, 86 wrongly): Lantern fills 95 now, and every line it fills gives the reviewer\u2019s answer (two of Jupiter by Lantern\u2019s own table); 78 it leaves to the model; 26 have two recipes",
+    RV.rows.length === 199 && rvN.filled === 95 && rvN.none === 78 && rvN.many === 26 && rvWrong.length === 0 && rvMoved.length === 0 && RV.rows.filter(function (r) { return r.table; }).length === 2, [rvN, rvWrong, rvMoved]);
+  function none(qs) { return qs.filter(function (q) { return fill(q) !== ""; }); }
+  ok("...the answer asked in a unit the recipe is not in: nothing, unless CONVERT can change it (mA, millivolts, kilohms, km/s, kg/mol, nautical miles, dollars for cents, nights; teaspoons, capfuls or ml of bleach)",
+    none(["How many milliamps flow through a 1000 ohm resistor at 5 V?", "What is the current, in mA, through a 1000 ohm resistor at 5 V?", "What is the voltage across a 470 ohm resistor carrying 0.02 A, in millivolts?",
+      "How many kilohms is 2200 ohm in series with 3300 ohm?", "How many km/s is the escape velocity of the Moon?", "What is the molar mass of NaCl, in kg/mol?", "How far is it from Lagos to Accra in nautical miles?",
+      "Electricity costs 25 cents per kWh. What does 12 kWh cost in dollars?", "How many nights will a 100 Ah 12 V battery run a 60 W light?", "How many teaspoons of bleach for 200 litres of water?",
+      "How many capfuls of bleach for 200 litres of water?", "How many ml of bleach for 1000 litres of water?"]).length === 0 &&
+    fill("How long in minutes will a 100 Ah 12 V battery run a 60 W lamp?") === "=CONVERT((100*12)/60,\"hours\",\"minutes\")" && fill("What is the power in kilowatts of a 230 V heater drawing 10 A?") === "=CONVERT(WATTS(230,10),\"watts\",\"kilowatts\")" &&
+    fill("What is the distance in miles between London and Paris?") === "=CONVERT(DISTKM(\"London\",\"Paris\"),\"km\",\"miles\")" && fill("In minutes, how long will a 12 V 7 Ah battery run a 60 W lamp?") === "=CONVERT((7*12)/60,\"hours\",\"minutes\")");
+  ok("...another thing asked of the same numbers: nothing (the other resistor, the current a lamp draws, the amp-hours used in an hour, orbits in a day, how fast, a signal\u2019s delay, moles of atoms, what burning gives, momentum, a dipole, a triangle, a perimeter, rows, one hen)",
+    none(["What resistance in parallel with 100 ohm gives 50 ohm?", "What resistance must be added in series to 100 ohm to make 250 ohm?", "A 12 V battery of 100 Ah runs a 60 W light. What current does the light draw?",
+      "A 100 Ah battery at 12 V powers a 60 W lamp. How many Ah are used per hour?", "How many orbits a day does a satellite at 400 km altitude make?", "How many times a day does the ISS go round at 420 km?",
+      "How fast does a satellite orbit the Moon at 100 km altitude?", "How long does a radio signal take to reach a satellite at 35786 km altitude?", "How many moles of hydrogen atoms are in 36 g of H2O?",
+      "How many moles of CO2 are produced by burning 12 g of carbon?", "What is the momentum of a 1500 kg car moving at 30 m/s?", "How long should a dipole antenna be for 14.2 MHz?",
+      "How many hectares is a triangular field with a base of 250 m and a height of 120 m?", "How many hectares is a field with a perimeter of 740 m and a width of 120 m?",
+      "A bed is 6 m long and 1 m wide. How many rows 40 cm apart fit across it?", "My 30 hens lay 4 eggs each a week. How many eggs does one hen lay in a week?", "What is the molar mass of CuSO4.5H2O?"]).length === 0);
+  ok("...a step more than the recipe: nothing (a round trip, then on to a third town, by road, the back bearing, each way, there and back, a week of days, a year of weeks, how much more, between them, in total)",
+    none(["How far is a round trip from Lagos to Accra?", "How far is it from Cairo to Khartoum, then on to Nairobi?", "How far is it from Nairobi to Mombasa by road?", "What is the back bearing from London to Paris?",
+      "It costs 2 dollars per km to hire a truck. What does a trip of 150 km each way cost?", "My car uses 8 litres per 100 km. How much petrol to drive 350 km there and back?",
+      "Milk is 50 shillings a litre. A family drinks 2 litres a day. What does a week cost?", "Petrol is 1.80 a litre and I use 40 litres a week. What do I spend in a year?",
+      "A recipe for 4 people uses 300 g of flour. How much more flour do I need for 10 people?", "The 12 pigs eat 2500 g a day between them. How much feed for 14 days?", "How much feed for 12 pigs for 14 days at 2500 g a day in total?"]).length === 0);
+  ok("...a number in words, a fraction sign, a number said twice, a second battery: nothing",
+    none(["A 12 V battery of 100 Ah runs fifteen 4 W LED lamps. How long will it last?", "Sixteen 2 W lamps run from a 12 V 50 Ah battery. How many hours?", "A 12 V 100 Ah battery runs thirteen 5 W bulbs. How many hours?",
+      "A 12 V 100 Ah battery that is \u00bd full runs a 60 W light. How long?", "What is the total resistance of a 100 ohm, a 100 ohm and a 50 ohm resistor in series?",
+      "A 100 Ah 12 V battery and a second 100 Ah 12 V battery run a 60 W lamp. How long?"]).length === 0);
+  ok("...a radius where the recipe takes a height, and a height taken for a radius: nothing; two heights said as heights are filled as heights (a geostationary orbit, an orbit at so many km, an altitude)",
+    none(["How long does a satellite take to orbit Earth at a radius of 7000 km?", "A satellite orbits 26571 km from Earth\u2019s centre. How long does one orbit take?", "What is the escape velocity at a radius of 7000 km?",
+      "How long does Phobos take to orbit Mars at a radius of 9376 km?", "How many hours does a Hohmann transfer take from a 250 km orbit to one at 20200 km?"]).length === 0 &&
+    fill("How long does a Hohmann transfer take from a 300 km orbit to a 35786 km geostationary orbit?") === "=HOHMANNT(CONVERT(300+6371,\"km\",\"m\"),CONVERT(35786+6371,\"km\",\"m\"))/3600" &&
+    fill("How long does a Hohmann transfer take from low Earth orbit at 300 km to geostationary orbit at 35786 km?") === "=HOHMANNT(CONVERT(300+6371,\"km\",\"m\"),CONVERT(35786+6371,\"km\",\"m\"))/3600" &&
+    fill("How long does a Hohmann transfer take from a 400 km orbit to GPS altitude, 20200 km?") === "=HOHMANNT(CONVERT(400+6371,\"km\",\"m\"),CONVERT(20200+6371,\"km\",\"m\"))/3600");
+  var qj = "How many 20 litre jerrycans can be filled from a 250 litre tank?", cj = A.match(qj)[0];
+  ok("...containers: the size is the one said after \u201chow many\u201d; bags that must hold an amount are rounded up, cans filled from a tank and boxes that fit on a shelf are whole ones, rounded down -- and said so",
+    fill(qj) === "=FLOOR(250/20)" && FL.out(cj, qj) === "whole ones (rounded down)" && fill("How many 750 ml bottles can I fill from a 20 litre bucket?") === "=FLOOR(20/0.75)" &&
+    fill("How many 40 cm boxes fit on a 2.5 m shelf?") === "=FLOOR(2.5/0.4)" && fill("How many 50 kg bags can a 1.02 tonne trailer carry?") === "=FLOOR(1020/50)" &&
+    fill("How many 20 litre jerrycans do I need to carry 15 litres of water?") === "=CEIL(15/20)" && fill("How many 1.5 litre bottles make 20 litres?") === "=CEIL(20/1.5)" &&
+    fill("How many 25 kg sacks do I need for 1.5 tonnes of cement?") === "=CEIL(1500/25)" && fill("How many 20 litre jerrycans for a 250 litre tank?") === "", [fill(qj), FL.out(cj, qj), fill("How many 20 litre jerrycans do I need to carry 15 litres of water?")]);
+  ok("...bleach: drops for clear water to drink, and nothing for any other measure, use or water (to mop a floor, the time to wait, river or pond water, water that is not clear)",
+    fill("How many drops of bleach make 5 litres of clear water safe to drink?") === "=2*5" &&
+    none(["How much bleach do I add to 5 litres of water to mop the floor?", "How long must I wait after adding bleach to 20 litres of water?", "How many drops of bleach do I need to disinfect 20 litres of river water?",
+      "How many drops of bleach for 20 litres of water that is not clear?", "How many drops of bleach for 20 litres of hazy pond water?", "How many drops of bleach do I need for 20 litres of cloudy water?"]).length === 0);
+  ok("...the number left over is a count, never an amount: \u201cif a bag is 50 kg\u201d does not make 50 pigs", fill("How much feed do my pigs need for 14 days at 2500 g a day each if a bag is 50 kg?") === "");
+  ok("a card with no rule is not filled", !L.assistFillRules["ors-sugar"] && !L.assistFillRules["geo-altitude"] && Object.keys(L.assistFillRules).length >= 35);
 
   // --- rule 11 ---
   var o2 = load(["AI_RECIPE_FILL"]);
   await sleep(40);
   var A2 = o2.L.assist, F2 = o2.L.aiNoFormula.filled;
   function fill2(q) { var cs = A2.match(q); return cs.length === 1 ? F2(cs[0], q) : ""; }
-  ok("without AI_RECIPE_FILL: blanks with units are still filled, with the same guards; a blank that is a word, and a recipe that needs a filler of its own, are left to the model",
-    o2.errs.length === 0 && fill2("How much current does a 12 V supply push through 48 ohms?") === "=AMPS(12,48)" && fill2(qm) === "=CONVERT((100*12)/60,\"hours\",\"minutes\")" &&
-    fill2("Two resistors of 100 ohm and 220 ohm are in series. What is the total resistance?") === "" && fill2("What is the molar mass of CO2?") === "" && fill2("Convert 5 miles to km.") === "" &&
-    fill2("Petrol is 1.80 a litre. What do 40 litres cost?") === "" && fill2("How many 25 kg sacks do I need for 1.5 tonnes of cement?") === "", o2.errs);
+  var pm2 = o2.L.aiPrompt.assist(qm, A2.match(qm));
+  ok("without AI_RECIPE_FILL: no card has a rule, so nothing is filled; the recipes go to the model with their blanks, as on 1.24.6",
+    o2.errs.length === 0 && !o2.L.assistFillRules && fill2("How much current does a 12 V supply push through 48 ohms?") === "" && fill2(qm) === "" &&
+    fill2("What is the molar mass of CO2?") === "" && fill2("Convert 5 miles to km.") === "" && fill2("Petrol is 1.80 a litre. What do 40 litres cost?") === "" &&
+    /- A recipe below fits: copy its = line/.test(pm2) && /  gives: hours\n  =\(\{ah\}\*\{v\}\)\/\{w\}\n/.test(pm2), o2.errs);
   var o3 = load(["AI_NO_FORMULA"]);
   await sleep(40);
   var p3 = o3.L.aiPrompt.assist(qm, o3.L.assist.match(qm));
