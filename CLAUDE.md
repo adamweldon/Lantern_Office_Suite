@@ -101,6 +101,14 @@ These are Adam's design rules, in the order they usually apply.
 6. **Never write a bench answer into Lantern.** A change must help every
    question of its kind. If the only way to pass a question is to know its
    answer, leave it failing.
+7. **A rule that changes what a model wrote must be surer than the model.**
+   "Could this be a mountain?" is not enough to move it: the rule has to ask
+   what else it can be (a roof, a sail, a kite, an umbrella) and act only
+   when the answer is nothing. The same for a line handed to a model to
+   copy: a recipe is filled only when the question asks for what the recipe
+   gives, in a unit it can be said in. A picture Lantern leaves wrong is as
+   the model drew it; a right picture it spoils, or a wrong sum it hands
+   over as the recipe, is Lantern's doing.
 
 ## What goes into the lessons and tables
 
@@ -143,6 +151,15 @@ People will act on what Lantern says with nobody to ask. So:
   row moving between runs is not a finding. The same row twice is.
 - Say what was run and what was not. A fix checked only against a stand-in
   model is "tested with a stand-in", not "works on the 35B".
+- **A new rule is tried by someone who did not write it.** Before a rule
+  that mends, reads or fills goes in, a separate agent that has not seen it
+  written makes inputs of its own (right ones above all) and tries to break
+  it. What it wrote goes in `tests/fixtures/` and stays. Found 2026-11-06
+  (1.24.7): the first draft's own tests all passed; a reviewer's 91 right
+  pictures had 46 changed or questioned, and of its 160 filled sums 86 were
+  wrong ("how many teaspoons of bleach" was given the recipe for drops).
+  The tests had been written by the same hand as the rules, from the same
+  cases. Mend what it finds, then have it tried again by another.
 
 ## The bench on Adam's laptop
 
