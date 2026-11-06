@@ -3,7 +3,28 @@
 Only what he alone can answer. Newest first. Remove a question when he has
 answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
 
-1. **Three things to look at in 1.24.6** (pictures were sent in the chat on
+1. **Your two pictures, and which way to go on with drawing** (1.24.7;
+   the pictures were sent in the chat on 2026-11-06).
+   - Lantern now stands a mountain on the horizon when its base is in the
+     sky, puts the sun behind the land, and draws a road narrowing to the
+     horizon when the AI wrote it as lines side by side; it says under the
+     picture what it changed. A shore nobody drew goes back to the AI once.
+     Do the two pictures look right to you now? What else do you see that
+     is off?
+   - For the bigger pictures made of pieces, there are two ways, and they
+     can come one after the other:
+     (a) **words for things**: the AI writes "mountain", "road", "tree
+     near the left", and Lantern draws each one, on the ground, in the
+     right order, bigger when nearer. Fewer numbers for a small model to
+     get wrong; Lantern has to know how to draw each thing;
+     (b) **pieces the AI draws itself**: each piece (a tree, a boat) on a
+     small grid of its own, as it draws now, and a last block that says
+     where each piece stands. Lantern sizes it by its distance and puts
+     the far ones behind. Anything can be a piece; the AI still has to
+     draw each one well.
+     Say "words", "pieces", or "both, words first".
+   (Asked 2026-11-06.)
+2. **Three things to look at in 1.24.6** (pictures were sent in the chat on
    2026-11-06). How a page looks is yours to judge:
    - when the AI's answer uses nothing of the lesson Lantern gave it, the
      lesson's own words are now shown in a box under the answer, with a
@@ -15,7 +36,7 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
      small grey print, that it added it.
    Say if any of them should look different, or go.
    (Asked 2026-11-06.)
-2. **Five Food lessons wait for pages I could not open.** Cassava and
+3. **Five Food lessons wait for pages I could not open.** Cassava and
    kidney beans (which poison when prepared wrongly), storing grain, the
    illnesses of a narrow diet, bread, and cooking with less fuel are
    drafted. To check them I need the pages of WHO, FAO, the US FDA and
@@ -25,7 +46,7 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    are at the app, say "finish the Food lessons" and approve the pages it
    asks about. They are on the branch `wip-2026-11-06`, not in Lantern.
    (Asked 2026-11-06.)
-3. **Should the kit give the small models more than 8,192 tokens?** Every
+4. **Should the kit give the small models more than 8,192 tokens?** Every
    model is started with that much room. Five of the 2B's conversations
    outgrew it and ended in an error. Lantern now shortens such a request
    and sends it again, and gives small models shorter instructions, so it
@@ -33,20 +54,20 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    memory on the smallest computers; I have not measured how much. Say
    "measure it" or "leave it".
    (Asked 2026-11-06.)
-4. **A nightly run.** Claude could not create the scheduled task itself: the
+5. **A nightly run.** Claude could not create the scheduled task itself: the
    app refused it (2026-11-05). The instruction for it is written and kept in
    `agent/NIGHTLY.md`. Either say "set up the nightly run" in a chat and
    approve it when the app asks, or make a scheduled task yourself with that
    text (each night, about 01:20 your time, new session each run). Until
    then the work moves only when a chat is open.
    (Asked 2026-11-05.)
-5. **Somebody trained should read the Health lessons before `main`.** They
+6. **Somebody trained should read the Health lessons before `main`.** They
    were checked line by line against WHO, CDC, NHS and the 2025
    resuscitation guidelines, by checkers that had not seen the drafting, and
    corrected. That is not the same as a nurse, a midwife or a first-aid
    instructor reading them. The birth lessons most of all. Is there someone?
    (Asked 2026-11-05.)
-6. **Medicines in the Health tile: none, unless you say.** The tile's rule is
+7. **Medicines in the Health tile: none, unless you say.** The tile's rule is
    no medicine and no dose, and a test now holds it. The sources the lessons
    come from also give these, each of which saves lives where there is no
    clinic. Say which, if any, should go in, with the source's own figure:
@@ -60,17 +81,17 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    - paracetamol for fever and pain by the label (now the AI's rule says
      "follow the dose on the package label" and stops there).
    (Asked 2026-11-05.)
-7. **WHO's amounts of ORS are in the Diarrhoea lesson** (after each loose
+8. **WHO's amounts of ORS are in the Diarrhoea lesson** (after each loose
    stool: 50 to 100 ml under 2 years, 100 to 200 ml for an older child). I
    read them as fluid, not as a medicine dose. Say if you want them out.
    (Asked 2026-11-05.)
-8. **The Health tile now opens on Emergencies**, then sick children and
+9. **The Health tile now opens on Emergencies**, then sick children and
    adults, mother and baby, staying well. It was staying well first. An
    emergency cannot wait for scrolling; but how a page looks is yours. Say if
    you want the old order.
    (Asked 2026-11-05.)
-9. **Publishing.** `main` is at 1.14.3; the work is on branches up to
-   1.24.6. The download on GitHub (`Lantern.zip`) is what `main` has, and
+10. **Publishing.** `main` is at 1.14.3; the work is on branches up to
+   1.24.7. The download on GitHub (`Lantern.zip`) is what `main` has, and
    it still carries what the two audits found wrong: in Health, meat and
    fish dried in the sun as they are; in Food, "oil covering" for cooked
    vegetables and herbs (how botulism is made) and a sum that tells a baby
@@ -80,7 +101,7 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    a tune of its own, 8 bars long; it passed when asked again on the build
    that was pushed).
    (Asked 2026-11-05; updated 2026-11-06.)
-10. **The encyclopedia questions need your Chrome.** The library on the laptop
+11. **The encyclopedia questions need your Chrome.** The library on the laptop
    is fine: `http://127.0.0.1:8081` answers "Welcome to Kiwix Server". What
    fails is the Claude app's own browser pane, which does not let Lantern's
    page (port 8080) talk to another port, so every run I make there leaves
@@ -88,7 +109,7 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    connect the Claude extension in Chrome on the laptop, I can run the bench
    there, library included. Say if you want that.
    (Asked 2026-11-05; found the same day.)
-11. **How the songs sound.** The songbook's nine tunes and the new bar
+12. **How the songs sound.** The songbook's nine tunes and the new bar
    readings are checked by their notes, lengths and bars, not by ear. If one
    sounds wrong, say which.
    (Asked 2026-11-05.)

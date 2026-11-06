@@ -84,8 +84,9 @@ These are Adam's design rules, in the order they usually apply.
    likely to write should come out correct. If a model keeps making the same
    mistake, change what Lantern gives it or how Lantern reads it.
 2. **Correct by construction, and said.** Lantern does the part that can be
-   computed (pipes a circuit, counts bars, chooses chords) and says what it
-   added or changed.
+   computed (pipes a circuit, counts bars, chooses chords, stands a mountain
+   on the horizon) and says what it added or changed. A model writes
+   numbers; it does not see what they draw.
 3. **What cannot be right goes back once, with the line to write.** Name the
    place, say why, and write out the corrected line. A list of choices, or the
    whole guide again, does not get fixed. Nor does an example: "add a note
@@ -165,7 +166,8 @@ with nobody clicking. This was first done on 2026-11-05.
    - `lanternBench.status()` to see where it is;
    - `lanternBench.rows("failed")` for the failed rows as the model wrote them.
 6. Times on that laptop: the quick run about 12 minutes, the full run 67 to 80
-   (118 questions, 112 of them scored, 3.5 to 4.1 tokens a second).
+   (118 questions, 112 of them scored, 3.5 to 4.1 tokens a second; 120 and
+   114 from 1.24.7).
 7. Leave the stick on a build that passed, make the whole folder agree
    (`Lantern_Office_Suite.html`, `CHANGELOG.md`), and tell Adam which version
    it is. His `E:` stick is the copy he keeps untouched.
@@ -221,14 +223,34 @@ grep -n 'scored questions' job.log; sed -n '/=== FAILED ROWS/,/=== END FAILED RO
   - a NEED or a decline often means the model did not see that Lantern has
     the thing (Earth's radius is in the recipe; there is a function for
     Fahrenheit): answer with the recipe's line.
+- What the rows of 1.24.6 taught (the 4B 96%, the 2B 51%, the 0.8B 46%; the
+  35B 99%):
+  - what stands AFTER a line to copy is copied with it: the short prompt
+    showed "=VOLTS({amps},{ohms})   -> volts", and the 2B wrote "=VOLTS(0.02,
+    470) -> volts" in 24 replies. Say what a line gives above it, never
+    after it;
+  - read the line as the model wrote it before sending anything back: 18 of
+    the 2B's 27 failed sums were right sums with an arrow after them, a
+    number typed on the next line, or the numbers in the recipe's braces;
+  - keep a guard of right replies and run every new reader and check over
+    it: the 35B's 45 sums caught "=2000/ANS" being read as a typed number;
+  - a check written from one model's row can misfire on another's (the 4B's
+    comment "without using delay()" was read as a call).
+- Pictures: the log prints every drawing a model made, passed or not,
+  between `=== DRAWINGS` and `=== END DRAWINGS ===` (from 1.24.7).
+  `python3 tools/draw_log.py job.log <dir>` draws each one as written and
+  as Lantern draws it, side by side (`sheet.png`). Look at them: a row
+  that passes says nothing about how its picture looks. How a picture
+  looks to a person is Adam's to judge; send him the sheet.
 - A run took about 36 minutes for the 2B, 50 for the 0.8B and 100 for the 4B
   on 1.24.4. Since 1.24.5 the 2B and the 0.8B get the short prompt (only
   the functions the question is about), and **the 2B's run took 102
   minutes**: a prompt that differs for every question is read afresh each
   time (the server keeps only what two requests share from their first
   character), about 1,000 tokens at 76 a second on GitHub's computer.
-  1.24.6 halves it. Read the run's minutes as well as its score; the row
-  count and the mode are in the log's summary.
+  1.24.6 halves it: 48 minutes for the 2B, 40 for the 0.8B, 69 for the 4B.
+  Read the run's minutes as well as its score; the row count and the mode
+  are in the log's summary.
 - The log prints a made thing's replies whole from 1.24.6 (a program was cut
   at 700 characters before, and could not be replayed).
 - The failed rows of a run you act on go in

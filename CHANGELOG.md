@@ -1,5 +1,192 @@
 # Changelog
 
+## 1.24.7 — A landscape the way the eye sees it, and the sum as the model wrote it (2026-11-06)
+
+Two pieces of work. Adam drew with the 35B on 1.24.6 and sent what came
+back; and the small models' run on 1.24.6 was read row by row.
+
+**What was seen.**
+
+- *Adam, in Chat, with the 35B:* "an ocean shore with mountains in the
+  distance at sunset" came back with two gray mountains whose bases were
+  flat lines in the sky (three and two cells above the sea) and the sun
+  drawn last, in front of one of them; there was no shore. "A road
+  disappearing into the distance over a far horizon" came back as three
+  upright black lines down the green ground, the same two mountains in the
+  air, and the sun in front again. The model was shown each picture and
+  said LOOKS RIGHT. Every picture also had a white strip down its right
+  side and along its bottom.
+- *The small models on 1.24.6* (GitHub run 42201761437, 112 scored
+  questions, no library):
+
+| Model | Passed | Time | On 1.24.5 |
+|---|---|---|---|
+| 4B | 107 (96%) | 69 min | 102 (91%), 106 min |
+| 2B | 57 (51%) | 48 min | 63 (56%), 102 min |
+| 0.8B | 51 (46%) | 40 min | 28 (25%), 64 min |
+
+  The 2B fell from 12 to 6 of the 21 function questions while the 0.8B rose
+  from 6 to 16. The failed rows are `tests/fixtures/bench_run_1246_2b.json`
+  (55), `_08b.json` (61) and `_4b.json` (5).
+
+**What they were traced to.**
+
+- *A model writes numbers; it does not see where the ground is.* Nothing
+  in Lantern knew either: a drawing was a list of shapes, checked for a
+  roof, a sun and a sunset sky, and never for what stands on what.
+- *The white strip:* a drawing's canvas was made 20 px larger than its
+  last shape, which is right for a schematic and wrong for a picture
+  whose sky reaches the edge.
+- *The 2B copied what a recipe's line gives onto the line.* The short
+  prompt of 1.24.6 showed a recipe as `=VOLTS({amps},{ohms})   -> volts`,
+  and the 2B wrote `=VOLTS(0.02,470) -> volts`, with the right numbers, in
+  24 replies. Lantern could not run the line.
+- *A number typed after the sum.* `=CONVERT(26,"mile","km")` and then
+  `=88.5625` on a line of its own: Lantern took the last line.
+- *A result after a second =* (the 0.8B): `= 65*35 = 2275`.
+- *Numbers put into the recipe's braces:* `=({2000}/{15})/60`.
+- *The 4B* wrote every formula of the power wheel on a line of its own, with
+  no part line; and its sketch for "without delay()", timed with millis(),
+  was questioned for the word delay() in its opening comment (a check
+  added in 1.24.6 that looked inside block comments).
+- *A recipe with its blanks is still a thing to fill in.* The 2B wrote
+  RSERIES for two resistors in parallel with the parallel recipe in front
+  of it; the 0.8B wrote `=PLANET("body","escape")`.
+
+**What changed.** Two new modules (413 in all).
+
+*Pictures*
+
+- **AI_SCENE** (new). Lantern reads the scene from the block: the ground is
+  the wide rect that reaches the bottom edge (and any wide rect lying on
+  it, a sea behind a strip of sand), and its top is the horizon. Then it
+  does what can be computed, and says so under the picture and to the
+  model when it is shown the picture:
+  - a mountain or hill (a tri on a flat base, 4 cells wide or more) whose
+    base is in the sky with nothing under it is stood on the horizon: its
+    sides carried down and its peak left where the model put it, or the
+    whole of it set down when that would make a needle. It is drawn behind
+    what already stood on the ground. A roof on its wall, a crown on its
+    trunk, the upper tier of a pine, a snow cap, a sail, a kite are left
+    alone;
+  - the sun or the moon drawn over land, water or cloud is put straight
+    after the sky: it is the farthest thing in any picture. A setting sun
+    drawn over the sea shows as half a sun;
+  - a road, path, track or river written as upright lines side by side, or
+    as one strip, from the horizon to the bottom edge is drawn as it looks
+    going away: a filled tri three times as wide at the bottom edge with
+    its point on the horizon, the model's lines carried along its edges
+    and its middle, and any line across it (a sleeper) as long as the road
+    is wide at that distance. Two edges that come together already, with
+    only the ground between them, get a fill;
+  - a background line written a second time further down (the 2B's house
+    on 1.24.4 and 1.24.6: the grass and the sky again after the roof) is
+    left out.
+  What it cannot make goes back once with the line to add, worked out for
+  the picture's own horizon: a road asked for "into the distance" where
+  nothing narrows; a shore where everything below the horizon is water.
+  A block that ran away, or says one line three times, is not arranged.
+- **The guide for a landscape.** A question about mountains, hills, a
+  shore, a road, a river, a horizon (and no house) gets three more lines
+  of guide and a landscape as its example: the sun straight after the
+  sky, two mountains on the horizon, the ground, a road that narrows, a
+  tree. A house keeps the hut and its roof.
+- **A drawing is its own frame.** The picture is exactly its 20 by 12
+  cells: no white strip.
+- **The look turn says what Lantern changed** ("Before drawing it, Lantern
+  stood the 2 gray mountains on the horizon ..."): the model is looking at
+  Lantern's drawing, not at its own lines.
+- **Two questions in the bench** (30 things to make, 114 scored):
+  `make-shore-sunset` and `make-road-horizon`, graded on what any right
+  picture has: a mountain stands on the horizon, none floats, the sun is
+  not drawn over the land, there is land in front of the water, a road
+  narrows towards the horizon.
+- `tools/bench_headless.py` prints every drawing a model made, passed or
+  not, between `=== DRAWINGS` and `=== END DRAWINGS ===`: a score cannot
+  show how a picture looks, and a session can draw the block again.
+
+*Sums*
+
+- **The line is the sum** (AI_READ). `=X -> anything` is read as `=X`;
+  `=X = 2275` as `=X` (outside quotes and brackets, and not a comparison);
+  a number in `{ }` as the number; a number typed on a `=` line of its own
+  after a sum Lantern can work out is left out, the last such line only
+  (`=2000/ANS` is a sum and stays; a number in the middle of a chain
+  stays). Chat says what was read.
+- **What a recipe gives is on a line of its own, above its line** in the
+  short prompt, so nothing follows the line for a model to copy.
+- **The recipe with the question's numbers in it** (AI_NO_FORMULA's
+  `filled`; **AI_RECIPE_FILL**, new). Where Lantern can be sure which
+  number goes in which blank it fills the recipe itself and gives the
+  line to copy as it stands: in the short prompt (alone, with no blanks),
+  for a decline, for a NEED Lantern can answer, for a line that could not
+  be run, and for a sum that gives another number. It can be sure when
+  each blank's unit is the unit of exactly one of the question's numbers
+  (or of several the recipe takes in any order: the two sides of a field,
+  two resistors, the two orbits of a transfer), with one blank at most
+  for the number left over; a blank that is a word is the planet or the
+  chemical formula in the question; and eleven recipes have a filler of
+  their own (a change of units as the question names them, bags, a tank,
+  two places, a height and a radius, a price for one, so much for so
+  many, the fuel of a trip, hens and eggs). It fills nothing for a number
+  written as a word ("Two 12 V batteries"), for a card's own exception
+  (a card's `fillWhen`: bleach for cloudy water, feed with no "a day"),
+  or where the question asks for a unit the recipe cannot be said in.
+  Where it asks for another unit of the same kind (minutes, and the
+  recipe gives hours) the line is the recipe inside a CONVERT. Every
+  line is run before it is given.
+- **A sum in another unit than the recipe's is not a wrong sum.** The
+  check that compares a sum with the recipe speaks only where the
+  question says the unit, or where the recipe is a function of Lantern's
+  that the sum does not use; and it says nothing where another check has
+  already written a line that gives the recipe's number.
+- **A wheel of bare formulas** ("P = V^2 / R", one to a line): each goes
+  into the part for the letter it gives.
+- **delay() in a comment** is not a call.
+- A number that closes a chemical formula, Ca(OH)2, is not one of the
+  question's numbers; the molar mass card is not offered for "how many
+  moles".
+
+**What was tested.**
+
+- `npm test`: all 63 suites pass. New: `tests/scene.js` (28 checks: Adam's
+  two blocks as the 35B wrote them, each rule on its own, twelve pictures
+  that are right as written and come through untouched, the drawings in
+  the bench fixtures, rule 11), `tests/recipe_fill.js` (19: of 73
+  questions that are not the bench's wording Lantern fills 44, each equal
+  to a truth written apart from the recipe, and no other; of the bench's
+  35 sums with one recipe it fills 31, each the bench's own answer),
+  `tests/bench_1246_small.js` (14: with its replies as it wrote them, 18
+  of the 2B's 27 failed sums pass and 4 of the 0.8B's 18; the 4B's wheel
+  and sketch).
+- The 35B's 45 right sums of 1.24.4: nothing in them is read differently,
+  and no check questions one. (The guard caught `=2000/ANS` being taken
+  for a typed number while this was written.)
+- Real Chromium, a stand-in model that sees
+  (`tests/browser/scene_e2e.py`, new): the two scenes in Chat, the PNG the
+  model is shown checked by its colours: the road gray and narrowing, the
+  mountains on the horizon, the mountain in front of the sun, sand along
+  the bottom.
+- Ten more real-browser tests pass on this build with a stand-in model
+  (bench run 9, the headless bench, Code Lab, the drawing domains,
+  hydraulics, music, health, food, Text Reader, sheet reading).
+  `gms_e2e.py` was not run: it needs the Generative Music Studio file.
+- Looked at: 24 pictures before and after, side by side.
+
+**What was not.**
+
+- **No model has run 1.24.7.** The push starts the small models' run. The
+  35B has not run it: the laptop was not linked. The guide for a landscape
+  and its example are new to every model.
+- Whether the mended pictures look right is Adam's to judge: they are in
+  the report.
+- Left as found, and in the tests as such: the 2B's own wrong sums
+  (`=150*10/420`), units written inside a sum (`=3 cups * 15 people / 6
+  people`), the hydraulic and pneumatic guides copied whole by the 2B and
+  the 0.8B with their explanations, a house or a tree whose foot is above
+  the ground line (not seen yet), and "from a 300 km orbit to the Moon's
+  distance" given the recipe for two radii.
+
 ## 1.24.6 — What a small model is given, and the line to write (2026-11-06)
 
 One piece of work: the small models' runs of 1.24.5 were read row by row,

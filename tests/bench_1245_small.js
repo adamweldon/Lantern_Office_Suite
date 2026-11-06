@@ -184,8 +184,9 @@ function lastOf(seen, k) { var s = seen[k]; return s ? s[s.length - 1] : ""; }
     ids("What delta-v is needed to go from a radius of 6771 km to a radius of 42164 km?") === "hohmann-dv",
     [ids(ih.q), ids(item("hohmann-geo").q), ids("How long does a transfer take from an orbit of radius 7000 km to one of radius 42164 km?"), ids("How much delta-v does a Hohmann transfer need from a 300 km orbit to a 35786 km orbit?")]);
   var hp = A.buildPrompt(ih.q, A.match(ih.q));
-  ok("...so what there is to copy is right: {alt1_km}+6371 and {alt2_km}+6371", /\nRECIPE\n- [^\n]+\n  needs: alt1_km in km; alt2_km in km\n  =HOHMANNT\x28CONVERT\x28\{alt1_km\}\+6371,\x22km\x22,\x22m\x22\x29,CONVERT\x28\{alt2_km\}\+6371,\x22km\x22,\x22m\x22\x29\x29\/3600 /.test(hp) &&
-    !/\{r2_km\}/.test(hp), hp.slice(-700));
+  // (1.24.7: the recipe with the question's two heights in it -- the two orbits of a transfer go in either order -- and what it gives on a line of its own)
+  ok("...so what there is to copy is right: the recipe for two heights, with 300+6371 and 35786+6371 in it, and no blank left to fill", /\nRECIPE\n- [^\n]+\n  gives: hours\n  =HOHMANNT\x28CONVERT\x28300\+6371,\x22km\x22,\x22m\x22\x29,CONVERT\x2835786\+6371,\x22km\x22,\x22m\x22\x29\x29\/3600\n/.test(hp) &&
+    !/\{r2_km\}/.test(hp) && !/\{alt1_km\}/.test(hp) && !/->/.test(hp.slice(hp.indexOf("\nRECIPE\n"))), hp.slice(-700));
   var s4 = [], out4 = await A.solve(ih.q, { call: seq([h4.first, LINE + "\nANSWER: The transfer takes {result} hours."], s4) });
   ok("the 4B\u2019s first line as it wrote it: what goes back says it of both heights, with the line; with that line the question passes",
     /radius 300 km is inside the Earth[^\n]*\x29\. Each of 300 km and 35786 km is a height above the surface: add 6371 km to every one\. Write =HOHMANNT\x28CONVERT\x28300\+6371,\x22km\x22,\x22m\x22\x29,CONVERT\x2835786\+6371,\x22km\x22,\x22m\x22\x29\x29\/3600\n/.test(lastOf(s4, 1)) &&

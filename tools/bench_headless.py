@@ -22,7 +22,8 @@ Written into --out:
 The summary is also printed, and after it the failed rows (id, why, the
 reply cut to --reply-chars) as one line of JSON each between the lines
 "=== FAILED ROWS ..." and "=== END FAILED ROWS ===", so the job's log alone
-is enough to work from.
+is enough to work from; and after those every picture a model drew, passed
+or not, between "=== DRAWINGS ..." and "=== END DRAWINGS ===".
 
 Exit code: 0 the run finished (whatever it scored); 2 no model answered;
 3 it stopped on an error or ran out of time (rows.json has what was done).
@@ -232,6 +233,21 @@ def main():
             slim["chat"] = [dict((k, (str(t[k])[:a.reply_chars] if k == "reply" else t[k])) for k in ("q", "searches", "declined", "reply") if t.get(k) not in (None, "", [], False)) for t in r["chat"]]
         print(json.dumps(slim, ensure_ascii=False), flush=True)
     print("=== END FAILED ROWS ===", flush=True)
+    # Every picture a model drew, passed or not (1.24.7): a row that passes
+    # says nothing about how its picture looks, and a picture is the one
+    # thing a score cannot show. With the block in the log, a session can
+    # draw it again and look.
+    print("=== DRAWINGS (one JSON object a line) ===", flush=True)
+    for r in rows:
+        if "MAKE DRAWING" not in str(r.get("reply") or "") + str(r.get("first") or ""):
+            continue
+        d = dict((k, r.get(k)) for k in ("id", "q", "why", "rounds") if r.get(k) not in (None, "", [], False))
+        d["pass"] = bool(r.get("pass"))
+        for k in ("reply", "first"):
+            if r.get(k):
+                d[k] = str(r[k])
+        print(json.dumps(d, ensure_ascii=False), flush=True)
+    print("=== END DRAWINGS ===", flush=True)
     return 3 if cut else 0
 
 

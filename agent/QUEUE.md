@@ -5,25 +5,41 @@ file in the same commit as the work. Read `CLAUDE.md` first.
 
 ## Next, in order
 
-1. **Read the small models' run on 1.24.6 and act on it.** Every push to a
+1. **Read the small models' run on 1.24.7 and act on it.** Every push to a
    `lantern-x.y.z` branch runs the whole bench with the 0.8B, the 2B and the
-   4B on GitHub (`CLAUDE.md`, "The bench with the small models"). On 1.24.5:
-   **4B 102 of 112, 2B 63, 0.8B 28** (the 35B, on the laptop: 111). 1.24.6
-   was written from those rows (`tests/fixtures/bench_run_1245_*.json`) and
-   no small model had run it when it was pushed. So first:
-   - the 2B's eleven "Not in my library" for sums: its instructions for a
-     sum show no decline now. Did they go? When the recipe's line goes back,
-     does it fill it in?
-   - **the 2B's minutes** (102 on 1.24.5, 36 on 1.24.4): its instructions
-     are half the size. If the run is still slow, put what never changes at
-     the top of the short prompt, so the server keeps it between questions;
-   - the 0.8B copied the instructions' words in thirty replies: what does it
-     copy now?
-   - the Hohmann rows, with the card for two heights (4B, 2B);
-   - the answers from a lesson, with instructions that show no sum
-     (`suite-goats`, `food-chicken-done`, the health rows): are sentences
-     cited now, or is the lesson box all the person gets?
-   Then, from what the rows of 1.24.5 show and 1.24.6 does not touch:
+   4B on GitHub (`CLAUDE.md`, "The bench with the small models"). On 1.24.6:
+   **4B 107 of 112, 2B 57, 0.8B 51** (the 35B, on the laptop: 111). 1.24.7
+   was written from those rows (`tests/fixtures/bench_run_1246_*.json`) and
+   from two pictures Adam made with the 35B; no model had run it when it
+   was pushed. So first:
+   - **the 2B's sums.** It had 18 of its 27 failed sums right but for how
+     it wrote the line (an arrow after it, a number typed under it, the
+     numbers in braces). Lantern reads those now, and the short prompt
+     gives a recipe with the question's numbers in it, alone. Does the 2B
+     copy that line as it stands? What does the 0.8B do with it?
+   - **the two scene questions** (new: `make-shore-sunset`,
+     `make-road-horizon`), and every other drawing: the log prints each one
+     between `=== DRAWINGS` and `=== END DRAWINGS ===`. Draw them
+     (`python3 tools/draw_log.py job.log <dir>`), look at the sheet, and
+     send it to Adam. What do the models write with the landscape guide
+     and its example? Do they copy the example whole?
+   - the minutes (48, 40 and 69 on 1.24.6).
+   Then, from what the rows of 1.24.6 show and 1.24.7 does not touch:
+   - **A guide copied whole.** The 2B and the 0.8B copied the hydraulic,
+     pneumatic, control and electronics guides into their blocks, line for
+     line, with the explanations, the continuation lines and `<title>`,
+     `<text>`, `<name>`. Those guides are a table of every line Lantern
+     reads. For a small model: the tested example nearest the question and
+     a short list of lines, so that what it copies is a block.
+   - **The example sum copied** (the 0.8B: `=65*35/1000` and "They cost
+     {result}." for a solar panel's kWh, a heater's, a water tank's days).
+     A recipe is copied instead of the example when there is one: cards for
+     the sums a household asks (watts x hours in kWh and what that costs,
+     litres a person a day, a journey's time from distance and speed, the
+     price of so many from the price of a pack) would be general recipes,
+     each with blanks a unit names.
+   - **Units written inside a sum** (`=3 cups * 15 people / 6 people`,
+     `=120*m*80/m/10000`: the 2B, once each).
    - **A number nobody gave, unquestioned.** `=100*12/60` for "How many
      hours will my battery run a 60 W light?" passes Lantern's check: 100
      and 12 are factors a sum may always use (percent, a dozen), and so is
@@ -33,45 +49,64 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    - **A number of the question no line uses** (`=60*5/1000*0.15*30` with
      the 100 W TV left out). Question it once: "the question also gives
      100 W".
-   - **A recipe card filled by Lantern.** When a card fits and every blank
-     can be filled from the question's numbers by their units, with no
-     number left over, give the model the filled line
-     (`=FEEDKG(20,30,800)`). Not when a blank or a number is left over.
-   - **A step worked out, and a made-up number where it belonged** (the 4B,
-     once: `=5*40` then `=2000/8000`). Lantern questioned it and the 4B then
-     asked for a number. If it is seen again: write `=2000/ANS`.
+   - **"From a 300 km orbit to the Moon's distance, 384400 km from Earth's
+     centre"** is given the recipe for two radii: a body named in the
+     question hides the height (AI_CHECKS' heights returns none when
+     another body is named).
    - **The 4B with the short prompt.** The workflow takes an input `prompt`;
      run it both ways (never on a branch whose run is in progress: a second
      run cancels the first) and keep what scores better.
-   - **Puzzles.** The 2B passed 1 of 10 on 1.24.5, the 0.8B none, the 4B 9,
-     and the two small ones wrote no block at all. 1.24.6 gives them the
-     puzzle tool alone and asks for the block when the answer has none.
-     What do they write in the block? The host who does not know where the
-     car is (`doors-host-guesses`) has no tool: the 4B and the 2B answered
-     the classic puzzle.
-   - **A guide's own example, copied** (the 0.8B wrote the wheel guide's
-     "The year" for an Ohm's law wheel, and the 2B the electronics guide's
-     button into a relay driver). An example nearer the question, or none
-     where the lines already say enough.
+   - **Puzzles.** The 2B passed 1 of 10 on 1.24.6 and the 0.8B none; they
+     write a block now, with lines Lantern cannot run ("move Gold to left
+     of Gold", the question's own sentences as steps). The host who does
+     not know where the car is (`doors-host-guesses`) has no tool: the 4B
+     and the 2B answered the classic puzzle.
    - **LESSON: for a program** ("Tank fill/stop logic") was read the Volume
-     lesson: "fill" in its title, "tank" in its text. The word that names
-     the topic (logic) was the one missing.
+     lesson: "fill" in its title, "tank" in its text. The 4B wrote that
+     line 30 times on 1.24.6 and then a program in a fence that Lantern did
+     not read as one.
    A question the 4B fails and the 35B passes comes before a new feature.
    Fix what Lantern gave the model or how it read the reply, for every
    question of its kind; put the failed rows in `tests/fixtures`.
-2. **Confirm each new version on the 35B, twice**, when a chat is linked to
+2. **Pictures.** Adam's direction (2026-11-06): get the fundamentals of a
+   scene right first -- what stands on what, what is behind what, how
+   things narrow with distance -- and then let the AI draw many small
+   pieces that Lantern puts together into a bigger, more detailed picture.
+   1.24.7 does the first for mountains, the sun and a road (AI_SCENE).
+   Next:
+   - **the 35B on 1.24.7**, when the laptop is linked: Adam's two requests
+     and the two scene questions, and what it writes with the landscape
+     guide. Its picture is the test; send Adam the sheet;
+   - **the look turn.** The 35B said LOOKS RIGHT to mountains in the air.
+     It is now told what Lantern changed. It could also be asked what
+     Lantern cannot work out (is each thing the request names in the
+     picture? does anything hang in the air?). Try it on the laptop and
+     keep it only if it catches more than it breaks;
+   - **things that stand.** A house or a tree whose foot is above the
+     ground line has not been seen yet; look for it in each run's drawings
+     before writing a rule for it;
+   - **pieces.** Two ways were put to Adam (`QUESTIONS.md`, 1): words for
+     things Lantern places (mountain, road, tree: the model says what and
+     roughly where, Lantern does the ground line, the order and the size
+     by distance), or pieces the AI draws each on a grid of its own, which
+     Lantern places by the point where the piece stands. His to choose;
+   - small things found: a circle written with four numbers (the 2B,
+     once); AI_MAKE_LAYOUT's `inside` reads an oval as a centre and two
+     radii, AI_DRAW draws it as a box.
+3. **Confirm each new version on the 35B, twice**, when a chat is linked to
    Adam's laptop (`CLAUDE.md`, "The bench on Adam's laptop"). A version that
    has not had a full run says so in its report. 1.24.6: one full run (111
-   of 112) on the build before its last change, and the four music
-   questions on the build that was pushed; a full run of that build is
-   still due.
-3. **Finish the five Food lessons on `wip-2026-11-06`.** They are drafted
+   of 112) on the build before its last change, the four music questions on
+   the build that was pushed, and a second full run of that build stopped
+   at 73 of 118 with nothing scored failing (Adam said to stop). 1.24.7:
+   none yet.
+4. **Finish the five Food lessons on `wip-2026-11-06`.** They are drafted
    and were checked from memory only; the checker's memory differs from the
    drafts where it matters (kidney beans, cassava, the hay box). They need
    the pages of WHO, FAO, the US FDA and USDA's food safety service opened
    -- which needs Adam at the app to approve them, or a session that may
    fetch them. The branch's `agent/wip/README.md` says what to do.
-4. **Tile audits**, one tile a session, in the order of the table below. For
+5. **Tile audits**, one tile a session, in the order of the table below. For
    each tile:
    - open it in a real browser and use everything in it; fix what is broken,
      each fix with a test;
@@ -93,39 +128,39 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    - check what the AI can reach of it (LESSON:, LOOKUP:, formula functions,
      MAKE tools) and add the hook when it cannot;
    - write the tile's row below, and the gaps left, in the report.
-5. **Lessons Lantern does not have, which people will ask for** (found by
+6. **Lessons Lantern does not have, which people will ask for** (found by
    asking, 1.24.5): making soap, keeping bees, pruning, sharpening a knife,
    a rocket stove, wiring a lamp to a battery, a solar charger; and the
    five held Food lessons. Each belongs to a tile's audit (Repair, Farming,
    Animals, Engineering).
-6. **The offline library in the runs.** On the laptop it works, but the
+7. **The offline library in the runs.** On the laptop it works, but the
    Claude app's browser pane does not let Lantern's page reach it, so runs
    made there leave out the 25 encyclopedia questions (a run in Adam's
    Chrome would include them: question for Adam). The GitHub runs have no
    library either: the Simple English one, 2.5 GB, would fit: worth adding
    to the workflow for one model.
-7. **The kit's 8,192 tokens.** Lantern now shortens a request that is too
+8. **The kit's 8,192 tokens.** Lantern now shortens a request that is too
    long and sends it again (AI_FIT). Better not to get there: measure what
    Chat sends in a long puzzle conversation, and what 16,384 tokens cost in
    memory for the 0.8B, the 2B and the 4B. Whether to raise it is Adam's.
-8. **Pictures for the Health lessons.** The recovery position, where the
+9. **Pictures for the Health lessons.** The recovery position, where the
    hands go for chest pushes, the tippy tap, the pit latrine, the arm
    measurement: a drawing each would carry more than the words. Lantern can
    draw (Draw's shapes, SVG). Whether a drawing is clear is Adam's to judge:
    make them, show him, keep what he passes.
-9. **Words that differ by an ending** ("charger" and "charge", "purify" and
+10. **Words that differ by an ending** ("charger" and "charge", "purify" and
    "purification") do not match in Lantern's search. `LESSON_WORDS` covers
    the cases found; the stemmer itself could do more, with care (it is used
    everywhere).
-10. **Songbook.** Nine tunes so far, all starting on the first beat. Tunes
+11. **Songbook.** Nine tunes so far, all starting on the first beat. Tunes
     that start with a pickup (Amazing Grace, Auld Lang Syne, Brahms' Lullaby,
     Greensleeves, Happy Birthday's 1893 tune) need a pickup bar checked
     through the score, the parts and the arrangement first.
-11. **A second try that changes nothing.** In the run on 1.24.0 three songs
+12. **A second try that changes nothing.** In the run on 1.24.0 three songs
     came back unchanged or worse after Lantern's send-back. 1.24.2 writes the
     line to use. If a model still sends the same block, decide with Adam
     whether Lantern should apply the fix it named and say so.
-12. **The 1.16.0 audit's feature list** (`Lantern_1.16.0_app_audit.pdf`, sent
+13. **The 1.16.0 audit's feature list** (`Lantern_1.16.0_app_audit.pdf`, sent
     to Adam on 2026-10-29) was never answered. With the aim above, take the
     features that serve it without asking again; leave the rest.
 

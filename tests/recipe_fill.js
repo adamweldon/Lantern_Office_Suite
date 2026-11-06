@@ -175,8 +175,8 @@ var FILLS = [
   var pm = P.assist(qm, A.match(qm)), qe = "How much do 3 dozen eggs cost at 12 shillings each?", pe = P.assist(qe, A.match(qe));
   ok("the short prompt for a recipe Lantern fills: the line with the numbers in it and what it gives, no blanks and nothing to fill in",
     /- The recipe below is the sum for this question, with the question's numbers already in it: copy its = line as it stands\./.test(pm) &&
-    /\nRECIPE\n- How long will a battery run a load\?[^\n]*\n  =CONVERT\(\(100\*12\)\/60,"hours","minutes"\)   -> minutes, as the question asks\n/.test(pm) && !/\{ah\}/.test(pm) && !/needs:/.test(pm), pm.slice(-500));
-  ok("...and for one it does not fill (3 dozen): the recipe with its blanks, as before", /- A recipe below fits: copy its = line and put the question's value in place of each \{name\}\./.test(pe) && /\n  needs: price; qty\n  =\{price\}\*\{qty\}   -> total, same currency\n/.test(pe), pe.slice(-400));
+    /\nRECIPE\n- How long will a battery run a load\?[^\n]*\n  gives: minutes, as the question asks\n  =CONVERT\(\(100\*12\)\/60,"hours","minutes"\)\n/.test(pm) && !/\{ah\}/.test(pm) && !/needs:/.test(pm), pm.slice(-500));
+  ok("...and for one it does not fill (3 dozen): the recipe with its blanks, as before", /- A recipe below fits: copy its = line and put the question's value in place of each \{name\}\./.test(pe) && /\n  needs: price; qty\n  gives: total, same currency\n  =\{price\}\*\{qty\}\n/.test(pe), pe.slice(-400));
 
   // --- what goes back: a decline, with the filled line; the reply that copies it passes ---
   var qd = "How far is it from Nairobi to Mombasa in miles?", seenD = [];
@@ -232,7 +232,7 @@ var FILLS = [
   var o3 = load(["AI_NO_FORMULA"]);
   await sleep(40);
   var p3 = o3.L.aiPrompt.assist(qm, o3.L.assist.match(qm));
-  ok("without AI_NO_FORMULA: the short prompt gives the recipe with its blanks, as before", o3.errs.length === 0 && /- A recipe below fits: copy its = line/.test(p3) && /=\(\{ah\}\*\{v\}\)\/\{w\}   -> hours/.test(p3), o3.errs);
+  ok("without AI_NO_FORMULA: the short prompt gives the recipe with its blanks, as before", o3.errs.length === 0 && /- A recipe below fits: copy its = line/.test(p3) && /  gives: hours\n  =\(\{ah\}\*\{v\}\)\/\{w\}\n/.test(p3), o3.errs);
 
   console.log(fails ? fails + " RECIPE FILL FAILURES (" + passes + " passed)" : "ALL RECIPE FILL TESTS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);

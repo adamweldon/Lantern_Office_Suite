@@ -98,7 +98,9 @@ try:
         pg.route("**/*", handle)
         pg.goto("http://127.0.0.1:%d/index.html#food" % PORT)
         pg.wait_for_function("!!(window.Lantern && Lantern.foodNeeds && document.querySelectorAll('table.data').length === 2)", timeout=30000)
-        ok("this is 1.24.6", pg.evaluate("Lantern.version") == "1.24.6", pg.evaluate("Lantern.version"))
+        # (the built site is the version package.json names: a pinned number here failed on every version after it)
+        VER = json.load(open(os.path.join(ROOT, "package.json")))["version"]
+        ok("the built site is this version (" + VER + ")", pg.evaluate("Lantern.version") == VER, pg.evaluate("Lantern.version"))
 
         # --- the tile ---
         heads = pg.eval_on_selector_all("h2", "els => els.map(e => e.textContent)")

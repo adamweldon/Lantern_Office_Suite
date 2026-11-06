@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.24.6 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.24.7 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -186,7 +186,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.24.6",
+  version: "1.24.7",
   apps: {},
   order: []
 };
@@ -24864,9 +24864,14 @@ Lantern.RFB = (function () {
         var sl = [];
         for (j = 0; j < c[i].slots.length; j++) sl.push(c[i].slots[j].k + (c[i].slots[j].unit ? " in " + c[i].slots[j].unit : "") + (c[i].slots[j].hint ? " (" + c[i].slots[j].hint + ")" : ""));
         out.push("- " + c[i].ask + (c[i].pre ? " [" + c[i].pre + "]" : ""));
-        if (done) { out.push("  " + done + "   -> " + (gives || c[i].out)); continue; }
+        // (1.24.7) What the line gives is on a line of its own, above it. It
+        // was after the line ("=VOLTS({amps},{ohms})   -> volts"), and on
+        // 1.24.6 the 2B copied it there in 24 replies: "=VOLTS(0.02,470) ->
+        // volts" could not be run.
+        if (done) { out.push("  gives: " + (gives || c[i].out)); out.push("  " + done); continue; }
         out.push("  needs: " + (sl.join("; ") || "nothing"));
-        out.push("  " + c[i].compose + "   -> " + c[i].out);
+        out.push("  gives: " + c[i].out);
+        out.push("  " + c[i].compose);
       }
     }
     out.push(""); out.push("QUESTION: " + question);
@@ -24902,7 +24907,7 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // MODULE: AI_READ - START
 // Depends: AI_ENGINE (applies Lantern.aiReplyReaders to every reply), ASSIST_CATALOG (function names) -- feature-detected
-// Exports: Lantern.aiRead(text) -> {text, said: [..]}; adds its readers to Lantern.aiReplyReaders
+// Exports: Lantern.aiRead(text, question or messages?) -> {text, said: [..]}; adds its readers to Lantern.aiReplyReaders
 // ===========================================================================
 // What a small model most likely meant (1.24.5). The instructions say "reply
 // with lines that START with =" and "ANS holds the previous result", and the
@@ -24916,6 +24921,19 @@ Lantern.RFB = (function () {
 // read here as what it plainly is, before anything else looks at the reply,
 // and Chat says so. Nothing is computed or guessed: a number typed with no
 // sum ("ANS: 33.3") stays a number with no sum.
+//
+// (1.24.7) On 1.24.6 the 2B had the right sum in its first reply for 15 of
+// the 21 function questions and passed 6, and the 0.8B wrote the right sum
+// for five of the two-step ones and passed none of those:
+//     =VOLTS(0.02,470) -> volts         (the recipe showed "=VOLTS(...)   -> volts":
+//                                        what a line gives, copied onto the line)
+//     = 65*35 = 2275                    (the sum, and its result after a second =)
+//     =({2000}/{15})/60                 (the numbers put into the recipe's { })
+//     =CONVERT(26,"mile","km")          (the sum, then a number typed on a = line
+//     =88.5625                           of its own: Lantern took the last line)
+// The line is the sum, up to the arrow or the second =; a number in { } is
+// the number; a number typed on a = line after a sum Lantern can work out
+// is left out, because Lantern works the number out.
 (function () {
   var L = window.Lantern;
   if (!L) return;
@@ -24944,7 +24962,9 @@ Lantern.RFB = (function () {
     if (/[a-z]{2,}/.test(bare.replace(/\b[A-Z][A-Z0-9]*\b/g, "")) || /[=;:{}?!]/.test(bare)) return false;
     if (calls(bare)) return true;
     if (needCall) return false;
-    return /^[-+\x28\s]*\d/.test(bare) && /[\d\x29][ \t]*[-+*\/^][ \t]*[-+\x28]*[ \t]*\d/.test(bare) && !/[A-Za-z]/.test(bare.replace(/\bANS\d*\b|\bPI\b|\bE\b/g, ""));
+    // (1.24.7: ANS and PI are values a sum is made of -- "2000/ANS", "ANS*2")
+    var vals = bare.replace(/\bANS\d*\b|\bPI\b/g, "0");
+    return /^[-+\x28\s]*\d/.test(vals) && /[\d\x29][ \t]*[-+*\/^][ \t]*[-+\x28]*[ \t]*\d/.test(vals) && !/[A-Za-z]/.test(bare.replace(/\bANS\d*\b|\bPI\b|\bE\b/g, ""));
   }
   function hasEq(t) { return /^[ \t]*=/m.test(t); }
   // 1. a verb line written with the = of a formula line
@@ -24956,7 +24976,8 @@ Lantern.RFB = (function () {
   function repeats(t) {
     var ls = t.split("\n"), out = [], i, run = 0, cut = 0;
     for (i = 0; i < ls.length; i++) {
-      var l = ls[i], same = i > 0 && l === ls[i - 1] && /^[ \t]*(?:ANS\d*[ \t]*[:=]|=)/.test(l);
+      // (1.24.7: not a line that uses ANS -- "=ANS*2" three times over doubles three times)
+      var l = ls[i], same = i > 0 && l === ls[i - 1] && /^[ \t]*(?:ANS\d*[ \t]*[:=]|=)/.test(l) && !/\bANS\d*\b/.test(l.replace(/^[ \t]*ANS\d*[ \t]*[:=]/, ""));
       run = same ? run + 1 : 0;
       if (same && run >= 1) { cut++; continue; }
       out.push(l);
@@ -24984,18 +25005,140 @@ Lantern.RFB = (function () {
     return { text: t.slice(0, m.index) + m[1] + "=" + m[2].replace(/^\s*=\s*/, "") + "\n" + m[1] + "ANSWER: {result}" + t.slice(m.index + m[0].length),
       said: "a formula written after \u201cANSWER:\u201d as a formula line" };
   }
-  var READERS = [verbs, repeats, ansLines, answerFormula];
-  function read(text) {
-    var t = String(text == null ? "" : text), said = [];
+  // (1.24.7) Readers 5 to 8 read sum lines only. Not a line inside a MAKE, TRACK, TURN or SOLVE block (a
+  // sheet's row "=ROUND(22/7,2) | =A2*2", a program's line that begins with = and holds an arrow function, a
+  // document's "= 9.4") nor
+  // inside a code fence; a block with no END runs to the end of the reply. And nothing inside quoted text,
+  // double or single: =LEN('a->b') is a sum about an arrow.
+  var OPENS = /^\**\s*(MAKE\s+[A-Za-z]|TRACK\s*:|TURN\s*:|SOLVE\s*:)/i;
+  function freeLines(ls) {
+    var out = [], inBlock = false, inFence = false, i, l;
+    for (i = 0; i < ls.length; i++) {
+      l = ls[i].replace(/^\s+|\s+$/g, "");
+      if (/^\x60\x60\x60/.test(l)) { inFence = !inFence; out.push(false); continue; }
+      if (!inBlock && OPENS.test(l)) { inBlock = true; out.push(false); continue; }
+      if (inBlock && /^END\b/i.test(l)) { inBlock = false; out.push(false); continue; }
+      out.push(!inBlock && !inFence && /^[ \t]*=/.test(ls[i]));
+    }
+    return out;
+  }
+  // firstOutside(line, fn) -> the first index, outside quoted text, where fn(char, index) holds; -1 when none
+  function firstOutside(l, fn) {
+    var dq = false, sq = false, i, c;
+    for (i = 0; i < l.length; i++) {
+      c = l.charAt(i);
+      if (c === "\x22" && !sq) dq = !dq;
+      else if (c === "\x27" && !dq) sq = !sq;
+      else if (!dq && !sq && fn(c, i)) return i;
+    }
+    return -1;
+  }
+  // 5. "=VOLTS(0.02,470) -> volts": the line is the sum, up to the arrow
+  function arrows(t) {
+    var ls = t.split("\n"), free = freeLines(ls), n = 0;
+    ls.forEach(function (l, k) {
+      if (!free[k]) return;
+      var at = firstOutside(l, function (c, i) { return i >= 1 && ((c === "-" && l.charAt(i + 1) === ">") || (c === "=" && l.charAt(i + 1) === ">") || c === "\u2192"); });
+      if (at < 0) return;
+      var head = l.slice(0, at).replace(/\s+$/, "");
+      if (!/^[ \t]*=\s*\S/.test(head)) return;
+      ls[k] = head; n++;
+    });
+    return n ? { text: ls.join("\n"), said: "a formula line with \u201c-> \u2026\u201d after the sum as the sum" } : null;
+  }
+  // 6. "= 65*35 = 2275", "=2000/15/60 = 2000/900 = 22.2": the line is the sum, up to the second = (outside
+  // quotes and brackets, and not part of <=, >=, != or ==); what follows is the result the model typed.
+  // Not when the question asks whether two things are equal: "=17*23=391" is then the sum (1 for yes).
+  var ASKS_IF = /^\s*(is|are|was|were|does|do|did|can|could|will|would|has|have|true or false)\b|\b(equal|equals|the same|greater|less than|bigger|smaller|larger|more than|true|false|correct|right)\b/i;
+  function results(t, q) {
+    if (q && ASKS_IF.test(q)) return null;
+    var ls = t.split("\n"), free = freeLines(ls), n = 0;
+    ls.forEach(function (l, k) {
+      if (!free[k]) return;
+      var m = /^([ \t]*=\s*)(.*)$/.exec(l), body = m[2], d = 0;
+      var at = firstOutside(body, function (c, i) {
+        if (c === "(") d++; else if (c === ")") d--;
+        return c === "=" && d === 0 && i > 0 && !/[<>!=]/.test(body.charAt(i - 1)) && body.charAt(i + 1) !== "=";
+      });
+      if (at <= 0) return;
+      var head = body.slice(0, at).replace(/\s+$/, ""), tail = body.slice(at + 1);
+      if (!formula(head) || !/\d/.test(tail) || !/^[\s\d.,+\-*\/^()=A-Za-z%\u00b0]*$/.test(tail)) return;
+      ls[k] = m[1] + head; n++;
+    });
+    return n ? { text: ls.join("\n"), said: "a formula line with its result typed after a second = as the sum" } : null;
+  }
+  // 7. "=({2000}/{15})/60": a number in the { } of a recipe's blank is the number
+  function braces(t) {
+    var ls = t.split("\n"), free = freeLines(ls), n = 0;
+    ls.forEach(function (l, k) {
+      if (!free[k]) return;
+      var out = "", i = 0, dq = false, sq = false, m;
+      while (i < l.length) {
+        var c = l.charAt(i);
+        if (c === "\x22" && !sq) dq = !dq; else if (c === "\x27" && !dq) sq = !sq;
+        if (c === "{" && !dq && !sq && (m = /^\{\s*([-+*\/^().\d\s]+?)\s*\}/.exec(l.slice(i))) && /\d/.test(m[1])) {
+          out += /^-?\d+(\.\d+)?$/.test(m[1]) ? m[1] : "(" + m[1] + ")"; i += m[0].length; n++; continue;
+        }
+        out += c; i++;
+      }
+      ls[k] = out;
+    });
+    return n ? { text: ls.join("\n"), said: "a number written in { } as the number" } : null;
+  }
+  // 8. A number typed on the last = line, after a sum Lantern can work out, in a reply that types its
+  // numbers into its sentence too ("=CONVERT(26,..)", "=88.5625", "ANSWER: 88.5625"): the model is showing
+  // what it thinks the sum comes to. The line is left out, so the sum's own result is the answer.
+  // Not when the reply uses {result} or {ANS1}: then each line is a value the model placed on purpose
+  // ("=12*30", "=365", "ANSWER: A year has {result} days, not {ANS1}"). Not when the sum above does not run.
+  function typed(t) {
+    var ls = t.split("\n"), free = freeLines(ls), eq = [], i;
+    for (i = 0; i < ls.length; i++) if (free[i]) eq.push(i);
+    var k = eq.length - 1;
+    // (an answer that names its lines -- {result}, {ANS2} -- may mean the typed number: a constant set down on
+    // purpose stays. Unless the same number is typed into the answer as well: then it is the model's own result,
+    // and the { } is the instructions' sentence copied -- the 2B's "3.3333333333333335 hours: Lantern ... {result}")
+    if (/\{\s*(result|ANS\d*)\s*\}/i.test(t)) {
+      var num = k >= 1 ? (ls[eq[k]].match(/-?\d[\d.,]*(?:e[-+]?\d+)?/i) || [""])[0].replace(/[.,]+$/, "") : "", at = t.search(/^[ \t]*ANSWER\s*:/im);
+      if (!num || num.length < 3 || at < 0 || t.slice(at).indexOf(num) < 0) return null;
+    }
+    // (a number and perhaps its unit -- "=133.3 hours", "=3.5 km/h" -- and nothing else: "=2000/ANS" is a sum)
+    if (k < 1 || !/^[ \t]*=\s*-?\d[\d.,]*(?:e[-+]?\d+)?(?:\s*[A-Za-z%\u00b0]+(?:\x2F[A-Za-z]+)?(?:\s+[A-Za-z]+){0,3})?\s*$/.test(ls[eq[k]]) || /\b(ANS\d*|PI)\b/.test(ls[eq[k]])) return null;
+    var before = eq.slice(0, k).map(function (j) { return ls[j].replace(/^[ \t]+/, ""); });
+    if (!before.some(function (l) { return formula(l) && /[-+*\/^\x28]/.test(l.replace(/^=\s*-?/, "")); })) return null;
+    // (a recipe's line copied with the names still in its blanks -- "=({ah}*{v})/{w}" -- is not part of the sum)
+    var sums = before.filter(function (l) { return !/[{}]/.test(l); });
+    if (!sums.length || sums[sums.length - 1] !== before[before.length - 1]) return null;
+    var A = L.assist, run = null;
+    try { run = A && A.run ? A.run(sums.join("\n")) : null; } catch (e) { run = null; }
+    if (!run || typeof run.value !== "number" || !isFinite(run.value)) return null;
+    ls.splice(eq[k], 1);
+    return { text: ls.join("\n"), said: "a number typed on a = line after the sum left out (Lantern works the number out)" };
+  }
+  var READERS = [verbs, repeats, arrows, results, braces, typed, ansLines, answerFormula];
+  // read(text, question?) -- the question, when it is known, tells a typed result from a comparison
+  function questionOf(messages) {
+    if (typeof messages === "string") return messages;
+    var ms = messages || [], i, c;
+    for (i = ms.length - 1; i >= 0; i--) {
+      if (!ms[i] || ms[i].role !== "user") continue;
+      c = ms[i].content;
+      c = typeof c === "string" ? c : (c || []).filter(function (x) { return x && x.type === "text"; }).map(function (x) { return x.text; }).join("\n");
+      var at = c.lastIndexOf("QUESTION:");
+      return (at >= 0 ? c.slice(at + 9) : c).replace(/^\s+/, "").split("\n")[0];
+    }
+    return "";
+  }
+  function read(text, messages) {
+    var t = String(text == null ? "" : text), said = [], q = questionOf(messages);
     READERS.forEach(function (f) {
       var r = null;
-      try { r = f(t); } catch (e) { r = null; }
+      try { r = f(t, q); } catch (e) { r = null; }
       if (r && typeof r.text === "string" && r.text !== t) { t = r.text; said.push(r.said); }
     });
     return { text: t, said: said };
   }
   window.Lantern.aiRead = read;
-  RD.push(function (text) { var r = read(text); return r.said.length ? { text: r.text, said: r.said.join("; ") } : null; });
+  RD.push(function (text, messages) { var r = read(text, messages); return r.said.length ? { text: r.text, said: r.said.join("; ") } : null; });
 })();
 // ===========================================================================
 // MODULE: AI_READ - END
@@ -28212,8 +28355,11 @@ Lantern.RFB = (function () {
   }
   // The look turn: what the model is told along with the picture.
   var LOOKS = /\bLOOKS RIGHT\b/i;
+  // (1.24.7) What Lantern changed in the block before drawing it (plan.said: a mountain stood on the horizon, a
+  // resistor added for an LED) is said with the picture: the model is looking at Lantern's drawing, not its own lines.
   function lookText(res, q) {
-    return "This is the picture Lantern drew from your MAKE " + res.block.kind + " block" + (q ? " (the request was: " + q + ")" : "") + ".\n" +
+    var said = res.plan && res.plan.said && res.plan.said.length ? "Before drawing it, Lantern " + res.plan.said.join("; ") + ".\n" : "";
+    return "This is the picture Lantern drew from your MAKE " + res.block.kind + " block" + (q ? " (the request was: " + q + ")" : "") + ".\n" + said +
       "Look at it closely: is every word readable -- none running into another, cut off or written twice -- and is each in its place?\n" +
       "If it shows what was asked and reads cleanly, reply LOOKS RIGHT and one sentence on what you see.\n" +
       "If something is missing or wrong, reply with a corrected MAKE block only.";
@@ -28891,8 +29037,8 @@ Lantern.RFB = (function () {
 // Depends: AI_ACTIONS (Lantern.aiActions hook), DRAW (Lantern.drawDocs,
 //          Lantern.drawShapes) -- feature-detected
 // Exports: Lantern.aiDraw = {picture(block), result(shapes, plan, summary,
-//          title, problems)} -- result() is shared with AI_SCHEMATIC; adds
-//          the DRAWING action to Lantern.aiActions
+//          title, problems, frame?)} -- result() is shared with AI_SCHEMATIC;
+//          adds the DRAWING action to Lantern.aiActions
 // ===========================================================================
 // MAKE DRAWING: a simple picture from shapes on a 20 x 12 grid -- whole
 // numbers a small model can handle -- scaled up by Lantern (36 px a cell).
@@ -29009,8 +29155,11 @@ Lantern.RFB = (function () {
     if (L.drawShapes && L.drawShapes.bbox) shapes.forEach(function (s) { var x = L.drawShapes.bbox(s); b[2] = Math.max(b[2], x[2] + 20); b[3] = Math.max(b[3], x[3] + 20); });
     return b;
   }
-  function result(shapes, plan, summary, title, problems) {
-    var ex = extent(shapes);
+  // (1.24.7) frame: [w, h] for a picture that has a frame of its own (MAKE DRAWING's 20 x 12 grid). Without it
+  // the canvas grows 20 px past the last shape, which is right for a schematic and wrong for a picture whose
+  // sky reaches the edge: every landscape had a white strip down its right side and along its bottom.
+  function result(shapes, plan, summary, title, problems, frame) {
+    var ex = frame ? [0, 0, frame[0], frame[1]] : extent(shapes);
     return {
       problems: problems, plan: plan, summary: summary, openLabel: "Open in Draw",
       preview: function () {
@@ -29146,7 +29295,7 @@ Lantern.RFB = (function () {
     var plan = { shapes: pic.shapes.map(function (o) { return { kind: o.kind, nums: o.nums, fill: o.fill || null, color: o.color || null, text: o.text || null }; }) };
     var left = block.lines.length - pic.shapes.length;
     var r = result(pictureShapes(pic), plan, pic.shapes.length + " shapes" + (pic.problems.length && left > 0 ? "; " + left + " line" + (left === 1 ? "" : "s") + " left out" : ""),
-      block.title, pic.problems);
+      block.title, pic.problems, [GW * CELL, GH * CELL]);
     r.runaway = ra;
     return r;
   }
@@ -32277,7 +32426,7 @@ Lantern.RFB = (function () {
   // above, a part that has a colour already, or a colour Lantern does not
   // know, the line is left out. Either way Lantern says so (said).
   function parse(block) {
-    var parts = [], problems = [], hub = "", notes = [], said = [];
+    var parts = [], problems = [], hub = "", notes = [], said = [], grouped = [];
     block.lines.forEach(function (raw) {
       var line = String(raw).replace(/^\s*([-*\u2022]|\d+[.\x29])\s+/, "").replace(/\s+$/, ""), m;
       if (!line.replace(/\s+/g, "")) return;
@@ -32294,6 +32443,16 @@ Lantern.RFB = (function () {
       line = line.replace(/^(part|slice|segment|sector|quadrant)\s*\d*\s*[:.\x29-]?\s+/i, "");
       var c = line.indexOf(":"), bar1 = line.indexOf("|");
       if (c < 1 && bar1 > 0) { line = line.slice(0, bar1).replace(/\s+$/, "") + ":" + line.slice(bar1 + 1); c = line.indexOf(":"); }
+      // (1.24.7) "P = V^2 / R" on a line of its own, twelve of them (the 4B on 1.24.6: every formula of the
+      // power wheel, one to a line, and no part line at all). The letter a formula gives is its part.
+      var fm0 = c < 1 ? /^([A-Za-z]{1,3})\s*=\s*\S/.exec(line) : null;
+      if (fm0) {
+        var own = parts.filter(function (p) { return p.name === fm0[1]; })[0];
+        if (!own) { own = { name: fm0[1], items: [], fill: null, grouped: true }; parts.push(own); }
+        own.items.push(unq(line));
+        if (grouped.indexOf(fm0[1]) < 0) grouped.push(fm0[1]);
+        return;
+      }
       if (c < 1) { problems.push("\u201c" + raw + "\u201d: a part line is <name>: <item> | <item> | <item>"); return; }
       var name = unq(line.slice(0, c)), rest = line.slice(c + 1), fill = null;
       var fm = /\s+(?:fill|colou?r)\s+(#[0-9a-fA-F]{3,6}|[A-Za-z]+(?:\s[A-Za-z]+)?)\s*$/.exec(rest);
@@ -32306,6 +32465,7 @@ Lantern.RFB = (function () {
       if (!bar && /=/.test(rest) && pcs.some(function (x) { return !/=/.test(x); })) pcs = [rest];   // "P = V x I, so ..." is one item
       parts.push({ name: name, items: pcs.map(unq).filter(function (x) { return x; }), fill: fill });
     });
+    if (grouped.length) said.push("put each formula written on a line of its own into the part for the letter it gives (" + grouped.join(", ") + ")");
     if (parts.length < 2) problems.push("a wheel needs 2 or more parts, one line each: <name>: <item> | <item>");
     if (parts.length > 12) problems.push("keep it to 12 parts or fewer");
     parts.forEach(function (p) { if (p.items.length > 8) problems.push("part " + p.name + " has " + p.items.length + " items: keep it to 8 or fewer"); });
@@ -32757,6 +32917,44 @@ Lantern.RFB = (function () {
   function has(arr, v) { return arr.some(function (x) { return Math.abs(x - v) < 0.006; }); }
   var WARM = /^#(f97316|dc2626|facc15|ec4899|7c3aed|d4a017|ea580c|fb923c|ef4444)$/i;
   var RED = /^#(dc2626|b91c1c|ef4444|f00|ff0000|e11d48)$/i, YELLOW = /^#(facc15|ffff00|ff0|eab308|fde047|d4a017)$/i, BLUE = /^#(2563eb|1e3a8a|7dd3fc|06b6d4|00f|0000ff|3b82f6|0d9488)$/i;
+  // --- a landscape, read from its shapes (1.24.7) ------------------------------
+  // The scene questions are graded on what any right picture has, whatever
+  // it is made of: the ground is the wide rect that reaches the bottom edge
+  // and its top is the horizon; a mountain (a tri on a flat base) stands on
+  // the horizon or lower; the sun is not drawn over the land; a road going
+  // away narrows towards the horizon.
+  function wideRect(s) { return s.kind === "rect" && s.nums[2] >= 16 && !!s.fill; }
+  function horizon(p) {
+    var ys = p.shapes.filter(function (s) { return wideRect(s) && s.nums[1] >= 1.5 && s.nums[1] + s.nums[3] >= 11; }).map(function (s) { return s.nums[1]; }), h = ys.length ? Math.min.apply(null, ys) : null;
+    if (h !== null) p.shapes.forEach(function (s) { if (wideRect(s) && s.nums[1] >= 1.5 && s.nums[1] < h && s.nums[1] + s.nums[3] >= h - 0.3) h = s.nums[1]; });
+    return h;
+  }
+  // flat(s) -> a tri on a flat base, its point up: {base (y), top (y), x0, x1, apex (x)} or null
+  function flat(s) {
+    if (!/^(tri|triangle)$/.test(s.kind)) return null;
+    var n = s.nums, v = [[n[0], n[1]], [n[2], n[3]], [n[4], n[5]]].sort(function (a, b) { return b[1] - a[1]; });
+    if (Math.abs(v[0][1] - v[1][1]) > 0.3 || v[2][1] >= v[1][1] - 0.5) return null;
+    return { base: Math.max(v[0][1], v[1][1]), top: v[2][1], x0: Math.min(v[0][0], v[1][0]), x1: Math.max(v[0][0], v[1][0]), apex: v[2][0] };
+  }
+  // floating(p, H) -> a wide tri whose base is in the sky with no wall under it (a roof has one), or null
+  function floating(p, H) {
+    return p.shapes.filter(function (s) {
+      var t = flat(s);
+      if (!t || !s.fill || t.x1 - t.x0 < 4 || t.base >= H - 0.3) return false;
+      return !p.shapes.some(function (w) { return /^(rect|square)$/.test(w.kind) && w.nums[2] < 16 && w.nums[1] >= t.base - 0.6 && w.nums[1] <= t.base + 1.6 && w.nums[0] < t.x1 && w.nums[0] + w.nums[2] > t.x0; });
+    })[0] || null;
+  }
+  // sunOver(p) -> true when a yellow circle is drawn after a tri or a ground it lies over
+  function sunOver(p) {
+    return p.shapes.some(function (s, i) {
+      if (s.kind !== "circle" || !YELLOW.test(s.fill || "")) return false;
+      return p.shapes.slice(0, i).some(function (o) {
+        var t = flat(o), cx = s.nums[0], cy = s.nums[1], r = s.nums[2];
+        if (t && o.fill) return cy + 0.5 * r > t.top && cy - 0.5 * r < t.base && cx > t.x0 && cx < t.x1 && Math.abs(cx - t.apex) < (cy + 0.5 * r - t.top) / Math.max(0.1, t.base - t.top) * Math.max(t.apex - t.x0, t.x1 - t.apex);
+        return wideRect(o) && o.nums[1] >= 1.5 && cy + 0.5 * r > o.nums[1];
+      });
+    });
+  }
   [
     { id: "make-lamp-circuit", ideal: "MAKE SCHEMATIC: Lamp with switch\npart B1 battery \x2212 V\x22\npart S1 switch\npart L1 lamp\nwire B1 S1\nwire S1 L1\nwire L1 B1\nEND", quick: 1, kind: "SCHEMATIC", q: "Draw a circuit with a 12 V battery, a switch and a lamp in series.",
       check: function (p) {
@@ -32900,6 +33098,46 @@ Lantern.RFB = (function () {
           });
         });
         return house ? "" : "no house (a wall with a roof on it: a rect, and a tri whose base sits on its top)";
+      } },
+    // 1.24.7: Adam's two pictures with the 35B on 1.24.6 -- mountains with their bases in the sky, the sun drawn in
+    // front of them, no shore; a road as three upright lines.
+    { id: "make-shore-sunset", ideal: "MAKE DRAWING: Shore at sunset\nrect 0 0 20 12 fill orange\ncircle 15 6 2 fill yellow\ntri 0 7 5 3 10 7 fill gray\ntri 7 7 13 4 20 7 fill gray\nrect 0 7 20 5 fill blue\nrect 0 10 20 2 fill tan\nEND",
+      kind: "DRAWING", q: "Draw an ocean shore with mountains in the distance at sunset.",
+      check: function (p) {
+        if (p.shapes.length > 30) return "more than 30 shapes";
+        if (!p.shapes.some(function (s) { return /^(rect|square)$/.test(s.kind) && s.nums[2] >= 10 && WARM.test(s.fill || ""); })) return "no sunset sky (one wide orange, red, pink, purple or yellow rect)";
+        var H = horizon(p);
+        if (H === null) return "no sea or ground (one wide rect that reaches the bottom edge)";
+        if (!p.shapes.some(function (s) { return wideRect(s) && s.nums[1] >= 1.5 && BLUE.test(s.fill || ""); })) return "no blue sea";
+        if (!p.shapes.some(function (s) { var t = flat(s); return !!t && !!s.fill && t.x1 - t.x0 >= 3 && t.base >= H - 0.3 && t.top < H - 0.5; })) return "no mountain standing on the horizon (a tri whose base is on it)";
+        if (floating(p, H)) return "a mountain floats above the horizon";
+        if (sunOver(p)) return "the sun is drawn in front of the land";
+        // the shore: land in the lower part of the picture, in front of the water
+        var land = p.shapes.some(function (s) {
+          if (!/^(rect|square|tri|triangle|circle|oval|ellipse)$/.test(s.kind) || !s.fill || BLUE.test(s.fill)) return false;
+          var ys = s.kind === "circle" ? [s.nums[1] - s.nums[2], s.nums[1] + s.nums[2]] : /^tri/.test(s.kind) ? [Math.min(s.nums[1], s.nums[3], s.nums[5]), Math.max(s.nums[1], s.nums[3], s.nums[5])] : [s.nums[1], s.nums[1] + (s.kind === "square" ? s.nums[2] : s.nums[3])];
+          return (ys[0] + ys[1]) / 2 > H && ys[1] - ys[0] >= 1;
+        });
+        return land ? "" : "no shore (land below the horizon, in front of the water)";
+      } },
+    { id: "make-road-horizon", ideal: "MAKE DRAWING: Road to the horizon\nrect 0 0 20 12 fill sky\nrect 0 6 20 6 fill green\ntri 7 12 13 12 10 6 fill gray\nEND",
+      kind: "DRAWING", q: "Draw a road disappearing into the distance over a far horizon.",
+      check: function (p) {
+        if (p.shapes.length > 30) return "more than 30 shapes";
+        var H = horizon(p);
+        if (H === null) return "no ground (one wide rect that reaches the bottom edge)";
+        var low = H + 0.6 * (12 - H), high = H + 0.25 * (12 - H), ground = p.shapes.filter(function (s) { return wideRect(s) && s.nums[1] >= 1.5; }).pop();
+        // a road going away: a filled tri, wide near the bottom edge with its point near the horizon, or two lines that come together there
+        var road = p.shapes.some(function (s) { var t = flat(s); return !!t && !!s.fill && t.base >= low && t.top <= high && t.top >= H - 1 && t.x1 - t.x0 >= 1.5 && (!ground || s.fill !== ground.fill); });
+        if (!road) {
+          var ends = p.shapes.filter(function (s) { return /^(line|curve)$/.test(s.kind) && s.nums.length >= 4; }).map(function (s) {
+            var n = s.nums, a = [n[0], n[1]], b = [n[n.length - 2], n[n.length - 1]];
+            return a[1] >= b[1] ? { bot: a, top: b } : { bot: b, top: a };
+          }).filter(function (e) { return e.bot[1] >= low && e.top[1] <= high && e.top[1] >= H - 1; });
+          road = ends.some(function (a, i) { return ends.slice(i + 1).some(function (b) { var w = Math.abs(a.bot[0] - b.bot[0]); return w >= 2 && Math.abs(a.top[0] - b.top[0]) <= Math.max(1, 0.6 * w); }); });
+        }
+        if (!road) return "no road that narrows towards the horizon";
+        return floating(p, H) ? "a mountain floats above the horizon" : sunOver(p) ? "the sun is drawn in front of the land" : "";
       } },
     { id: "make-shopping", ideal: "MAKE SHEET: Shopping\nItem | Qty | Price | Cost\nBread | 2 | 1.50 | =B2*C2\nMilk | 1 | 0.99 | =B3*C3\nEggs | 12 | 0.25 | =B4*C4\nTotal | | | =SUM(D2:D4)\nEND", quick: 1, kind: "SHEET", q: "Make a table of my shopping: 2 loaves of bread at 1.50 each, 1 milk at 0.99, and 12 eggs at 0.25 each, with the cost of each line and a total.",
       check: function (p) {
@@ -45301,7 +45539,10 @@ Lantern.RFB = (function () {
   // with millis(), the interval taken from the question when it says one.
   function delayProblems(lang, text, q) {
     if (lang !== "arduino" || !q || !/\b(without|instead of|not us(e|ing)|never us(e|ing)|avoid(ing)?|no)\b[^.?!]{0,24}\bdelay\b/i.test(q)) return [];
-    var ls = String(text || "").split("\n"), i, m = null, at = 0;
+    // (1.24.7) not in a comment: the 4B's sketch on 1.24.6 began "/* Blink LED on pin 13 every 500ms without
+    // using delay(). */", timed itself with millis(), and was told "line 2 calls delay()". A block comment
+    // is blanked first, line for line, so the line numbers stay.
+    var ls = String(text || "").replace(/\x2F\*[\s\S]*?(\*\x2F|$)/g, function (cm) { return cm.replace(/[^\n]/g, " "); }).split("\n"), i, m = null, at = 0;
     for (i = 0; i < ls.length && !m; i++) { m = /\b(delay|delayMicroseconds)\s*\x28/.exec(ls[i].replace(/\x2F\x2F.*$/, "")); if (m) at = i + 1; }
     if (!m) return [];
     var ql = String(q).toLowerCase(), ms = 0, t;
@@ -46883,6 +47124,454 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: AI_MAKE_LAYOUT - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_SCENE - START
+// Depends: AI_ACTIONS (Lantern.aiActions: the drawing action), AI_DRAW,
+//          AI_MAKE_LAYOUT (family, for a fill written as #hex) -- all
+//          feature-detected. It comes after the other modules that wrap the
+//          drawing action's build (AI_DRAW_CHECK, AI_MAKE_LAYOUT), so that
+//          their checks see the picture as Lantern draws it.
+// Exports: Lantern.aiScene = {read(lines) -> {items, horizon, sky, ground},
+//          mend(lines, question) -> {lines, said, problems},
+//          landscape(question)}
+// ===========================================================================
+// A landscape drawn the way the eye sees one (1.24.7).
+//
+// Adam, with the 35B on 1.24.6: "an ocean shore with mountains in the
+// distance at sunset" came back with two gray mountains whose bases were
+// flat lines in the sky, three and two cells above the sea, and the sun
+// drawn last, in front of one of them; no shore. "A road disappearing into
+// the distance over a far horizon" came back as three parallel black lines
+// down the green ground, the same two mountains in the air, the sun in
+// front again. The model was shown each picture and said LOOKS RIGHT.
+//
+// A model writes numbers; it does not see where the ground is. Lantern can
+// work that out from the block (the ground is the wide rect that reaches
+// the bottom edge; its top is the horizon), so it does the part that can be
+// computed, and says what it changed:
+//  - a mountain or hill (a tri on a flat base) whose base is in the sky,
+//    with nothing under it, is stood on the horizon -- its sides carried
+//    down, its peak left where the model put it -- and drawn behind what
+//    already stood on the ground;
+//  - the sun or the moon drawn over land, sea or cloud is put behind them:
+//    it is the farthest thing in any picture;
+//  - a road (path, track, river) written as parallel lines or a strip from
+//    the horizon to the bottom edge is drawn as it looks going away: wide
+//    at the bottom edge, a point on the horizon, its lines along its edges.
+// What it cannot make from the block goes back once, with the line to add,
+// worked out for this picture:
+//  - the question asks for a road into the distance and nothing narrows
+//    towards the horizon;
+//  - the question asks for a shore and everything below the horizon is
+//    water.
+// A question about a landscape is given two more lines of guide and a
+// landscape as its example (the sun straight after the sky, mountains on
+// the horizon, a road that narrows): an example is the likeliest thing a
+// model will write.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var ACTS = window.Lantern.aiActions || [];
+  var GW = 20, GH = 12;
+  function num(v) { return String(Math.round(v * 100) / 100); }
+
+  // --- reading a line ---------------------------------------------------------
+  var KIND = /^(rect|square|circle|tri|triangle|line|curve|oval|ellipse)$/;
+  var NEED = { rect: 4, square: 3, circle: 3, tri: 6, oval: 4 };
+  // what a colour is likely to be in a landscape
+  var FAM = { red: "warm", orange: "warm", yellow: "warm", gold: "warm", pink: "warm", purple: "far", green: "green", "dark green": "green", lime: "green", teal: "green",
+    blue: "water", "dark blue": "water", navy: "water", cyan: "water", sky: "sky", "light blue": "sky", brown: "earth", tan: "earth", beige: "earth", sand: "earth",
+    black: "dark", gray: "gray", grey: "gray", "light gray": "gray", "light grey": "gray", silver: "gray", white: "white" };
+  var HEXFAM = { red: "warm", orange: "warm", yellow: "warm", pink: "warm", purple: "far", green: "green", blue: "water", brown: "earth", gray: "gray", white: "white", black: "dark" };
+  function famOf(name) {
+    name = String(name || "").toLowerCase();
+    if (FAM[name]) return FAM[name];
+    if (!/^#/.test(name)) return "";
+    if (/^#7dd3fc$/.test(name)) return "sky";
+    var f = L.aiMakeLayout && L.aiMakeLayout.family ? L.aiMakeLayout.family(name) : "";
+    return HEXFAM[f] || "";
+  }
+  // read1(line) -> {kind, nums, rest, fill, fam} for a shape Lantern places, or null (words, or a line AI_DRAW will question)
+  function read1(line) {
+    var s = String(line || "");
+    if (/[\x22\u201c\u201d]/.test(s)) return null;
+    var toks = s.replace(/(\d)\s*[x\u00d7]\s*(\d)/gi, "$1 $2").replace(/,/g, " ").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "").split(" ");
+    var kind = (toks[0] || "").toLowerCase(), nums = [], i = 1, k;
+    if (!KIND.test(kind)) return null;
+    kind = kind === "triangle" ? "tri" : kind === "ellipse" ? "oval" : kind;
+    while (i < toks.length && /^-?\d+(\.\d+)?$/.test(toks[i])) nums.push(parseFloat(toks[i++]));
+    if (NEED[kind] ? nums.length !== NEED[kind] : (nums.length < 4 || nums.length % 2)) return null;
+    var rest = toks.slice(i), fill = "";
+    for (k = 0; k < rest.length && !fill; k++) {
+      var w = rest[k].toLowerCase(), two = w + " " + String(rest[k + 1] || "").toLowerCase();
+      if (/^(color|colour|outline|stroke)$/.test(w)) { k += FAM[String(rest[k + 1] || "").toLowerCase() + " " + String(rest[k + 2] || "").toLowerCase()] ? 2 : 1; continue; }   // an outline is not a fill
+      if (FAM[two]) fill = two; else if (FAM[w] || /^#[0-9a-f]{3,6}$/.test(w)) fill = w;
+    }
+    return { kind: kind, nums: nums, rest: rest.join(" "), fill: fill, fam: famOf(fill) };
+  }
+  function write(o) { return o.kind + " " + o.nums.map(num).join(" ") + (o.rest ? " " + o.rest : ""); }
+  function box(o) {
+    var n = o.nums, xs = [], ys = [], i;
+    if (o.kind === "rect" || o.kind === "oval") return [n[0], n[1], n[0] + n[2], n[1] + n[3]];
+    if (o.kind === "square") return [n[0], n[1], n[0] + n[2], n[1] + n[2]];
+    if (o.kind === "circle") return [n[0] - n[2], n[1] - n[2], n[0] + n[2], n[1] + n[2]];
+    for (i = 0; i + 1 < n.length; i += 2) { xs.push(n[i]); ys.push(n[i + 1]); }
+    return [Math.min.apply(null, xs), Math.min.apply(null, ys), Math.max.apply(null, xs), Math.max.apply(null, ys)];
+  }
+  function solid(o) { return !!o && !!o.fill && /^(rect|square|circle|oval|tri)$/.test(o.kind); }
+  function inside(o, x, y) {
+    var n = o.nums, b;
+    if (o.kind === "rect" || o.kind === "square") { b = box(o); return x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]; }
+    if (o.kind === "circle") return (x - n[0]) * (x - n[0]) + (y - n[1]) * (y - n[1]) <= n[2] * n[2];
+    if (o.kind === "oval") { var rx = n[2] / 2, ry = n[3] / 2; return rx > 0 && ry > 0 && Math.pow((x - n[0] - rx) / rx, 2) + Math.pow((y - n[1] - ry) / ry, 2) <= 1; }
+    if (o.kind === "tri") {
+      var d1 = (x - n[2]) * (n[1] - n[3]) - (n[0] - n[2]) * (y - n[3]), d2 = (x - n[4]) * (n[3] - n[5]) - (n[2] - n[4]) * (y - n[5]),
+        d3 = (x - n[0]) * (n[5] - n[1]) - (n[4] - n[0]) * (y - n[1]);
+      return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+    }
+    return false;
+  }
+  function wide(o) { return !!o && o.kind === "rect" && !!o.fill && o.nums[2] >= 16; }
+  function isSky(o) { return wide(o) && o.nums[1] <= 0.5 && o.nums[3] >= 3; }
+  // seen(items, i) -> the share of shape i (0 to 1) that nothing drawn after it covers
+  function seen(items, i) {
+    var o = items[i].o, b = box(o), all = 0, clear = 0, x, y, j;
+    for (x = Math.max(0, b[0]) + 0.125; x < Math.min(GW, b[2]); x += 0.25) for (y = Math.max(0, b[1]) + 0.125; y < Math.min(GH, b[3]); y += 0.25) {
+      if (!inside(o, x, y)) continue;
+      all++;
+      for (j = i + 1; j < items.length; j++) if (solid(items[j].o) && inside(items[j].o, x, y)) break;
+      if (j === items.length) clear++;
+    }
+    return all ? clear / all : 0;
+  }
+
+  // --- the scene: sky, ground, horizon ---------------------------------------
+  // The ground is the wide rect that reaches the bottom edge (and any wide
+  // rect that lies on it: the sea behind a strip of sand); the horizon is
+  // its top. A picture with no such rect has no horizon, and Lantern moves
+  // nothing in it but a sun drawn over the land.
+  function scene(items) {
+    var sky = -1, bands = [], ground = [], H = null, i, grew = true;
+    for (i = 0; i < items.length; i++) {
+      var o = items[i].o;
+      if (!wide(o)) continue;
+      if (isSky(o)) sky = i; else if (o.nums[1] >= 1.5) bands.push(i);
+    }
+    while (grew) {
+      grew = false;
+      bands.forEach(function (bi) {
+        if (ground.indexOf(bi) >= 0) return;
+        var y1 = items[bi].o.nums[1] + items[bi].o.nums[3];
+        if (y1 >= GH - 1 || (H !== null && y1 >= H - 0.3)) { ground.push(bi); H = H === null ? items[bi].o.nums[1] : Math.min(H, items[bi].o.nums[1]); grew = true; }
+      });
+    }
+    ground.sort(function (a, b) { return a - b; });
+    return { sky: sky, ground: ground, H: H };
+  }
+  function read(lines) {
+    var items = (lines || []).map(function (l) { return { line: l, o: read1(l) }; }), sc = scene(items);
+    return { items: items, horizon: sc.H, sky: sc.sky, ground: sc.ground };
+  }
+
+  // --- a mountain stands on the horizon --------------------------------------
+  var MOUNT = /\b(mountains?|mountainous|hills?|hillside|peaks?|volcano(?:es)?|alps|ranges?|ridges?|dunes?|cliffs?|valley|highlands?)\b/i;
+  // things a tri in the sky may be, when the question names one
+  var THING = /\b(house|cottage|cabin|hut|barn|church|castle|tower|temple|roof|tent|tipi|teepee|boat|boats|ship|ships|sail\w*|yacht|kites?|flags?|arrows?|rocket|plane|aeroplane|airplane|jet|birds?|pyramids?|trees?|pines?|firs?|hat|stars?|sign)\b/i;
+  // stands(o) -> a tri on a flat base, its point up: {a, l, r (each [x, y, index of the corner]), B, w}
+  function stands(o) {
+    if (!o || o.kind !== "tri") return null;
+    var n = o.nums, v = [[n[0], n[1], 0], [n[2], n[3], 1], [n[4], n[5], 2]].sort(function (p, q) { return q[1] - p[1]; });
+    if (Math.abs(v[0][1] - v[1][1]) > 0.3 || v[2][1] >= Math.min(v[0][1], v[1][1]) - 0.5) return null;
+    var l = v[0][0] <= v[1][0] ? v[0] : v[1], r = l === v[0] ? v[1] : v[0];
+    return { a: v[2], l: l, r: r, B: Math.max(v[0][1], v[1][1]), w: r[0] - l[0] };
+  }
+  function floats(items, i, H, q) {
+    var o = items[i].o, t = stands(o);
+    if (!t || !o.fill || t.w < 4 || t.B >= H - 0.2) return null;
+    var named = MOUNT.test(q), thing = THING.test(q);
+    if (/^(warm|sky)$/.test(o.fam) ? !(named && !thing) : !(named || !thing)) return null;
+    // a roof on its wall, a crown on its trunk: a rect right under the base holds it up
+    if (items.some(function (jt) {
+      var p = jt.o;
+      if (!p || p === o || !solid(p) || wide(p) || !/^(rect|square)$/.test(p.kind)) return false;
+      var b = box(p);
+      return b[1] >= t.B - 0.6 && b[1] <= t.B + 1.6 && b[0] < t.r[0] && b[2] > t.l[0];
+    })) return null;
+    // resting on something under the middle of its base and to both sides of it: the top of a pine on the
+    // tier below (whose point is narrower than the base above it), a snow cap on its mountain. A base that
+    // sticks out over the sky to one side is not resting.
+    if ([0.3, 0.5, 0.7].every(function (f) {
+      return items.some(function (jt) { var p = jt.o; return !!p && p !== o && solid(p) && !isSky(p) && inside(p, t.l[0] + f * t.w, t.B + 0.3); });
+    })) return null;
+    return t;
+  }
+
+  // --- the sun is behind everything --------------------------------------------
+  var SUNQ = /\b(sun|sunset|sunrise|sundown|sunny|dawn|dusk|moon|moonlit|moonlight|night)\b/i;
+  var MOONQ = /\b(moon|moonlit|moonlight|night)\b/i, LOWSUN = /\b(sunset|sunrise|sundown|dusk|dawn)\b/i;
+  var ROUND = /\b(balls?|balloons?|lamps?|lanterns?|lights?|flowers?|face|smiley|head|coins?|eggs?|fruit|oranges?|lemons?|apples?|wheels?|button|clock|planets?|bubbles?)\b/i;
+  function isSun(o, H, q) {
+    if (!o || o.kind !== "circle" || !o.fill || o.nums[2] < 0.6 || o.nums[2] > 4) return false;
+    if (!(/^(yellow|orange|gold)$/.test(o.fill) || (MOONQ.test(q) && /^(white|silver|light gray|light grey|beige)$/.test(o.fill)) || (LOWSUN.test(q) && o.fill === "red"))) return false;
+    if (H !== null ? o.nums[1] > H + 0.5 * o.nums[2] : o.nums[1] > GH / 2) return false;   // in the sky, or setting on the horizon
+    return SUNQ.test(q) || !ROUND.test(q);
+  }
+  function touches(sun, p) {
+    var n = sun.nums, k, a;
+    if (inside(p, n[0], n[1])) return true;
+    for (k = 0; k < 16; k++) {
+      a = k / 8 * Math.PI;
+      if (inside(p, n[0] + (k % 2 ? 0.55 : 0.92) * n[2] * Math.cos(a), n[1] + (k % 2 ? 0.55 : 0.92) * n[2] * Math.sin(a))) return true;
+    }
+    return false;
+  }
+  function landName(o, many) {
+    if (wide(o)) return o.fam === "water" || o.fam === "sky" ? "the water" : "the ground";
+    if (o.kind === "tri") return /^(green|earth)$/.test(o.fam) ? (many ? "the hills" : "the hill") : (many ? "the mountains" : "the mountain");
+    return /^(white|gray)$/.test(o.fam) && /^(circle|oval)$/.test(o.kind) ? "the clouds" : "what is nearer";
+  }
+
+  // --- a road going away narrows ----------------------------------------------
+  var ROADQ = /\b(roads?|paths?|pathway|footpath|tracks?|trail|lane|street|highway|motorway|railway|railroad|rails|driveway|avenue|river|stream|canal|creek)\b/i;
+  var WATERWAY = /\b(river|stream|canal|creek)\b/i, DRYWAY = /\b(roads?|paths?|pathway|footpath|tracks?|trail|lane|street|highway|motorway|railway|railroad|rails|driveway|avenue)\b/i;
+  var AWAY = /\b(distance|distant|horizon|dis+ap+ear\w*|vanish\w*|perspective|far|ahead|away|leading|leads|receding|recedes|stretching|stretches)\b/i;
+  function wayName(q) { var m = ROADQ.exec(String(q || "")); return m ? m[0].toLowerCase().replace(/s$/, "") : "road"; }
+  function groundFam(items, sc) { return sc.ground.length ? items[sc.ground[sc.ground.length - 1]].o.fam : ""; }
+  // narrows(items, sc) -> "tri" | {a, b} (two straight lines that meet near the horizon) | null
+  function narrows(items, sc) {
+    var H = sc.H, low = H + 0.6 * (GH - H), high = H + 0.25 * (GH - H), gf = groundFam(items, sc), ends = [], i, j;
+    if (items.some(function (it) { var t = stands(it.o); return !!t && !!it.o.fill && t.B >= low && t.a[1] <= high && t.a[1] >= H - 1 && t.w >= 1.5 && it.o.fam !== gf; })) return "tri";
+    items.forEach(function (it, k) {
+      var o = it.o;
+      if (!o || !/^(line|curve)$/.test(o.kind)) return;
+      var n = o.nums, a = [n[0], n[1]], b = [n[n.length - 2], n[n.length - 1]];
+      if (a[1] < b[1]) { var s = a; a = b; b = s; }
+      if (a[1] >= low && b[1] <= high && b[1] >= H - 1) ends.push({ bot: a, top: b, i: k, straight: o.kind === "line" && n.length === 4 });
+    });
+    for (i = 0; i < ends.length; i++) for (j = i + 1; j < ends.length; j++) {
+      var wide0 = Math.abs(ends[i].bot[0] - ends[j].bot[0]), near0 = Math.abs(ends[i].top[0] - ends[j].top[0]);
+      if (wide0 >= 2 && near0 <= Math.max(1, 0.6 * wide0)) return { a: ends[i], b: ends[j] };
+    }
+    return null;
+  }
+  // strip(items, sc) -> the road as the model wrote it without perspective: upright lines side by side, or one
+  // narrow rect, from the horizon to the bottom edge: {idx, x0, x1, lines | rect}
+  function strip(items, sc) {
+    var H = sc.H, idx = [], xs = [], i;
+    items.forEach(function (it, k) {
+      var o = it.o;
+      if (!o || o.kind !== "line" || o.nums.length !== 4 || Math.abs(o.nums[0] - o.nums[2]) > 0.6) return;
+      var top = Math.min(o.nums[1], o.nums[3]), bot = Math.max(o.nums[1], o.nums[3]);
+      if (top <= H + 1.5 && top >= H - 1 && bot >= GH - 1.5) { idx.push(k); xs.push((o.nums[0] + o.nums[2]) / 2); }
+    });
+    if (idx.length >= 1 && idx.length <= 6 && Math.max.apply(null, xs) - Math.min.apply(null, xs) <= 6) return { idx: idx, x0: Math.min.apply(null, xs), x1: Math.max.apply(null, xs), lines: true };
+    for (i = 0; i < items.length; i++) {
+      var o = items[i].o;
+      if (!o || o.kind !== "rect" || !o.fill || wide(o) || o.nums[2] < 0.5 || o.nums[2] > 6) continue;
+      if (o.nums[1] <= H + 1.5 && o.nums[1] >= H - 0.5 && o.nums[1] + o.nums[3] >= GH - 1.5) return { idx: [i], x0: o.nums[0], x1: o.nums[0] + o.nums[2], rect: true };
+    }
+    return null;
+  }
+
+  // --- a shore has land in front of the water ---------------------------------
+  var SHORE = /\b(shore|shoreline|beach|coast|coastline|seaside|seashore|lakeside|lakeshore|riverbank|bay|cove)\b/i;
+
+  // mend(lines, question) -> {lines, said, problems}
+  function mend(lines, q) {
+    q = String(q || "");
+    var items = (lines || []).map(function (l) { return { line: l, o: read1(l) }; }), said = [], problems = [], i, count = {};
+    if (items.length > 40) return { lines: lines, said: said, problems: problems };
+    // 0. a background written again further down would cover everything drawn in between (the 2B's house on
+    // 1.24.4 and on 1.24.6: the sky, the grass, the wall, the roof, then the grass and the sky again)
+    var again = items.filter(function (it, k) { return wide(it.o) && items.slice(0, k).some(function (jt) { return wide(jt.o) && write(jt.o) === write(it.o); }); });
+    if (again.length) {
+      items = items.filter(function (it) { return again.indexOf(it) < 0; });
+      said.push("left out " + (again.length === 1 ? "a background line that was" : again.length + " background lines that were") + " written a second time (\u201c" + again[0].line + "\u201d): drawn again, it would cover what came before it");
+    }
+    // (a block that still says one line three times over is a model going round in a circle: AI_DRAW's to
+    // question, not a scene to arrange)
+    items.forEach(function (it) { var k = String(it.line).replace(/\s+/g, " "); count[k] = (count[k] || 0) + 1; });
+    if (Object.keys(count).some(function (k) { return count[k] >= 3; })) return { lines: items.map(function (it) { return it.line; }), said: said, problems: problems };
+    var sc = scene(items), H = sc.H;
+    if (sc.sky < 0 && H === null) return { lines: items.map(function (it) { return it.line; }), said: said, problems: problems };
+    var before = items.slice();
+
+    // 1. mountains with their bases in the sky
+    var mts = [];
+    if (H !== null) for (i = 0; i < items.length; i++) {
+      var t = floats(items, i, H, q);
+      if (!t) continue;
+      var o = items[i].o, n2 = o.nums.slice();
+      if (H - t.a[1] <= 0.8 * t.w) { n2[t.l[2] * 2 + 1] = H; n2[t.r[2] * 2 + 1] = H; }   // the sides carried down: the peak stays
+      else { n2[1] += H - t.B; n2[3] += H - t.B; n2[5] += H - t.B; }                     // too thin for that: the whole of it set down
+      mts.push({ at: i, was: items[i], now: { line: "", o: { kind: o.kind, nums: n2, rest: o.rest, fill: o.fill, fam: o.fam } } });
+    }
+    mts.forEach(function (m) { m.now.line = write(m.now.o); items[m.at] = m.now; });
+
+    // 2. the sun or moon drawn over something nearer
+    var suns = [];
+    for (i = 0; i < items.length; i++) {
+      if (!isSun(items[i].o, H, q)) continue;
+      var over = [], j;
+      for (j = 0; j < i; j++) { var p = items[j].o; if (solid(p) && !isSky(p) && !isSun(p, H, q) && touches(items[i].o, p)) over.push(p); }
+      if (over.length) suns.push({ at: i, it: items[i], over: over });
+    }
+
+    // the new order: the sky, the sun, the mountains Lantern stood on the horizon, then the rest as written
+    function order(moveSuns, moveMts) {
+      var out = [], sunSet = moveSuns.map(function (s) { return s.it; }), mtSet = moveMts.map(function (m) { return m.now; });
+      var behind = sunSet.concat(mtSet), rest = items.filter(function (it) { return behind.indexOf(it) < 0; }), skyAt = -1, k;
+      for (k = 0; k < rest.length; k++) if (isSky(rest[k].o)) skyAt = k;
+      return rest.slice(0, skyAt + 1).concat(behind, rest.slice(skyAt + 1));
+    }
+    var next = order(suns, mts);
+    // (a thing Lantern would hide by moving it is left where the model put it)
+    mts = mts.filter(function (m) { if (seen(next, next.indexOf(m.now)) >= 0.05) return true; items[m.at] = m.was; return false; });
+    next = order(suns, mts);
+    suns = suns.filter(function (s) { return seen(next, next.indexOf(s.it)) >= 0.05; });
+    next = order(suns, mts);
+    if (mts.length) {
+      var hills = /\bhills?\b/i.test(q) && !/\bmountains?\b/i.test(q), word = hills ? "hill" : "mountain", fills = {}, fl = [];
+      mts.forEach(function (m) { if (m.now.o.fill && !fills[m.now.o.fill]) { fills[m.now.o.fill] = 1; fl.push(m.now.o.fill); } });
+      said.push("stood " + (mts.length === 1 ? "the " : "the " + mts.length + " ") + (fl.length === 1 ? fl[0] + " " : "") + word + (mts.length === 1 ? "" : "s") + " on the horizon (y " + num(H) + "), behind what was already on the ground: " +
+        (mts.length === 1 ? "its base was" : "their bases were") + " in the sky");
+    }
+    suns.forEach(function (s) {
+      var names = [], tris = s.over.filter(function (p) { return p.kind === "tri"; }).length;
+      s.over.forEach(function (p) { var nm = landName(p, tris > 1); if (names.indexOf(nm) < 0) names.push(nm); });
+      if (names.length > 1) names = names.filter(function (nm) { return nm !== "what is nearer"; });
+      var what = MOONQ.test(q) && !/^(yellow|orange|gold|red)$/.test(s.it.o.fill) ? "moon" : "sun";
+      said.push("put the " + what + " behind " + names.join(" and ") + ": it was drawn in front");
+    });
+    items = next;
+
+    // 3. a road going away
+    if (H !== null && ROADQ.test(q)) {
+      var nar = narrows(items, sc), st = nar ? null : strip(items, sc), way = wayName(q), wet = WATERWAY.test(q) && !DRYWAY.test(q), gf = groundFam(items, sc);
+      if (st && (st.rect || st.idx.length >= 2 || AWAY.test(q))) {
+        // The strip is x0 to x1 all the way down. Going away it is wb wide at
+        // the bottom edge and nothing at the horizon: a point at (x, y) in it
+        // goes to xc + (x - xc) * k * (y - H) / (GH - H). The lines of the
+        // strip, and any line drawn across it (a sleeper, a dash of the
+        // centre line), are carried through that.
+        var first = items[st.idx[0]].o, xc = (st.x0 + st.x1) / 2, sw = st.x1 - st.x0, wb = Math.max(6, Math.min(10, 3 * sw));
+        if (xc - wb / 2 < 0) xc = wb / 2;
+        if (xc + wb / 2 > GW) xc = GW - wb / 2;
+        var k = sw > 0 ? wb / sw : 0, mid = (st.x0 + st.x1) / 2;
+        var px = function (x, y) { return xc + (x - mid) * k * Math.max(0, y - H) / (GH - H); };
+        var colour = st.rect && first.fam !== gf ? first.fill : wet ? "blue" : "gray";
+        var made = ["tri " + num(xc - wb / 2) + " " + GH + " " + num(xc + wb / 2) + " " + GH + " " + num(xc) + " " + num(H) + " fill " + colour], across = [];
+        if (st.lines) {
+          st.idx.forEach(function (ki) {
+            var o = items[ki].o, n = o.nums, top = Math.min(n[1], n[3]);
+            made.push("line " + num(px((n[0] + n[2]) / 2, GH)) + " " + GH + " " + num(px((n[0] + n[2]) / 2, top)) + " " + num(Math.max(H, top)) + (o.rest ? " " + o.rest : ""));
+          });
+          items.forEach(function (it, ki) {
+            var o = it.o;
+            if (!o || o.kind !== "line" || o.nums.length !== 4 || st.idx.indexOf(ki) >= 0) return;
+            var n = o.nums;
+            if (Math.min(n[0], n[2]) < st.x0 - 0.1 || Math.max(n[0], n[2]) > st.x1 + 0.1 || Math.min(n[1], n[3]) < H || Math.max(n[1], n[3]) > GH) return;
+            across.push(it);
+            made.push("line " + num(px(n[0], n[1])) + " " + num(n[1]) + " " + num(px(n[2], n[3])) + " " + num(n[3]) + (o.rest ? " " + o.rest : ""));
+          });
+        }
+        var gone = st.idx.map(function (ki) { return items[ki]; }).concat(across), at = st.idx[0], lastGround = -1;
+        items.forEach(function (it, ki) { if (wide(it.o) && !isSky(it.o) && it.o.nums[1] >= 1.5) lastGround = ki; });
+        var anchor = lastGround > at ? items[lastGround] : null, out = [];
+        items.forEach(function (it, ki) {
+          if (ki === at && !anchor) made.forEach(function (l) { out.push({ line: l, o: read1(l) }); });
+          if (gone.indexOf(it) < 0) out.push(it);
+          if (anchor && it === anchor) made.forEach(function (l) { out.push({ line: l, o: read1(l) }); });
+        });
+        items = out;
+        said.push("drew the " + way + " as it looks going away: wide at the bottom edge, a point on the horizon (" +
+          (st.rect ? "it was a strip of one width" : st.idx.length === 1 ? "it was one upright line" : "its " + st.idx.length + " lines were side by side, the same distance apart all the way") + "; what is far looks smaller)");
+      } else if (nar && nar !== "tri" && nar.a.straight && nar.b.straight) {
+        // two edges that meet, and nothing between them but the ground: the road gets a colour of its own
+        var mx = (nar.a.bot[0] + nar.b.bot[0] + nar.a.top[0] + nar.b.top[0]) / 4, my = (nar.a.bot[1] + nar.a.top[1]) / 2;
+        if (!items.some(function (it) { return solid(it.o) && !wide(it.o) && inside(it.o, mx, my); })) {
+          var col = wet ? "blue" : "gray", A = nar.a, B = nar.b, apart = Math.abs(A.top[0] - B.top[0]) > 0.3;
+          var fills = apart ? ["tri " + [A.bot[0], A.bot[1], B.bot[0], B.bot[1], A.top[0], A.top[1]].map(num).join(" ") + " fill " + col, "tri " + [B.bot[0], B.bot[1], B.top[0], B.top[1], A.top[0], A.top[1]].map(num).join(" ") + " fill " + col] :
+            ["tri " + [A.bot[0], A.bot[1], B.bot[0], B.bot[1], (A.top[0] + B.top[0]) / 2, Math.min(A.top[1], B.top[1])].map(num).join(" ") + " fill " + col];
+          var firstAt = Math.min(A.i, B.i);
+          fills.forEach(function (fl, fi) { items.splice(firstAt + fi, 0, { line: fl, o: read1(fl) }); });
+          said.push("filled the " + way + " between its two edges (" + (wet ? "blue" : "gray") + "): it was the colour of the ground");
+        }
+      } else if (!nar && AWAY.test(q)) {
+        problems.push("the question asks for a " + way + " going into the distance, but nothing in the picture narrows towards the horizon: add tri 7 " + GH + " 13 " + GH + " 10 " + num(H) + " fill " + (wet ? "blue" : "gray") +
+          " after the ground (a " + way + " going away is wide at the bottom edge and comes to a point on the horizon, y " + num(H) + ")");
+      }
+    }
+
+    // 4. a shore
+    if (H !== null && SHORE.test(q)) {
+      var water = sc.ground.some(function (gi) { return /^(water|sky)$/.test(before[gi].o.fam); });
+      var land = items.some(function (it) {
+        var p = it.o;
+        if (!solid(p) || isSky(p) || /^(water|sky)$/.test(p.fam) || isSun(p, H, q)) return false;
+        var b = box(p);
+        return (b[1] + b[3]) / 2 > H && (b[2] - b[0]) * (b[3] - b[1]) >= 4;
+      });
+      if (water && !land) {
+        var y = Math.round((H + 0.62 * (GH - H)) * 2) / 2;
+        problems.push("the question asks for a shore, but below the horizon (y " + num(H) + ") the picture is all water: add rect 0 " + num(y) + " " + GW + " " + num(GH - y) + " fill sand after the water (the beach, at the front of the picture)");
+      }
+    }
+    return { lines: items.map(function (it) { return it.line; }), said: said, problems: problems };
+  }
+
+  // --- the guide for a landscape ------------------------------------------------
+  // (not "field" or "plain": a magnetic field and a plain red square are not landscapes)
+  var LANDQ = /\b(landscape|scenery|countryside|horizon|mountains?|hills?|valley|shore|shoreline|beach|coast|roads?|path|track|river|lake|desert|meadow|prairie|island|forest|woods)\b/i;
+  var HOUSEQ = /\b(house|cottage|cabin|hut|barn|farmhouse)\b/i;
+  function landscape(q) { return LANDQ.test(String(q || "")) && !HOUSEQ.test(String(q || "")); }
+  var GUIDE = [
+    "A landscape: the ground is ONE wide rect that reaches the bottom edge; its top is the horizon. Mountains and hills are tris whose",
+    "base is ON the horizon. The sun or moon comes straight after the sky: it is behind everything. A road or river going away is a tri:",
+    "wide at the bottom edge, its point on the horizon. What is nearer is lower in the picture, and bigger."];
+  var EXAMPLE = [
+    "For example:",
+    "MAKE DRAWING: Road to the mountains",
+    "rect 0 0 " + GW + " " + GH + " fill sky",
+    "circle 16 3 1.5 fill yellow",
+    "tri 1 7 6 3 11 7 fill gray",
+    "tri 8 7 14 4 " + GW + " 7 fill gray",
+    "rect 0 7 " + GW + " 5 fill green",
+    "tri 7 " + GH + " 13 " + GH + " 10 7 fill tan",
+    "rect 15 8 1 2 fill brown",
+    "circle 15.5 7.5 1.2 fill dark green",
+    "END"];
+
+  var act = ACTS.filter(function (a) { return a.id === "drawing"; })[0];
+  if (act && !act.sceneMended) {
+    var build0 = act.build;
+    act.build = function (block, ctx) {
+      var m = null, b2 = {}, k, ra = null;
+      try { ra = L.aiAct && L.aiAct.runaway ? L.aiAct.runaway(block, null) : null; } catch (e0) { ra = null; }
+      try { m = ra ? null : mend(block.lines, ctx && ctx.question); } catch (e) { m = null; }
+      if (!m || (!m.said.length && !m.problems.length)) return build0.call(act, block, ctx);
+      for (k in block) b2[k] = block[k];
+      b2.lines = m.lines;
+      var r = build0.call(act, b2, ctx);
+      if (r && r.problems) m.problems.forEach(function (p) { r.problems.push(p); });
+      if (r && r.plan && m.said.length) { r.plan.said = (r.plan.said || []).concat(m.said); r.summary = (r.summary || "") + ". Lantern " + m.said.join("; "); }
+      return r;
+    };
+    var pf0 = act.promptFor;
+    act.promptFor = function (q) {
+      var base = typeof pf0 === "function" ? pf0.call(act, q) : act.prompt;
+      if (!landscape(q)) return base;
+      var end = base.indexOf("END"), eg = base.indexOf("For example:");
+      if (end < 0 || eg < end) return base;
+      return base.slice(0, end).concat(GUIDE, ["END"], EXAMPLE);
+    };
+    act.sceneMended = true;
+  }
+  window.Lantern.aiScene = { read: read, mend: mend, landscape: landscape };
+})();
+// ===========================================================================
+// MODULE: AI_SCENE - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: AI_PROPORTION_CHECK - START
