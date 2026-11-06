@@ -266,6 +266,38 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   var gr = L.libraryGround("Yes, I have the page Text Reader read: it is part of a grinder manual [1]. The page covers the feed keys [1].", [{ n: 1, text: "Press the key of 10-2 once." }], "Can you see the text?");
   ok("a sentence about the document as a whole is not a false citation", !gr.wrong.length && !gr.problems.length, gr);
   TR.attached = null;
+  // --- 1.24.1: the 35B's bench run on 1.24.0 (fixtures/bench_run_1240_35b.json). With the compressor manual open,
+  // "What does fault code E-11 mean?" was taken for something to make (its word "code" is one of MAKE CODE's): the
+  // AI was told to reply with a MAKE block, asked for a lesson on "Fault codes" instead, and answered from memory
+  // without the 110 degrees C of page 3. A question is answered from the pages; a request is still made. ---
+  var R24 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "bench_run_1240_35b.json"), "utf8"));
+  var fcRow = R24.rows.filter(function (r) { return r.id === "doc-fault-code"; })[0], fcQ = Q.filter(function (q) { return q.id === "doc-fault-code"; })[0];
+  var manual = function () { return { id: "bench", title: fcQ.doc.title, per: 10, pages: fcQ.doc.pages.map(function (t, k) { return { n: k + 1, text: t, conf: 1, done: true, own: true }; }) }; };
+  var prov = L.chatContext.filter(function (c) { return c.id === "textReader"; })[0];
+  var modeOf = async function (q) { TR.attached = manual(); var r = await prov.provide(q, [], {}); TR.attached = null; return !r ? "none" : /wants something made from this document/.test(r.prompt) ? "make" : "answer"; };
+  ok("the run's row: Lantern 1.24.0, the lesson asked for, the 110 missed", R24.lantern === "1.24.0" && fcRow && !fcRow.pass && /110/.test(fcRow.why) && fcRow.chat[0].commands[0] === "LESSON: Fault codes");
+  var asked = ["What does fault code E-11 mean?", "What should I check if code E-17 appears?", "What is the maintenance schedule?", "Is there a table of the fault codes?",
+    "How do I make the compressor start after an overload?", "What should I do every day?", "Which section is the presentation of the safety rules in?"], askedModes = [];
+  for (var ai = 0; ai < asked.length; ai++) askedModes.push(await modeOf(asked[ai]));
+  ok("with a document open, a question that shares a word with a MAKE tool is answered from its pages", askedModes.every(function (m) { return m !== "make"; }) && askedModes[0] === "answer" && askedModes[1] === "answer", askedModes);
+  var wanted = ["Make flashcards from this manual", "can you turn this into slides?", "Could you please make a maintenance plan from this?", "I need a table of the fault codes",
+    "Flashcards for section 3", "Would you write a maintenance schedule from it?", "Please make a toolbox talk from this manual"], wantedModes = [];
+  for (var wi = 0; wi < wanted.length; wi++) wantedModes.push(await modeOf(wanted[wi]));
+  ok("...and something asked for is still made from it", wantedModes.every(function (m) { return m === "make"; }), wantedModes);
+  ok("asksToMake: questions, requests, and the three from 1.12.2", !TR.asksToMake("What does fault code E-11 mean?") && !TR.asksToMake("Can I use ISO VG 68 oil?") && !TR.asksToMake("Can you tell me the maintenance schedule?") &&
+    TR.asksToMake("can you turn this into a PDF with corrections for what the words probably are since the ocr reader did not get them all perfectly") &&
+    TR.asksToMake("Lantern has a writing module can you rewrite the text in it with corrections for what you believe the words should be?") && TR.asksToMake("Write the following in the text writer in Lantern: 2.Pressing the key of l@2 once"));
+  // the conversation, with the manual open: page 3 is in front of the AI, with the answer's instructions; no MAKE CODE format in the system prompt
+  TR.attached = manual();
+  var fcSeen = [], fcSys = [];
+  var fcv = await L.CHAT.converse(["What does fault code E-11 mean?"], { call: function (m) {
+    var last = String(m[m.length - 1].content); fcSeen.push(last); fcSys.push(String(m[0].content));
+    return Promise.resolve(/wants something made from this document/.test(last) ? fcRow.chat[0].commands[0] :
+      "ANSWER: E-11 means the discharge temperature is above 110 degrees C: clean the cooling fins and check the room ventilation [1].\nQUOTE [1]: E-11: discharge temperature above 110 degrees C; clean the cooling fins and check the room ventilation.");
+  } });
+  ok("the fault code question: page 3 and the ANSWER instructions, one round, the 110 in the answer, and the bench's check passes", fcSeen.length === 1 && /E-11: discharge temperature above 110 degrees C/.test(fcSeen[0]) &&
+    /ANSWER:/.test(fcSeen[0]) && !/wants something made/.test(fcSeen[0]) && !/MAKE CODE:/.test(fcSys[0]) && fcQ.check(fcv.turns) === "", { n: fcSeen.length, why: fcQ.check(fcv.turns), tail: (fcSeen[0] || "").slice(-400) });
+  TR.attached = null;
 
   // --- 1.12.2: PDF straight from a document ---
   ok("Writer has a Save .pdf tool", (L.writerTools || []).some(function (t) { return t.label === "Save .pdf"; }));

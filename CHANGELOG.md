@@ -1,5 +1,79 @@
 # Changelog
 
+## 1.24.1 — A question with "code" in it is not a program to write (2026-11-05)
+
+The first full Lantern Bench run that nobody clicked through: a Claude chat
+linked to Adam's laptop through the Claude desktop app opened Lantern in the
+app's browser pane at the kit's own address, with the 35B already loaded,
+started the run and read the rows. Lantern 1.24.0, no library answering:
+**99 of 103** scored questions (96%) in 72 minutes. The four misses, as the
+35B wrote them, are `tests/fixtures/bench_run_1240_35b.json`.
+
+- **`doc-fault-code` was Lantern's doing.** With the compressor manual open,
+  "What does fault code E-11 mean?" was taken for something to make: the
+  word "code" is one of MAKE CODE's, and any MAKE tool that fitted the
+  question put Chat's document prompt into "the person wants something made
+  from this document ... reply with the MAKE block". The 35B asked for a
+  lesson on "Fault codes" instead, was sent Code Lab's and Turtle Code's
+  guides, and answered from memory without page 3's 110 degrees C. Every
+  version since 1.16.0 gave it that prompt; earlier runs passed because the
+  model answered from the passages anyway.
+  - **A question is answered from the pages** (TEXT_READER_CHAT). Something
+    is made from an open document when it is asked for -- "make flashcards
+    from this", "can you turn it into slides?", "I need a table of the fault
+    codes", "Flashcards for section 3". A question that only shares a word
+    with a MAKE tool ("What is the maintenance schedule?", "Is there a table
+    of the fault codes?", "How do I make the compressor start?") gets its
+    passages and the ANSWER / QUOTE instructions.
+  - **Code, program, script and ladder are everyday words too** (AI_CODE).
+    A kind of code that is not a program (fault, error, trouble, zip, area,
+    building, dress, bar, QR, colour, Morse ...), a code named by its number
+    (code E-17, code P0420), a code a machine shows, a wash or exercise
+    program, program 3, a film script, a ladder to climb: none of these
+    brings the MAKE CODE format into the prompt. A programming word left in
+    the question still does: "Write Arduino code that shows the fault code
+    on an LCD", "a ladder rung that seals in a motor".
+- **Ladder rungs after a label, several on a line, are code in the reply**
+  (CHAT_CODE_BLOCKS). On 1.24.1 the 35B answered the bench's start/stop
+  question with `Ladder: [XIC(Start),XIC(Stop),XIC(OL)]OTE(Motor);[XIC(Motor)]
+  XIC(Start)XIC(Stop)XIC(OL)OTE(Motor);` -- nothing in it was taken for code,
+  so the bench said "no MAKE block" and the rungs were never checked. Now
+  they are (the coil driven in two rungs) and go back once, as code in a
+  reply does. Prose with an instruction in it is still prose.
+- **The same request does not always get the same reply.** That request was
+  the one 1.24.0 sent, word for word (compared outside the browser), and on
+  the full run the 35B began `EXAMPLE:` instead. The model server keeps the
+  last prompts it worked through and reuses what it can, and llama.cpp says
+  its results are then not guaranteed to repeat exactly. So a run repeats
+  word for word when the whole run is the same (bench runs 9 and 10), and a
+  question that sits on the edge can go either way after any change to the
+  questions before it. One row moving is not yet a finding; the same row
+  twice is.
+- **Not changed: the three song questions**, kept in the fixture for the fix
+  to come. In each, the second try did not mend what Lantern pointed at.
+  - `make-music-waltz`: the last bar holds G over a D chord; sent back, the
+    35B wrote the same block again.
+  - `make-music-ode`: every melody line has 17 notes and no bar lines, so
+    the bars drift to 34; sent back, it wrote 40 chords instead.
+  - `make-music-orchestra`: 2 bars of tune under 8 of chords; the same block
+    again. (This question and the waltz had never met a real model.)
+- **Swapping Lantern under a loaded model.** The kit's server reads
+  `Lantern\site` from the disk at each request, so a new `index.html` and
+  `lantern-sw.js` there are the new version with the model still loaded
+  (tried: 1.24.0 to 1.23.1 and back, the model answering throughout). It
+  sends no cache rule with the page, so a browser may show the copy it has:
+  open the address with something new after it (`/?v=1.24.1`), or Ctrl+F5.
+- Seen on the run, not looked into: nothing answered on the library's port
+  (8081) though both Wikipedia files and kiwix-serve are on the stick, so
+  the 25 fact questions and the library conversations were left out.
+- Tests: `tests/code_lab.js` (99: 23 everyday questions that are not
+  programs, 16 that are, every program question of the bench; the 35B's
+  one-line ladder reply read, checked, sent back and passing on the
+  corrected block);
+  `tests/ai_make_docs.js` (78: the run's row; seven questions answered from
+  the pages and seven requests made; the conversation, with page 3 and the
+  answer's instructions in one round and the bench's own check passing).
+
 ## 1.24.0 — Save a song as a Generative Music Studio project (2026-11-04)
 
 Adam: "we should also add a button that exports the song as a generative

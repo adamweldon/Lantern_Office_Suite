@@ -269,6 +269,25 @@ function msgs(list, re) { return list.some(function (p) { return re.test(p.msg);
   ok("only a bare END ends a code block", fb.length === 1 && fb[0].raw.length === 5 && fb[0].closed, fb[0] && fb[0].raw);
   ok("the code action is only offered for code questions", L.aiAct.relevant("write a python script").some(function (a) { return a.id === "code"; }) &&
     !L.aiAct.relevant("what is the capital of France").some(function (a) { return a.id === "code"; }));
+  // --- 1.24.1: the 35B's bench run on 1.24.0 (fixtures/bench_run_1240_35b.json). "What does fault code E-11 mean?" was
+  // offered MAKE CODE for its word "code". Code, program, script and ladder are everyday words too.
+  var isCode = function (q) { return L.aiAct.relevant(q).some(function (a) { return a.id === "code"; }); };
+  var everyday = ["What does fault code E-11 mean?", "What should I check if code E-17 appears?", "What is the error code for low oil?",
+    "What is the zip code on this letter?", "What is the area code for Tulsa?", "Does the building code allow this span?", "What is the dress code?",
+    "What does the code on the display mean?", "The dryer shows code 5E, what now?", "How do I read the resistor color code?", "What does trouble code P0420 mean?",
+    "What does exit code 137 mean?", "Scan the QR code and tell me what it says", "What is Morse code for SOS?", "Is there a code of conduct?",
+    "What wash program should I use for wool?", "Which program number is for cotton, program 3 or program 4?", "What is a good exercise program for my back?",
+    "Write a script for a short play about a lighthouse", "Draft a sales script for the phone", "How do I set up an extension ladder safely?",
+    "What angle should a ladder lean at?", "How tall a step ladder do I need to reach the gutters?"];
+  ok("a fault code, a zip code, a wash program, a film script and a ladder to climb are not programs to write", !everyday.filter(isCode).length, everyday.filter(isCode));
+  var programs = ["write a python script", "Write Arduino code that shows the fault code on an LCD", "Give me code to blink an LED", "debug this code",
+    "Write a program that converts text to Morse code", "Write code to read a QR code", "Write code 3 different ways to sum a list", "Show me the code in 2 lines",
+    "Write a ladder rung that seals in a motor", "ladder logic for a start stop station", "Write the ladder for a conveyor with an extension", "A PLC program for a tank fill",
+    "Write a script that renames my files", "My Python script exits with error code 1, fix it", "Write a wash program for my Arduino washing machine controller",
+    "Write a program for the P1AM-100 that reads fault code 12 from the drive"];
+  ok("...and a program is still a program, with such a word in it or not", !programs.filter(function (q) { return !isCode(q); }).length, programs.filter(function (q) { return !isCode(q); }));
+  ok("...as is every program question of the bench", !(L.aiBenchQuestions || []).filter(function (q) { return /^code-/.test(q.id) && !isCode(q.q); }).length,
+    (L.aiBenchQuestions || []).filter(function (q) { return /^code-/.test(q.id) && !isCode(q.q); }).map(function (q) { return q.id; }));
 
   var lp = L.suite.passages("how do I install the Arduino IDE and the P1AM board?", "install arduino P1AM board", { detail: true, max: 3 });
   ok("LESSON: Code Lab's guide is one of Lantern's own lessons", lp.some(function (x) { return /Code Lab/.test(x.title) && /boardmanager|Boards Manager/.test(x.text); }), lp.map(function (x) { return x.title; }));
@@ -285,6 +304,23 @@ function msgs(list, re) { return list.some(function (p) { return re.test(p.msg);
   // (since 1.14.1 Lantern itself questions a missing seal-in before the grader sees it)
   ok("bench: ladder with no seal-in fails", /no seal-in|asks for a seal-in, but no contact examines the coil Motor/.test(gradeCode(bq2, "MAKE CODE: m\nlanguage ladder\nXIC(Start)XIC(Stop)OTE(Motor);\nEND").why));
   ok("bench: Python for an Arduino question is the wrong language", /written in python, not arduino/.test(gradeCode(bq1, "MAKE CODE: b\nlanguage python\nimport time\nprint(1)\nprint(2)\nEND").why));
+
+  // --- 1.24.1: the start/stop question again, the 35B on 1.24.1 -- the same request, word for word, as on 1.24.0,
+  // where its first reply began EXAMPLE:. This time: a label and two rungs on one line. Nothing in it was taken for
+  // code, so the bench said "no MAKE block" and the rungs (the coil driven twice) were never checked or sent back. ---
+  var lr = "Ladder: [XIC(Start),XIC(Stop),XIC(OL)]OTE(Motor);[XIC(Motor)]XIC(Start)XIC(Stop)XIC(OL)OTE(Motor);";
+  var lq = BQ.filter(function (q) { return q.id === "code-ladder-start-stop"; })[0], lb = L.chatCode.blocks(lr);
+  ok("rungs after a label, two on a line, are code in the reply", lb.length === 1 && lb[0].lang === "ladder" && lb[0].lines === 2 &&
+    lb[0].text === "[XIC(Start),XIC(Stop),XIC(OL)]OTE(Motor);\n[XIC(Motor)]XIC(Start)XIC(Stop)XIC(OL)OTE(Motor);\n", lb);
+  var lrc = L.aiAct.replyCode(lr, lq.q);
+  ok("...checked and sent back: the coil driven in two rungs", lrc && /Motor is driven by OTE in rungs 1 and 2/.test(lrc.problems.join("; ")) && /MAKE CODE/.test(L.aiAct.replyCodeText(lrc)), lrc && lrc.problems);
+  ok("...numbered or named rungs too; prose with an instruction in it is not code", L.chatCode.blocks("Rung 1: XIC(Start)OTE(Lamp);").length === 1 &&
+    L.chatCode.blocks("1. [XIC(Start) ,XIC(Motor) ]XIC(Stop)OTE(Motor);").length === 1 && !L.chatCode.blocks("Explanation: XIC(Start) examines the start button;").length &&
+    !L.chatCode.blocks("Here it is: use XIC(Start); then OTE(Motor);").length && !L.chatCode.blocks("XIC(A)OTE(B); and that is all").length);
+  var lseen = [], lfixed = "MAKE CODE: Motor start/stop\nlanguage ladder\n[XIC(Start) ,XIC(Motor) ]XIC(Stop)XIC(OL)OTE(Motor);\nEND";
+  var lres = await L.aiAct.solve(lq.q, function (m) { lseen.push(String(m[m.length - 1].content)); return Promise.resolve(lseen.length === 1 ? lr : lfixed); });
+  ok("...the bench's path: one send-back, the corrected block made, the question passes", lseen.length === 2 && /driven by OTE in rungs 1 and 2/.test(lseen[1]) && lres.made && lres.made.ok &&
+    lres.kind === "questioned" && lres.fixed && lres.rounds === 2 && gradeCode(lq, lfixed).pass, { n: lseen.length, kind: lres.kind, fixed: lres.fixed, why: gradeCode(lq, lfixed).why, back: (lseen[1] || "").slice(0, 300) });
 
   ok("no page errors", errs.length === 0, errs);
   console.log(fails ? fails + " CODE LAB FAILURES (" + passes + " passed)" : "ALL CODE LAB TESTS PASS (" + passes + ")");
