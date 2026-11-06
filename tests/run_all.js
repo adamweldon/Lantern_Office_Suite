@@ -55,7 +55,11 @@ var steps = [
   ["Lantern Watch on Windows for real (PowerShell 7): the first reading at once, nothing written during the load even past 30 s, still answering, a row all through, the temp folder as working directory (1.16.1)", "python3", ["tests/lantern_watch/live_ps.py", "kit"], /LIVE PS WATCH (TESTS PASS|SKIPPED)/],
   ["Lantern.zip: one Lantern folder; laid over the stick's old one", "python3", ["tests/lantern_zip.py"], /LANTERN ZIP TESTS PASS/],
   ["The bench run from outside the page (tools/bench_pane.js): chosen questions, rows kept, the list put back (1.24.2)", "node", ["tests/bench_pane.js"], /ALL BENCH PANE TESTS PASS/],
-  ["Health after the audit: emergencies first, 42 topics, the sourced figures and no medicine, the ORS mixer, the breath and pulse counter, bleach for water, Print on every lesson, the Health lesson given whole for a health need in Chat, the bench's health questions (1.24.4)", "node", ["tests/health.js"], /ALL HEALTH TESTS PASS/]
+  ["Health after the audit: emergencies first, 42 topics, the sourced figures and no medicine, the ORS mixer, the breath and pulse counter, bleach for water, Print on every lesson, the Health lesson given whole for a health need in Chat, the bench's health questions (1.24.4)", "node", ["tests/health.js"], /ALL HEALTH TESTS PASS/],
+  ["Food after the audit: three groups, ten topics, the preserving table without oil covering, temperatures first, no number for a child, the figures read on the CDC's and the home-preserving centre's pages, the guide, the lesson for a food how-to given whole, the bench's food conversations (1.24.5)", "node", ["tests/food.js"], /ALL FOOD TESTS PASS/],
+  ["The lesson Chat reads by itself: the first that is sure to be about the question, no lesson where none answers, the words people ask with (1.24.5)", "node", ["tests/lesson_search.js"], /ALL LESSON SEARCH TESTS PASS/],
+  ["No MAKE block where a thing was asked for: the block is asked for once, with its first line -- the 35B's row on 1.24.4, replayed (1.24.5)", "node", ["tests/no_block.js"], /ALL NO BLOCK TESTS PASS/],
+  ["The small models: a NEED for a number the question gives, the short prompt, replies read as they were meant, a request too long for the model, RELKE -- the 2B's and the 0.8B's rows on 1.24.4, replayed (1.24.5)", "node", ["tests/small_models.js"], /ALL SMALL MODEL TESTS PASS/]
 ];
 var failed = 0;
 steps.forEach(function (s) {

@@ -111,6 +111,19 @@ People will act on what Lantern says with nobody to ask. So:
 - **Numbers the AI can use.** A table or formula a person needs is better as a
   formula function or a lesson the AI can reach (LESSON:, LOOKUP:) than as
   prose only.
+- **A checker that could open nothing has checked nothing.** Lessons are
+  checked by a separate agent that has not seen the drafting, against pages
+  it opens. If it could not open a page, what it says is memory: the lesson
+  waits (on a `wip-` branch), it does not go in. Then read each figure again
+  yourself on its page before it goes in. Found 2026-11-06: a session with
+  nobody at the app could open `cdc.gov` and `nchfp.uga.edu` and no other
+  site (WHO, FAO, FDA, USDA each needed Adam's approval), and web searches
+  are counted for the whole turn, checkers included (200), so spend them on
+  the checking.
+- **So the AI finds it.** Write a procedure as a list (Chat's passage then
+  keeps every step). Give a lesson the words people will ask with in
+  `LESSON_WORDS` when its title does not carry them. Try the questions a
+  person would ask (`tests/lesson_search.js` has the pattern).
 
 ## Evidence
 
@@ -181,6 +194,17 @@ grep -n 'scored questions' job.log; sed -n '/=== FAILED ROWS/,/=== END FAILED RO
 
 - Read the runs of the branch you start from before choosing what to fix: a
   question the 4B fails that the 35B passes is the work this project is for.
+- What the rows of 1.24.4 taught (the 2B 46%, the 0.8B 15%, the 35B 98%): a
+  small model copies what is in front of it. It wrote the instructions' own
+  example of a NEED for four unrelated questions, the example sum's `/1000`
+  where none belonged, and `NEED:` followed by the question because the
+  instructions said `NEED: <question>`. So before changing how Lantern reads
+  a reply, look at what the instructions showed the model. An example in a
+  prompt is the likeliest thing a small model will write.
+- A run takes about 36 minutes for the 2B, 50 for the 0.8B and 100 for the
+  4B. Since 1.24.5 the 2B and the 0.8B get the short prompt (only the
+  functions the question is about); the row count and the mode are in the
+  log's summary.
 - The failed rows of a run you act on go in
   `tests/fixtures/bench_run_<version>_<model>.json`, and a test replays them.
 - The same care as on the laptop: one row moving between two runs is not a

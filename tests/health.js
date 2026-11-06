@@ -173,7 +173,7 @@ function all(root, sel) { return Array.prototype.slice.call(root.querySelectorAl
   var fp = plain(ML.get("food_preserve").html), ff = plain(ML.get("food_ferment").html);
   ok("the Food tile's preserving lesson: no oil over cooked food, no air to keep out, meat salted and cooked, the botulism warning",
     !/oil \(covering cooked food\)/.test(fp) && !/water, warmth and air/.test(fp) && /salted first/.test(fp) && /cooked before eating/.test(fp) && /botulism/.test(fp) &&
-    /smoke alone does not make food keep/.test(fp) && /That was wrong/.test(fp) && /3 tablespoons to 2 kg/.test(ff), fp.slice(0, 400));
+    /smoke alone does not make food keep/.test(fp) && /That was wrong/.test(fp) && /3 tablespoons of salt/.test(ff), fp.slice(0, 400));
   ok("...and Health's own says it was wrong before", /Before version 1\.24\.4 this lesson said/.test(lesson("health_food")));
   ok("both spellings of diarrhoea find the lesson", /Diarrhoea \(diarrhea\)/.test(ML.get("health_diarrhoea").title));
   // advice the check against the 2025 guidelines took out

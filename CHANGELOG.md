@@ -1,5 +1,248 @@
 # Changelog
 
+## 1.24.5 — The small models read; the Food tile audited; the right lesson found (2026-11-06)
+
+Three pieces of work under the same aim: a small model with Lantern should
+give the right answer, and what Lantern itself says should be right.
+
+### 1. The small models
+
+**What was seen.** Since 1.24.3 every push runs the whole bench on GitHub
+with the 0.8B, the 2B and the 4B. On 1.24.4 (no library, 109 scored
+questions): **the 2B passed 50 (46%), the 0.8B 16 (15%)**; the 35B, on the
+laptop, 107 (98%). The 4B passed 96 of 103 (93%) on 1.24.3; its run on
+1.24.4 had not ended when this was written. From 1.24.4 the job's log has
+every failed row as the model wrote it. They are now
+`tests/fixtures/bench_run_1244_2b.json` (59 rows) and
+`bench_run_1244_08b.json` (93 rows), and `tests/small_models.js` replays
+them.
+
+**What they were traced to.** Not to what the models know. To what Lantern
+gave them and how it read them:
+
+- *"asked for a value"* (the 2B 11 times, the 0.8B 24). Asked "What voltage
+  is across a 470 ohm resistor carrying 0.02 amps?" the 2B wrote `NEED: What
+  is the resistance in ohms and the current in amperes?`. Four times, for
+  questions about a pump, a jerrycan and a family's water, it wrote the
+  instructions' own example of a NEED, word for word. The 0.8B wrote `NEED:`
+  and then the question: the instructions said `NEED: <question>`.
+- *"Server said 400 Bad Request"* (the 2B, 5 times): `request (8625 tokens)
+  exceeds the available context size (8192 tokens)`. The model had asked
+  Lantern for one thing after another, each answer was added to the
+  conversation, and the kit gives every model 8,192 tokens.
+- *"no formula"* and *"no MAKE block"*: `ANSWER: CONVERT(26,"mile","km")`
+  (the formula where the sentence goes), `ANS: 120*80/10000` (the sum,
+  labelled ANS; the 0.8B wrote most of its sums so), `= MAKE WHEEL: ...` and
+  `=TRACK: Cups` (a block with the = of a formula line), `ANS: 3` fifty
+  times.
+- *wrong functions*: with all 75 functions in front of it the 2B took RELKE
+  for a car's kinetic energy, no function for a wavelength, and declined
+  "Convert 5 kg to pounds" and a bed of plants. Chat's instructions were
+  9,000 characters before the question.
+- *"no sentence backed by a lesson passage"*: for "My brother is having a
+  fit" the 2B gave the Fits lesson's own eight sentences, in order, under
+  "From my own knowledge:" and with no [n]. Lantern had found every one of
+  them in the passage and counted none.
+- And one that was Lantern's alone: `RELKE(1200,25)` said 383,162 J for a
+  car's 375,000 J. It worked out gamma − 1 by subtracting two numbers that
+  agree to fifteen places.
+
+**What changed.**
+
+- **AI_NEED_GIVEN** (new). A NEED for a number the question gives is
+  answered by Lantern, once, with the question's numbers: "the question
+  gives these numbers: 470 ohm; 0.02 amps. If the number you asked for is
+  among them, use it ... Write NEED again only for a number that is not
+  among them." A NEED is taken to be for something given when it quotes a
+  number of the question, repeats the question, is the instructions' own
+  example, or asks "how many <unit>" or "in <unit>" for a unit the question
+  gives a number in. "How many goats do you have?" still goes to the person.
+  It answers all 11 of the 2B's rows and 22 of the 0.8B's 24.
+- **The instructions.** `NEED: <what is missing>` in every place (it was
+  `<question>`). The numbers the question gives are listed under it. The
+  example of a NEED is shown only for a question with fewer than two
+  numbers.
+- **The short prompt for a small model** (AI_PROMPT). "Automatic" was short
+  only for a model running in the browser; it is now short too when the
+  kit's server runs a model under 3 billion parameters (by its file name:
+  `Qwen3.5-2B`, `Qwen3.5-0.8B`). The functions offered are the ones the
+  question is about: for a wavelength, WAVELEN and eight others in 2,300
+  characters, where it was 75 in 7,600. Chat's own instructions follow the
+  same rule and fall from 9,000 characters to about 4,000. The 4B and
+  larger get what they got.
+- **AI_READ** (new; `Lantern.aiReplyReaders`, applied by the engine to every
+  reply before anything else reads it). `= MAKE ...`, `=TRACK:` and
+  `= ANSWER:` are read without their =; `ANSWER: <a formula with one of
+  Lantern's functions>` as the formula and its result; `ANS: <a sum>` as a
+  formula line and `ANS: <a sentence>` as the answer, when the reply has no
+  = line; one ANS or = line written three times or more running, as one.
+  Nothing is computed or guessed: `ANS: 3` stays a number with no sum, and
+  `ANSWER: 1/2` stays an answer. Chat says what it read
+  ("Lantern read a formula written after “ANSWER:” as a formula line").
+- **AI_FIT** (new; `Lantern.aiFit`). When the server refuses a request as
+  longer than the model can hold, Lantern shortens it by the server's own
+  count and sends it once more: the longest messages (Lantern's own:
+  passages, a catalog, a tool sheet) lose their middle and keep their start
+  and their end; the oldest turns go only if that is not enough; the
+  instructions are cut last. Chat says so.
+- **A sentence a passage says, which the AI did not cite, is cited by
+  Lantern.** It counts as backed, Chat says how many it found, and an
+  answer made only of such sentences is no longer labelled "from the AI's
+  own knowledge ... Lantern did not check it".
+- **AI_NO_BLOCK** (new; in `Lantern.chatNoBlock` after MUSIC_CHAT's own),
+  and the bench's path now asks as Chat does. A thing was asked for,
+  Lantern can make it, and the reply has no block: the block is asked for
+  once, with its first line as the instructions for that question give it
+  (`MAKE PNEUMATIC` for air, `MAKE CODE` for a sketch that names an LED,
+  `MAKE WHEEL` for "draw the power wheel"). This was the 35B's one miss on
+  1.24.4 (below), 15 of the 0.8B's, and two of the 4B's on 1.24.3.
+- **RELKE** is exact at everyday speeds (gamma − 1 = b² / (s(1 + s)), with
+  b² = v²/c² and s = √(1 − b²)), and unchanged near light speed.
+
+### 2. The lesson Chat reads by itself
+
+**What was seen.** For a how-to Chat gives the AI Lantern's own lesson, when
+it is sure one fits. It looked only at the best-scoring lesson, and was sure
+when one rare word of the question was in its title. So "How do I dig a
+well?" was given *Deciding well*, "How do I tan a hide?" trigonometry, "How
+do I weld two steel plates?" *A balanced plate*, "How do I prevent scurvy?"
+*Engine care that prevents repair* — and "How do I patch an inner tube?",
+"How do I purify water?", "How do I find north without a compass?" were
+given nothing, though a lesson answers each.
+
+**What changed.**
+
+- SUITE_SEARCH: a hit also says how much of the question it has **by
+  weight** (a rare word counts for more than a common one, and a word no
+  lesson has counts most), and whether a rare word of the question is in it
+  anywhere.
+- SUITE_PASSAGES: the first of the best five that is sure — its title and
+  tile name the topic and it has a quarter of the question by weight; or its
+  title names one rare word and it has half; or a rare word is in its text,
+  the text matches well and it has most of the question. After it, others of
+  the same tile; from another tile only a lesson that is sure itself, scores
+  at least half as well, and is about the same thing or brings a rarer word
+  the first lacks. A paragraph that ends in a colon brings the list it
+  introduces.
+- **LESSON_WORDS** (new) and `Lantern.mathLessons.about(key, words)`: a
+  lesson can carry the words people ask with ("puncture, patch an inner
+  tube", "purify", "find north without a compass", "scurvy"). They are its
+  description: the search weighs them, the Search tile shows them under the
+  title, the AI's catalog lists them. Twenty lessons have them so far; each
+  tile audit adds its own.
+- The area lesson says how to find the area of a field or a room (with
+  hectares), so "How do I measure a field?" has its answer.
+- Of 36 how-to questions, 27 were given a lesson before, four of them the
+  wrong one (a carburettor got *Clean water* for animals; growing maize, the
+  Forge's guide; finding north, *Natural pest control*; measuring a field,
+  *Angles*). 27 are given one now, each the lesson that answers. Nine find
+  nothing: soap, bees, pruning, sharpening a knife, a rocket stove, wiring
+  a lamp and a solar charger have no lesson; storing grain and bread have
+  one drafted (below). Of 15 questions Lantern has no lesson for, six were
+  given one before and none is now.
+
+### 3. The Food tile, audited
+
+**What was seen.** The tile's own table still offered "Oil covering — seals
+out air — cooked vegetables, cheese, herbs", which is how botulism is made;
+"meat (jerky)" and fish under plain drying; "juices run clear, no pink" as
+the test that chicken is cooked; and a daily-needs sum that told a 6 kg
+baby to drink 0.21 litres of water. The tile had no help guide.
+
+**How it was checked.** As Health was: a separate checker, which had not
+seen the drafting, read every lesson and table against pages it opened.
+This time only two sites could be opened (the others needed an approval
+nobody was there to give, and the session's web searches were spent): the
+US Centers for Disease Control and Prevention, and the US National Center
+for Home Food Preservation, which hosts the USDA Complete Guide to Home
+Canning. So **only what those pages say went in**, and every figure was
+then read again on its page by the session that wrote this.
+
+**What changed.**
+
+- The tile: three groups (Eating well; Safe to eat; Keeping food), each
+  topic shown only when its lesson is loaded. The preserving table has a
+  "To be safe" column, no oil covering, and its own row for meat and fish.
+  The cooking table gives temperatures first (poultry and leftovers 74 °C,
+  minced meat 71 °C, whole cuts 63 °C then 3 minutes, fish 63 °C), adds
+  shellfish, sprouts, pork and game, and milk from the animal, and says
+  under it what to do with no thermometer. The sum shows no number for
+  anyone under 18. A help guide.
+- All eight lessons the tile had are revised: the four steps and their
+  figures (hands 20 seconds; 4 to 60 °C; 2 hours, 1 hour above 32 °C);
+  sun-drying for fruit, and what the US guide says of meat (not in the open
+  air; if it must be: 6 mm strips, salted, boiled 5 minutes first, eaten
+  within two weeks; never fish unsalted; pork and game cooked through);
+  botulism's signs and that it is an emergency; sauerkraut as the USDA
+  gives it (3 tablespoons of salt to 5 lb, 3 to 4 weeks at 21 to 24 °C),
+  as steps; a baby's food from the CDC's pages (about six months, not
+  before four; one food at a time, 3 to 5 days apart; nothing with honey,
+  no cow's milk as a drink and no juice before 12 months); vitamin D,
+  folate and zinc; iron from plants.
+- Two new lessons: **Cooking food so it is safe**, and **Milk and eggs**.
+- Three food conversations in the bench (sauerkraut and its salt; when
+  chicken is cooked; cooked vegetables kept under oil, which must be
+  answered "never").
+- Health's own lesson on keeping food says how long dried meat keeps.
+
+**Drafted and not in.** Five more lessons were written and checked only
+from memory, so they are held back, with both checkers' notes, on the
+branch `wip-2026-11-06`: foods that must be prepared the right way (cassava,
+kidney beans, mouldy grain, green potatoes), storing grain, the illnesses
+of a narrow diet, bread, and cooking with less fuel and smoke. Their
+sources (WHO, FAO, the US FDA, USDA's food safety service) need opening.
+The checker's own recollection differed from the drafts in places that
+matter (how long kidney beans must boil; that drying alone does not make
+bitter cassava safe), which is why they wait.
+
+### 4. Lantern questioned its own example
+
+On the 35B's full run on 1.24.4 the ladder question failed: "the question
+asks for a seal-in, but no contact examines the coil RunLight". The model
+had asked for Lantern's example and given it back exactly: the motor sealed
+in, and a run light that follows it. Lantern's check asked **every** coil
+for a seal-in. Now one coil that holds itself in is the seal-in, and when
+none does, a coil that only follows another is not the one questioned. A
+test holds Lantern's own ladder example to Lantern's own checks.
+
+### What was tested
+
+- `npm test`: all 57 suites pass (four new).
+- New suites: `tests/small_models.js` (51 checks: the rows of the 2B and
+  the 0.8B replayed), `tests/no_block.js` (23: the 35B's row replayed),
+  `tests/lesson_search.js` (20), `tests/food.js` (34); five more checks in
+  `tests/code_lab.js` (the 35B's ladder row).
+- Browser tests (Chromium): the new `tests/browser/food_e2e.py` (19 checks: the Food tile used for real, and Chat with a
+  stand-in 2B -- the short instructions, the lesson given whole, a formula after ANSWER:, a NEED answered, a
+  request sent again shorter); and the Health, Code Lab, bench run 9, domains, headless bench, Text Reader and
+  music tests, which pass.
+- The 35B, laptop, full run on 1.24.4 (115 questions, no library): **107 of
+  109 scored (98%)**, 80 minutes, 3.8 tokens a second; 7 sent back once, 6
+  fixed. Its two misses are both answered above: `make-pneumatic` (700
+  tokens of thinking aloud and no block) and `code-ladder-start-stop`
+  (Lantern's own fault). The rows are `tests/fixtures/bench_run_1244_35b.json`.
+- The 35B on 1.24.5: see `agent/reports/2026-11-06-1.24.5.md`.
+
+### What was not
+
+- **No small model has run 1.24.5 yet.** Every change above was made from
+  the rows of 1.24.4 and tested by replaying them, with the reply that
+  comes back after Lantern's answer written by hand. The push of this
+  branch starts the run that will say what the 2B and the 0.8B do with it;
+  the report has the result.
+- Not checked against an opened page, and left as they were in the Food
+  lessons: 2000 to 2500 kcal a day and 0.8 to 1 g of protein per kg; vitamin
+  C and calcium; "use the cooking water"; the half, quarter, quarter plate;
+  cellar storage. The Mifflin-St Jeor equation's constants and the four
+  activity factors of the sum were compared from memory only. Boiling milk
+  is derived (boiling water is hotter than any cooking temperature the CDC
+  gives), not read: the CDC's page on raw milk gives no temperature. "No
+  pink, clear juices, and then cook it longer" for a kitchen with no
+  thermometer is WHO's wording, recalled, not opened.
+- The kit still gives every model 8,192 tokens. Lantern now recovers from
+  a request that is too long; whether the small models should be given
+  more is a question of memory on the smallest computers, and is Adam's.
+
 ## 1.24.4 — The Health tile, audited: what to do when no help can come (2026-11-05)
 
 The first tile audit under Adam's direction ("maximizing the rebooting of

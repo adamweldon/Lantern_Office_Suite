@@ -362,6 +362,20 @@ function msgs(list, re) { return list.some(function (p) { return re.test(p.msg);
   ok("...and its second try, a MAKE CODE block with the same rungs, is questioned for them too", blk2 && !blk2.ok && blk2.problems.filter(function (x) { return /branch path of their own/.test(x); }).length === 2, blk2 && blk2.problems);
 
   ok("no page errors", errs.length === 0, errs);
+  // --- 1.24.5: the 35B's full run on 1.24.4 (tests/fixtures/bench_run_1244_35b.json). It asked for Lantern's example
+  // and gave it back exactly: the motor sealed in, and a run light that follows it. Lantern's seal-in check asked
+  // every coil for a seal-in, so it questioned the run light, twice, and the bench failed Lantern's own example.
+  var R1244 = JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "fixtures", "bench_run_1244_35b.json"), "utf8"));
+  var lr = R1244.rows.filter(function (r) { return r.id === "code-ladder-start-stop"; })[0], SP = L.aiCode.sealProblems;
+  ok("the fixture: the 35B's rung is Lantern's own example, and it was questioned for the run light", /no contact examines the coil RunLight/.test(lr.why) &&
+    lr.reply.indexOf(L.aiCodeExamples.search(bq2.q)[0].ex.text.replace(/\s+$/, "")) >= 0, lr.why);
+  ok("one coil that holds itself in is the seal-in: the 35B's reply passes now", gradeCode(bq2, lr.reply).pass, gradeCode(bq2, lr.reply).why);
+  ok("...and Lantern's own ladder example for the question passes Lantern's own checks", SP("ladder", L.aiCodeExamples.search(bq2.q)[0].ex.text, bq2.q).length === 0);
+  var ns = SP("ladder", "XIC(Start)XIC(Stop)OTE(Motor);\nXIC(Motor)OTE(RunLight);", bq2.q);
+  ok("no coil sealed in: the motor is questioned, with the line to write, and the light that follows it is not", ns.length === 1 && /no contact examines the coil Motor: put XIC\(Motor\) in a branch with Start/.test(ns[0]), ns);
+  ok("...a tag nothing sets in the branch is still named, and a dotted tag sealed in passes", /XIC\(Aux\) examines a tag no rung sets/.test(SP("ladder", "[XIC(Start) ,XIC(Aux) ]XIC(Stop)OTE(Motor);", bq2.q)[0]) &&
+    SP("ladder", "[XIC(Start) ,XIC(M.Run) ]XIC(Stop)OTE(M.Run);", bq2.q).length === 0 && SP("ladder", "XIC(B)OTE(A);\nXIC(A)OTE(B);", bq2.q).length === 1);
+
   console.log(fails ? fails + " CODE LAB FAILURES (" + passes + " passed)" : "ALL CODE LAB TESTS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);
 })().catch(function (e) { console.log("CRASH", e && e.stack || e); process.exit(1); });
