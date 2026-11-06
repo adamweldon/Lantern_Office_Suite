@@ -14,12 +14,15 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    library conversations. Needs the text of the Start Lantern window, or a look
    at the screen. The Windows start script's "library first" change (1.17.0)
    was never run on Windows.
-3. **A real small model with no laptop.** The aim is small models; the only
-   real-model runs so far are the 35B's (and Adam's 4B runs in October). Build
-   a GitHub workflow that downloads the engine and the 0.8B, 2B and 4B models,
-   serves `site/`, and runs the bench headless with `tools/bench_pane.js`
-   (free runners for a public repository: 4 CPUs, 16 GB, 6 hours a job). Save
-   each run's report under `bench-runs/`. Not started.
+3. **Read the small models' runs and act on them.** Since 1.24.3 every push
+   to a `lantern-x.y.z` branch runs the whole bench with the 0.8B, the 2B and
+   the 4B on GitHub (`CLAUDE.md`, "The bench with the small models"). Before
+   choosing what to fix, download the runs of the branch you start from. A
+   question the 4B fails and the 35B passes comes before a new feature: find
+   what Lantern gave the model or how it read the reply, fix that for every
+   question of its kind, and put the failed rows in `tests/fixtures`. The
+   0.8B and 2B are phone models: expect them to fail much more, and look for
+   the failures many questions share.
 4. **Tile audits**, one tile a session, in the order of the table below. For
    each tile:
    - open it in a real browser and use everything in it; fix what is broken,

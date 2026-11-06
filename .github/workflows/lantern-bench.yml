@@ -1,0 +1,123 @@
+# Lantern Bench with the small models -- every push to a lantern-x.y.z branch
+# sets Lantern up on a GitHub computer the way a person does (the kit's own
+# installer: the same engine build and the same model files), starts it with
+# kit/start-lantern.sh, and runs the whole bench in a headless browser
+# (tools/bench_headless.py), once for each model: 0.8B, 2B and 4B.
+#
+# Why: the aim is that a small model on an old computer gets the right
+# answer. The only real-model runs before this were on one laptop with the
+# 35B. Here every version is asked the same questions by the models most
+# people will actually have, with nobody needing to be at a keyboard.
+#
+# What it says: the job's summary page has the score, the sets and the failed
+# questions; the artifact lantern-bench-<model> has report.json (the same
+# file as the AI tile's Save JSON), failed.json (the failed rows as the model
+# wrote them, for tests/fixtures) and the start window's text.
+# A job is green when the run FINISHED, whatever it scored: the score is a
+# measurement, not a gate. Nothing here publishes anything or writes to the
+# repository.
+#
+# A GitHub computer for a public repository has 4 processor cores and 16 GB
+# of memory and no graphics card, so the speeds here are an old laptop's.
+# The offline library is not set up (12 GB), so the encyclopedia questions
+# are left out, as the summary says.
+#
+# By hand (Actions tab, Run workflow): choose the models and "quick", "full"
+# or a pattern for the question ids (for example ^make-music).
+name: Lantern Bench
+
+on:
+  push:
+    branches: ['lantern-*']
+    paths-ignore: ['agent/**', 'docs/**', 'README.md', 'CLAUDE.md']
+  workflow_dispatch:
+    inputs:
+      models:
+        description: 'Models, separated by spaces: 0.8b 2b 4b 9b'
+        default: '0.8b 2b 4b'
+      questions:
+        description: 'quick, full, or a pattern for question ids'
+        default: 'full'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lantern-bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      models: ${{ steps.models.outputs.list }}
+    steps:
+      - id: models
+        env:
+          ASKED: ${{ github.event.inputs.models }}
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json, os
+          asked = (os.environ.get("ASKED") or "0.8b 2b 4b").lower().split()
+          known = ["0.8b", "2b", "4b", "9b"]
+          print("list=" + json.dumps([m for m in known if m in asked] or ["0.8b", "2b", "4b"]))
+          EOF
+
+  bench:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix:
+        model: ${{ fromJson(needs.plan.outputs.models) }}
+    env:
+      MODEL_ID: ${{ matrix.model }}
+      QUESTIONS: ${{ github.event.inputs.questions }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Get the engine and the model with the kit's own installer
+        env:
+          LANTERN_AUTO_DOWNLOAD: 1
+        run: sh kit/setup-kit.sh engine "$MODEL_ID"
+
+      - name: Start Lantern the way a person does
+        env:
+          NO_BROWSER: 1
+          LANTERN_AUTO_DOWNLOAD: 0
+        run: |
+          nohup sh kit/start-lantern.sh "$MODEL_ID" nodownload > start-lantern.log 2>&1 &
+          sleep 5; cat start-lantern.log
+
+      - name: A browser for the bench
+        run: |
+          python3 -m pip install --quiet playwright
+          python3 -m playwright install --with-deps chromium
+
+      - name: Run the bench
+        run: |
+          case "${QUESTIONS:-full}" in
+            full|"") python3 tools/bench_headless.py --out bench-out --label "$MODEL_ID" --minutes 320 ;;
+            quick)   python3 tools/bench_headless.py --out bench-out --label "$MODEL_ID" --minutes 320 --quick ;;
+            *)       python3 tools/bench_headless.py --out bench-out --label "$MODEL_ID" --minutes 320 --match "$QUESTIONS" ;;
+          esac
+
+      - name: The summary
+        if: always()
+        run: |
+          if [ -f bench-out/summary.md ]; then cat bench-out/summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+          echo "--- the start window ---"; tail -n 60 start-lantern.log || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lantern-bench-${{ matrix.model }}
+          path: |
+            bench-out
+            start-lantern.log
+          retention-days: 90

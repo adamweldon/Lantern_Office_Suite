@@ -231,6 +231,8 @@ for multi-threading).
 | `tools/make_lantern_zip.py` | Packs `Lantern.zip`: one `Lantern` folder with the launchers, `site/`, `kit/`, `docs/`, the single file and the readme; never `kit/engine`, `kit/models`, `kit/library`. |
 | `.github/workflows/lantern-zip.yml` | On every push to `main`: builds `Lantern.zip` and puts it on the latest release. |
 | `tools/bench_pane.js` | Lantern Bench started and read from outside the page (a browser console, or a Claude chat linked to the computer): the full or quick run, or chosen questions; the rows are kept as they finish. |
+| `tools/bench_headless.py` | Lantern Bench with nobody at the screen: waits for the model at the kit's address, runs the bench in a headless Chromium through `tools/bench_pane.js`, and writes the report, the failed rows as the model wrote them and a summary. |
+| `.github/workflows/lantern-bench.yml` | On every push to a `lantern-x.y.z` branch: the kit's own installer and start script on a GitHub computer, then the whole bench with the 0.8B, 2B and 4B models. The score is on the job's summary page. Publishes nothing. |
 | `CLAUDE.md`, `agent/` | For Claude sessions working on Lantern: the aim, the rules, how the bench is run on the laptop; the queue of work with every tile's state; a report for each session; questions for Adam. |
 
 ## Working on it
@@ -297,6 +299,8 @@ npm test
 - **AI isolation**: removes each of the 147 AI, music, instrument, sheet-reading, library, action, Text Reader, PDF, sheet music, suite-catalog, make, READ, Code Lab, places, codes, sources and document-decline modules in turn and opens Chat, Text Reader and Music (rule 11)
 
 `tests/browser/code_lab_e2e.py` (not part of `npm test`; needs Playwright and Chromium) drives Code Lab and Chat in a real browser: Check on a broken example, ladder drawn and turned into Structured Text, JavaScript in a real Web Worker and an endless loop stopped, and MAKE CODE from a stand-in model checked, corrected once, shown once and opened in Code Lab.
+
+`tests/browser/bench_headless_e2e.py` (not part of `npm test`; needs Playwright and Chromium) runs `tools/bench_headless.py` against a stand-in model server that serves `site/index.html` the way the kit does: chosen questions and the quick run, the report and the failed rows it writes, a run cut off for time, and an address where nothing answers.
 
 `tests/browser/bench_run9_e2e.py` (not part of `npm test`; needs Playwright and Chromium) runs the whole Lantern Bench in a real browser against a stand-in llama-server that sees images and answers with bench run 9's replies: the puzzle rows labelled, the cups block corrected, the sun-and-sea drawing sent back and then shown to the model as a real PNG, the queue, the dozen.
 

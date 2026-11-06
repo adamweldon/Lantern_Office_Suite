@@ -152,6 +152,54 @@ with nobody clicking. This was first done on 2026-11-05.
 Known and not yet looked into: nothing answers on the offline library's port
 (8081) on that laptop, so the encyclopedia questions are left out of its runs.
 
+## The bench with the small models, on GitHub
+
+The aim is small models. Every push to a `lantern-x.y.z` branch starts the
+"Lantern Bench" workflow (`.github/workflows/lantern-bench.yml`): the kit's
+own installer and start script on a GitHub computer (4 cores, 16 GB, no
+graphics card), then the whole bench in a headless browser
+(`tools/bench_headless.py`), once each for the 0.8B, the 2B and the 4B. It
+needs nobody and no laptop. A job is green when the run finished, whatever it
+scored. A push that changes only `agent/`, `docs/`, `README.md` or
+`CLAUDE.md` does not start it.
+
+```sh
+gh run list --repo adamweldon/Lantern_Office_Suite --workflow "Lantern Bench" --limit 6
+gh run view <run id> --repo adamweldon/Lantern_Office_Suite           # the three jobs and how each ended
+gh run download <run id> --repo adamweldon/Lantern_Office_Suite -D <dir>   # lantern-bench-<model>/bench-out/{summary.md,report.json,failed.json}
+```
+
+- Read the runs of the branch you start from before choosing what to fix: a
+  question the 4B fails that the 35B passes is the work this project is for.
+- The failed rows of a run you act on go in
+  `tests/fixtures/bench_run_<version>_<model>.json`, and a test replays them.
+- The same care as on the laptop: one row moving between two runs is not a
+  finding. The same row failing on two versions, or on two models, is.
+- `python3 tools/bench_headless.py --url <address>` does the same against any
+  running Lantern (for example Adam's laptop, by hand).
+- Inside a cloud session the engine can be fetched
+  (`sh kit/setup-kit.sh engine`) but the model files could not (their site
+  was not reachable from the session on 2026-11-05; `curl -sI
+  https://huggingface.co` says whether it is now). So a small-model run is a
+  push and a read of the workflow, not something done in the session.
+
+## A session with nobody watching
+
+Some sessions are started by a schedule (`agent/NIGHTLY.md` is their
+instruction) and have no laptop and nobody to ask.
+
+- Take the first item in `agent/QUEUE.md` that needs neither Adam nor his
+  laptop; normally the next tile audit. One item, done properly.
+- Pass the gates, publish it as the next version on its own branch, update
+  the queue, write the report. Never `main`.
+- If the gates cannot be made to pass, or the work is unfinished: push it to
+  `wip-<date>` instead of a version branch, and say at the top of its report
+  what is unfinished. A session that starts looks for a `wip-*` branch that
+  is not yet part of the newest version, and finishes or drops it first.
+- End with a short message to Adam in plain words: the branch, what a person
+  or a small model can do now that they could not, what was tested and what
+  was not, any question that is his.
+
 ## The queue and the reports
 
 - `agent/QUEUE.md`: the work in order, and every tile with what has been done

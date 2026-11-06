@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.24.3 — The bench with the small models, and nobody at the keyboard (2026-11-05)
+
+Lantern is meant for a small model on an old computer, and every real-model
+run since October has been the 35B on one laptop, started by hand. Nothing
+in Lantern itself changes in this version: it adds the way to ask the small
+models, on every version, without anyone being there.
+
+- **`tools/bench_headless.py`**: Lantern Bench in a headless browser. It
+  waits for the model server at the kit's address, opens Lantern, evaluates
+  `tools/bench_pane.js`, runs the full bench (or `--quick`, `--ids`,
+  `--match`), and writes `report.json` (the AI tile's Save JSON),
+  `rows.json` as the questions finish, `failed.json` (the failed rows as
+  the model wrote them, ready for `tests/fixtures`) and `summary.md`. A run
+  that is out of time is stopped after the question in hand and keeps its
+  rows. Exit 0 means the run finished, whatever it scored.
+- **The "Lantern Bench" workflow** (`.github/workflows/lantern-bench.yml`):
+  on every push to a `lantern-x.y.z` branch, a GitHub computer (4 cores,
+  16 GB, no graphics card: an old laptop) gets the engine and a model with
+  the kit's own installer (`kit/setup-kit.sh engine 4b`), starts Lantern
+  with `kit/start-lantern.sh`, and runs the whole bench; once each for the
+  0.8B, the 2B and the 4B. So it is also the first automatic run of the
+  Linux installer and start script from nothing. The score is on the job's
+  summary page; the report and the failed rows are its artifact. It reads
+  the repository and publishes nothing. No offline library there (12 GB),
+  so the encyclopedia questions are left out, as on the laptop.
+- For the sessions that do the work: `CLAUDE.md` says how to read those
+  runs (`gh run list`, `gh run download`) and what a run with nobody
+  watching does; `agent/NIGHTLY.md` holds the instruction for a nightly
+  run.
+- Tests: `tests/browser/bench_headless_e2e.py` (16 checks, Chromium, a
+  stand-in server serving `site/index.html`): three chosen questions (a
+  right formula, a wrong one, a decline), the report, the rows, the failed
+  row as written, the summary, the quick run, a run cut off for time
+  (exit 3, rows kept), nothing at the address (exit 2). `npm test`: all
+  suites pass.
+- Not tested here: the workflow itself cannot run before it is pushed; its
+  first runs are this branch's. What they showed is in the session's report
+  (`agent/reports/`), and the failed rows go into `tests/fixtures` with the
+  next version.
+- The 35B's full run on 1.24.2 (the same Lantern code as this version) is in
+  the same report.
+
 ## 1.24.2 — The right example, the rung that works, and tunes Lantern knows whole (2026-11-05)
 
 Adam: "Keep going my direction is the intent with you as the author of the
