@@ -79,6 +79,12 @@ function btn(root, text) { return Array.prototype.filter.call(root.querySelector
 function fire(elm, type) { var e = d.createEvent("Event"); e.initEvent(type, true, true); elm.dispatchEvent(e); }
 function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
 function firstPassageSentence(t) { var m = /\[1\] [^\n]*\n([^\n]+)/.exec(t); return m ? m[1].split(/\.\s/)[0] + "." : ""; }
+// the sentence of passage 1 that matches (a lesson given whole, 1.24.4)
+function passageSentenceWith(t, re) {
+  var body = (t.split(/\n\[1\] [^\n]*\n/)[1] || "").split(/\n\n\[2\] |\n\nAnswer the QUESTION/)[0], out = "";
+  body.split("\n").forEach(function (line) { line.replace(/^\u2022 /, "").split(/(?<=[.!])\s/).forEach(function (sn) { if (!out && re.test(sn)) out = sn; }); });
+  return out;
+}
 
 // A model that behaves well: answers from passages with [n], writes search
 // words when asked, answers questions about itself plainly.
@@ -112,6 +118,10 @@ function good(last) {
   if (/LANTERN CATALOG: /.test(last)) return "Yes. Lantern has the Writer, Sheets, Farming, Animals, Health and Repair tiles, with lessons in each.";
   if (/LESSONS: passages/.test(last)) {
     var ls = firstPassageSentence(last);
+    // a health question (1.24.4): the sentence of the lesson that says what to do
+    var hw = /QUESTION: [^\n]*choking/.test(last) ? /blows between the shoulder blades/ : /QUESTION: [^\n]*having a fit/.test(last) ? /Put nothing in the mouth/ :
+      /QUESTION: [^\n]*breathing 56 times/.test(last) ? /fast breathing may have pneumonia/ : /QUESTION: [^\n]*river water/.test(last) ? /rolling boil/ : null;
+    if (hw) ls = passageSentenceWith(last, hw) || ls;
     return ls.replace(/\.$/, "") + " [1].\nQUOTE [1]: " + ls;
   }
   if (/hens have stopped laying/i.test(last)) return "LESSON: chickens laying eggs";
@@ -221,11 +231,13 @@ function good(last) {
   ok("C.converse runs a conversation with no page", conv.turns.length === 2 && conv.turns[0].searches.length === 1 && conv.turns[1].searches.length === 0 &&
     conv.turns[1].self && /Kenya/.test(conv.text), conv.turns.map(function (x) { return [x.searches, x.self, x.final]; }));
   var Q = L.aiBenchQuestions.filter(function (x) { return x.cat === "chat"; });
-  ok("nine conversations in the bench (1.12.9: a how-to answered from the AI's own knowledge), one quick, five about a document and four about Lantern itself", Q.filter(function (x) { return !x.doc && !/^suite-/.test(x.id); }).length === 9 &&
-    Q.filter(function (x) { return x.quick; }).length === 1 && Q.filter(function (x) { return x.doc; }).length === 5 && Q.filter(function (x) { return /^suite-/.test(x.id); }).length === 4);
+  ok("nine conversations in the bench (1.12.9: a how-to answered from the AI's own knowledge), one quick, five about a document, four about Lantern itself and four about health (1.24.4)",
+    Q.filter(function (x) { return !x.doc && !/^(suite|health)-/.test(x.id); }).length === 9 &&
+    Q.filter(function (x) { return x.quick; }).length === 1 && Q.filter(function (x) { return x.doc; }).length === 5 && Q.filter(function (x) { return /^suite-/.test(x.id); }).length === 4 &&
+    Q.filter(function (x) { return /^health-/.test(x.id); }).length === 4);
   var rep = await L.aiBench.run({ quick: false, skip: ["tool", "multi", "need", "unknown", "safety", "fact", "make", "reason", "alone"] });
   var failed = rep.rows.filter(function (r) { return !r.pass; }).map(function (r) { return r.id + ": " + r.why; });
-  ok("a model that behaves well passes every conversation", rep.rows.length === 18 && !failed.length && rep.summary.chat.pass === 18, failed);
+  ok("a model that behaves well passes every conversation", rep.rows.length === 22 && !failed.length && rep.summary.chat.pass === 22, failed);
   ok("document conversations: the bench handed Chat the manual, and took it back", rep.rows.filter(function (r) { return /^doc-/.test(r.id); }).every(function (r) { return r.chat.some(function (t) { return t.searches.some(function (s) { return s.how === "document"; }); }) || r.id === "doc-not-covered"; }) &&
     !(L.textReader && L.textReader.attached));
   ok("rows record each turn's searches", rep.rows.filter(function (r) { return r.id === "chat-follow-up-search"; })[0].chat[1].searches[0].how === "asked");

@@ -19,6 +19,10 @@ Written into --out:
   report.json   the finished report, the same JSON as the AI tile's Save JSON
   failed.json   the failed rows as the model wrote them (for tests/fixtures)
   summary.md    a short table for a person: score, sets, the failed questions
+The summary is also printed, and after it the failed rows (id, why, the
+reply cut to --reply-chars) as one line of JSON each between the lines
+"=== FAILED ROWS ..." and "=== END FAILED ROWS ===", so the job's log alone
+is enough to work from.
 
 Exit code: 0 the run finished (whatever it scored); 2 no model answered;
 3 it stopped on an error or ran out of time (rows.json has what was done).
@@ -112,6 +116,7 @@ def main():
     ap.add_argument("--wait-model", type=float, default=900)
     ap.add_argument("--label", default="")
     ap.add_argument("--poll", type=float, default=15, help="seconds between looks at the run")
+    ap.add_argument("--reply-chars", type=int, default=700, help="how much of each failed reply to print in the log")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
 
@@ -201,6 +206,21 @@ def main():
         md += "\nPage errors seen during the run: %d (first: %s)\n" % (len(errors), errors[0][:200])
     keep("summary.md", md)
     print(md, flush=True)
+    # The failed rows as the model wrote them, one line of JSON each, between
+    # two marker lines: a session that can read this log but not the
+    # artifact (the artifact store is another site) still gets them.
+    print("=== FAILED ROWS (one JSON object a line) ===", flush=True)
+    for r in rows:
+        if r.get("pass") or r.get("cat") == "alone":
+            continue
+        slim = dict((k, r.get(k)) for k in ("id", "cat", "q", "why", "value", "expected", "rounds", "retry", "rejected", "flags", "tokens", "ms") if r.get(k) not in (None, "", [], False))
+        for k in ("reply", "first"):
+            if r.get(k):
+                slim[k] = str(r[k])[:a.reply_chars]
+        if r.get("chat"):
+            slim["chat"] = [dict((k, (str(t[k])[:a.reply_chars] if k == "reply" else t[k])) for k in ("q", "searches", "declined", "reply") if t.get(k) not in (None, "", [], False)) for t in r["chat"]]
+        print(json.dumps(slim, ensure_ascii=False), flush=True)
+    print("=== END FAILED ROWS ===", flush=True)
     return 3 if cut else 0
 
 

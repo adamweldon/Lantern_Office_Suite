@@ -5,24 +5,35 @@ file in the same commit as the work. Read `CLAUDE.md` first.
 
 ## Next, in order
 
-1. **Confirm each new version on the 35B, twice**, when a chat is linked to
+1. **Read the small models' runs and act on them.** Since 1.24.3 every push
+   to a `lantern-x.y.z` branch runs the whole bench with the 0.8B, the 2B and
+   the 4B on GitHub (`CLAUDE.md`, "The bench with the small models"). The
+   first runs, on 1.24.3: **0.8B 15 of 103, 2B 51 of 103** (the 35B: 103 of
+   103 on the same Lantern code). From 1.24.4 the job's log has every failed
+   row as the model wrote it. Start there:
+   - "asked for a value" is the commonest miss of both (0.8B 22, 2B 10): the
+     model writes `NEED:` for a number the question gives, or for a fact a
+     recipe card or a table of Lantern's has. Read the rows; what did it ask
+     for? Can Lantern answer the NEED itself (`Lantern.aiNeedAnswer`), or
+     fill the card's slots from the question and say so?
+   - "no formula" (0.8B 14, 2B 6) and "no MAKE block" (0.8B 18): prose
+     instead of the line Lantern runs. What does the reply look like?
+   - three of the 2B's puzzles ended in "Server said 400 Bad Request". From
+     1.24.4 the server's own reason is in the row. If it is the context
+     (8192 tokens, long TRACK retries), Chat should trim before it asks.
+   A question the 4B fails and the 35B passes comes before a new feature.
+   Fix what Lantern gave the model or how it read the reply, for every
+   question of its kind; put the failed rows in `tests/fixtures`.
+2. **Confirm each new version on the 35B, twice**, when a chat is linked to
    Adam's laptop (`CLAUDE.md`, "The bench on Adam's laptop"). A version that
    has not had a full run says so in its report.
-2. **The offline library on the laptop.** Nothing answers on port 8081 though
-   `kit\library` holds two Wikipedia files and `kit\engine\windows\kiwix` has
-   `kiwix-serve.exe`. Every run there leaves out the 25 fact questions and the
-   library conversations. Needs the text of the Start Lantern window, or a look
-   at the screen. The Windows start script's "library first" change (1.17.0)
-   was never run on Windows.
-3. **Read the small models' runs and act on them.** Since 1.24.3 every push
-   to a `lantern-x.y.z` branch runs the whole bench with the 0.8B, the 2B and
-   the 4B on GitHub (`CLAUDE.md`, "The bench with the small models"). Before
-   choosing what to fix, download the runs of the branch you start from. A
-   question the 4B fails and the 35B passes comes before a new feature: find
-   what Lantern gave the model or how it read the reply, fix that for every
-   question of its kind, and put the failed rows in `tests/fixtures`. The
-   0.8B and 2B are phone models: expect them to fail much more, and look for
-   the failures many questions share.
+3. **The Food tile audit, next of the tiles.** Its preserving lesson said
+   what Health's did (keep the air out, oil over cooked food, meat simply
+   sun-dried); 1.24.4 corrected that one lesson only. Check every food
+   lesson the same way Health was checked: separate checkers, named sources
+   (USDA, the US National Center for Home Food Preservation, FAO, WHO five
+   keys to safer food, CDC on botulism). Canning is not in Lantern and must
+   not go in without pressure, time and acidity from a source.
 4. **Tile audits**, one tile a session, in the order of the table below. For
    each tile:
    - open it in a real browser and use everything in it; fix what is broken,
@@ -31,35 +42,58 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      learn, build, repair, grow or heal with this subject here, and right?
      Add what is missing, from what is public domain or openly licensed, and
      say where it came from;
+   - **have every figure and instruction checked by a separate checker that
+     has not seen the drafting**, against sources it opens itself, old
+     lessons as well as new. In Health this found 30 things to change in the
+     drafts and 13 in lessons that had shipped for weeks;
    - check what the AI can reach of it (LESSON:, LOOKUP:, formula functions,
      MAKE tools) and add the hook when it cannot;
    - write the tile's row below, and the gaps left, in the report.
-5. **Songbook.** Nine tunes so far, all starting on the first beat. Tunes that
+5. **The offline library on the laptop.** Nothing answers on port 8081 though
+   `kit\library` holds two Wikipedia files and `kit\engine\windows\kiwix` has
+   `kiwix-serve.exe`. Every run there leaves out the 25 fact questions and the
+   library conversations. Needs the text of the Start Lantern window, or a
+   look at the screen. The Windows start script's "library first" change
+   (1.17.0) was never run on Windows. (The GitHub runs have no library
+   either: 12 GB. The Simple English one, 2.5 GB, would fit: worth adding to
+   the workflow for one model.)
+6. **Pictures for the Health lessons.** The recovery position, where the
+   hands go for chest pushes, the tippy tap, the pit latrine, the arm
+   measurement: a drawing each would carry more than the words. Lantern can
+   draw (Draw's shapes, SVG). Whether a drawing is clear is Adam's to judge:
+   make them, show him, keep what he passes.
+7. **Lessons found by a strong word only when they come first.** For a
+   how-to, `Lantern.suite.passages(..., {strong: true})` gives nothing when
+   the best-scoring lesson does not name the topic, even if the second does
+   ("He fell and hit his head" found nothing before HEALTH_CHAT took health
+   questions). Look at the first few hits, not only the first.
+8. **Songbook.** Nine tunes so far, all starting on the first beat. Tunes that
    start with a pickup (Amazing Grace, Auld Lang Syne, Brahms' Lullaby,
    Greensleeves, Happy Birthday's 1893 tune) need a pickup bar checked through
    the score, the parts and the arrangement first.
-6. **A second try that changes nothing.** In the run on 1.24.0 three songs
+9. **A second try that changes nothing.** In the run on 1.24.0 three songs
    came back unchanged or worse after Lantern's send-back. 1.24.2 writes the
    line to use. If a model still sends the same block, decide with Adam
    whether Lantern should apply the fix it named and say so.
-7. **The 1.16.0 audit's feature list** (`Lantern_1.16.0_app_audit.pdf`, sent
-   to Adam on 2026-10-29) was never answered. With the aim above, take the
-   features that serve it without asking again; leave the rest.
+10. **The 1.16.0 audit's feature list** (`Lantern_1.16.0_app_audit.pdf`, sent
+    to Adam on 2026-10-29) was never answered. With the aim above, take the
+    features that serve it without asking again; leave the rest.
 
 ## Tiles
 
-"Audited" means the 1.16.0 pass: every control used in a real browser, bugs
-fixed with tests. Nothing else in this table has been checked that way.
+"Audited" means: every control used in a real browser and bugs fixed with
+tests (the 1.16.0 pass); from 1.24.4 also the lessons read against the aim,
+checked against sources by separate checkers, and what the AI can reach.
 
 | Tile | What it is | Audited | Notes |
 |---|---|---|---|
-| Health | First aid, water, survival | no | first in line: most direct to the aim |
+| Health | First aid, water, survival | yes, 1.24.4 | 42 lessons (28 new, 13 corrected), a breath and pulse counter, bleach for water, Print, Chat gives the lesson for a health need. Left: no medicine (questions for Adam), no pictures, not read by a trained person; nothing yet on long illnesses (tuberculosis, HIV, diabetes, high blood pressure, epilepsy, asthma), skin and eye disease, family planning, care of the dying and the dead, disability |
+| Food | Nutrition, cooking, preserving | no | next: its preserving lesson was corrected in 1.24.4, the rest unchecked |
 | Farming | Organic growing, seed saving | no | |
-| Food | Nutrition, cooking, preserving | no | |
 | Repair | Bicycles, small engines | no | |
 | Engineering | Repair, circuits, machines | no | hydraulic, pneumatic, control and electronics drawings are correct by construction since 1.17.0 to 1.18.1 |
 | Animals | Chickens, goats, livestock | no | |
-| Weather | Clouds, forecasting, safety | no | |
+| Weather | Clouds, forecasting, safety | no | lightning is also in Health (30 minutes after the last thunder): keep the two agreeing |
 | Earth | Maps, distance, climate zones | no | places and distances added in 1.14.0 |
 | Community | Fair decisions, disputes, rules | no | |
 | Learn to Read | Letters, sounds, first words | no | |
@@ -88,11 +122,11 @@ fixed with tests. Nothing else in this table has been checked that way.
 | Forge | Edit, test, persist modules | no | |
 | Assist | Ask, compute, verify | no | exercised by every bench run |
 | About | Help and sharing | no | |
-| Writer | Letters, reports, homework | yes, 1.16.0 | |
-| Sheets | Budgets, lists, calculations | yes, 1.16.0 | |
-| Slides | Presentations and teaching | yes, 1.16.0 | |
-| Calculator | Scientific calculator | yes, 1.16.0 | |
-| Draw | Sketch, shapes, diagrams | yes, 1.16.0 | schematic symbols 1.15.0 |
+| Writer | Letters, reports, homework | yes, 1.16.0 | controls only |
+| Sheets | Budgets, lists, calculations | yes, 1.16.0 | controls only |
+| Slides | Presentations and teaching | yes, 1.16.0 | controls only |
+| Calculator | Scientific calculator | yes, 1.16.0 | controls only |
+| Draw | Sketch, shapes, diagrams | yes, 1.16.0 | controls only; schematic symbols 1.15.0 |
 | Code Lab | Arduino, Python, JavaScript, PLC | yes, 1.16.0 | examples by the language asked for, and the Stop-in-a-branch check, 1.24.2 |
 | Music | Sound, notes, harmony, songs | no | deep work 1.19.0 to 1.24.2 (songs, instruments, orchestra, sheet reader, parts, songbook); the tile's own lessons not audited |
 | Text Reader | Text from pictures, scans, PDFs | no | deep work 1.12.0 to 1.22.8 |

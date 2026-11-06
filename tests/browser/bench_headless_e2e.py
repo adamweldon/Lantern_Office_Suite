@@ -9,7 +9,8 @@ formula, one wrong one (twice), one decline. Checks:
   - report.json is the bench's own report (bench, lantern, model, rows);
   - rows.json has the three rows; failed.json has only the failed one, with
     the reply as the model wrote it;
-  - summary.md names the score and the failed question;
+  - summary.md names the score and the failed question; the log carries the
+    summary and the failed rows (for a reader who cannot fetch the files);
   - with no server at the address the tool gives up and exits 2;
   - a run that is out of time is stopped, keeps its rows, and exits 3.
 Usage: python3 tests/browser/bench_headless_e2e.py [outdir]
@@ -116,6 +117,9 @@ check("summary.md gives the score", ("**%d of %d scored questions passed" % (wan
 check("summary.md names the failed question and why", "`miles-km`" in md and "wrong value" in md, md)
 check("summary.md says no library was attached", "No offline library" in md, md)
 check("the log follows the run", ("%d of %d" % (want, want)) in log and "started:" in log, log[-400:])
+block = log.split("=== FAILED ROWS (one JSON object a line) ===")[-1].split("=== END FAILED ROWS ===")[0].strip().split("\n") if "=== FAILED ROWS" in log else []
+check("the log has the failed rows too, one line of JSON each, with the reply as written", len(block) == 1 and json.loads(block[0])["id"] == "miles-km" and "=26*2" in json.loads(block[0])["reply"]
+      and json.loads(block[0])["why"] == "wrong value", block)
 
 # 2. the quick run uses the bench's own quick list
 o2 = os.path.join(OUT, "quick")

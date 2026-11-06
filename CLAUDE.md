@@ -165,9 +165,16 @@ scored. A push that changes only `agent/`, `docs/`, `README.md` or
 
 ```sh
 gh run list --repo adamweldon/Lantern_Office_Suite --workflow "Lantern Bench" --limit 6
-gh run view <run id> --repo adamweldon/Lantern_Office_Suite           # the three jobs and how each ended
-gh run download <run id> --repo adamweldon/Lantern_Office_Suite -D <dir>   # lantern-bench-<model>/bench-out/{summary.md,report.json,failed.json}
+gh run view <run id> --repo adamweldon/Lantern_Office_Suite --json jobs --jq '.jobs[] | "\(.databaseId) \(.name) \(.status) \(.conclusion)"'
+gh api repos/adamweldon/Lantern_Office_Suite/actions/jobs/<job id>/logs > job.log   # works as soon as that job has ended
+grep -n 'scored questions' job.log; sed -n '/=== FAILED ROWS/,/=== END FAILED ROWS/p' job.log
 ```
+
+- The log has the summary table and, between `=== FAILED ROWS` and
+  `=== END FAILED ROWS ===`, every failed row as one line of JSON (the
+  question, why it failed, the model's reply). `gh run download` (the
+  artifact, with the whole `report.json`) was refused from a cloud session on
+  2026-11-05: the artifact store is another site. The log was not.
 
 - Read the runs of the branch you start from before choosing what to fix: a
   question the 4B fails that the 35B passes is the work this project is for.

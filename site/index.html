@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.24.3 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.24.4 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -164,6 +164,10 @@
 //      null] -- a reply with no MAKE block where one can be made (it says
 //      Lantern cannot, or writes the thing out in prose): what to tell the
 //      AI, once a question (MUSIC_CHAT).
+//    Lantern.lessonTools = [{id, label, title, run({key, title, overlay,
+//      body})}] -- buttons in the head of every lesson (LESSON_PRINT adds
+//      Print); Lantern.healthTools = [{id, title, mount(el)}] -- tools shown
+//      in the Health tile under its topics (HEALTH_COUNT, HEALTH_BLEACH).
 //    Prefer a hook over editing a big module.
 // 11. ISOLATION: every extension module must be droppable. Open with
 //    var L = window.Lantern; if (!L || !L.el) return; -- feature-detect every
@@ -180,7 +184,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.24.3",
+  version: "1.24.4",
   apps: {},
   order: []
 };
@@ -911,18 +915,19 @@ Lantern.mathLessons = (function () {
     // Capture phase + stopPropagation so Escape closes only THIS lesson,
     // leaving the function-table guide open underneath it.
     function onKey(e) { if (e.key === "Escape" || e.keyCode === 27) { e.stopPropagation(); close(); } }
+    var body = el("div", { "class": "guide-body lesson-body", html: d.html });
+    var head = el("div", { "class": "guide-head" }, [el("h2", { text: d.title })]);
     var ov = el("div", {
       "class": "guide-overlay lesson-overlay", role: "dialog", "aria-label": d.title,
       onclick: function (e) { if (e.target === ov) close(); }
-    }, [
-      el("div", { "class": "guide-panel" }, [
-        el("div", { "class": "guide-head" }, [
-          el("h2", { text: d.title }),
-          el("button", { text: "Close", onclick: close, "aria-label": "Close lesson" })
-        ]),
-        el("div", { "class": "guide-body lesson-body", html: d.html })
-      ])
-    ]);
+    }, [el("div", { "class": "guide-panel" }, [head, body])]);
+    // buttons other modules add to every lesson (Lantern.lessonTools: Print)
+    (window.Lantern.lessonTools || []).forEach(function (t) {
+      if (!t || typeof t.run !== "function") return;
+      head.appendChild(el("button", { text: t.label || "Tool", title: t.title || "", "data-tool": t.id || "",
+        onclick: function () { t.run({ key: key, title: d.title, overlay: ov, body: body }); } }));
+    });
+    head.appendChild(el("button", { text: "Close", onclick: close, "aria-label": "Close lesson" }));
     document.addEventListener("keydown", onKey, true);
     document.body.appendChild(ov);
   }
@@ -960,6 +965,50 @@ Lantern.mathLessons = (function () {
 })();
 // ===========================================================================
 // MODULE: MATH_LESSONS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: LESSON_PRINT - START
+// Depends: MATH_LESSONS (shows Lantern.lessonTools in every lesson's head) -- feature-detected
+// Exports: (none) -- adds a Print button to every lesson (Lantern.lessonTools)
+// ===========================================================================
+// Paper survives a dead battery (the Health audit, 1.24.4): the Health tile
+// could print three short cards; now any lesson of any tile prints by itself,
+// title and all, over as many pages as it needs, with nothing of the screen
+// behind it. The lesson's own overlay is laid out as a plain page for the
+// printer and everything else is hidden, including an app's own print area
+// (a Writer page, a chart) that may be open underneath.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.el) return;
+  var T = window.Lantern.lessonTools = window.Lantern.lessonTools || [];
+  var css = document.createElement("style"); // module-owned CSS (rule 11)
+  css.appendChild(document.createTextNode([
+    "@media print{",
+    "body.lesson-printing *,body.lesson-printing .print-area,body.lesson-printing .print-area *{visibility:hidden;}",
+    "body.lesson-printing .lesson-print,body.lesson-printing .lesson-print *{visibility:visible;}",
+    "body.lesson-printing .lesson-print{position:absolute;inset:auto;left:0;top:0;width:100%;display:block;padding:0;background:none;}",
+    "body.lesson-printing .lesson-print .guide-panel{max-width:none;max-height:none;display:block;box-shadow:none;border-radius:0;}",
+    "body.lesson-printing .lesson-print .guide-body{overflow:visible;}",
+    "body.lesson-printing .lesson-print button{display:none;}",
+    "}"
+  ].join("\n")));
+  document.head.appendChild(css);
+  function clear() {
+    document.body.classList.remove("lesson-printing");
+    var old = document.querySelectorAll(".lesson-print");
+    for (var i = 0; i < old.length; i++) old[i].classList.remove("lesson-print");
+  }
+  window.addEventListener("afterprint", clear);
+  T.push({ id: "print", label: "Print", title: "Print this lesson on paper", run: function (api) {
+    if (!api || !api.overlay) return;
+    clear();
+    api.overlay.classList.add("lesson-print");
+    document.body.classList.add("lesson-printing");
+    try { window.print(); } catch (e) { clear(); }
+  } });
+})();
+// ===========================================================================
+// MODULE: LESSON_PRINT - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: PHYSICS_CORE - START
@@ -3589,26 +3638,48 @@ Lantern.drawShapes = (function () {
 // ===========================================================================
 // ===========================================================================
 // MODULE: HEALTH - START
-// Depends: CORE, SHELL, MATH_LESSONS
-// Exports: (registers "health" app)
+// Depends: CORE, SHELL, MATH_LESSONS (Lantern.healthTools is read when the tile opens -- feature-detected)
+// Exports: (registers "health" app); Lantern.healthOrs(litres) -> {ok, sugar, salt, text}
 // ===========================================================================
 // Health & survival: first-aid and public-health reference, an oral-rehydration
 // scaler, and printable survival cards (paper survives a dead battery). This is
 // a reference for when trained help is not available - never a replacement for
 // a doctor, nurse, or emergency service.
+// 1.24.4 (the Health audit): emergencies first, since they cannot wait; four
+// groups of topics, each shown only when its lesson is loaded (the lesson
+// modules stay droppable); tools other modules add (Lantern.healthTools =
+// [{id, title, mount(el)}]); the ORS mixer answers as soon as the tile opens
+// and no longer says "0 tsp" for a cupful.
 (function () {
   var SECTIONS = [
-    ["Staying well", [
-      ["Safe drinking water", "health_water"], ["Oral rehydration (ORS)", "health_ors"],
-      ["Hygiene & sanitation", "health_hygiene"], ["Storing food safely", "health_food"],
-      ["Eating well", "health_nutrition"], ["Fever & everyday illness", "health_fever"],
-      ["Teeth & mouth", "health_teeth"]
-    ]],
     ["Emergencies", [
-      ["Bleeding & wounds", "health_bleeding"], ["Burns", "health_burns"],
-      ["Broken bones & sprains", "health_breaks"], ["Wounds gone bad", "health_infection"],
-      ["Too hot, too cold", "health_heatcold"], ["Bites & stings", "health_bites"],
-      ["Choking & not breathing", "health_emergency"]
+      ["First things first", "health_first"], ["Not breathing (CPR)", "health_cpr"],
+      ["Choking", "health_emergency"], ["Unconscious: recovery position", "health_recovery"],
+      ["Bleeding & wounds", "health_bleeding"], ["Shock", "health_shock"], ["Burns", "health_burns"],
+      ["Broken bones & sprains", "health_breaks"], ["Blows to the head", "health_head"],
+      ["Fits (seizures)", "health_fits"], ["Stroke & heart attack", "health_strokeheart"],
+      ["Poisoning", "health_poison"], ["Drowning", "health_drowning"],
+      ["Electric shock & lightning", "health_electric"], ["Too hot, too cold", "health_heatcold"],
+      ["Bites & stings", "health_bites"], ["Eyes, nose, fainting", "health_eyes"],
+      ["Wounds gone bad", "health_infection"], ["Moving an injured person", "health_moving"]
+    ]],
+    ["Sick children and adults", [
+      ["Danger signs in a child", "health_danger"], ["Coughs: counting breaths", "health_breathing"],
+      ["Diarrhoea", "health_diarrhoea"], ["Oral rehydration (ORS)", "health_ors"],
+      ["Fever & everyday illness", "health_fever"], ["Mosquitoes & malaria", "health_malaria"],
+      ["A dangerously thin child", "health_muac"], ["Pulse, breathing, temperature", "health_vitals"],
+      ["Caring for the sick at home", "health_homecare"], ["Fear, grief, a troubled mind", "health_mind"]
+    ]],
+    ["Mother and baby", [
+      ["Pregnancy: danger signs", "health_pregnancy"], ["A birth with no midwife", "health_birth"],
+      ["The first hour after birth", "health_afterbirth"], ["The newborn baby", "health_newborn"]
+    ]],
+    ["Staying well", [
+      ["Safe drinking water", "health_water"], ["Enough water, kept safe", "health_waterstore"],
+      ["Hygiene & sanitation", "health_hygiene"], ["A latrine & hand-washing", "health_latrine"],
+      ["Stopping illness spreading", "health_spread"], ["Storing food safely", "health_food"],
+      ["Eating well", "health_nutrition"], ["Teeth & mouth", "health_teeth"],
+      ["A first-aid kit", "health_kit"]
     ]]
   ];
 
@@ -3616,15 +3687,34 @@ Lantern.drawShapes = (function () {
   var CARDS =
     "<h2>Oral Rehydration Solution (ORS)</h2>" +
     "<p>Per <b>1 litre of clean water</b>: <b>6 level teaspoons sugar</b> + <b>&frac12; level teaspoon salt</b>. " +
-    "Stir. Should taste no saltier than tears. Give small sips often. Keep breastfeeding.</p>" +
+    "Stir. Should taste no saltier than tears. Give small sips often. Keep breastfeeding. Make it fresh each day.</p>" +
     "<h2>Make water safe</h2>" +
     "<p>Boil 1 min (3 min in mountains) &bull; OR clear bottle in full sun 6 h &bull; OR 2 drops plain bleach per " +
     "litre, wait 30 min. Filter muddy water through cloth first.</p>" +
     "<h2>Emergency basics</h2>" +
-    "<p>Bleeding: press hard on the wound with a clean cloth, keep pressing, raise the limb. " +
+    "<p>Bleeding: press hard on the wound with a clean cloth and keep pressing; do not lift it to look. " +
     "Burns: cool with clean water 20 min, cover; no ice/butter. " +
     "Choking: back blows then abdominal thrusts. Not breathing: push hard and fast in the centre of the chest. " +
-    "<b>Get trained help whenever it exists.</b></p>";
+    "Not awake but breathing: turn them on their side. " +
+    "<b>Get trained help whenever it exists.</b></p>" +
+    "<h2>A sick child needs help now if</h2>" +
+    "<p>cannot drink or breastfeed &bull; vomits everything &bull; has a fit &bull; very sleepy or hard to wake &bull; " +
+    "fast or difficult breathing &bull; blood in the stool &bull; a baby under 3 months with fever.</p>";
+
+  // The home recipe scaled: 6 level teaspoons of sugar and half a level
+  // teaspoon of salt to 1 litre. Under a litre the salt is too little to
+  // measure with a teaspoon, and too much salt is the danger, so it says so.
+  function ors(l) {
+    l = parseFloat(l);
+    if (!(l > 0) || !isFinite(l)) return { ok: false, text: "" };
+    var sugar = 6 * l, salt = 0.5 * l, f = Lantern.fmtNum;
+    function r(v, d) { var p = Math.pow(10, d); return Math.round(v * p) / p; }
+    var out = { ok: true, litres: l, sugar: sugar, salt: salt, small: l < 1, tiny: l < 0.2 };
+    out.text = out.tiny ? "Less than a cupful: too little to measure safely with a teaspoon. Mix a whole litre: 6 level tsp sugar + half a level tsp salt." :
+      "For " + f(r(l, 2)) + " L: " + f(r(sugar, 1)) + " level tsp sugar + " + f(r(salt, 2)) + " level tsp salt";
+    return out;
+  }
+  window.Lantern.healthOrs = ors;
 
   function printCards() {
     var el = Lantern.el;
@@ -3642,9 +3732,10 @@ Lantern.drawShapes = (function () {
   }
 
   Lantern.register("health", {
-    name: "Health", glyph: "\u271a", color: "#dc2626",
+    name: "Health", glyph: "✚", color: "#dc2626",
     desc: "First aid, water, survival",
     mount: function (ws) {
+      var ML = Lantern.mathLessons;
       var wrap = Lantern.el("div", { "class": "wrap", style: "max-width:760px" });
       wrap.appendChild(Lantern.el("div", { "class": "sharebox", style: "margin-top:6px", html:
         "<b>Important:</b> this is a reference to help when no other help is available. In an emergency, get a " +
@@ -3652,11 +3743,13 @@ Lantern.drawShapes = (function () {
 
       wrap.appendChild(Lantern.el("p", { "class": "muted", style: "margin-top:14px", text: "Tap a topic for clear, step-by-step guidance." }));
       SECTIONS.forEach(function (s) {
+        var have = s[1].filter(function (t) { return !ML.has || ML.has(t[1]); });
+        if (!have.length) return;
         wrap.appendChild(Lantern.el("h2", { style: "margin-top:18px", text: s[0] }));
         var grid = Lantern.el("div", { "class": "tiles", style: "margin-top:6px" });
-        s[1].forEach(function (t) {
+        have.forEach(function (t) {
           grid.appendChild(Lantern.el("button", { "class": "tile", style: "--tc:#dc2626;min-height:auto;padding:12px",
-            onclick: function () { Lantern.mathLessons.open(t[1]); } }, [Lantern.el("div", { "class": "name", text: t[0] })]));
+            onclick: function () { ML.open(t[1]); } }, [Lantern.el("div", { "class": "name", text: t[0] })]));
         });
         wrap.appendChild(grid);
       });
@@ -3666,12 +3759,14 @@ Lantern.drawShapes = (function () {
       var lIn = Lantern.el("input", { type: "number", step: "any", min: "0", value: "1", "aria-label": "Litres of clean water", style: "width:120px" });
       var out = Lantern.el("div", { "class": "physresult" });
       function calc() {
-        var l = parseFloat(lIn.value);
-        if (!(l > 0)) { out.textContent = "\u2014"; return; }
-        var sugar = 6 * l, salt = 0.5 * l;
-        out.innerHTML = "For <b>" + Lantern.fmtNum(Math.round(l * 100) / 100) + " L</b>: " +
-          "<b>" + Lantern.fmtNum(Math.round(sugar * 10) / 10) + "</b> tsp sugar + " +
-          "<b>" + Lantern.fmtNum(Math.round(salt * 100) / 100) + "</b> tsp salt";
+        var o = ors(lIn.value);
+        if (!o.ok) { out.textContent = "\u2014"; return; }
+        if (o.tiny) { out.textContent = o.text; return; }
+        out.innerHTML = "For <b>" + Lantern.fmtNum(Math.round(o.litres * 100) / 100) + " L</b>: " +
+          "<b>" + Lantern.fmtNum(Math.round(o.sugar * 10) / 10) + "</b> level tsp sugar + " +
+          "<b>" + Lantern.fmtNum(Math.round(o.salt * 100) / 100) + "</b> level tsp salt" +
+          (o.small ? "<div class='muted' style='font-size:13px;margin-top:4px'>That little salt is hard to measure with a teaspoon, and " +
+            "too much salt is harmful. Safer: mix a whole litre (6 level tsp sugar + &frac12; level tsp salt) and make it fresh each day.</div>" : "");
       }
       lIn.addEventListener("input", calc);
       wrap.appendChild(Lantern.el("div", { "class": "row" }, [
@@ -3679,12 +3774,22 @@ Lantern.drawShapes = (function () {
         Lantern.el("button", { "class": "primary", text: "Mix", onclick: calc })
       ]));
       wrap.appendChild(out);
+      calc();
       wrap.appendChild(Lantern.el("p", { "class": "muted", style: "font-size:13px", html:
         "Learn: <span class='lessonlink' data-lesson='health_ors'>why ORS works</span>." }));
 
+      // --- tools other modules add (HEALTH_COUNT: the breath and pulse counter; HEALTH_BLEACH: bleach for water) ---
+      (window.Lantern.healthTools || []).forEach(function (t) {
+        if (!t || typeof t.mount !== "function") return;
+        wrap.appendChild(Lantern.el("h2", { style: "margin-top:22px", text: t.title || "Tool" }));
+        var box = Lantern.el("div", { "class": "health-tool", "data-tool": t.id || "" });
+        wrap.appendChild(box);
+        try { t.mount(box); } catch (e) { box.textContent = "This tool could not start."; }
+      });
+
       // --- print to paper ---
       wrap.appendChild(Lantern.el("h2", { style: "margin-top:22px", text: "Keep it on paper" }));
-      wrap.appendChild(Lantern.el("p", { "class": "muted", text: "Paper survives a dead battery or a lost phone. Print the core survival cards and keep them where everyone can find them." }));
+      wrap.appendChild(Lantern.el("p", { "class": "muted", text: "Paper survives a dead battery or a lost phone. Print the core survival cards and keep them where everyone can find them. Every topic above also has a Print button." }));
       wrap.appendChild(Lantern.el("button", { "class": "primary", text: "Print survival cards", onclick: printCards }));
 
       ws.appendChild(wrap);
@@ -3693,6 +3798,185 @@ Lantern.drawShapes = (function () {
 })();
 // ===========================================================================
 // MODULE: HEALTH - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: HEALTH_COUNT - START
+// Depends: CORE (Lantern.el) -- the Health tile shows what is in Lantern.healthTools; feature-detected both ways
+// Exports: Lantern.healthTools (adds the counter), Lantern.healthCount = {LIMITS, PULSE, judge(kind, age, n), seconds}
+// ===========================================================================
+// A tool for the Health tile (the Health audit, 1.24.4): a counter that
+// times one full minute while a person taps at each breath or heartbeat (or
+// types the count), and says what the number means. A fast breathing rate
+// is how pneumonia is found in a small child where there is no doctor: 60
+// or more a minute under 2 months, 50 or more from 2 to 12 months, 40 or
+// more from 1 to 5 years (World Health Organization, IMCI chart booklet,
+// 2014). Resting pulse by age: MedlinePlus, US National Library of
+// Medicine. The tool only counts; what to do is in the lessons.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.el) return;
+  var el = L.el;
+  var T = window.Lantern.healthTools = window.Lantern.healthTools || [];
+
+  // --- what a count means -----------------------------------------------------
+  var LIMITS = [   // breaths in one minute at or above which breathing is fast (WHO IMCI)
+    { id: "u2m", label: "Baby under 2 months", fast: 60 },
+    { id: "2-12m", label: "2 months up to 12 months", fast: 50 },
+    { id: "1-5y", label: "1 year up to 5 years", fast: 40 },
+    { id: "older", label: "Older child or adult", fast: 0 }
+  ];
+  var PULSE = [    // usual beats a minute at rest (MedlinePlus)
+    { id: "u1m", label: "Baby under 1 month", lo: 70, hi: 190 },
+    { id: "u1", label: "Baby 1 to 11 months", lo: 80, hi: 160 },
+    { id: "1-2", label: "1 to 2 years", lo: 80, hi: 130 },
+    { id: "3-4", label: "3 to 4 years", lo: 80, hi: 120 },
+    { id: "5-6", label: "5 to 6 years", lo: 75, hi: 115 },
+    { id: "7-9", label: "7 to 9 years", lo: 70, hi: 110 },
+    { id: "10+", label: "10 years and over, adults", lo: 60, hi: 100 }
+  ];
+  function find(list, id) { for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i]; return null; }
+  // judge(kind, age, n) -> {n, fast|low|high|usual, text}
+  function judge(kind, age, n) {
+    n = Math.round(Number(n));
+    if (!(n > 0) || !isFinite(n)) return { n: 0, text: "" };
+    var out = { n: n }, a;
+    if (kind === "pulse") {
+      a = find(PULSE, age) || PULSE[PULSE.length - 1];
+      out.low = n < a.lo; out.high = n > a.hi; out.usual = !out.low && !out.high;
+      out.text = n + " beats a minute. At rest the usual range for " + a.label.charAt(0).toLowerCase() + a.label.slice(1) + " is " + a.lo + " to " + a.hi + ". " +
+        (out.usual ? "This is inside it." : out.high ? "This is above it. Fever, pain, fear and exercise raise the pulse; a fast, weak pulse with pale, cold skin warns of shock (see Shock)." :
+          "This is below it. Count once more; a slow pulse in someone who is faint, cold or hard to wake needs help.");
+      return out;
+    }
+    a = find(LIMITS, age) || LIMITS[LIMITS.length - 1];
+    if (!a.fast) {
+      out.usual = n >= 12 && n <= 20;
+      out.text = n + " breaths a minute. An adult at rest usually takes 12 to 20. " + (out.usual ? "This is inside that." :
+        "For an older child or adult there is no single limit: compare it with earlier counts, and look at how hard the breathing is (see Checking the body).");
+      return out;
+    }
+    out.fast = n >= a.fast;
+    out.text = n + " breaths a minute. For " + a.label.charAt(0).toLowerCase() + a.label.slice(1) + ", " + a.fast + " or more is fast breathing. " +
+      (out.fast ? (a.id === "u2m" ? "Count once more to be sure. If it is still " + a.fast + " or more, the baby needs a health worker now." :
+          "With a cough or difficult breathing this may be pneumonia: the child needs a health worker.") + " (See Coughs and pneumonia.)" :
+        "This is not fast breathing. Other danger signs still count (see Danger signs in a sick child).");
+    return out;
+  }
+  var HC = window.Lantern.healthCount = { LIMITS: LIMITS, PULSE: PULSE, judge: judge, seconds: 60 };
+
+  // --- the counter ----------------------------------------------------------------
+  function option(v, t) { return el("option", { value: v, text: t }); }
+  T.push({ id: "count", title: "Breath and pulse counter", mount: function (box) {
+    var kind = el("select", { "aria-label": "What to count" }, [option("breaths", "Breaths"), option("pulse", "Pulse (heartbeats)")]);
+    var age = el("select", { "aria-label": "Age" });
+    var go = el("button", { "class": "primary", text: "Start one minute" });
+    var tap = el("button", { "class": "primary health-tap", text: "Tap at each breath", style: "display:none;min-height:64px;min-width:220px;font-size:18px" });
+    var stop = el("button", { text: "Stop", style: "display:none" });
+    var typed = el("input", { type: "number", min: "0", step: "1", "aria-label": "Count in one minute", style: "width:90px" });
+    var say = el("button", { text: "What does it mean?" });
+    var clock = el("div", { "class": "muted", style: "margin-top:6px" });
+    var out = el("div", { "class": "physresult" });
+    var timer = null, t0 = 0, n = 0;
+    function ages() {
+      var list = kind.value === "pulse" ? PULSE : LIMITS;
+      age.innerHTML = "";
+      list.forEach(function (a) { age.appendChild(option(a.id, a.label)); });
+      tap.textContent = kind.value === "pulse" ? "Tap at each beat" : "Tap at each breath";
+    }
+    function show(v) { var r = judge(kind.value, age.value, v); out.textContent = r.text || "—"; }
+    function end(done) {
+      if (timer) { clearInterval(timer); timer = null; }
+      tap.style.display = "none"; stop.style.display = "none"; go.style.display = "";
+      if (done) { clock.textContent = "One minute: " + n + "."; typed.value = String(n); show(n); }
+      else clock.textContent = "Stopped before the minute was up: nothing counted. A full minute is needed.";
+    }
+    function tick() {
+      var left = HC.seconds - (Date.now() - t0) / 1000;
+      if (left <= 0) { end(true); return; }
+      clock.textContent = Math.ceil(left) + " seconds left — " + n + " so far";
+    }
+    go.addEventListener("click", function () {
+      n = 0; t0 = Date.now(); out.textContent = "";
+      go.style.display = "none"; tap.style.display = ""; stop.style.display = "";
+      tick(); timer = setInterval(tick, 200);
+    });
+    tap.addEventListener("click", function () { if (timer) { n++; tick(); } });
+    stop.addEventListener("click", function () { end(false); });
+    say.addEventListener("click", function () { show(typed.value); });
+    kind.addEventListener("change", function () { ages(); out.textContent = ""; });
+    ages();
+    box.appendChild(el("p", { "class": "muted", text: "Counts for one full minute. For breaths, watch the chest or belly rise while the person is calm or asleep. For pulse, feel the wrist or the neck." }));
+    box.appendChild(el("div", { "class": "row" }, [el("span", { text: "Count:" }), kind, el("span", { text: "for:" }), age]));
+    box.appendChild(el("div", { "class": "row", style: "margin-top:8px" }, [go, tap, stop]));
+    box.appendChild(clock);
+    box.appendChild(el("div", { "class": "row", style: "margin-top:8px" }, [el("span", { text: "Or type a count you made over one minute:" }), typed, say]));
+    box.appendChild(out);
+    box.appendChild(el("p", { "class": "muted", style: "font-size:13px", html:
+      "Learn: <span class='lessonlink' data-lesson='health_breathing'>counting breaths</span>, <span class='lessonlink' data-lesson='health_vitals'>checking the body</span>." }));
+  } });
+})();
+// ===========================================================================
+// MODULE: HEALTH_COUNT - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: HEALTH_BLEACH - START
+// Depends: CORE (Lantern.el) -- the Health tile shows what is in Lantern.healthTools; feature-detected both ways
+// Exports: Lantern.healthTools (adds the bleach helper), Lantern.healthBleach(litres, cloudy, strength) -> {ok, drops, ml, tsp, text}
+// ===========================================================================
+// A tool for the Health tile (the Health audit, 1.24.4): drops of household
+// bleach for an amount of water, from the US CDC's table (Make Water Safe
+// During an Emergency): bleach labelled 5% to 9%, 2 drops a litre; 1%, 10
+// drops a litre; twice that for cloudy water; wait 30 minutes. The US EPA's
+// table (Emergency Disinfection of Drinking Water) agrees and adds the
+// second dose when no chlorine can be smelt. It only multiplies; the lesson
+// says the rest.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.el) return;
+  var el = L.el;
+  var T = window.Lantern.healthTools = window.Lantern.healthTools || [];
+  // --- bleach for water -------------------------------------------------------------
+  // The US CDC's table (Make Water Safe): bleach labelled 5% to 9%, 2 drops a
+  // litre; bleach labelled 1%, 10 drops a litre; twice that for cloudy
+  // water. From 40 drops up also in millilitres and teaspoons, at the
+  // table's own rate (40 drops = 2.5 ml = half a teaspoon).
+  var STRENGTHS = [{ id: "5-9", label: "5% to 9% (ordinary household bleach)", perLitre: 2 }, { id: "1", label: "1% (weak bleach)", perLitre: 10 }];
+  function spoons(tsp) {
+    var q = Math.round(tsp * 4) / 4, f = L.fmtNum || String;
+    return q === 0.5 ? "half a teaspoon" : q === 0.25 ? "a quarter of a teaspoon" : q === 1 ? "1 teaspoon" : f(q) + " teaspoons";
+  }
+  // bleach(litres, cloudy, strength) -> {ok, drops, ml, tsp, text}; strength "5-9" (default) or "1"
+  function bleach(litres, cloudy, strength) {
+    var l = parseFloat(litres), st = STRENGTHS[strength === "1" ? 1 : 0];
+    if (!(l > 0) || !isFinite(l)) return { ok: false, text: "" };
+    var drops = Math.ceil(st.perLitre * l * (cloudy ? 2 : 1) - 1e-9), ml = drops / 16, tsp = ml / 5, f = L.fmtNum || String;
+    var out = { ok: true, litres: l, drops: drops, ml: ml, tsp: tsp };
+    out.text = "For " + f(Math.round(l * 100) / 100) + " L of " + (cloudy ? "cloudy" : "clear") + " water: " + f(drops) + " drop" + (drops === 1 ? "" : "s") +
+      (drops >= 40 ? " (about " + f(Math.round(ml * 10) / 10) + " ml, " + spoons(tsp) + ")" : "") +
+      " of plain bleach labelled " + (st.id === "1" ? "1%" : "5% to 9%") + ". Stir, and wait 30 minutes before drinking.";
+    return out;
+  }
+  window.Lantern.healthBleach = bleach;
+  T.push({ id: "bleach", title: "Bleach for drinking water", mount: function (box) {
+    var lIn = el("input", { type: "number", step: "any", min: "0", value: "20", "aria-label": "Litres of water to treat", style: "width:120px" });
+    var cl = el("input", { type: "checkbox", "aria-label": "The water is cloudy" });
+    var st = el("select", { "aria-label": "Strength of the bleach on its label" }, STRENGTHS.map(function (x) { return el("option", { value: x.id, text: x.label }); }));
+    var out = el("div", { "class": "physresult" });
+    function calc() { var r = bleach(lIn.value, cl.checked, st.value); out.textContent = r.ok ? r.text : "\u2014"; }
+    lIn.addEventListener("input", calc); cl.addEventListener("change", calc); st.addEventListener("change", calc);
+    box.appendChild(el("p", { "class": "muted", text: "For when water cannot be boiled (boiling is surer: bleach does not kill every parasite). Only plain, unscented household bleach - not scented, not colour-safe, not with added cleaners - and less than a year old. Its label gives the strength as sodium hypochlorite." }));
+    box.appendChild(el("div", { "class": "row" }, [el("span", { text: "Water:" }), lIn, el("span", { text: "litres" }),
+      el("label", { style: "display:inline-flex;align-items:center;gap:6px" }, [cl, el("span", { text: "cloudy (filter it through cloth first)" })])]));
+    box.appendChild(el("div", { "class": "row", style: "margin-top:8px" }, [el("span", { text: "Bleach:" }), st]));
+    box.appendChild(out);
+    box.appendChild(el("p", { "class": "muted", style: "font-size:13px", html:
+      "The water should smell faintly of chlorine afterwards. If it does not, add the same amount again and wait 15 more minutes. " +
+      "Learn: <span class='lessonlink' data-lesson='health_water'>making water safe to drink</span>." }));
+    calc();
+  } });
+})();
+// ===========================================================================
+// MODULE: HEALTH_BLEACH - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: LITERACY_DATA - START
@@ -10517,57 +10801,73 @@ Lantern.chem = (function () {
 // non-prescription measures (safe water, oral rehydration, basic first aid).
 // It never diagnoses, never doses prescription medicine, and always defers to
 // trained help where it exists.
+// 1.24.4 (the Health audit): every lesson here was checked against sources
+// and corrected. Water: US CDC, Make Water Safe, and US EPA, Emergency
+// Disinfection of Drinking Water (boiling, the drops of bleach, the second
+// dose, 1% bleach); Eawag's SODIS guidance. ORS: WHO and UNICEF (the recipe,
+// a day's keeping). Keeping food: USDA and the US National Center for Home
+// Food Preservation (meat is not simply sun-dried), FAO (salted strips,
+// cooked before eating), the University of Alaska and US CDC (smoke alone
+// does not preserve; botulism where there is no air), University of New
+// Hampshire Extension (salt for a ferment). Fever: UK NHS and NICE (no
+// sponging). Teeth: the International Association of Dental Traumatology
+// (a milk tooth is not put back).
 (function () {
   var L = Lantern.mathLessons;
   var SEEK = "<p class='muted'>Get trained help or emergency services whenever they exist - this is for when no other help is available yet.</p>";
 
   L.add("health_water", "Making water safe to drink", "<p>Dirty water causes deadly diarrhoea, especially in " +
     "children. Make it safe by any one of these:</p>" +
-    "<ul><li><b>Boil</b> (safest): bring to a rolling boil for <b>1 minute</b> (3 minutes high in the mountains), " +
-    "then cool.</li>" +
-    "<li><b>Sun (SODIS):</b> fill a <b>clear</b> plastic bottle, lay it on its side in <b>full sun for 6 hours</b> " +
-    "(2 days if cloudy). Sunlight kills the germs.</li>" +
-    "<li><b>Bleach:</b> add plain unscented household bleach - about <b>2 drops per litre</b> of clear water " +
-    "(4 drops if cloudy), stir, wait <b>30 minutes</b>.</li></ul>" +
-    "<p>If the water is muddy, filter it through clean cloth <b>first</b>, then treat. These kill germs but not " +
-    "chemical pollution - avoid water near mines or factories.</p>");
+    "<ul><li><b>Boil</b> (safest - it kills every germ): bring to a rolling boil for <b>1 minute</b> (3 minutes in the mountains, above about 1,500 m), then let it cool, covered.</li>" +
+    "<li><b>Sun (SODIS):</b> fill a <b>clear</b> plastic bottle of 2 litres or less, lay it on its side in " +
+    "<b>full sun for 6 hours</b> (2 days if the sky is cloudy). Sunlight kills the germs. It does not work in rain, or on murky water.</li>" +
+    "<li><b>Bleach:</b> add plain unscented household bleach (the label says 5% to 9% sodium hypochlorite; less than a year old) - about <b>2 drops per litre</b> of clear water " +
+    "(4 drops if cloudy), stir, wait <b>30 minutes</b>. It should smell faintly of chlorine; if it does not, add the same amount again and wait 15 minutes more. " +
+    "Weak bleach labelled 1%: 10 drops per litre. Bleach does not kill every parasite, so boil when you can.</li></ul>" +
+    "<p>If the water is muddy, let it settle and filter it through clean cloth <b>first</b>, then treat. These kill " +
+    "germs but not chemical pollution - avoid water near mines or factories.</p>" +
+    "<p>Keep treated water in a clean covered container and pour it out; a hand or cup dipped in makes it dirty again (see Enough water, and keeping it safe).</p>");
 
   L.add("health_ors", "Oral rehydration - stops dehydration", "<p>Diarrhoea and vomiting kill by drying the body out, " +
-    "fast, especially in children. <b>Oral Rehydration Solution (ORS)</b> replaces the lost water and salts and saves " +
-    "lives.</p>" +
-    "<p><b>The recipe (per 1 litre of clean water):</b><br>&bull; <b>6 level teaspoons of sugar</b><br>" +
-    "&bull; <b>&frac12; level teaspoon of salt</b><br>Stir until dissolved. It should taste no saltier than tears.</p>" +
-    "<p>Give small sips often, even if they vomit - keep trying. Keep breastfeeding a baby. <b>Get help</b> if they " +
-    "cannot keep fluids down, have blood in the stool, sunken eyes, no urine, or become very drowsy.</p>" + SEEK);
+    "fast, especially in children. <b>Oral Rehydration Solution (ORS)</b> replaces the lost water and salts and " +
+    "saves lives.</p>" +
+    "<p><b>The recipe (per 1 litre of clean water):</b><br>&bull; <b>6 level teaspoons of sugar</b><br>&bull; " +
+    "<b>&frac12; level teaspoon of salt</b><br>Stir until dissolved. It should taste no saltier than tears. " +
+    "Too much salt is harmful: if it tastes saltier than tears, throw it away and mix again. A packet of ORS from a health worker or shop is better still - mix it exactly as the packet says.</p>" +
+    "<p>Use water that is safe to drink, and <b>make it fresh each day</b>. A litre is about 5 teacups. Add no extra sugar, and do not mix it into milk, soup or juice.</p>" +
+    "<p>Give small sips often, even if they vomit - keep trying - and as much as they will take after every loose stool. Keep breastfeeding a baby, and keep feeding (see Diarrhoea: care at home). <b>Get " +
+    "help</b> if they cannot keep fluids down, have blood in the stool, sunken eyes, no urine, or become very " +
+    "drowsy.</p>" + SEEK);
 
   L.add("health_hygiene", "Hygiene and sanitation", "<p>Simple habits stop the biggest killers:</p>" +
-    "<ul><li><b>Wash hands</b> with soap after the toilet and before handling food - this alone prevents much " +
+    "<ul><li><b>Wash hands</b> with soap after the toilet or cleaning a child's bottom, and before handling food, eating, or feeding a child - this alone prevents much " +
     "illness.</li>" +
-    "<li>Keep a toilet or latrine <b>at least 30 m from any well or water source</b>, and downhill from it.</li>" +
+    "<li>Keep a toilet or latrine <b>at least 30 m from any well or water source</b>, and downhill from it - farther in sandy, gravelly or cracked rocky ground (see A latrine and a place to wash hands).</li>" +
     "<li>Cover food and keep flies off it; dispose of waste well away from where people live.</li></ul>" +
     "<p>Clean water, handwashing, and safe toilets together prevent most diarrhoea and disease.</p>");
 
-  L.add("health_food", "Keeping food without a fridge", "<p>Food lasts for months without electricity if you remove " +
-    "the water or the air that spoils it:</p>" +
-    "<ul><li><b>Drying:</b> slice thin and dry in sun or airflow until brittle (fruit, beans, fish, meat).</li>" +
+  L.add("health_food", "Keeping food without a fridge", "<p>Food spoils when germs grow in it. They need water, so food keeps when it is made <b>dry, salty or sour</b> enough to stop them:</p>" +
+    "<ul><li><b>Drying fruit:</b> slice thin and dry on a clean raised rack in hot, dry weather, covered from flies, until leathery or brittle. Grains and beans are left to dry hard.</li>" +
+    "<li><b>Drying meat and fish</b> is riskier: germs that cause serious illness survive in it. Use lean meat only, cut in thin strips, <b>salted first</b>, hung off the ground under a cover against flies, in dry weather only, until hard - and <b>cook it</b> before eating.</li>" +
     "<li><b>Salting:</b> heavy salt draws out water and preserves fish and meat.</li>" +
-    "<li><b>Fermenting:</b> vegetables in a salt brine (like sauerkraut) keep for months and gain nutrients.</li>" +
-    "<li><b>Smoking:</b> preserves and flavours fish and meat.</li></ul>" +
-    "<p>Store the results somewhere <b>cool, dark and dry</b>; keep tubers in a shaded pit or root cellar.</p>");
+    "<li><b>Fermenting:</b> vegetables packed with salt - about 3 tablespoons to 2 kg of shredded cabbage - and kept <b>under their own brine</b> turn sour, and the sourness protects them for months. If a ferment is slimy, mouldy through or smells rotten, throw it out.</li>" +
+    "<li><b>Smoking</b> flavours fish and meat and helps dry them, but smoke alone does not make food keep: it must also be salted and dried hard, or cooked through and eaten within a day or two.</li></ul>" +
+    "<p><b>Never seal moist meat, fish or vegetables airtight</b> - in a jar, under oil, in plastic - to keep them. A deadly poison (botulism) grows where there is no air, and it cannot be seen, smelt or tasted. If in doubt, throw it out. " +
+    "(Before version 1.24.4 this lesson said to dry meat and fish in the sun as they are, and to take away the air. That was wrong.)</p>" +
+    "<p>Store dried and salted food somewhere <b>cool, dark and dry</b>; keep tubers in a shaded pit or root cellar.</p>");
 
   L.add("health_nutrition", "Eating well on little", "<p>A good meal has three parts: a <b>staple</b> for energy " +
     "(grain, maize, rice, potato), a <b>protein</b> to build the body (beans, egg, fish, meat, milk), and " +
     "<b>vegetables or fruit</b> for vitamins.</p>" +
-    "<p>Beans or lentils eaten <b>together with</b> a grain make a complete protein cheaply - the base of many " +
+    "<p>Beans or lentils and a grain, eaten over the same day, make a complete protein cheaply - the base of many " +
     "healthy diets. Variety across the week matters more than any single 'super' food.</p>" +
-    "<p>In young children, watch for not growing, swelling, or constant tiredness, and seek help - these can signal " +
-    "malnutrition.</p>");
+    "<p>In young children, watch for very thin arms, swelling of both feet, not growing, or constant tiredness, and seek help - these can signal " +
+    "malnutrition (see Is this child dangerously thin?).</p>");
 
   L.add("health_fever", "Fever and everyday illness", "<p>Fever is the body fighting infection. Care: " +
-    "<b>rest and plenty of fluids</b> (water, ORS, soup), light clothing, and a lukewarm sponge if very hot - never " +
-    "cold water, which brings shivering.</p>" +
+    "<b>rest and plenty of fluids</b> (water, ORS, soup) and light clothing - neither stripped nor wrapped up. Do not sponge or bath a child to cool a fever.</p>" +
     "<p><b>Get help fast</b> for: a baby under 3 months with any fever, a stiff neck, fits, confusion or hard to " +
-    "wake, fast or difficult breathing, a rash that does not fade when pressed, or fever beyond about 3 days.</p>" +
+    "wake, fast or difficult breathing, a rash that does not fade when pressed, a child who cannot drink or vomits everything, or fever beyond about 3 days.</p>" +
     "<p>In malaria country, treat any fever as possible malaria - get tested or treated quickly. Coughs and colds " +
     "pass with rest and fluids; <b>trouble breathing never waits.</b></p>" + SEEK);
 
@@ -10575,9 +10875,10 @@ Lantern.chem = (function () {
     "chewing stick, or clean cloth on a finger all work. Clean along the gum line, and go easy on sugar and sweet " +
     "drinks; they feed decay.</p>" +
     "<p><b>Toothache:</b> rinse with warm salt water and keep the area clean. Face or jaw swelling, or fever with " +
-    "toothache, means <b>spreading infection - get help urgently.</b></p>" +
-    "<p><b>Knocked-out adult tooth:</b> hold it by the white crown, never the root, rinse briefly, and press it " +
-    "gently back into its socket - or carry it in milk and get help fast; minutes matter.</p>" + SEEK);
+    "toothache, means <b>spreading infection - get help urgently.</b> Swelling round the eye or in the neck, or trouble breathing, swallowing or speaking, is an emergency.</p>" +
+    "<p><b>Knocked-out adult tooth:</b> hold it by the white crown, never the root. If it is dirty, rinse it in milk or the person's own spit (or under cold running water for a few seconds only), press it " +
+    "gently back into its socket and have them bite on a clean cloth to hold it - or carry it in milk, never dry, and get help fast; minutes matter. " +
+    "A child's milk tooth is <b>not</b> put back: it can harm the tooth growing underneath.</p>" + SEEK);
 })();
 // ===========================================================================
 // MODULE: HEALTH_LESSONS - END
@@ -10585,27 +10886,41 @@ Lantern.chem = (function () {
 // ===========================================================================
 // MODULE: HEALTH_LESSONS_EMERGENCY - START
 // Depends: MATH_LESSONS
-// Exports: (none) -- registers urgent-injury lessons (health_*): bleeding, burns, breaks, infection, heat/cold, bites, choking
+// Exports: (none) -- registers urgent-injury lessons (health_*): bleeding (and the tourniquet), burns, breaks, infection, heat/cold, bites, choking
 // ===========================================================================
 // Split from HEALTH_LESSONS at a nameable boundary: staying well there;
 // urgent injuries here. Same policy: REFERENCE only, non-prescription,
 // always defers to trained help where it exists.
+// 1.24.4 (the Health audit): every lesson here was checked against sources
+// and corrected. Bleeding and choking: Resuscitation Council UK 2025 and the
+// American Heart Association 2025 (no raising of the limb; the tourniquet
+// when pressure fails; two thumbs on a baby). Burns: the British Burn
+// Association and UK NHS (20 minutes, still worth it for three hours), WHO
+// (which burns need help). Heat: American Heart Association and Red Cross
+// 2024 (cool water to the neck is quickest). Cold: NHS. Bites: WHO (a bite
+// is washed 15 minutes and left open; a snake bite is kept still, carried,
+// never cut or tied). Stings and severe allergy: St John Ambulance, NHS.
 (function () {
   var L = Lantern.mathLessons;
   var SEEK = "<p class='muted'>Get trained help or emergency services whenever they exist - this is for when no other help is available yet.</p>";
 
   L.add("health_bleeding", "Stopping bleeding and treating wounds", "<p>For bleeding: press <b>firmly and directly</b> " +
-    "on the wound with a clean cloth and <b>keep pressing</b> - do not lift it to peek. Raise the injured part above " +
-    "the heart if you can.</p>" +
-    "<p>If blood soaks through, add another cloth on top - do not remove the first. Hold pressure until it stops. " +
-    "Clean small cuts with safe water and cover them.</p>" +
+    "on the wound with a clean cloth and <b>keep pressing</b> - do not lift it to look.</p><p>If blood soaks through, press harder and add another cloth on top - do not remove the first. Hold " +
+    "pressure until it stops. Clean small cuts with safe water and cover them.</p>" +
+    "<p><b>Something stuck in the wound</b> (glass, a knife, a stick): do not pull it out. Press on both sides of it and pad round it.</p>" +
+    "<p><b>A limb bleeding so hard that firm pressure is not controlling it</b> can kill in minutes: do not wait. Tie a <b>tourniquet</b>: a wide band of cloth, not string or wire, " +
+    "round the limb <b>5 to 7 cm above the wound</b> and never on a joint; knot a stick into it and twist until the bleeding stops completely, then tie the stick so it cannot unwind. " +
+    "If it still bleeds, put a second band above the first. It hurts; that is expected. <b>Write down the time</b>, leave it on, and get help: only a health worker takes it off. " +
+    "Where a band cannot go - the armpit, the groin - push clean cloth firmly into the wound and press hard on it.</p>" +
     "<p><b>Get urgent help</b> for blood that spurts, will not stop, or comes from a deep or large wound.</p>" + SEEK);
 
-  L.add("health_burns", "Burns", "<p><b>Cool the burn</b> with clean, cool running water for <b>20 minutes</b>. Take " +
+  L.add("health_burns", "Burns", "<p>Clothes on fire: <b>stop, drop to the ground and roll</b>, or smother the flames with a blanket.</p>" +
+    "<p><b>Cool the burn</b> with clean, cool running water for <b>20 minutes</b> - it still helps up to three hours after the burn. With no running water, lay on wet cloths and keep changing them. Keep the rest of the person warm. Take " +
     "off rings, watches or tight clothing near the burn before it swells (unless stuck to the skin).</p>" +
     "<p>Cover loosely with a clean, non-fluffy cloth or clean plastic. <b>Do not</b> use ice, butter, oil or " +
     "toothpaste, and <b>do not</b> burst blisters.</p>" +
-    "<p>Get help for burns that are large, deep, or on the face, hands, joints or a child.</p>" + SEEK);
+    "<p><b>A chemical burn:</b> brush off any dry powder, then flood with water for at least 20 minutes.</p>" +
+    "<p>Get help for burns that are large, deep, or on the face, hands, feet, joints or genitals; for any burn from electricity or a chemical; for burns in a child; and for anyone who breathed in smoke or flame (a hoarse voice, soot round the mouth).</p>" + SEEK);
 
   L.add("health_breaks", "Broken bones and sprains", "<p>Signs of a break: severe pain, swelling, a limb bent or " +
     "wrong, or it cannot bear weight. <b>Do not straighten it or push bone back in.</b></p>" +
@@ -10620,36 +10935,439 @@ Lantern.chem = (function () {
     "<p><b>Watch it for days.</b> Danger signs: redness and swelling that spread, growing pain and heat, pus, " +
     "foul smell, fever, or <b>red streaks running from the wound toward the body</b> - spreading infection; " +
     "get help fast.</p>" +
-    "<p>A small wound turning red early: warm clean-water soaks several times a day, kept covered between. " +
+    "<p>A small wound turning red early: rest that part and keep it raised, keep the wound clean and covered, and watch whether the redness grows. " +
     "<b>Deep or dirty punctures</b> risk tetanus - vaccination protects; seek it after such wounds.</p>" + SEEK);
 
   L.add("health_heatcold", "Too hot, too cold", "<p><b>Heat exhaustion:</b> heavy sweating, weakness, dizziness, " +
-    "headache, nausea. Shade, sips of water or ORS, wet cloths and fanning, rest.</p>" +
+    "headache, nausea. Shade, sips of water or ORS, wet cloths and fanning, rest. If they are no better after 30 minutes, treat it as heatstroke.</p>" +
     "<p><b>Heatstroke - emergency:</b> hot skin (sweating may stop), confusion, staggering, collapse. <b>Cool them " +
-    "fast:</b> shade, soak skin and clothes with water, fan hard, wet cloths to the neck, armpits and groin. Sips " +
+    "fast.</b> Quickest is cool water up to the neck - a tub, a trough, a safe stream - with someone holding the head up, for about 15 minutes or until they come round. " +
+    "With no such water: shade, soak skin and clothes with water, fan hard, wet cloths to the neck, armpits and groin. Sips " +
     "only if fully awake.</p>" +
     "<p><b>Hypothermia:</b> violent shivering at first; <b>when shivering stops</b> and they turn confused, clumsy " +
-    "and sleepy it is life-threatening. Get them dry and out of the wind, insulate all round (blankets, another " +
-    "person's warmth), warm sweet drinks only if fully awake. Warm gently - no rubbing, no alcohol.</p>" + SEEK);
+    "and sleepy it is life-threatening. Handle them gently. Get them dry and out of the wind, insulate all round and underneath (blankets, another " +
+    "person's warmth), cover the head, warm sweet drinks only if fully awake. Warm gently - no rubbing, no alcohol, no hot bath or hot bottle on the skin.</p>" + SEEK);
 
-  L.add("health_bites", "Bites and stings", "<p><b>Animal bites and scratches:</b> wash at once with soap and " +
-    "running water - keep washing a full <b>15 minutes</b> - then cover. Rabies kills once signs appear, but the " +
-    "<b>vaccine works if given early</b>: after any bite from a dog, cat, bat or wild animal, get it urgently.</p>" +
-    "<p><b>Snakebite:</b> keep the person <b>still and calm</b>, remove rings and tight things, splint the limb " +
-    "like a break, held level with or below the heart, and get help fast. <b>Never</b> cut, suck, ice or tie " +
-    "off a snakebite.</p>" +
-    "<p><b>Stings:</b> scrape the stinger out sideways, then a cold wet cloth. Lip or tongue swelling, hives all over, or trouble breathing is severe allergy - <b>an emergency.</b></p>" + SEEK);
+  L.add("health_bites", "Bites and stings", "<p><b>Animal bites and scratches</b> (bitten by a dog, cat, bat, monkey or wild animal): wash at once with soap and " +
+    "running water - keep washing a full <b>15 minutes</b>. Leave the wound open; do not bind it or close it. Rabies kills once signs appear, but the " +
+    "<b>vaccine works if given early</b>: after any such bite, get it urgently.</p>" +
+    "<p><b>Snake bite:</b> keep the person <b>still and calm</b>, remove rings and tight things, and splint the " +
+    "limb like a break, in whatever position is comfortable. Carry them to help - they should not walk - lying on the left side, since they may vomit. <b>Never</b> cut, suck, ice or tie " +
+    "off a snake bite.</p>" +
+    "<p><b>Stings:</b> a bee leaves its sting in the skin - get it out at once, scraping it sideways with a fingernail; then a cold wet cloth. A scorpion sting that makes the whole body ill is an emergency. " +
+    "Lip or tongue swelling, hives all over, a hoarse voice, wheezing, faintness or trouble breathing after any sting is severe allergy - <b>an emergency:</b> lay them down with the legs raised (sitting up if that is the only way they can breathe), and do not let them stand or walk.</p>" + SEEK);
 
-  L.add("health_emergency", "Choking and not breathing", "<p><b>Choking</b> (cannot cough, speak or breathe): give " +
-    "firm blows between the shoulder blades; if that fails, give abdominal thrusts (for a baby, back blows and chest " +
-    "thrusts). Keep alternating until it clears.</p>" +
-    "<p><b>Not breathing:</b> shout for help, then push <b>hard and fast in the centre of the chest</b> (about twice " +
-    "per second) and keep going until they recover or help arrives.</p>" +
-    "<p>These are only the basics - <b>get proper first-aid training</b> when you can; the real skill is worth far " +
-    "more than reading it once.</p>" + SEEK);
+  L.add("health_emergency", "Choking", "<p>If a choking person can <b>cough, speak or cry</b>, tell them to keep coughing and do nothing else. " +
+    "If they <b>cannot cough, speak or breathe</b>, act at once:</p>" +
+    "<p><b>Adult, or child over one year:</b> stand to the side and a little behind, lean them well forward, and give up to <b>5 sharp blows between the shoulder blades</b> with the heel of your hand. " +
+    "Not cleared: stand behind them, put a fist just above the navel, grasp it with your other hand and pull sharply <b>in and up, up to 5 times</b>. Keep alternating 5 blows and 5 thrusts.</p>" +
+    "<p><b>Baby under one year:</b> lay the baby face down along your forearm, head lower than the chest, holding the jaw, and give up to <b>5 back blows</b>. " +
+    "Not cleared: turn the baby face up, hold the chest in both hands, and give up to <b>5 sharp chest thrusts</b> with both thumbs on the middle of the breastbone. <b>Never squeeze a baby's belly.</b></p>" +
+    "<p>Do not feel blindly in the mouth: take out only what you can see. A woman far on in pregnancy, or a very large person: thrusts on the <b>chest</b>, not the belly.</p>" +
+    "<p>If they go limp and stop responding, lay them down and start chest pushes (see Not breathing: chest pushes). Anyone who was given thrusts to the belly, and any baby given chest thrusts, should be seen by a health worker afterwards. " +
+    "These are only the basics - <b>get proper first-aid training</b> when you can; the real skill is worth far more than reading it once.</p>" + SEEK);
 })();
 // ===========================================================================
 // MODULE: HEALTH_LESSONS_EMERGENCY - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: HEALTH_LESSONS_FIRST - START
+// Depends: MATH_LESSONS
+// Exports: (none) -- registers first-response lessons (health_*): first things first, recovery position, chest pushes (CPR), shock
+// ===========================================================================
+// The Health audit (1.24.4): what to do in the first minutes, in the order it
+// is done. Same policy as HEALTH_LESSONS: REFERENCE only, no medicine, always
+// defers to trained help where it exists. The figures were checked in
+// November 2026 against the Resuscitation Council UK's 2025 guidelines
+// (adult and paediatric basic life support, first aid), the American Heart
+// Association's 2025 guidelines (a baby's chest is pressed with two thumbs,
+// no longer two fingers), St John Ambulance (the recovery position, shock)
+// and the UK NHS, and are in Lantern's own words. Where the councils differ
+// (5 breaths first for a child or a drowned person) the lesson takes the
+// European way and says that pushing alone still helps.
+(function () {
+  var L = Lantern.mathLessons;
+  var SEEK = "<p class='muted'>Get trained help or emergency services whenever they exist - this is for when no other help is available yet.</p>";
+
+  L.add("health_first", "First things first in an emergency", "<p>Take these in order. Each one comes before the next.</p>" +
+    "<ol><li><b>Danger.</b> Look before you go in: fire, traffic, electricity, deep water, gas, a wall about to fall. You cannot help if you are hurt too.</li>" +
+    "<li><b>Help.</b> Shout for help. Send someone for a health worker or an emergency service if one exists, to say where you are and what happened.</li>" +
+    "<li><b>Response.</b> Speak loudly and tap the shoulders. If they answer, ask what hurts and look for bleeding.</li>" +
+    "<li><b>Breathing.</b> No answer: tilt the head back gently, lift the chin, and look, listen and feel for normal breathing for up to 10 seconds. " +
+    "<b>Not breathing normally</b>, or only a gasp now and then: start chest pushes at once (see Not breathing: chest pushes). " +
+    "<b>Breathing normally:</b> turn them on their side (see The recovery position).</li>" +
+    "<li><b>Bleeding.</b> Press hard on any heavy bleeding.</li></ol>" +
+    "<p>Then keep them warm and still and stay with them. <b>Give nothing to eat or drink</b> to someone badly hurt or not fully awake. " +
+    "After a fall, a crash or a blow to the head or back, do not move them unless they are in danger or must be turned to keep them breathing.</p>" + SEEK);
+
+  L.add("health_recovery", "Unconscious but breathing: the recovery position", "<p>A person who is not awake and lies on their back can choke on their own tongue or vomit. " +
+    "If they are <b>breathing normally</b>, turn them onto their side:</p>" +
+    "<ol><li>Kneel beside them. Take off their glasses and straighten their legs.</li>" +
+    "<li>Lay the arm nearest you out from the body, elbow bent, palm up.</li>" +
+    "<li>Bring their far arm across the chest and hold the back of that hand against the cheek nearest you.</li>" +
+    "<li>With your other hand pull the far knee up until the foot is flat on the ground.</li>" +
+    "<li>Keeping the hand against the cheek, pull on the knee to roll them toward you onto their side.</li>" +
+    "<li>Tilt the head back a little so the airway stays open, with the mouth pointing down so that anything in it drains out. Bend the top leg at the hip and knee so they cannot roll over.</li></ol>" +
+    "<p>Keep them warm, <b>keep checking that they breathe</b>, and get help. If breathing stops, roll them onto their back and start chest pushes. " +
+    "A woman far on in pregnancy is laid on her <b>left</b> side. A baby is held on its side in your arms, head tilted a little down.</p>" +
+    "<p>If the neck or back may be hurt, move them only as much as is needed to keep them breathing.</p>" + SEEK);
+
+  L.add("health_cpr", "Not breathing: chest pushes (CPR)", "<p>Someone who does not respond and is <b>not breathing normally</b> needs their chest pushed at once. Send for help, but do not wait for it.</p>" +
+    "<p><b>Adult:</b> lay them on their back on something firm and kneel beside the chest. Put the heel of one hand on the <b>centre of the chest</b>, your other hand on top, arms straight, shoulders over your hands. " +
+    "Push down <b>5 to 6 cm</b>, let the chest come all the way up, and repeat <b>100 to 120 times a minute</b> - about two pushes a second. Do not stop to check.</p>" +
+    "<p><b>Breaths, if you are able:</b> after every <b>30 pushes</b> tilt the head back, lift the chin, pinch the nose, seal your mouth over theirs and blow steadily for one second, watching the chest rise; do it twice, then push again. " +
+    "If you cannot give breaths, keep pushing: pushes alone still help.</p>" +
+    "<p><b>A child, a baby, or anyone pulled from water</b> has usually stopped breathing first, so breaths matter most: give <b>5 breaths first</b>, then 30 pushes and 2 breaths, over and over. " +
+    "Child: one hand, pushing down one third of the depth of the chest. Baby under one year: hold the chest in both hands and press on the breastbone with both thumbs, one third of the depth (about 4 cm); " +
+    "for breaths keep the baby's head level, not tilted back, lift the chin, cover the mouth and nose with your mouth and give small puffs.</p>" +
+    "<p>Keep going until they breathe, someone trained takes over, or you cannot go on. If others are there, change the person pushing every 2 minutes. If a defibrillator can be fetched, switch it on and do what it says.</p>" +
+    "<p>A person whose heart has stopped may jerk for a few seconds or gasp now and then. That is not breathing: start pushing.</p>" + SEEK);
+
+  L.add("health_shock", "Shock after blood loss, burns or a bad injury", "<p>After heavy bleeding, bad burns, a broken thigh or hip, or severe diarrhoea, too little blood reaches the body's organs. This is <b>shock</b>, and it kills if nothing is done. " +
+    "Signs: <b>pale, cold, sweaty skin</b>; a fast, weak pulse; fast, shallow breathing; thirst; feeling faint or sick; then confusion and drowsiness.</p>" +
+    "<ul><li>Stop any bleeding first.</li>" +
+    "<li><b>Lay them flat.</b> If it causes no pain and the head, back, hips and legs are not injured, raise the legs a little on a pack or a folded blanket.</li>" +
+    "<li>Keep them <b>warm</b>: something under them as well as over them.</li>" +
+    "<li>Loosen tight clothing. Stay with them and speak calmly.</li>" +
+    "<li><b>Nothing to eat or drink</b>; wet the lips if they are thirsty. (Shock from diarrhoea is different: give ORS in sips if they are awake.)</li>" +
+    "<li>Get help urgently. If they stop responding but breathe, use the recovery position; if they stop breathing, chest pushes.</li></ul>" + SEEK);
+})();
+// ===========================================================================
+// MODULE: HEALTH_LESSONS_FIRST - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: HEALTH_LESSONS_SUDDEN - START
+// Depends: MATH_LESSONS
+// Exports: (none) -- registers sudden-illness lessons (health_*): fits, stroke and heart attack, poisoning, drowning
+// ===========================================================================
+// The Health audit (1.24.4). Checked in November 2026, in Lantern's own
+// words: US CDC, first aid for seizures; UK NHS, febrile seizures (no
+// sponging, a first fit is urgent); American Stroke Association and US CDC,
+// the signs of stroke and heart attack; US Poison Control and UK NHS, first
+// aid for poisoning and chemicals (rinse at least 20 minutes); Resuscitation
+// Council UK 2025 (5 breaths first after drowning); US CDC, carbon monoxide.
+// No medicine is named (aspirin for a heart attack is a question for Adam).
+(function () {
+  var L = Lantern.mathLessons;
+  var SEEK = "<p class='muted'>Get trained help or emergency services whenever they exist - this is for when no other help is available yet.</p>";
+
+  L.add("health_fits", "Fits (seizures, convulsions)", "<p>In a fit a person may fall, go stiff and jerk for a minute or two, froth at the mouth, bite the tongue or wet themselves. It is frightening to see, but most fits stop by themselves.</p>" +
+    "<ul><li><b>Note the time</b> it starts.</li>" +
+    "<li>Move hard and sharp things away, put something soft under the head, and loosen anything tight round the neck.</li>" +
+    "<li><b>Do not hold them down. Put nothing in the mouth</b> - a person cannot swallow their tongue.</li>" +
+    "<li>When the jerking stops, turn them on their side (the recovery position) and stay until they are fully awake. No food or drink until then.</li></ul>" +
+    "<p><b>Get help urgently</b> if the fit lasts <b>more than 5 minutes</b>, a second one follows, it is their first fit, they are pregnant, hurt or have diabetes, it happened in water, or they do not wake or breathe normally afterwards.</p>" +
+    "<p>A small child with a fever may have a short fit. Do not wrap the child up, and do not sponge or bath them to cool them. A child's first fit, or any fit of more than 5 minutes, needs help at once; so does a fit with a stiff neck, or with fever in malaria country.</p>" +
+    "<p>Someone who collapses and jerks for only a few seconds may have had their heart stop: when the jerking ends, check the breathing, and if it is not normal start chest pushes.</p>" + SEEK);
+
+  L.add("health_strokeheart", "Stroke and heart attack (chest pain): the signs", "<p><b>Stroke</b> - the blood supply to part of the brain is cut off. The signs come suddenly: the <b>face</b> droops on one side when they smile; one <b>arm</b> drifts down when both are raised; <b>speech</b> is slurred or strange. " +
+    "Also sudden numbness or weakness on one side, confusion, trouble seeing, trouble walking, or a severe headache with no cause. Note the <b>time</b> the signs began and get help at once: treatment works only in the first hours. " +
+    "Help them into a comfortable, supported position and stay with them; if they grow drowsy but still breathe, use the recovery position. Nothing to eat or drink.</p>" +
+    "<p><b>Heart attack</b> - pain, pressure or squeezing in the <b>centre of the chest</b> that lasts more than a few minutes or goes and comes back; it may spread to an arm, the neck, the jaw, the back or the stomach. Also shortness of breath, a cold sweat, sickness, light-headedness. " +
+    "Women, old people and people with diabetes may have little pain, and mostly breathlessness, sickness and great tiredness. " +
+    "Sit them down, leaning back with the knees bent, loosen clothing, keep them calm and still, and get help at once. If they collapse and stop breathing, start chest pushes.</p>" + SEEK);
+
+  L.add("health_poison", "Poisoning (something harmful swallowed, breathed or on the skin)", "<ul><li><b>Swallowed</b> (kerosene, petrol, bleach, pesticide, pills, a poisonous plant): do <b>not</b> make them vomit, and do not give salt water. Have them spit out what is left in the mouth. Keep the container, plant or pills to show a health worker.</li>" +
+    "<li><b>On the skin:</b> brush off any dry powder, take off wet clothing, and wash the skin under running water for <b>at least 20 minutes</b> - longer if it still burns.</li>" +
+    "<li><b>In the eye:</b> pour clean water gently across the open eye for <b>at least 20 minutes</b>.</li>" +
+    "<li><b>Breathed in</b> (smoke, fumes, gas): get them into fresh air at once, without breathing it yourself.</li></ul>" +
+    "<p>Not fully awake but breathing: the recovery position. Get help for every poisoning even if they seem well - some poisons act hours later.</p>" +
+    "<p><b>Fumes from fires and engines</b> (carbon monoxide) have no smell. Headache, dizziness, sickness and sleepiness in people sharing a closed room with a stove, charcoal or an engine: get everyone outside. Never burn charcoal or run an engine indoors.</p>" +
+    "<p><b>Prevent it:</b> keep fuel, pesticides, medicines and cleaning liquids in their own labelled containers, never in drink bottles, and out of children's reach. Never mix bleach with other cleaners.</p>" + SEEK);
+
+  L.add("health_drowning", "Drowning", "<p><b>Do not go in after them</b> if you can help from the bank - a drowning person pulls a rescuer under. <b>Reach</b> with a pole, a branch or a rope, or <b>throw</b> something that floats, and pull them in while you lie down or hold on to something. Use a boat if there is one.</p>" +
+    "<p>Out of the water, check breathing. <b>Not breathing:</b> give <b>5 breaths</b>, then 30 chest pushes and 2 breaths, and keep going (see Not breathing: chest pushes). Do not waste time trying to drain water from the lungs. " +
+    "<b>Breathing:</b> the recovery position; take off wet clothes and wrap them up, because cold is the next danger.</p>" +
+    "<p>Anyone who went under and had to be rescued, or who coughs or breathes hard afterwards, needs a health worker even if they seem well: the lungs can fail hours later.</p>" +
+    "<p>Most drownings are small children near home - in wells, ponds, tanks and buckets. Cover wells and tanks, fence ponds, and never leave a small child alone near water.</p>" + SEEK);
+})();
+// ===========================================================================
+// MODULE: HEALTH_LESSONS_SUDDEN - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: HEALTH_LESSONS_INJURY - START
+// Depends: MATH_LESSONS
+// Exports: (none) -- registers injury lessons (health_*): blows to the head, eyes / nose / fainting, electric shock and lightning, moving an injured person
+// ===========================================================================
+// The Health audit (1.24.4). Checked in November 2026, in Lantern's own
+// words: UK NHS and NICE guideline NG232 (head injury: who must be seen, the
+// danger signs, sleep is allowed), UK NHS (nosebleed: help after 15 minutes;
+// fainting: awake within a minute), St John Ambulance (electric shock), the
+// Electrical Safety Foundation (10 metres from a fallen line), the US
+// National Weather Service (30 minutes after the last thunder); the
+// stretchers and carries are those of the US Army's First Aid manual
+// (FM 4-25.11, public domain).
+(function () {
+  var L = Lantern.mathLessons;
+  var SEEK = "<p class='muted'>Get trained help or emergency services whenever they exist - this is for when no other help is available yet.</p>";
+
+  L.add("health_head", "Blows to the head (head injury)", "<p>Most bumps on the head are not serious: rest, and a cold wet cloth on the bump. <b>Someone should stay with the person for the next 24 hours.</b> They may sleep; look in on them to see that they breathe normally and can be roused as usual.</p>" +
+    "<p><b>Get them seen by a health worker</b> if they were knocked out, even for a moment; cannot remember what happened; have vomited; fell from more than a metre; take medicine that thins the blood, or had been drinking alcohol; or are a baby with a swelling on the head.</p>" +
+    "<p><b>Danger signs - get help at once:</b> a headache that keeps getting worse; vomiting more than once; growing sleepiness, or cannot be woken; confusion or strange behaviour; a fit; weakness or numbness in an arm or leg; trouble speaking or seeing; " +
+    "pupils of different sizes; clear fluid or blood from an ear or the nose; bruising behind the ears, or black eyes with no blow to the eye; a soft or dented place in the skull.</p>" +
+    "<p>A bleeding scalp: press firmly with a clean cloth - gently if the bone may be broken. After a hard blow, a fall from a height or a crash, treat the neck and back as injured too: keep the head still and in line with the body, and do not move them unless you must.</p>" + SEEK);
+
+  L.add("health_eyes", "Eyes, a bleeding nose, and fainting", "<p><b>Something in the eye:</b> do not rub. Blink under clean water, or pour water across the eye. " +
+    "<b>Anything stuck in the eyeball, or a cut eye:</b> do not touch it or wash it; cover the eye loosely with a clean cloth without pressing, ask them to keep both eyes still, and get help. " +
+    "<b>A chemical or lime in the eye:</b> rinse at once with clean water for at least 20 minutes, then get help.</p>" +
+    "<p><b>A bleeding nose (nosebleed):</b> sit up, lean <b>forward</b>, and pinch the soft part of the nose for <b>10 to 15 minutes</b> without letting go, breathing through the mouth. Do not tip the head back. " +
+    "If it is still bleeding after 15 minutes, keep pinching and get help; get help too if it follows a blow to the head.</p>" +
+    "<p><b>Fainting:</b> lay them flat and check at once that they are breathing; then raise the legs, loosen tight clothing and give them air. They should come round within a minute. If they do not, turn them on their side (the recovery position) and get help. " +
+    "A woman far on in pregnancy lies on her left side. Someone who feels faint should lie down, or sit with the head between the knees.</p>" + SEEK);
+
+  L.add("health_electric", "Electric shock and lightning", "<p><b>Do not touch a person who is still touching the electricity</b> - it will pass into you. Switch off at the mains or pull out the plug. " +
+    "If you cannot, stand on something dry (wood, rubber, a pile of paper) and push them clear with something dry that does not carry electricity: a wooden broom handle, a plastic chair. Never anything wet or metal.</p>" +
+    "<p><b>Fallen power lines and high-voltage equipment:</b> stay at least <b>10 metres</b> back and keep others away. The ground around them can kill; only the power company can make them safe.</p>" +
+    "<p>Once they are clear, check breathing. Not breathing: chest pushes. Breathing but not awake: the recovery position. Cool any burns with water - there may be one where the current went in and another where it came out. " +
+    "Anyone a shock has knocked down or burned needs a health worker: the heart can be affected later.</p>" +
+    "<p><b>Lightning:</b> a person who has been struck carries no electricity and is safe to touch; start chest pushes if they are not breathing. " +
+    "In a storm go into a building or a closed vehicle, and keep away from lone trees, hilltops, open fields, water and wire fences. Stay in shelter until <b>30 minutes after the last thunder</b>.</p>" + SEEK);
+
+  L.add("health_moving", "Moving an injured person", "<p>Moving a badly hurt person can do more harm. <b>Leave them where they are</b> and bring help to them, unless there is danger (fire, water, traffic, cold) or they must be carried to help.</p>" +
+    "<p><b>If the neck or back may be hurt</b> (a fall, a crash, a dive; pain in the neck or back; numb or weak arms or legs), keep head, neck and back in one straight line. Move them only with several people, one holding the head, rolling and lifting the body as one piece onto a board or a door.</p>" +
+    "<p><b>Out of danger fast, alone:</b> drag them along the line of the body by the clothes at the shoulders, or on a blanket.</p>" +
+    "<p><b>A stretcher:</b> a blanket folded over two strong poles, the poles pushed through the sleeves of two or three buttoned coats, or a door or plank. Try it with an uninjured person first. Four carriers if you can, keeping it level; tie the person on over rough ground.</p>" +
+    "<p>Someone who can hobble: their arm over your shoulders, your arm round their waist. Two people can carry a third on a seat made by gripping each other's wrists.</p>" + SEEK);
+})();
+// ===========================================================================
+// MODULE: HEALTH_LESSONS_INJURY - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: HEALTH_LESSONS_CHILD - START
+// Depends: MATH_LESSONS
+// Exports: (none) -- registers sick-child lessons (health_*): danger signs, counting breaths, diarrhoea, the arm measurement for thinness
+// ===========================================================================
+// The Health audit (1.24.4). The signs and limits are the World Health
+// Organization's, in Lantern's own words: Integrated Management of Childhood
+// Illness (IMCI) chart booklet, 2014 (general danger signs, fast breathing by
+// age, the sick young infant); The Treatment of Diarrhoea, 2005 (home care,
+// fluids, feeding); WHO and UNICEF, child growth standards and the
+// identification of severe acute malnutrition, 2009, and WHO 2013 (the
+// mid-upper-arm measurement). No medicine and no dose is given: zinc, and
+// antibiotics for pneumonia, are a health worker's to give.
+(function () {
+  var L = Lantern.mathLessons;
+  var SEEK = "<p class='muted'>Get trained help or emergency services whenever they exist - this is for when no other help is available yet.</p>";
+
+  L.add("health_danger", "Danger signs in a sick child", "<p>Small children become very ill very fast. <b>Any one of these means the child needs a health worker now</b>, day or night:</p>" +
+    "<ul><li><b>cannot drink or breastfeed</b>;</li><li><b>vomits everything</b>;</li><li>has had a <b>fit</b>;</li><li>is <b>unusually sleepy, floppy or hard to wake</b>.</li></ul>" +
+    "<p>Also urgent: fast or difficult breathing, or the lower chest pulling in with each breath; a stiff neck; sunken eyes, or skin that goes back slowly when pinched; blood in the stool; a rash that does not fade when pressed; " +
+    "blue lips or tongue; any fever in a baby under 3 months; swelling of both feet; a child who keeps getting worse.</p>" +
+    "<p><b>A baby in the first 2 months</b> also: feeding poorly or not at all; breathing 60 times a minute or more; grunting; hot or cold to the touch; moving only when stirred, or not at all; yellow palms or soles; redness or pus round the cord.</p>" +
+    "<p>On the way to help keep the child warm, keep breastfeeding, and give sips of ORS if the child can drink. A child who is having a fit or cannot be woken is laid on the side and given nothing by mouth.</p>" + SEEK);
+
+  L.add("health_breathing", "Coughs and pneumonia: counting breaths", "<p>Most coughs and colds pass in a week or two with rest, drinks and food. <b>Pneumonia</b>, an infection deep in the lungs, is a great killer of small children, and it shows in the <b>breathing</b>.</p>" +
+    "<p><b>Count the breaths</b> while the child is calm or asleep: watch the belly or chest rise, and count for <b>one full minute</b>. Fast breathing is:</p>" +
+    "<ul><li>a baby under 2 months: <b>60 or more</b> a minute (count again to be sure);</li>" +
+    "<li>2 months up to 12 months: <b>50 or more</b>;</li>" +
+    "<li>1 year up to 5 years: <b>40 or more</b>.</li></ul>" +
+    "<p>A child with a cough or difficult breathing <b>and fast breathing</b> may have pneumonia and needs a health worker for medicine. " +
+    "<b>The lower chest pulling in</b> as the child breathes in, a harsh noise on breathing in while calm, grunting, blue lips, or any danger sign means severe illness: go at once.</p>" +
+    "<p>At home: breastfeed and give drinks often, keep feeding, wipe a blocked nose clear, keep the child warm but not wrapped tight, and keep smoke away - cooking smoke indoors causes much pneumonia.</p>" +
+    "<p>A cough that lasts more than 14 days, or a fever every day for more than 7 days, also needs a health worker.</p>" +
+    "<p>The Health tile has a counter that times the minute for you.</p>" + SEEK);
+
+  L.add("health_diarrhoea", "Diarrhoea (diarrhea): care at home", "<p>Diarrhoea kills by drying the body out. Three rules, from the first loose stool:</p>" +
+    "<ul><li><b>Give more to drink than usual:</b> ORS (see Oral rehydration), rice water or soup with a little salt (no saltier than tears), and clean water; also weak tea without sugar or green coconut water. " +
+    "A baby who has only breast milk gets the breast more often, and ORS or clean water besides - nothing else. After every loose stool offer a child under 2 years 50 to 100 ml (a quarter to half a cup), an older child 100 to 200 ml, an adult as much as they want. " +
+    "After vomiting wait ten minutes, then give it more slowly, a spoonful at a time. Not sweet fizzy drinks or sweetened juice, which make it worse.</li>" +
+    "<li><b>Keep feeding.</b> Small meals often: the usual staple with beans, egg, fish or a little oil; mashed banana. Do not starve a child with diarrhoea. For two weeks afterwards give one extra meal a day.</li>" +
+    "<li><b>Know when to get help:</b> many watery stools, repeated vomiting, great thirst, eating or drinking poorly, fever, <b>blood in the stool</b>, or no better after 3 days.</li></ul>" +
+    "<p><b>Signs of drying out:</b> thirst, a dry mouth, little dark urine, sunken eyes, no tears, a sunken soft spot on a baby's head, skin that goes back slowly when pinched. Sleepy, floppy or unable to drink is an emergency.</p>" +
+    "<p><b>Cholera</b> - sudden, pouring, watery diarrhoea like rice water - can kill an adult in hours. Start ORS at once and keep giving it all the way to help. Wash hands, treat all drinking water, and keep the stool away from water.</p>" +
+    "<p>Medicines that stop diarrhoea are not for children.</p>" + SEEK);
+
+  L.add("health_muac", "Is this child dangerously thin? The arm measurement", "<p>Thinness is hard to judge by eye. For a child from <b>6 months to 5 years</b>, the distance round the upper arm shows it plainly, and a strip of paper and a ruler are all it takes.</p>" +
+    "<ol><li>Bend the child's <b>left arm</b> at a right angle. Find the point halfway between the tip of the shoulder and the tip of the elbow, and mark it.</li>" +
+    "<li>Let the arm hang loose. Wrap a strip of paper round it at the mark, flat on the skin, neither tight nor slack, and mark where the end meets the strip.</li>" +
+    "<li>Lay the strip on a ruler.</li></ol>" +
+    "<ul><li><b>Less than 11.5 cm:</b> severe. The child is in danger and needs a health worker's treatment now.</li>" +
+    "<li><b>11.5 cm up to 12.5 cm:</b> thin. Needs extra food every day, and measuring again each week.</li>" +
+    "<li><b>12.5 cm or more:</b> not dangerously thin.</li></ul>" +
+    "<p><b>Swelling of both feet</b> is also severe malnutrition, whatever the arm measures: press a thumb on the top of each foot for three seconds; if a dent stays in both, get help.</p>" +
+    "<p>A thin child needs food often - small meals five or six times a day, with oil, beans, egg, milk or groundnut paste added to the staple - breast milk as before, and any illness treated.</p>" + SEEK);
+})();
+// ===========================================================================
+// MODULE: HEALTH_LESSONS_CHILD - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: HEALTH_LESSONS_CARE - START
+// Depends: MATH_LESSONS
+// Exports: (none) -- registers caring lessons (health_*): malaria, the sick at home, pulse / breathing / temperature, a troubled mind
+// ===========================================================================
+// The Health audit (1.24.4). Sources for the figures, in Lantern's own
+// words: WHO malaria guidance (nets, a test within a day of fever); the US
+// National Library of Medicine's MedlinePlus (resting pulse by age, an
+// adult's breathing rate, fever); WHO, Psychological first aid: guide for
+// field workers, 2011 (look, listen, link). No medicine is named.
+(function () {
+  var L = Lantern.mathLessons;
+  var SEEK = "<p class='muted'>Get trained help or emergency services whenever they exist - this is for when no other help is available yet.</p>";
+
+  L.add("health_malaria", "Mosquitoes and malaria", "<p>Malaria is carried by mosquitoes that bite mostly <b>between dusk and dawn</b>. Where there is malaria:</p>" +
+    "<ul><li><b>Sleep under a net</b> every night, tucked in all round, treated with insecticide if one can be had. Mend holes. Babies, small children and pregnant women first: malaria is most dangerous to them.</li>" +
+    "<li>Cover arms and legs in the evening; put screens on windows and doors.</li>" +
+    "<li>Mosquitoes breed in still water. <b>Empty standing water</b> round the house once a week - tins, tyres, pots, blocked gutters - cover water jars and tanks, and drain or fill puddles where you can. (The mosquitoes that carry dengue breed in such small containers of clean water, and bite by day.)</li></ul>" +
+    "<p><b>Any fever in malaria country may be malaria.</b> Get a test and treatment within a day. Go at once if the person cannot drink, vomits again and again, has a fit, is very sleepy or confused, passes dark or little urine, has yellow eyes, breathes fast, or is very weak. " +
+    "Take the whole course of any malaria medicine a health worker gives, even after the fever has gone.</p>" + SEEK);
+
+  L.add("health_homecare", "Caring for a sick person at home", "<ul><li><b>Drink:</b> offer drinks often. A sick person, above all one with fever or diarrhoea, needs more water than a well one. Pale urine several times a day shows they are getting enough.</li>" +
+    "<li><b>Food:</b> small amounts often, soft, and what they fancy; sit them up to eat.</li>" +
+    "<li><b>Clean and dry:</b> wash them every day, change wet bedding, keep the mouth clean.</li>" +
+    "<li><b>Someone who cannot move:</b> turn them to a new position at least <b>every 2 hours</b>, and keep the skin dry and the sheet smooth, or sores open over the bones - hips, heels, tailbone, shoulders. Look at those places every day; redness that does not fade is the first sign.</li>" +
+    "<li><b>Breathing trouble:</b> prop them up sitting.</li>" +
+    "<li><b>Wash your hands</b> before and after caring for them. Give them their own cup, plate and towel; wash soiled cloth with soap and dry it in the sun.</li>" +
+    "<li><b>Write down</b>, morning and evening, how much they drank and passed, their temperature if you can, breaths a minute, and how awake they are. Changes show early on paper.</li></ul>" +
+    "<p>Get help if they cannot drink, pass no urine for 8 hours (in a baby, no wet nappy for 3 hours is already a warning), breathe fast or with effort, grow confused or hard to wake, or get worse instead of better. " +
+    "Give nothing by mouth to someone who cannot be woken or is having a fit: lay them on their side.</p>" + SEEK);
+
+  L.add("health_vitals", "Checking the body: pulse, breathing, temperature", "<p>Four simple checks show whether a person is getting better or worse. Do them at rest and <b>write them down with the time</b>.</p>" +
+    "<ul><li><b>Pulse:</b> two fingers (not the thumb) on the thumb side of the wrist, or beside the windpipe in the neck. Count the beats for one minute. Never press both sides of the neck at once. At rest: adults and children of 10 and over, <b>60 to 100</b>; a child of 5 or 6, 75 to 115; a child of 1 or 2, 80 to 130; a baby of 1 to 11 months, 80 to 160; a baby in its first month, 70 to 190. " +
+    "A fast, weak pulse after bleeding or diarrhoea warns of shock.</li>" +
+    "<li><b>Breathing:</b> watch the chest and count for one full minute, without telling them. An adult at rest takes <b>12 to 20</b> breaths a minute; children breathe faster (see Coughs and pneumonia for their limits).</li>" +
+    "<li><b>Temperature:</b> normal is about <b>37 &deg;C</b> (98.6 &deg;F). <b>38 &deg;C</b> (100.4 &deg;F) or more is a fever; below 35 &deg;C (95 &deg;F) is dangerously cold (for a baby in its first 2 months, below 35.5 &deg;C). With no thermometer, the back of your hand on their chest, compared with your own, gives a rough idea.</li>" +
+    "<li><b>How awake:</b> alert; answers only when spoken to; stirs only when pinched; or does not respond at all. Each step down is worse.</li></ul>" +
+    "<p>Look too at the colour of the lips and nails (blue or very pale is bad), and ask how much they have drunk and passed. The Health tile has a counter that times a minute for breaths or pulse.</p>" + SEEK);
+
+  L.add("health_mind", "Fear, grief and a troubled mind", "<p>After a disaster, a death, violence or long hardship, strong reactions are <b>normal</b>: fear, crying, anger, numbness, bad dreams, being unable to sleep or eat, aches with no cause. In most people they ease over days and weeks.</p>" +
+    "<p><b>To help someone:</b></p>" +
+    "<ul><li><b>Look:</b> are they safe? Do they need water, food, warmth, a wound seen to? Start there.</li>" +
+    "<li><b>Listen:</b> stay near, be calm, give them your whole attention. Let them talk if they want to; never press them to tell what happened. Do not say it could be worse, and do not make promises you cannot keep.</li>" +
+    "<li><b>Link:</b> help them find their family, true news, and the people who can help with food, shelter and work. Help them do things for themselves: it gives back some control.</li></ul>" +
+    "<p><b>For yourself and your household:</b> keep a daily routine; eat, sleep and wash at regular times; work and move the body; stay among other people; keep children close, answer their questions truthfully and simply, and let them play. Alcohol and drugs make it worse.</p>" +
+    "<p><b>Get more help at once</b> - a health worker, an elder, someone trusted - for anyone who speaks of harming themselves or others, who cannot look after themselves or their children, or who sees or hears things that are not there. <b>Do not leave such a person alone.</b> " +
+    "Get help too for anyone who, after about a month, still cannot manage daily tasks.</p>");
+})();
+// ===========================================================================
+// MODULE: HEALTH_LESSONS_CARE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: HEALTH_LESSONS_BIRTH - START
+// Depends: MATH_LESSONS
+// Exports: (none) -- registers mother-and-baby lessons (health_*): pregnancy danger signs, a birth with no midwife, the first hour, the newborn
+// ===========================================================================
+// The Health audit (1.24.4). For when no midwife or health worker can be
+// reached in time; every lesson says to get one. In Lantern's own words,
+// from:
+//  - World Health Organization, Pregnancy, childbirth, postpartum and
+//    newborn care: a guide for essential practice (3rd edition, 2015): the
+//    danger signs and when to go, the clean birth, never pushing on the
+//    belly or pulling the cord, a loose cord slipped over the head, drying
+//    and skin-to-skin warmth, the cord cut after it stops beating and tied
+//    in two places, the first feed within the hour, the womb rubbed when it
+//    is soft or she bleeds (and not to bring the afterbirth), a cloth soaked
+//    in under 5 minutes, the newborn's danger signs; and WHO recommendations
+//    on newborn health (2017): no bath on the first day, breast milk only
+//    for six months, 8 or more feeds a day, nothing on the cord stump;
+//  - Helping Babies Breathe (American Academy of Pediatrics, 2nd edition):
+//    a baby not breathing is dried, rubbed two or three times, and must be
+//    breathing or helped to breathe within the first minute;
+//  - Hesperian Health Guides, A Book for Midwives and the New Where There Is
+//    No Doctor (facts only): breaths for a newborn when there is no bag and
+//    mask (small puffs from the cheeks), a tight cord round the neck, and
+//    boiling the blade and thread for 20 minutes.
+// No medicine is named. What only a trained person should do (cutting a
+// tight cord, bringing out an afterbirth by hand) is left out on purpose.
+(function () {
+  var L = Lantern.mathLessons;
+  var SEEK = "<p class='muted'>A midwife or health worker is always safer than this page. Use it only when none can be reached in time.</p>";
+
+  L.add("health_pregnancy", "Pregnancy: staying well, and danger signs", "<p>A pregnant woman needs more food than usual, rest, clean water, less heavy lifting, and a net to sleep under in malaria country. " +
+    "Wherever a midwife or health worker can be reached, see them early and several times - they find problems before they are dangerous - and plan to give birth with trained help. Decide beforehand how to get there, who goes along, and who minds the children.</p>" +
+    "<p><b>Danger signs in pregnancy - go for help at once, day or night:</b></p>" +
+    "<ul><li>bleeding from the vagina;</li><li>fits;</li><li>a severe headache with blurred sight;</li><li>fever, and too weak to get out of bed;</li><li>severe pain in the belly;</li><li>fast or difficult breathing;</li>" +
+    "<li>the waters have broken and labour has not started within 6 hours.</li></ul>" +
+    "<p><b>Go as soon as you can for:</b> fever; belly pain; feeling ill; swollen fingers, face and legs; the baby moving less, or not at all.</p>" +
+    "<p><b>In labour, get help at once if:</b> the pains have gone on for more than 12 hours; there is heavy bleeding; she has pushed hard for an hour and the baby is not coming; a hand, a foot or the cord comes first " +
+    "(if it is the cord, she kneels with her chest down and her hips higher than her shoulders on the way); or the afterbirth has not come an hour after the baby.</p>" +
+    "<p><b>After the birth, get help at once for:</b> heavy bleeding - a pad or cloth soaked in less than 5 minutes, or bleeding that grows heavier; fits; fever; a severe headache; severe belly pain; bad-smelling discharge; difficult breathing.</p>" + SEEK);
+
+  L.add("health_birth", "A birth with no midwife", "<p>Most births go well by themselves. If trained help cannot be reached in time, the helper's work is to keep everything <b>clean, calm and warm</b>, and not to interfere.</p>" +
+    "<p><b>Get ready - everything clean:</b> hands washed with soap, nails short; a clean cloth or plastic sheet under the mother; a <b>new razor blade</b>, or a blade boiled for 20 minutes; two lengths of clean thread or strips of cloth, boiled with it, to tie the cord; clean dry cloths for the baby; a warm room.</p>" +
+    "<p><b>Labour:</b> let her walk, kneel, squat or lie on her side as she likes - not flat on her back. She should drink, eat lightly, and pass urine often. She pushes only when she cannot help pushing. " +
+    "<b>Never push on her belly. Never pull on the baby.</b> Put nothing into the vagina, and give no herbs or medicines to hurry the birth.</p>" +
+    "<p><b>The birth:</b> support the baby's head as it comes, and let the baby turn by itself; the shoulders and body follow with the next pains. If a loose cord lies round the neck, slip it over the head; if it will not slip, do not pull on it - let the baby be born through the loop and unwind it at once. " +
+    "Lift the baby straight onto the mother's belly.</p>" +
+    "<p>What to do next for the baby, the cord and the afterbirth is in Just born: the first hour after birth.</p>" + SEEK);
+
+  L.add("health_afterbirth", "Just born: the first hour after birth", "<p><b>The baby:</b> at once <b>dry</b> the baby all over with a clean cloth, take the wet cloth away, and lay the baby naked on the mother's bare chest with a dry cloth over both: her skin is the best warmer. A baby who cries or breathes well needs nothing more.</p>" +
+    "<p><b>Not breathing, or only gasping:</b> while you dry, rub the back gently but firmly two or three times, and wipe the mouth and nose only if mucus is blocking them. <b>Still not breathing - act within the first minute</b>, and send someone else for help: " +
+    "lay the baby on its back with the face straight up (the head not tilted far back), cover the baby's mouth and nose with your mouth, and give a small puff of air from your cheeks - not a full breath - about every two seconds, just enough to make the chest rise. " +
+    "If the chest does not rise, move the head a little and try again. Keep going until the baby breathes. Never slap or shake a baby or hold it upside down.</p>" +
+    "<p><b>The cord:</b> there is no hurry. Wait a few minutes, until the cord has stopped beating. Tie it tightly in two places, about two and five finger-widths from the baby's belly, and cut between the ties with the clean blade. " +
+    "Put nothing on the stump - no ash, dung, oil or powder. Watch the cut end: if it oozes blood, tie it again more tightly.</p>" +
+    "<p><b>The first feed:</b> put the baby to the breast within the first hour. The first yellowish milk is what the baby needs, and suckling helps the womb tighten and the bleeding stop.</p>" +
+    "<p><b>The afterbirth</b> usually comes by itself within the hour, with a few more pains. <b>Do not pull on the cord, and do not press on the womb to bring it.</b> Putting the baby to the breast, passing urine, and sitting up or squatting to push with a pain all help. " +
+    "If it has not come an hour after the baby, get help at once.</p>" +
+    "<p><b>Afterwards</b> feel the womb through the belly: it should be hard, like a ball, below the navel. If it is soft, or she bleeds, <b>rub it firmly</b> until it hardens. Check the womb and the bleeding every 15 minutes in the first hours, and do not leave her alone on the first day.</p>" +
+    "<p><b>Emergency:</b> blood pouring, or a pad or cloth soaked in less than 5 minutes; a fit; fever. For bleeding rub the womb, put the baby to the breast, help her pass urine, keep her lying down and warm, and get help at once.</p>" + SEEK);
+
+  L.add("health_newborn", "The newborn baby", "<ul><li><b>Warm:</b> skin to skin with the mother, a cap on the head, dry cloths, and no bath on the first day. A baby born small or early is kept skin to skin day and night, upright between the breasts, and fed often.</li>" +
+    "<li><b>Breast milk only</b> for the first six months - no water, tea, honey or porridge. Feed whenever the baby wants, day and night, at least 8 times in 24 hours.</li>" +
+    "<li><b>Clean:</b> wash your hands before touching the baby. Keep the cord stump dry and outside the nappy; it falls off in a week or two.</li>" +
+    "<li><b>Sleep:</b> on the back, under the net, near the mother.</li></ul>" +
+    "<p><b>Danger signs - go at once:</b> feeding poorly or not at all; a fit; breathing 60 times a minute or more, fewer than 30, gasping, grunting, or the chest pulling in; hot or cold to the touch; floppy, moving only when stirred, or not moving; " +
+    "yellow skin on the first day, or yellow palms and soles at any time; bleeding or pus from the cord, or a red, swollen or smelly cord; eyes swollen or running with pus; a very small baby.</p>" +
+    "<p>The mother's danger signs after a birth are in Pregnancy: staying well, and danger signs.</p>" + SEEK);
+})();
+// ===========================================================================
+// MODULE: HEALTH_LESSONS_BIRTH - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: HEALTH_LESSONS_WASH - START
+// Depends: MATH_LESSONS
+// Exports: (none) -- registers building and prevention lessons (health_*): a latrine and hand-washing, enough water kept safe, stopping illness spreading, a first-aid kit
+// ===========================================================================
+// The Health audit (1.24.4). Sources for the figures, in Lantern's own
+// words: the Sphere Handbook, 2018, water supply, sanitation and hygiene
+// standards (15 litres a person a day, a latrine 30 m from a water source,
+// the pit 1.5 m above the water table, not more than 50 m from the home);
+// WHO, A guide to the development of on-site sanitation, 1992 (the simple
+// pit latrine); WHO and US CDC on hand-washing and safe storage of water.
+(function () {
+  var L = Lantern.mathLessons;
+
+  L.add("health_latrine", "A latrine and a place to wash hands", "<p>Stools left in the open reach water, hands, flies and food. A <b>simple pit latrine</b> ends that:</p>" +
+    "<ul><li><b>Where:</b> at least <b>30 metres</b> from any well, spring or stream, and <b>downhill</b> from it; not where water lies or floods; near enough to the house to be used at night.</li>" +
+    "<li><b>The pit:</b> about a metre across and 2 metres or more deep. Its bottom must stay at least <b>1.5 metres above the groundwater</b>: if you strike water, fill it in and dig somewhere else. Always line the top half metre or more with stones, bricks or poles so the rim cannot cave in; in loose soil line the whole pit. Never dig alone: one person stays at the top.</li>" +
+    "<li><b>The floor:</b> a slab of strong poles covered with packed earth, or of concrete, with a hole. Build it up a little above the ground round it, so rain runs away.</li>" +
+    "<li><b>A lid</b> that fits the hole keeps flies and smell in; a shelter with a door gives privacy.</li>" +
+    "<li>Small children's stools go into the latrine too.</li>" +
+    "<li>When the pit is full to half a metre from the top, fill it with soil and dig a new one.</li></ul>" +
+    "<p><b>A place to wash hands (a tippy tap):</b> hang a plastic can of water from a stick laid across two forked posts, with a small hole near its top; a string from its neck to a stick on the ground lets a foot tip it, so no dirty hand touches the can. Hang the soap beside it on a string. Stones underneath stop the mud.</p>" +
+    "<p>Wash hands with soap <b>after using the latrine or cleaning a child's bottom, and before preparing food, eating, or feeding a child</b>. With no soap, rub them with clean ash and rinse; soap is better.</p>");
+
+  L.add("health_waterstore", "Enough water, and keeping it safe", "<p><b>How much:</b> to stay alive a person needs about <b>3 litres a day</b> to drink and in food - more in heat and hard work - and about <b>15 litres a day</b> in all for drinking, cooking and washing.</p>" +
+    "<p><b>Where from, best first:</b> a spring or a deep well that is protected and covered; rain caught off a clean roof; then streams, ponds and open wells. Treat rain water and all surface water before drinking it (see Making water safe to drink), and well water too unless you know it is safe.</p>" +
+    "<ul><li><b>Rain:</b> let the first rain of a storm wash the roof and run to waste, then lead the gutter into a covered tank or jar.</li>" +
+    "<li><b>A well or spring:</b> wall it and cover it; fence animals out; slope the ground so spilled water drains away; use one clean bucket and rope, kept off the ground. Latrines 30 metres away and downhill.</li>" +
+    "<li><b>Carrying and keeping:</b> clean containers with <b>lids, and narrow necks or taps</b>. Pour the water out - never dip hands or cups in. Keep drinking water apart from washing water, covered and out of the sun. Wash the container with soap before refilling it.</li></ul>" +
+    "<p>Clean water that is made dirty again in the house causes much of the diarrhoea that treating water was meant to stop.</p>");
+
+  L.add("health_spread", "Stopping an illness from spreading", "<p>Illness passes from person to person in a few ways. Block the way and you stop it.</p>" +
+    "<ul><li><b>By water, food and hands</b> (diarrhoea, cholera, typhoid, worms): treat drinking water, wash hands with soap, use a latrine, keep flies off food, cook food through and eat it hot.</li>" +
+    "<li><b>Through the air</b> (colds, flu, measles, tuberculosis, whooping cough): open windows and doors; the sick person rests apart, covers coughs with the elbow or a cloth, and wears a cloth over nose and mouth near others; fewer people to a room.</li>" +
+    "<li><b>By touch</b> (skin and eye infections, lice, scabies): each person their own towel and bedding; wash clothes and bedding and dry them in the sun.</li>" +
+    "<li><b>By insects and animals</b> (malaria, dengue, plague, rabies): nets, no standing water, food stored away from rats, dogs vaccinated; an animal bite washed with soap and water for 15 minutes (see Bites and stings).</li>" +
+    "<li><b>By blood and by sex</b> (HIV, hepatitis B, syphilis): cover your hands with gloves or plastic bags to touch blood, vomit or stool, and wash afterwards. Never share needles, razors or blades. A condom protects during sex.</li></ul>" +
+    "<p><b>Vaccines</b> prevent measles, tetanus, polio, whooping cough, diphtheria and more. When a vaccinator can be reached, get every child the full set, and tetanus vaccine for pregnant women and after dirty wounds.</p>" +
+    "<p>When many people fall ill together: tell whoever is responsible for health, keep the sick apart with one carer each, and make safe water, hand-washing and latrines the first work.</p>");
+
+  L.add("health_kit", "A first-aid kit from what you have", "<p>Keep these together in a clean, dry box that everyone knows:</p>" +
+    "<ul><li>soap, and a bottle of treated water;</li>" +
+    "<li>clean cloths and strips of cotton, boiled for 20 minutes, dried in the sun and wrapped, for pads and bandages;</li>" +
+    "<li>a <b>triangular bandage</b>: a square of cloth about a metre across cut corner to corner makes two, for slings and for tying splints;</li>" +
+    "<li>safety pins, scissors, tweezers, and a new razor blade in its wrapper;</li>" +
+    "<li>clean plastic bags, to cover your hands and to cover burns;</li>" +
+    "<li>sugar, salt, a teaspoon and a clean litre bottle, for ORS;</li>" +
+    "<li>a thermometer, and a watch or phone that shows seconds;</li>" +
+    "<li>a blanket, a torch, matches, paper and a pencil;</li>" +
+    "<li>the Health tile's printed cards.</li></ul>" +
+    "<p>Sticks and folded cardboard for splints can be found when they are needed. Medicines are not listed: which to keep, and how much to give, is for a health worker to say.</p>" +
+    "<p>After use, wash and boil what can be used again, and replace the rest.</p>");
+})();
+// ===========================================================================
+// MODULE: HEALTH_LESSONS_WASH - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: LITERACY_LESSONS - START
@@ -10986,18 +11704,28 @@ Lantern.chem = (function () {
 // ===========================================================================
 (function () {
   Lantern.guide.add("health", "Health - Help & Tutorial", [
-    ["What's here", "<p>Life-saving basics for when trained help is far away, in two groups. <b>Staying well:</b> " +
-      "safe water, oral rehydration (ORS), hygiene, storing food, eating well, fever care, and teeth. " +
-      "<b>Emergencies:</b> bleeding, burns, broken bones, wounds gone bad, heat and cold, bites and stings, and " +
-      "choking or not breathing. Tap any topic for clear steps.</p>"],
-    ["The ORS mixer", "<p>Enter how many litres of clean water you have and it scales the recipe (6 tsp sugar + " +
-      "&frac12; tsp salt per litre). ORS treats the dehydration that makes diarrhoea deadly, especially in " +
-      "children.</p>"],
+    ["What's here", "<p>Life-saving basics for when trained help is far away, in four groups. <b>Emergencies</b> come first because they cannot wait: " +
+      "what to do first, not breathing, choking, the recovery position, bleeding, shock, burns, broken bones, blows to the head, fits, stroke and heart attack, " +
+      "poisoning, drowning, electric shock, heat and cold, bites and stings, and moving an injured person. <b>Sick children and adults:</b> the danger signs in a child, " +
+      "counting breaths, diarrhoea and oral rehydration (ORS), fever, malaria, a dangerously thin child, pulse and temperature, caring for the sick at home, and a troubled mind. " +
+      "<b>Mother and baby:</b> danger signs in pregnancy, a birth with no midwife, the first hour, and the newborn. <b>Staying well:</b> safe water, a latrine and hand-washing, " +
+      "stopping illness spreading, food, teeth, and a first-aid kit. Tap any topic for clear steps.</p>"],
+    ["The ORS mixer", "<p>Enter how many litres of clean water you have and it scales the recipe (6 level tsp sugar + " +
+      "&frac12; level tsp salt per litre). ORS treats the dehydration that makes diarrhoea deadly, especially in " +
+      "children. For less than a litre it tells you to mix a whole litre instead: so little salt cannot be measured safely.</p>"],
+    ["The breath and pulse counter", "<p>Choose <b>Breaths</b> or <b>Pulse</b> and the person's age, press <b>Start one minute</b>, and tap the big button at each breath " +
+      "(watch the chest or belly rise) or each heartbeat (feel the wrist or neck). After a full minute it gives the count and what it means: for a small child, whether the " +
+      "breathing is fast for that age, which is how pneumonia is found. You can also type a count you made yourself over one minute.</p>"],
+    ["Bleach for drinking water", "<p>For when water cannot be boiled. Enter the litres and tick <b>cloudy</b> if the water is not clear: it gives the drops of plain " +
+      "household bleach (5% to 9% on the label) - 2 drops a litre, twice that for cloudy water - and, for a large amount, the same in millilitres and teaspoons. " +
+      "Stir and wait 30 minutes.</p>"],
     ["Keep it on paper", "<p><b>Print survival cards</b> makes a one-page sheet with the ORS recipe, water " +
-      "treatment, and emergency basics. Paper works with no battery and no phone - put a copy where everyone can " +
+      "treatment, emergency basics and a child's danger signs. Every topic also has a <b>Print</b> button of its own. Paper works with no battery and no phone - put a copy where everyone can " +
       "find it.</p>"],
+    ["Asking the AI", "<p>In Chat, say what is wrong in your own words - &ldquo;my son is choking&rdquo;, &ldquo;she has had diarrhoea for two days&rdquo;. Lantern gives the AI the " +
+      "Health lesson that fits before it answers, and checks its answer against it. It never gives medicine doses.</p>"],
     ["Important limits", "<p>This is a reference, <b>not a doctor</b>. It does not diagnose illness or give " +
-      "prescription medicine doses. Whenever a trained health worker or emergency service exists, use them - this is " +
+      "medicine doses. Whenever a trained health worker or emergency service exists, use them - this is " +
       "for the gap when they do not.</p>"]
   ]);
 })();
@@ -11852,14 +12580,16 @@ Lantern.chem = (function () {
     "<p>When in doubt, throw it out: bulging tins, sour or slimy food, and off smells are warnings. Reheat leftovers until steaming, and don't reheat more than once.</p>");
 
   L.add("food_preserve", "Preserving food without a fridge",
-    "<p>Spoilage is caused by microbes, which need <b>water, warmth and air</b>. Take any of these away and food keeps for months. This is how people stored harvests long before refrigeration.</p>" +
-    "<p><b>Drying</b> removes water \u2014 sun-dry or air-dry grains, beans, fruit slices, herbs, and thin strips of meat or fish. <b>Salting</b> pulls water out and preserves meat and fish. <b>Smoking</b> dries and adds protective compounds. <b>Sugar</b> (jams) and <b>oil</b> (covering cooked food) both block microbes, and cool, dark <b>cellar storage</b> keeps roots and squash for a season.</p>" +
-    "<p>Store the finished food <b>cool, dark, dry and sealed</b> from insects and damp. Label with the date. Check stores regularly and use the oldest first.</p>");
+    "<p>Spoilage is caused by microbes, which need <b>water and warmth</b>. Make food dry, salty, sour or sweet enough and it keeps for months. This is how people stored harvests long before refrigeration.</p>" +
+    "<p><b>Drying</b> removes water \u2014 sun-dry or air-dry grains, beans, fruit slices and herbs. Meat and fish are riskier: lean meat only, in thin strips, <b>salted first</b>, kept from flies, dried hard in dry weather, and <b>cooked before eating</b>. " +
+    "<b>Salting</b> pulls water out and preserves meat and fish. <b>Smoking</b> helps drying and adds flavour, but smoke alone does not make food keep. <b>Sugar</b> (jam boiled with plenty of it) holds microbes back, and cool, dark <b>cellar storage</b> keeps roots and squash for a season.</p>" +
+    "<p><b>Never keep moist food by shutting out the air</b> \u2014 vegetables, meat or fish under oil, or sealed in a jar or in plastic. A deadly poison (botulism) grows where there is no air, and it cannot be seen, smelt or tasted. If in doubt, throw it out. (Before version 1.24.4 this lesson said to keep the air out, and to cover cooked food with oil. That was wrong.)</p>" +
+    "<p>Store dried and salted food <b>cool, dark and dry, closed</b> against insects and damp. Label with the date. Check stores regularly and use the oldest first.</p>");
 
   L.add("food_ferment", "Fermenting",
     "<p>Fermenting is controlled, <b>helpful</b> spoilage: you encourage good microbes that make acid or alcohol, which then keep bad microbes out. It preserves food, adds vitamins, and makes food easier to digest.</p>" +
     "<p>The simplest is <b>lacto-fermentation</b>: pack chopped vegetables (cabbage makes sauerkraut) with salt, keep them <b>under the liquid</b> so no air reaches them, and wait days to weeks in a cool place. Souring milk into <b>yoghurt</b> and leavening bread with <b>sourdough</b> work on the same idea.</p>" +
-    "<p>Keys to safety: enough salt, keep the food submerged, use clean vessels, and trust your senses \u2014 a pleasant sour smell is good; mould or a rotten smell is not. Ferments are among the cheapest ways to eat vegetables all winter.</p>");
+    "<p>Keys to safety: enough salt (about 3 tablespoons to 2 kg of shredded cabbage), keep the food submerged, use clean vessels, and trust your senses \u2014 a pleasant sour smell is good; mould or a rotten smell is not. Ferments are among the cheapest ways to eat vegetables all winter.</p>");
 
   L.add("food_children", "Feeding babies and children",
     "<p>For the first six months, <b>breast milk alone</b> is the ideal food \u2014 complete nutrition plus protection against illness, always clean and at the right temperature. Feed on demand, day and night.</p>" +
@@ -22393,7 +23123,14 @@ Lantern.RFB = (function () {
       res = await window.fetch(AI.endpoint(), init);
     }
     if (res.status === 503) throw new Error("the AI model is still loading -- wait for Lantern's progress bar to finish, then ask again");
-    if (!res.ok) throw new Error("Server said " + res.status + " " + (res.statusText || ""));
+    if (!res.ok) {
+      // the server's own reason, when it gives one (llama.cpp: {error: {message, type}}), so a
+      // person -- and a bench row -- sees why and not only "400 Bad Request" (1.24.4)
+      var why = "";
+      try { var eb = await res.json(); why = eb && eb.error ? String(eb.error.message || eb.error.type || eb.error) : ""; } catch (e2) { why = ""; }
+      throw new Error("Server said " + res.status + " " + (res.statusText || "") + (why ? ": " + why.slice(0, 200) : "") +
+        (/context/i.test(why) ? " -- this is more than the model can hold at once: start a new chat, or ask a shorter question" : ""));
+    }
     var data = await res.json();
     var u = data.usage || {};
     AI.lastUsage = { completion: u.completion_tokens || null, prompt: u.prompt_tokens || null };
@@ -38421,6 +39158,18 @@ Lantern.RFB = (function () {
     if (h.e.kind === "lesson") for (i = 0; i < us.length; i++) if (!us[i].h) { take(i); break; }
     ranked.forEach(function (r) { if (r.s > 0) take(r.i); });
     for (i = 0; i < us.length && len < limit * 0.6; i++) take(i);   // a short lesson is given whole
+    // (1.24.4) A list is given whole or not at all, whatever the limit: the
+    // recovery position came out as steps 1, 2 and 6, and 17 lessons asked
+    // for by their own title had their list cut. A step left out of a
+    // procedure is worse than a longer passage.
+    function item(k) { return k >= 0 && k < us.length && !us[k].h && us[k].t.charAt(0) === "\u2022"; }
+    Object.keys(pick).map(Number).forEach(function (k) {
+      if (!item(k)) return;
+      var a = k, b = k, j;
+      while (item(a - 1)) a--;
+      while (item(b + 1)) b++;
+      for (j = a; j <= b; j++) pick[j] = 1;
+    });
     var keys = Object.keys(pick).map(Number).sort(function (a, b) { return a - b; }), out = [], lastHead = -1;
     keys.forEach(function (k) {
       for (var j = k - 1; j > lastHead; j--) if (us[j].h) { out.push(us[j].t + ":"); lastHead = j; break; }
@@ -39237,6 +39986,171 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: SUITE_BENCH_DATA - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: HEALTH_RECIPES - START
+// Depends: ASSIST_CARDS (Lantern.assistCards, created here if absent)
+// Exports: (none) -- adds recipe cards for Assist and the AI: ORS for an amount of water, bleach for drinking water
+// ===========================================================================
+// Two of the Health tile's numbers as recipes (the Health audit, 1.24.4), so
+// a small model fills in the litres and Lantern does the multiplying instead
+// of the model recalling a figure: the home ORS recipe (6 level teaspoons of
+// sugar and half a level teaspoon of salt to a litre) and bleach for
+// drinking water (2 drops a litre of 5% to 9% bleach: US CDC and EPA). The
+// keywords are narrow on purpose (ors, rehydration, bleach), so a question
+// about salt, sugar or water in general does not bring them up.
+(function () {
+  var C = window.Lantern.assistCards = window.Lantern.assistCards || [];
+  [
+    { id: "ors-sugar", ask: "How much sugar goes into oral rehydration solution (ORS) for a given amount of water?",
+      kw: ["ors", "oral", "rehydration", "rehydrate"],
+      pre: "Home recipe: 6 level teaspoons of sugar AND half a level teaspoon of salt to each litre of clean water. This card gives the sugar.",
+      slots: [{ k: "litres", label: "Clean water", unit: "litres" }],
+      compose: "=6*{litres}", out: "level teaspoons of sugar (and half a level teaspoon of salt for each litre)" },
+    { id: "ors-salt", ask: "How much salt goes into oral rehydration solution (ORS) for a given amount of water?",
+      kw: ["ors", "oral", "rehydration", "rehydrate"],
+      pre: "Home recipe: half a level teaspoon of salt AND 6 level teaspoons of sugar to each litre of clean water. This card gives the salt.",
+      slots: [{ k: "litres", label: "Clean water", unit: "litres" }],
+      compose: "=0.5*{litres}", out: "level teaspoons of salt (and 6 level teaspoons of sugar for each litre)" },
+    { id: "water-bleach", ask: "How many drops of household bleach make an amount of water safe to drink?",
+      kw: ["bleach", "chlorine", "chlorinate", "disinfect"],
+      pre: "Plain unscented bleach labelled 5% to 9%: 2 drops for each litre of clear water (4 if the water is cloudy). Stir and wait 30 minutes.",
+      slots: [{ k: "litres", label: "Water to treat", unit: "litres" }],
+      compose: "=2*{litres}", out: "drops for clear water (twice as many for cloudy water); wait 30 minutes" }
+  ].forEach(function (c) { if (!C.some(function (x) { return x.id === c.id; })) C.push(c); });
+})();
+// ===========================================================================
+// MODULE: HEALTH_RECIPES - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: HEALTH_CHAT - START
+// Depends: SUITE_SEARCH (Lantern.suite.search), SUITE_TEXT (Lantern.suite.text), SUITE_CHAT (Lantern.suite.chat.prompt, noteFor),
+//          ASSIST_CHAT (reads Lantern.chatContext) -- all feature-detected
+// Exports: Lantern.healthNeed(question) -> true when it reads like a health need; Lantern.healthLessons(question) -> passages; adds a Lantern.chatContext provider
+// ===========================================================================
+// Lantern supplies what it knows (the Health audit, 1.24.4). Chat already
+// gives the AI Lantern's lessons for a how-to question ("how do I treat a
+// burn"). People in trouble do not ask how-to questions: "my son is choking",
+// "she has had diarrhoea for two days", "the baby is breathing 56 times a
+// minute". Those went to the model with nothing in front of it. A question
+// that names an injury, an illness or a sign in a person, and that a Health
+// lesson names or covers, now gets that lesson -- whole, in its own order --
+// and the answer is checked against it as against any passage. Numbers in
+// the question do not stop it (an age, a count of breaths). A how-to that a
+// Health lesson answers best gets the whole lesson the same way. Medicine
+// doses still go to the rule in AI_GUARD before anything is read.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var CTX = window.Lantern.chatContext = window.Lantern.chatContext || [];
+  // What is wrong: an injury, an illness or a sign, said plainly. Words with
+  // an everyday sense as well (burn, broken, stroke, fit, bite) count only
+  // in the phrase that makes them a health matter.
+  var NEED = new RegExp("\\b(" + [
+    "chok(e|es|ed|ing)", "(not|stopped|isn\x27?t|can\x27?t|cannot|trouble|difficulty|hard to|struggling to) breath\\w*", "breathing (very |too |so )?(fast|hard|slow|quick\\w*|\\d+)",
+    "unconscious", "passed out", "collaps(e|ed|ing)", "faint(ed|ing)", "(won\x27?t|cannot|can\x27?t|not|doesn\x27?t|does not) wak(e|ing)( up)?",
+    "bleed(s|ing)?", "blood (is |was )?(coming|pouring|spurting|everywhere)", "(a|bad|the) burn", "burn(ed|t) (my|his|her|their|him|your|its|the|a)", "burn(ed|t) (him|her|my|your)self", "scald(s|ed)?",
+    "broken (arm|leg|bone|wrist|ankle|rib|finger|toe|nose|collarbone|hip|foot|hand|jaw)", "fractur\\w*", "sprain\\w*", "snake ?bite", "bitten", "(dog|snake|spider|scorpion|bat|cat|rat|monkey) bit",
+    "stung", "(bee|wasp|scorpion|insect) stings?", "drown(s|ed|ing)?", "(a|having|had|has|in a) (fit|seizure)", "seizures?", "convuls\\w*", "fitting",
+    "(a|had a|having a|of a|of) stroke", "heart attack", "chest pain", "poison\\w*", "swallow(ed|s)", "electric shock", "electrocut\\w*", "struck by lightning",
+    "heat ?stroke", "sunstroke", "hypotherm\\w*", "frostbite", "fever(ish)?", "diarrh(o)?ea", "vomit\\w*", "throwing up", "dehydrat\\w*", "cough(s|ing)?", "pneumonia", "malaria",
+    "in labou?r", "giving birth", "waters (have |has )?bro(ke|ken)", "pregnan\\w*", "newborn", "afterbirth", "placenta", "wounds?", "infect\\w*", "pus", "toothache", "nosebleed", "nose is bleeding", "rash",
+    "knocked out", "hit (his|her|my|their|your) head", "head injury", "concuss\\w*", "malnourish\\w*", "(very|too|so) thin", "not growing", "losing weight",
+    "(not|stopped|won\x27?t|will not|cannot|can\x27?t) (eat|drink|feed|suck|breastfeed)(ing)?", "(is|are|looks?|looking|went|gone|turned|very|so) pale", "clammy", "(lost|losing) (a lot of |much |so much |too much )?blood",
+    "(cannot|can\x27?t|not|unable to) sleep", "nightmares?", "griev(e|es|ing)", "grief", "cr(y|ies|ying) all", "panic\\w*", "terrified", "hopeless",
+    "(kill|harm|hurt)(ing)? (him|her|my|your|them)sel(f|ves)", "suicid\\w*"
+  ].join("|") + ")\\b", "i");
+  // Who it is about: a person, or a part of one. "My engine coughs" is not.
+  var WHO = new RegExp("\\b(i|i\x27m|i\x27ve|im|me|myself|he|she|him|they|them|someone|somebody|anyone|people|person|patient|man|woman|boy|girl|child|children|kid|kids|baby|babies|infant|toddler|" +
+    "son|daughter|wife|husband|mother|father|mum|mom|mam|dad|brother|sister|friend|neighbou?r|grand\\w+|uncle|aunt|cousin|teacher|worker|" +
+    "(my|his|her|our|their|your) (arm|leg|hand|foot|feet|head|eyes?|nose|ears?|chest|stomach|belly|back|neck|tooth|teeth|skin|fingers?|toes?|knee|ankle|wrist|throat|mouth|face|body|lips?|tongue))\\b", "i");
+  function need(q) { q = String(q || ""); return NEED.test(q) && WHO.test(q); }
+  window.Lantern.healthNeed = need;
+  // The Health lessons for a question: the one that names it (a rare word of
+  // the question in its title) or covers half of what was said, and a second
+  // if it fits nearly as well. Only Health lessons: "having a fit ... on the
+  // floor" is not about the FLOOR function. Each lesson is given WHOLE and in
+  // its own order -- a procedure with a step left out is worse than none
+  // (the usual cut gave the recovery position as steps 1, 2 and 6).
+  // any: a health need (true), or a how-to that a Health lesson answers best.
+  function lessons(q, any) {
+    var S = L.suite;
+    var all = S.search(q, { kinds: { lesson: 1 }, max: 20 }).filter(function (h) { return h.d && h.d.units.length; });
+    var hits = all.filter(function (h) { return h.e.app === "health"; });
+    if (!hits.length || (hits[0].strong < 1 && hits[0].cover < 0.5)) return [];
+    if (!any && all[0] !== hits[0]) return [];
+    return hits.filter(function (h, k) { return k === 0 || h.s >= hits[0].s * 0.7; }).slice(0, 2).map(function (h, k) {
+      var e = h.e;
+      return { n: k + 1, title: e.title + (e.appName ? " (" + e.appName + " tile)" : ""), bookTitle: "Lantern\u2019s own lesson",
+        text: S.text(e), suite: true, kind: "lesson", key: e.id, app: e.app || "", open: e.open };
+    });
+  }
+  function ready() { var S = L.suite; return !!(S && S.search && S.text && S.chat && S.chat.prompt); }
+  // healthLessons(question) -> the passages Chat would be given ([] when it is not a health question)
+  window.Lantern.healthLessons = function (q) {
+    if (!ready()) return [];
+    return need(q) ? lessons(q, true) : (L.suite.chat.howTo && L.suite.chat.howTo(q) ? lessons(q, false) : []);
+  };
+  // first in the list, so a health need is not answered from another tile's
+  // lesson that shares a word; a document the person handed over still comes first
+  CTX.unshift({ id: "health-need", provide: function (q) {
+    if (!ready() || (L.textReader && L.textReader.attached)) return null;
+    var S = L.suite, src = window.Lantern.healthLessons(q);
+    if (!src.length) return null;
+    return { sources: src, detail: true, more: true, how: "lessons", label: "Lantern\u2019s own lessons", query: "",
+      prompt: S.chat.prompt(q, src, "") + "\n(Lantern: this is a health question, so Lantern sent its Health lesson" + (src.length === 1 ? "" : "s") + " whole. Give the steps to do now, in order, and say when to get a health worker.)",
+      note: S.chat.noteFor ? S.chat.noteFor(src, "") : "Lantern gave the AI its Health lessons\u2026" };
+  } });
+})();
+// ===========================================================================
+// MODULE: HEALTH_CHAT - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: HEALTH_BENCH_DATA - START
+// Depends: AI_BENCH (runs Lantern.aiBenchQuestions, created here if absent)
+// Exports: (none) -- adds health questions to Lantern Bench: four conversations and two sums
+// ===========================================================================
+// The Health audit (1.24.4): does a model, with Lantern, give a person in
+// trouble what Lantern's Health lessons say? Four conversations as people
+// would say them, graded on the last turn the way SUITE_BENCH_DATA grades
+// its own: the right lesson was in front of the AI, it did not decline, and
+// at least one sentence is backed by a passage. Two sums check that the
+// recipe cards reach the model (ORS for 5 litres, bleach for a jerrycan).
+(function () {
+  var Q = window.Lantern.aiBenchQuestions = window.Lantern.aiBenchQuestions || [];
+  function last(t) { return t[t.length - 1]; }
+  function text(r) { return String(r.final || ""); }
+  function readLessons(r) { return (r.searches || []).some(function (s) { return s.how === "lessons"; }); }
+  function grade(key, must, what) {
+    return function (t) {
+      var r = last(t);
+      if (!readLessons(r)) return "Chat did not give the AI Lantern’s own lessons";
+      if (!(r.sources || []).some(function (s) { return s.key === key; })) return "the " + key + " lesson was not among the passages";
+      if (r.declined) return "answered “Not in my library”";
+      if (!(r.backed >= 1)) return "no sentence backed by a lesson passage";
+      return must.test(text(r)) ? "" : "did not say " + what;
+    };
+  }
+  [
+    { id: "health-choking", turns: ["My son is choking on a piece of meat and cannot breathe!"],
+      check: grade("health_emergency", /\bblows?\b|\bthrusts?\b/i, "to give back blows or thrusts") },
+    { id: "health-fit", turns: ["My brother is having a fit and shaking on the floor. What should I do?"],
+      check: grade("health_fits", /nothing in (the|their|his|her) mouth|(not|never) (put|hold)|on (to )?(the|their|his|her) side|recovery position|\b5 minutes\b|\bfive minutes\b/i, "what the lesson says (do not hold him down, nothing in the mouth, on his side afterwards, help after 5 minutes)") },
+    { id: "health-baby-breathing", turns: ["My baby is 8 months old, has a cough and is breathing 56 times a minute. Is that too fast?"],
+      check: grade("health_breathing", /\bfast\b|\bpneumonia\b|\b50\b/i, "that 56 is fast breathing for that age") },
+    { id: "health-river-water", turns: ["How do I make river water safe to drink?"],
+      check: grade("health_water", /\bboil/i, "to boil it") }
+  ].forEach(function (x) {
+    x.cat = "chat"; x.q = x.turns.join(" → ");
+    if (!Q.some(function (y) { return y.id === x.id; })) Q.push(x);
+  });
+  [
+    { id: "ors-five-litres", cat: "tool", fresh: 1, q: "How many level teaspoons of sugar do I need to make 5 litres of oral rehydration solution (ORS)?", x: "6*5", unit: "tsp" },
+    { id: "bleach-jerrycan", cat: "tool", fresh: 1, q: "How many drops of household bleach make a 20 litre jerrycan of clear water safe to drink?", x: "2*20", unit: "drops" }
+  ].forEach(function (x) { if (!Q.some(function (y) { return y.id === x.id; })) Q.push(x); });
+})();
+// ===========================================================================
+// MODULE: HEALTH_BENCH_DATA - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: AI_DOC - START

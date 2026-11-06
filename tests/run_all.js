@@ -54,7 +54,8 @@ var steps = [
   ["Lantern Watch: the load watcher's story and plan, Python and PowerShell agree; the two real laptops warn of nothing (1.16.1)", "python3", ["tests/lantern_watch/run_tests.py", "kit"], /^\d+ checks, 0 failed/m],
   ["Lantern Watch on Windows for real (PowerShell 7): the first reading at once, nothing written during the load even past 30 s, still answering, a row all through, the temp folder as working directory (1.16.1)", "python3", ["tests/lantern_watch/live_ps.py", "kit"], /LIVE PS WATCH (TESTS PASS|SKIPPED)/],
   ["Lantern.zip: one Lantern folder; laid over the stick's old one", "python3", ["tests/lantern_zip.py"], /LANTERN ZIP TESTS PASS/],
-  ["The bench run from outside the page (tools/bench_pane.js): chosen questions, rows kept, the list put back (1.24.2)", "node", ["tests/bench_pane.js"], /ALL BENCH PANE TESTS PASS/]
+  ["The bench run from outside the page (tools/bench_pane.js): chosen questions, rows kept, the list put back (1.24.2)", "node", ["tests/bench_pane.js"], /ALL BENCH PANE TESTS PASS/],
+  ["Health after the audit: emergencies first, 42 topics, the sourced figures and no medicine, the ORS mixer, the breath and pulse counter, bleach for water, Print on every lesson, the Health lesson given whole for a health need in Chat, the bench's health questions (1.24.4)", "node", ["tests/health.js"], /ALL HEALTH TESTS PASS/]
 ];
 var failed = 0;
 steps.forEach(function (s) {

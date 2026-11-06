@@ -396,6 +396,19 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   ok("cut-short answers say so", /cut short/.test(logEl.textContent));
   ok("PLANET is in the AI tool list and recipe cards", /PLANET\(/.test(A.toolCard()) && A.match("escape velocity from mars").some(function (c) { return c.id === "planet-escape"; }));
 
+  // a request the server refuses: its own reason is passed on (1.24.4; the 2B's first run on GitHub: "Server said 400 Bad Request", three times, and no more)
+  var realFetch = w.fetch, refusal = null;
+  w.fetch = function (url, opts) {
+    if (/\/v1\/models$/.test(String(url))) return realFetch(url, opts);
+    return Promise.resolve(refusal);
+  };
+  async function refused(r) { refusal = r; try { await AI.callServer([{ role: "user", content: "x" }], {}); return ""; } catch (e) { return String(e && e.message); } }
+  var e400 = await refused({ ok: false, status: 400, statusText: "Bad Request", json: function () { return Promise.resolve({ error: { code: 400, type: "exceed_context_size_error", message: "the request exceeds the available context size, try increasing it" } }); } });
+  ok("a refused request says why: the server's own message, and what to do when it is the context", /^Server said 400 Bad Request: the request exceeds the available context size/.test(e400) && /start a new chat, or ask a shorter question/.test(e400), e400);
+  var e500 = await refused({ ok: false, status: 500, statusText: "Internal Server Error", json: function () { return Promise.reject(new Error("not JSON")); } });
+  ok("...and without a reason from the server, as before", /^Server said 500 Internal Server Error$/.test(e500), e500);
+  w.fetch = realFetch;
+
   var st = L.selftest.run();
   ok("selftests pass (incl. AI)", st.fail.length === 0 && L.selftest.tests.filter(function (t) { return /^ai: /.test(t.name); }).length === 8, st.fail);
   ok("no errors at the end", errs.length === 0, errs);

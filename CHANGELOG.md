@@ -1,5 +1,165 @@
 # Changelog
 
+## 1.24.4 — The Health tile, audited: what to do when no help can come (2026-11-05)
+
+The first tile audit under Adam's direction ("maximizing the rebooting of
+civilization from a usb stick ... making all of the answers the AI can give
+as good as possible"). Health went first: it is the tile a person is most
+likely to open with nobody to ask.
+
+**What was seen.** The tile had 14 short lessons, an ORS mixer and three
+printed cards. Used in a real browser, everything opened; two things were
+wrong in the mixer (it showed nothing until Mix was pressed, and for a
+mouthful of water it said "0 tsp sugar + 0 tsp salt"). Read against the aim,
+most of what a household needs was missing: nothing on a person who is not
+breathing beyond one sentence, nothing on the recovery position, shock,
+fits, poisoning, drowning, a blow to the head, a sick child's danger signs,
+pneumonia, diarrhoea beyond the recipe, malaria, birth, the newborn, a
+latrine, storing water. And the AI could not reach what there was: Chat
+gives Lantern's lessons for a how-to question, and a person in trouble does
+not ask one ("my son is choking", "she has had diarrhoea for two days").
+
+**What changed.**
+
+- **28 new lessons and 13 revised ones**, 42 in all, in four groups with the
+  emergencies first (of the 14 the tile had, only Broken bones stands as it
+  was):
+  - *Emergencies:* first things first; not breathing (chest pushes); choking
+    (revised); the recovery position; bleeding (revised: the tourniquet,
+    packing a wound); shock; blows to the head; fits; stroke and heart
+    attack; poisoning; drowning; electric shock and lightning; eyes, a
+    bleeding nose, fainting; moving an injured person; bites and stings
+    (reworded so "bitten by a snake" finds it).
+  - *Sick children and adults:* danger signs in a child; counting breaths
+    for pneumonia; diarrhoea; ORS (revised); malaria; a dangerously thin
+    child (the arm measurement); pulse, breathing, temperature; caring for
+    the sick at home; fear, grief and a troubled mind.
+  - *Mother and baby:* pregnancy and its danger signs; a birth with no
+    midwife; the first hour; the newborn.
+  - *Staying well:* safe water (revised); enough water, kept safe; a pit
+    latrine and a tippy tap; stopping an illness spreading; a first-aid kit.
+- **Every figure was checked against a source by a separate checker** that
+  had not seen the drafting, and the lessons were corrected from what the
+  checkers found before anything was built. Sources, named in each module's
+  header: WHO (IMCI chart booklet 2014; The Treatment of Diarrhoea 2005;
+  Pregnancy, childbirth, postpartum and newborn care 2015; newborn health
+  2017; Psychological first aid 2011; child growth standards 2009 / 2013);
+  the Resuscitation Council UK and American Heart Association guidelines of
+  2025; St John Ambulance; the UK NHS and NICE NG232; US CDC (Make Water
+  Safe, seizure first aid, stroke, heart attack, carbon monoxide); US EPA;
+  US Poison Control; MedlinePlus; the Sphere Handbook 2018; WEDC (pit
+  latrines); Helping Babies Breathe; Hesperian (facts only); the US Army's
+  First Aid manual FM 4-25.11 (public domain) for carries and stretchers.
+  All of it is in Lantern's own words. What the checkers changed:
+  - a baby's chest is pressed with **two thumbs**, the hands round the
+    chest (2025 guidelines; two fingers were dropped as too shallow), and a
+    baby's head is kept level for breaths;
+  - **raising a bleeding limb is gone** (it was in the old lesson and on the
+    printed card; current first-aid guidance drops it: pressure is what
+    works), and the tourniquet is no longer "a last resort";
+  - after a blow to the head a person **may sleep** (the draft said to wake
+    them); who must be seen is listed;
+  - a child's fit with fever: **no sponging or bathing**; a first fit is
+    urgent;
+  - chemicals are washed off for **at least 20 minutes**; a nosebleed needs
+    help after **15** minutes, not 30; a faint that lasts more than a minute
+    is not a faint;
+  - a newborn who does not breathe: dried, rubbed two or three times, and
+    helped to breathe **within the first minute** with small puffs from the
+    cheeks; the womb is **not pressed to bring the afterbirth**; bleeding
+    after a birth has a measure (a cloth soaked in under 5 minutes);
+  - the arm measurement is found with the arm bent, taken with it hanging;
+  - "speaks of harming themselves" is help **at once**, not after weeks;
+  - water: 3 minutes' boiling above about 1,500 m (the lower of the CDC's
+    and EPA's heights), the second dose of bleach when no chlorine can be
+    smelt, weak 1% bleach, and that bleach does not kill every parasite;
+  - a pit is always lined at the top, and nobody digs one alone;
+  - **the lessons the tile already had were checked too, and nine were
+    wrong or out of date.** Keeping food said to dry meat and fish in the
+    sun as they are, that smoking preserves, and to remove "the water or the
+    air": meat and fish are now salted, dried hard and cooked before eating,
+    smoke alone is said not to keep food, and nothing moist is sealed
+    airtight (botulism). A fever is no longer sponged. An animal bite is
+    washed and left open, not covered. A snake-bitten limb is kept still and
+    the person carried, not the limb held low. Heatstroke is cooled quickest
+    in water to the neck. A child's milk tooth is not put back. A wound
+    turning red is rested and raised, not soaked. Burns gained clothes on
+    fire, chemicals, and the burns that need help.
+- **No medicine and no dose anywhere in the tile** (a test now holds this).
+  WHO's amounts of fluid for a child with diarrhoea are in (50 to 100 ml
+  under 2 years, 100 to 200 ml older, after each loose stool): fluid, not a
+  medicine. What the sources add that is a medicine (zinc, aspirin for a
+  heart attack, chlorhexidine on the cord) is a question for Adam in
+  `agent/QUESTIONS.md`.
+- **The tile.** Topics shown only when their lesson is loaded, so each
+  lesson module can be dropped. The ORS mixer answers as the tile opens; for
+  under a litre it adds that so little salt cannot be measured safely, and
+  for a cupful it gives no numbers at all. Two tools other modules add
+  (`Lantern.healthTools`):
+  - **a breath and pulse counter** (HEALTH_COUNT): it times one full minute
+    while you tap at each breath or beat, or takes a count typed in, and
+    says what it means: WHO's fast-breathing limits by age (60, 50, 40),
+    MedlinePlus's resting pulse by age. For an older child or adult it makes
+    up no limit.
+  - **bleach for drinking water** (HEALTH_BLEACH): the CDC's table, for
+    bleach labelled 5% to 9% or 1%, clear or cloudy; from 40 drops also in
+    millilitres and teaspoons at the table's own rate.
+- **Print on every lesson of every tile** (LESSON_PRINT, through a new hook
+  `Lantern.lessonTools`): the lesson alone, with its title, over as many
+  pages as it needs. Paper survives a dead battery.
+- **Chat gives the Health lesson for a health need** (HEALTH_CHAT). A
+  question that names an injury, illness or sign in a person ("he fell and
+  hit his head and now he is vomiting"), or a how-to a Health lesson answers
+  best, gets that lesson **whole and in its own order**, one more if it fits
+  nearly as well, and never another tile's ("having a fit ... on the floor"
+  was being answered from the FLOOR function's lesson). 35 questions as
+  people say them reach the right lesson; 14 that only share a word ("my
+  engine coughs", "my code is broken", "my goat has diarrhoea") do not.
+  Medicine doses still go to the rule in AI_GUARD first.
+- **A list is given to the AI whole or not at all** (SUITE_PASSAGES). The
+  recovery position reached the model as steps 1, 2 and 6; 17 lessons across
+  the tiles lost part of a list when asked for by their own title. A step
+  left out of a procedure is worse than a longer passage.
+- **Recipe cards** (HEALTH_RECIPES): ORS sugar and salt for an amount of
+  water, drops of bleach for an amount of water, so the model fills in the
+  litres and Lantern multiplies.
+- **Six bench questions** (HEALTH_BENCH_DATA): four conversations as people
+  would say them (choking, a fit, a baby breathing 56 times a minute, river
+  water), graded on the right lesson being in front of the AI, a sentence
+  backed by it, and the point of the lesson being said; two sums (ORS for 5
+  litres, bleach for a jerrycan).
+- **The model server's own reason for a refusal is passed on** (AI_ENGINE):
+  the 2B's first run on GitHub lost three puzzles to "Server said 400 Bad
+  Request" and nothing more. It now adds the server's message, and when it
+  is the context, what to do.
+- **The headless bench prints the failed rows into its log**, one line of
+  JSON each, and the workflow prints the engine's complaints: a session can
+  read a job's log but could not fetch its artifact.
+
+**Tested.** `tests/health.js` (new, in `npm test`): the tile, the mixer, the
+figures as sourced (a change to one is a decision, not a slip), advice the
+2025 guidelines dropped staying out, no medicine or dose, the counter with
+taps over a shortened minute, the CDC table's own rows, Print, the 35 and
+the 14 questions, whole lessons and whole lists, Chat end to end with a
+scripted model, the bench questions' checks, and each new module dropped
+(rule 11). `tests/browser/health_e2e.py` (new, Chromium): every topic, the
+tools with real taps, a lesson printed to a real PDF over several A5 pages
+with nothing of the tile behind it, a phone's width, and Chat with a
+stand-in model. `tests/ai_layer.js`, `tests/chat_routing.js` updated.
+`npm test`: all suites pass.
+
+**Not tested, and said so.** The lessons were checked against sources, not
+by a doctor, a midwife or a first-aid instructor: Adam should have one read
+them before `main`. The three checkers could not open every source (the WHO
+2005 diarrhoea manual and the WHO pregnancy guide's own PDF were read
+through copies; a few lines have no source that was opened, listed in the
+report). The same wrong advice about keeping food may be in the Food tile's
+own lessons: that tile is next in the queue. In 1.24.4 only that tile's
+"Preserving food without a fridge" was corrected with Health's (no oil over
+cooked food, no air to keep out, the botulism warning), and both lessons say
+that they were wrong before. What the 35B and the small models made of the
+six new questions is in the session's report.
+
 ## 1.24.3 — The bench with the small models, and nobody at the keyboard (2026-11-05)
 
 Lantern is meant for a small model on an old computer, and every real-model
