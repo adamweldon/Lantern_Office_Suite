@@ -132,6 +132,44 @@ var RIGHT = [
   });
   ok("the models\u2019 drawings in the bench fixtures (houses, a sun over the sea): nothing in them is moved (" + blocks + " blocks)", blocks >= 20 && moved.length === 0, moved);
 
+  // --- the review's pictures ---
+  // An independent reviewer drew 91 pictures that are right as written and 19 with something wrong, to try the
+  // first 1.24.7 on. It changed or questioned 46 of the right ones: a lamp, a balloon, a sunflower and a head
+  // taken for the sun; an umbrella, a sail, a kite and the tiers of a pine taken for mountains in the air; the
+  // piers of a bridge, the posts of a gate, the legs of a horse and the trunk of a tree taken for a road with
+  // no perspective; a sunset's second band of sky and a long wall taken for the ground. They are all here.
+  var RV = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "scene_review_1247.json"), "utf8"));
+  function same(c) { var m = S.mend(c.lines, c.q); return !m.said.length && !m.problems.length && m.lines.join("\n") === c.lines.join("\n"); }
+  function rv(name) { return RV.right.filter(function (c) { return c.name === name; })[0]; }
+  function allSame(names) { return names.every(function (n) { return !!rv(n) && same(rv(n)); }); }
+  var rvTouched = RV.right.filter(function (c) { return !same(c); });
+  ok("the review\u2019s 90 right pictures: every one comes through exactly as written, with nothing said and nothing sent back", RV.right.length === 90 && rvTouched.length === 0,
+    rvTouched.map(function (c) { return [c.name, S.mend(c.lines, c.q)]; }));
+  ok("...a round thing that is not the sun stays where it is: the lamp of a lighthouse, lamps on their posts, balloons over their baskets, sunflowers on their stems, a head over a dress, fruit in a crown, a campfire, a planet, a yellow bird",
+    allSame(["lighthouse at night", "street lamps at night", "hot-air balloons sunrise", "sunny balloon", "sunflowers", "girl triangle dress", "orange tree at dawn", "blossom tree", "campfire at night", "saturn at night", "yellow bird on a roof", "snowman at night", "clouds at night over mountains"]));
+  ok("...a tri that something holds up is not a mountain in the air: an umbrella on its pole, a sail over its hull, kites on their strings, the tiers of a pine, a crown on a line for a trunk, a crown with its trunk through it",
+    allSame(["beach umbrella", "umbrella red (dunes)", "dhow (no thing word)", "kites over hills", "kites low hills", "stacked pines", "3-tier pines overlap 0.5", "forest (line trunks)", "christmas tree trunk through crown"]));
+  ok("...upright things on the ground are not a road without perspective, when the question does not say the road goes away: the piers of a bridge, a waterfall, the posts of a gate, the legs of a horse and of a man, reeds, a trunk, a shop\u2019s door",
+    allSame(["bridge piers on waterline", "bridge narrow deck", "waterfall", "gate on a path side view", "horse on a track", "man walking on a road", "man walking in a park", "reeds by a river", "tree by a river (foreground trunk)", "tree by the road", "shop door on a street"]));
+  ok("...nothing is sent back that the question did not ask for: mountains in the distance behind a river, a path to a door, a brown track on sand and a gray road on light gray (roads of another colour than their ground), an island in a bay, a coast seen from the sea",
+    allSame(["river, mountains in the distance", "path leading to the door", "desert track", "grey road, light grey ground", "lake with island", "cliffs bay", "ship along the coast (no ship below?)", "road to horizon banded sunset", "long wall raising the horizon"]));
+  ok("the horizon is the top of the ground: under a sunset\u2019s purple band, the orange band below it is sky (8, not 4); a band of a sunset\u2019s colour lying on the sea is sky; a long wall is not the ground; a yellow field under a blue sky is ground",
+    S.read(["rect 0 0 20 4 fill purple", "rect 0 4 20 4 fill orange", "rect 0 8 20 4 fill blue"]).horizon === 8 && S.read(["rect 0 0 20 12 fill orange", "rect 0 5 20 3 fill pink", "rect 0 8 20 4 fill blue"]).horizon === 8 &&
+    S.read(["rect 0 0 20 12 fill sky", "rect 0 8 20 4 fill green", "rect 1 5 18 3 fill gray"]).horizon === 8 && S.read(["rect 0 0 20 12 fill sky", "rect 0 6 20 3 fill yellow", "rect 0 9 20 3 fill green"]).horizon === 6);
+  var sc1 = RV.sunOverCloud[0], msc = S.mend(sc1.lines, sc1.q);
+  ok("the one right-looking picture Lantern still changes: the sun drawn in front of a cloud goes behind it (Adam, of the 35B\u2019s picture: \u201cThe sun is in front of the clouds\u201d)",
+    RV.sunOverCloud.length === 1 && msc.lines[1] === "circle 8.5 2.5 1.5 fill yellow" && msc.said.join() === "put the sun behind the clouds: it was drawn in front" && !msc.problems.length, msc);
+  var wrongNow = RV.wrong.filter(function (c) { var m = S.mend(c.lines, c.q); return (m.said.length ? "mended" : m.problems.length ? "sent back" : "left") !== c.now; });
+  ok("the review\u2019s 19 wrong pictures: 4 are mended, 4 sent back with the line to add, and 11 left as they are (a ground in two halves, a sun drawn as an oval, pink mountains behind a tent: Lantern moves nothing it is not sure of)",
+    RV.wrong.length === 19 && wrongNow.length === 0 && RV.wrong.filter(function (c) { return c.now === "mended"; }).length === 4 && RV.wrong.filter(function (c) { return c.now === "sent back"; }).length === 4, wrongNow.map(function (c) { return c.name; }));
+  // going away is said of the road itself
+  function sentBack(q, lines) { return S.mend(lines, q).problems.length; }
+  var FLAT = ["rect 0 0 20 12 fill sky", "rect 0 6 20 6 fill green"];
+  ok("a road is asked for only when the question says the road itself goes away: \u201ca road disappearing into the distance\u201d, \u201ca track to the horizon\u201d, \u201ca river flowing off into the distance\u201d -- not \u201ca river with mountains in the distance\u201d, \u201ca path leading to the door\u201d, \u201ca house, and far away a road\u201d",
+    sentBack("Draw a road disappearing into the distance.", FLAT) === 1 && sentBack("Draw a dirt track running to the horizon.", FLAT) === 1 && sentBack("Draw a river flowing off into the distance.", FLAT) === 1 &&
+    sentBack("draw a picture of a road dissapearing into the distance over a far horizon", FLAT) === 1 && sentBack("Draw a river with mountains in the distance.", FLAT) === 0 &&
+    sentBack("Draw a house with a path leading to the door.", FLAT) === 0 && sentBack("Draw a house, and far away a road.", FLAT) === 0 && sentBack("Draw a road.", FLAT) === 0);
+
   // --- each rule on its own ---
   function mend(q, lines) { return S.mend(lines, q); }
   var m1 = mend("Draw a road leading to the horizon across a green plain.", ["rect 0 0 20 12 fill sky", "rect 0 7 20 5 fill green", "rect 9 7 2 5 fill gray"]);

@@ -47239,8 +47239,11 @@ Lantern.RFB = (function () {
     }
     return false;
   }
-  function wide(o) { return !!o && o.kind === "rect" && !!o.fill && o.nums[2] >= 16; }
-  function isSky(o) { return wide(o) && o.nums[1] <= 0.5 && o.nums[3] >= 3; }
+  // a band: a filled rect from one side edge to the other. (A wall 18 cells long with a gap at each end is a
+  // wall, and a rect 16 wide is a building: the review of 1.24.7 found both read as the ground.)
+  function wide(o) { return !!o && o.kind === "rect" && !!o.fill && o.nums[0] <= 0.5 && o.nums[0] + o.nums[2] >= GW - 0.5; }
+  // the colours of a sunset's sky (purple, orange, pink, red, yellow)
+  function glow(o) { return /^(warm|far)$/.test(o.fam); }
   // seen(items, i) -> the share of shape i (0 to 1) that nothing drawn after it covers
   function seen(items, i) {
     var o = items[i].o, b = box(o), all = 0, clear = 0, x, y, j;
@@ -47254,37 +47257,60 @@ Lantern.RFB = (function () {
   }
 
   // --- the scene: sky, ground, horizon ---------------------------------------
-  // The ground is the wide rect that reaches the bottom edge (and any wide
-  // rect that lies on it: the sea behind a strip of sand); the horizon is
-  // its top. A picture with no such rect has no horizon, and Lantern moves
-  // nothing in it but a sun drawn over the land.
+  // The sky is the band at the top edge -- and, under a band of a sunset's
+  // colours, the bands of those colours that lie right below it (purple on
+  // orange on the sea). The ground is the band that reaches the bottom edge,
+  // and any band that lies on it (the sea behind a strip of sand; but a band
+  // of a sunset's colours lying on the water is the glow in the sky); the
+  // horizon is its top. A picture with no such band has no horizon, and
+  // Lantern moves nothing in it but a sun drawn over the land.
   function scene(items) {
-    var sky = -1, bands = [], ground = [], H = null, i, grew = true;
+    var skyO = [], bands = [], ground = [], H = null, sky = -1, i, grew = true;
+    function isSkyO(o) { return skyO.indexOf(o) >= 0; }
     for (i = 0; i < items.length; i++) {
       var o = items[i].o;
-      if (!wide(o)) continue;
-      if (isSky(o)) sky = i; else if (o.nums[1] >= 1.5) bands.push(i);
+      if (wide(o) && o.nums[1] <= 0.5 && (o.nums[3] >= 3 || (glow(o) && o.nums[3] >= 1.5))) skyO.push(o);
     }
     while (grew) {
       grew = false;
-      bands.forEach(function (bi) {
-        if (ground.indexOf(bi) >= 0) return;
-        var y1 = items[bi].o.nums[1] + items[bi].o.nums[3];
-        if (y1 >= GH - 1 || (H !== null && y1 >= H - 0.3)) { ground.push(bi); H = H === null ? items[bi].o.nums[1] : Math.min(H, items[bi].o.nums[1]); grew = true; }
+      items.forEach(function (it) {
+        var o = it.o;
+        if (!wide(o) || isSkyO(o) || !glow(o) || o.nums[1] + o.nums[3] >= GH - 1) return;
+        if (skyO.some(function (s) { return glow(s) && s.nums[1] + s.nums[3] < GH - 1 && Math.abs(o.nums[1] - (s.nums[1] + s.nums[3])) <= 0.3; })) { skyO.push(o); grew = true; }
       });
     }
+    for (i = 0; i < items.length; i++) if (wide(items[i].o) && !isSkyO(items[i].o) && items[i].o.nums[1] >= 1.5) bands.push(i);
+    grew = true;
+    while (grew) {
+      grew = false;
+      bands.forEach(function (bi) {
+        var o = items[bi].o, y1 = o.nums[1] + o.nums[3];
+        if (ground.indexOf(bi) >= 0 || isSkyO(o)) return;
+        if (y1 >= GH - 1) { ground.push(bi); H = H === null ? o.nums[1] : Math.min(H, o.nums[1]); grew = true; return; }
+        if (H === null || y1 < H - 0.3) return;
+        var onWater = ground.some(function (gi) { var g = items[gi].o; return Math.abs(g.nums[1] - H) <= 0.3 && /^(water|sky)$/.test(g.fam); });
+        if (glow(o) && onWater) { skyO.push(o); grew = true; return; }
+        ground.push(bi); H = Math.min(H, o.nums[1]); grew = true;
+      });
+    }
+    for (i = 0; i < items.length; i++) if (isSkyO(items[i].o)) sky = i;
     ground.sort(function (a, b) { return a - b; });
-    return { sky: sky, ground: ground, H: H };
+    return { sky: sky, skyO: skyO, ground: ground, groundO: ground.map(function (gi) { return items[gi].o; }), H: H };
   }
   function read(lines) {
     var items = (lines || []).map(function (l) { return { line: l, o: read1(l) }; }), sc = scene(items);
     return { items: items, horizon: sc.H, sky: sc.sky, ground: sc.ground };
   }
+  // ends(o) -> the two ends of a line or curve, the upper one first
+  function ends(o) {
+    var n = o.nums, a = [n[0], n[1]], e = [n[n.length - 2], n[n.length - 1]];
+    return a[1] <= e[1] ? [a, e] : [e, a];
+  }
 
   // --- a mountain stands on the horizon --------------------------------------
   var MOUNT = /\b(mountains?|mountainous|hills?|hillside|peaks?|volcano(?:es)?|alps|ranges?|ridges?|dunes?|cliffs?|valley|highlands?)\b/i;
   // things a tri in the sky may be, when the question names one
-  var THING = /\b(house|cottage|cabin|hut|barn|church|castle|tower|temple|roof|tent|tipi|teepee|boat|boats|ship|ships|sail\w*|yacht|kites?|flags?|arrows?|rocket|plane|aeroplane|airplane|jet|birds?|pyramids?|trees?|pines?|firs?|hat|stars?|sign)\b/i;
+  var THING = /\b(house|cottage|cabin|hut|barn|church|chapel|castle|tower|temple|spire|steeple|windmill|lighthouse|roof|tent|tipi|teepee|wigwam|boat|boats|ship|ships|sail\w*|yacht|dhow|canoe|kites?|flags?|pennants?|bunting|arrows?|rocket|plane|aeroplane|airplane|jet|birds?|pyramids?|trees?|pines?|firs?|umbrellas?|parasols?|hat|crown|dress|skirt|cone|stars?|sign)\b/i;
   // stands(o) -> a tri on a flat base, its point up: {a, l, r (each [x, y, index of the corner]), B, w}
   function stands(o) {
     if (!o || o.kind !== "tri") return null;
@@ -47293,36 +47319,127 @@ Lantern.RFB = (function () {
     var l = v[0][0] <= v[1][0] ? v[0] : v[1], r = l === v[0] ? v[1] : v[0];
     return { a: v[2], l: l, r: r, B: Math.max(v[0][1], v[1][1]), w: r[0] - l[0] };
   }
-  function floats(items, i, H, q) {
-    var o = items[i].o, t = stands(o);
+  // held(items, i, t) -> something holds the tri up, so it is not a mountain in the air: a wall under a roof,
+  // a trunk under or through a crown, a pole under a canopy, a mast or a hull under a sail, the string of a
+  // kite, the tier below in a pine. (Each of these was stood on the horizon by the first 1.24.7.)
+  function held(items, i, t) {
+    var o = items[i].o, mid0 = t.l[0] + 0.2 * t.w, mid1 = t.r[0] - 0.2 * t.w;
+    return items.some(function (jt, j) {
+      var p = jt.o, b, e, x;
+      if (!p || j === i) return false;
+      if (p.kind === "line" || p.kind === "curve") {
+        e = ends(p);
+        if (e[1][1] < t.B + 1 || e[0][1] > t.B + 0.5) return false;
+        x = e[1][1] - e[0][1] < 0.01 ? e[0][0] : e[0][0] + (e[1][0] - e[0][0]) * Math.max(0, t.B - e[0][1]) / (e[1][1] - e[0][1]);
+        return x >= t.l[0] - 0.3 && x <= t.r[0] + 0.3;
+      }
+      if (!solid(p) || wide(p)) return false;
+      b = box(p);
+      if (p.kind === "rect" || p.kind === "square") {
+        if (b[1] >= t.B - 0.6 && b[1] <= t.B + 1.6 && b[0] < t.r[0] && b[2] > t.l[0]) return true;
+        return b[2] - b[0] <= 0.5 * t.w && b[1] < t.B - 0.6 && b[3] >= t.B + 0.4 && b[0] < mid1 && b[2] > mid0;
+      }
+      if (p.kind === "tri") {
+        var s = stands(p), n = p.nums, ys = [n[1], n[3], n[5]], top = Math.min.apply(null, ys);
+        if (s && p.fill === o.fill && Math.abs(s.a[1] - t.B) <= 0.6 && s.a[0] >= mid0 && s.a[0] <= mid1) return true;
+        return ys.filter(function (y) { return Math.abs(y - top) <= 0.3; }).length === 2 && top >= t.B - 0.6 && top <= t.B + 1.6 &&
+          Math.min(b[2], t.r[0]) - Math.max(b[0], t.l[0]) >= 0.2 * t.w;
+      }
+      return false;
+    });
+  }
+  function floats(items, i, sc, q) {
+    var o = items[i].o, t = stands(o), H = sc.H;
     if (!t || !o.fill || t.w < 4 || t.B >= H - 0.2) return null;
-    var named = MOUNT.test(q), thing = THING.test(q);
-    if (/^(warm|sky)$/.test(o.fam) ? !(named && !thing) : !(named || !thing)) return null;
-    // a roof on its wall, a crown on its trunk: a rect right under the base holds it up
-    if (items.some(function (jt) {
-      var p = jt.o;
-      if (!p || p === o || !solid(p) || wide(p) || !/^(rect|square)$/.test(p.kind)) return false;
-      var b = box(p);
-      return b[1] >= t.B - 0.6 && b[1] <= t.B + 1.6 && b[0] < t.r[0] && b[2] > t.l[0];
-    })) return null;
-    // resting on something under the middle of its base and to both sides of it: the top of a pine on the
-    // tier below (whose point is narrower than the base above it), a snow cap on its mountain. A base that
-    // sticks out over the sky to one side is not resting.
+    // a mountain's colours, in a question that names mountains, or that is about a landscape and names
+    // nothing a tri could be; any other colour only when mountains are named and nothing else is
+    var named = MOUNT.test(q), thing = THING.test(q), rock = /^(gray|far|earth|green|white|dark)$/.test(o.fam);
+    if (rock ? !(named || (!thing && landscape(q))) : !(named && !thing)) return null;
+    if (thing && t.w < 6) return null;
+    if (held(items, i, t)) return null;
+    // resting on something under the middle of its base and to both sides of it: a snow cap on its mountain.
+    // A base that sticks out over the sky to one side is not resting.
     if ([0.3, 0.5, 0.7].every(function (f) {
-      return items.some(function (jt) { var p = jt.o; return !!p && p !== o && solid(p) && !isSky(p) && inside(p, t.l[0] + f * t.w, t.B + 0.3); });
+      return items.some(function (jt) { var p = jt.o; return !!p && p !== o && solid(p) && sc.skyO.indexOf(p) < 0 && inside(p, t.l[0] + f * t.w, t.B + 0.3); });
     })) return null;
     return t;
   }
 
   // --- the sun is behind everything --------------------------------------------
-  var SUNQ = /\b(sun|sunset|sunrise|sundown|sunny|dawn|dusk|moon|moonlit|moonlight|night)\b/i;
-  var MOONQ = /\b(moon|moonlit|moonlight|night)\b/i, LOWSUN = /\b(sunset|sunrise|sundown|dusk|dawn)\b/i;
-  var ROUND = /\b(balls?|balloons?|lamps?|lanterns?|lights?|flowers?|face|smiley|head|coins?|eggs?|fruit|oranges?|lemons?|apples?|wheels?|button|clock|planets?|bubbles?)\b/i;
-  function isSun(o, H, q) {
-    if (!o || o.kind !== "circle" || !o.fill || o.nums[2] < 0.6 || o.nums[2] > 4) return false;
-    if (!(/^(yellow|orange|gold)$/.test(o.fill) || (MOONQ.test(q) && /^(white|silver|light gray|light grey|beige)$/.test(o.fill)) || (LOWSUN.test(q) && o.fill === "red"))) return false;
-    if (H !== null ? o.nums[1] > H + 0.5 * o.nums[2] : o.nums[1] > GH / 2) return false;   // in the sky, or setting on the horizon
-    return SUNQ.test(q) || !ROUND.test(q);
+  var SUNQ = /\b(sun|sunset|sunrise|sundown|sunshine|sunny|sunlit|dawn|dusk|moon|moonrise|moonlit|moonlight)\b/i;
+  var MOONQ = /\b(moon|moonrise|moonlit|moonlight)\b/i, LOWSUN = /\b(sunset|sunrise|sundown|dusk|dawn)\b/i;
+  // round things that are not the sun: when the question names one, and does not name the sun or the moon,
+  // Lantern moves no circle
+  var ROUND = /\b(balls?|balloons?|lamps?|lamp ?posts?|streetlights?|lanterns?|lights?|lighthouse|beacon|torch|candles?|fires?|campfire|bonfire|flames?|flowers?|sunflowers?|daisy|daisies|blossoms?|face|smiley|head|girl|boy|man|woman|person|people|child|children|snowman|coins?|eggs?|fruits?|oranges?|lemons?|apples?|mango\w*|wheels?|button|clock|planets?|saturn|jupiter|mars|venus|bubbles?|birds?|chicks?|ducks?|ufo)\b/i;
+  function sunColour(o, q) {
+    if (!o || o.kind !== "circle" || !o.fill) return "";
+    if (/^(yellow|orange|gold)$/.test(o.fill) || (LOWSUN.test(q) && o.fill === "red")) return "sun";
+    // ("a red sun", "a white moon": the question gives the colour)
+    if (/^[a-z]+$/.test(o.fill) && new RegExp("\\b" + o.fill + "\\s+(?:sun|moon)\\b", "i").test(q)) return /moon/i.test(q) && !/\bsun\b/i.test(q) ? "moon" : "sun";
+    return MOONQ.test(q) && /^(white|silver|light gray|light grey|beige)$/.test(o.fill) ? "moon" : "";
+  }
+  // rays(items, i) -> the lines that have an end in or at the circle, when there are three or more (a sun's rays)
+  function rays(items, i) {
+    var o = items[i].o, out = [];
+    items.forEach(function (jt) {
+      var p = jt.o;
+      if (!p || p.kind !== "line" || p.nums.length !== 4) return;
+      var n = p.nums, d0 = Math.sqrt(Math.pow(n[0] - o.nums[0], 2) + Math.pow(n[1] - o.nums[1], 2)), d1 = Math.sqrt(Math.pow(n[2] - o.nums[0], 2) + Math.pow(n[3] - o.nums[1], 2));
+      if (Math.min(d0, d1) <= o.nums[2] + 0.6 && Math.max(d0, d1) <= 3 * o.nums[2] + 1) out.push(jt);
+    });
+    return out.length >= 3 ? out : [];
+  }
+  // tied(items, i) -> the circle is the top of something: a lamp on its post, a flower on its stem, a balloon
+  // over its basket, the lamp of a lighthouse, a head over a dress
+  function tied(items, i) {
+    var o = items[i].o, cx = o.nums[0], cy = o.nums[1], r = o.nums[2], bot = cy + r, ry = rays(items, i);
+    return items.some(function (jt, j) {
+      var p = jt.o, b, e, s;
+      if (!p || j === i) return false;
+      if (p.kind === "line" || p.kind === "curve") {
+        if (ry.indexOf(jt) >= 0) return false;
+        e = ends(p);
+        return Math.abs(e[0][0] - cx) <= Math.max(0.5, 0.6 * r) && e[0][1] >= cy - r && e[0][1] <= bot + 0.6 && e[1][1] >= bot + Math.max(1.5, r);
+      }
+      if (!solid(p) || wide(p)) return false;
+      b = box(p);
+      if (p.kind === "rect" || p.kind === "square")
+        return b[2] - b[0] <= 2 * r + 0.5 && b[0] <= cx + 0.3 && b[2] >= cx - 0.3 && b[1] >= cy - r - 0.2 && b[1] <= bot + Math.max(0.8, 0.6 * r) && b[3] >= bot + 0.3;
+      if (p.kind === "tri") {
+        s = stands(p);
+        return !!s && s.w <= 3 * r + 1 && Math.abs(s.a[0] - cx) <= 0.5 * r + 0.2 && s.a[1] >= cy - 0.2 && s.a[1] <= bot + 0.6;
+      }
+      return false;
+    });
+  }
+  // within(items, i, sc) -> the whole circle lies inside a shape drawn before it that is not a band: a fruit in
+  // a crown, a lamp in a window
+  function within(items, i, sc) {
+    var o = items[i].o, n = o.nums, j, k, a, p, all;
+    for (j = 0; j < i; j++) {
+      p = items[j].o;
+      if (!solid(p) || wide(p) || sc.skyO.indexOf(p) >= 0) continue;
+      all = inside(p, n[0], n[1]);
+      for (k = 0; all && k < 8; k++) { a = k / 4 * Math.PI; all = inside(p, n[0] + 0.95 * n[2] * Math.cos(a), n[1] + 0.95 * n[2] * Math.sin(a)); }
+      if (all) return true;
+    }
+    return false;
+  }
+  // sunOf(items, sc, q) -> the index of the one circle that can only be the sun (or the moon), or -1. One: a
+  // picture with two such circles has lamps, flowers or balloons in it, and Lantern cannot tell which is which.
+  function sunOf(items, sc, q) {
+    var H = sc.H, named = SUNQ.test(q), suns = [], moons = [], i;
+    if (!named && ROUND.test(q)) return -1;
+    for (i = 0; i < items.length; i++) {
+      var o = items[i].o, c = sunColour(o, q);
+      if (!c || o.nums[2] < 0.9 || o.nums[2] > 4) continue;
+      // in the sky; or setting on the horizon, when the question names the sun or the moon
+      if (H !== null ? (o.nums[1] + o.nums[2] > H + 0.2 && !(named && o.nums[1] <= H + 0.5 * o.nums[2])) : o.nums[1] > GH / 2) continue;
+      if (tied(items, i) || within(items, i, sc)) continue;
+      (c === "sun" ? suns : moons).push(i);
+    }
+    if (suns.length === 1) return suns[0];
+    return !suns.length && moons.length === 1 ? moons[0] : -1;
   }
   function touches(sun, p) {
     var n = sun.nums, k, a;
@@ -47340,49 +47457,73 @@ Lantern.RFB = (function () {
   }
 
   // --- a road going away narrows ----------------------------------------------
-  var ROADQ = /\b(roads?|paths?|pathway|footpath|tracks?|trail|lane|street|highway|motorway|railway|railroad|rails|driveway|avenue|river|stream|canal|creek)\b/i;
-  var WATERWAY = /\b(river|stream|canal|creek)\b/i, DRYWAY = /\b(roads?|paths?|pathway|footpath|tracks?|trail|lane|street|highway|motorway|railway|railroad|rails|driveway|avenue)\b/i;
-  var AWAY = /\b(distance|distant|horizon|dis+ap+ear\w*|vanish\w*|perspective|far|ahead|away|leading|leads|receding|recedes|stretching|stretches)\b/i;
+  var ROADQ = /\b(roads?|paths?|pathway|footpath|tracks?|trail|lane|street|highway|motorway|freeway|railway|railroad|rails|driveway|avenue|river|stream|canal|creek)\b/i;
+  var WATERWAY = /\b(river|stream|canal|creek)\b/i, DRYWAY = /\b(roads?|paths?|pathway|footpath|tracks?|trail|lane|street|highway|motorway|freeway|railway|railroad|rails|driveway|avenue)\b/i;
+  // Going away is said of the road itself ("a road disappearing into the distance"): not of something else in
+  // the picture ("a river with mountains in the distance"), and not of a road to somewhere near ("a path
+  // leading to the door"). Lantern redraws a road, or asks for one, only then: the posts of a gate, the legs
+  // of a horse, the piers of a bridge and the trunk of a tree are also upright strips from the horizon down.
+  var AWAY = /\b(into the (?:far )?distance|off in the distance|to(?:wards?)? (?:the|a) (?:far |distant )?horizon|over (?:the|a) (?:far |distant )?horizon|vanishing point|dis+ap+ear\w*|vanish\w*|in perspective|reced\w+|far away|far off|going away|goes away|stretch\w* away)\b/i;
+  var CLAUSE = /[,;.!?]|\b(?:with|and|past|beside|besides|near|next to|behind|under|beneath|between|among|where|while|in front of)\b/i;
+  function away(q) {
+    var re = new RegExp(ROADQ.source, "gi"), m, rest, cut;
+    q = String(q || "");
+    while ((m = re.exec(q))) {
+      rest = q.slice(m.index + m[0].length); cut = rest.search(CLAUSE);
+      if (AWAY.test(cut < 0 ? rest : rest.slice(0, cut))) return true;
+    }
+    return false;
+  }
   function wayName(q) { var m = ROADQ.exec(String(q || "")); return m ? m[0].toLowerCase().replace(/s$/, "") : "road"; }
-  function groundFam(items, sc) { return sc.ground.length ? items[sc.ground[sc.ground.length - 1]].o.fam : ""; }
+  // groundAt(sc, x, y) -> the fill of the ground at a point (the band drawn last there)
+  function groundAt(sc, x, y) {
+    var f = "", k;
+    for (k = 0; k < sc.groundO.length; k++) if (inside(sc.groundO[k], x, y)) f = sc.groundO[k].fill;
+    return f || (sc.groundO.length ? sc.groundO[sc.groundO.length - 1].fill : "");
+  }
   // narrows(items, sc) -> "tri" | {a, b} (two straight lines that meet near the horizon) | null
   function narrows(items, sc) {
-    var H = sc.H, low = H + 0.6 * (GH - H), high = H + 0.25 * (GH - H), gf = groundFam(items, sc), ends = [], i, j;
-    if (items.some(function (it) { var t = stands(it.o); return !!t && !!it.o.fill && t.B >= low && t.a[1] <= high && t.a[1] >= H - 1 && t.w >= 1.5 && it.o.fam !== gf; })) return "tri";
+    var H = sc.H, low = H + 0.6 * (GH - H), high = H + 0.25 * (GH - H), found = [], i, j;
+    // (a tri of another colour than the ground it lies on: brown on sand and gray on light gray are roads)
+    if (items.some(function (it) {
+      var t = stands(it.o);
+      return !!t && !!it.o.fill && t.B >= low && t.a[1] <= high && t.a[1] >= H - 1 && t.w >= 1.5 && it.o.fill !== groundAt(sc, (t.l[0] + t.r[0]) / 2, Math.min(GH - 0.2, t.B - 0.3));
+    })) return "tri";
     items.forEach(function (it, k) {
       var o = it.o;
       if (!o || !/^(line|curve)$/.test(o.kind)) return;
-      var n = o.nums, a = [n[0], n[1]], b = [n[n.length - 2], n[n.length - 1]];
-      if (a[1] < b[1]) { var s = a; a = b; b = s; }
-      if (a[1] >= low && b[1] <= high && b[1] >= H - 1) ends.push({ bot: a, top: b, i: k, straight: o.kind === "line" && n.length === 4 });
+      var e = ends(o);
+      if (e[1][1] >= low && e[0][1] <= high && e[0][1] >= H - 1) found.push({ bot: e[1], top: e[0], i: k, straight: o.kind === "line" && o.nums.length === 4 });
     });
-    for (i = 0; i < ends.length; i++) for (j = i + 1; j < ends.length; j++) {
-      var wide0 = Math.abs(ends[i].bot[0] - ends[j].bot[0]), near0 = Math.abs(ends[i].top[0] - ends[j].top[0]);
-      if (wide0 >= 2 && near0 <= Math.max(1, 0.6 * wide0)) return { a: ends[i], b: ends[j] };
+    for (i = 0; i < found.length; i++) for (j = i + 1; j < found.length; j++) {
+      var wide0 = Math.abs(found[i].bot[0] - found[j].bot[0]), near0 = Math.abs(found[i].top[0] - found[j].top[0]);
+      if (wide0 >= 2 && near0 <= Math.max(1, 0.6 * wide0)) return { a: found[i], b: found[j] };
     }
     return null;
   }
   // strip(items, sc) -> the road as the model wrote it without perspective: upright lines side by side, or one
-  // narrow rect, from the horizon to the bottom edge: {idx, x0, x1, lines | rect}
+  // rect, from the horizon to the bottom edge: {idx, x0, x1, lines | rect}
   function strip(items, sc) {
     var H = sc.H, idx = [], xs = [], i;
     items.forEach(function (it, k) {
       var o = it.o;
       if (!o || o.kind !== "line" || o.nums.length !== 4 || Math.abs(o.nums[0] - o.nums[2]) > 0.6) return;
       var top = Math.min(o.nums[1], o.nums[3]), bot = Math.max(o.nums[1], o.nums[3]);
-      if (top <= H + 1.5 && top >= H - 1 && bot >= GH - 1.5) { idx.push(k); xs.push((o.nums[0] + o.nums[2]) / 2); }
+      if (top <= H + 1 && top >= H - 1 && bot >= GH - 0.5) { idx.push(k); xs.push((o.nums[0] + o.nums[2]) / 2); }
     });
     if (idx.length >= 1 && idx.length <= 6 && Math.max.apply(null, xs) - Math.min.apply(null, xs) <= 6) return { idx: idx, x0: Math.min.apply(null, xs), x1: Math.max.apply(null, xs), lines: true };
     for (i = 0; i < items.length; i++) {
       var o = items[i].o;
-      if (!o || o.kind !== "rect" || !o.fill || wide(o) || o.nums[2] < 0.5 || o.nums[2] > 6) continue;
-      if (o.nums[1] <= H + 1.5 && o.nums[1] >= H - 0.5 && o.nums[1] + o.nums[3] >= GH - 1.5) return { idx: [i], x0: o.nums[0], x1: o.nums[0] + o.nums[2], rect: true };
+      if (!o || o.kind !== "rect" || !o.fill || wide(o) || o.nums[2] < 1.5 || o.nums[2] > 6) continue;
+      if (o.nums[1] <= H + 1 && o.nums[1] >= H - 0.5 && o.nums[1] + o.nums[3] >= GH - 0.5) return { idx: [i], x0: o.nums[0], x1: o.nums[0] + o.nums[2], rect: true };
     }
     return null;
   }
 
   // --- a shore has land in front of the water ---------------------------------
-  var SHORE = /\b(shore|shoreline|beach|coast|coastline|seaside|seashore|lakeside|lakeshore|riverbank|bay|cove)\b/i;
+  // (not a bay or a cove, which may be all water with an island or cliffs; and not a coast seen from the sea)
+  var SHORE = /\b(shore|shoreline|beach|coast|coastline|seaside|seashore|lakeside|lakeshore|riverbank)\b/i;
+  var FROMSEA = /\b(?:from|off) (?:the |a )?(?:sea|ocean|water|lake|boat|ship|deck|air)\b|\boffshore\b/i;
 
   // mend(lines, question) -> {lines, said, problems}
   function mend(lines, q) {
@@ -47402,12 +47543,12 @@ Lantern.RFB = (function () {
     if (Object.keys(count).some(function (k) { return count[k] >= 3; })) return { lines: items.map(function (it) { return it.line; }), said: said, problems: problems };
     var sc = scene(items), H = sc.H;
     if (sc.sky < 0 && H === null) return { lines: items.map(function (it) { return it.line; }), said: said, problems: problems };
-    var before = items.slice();
+    function isSkyO(o) { return sc.skyO.indexOf(o) >= 0; }
 
     // 1. mountains with their bases in the sky
     var mts = [];
     if (H !== null) for (i = 0; i < items.length; i++) {
-      var t = floats(items, i, H, q);
+      var t = floats(items, i, sc, q);
       if (!t) continue;
       var o = items[i].o, n2 = o.nums.slice();
       if (H - t.a[1] <= 0.8 * t.w) { n2[t.l[2] * 2 + 1] = H; n2[t.r[2] * 2 + 1] = H; }   // the sides carried down: the peak stays
@@ -47417,19 +47558,25 @@ Lantern.RFB = (function () {
     mts.forEach(function (m) { m.now.line = write(m.now.o); items[m.at] = m.now; });
 
     // 2. the sun or moon drawn over something nearer
-    var suns = [];
-    for (i = 0; i < items.length; i++) {
-      if (!isSun(items[i].o, H, q)) continue;
-      var over = [], j;
-      for (j = 0; j < i; j++) { var p = items[j].o; if (solid(p) && !isSky(p) && !isSun(p, H, q) && touches(items[i].o, p)) over.push(p); }
-      if (over.length) suns.push({ at: i, it: items[i], over: over });
+    var suns = [], si = sunOf(items, sc, q);
+    if (si >= 0) {
+      var over = [], j, sun = items[si], group = [sun];
+      for (j = 0; j < si; j++) { var p = items[j].o; if (solid(p) && !isSkyO(p) && touches(sun.o, p)) over.push(p); }
+      // what belongs to the sun goes with it: a disc drawn inside it, its rays
+      for (j = si + 1; j < items.length; j++) {
+        var c = items[j].o;
+        if (c && c.kind === "circle" && c.fill && c.nums[2] < sun.o.nums[2] && Math.sqrt(Math.pow(c.nums[0] - sun.o.nums[0], 2) + Math.pow(c.nums[1] - sun.o.nums[1], 2)) + c.nums[2] <= sun.o.nums[2] + 0.1) group.push(items[j]);
+      }
+      rays(items, si).forEach(function (r) { if (group.indexOf(r) < 0) group.push(r); });
+      if (over.length) suns.push({ at: si, it: sun, over: over, group: group });
     }
 
     // the new order: the sky, the sun, the mountains Lantern stood on the horizon, then the rest as written
     function order(moveSuns, moveMts) {
-      var out = [], sunSet = moveSuns.map(function (s) { return s.it; }), mtSet = moveMts.map(function (m) { return m.now; });
+      var out = [], sunSet = [], mtSet = moveMts.map(function (m) { return m.now; });
+      moveSuns.forEach(function (s) { s.group.forEach(function (g) { sunSet.push(g); }); });
       var behind = sunSet.concat(mtSet), rest = items.filter(function (it) { return behind.indexOf(it) < 0; }), skyAt = -1, k;
-      for (k = 0; k < rest.length; k++) if (isSky(rest[k].o)) skyAt = k;
+      for (k = 0; k < rest.length; k++) if (isSkyO(rest[k].o)) skyAt = k;
       return rest.slice(0, skyAt + 1).concat(behind, rest.slice(skyAt + 1));
     }
     var next = order(suns, mts);
@@ -47454,9 +47601,9 @@ Lantern.RFB = (function () {
     items = next;
 
     // 3. a road going away
-    if (H !== null && ROADQ.test(q)) {
-      var nar = narrows(items, sc), st = nar ? null : strip(items, sc), way = wayName(q), wet = WATERWAY.test(q) && !DRYWAY.test(q), gf = groundFam(items, sc);
-      if (st && (st.rect || st.idx.length >= 2 || AWAY.test(q))) {
+    if (H !== null && away(q)) {
+      var nar = narrows(items, sc), st = nar ? null : strip(items, sc), way = wayName(q), wet = WATERWAY.test(q) && !DRYWAY.test(q);
+      if (st) {
         // The strip is x0 to x1 all the way down. Going away it is wb wide at
         // the bottom edge and nothing at the horizon: a point at (x, y) in it
         // goes to xc + (x - xc) * k * (y - H) / (GH - H). The lines of the
@@ -47467,7 +47614,8 @@ Lantern.RFB = (function () {
         if (xc + wb / 2 > GW) xc = GW - wb / 2;
         var k = sw > 0 ? wb / sw : 0, mid = (st.x0 + st.x1) / 2;
         var px = function (x, y) { return xc + (x - mid) * k * Math.max(0, y - H) / (GH - H); };
-        var colour = st.rect && first.fam !== gf ? first.fill : wet ? "blue" : "gray";
+        var gfill = groundAt(sc, mid, (H + GH) / 2), colour = st.rect && first.fill !== gfill ? first.fill : wet ? "blue" : "gray";
+        if (colour === gfill) colour = wet ? "light blue" : "tan";
         var made = ["tri " + num(xc - wb / 2) + " " + GH + " " + num(xc + wb / 2) + " " + GH + " " + num(xc) + " " + num(H) + " fill " + colour], across = [];
         if (st.lines) {
           st.idx.forEach(function (ki) {
@@ -47484,7 +47632,7 @@ Lantern.RFB = (function () {
           });
         }
         var gone = st.idx.map(function (ki) { return items[ki]; }).concat(across), at = st.idx[0], lastGround = -1;
-        items.forEach(function (it, ki) { if (wide(it.o) && !isSky(it.o) && it.o.nums[1] >= 1.5) lastGround = ki; });
+        items.forEach(function (it, ki) { if (wide(it.o) && !isSkyO(it.o) && it.o.nums[1] >= 1.5) lastGround = ki; });
         var anchor = lastGround > at ? items[lastGround] : null, out = [];
         items.forEach(function (it, ki) {
           if (ki === at && !anchor) made.forEach(function (l) { out.push({ line: l, o: read1(l) }); });
@@ -47494,29 +47642,30 @@ Lantern.RFB = (function () {
         items = out;
         said.push("drew the " + way + " as it looks going away: wide at the bottom edge, a point on the horizon (" +
           (st.rect ? "it was a strip of one width" : st.idx.length === 1 ? "it was one upright line" : "its " + st.idx.length + " lines were side by side, the same distance apart all the way") + "; what is far looks smaller)");
-      } else if (nar && nar !== "tri" && nar.a.straight && nar.b.straight) {
+      } else if (nar && nar !== "tri" && nar.a.straight && nar.b.straight && Math.abs(nar.a.bot[0] - nar.b.bot[0]) >= 3 && Math.min(nar.a.bot[1], nar.b.bot[1]) >= GH - 1) {
         // two edges that meet, and nothing between them but the ground: the road gets a colour of its own
         var mx = (nar.a.bot[0] + nar.b.bot[0] + nar.a.top[0] + nar.b.top[0]) / 4, my = (nar.a.bot[1] + nar.a.top[1]) / 2;
         if (!items.some(function (it) { return solid(it.o) && !wide(it.o) && inside(it.o, mx, my); })) {
-          var col = wet ? "blue" : "gray", A = nar.a, B = nar.b, apart = Math.abs(A.top[0] - B.top[0]) > 0.3;
+          var gf2 = groundAt(sc, mx, my), col = wet ? "blue" : "gray", A = nar.a, B = nar.b, apart = Math.abs(A.top[0] - B.top[0]) > 0.3;
+          if (col === gf2) col = wet ? "light blue" : "tan";
           var fills = apart ? ["tri " + [A.bot[0], A.bot[1], B.bot[0], B.bot[1], A.top[0], A.top[1]].map(num).join(" ") + " fill " + col, "tri " + [B.bot[0], B.bot[1], B.top[0], B.top[1], A.top[0], A.top[1]].map(num).join(" ") + " fill " + col] :
             ["tri " + [A.bot[0], A.bot[1], B.bot[0], B.bot[1], (A.top[0] + B.top[0]) / 2, Math.min(A.top[1], B.top[1])].map(num).join(" ") + " fill " + col];
           var firstAt = Math.min(A.i, B.i);
           fills.forEach(function (fl, fi) { items.splice(firstAt + fi, 0, { line: fl, o: read1(fl) }); });
-          said.push("filled the " + way + " between its two edges (" + (wet ? "blue" : "gray") + "): it was the colour of the ground");
+          said.push("filled the " + way + " between its two edges (" + col + "): it was the colour of the ground");
         }
-      } else if (!nar && AWAY.test(q)) {
-        problems.push("the question asks for a " + way + " going into the distance, but nothing in the picture narrows towards the horizon: add tri 7 " + GH + " 13 " + GH + " 10 " + num(H) + " fill " + (wet ? "blue" : "gray") +
+      } else if (!nar) {
+        problems.push("the question asks for a " + way + " going into the distance, but nothing in the picture narrows towards the horizon: add tri 7 " + GH + " 13 " + GH + " 10 " + num(H) + " fill " + (wet ? (groundAt(sc, 10, (H + GH) / 2) === "blue" ? "light blue" : "blue") : (groundAt(sc, 10, (H + GH) / 2) === "gray" ? "tan" : "gray")) +
           " after the ground (a " + way + " going away is wide at the bottom edge and comes to a point on the horizon, y " + num(H) + ")");
       }
     }
 
     // 4. a shore
-    if (H !== null && SHORE.test(q)) {
-      var water = sc.ground.some(function (gi) { return /^(water|sky)$/.test(before[gi].o.fam); });
+    if (H !== null && SHORE.test(q) && !FROMSEA.test(q)) {
+      var water = sc.groundO.some(function (g) { return /^(water|sky)$/.test(g.fam); });
       var land = items.some(function (it) {
         var p = it.o;
-        if (!solid(p) || isSky(p) || /^(water|sky)$/.test(p.fam) || isSun(p, H, q)) return false;
+        if (!solid(p) || isSkyO(p) || /^(water|sky)$/.test(p.fam) || sunColour(p, q)) return false;
         var b = box(p);
         return (b[1] + b[3]) / 2 > H && (b[2] - b[0]) * (b[3] - b[1]) >= 4;
       });
