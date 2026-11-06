@@ -7,16 +7,23 @@
 // air and the sun in front again. The model was shown each picture and said
 // LOOKS RIGHT. Both blocks are replayed here as it wrote them.
 //
-// Lantern reads where the ground is from the block (the wide rect that
-// reaches the bottom edge; its top is the horizon) and does what can be
-// computed: stands a floating mountain on the horizon, puts the sun behind
-// the land, draws a road narrowing to the horizon -- and says so. What it
-// cannot make (a shore nobody drew, a road nobody drew) goes back once with
-// the line to add.
+// Lantern reads where the ground is from the block (the band that reaches
+// the bottom edge; its top is the horizon) and does what can be computed:
+// stands a floating mountain on the horizon, puts the sun behind the land,
+// draws a road narrowing to the horizon -- and says so. What it cannot make
+// (a shore nobody drew, a road nobody drew) goes back once with the line to
+// add.
 //
-// A picture that is right as written must come through untouched, so half of
-// this file is pictures Lantern leaves alone: a hut with its roof, pines in
-// tiers, a sailboat, snow caps, pyramids, a balloon, a fence, a kite.
+// A picture that is right as written must come through untouched, and that
+// is most of this file. The first draft of AI_SCENE was tried by two
+// independent reviewers, one after the other, on pictures of their own:
+// the first drew 91 right ones and it changed or questioned 46; the second,
+// after those were mended, drew 126 more and 41 were changed or questioned
+// again (a sky in two blues, a far beach as a band, a hang glider, a lion's
+// mane at sunset). Their pictures are fixtures here, every one. What stands
+// now arranges a picture only when every word of the question is a word of
+// a plain landscape and the block has one sky and a ground it can read; in
+// any other picture it moves nothing.
 "use strict";
 var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
 var fs = require("fs"), path = require("path");
@@ -153,15 +160,54 @@ var RIGHT = [
     allSame(["bridge piers on waterline", "bridge narrow deck", "waterfall", "gate on a path side view", "horse on a track", "man walking on a road", "man walking in a park", "reeds by a river", "tree by a river (foreground trunk)", "tree by the road", "shop door on a street"]));
   ok("...nothing is sent back that the question did not ask for: mountains in the distance behind a river, a path to a door, a brown track on sand and a gray road on light gray (roads of another colour than their ground), an island in a bay, a coast seen from the sea",
     allSame(["river, mountains in the distance", "path leading to the door", "desert track", "grey road, light grey ground", "lake with island", "cliffs bay", "ship along the coast (no ship below?)", "road to horizon banded sunset", "long wall raising the horizon"]));
-  ok("the horizon is the top of the ground: under a sunset\u2019s purple band, the orange band below it is sky (8, not 4); a band of a sunset\u2019s colour lying on the sea is sky; a long wall is not the ground; a yellow field under a blue sky is ground",
-    S.read(["rect 0 0 20 4 fill purple", "rect 0 4 20 4 fill orange", "rect 0 8 20 4 fill blue"]).horizon === 8 && S.read(["rect 0 0 20 12 fill orange", "rect 0 5 20 3 fill pink", "rect 0 8 20 4 fill blue"]).horizon === 8 &&
-    S.read(["rect 0 0 20 12 fill sky", "rect 0 8 20 4 fill green", "rect 1 5 18 3 fill gray"]).horizon === 8 && S.read(["rect 0 0 20 12 fill sky", "rect 0 6 20 3 fill yellow", "rect 0 9 20 3 fill green"]).horizon === 6);
+  ok("the horizon is the top of the ground, where Lantern can be sure of it: one sky and the ground (8); the sea behind a strip of sand (6); a long wall is not the ground (8). Where it cannot be sure there is none, and nothing is arranged: a sunset in bands, a sky in two blues, a band of a sunset\u2019s colour on the water (the glow, or a far beach?), a yellow band under a blue sky (wheat, or the glow?), no sky at all",
+    S.read(["rect 0 0 20 12 fill sky", "rect 0 8 20 4 fill green"]).horizon === 8 && S.read(["rect 0 0 20 12 fill sky", "rect 0 6 20 6 fill blue", "rect 0 9 20 3 fill sand"]).horizon === 6 &&
+    S.read(["rect 0 0 20 12 fill sky", "rect 0 8 20 4 fill green", "rect 1 5 18 3 fill gray"]).horizon === 8 &&
+    S.read(["rect 0 0 20 4 fill purple", "rect 0 4 20 4 fill orange", "rect 0 8 20 4 fill blue"]).horizon === null && S.read(["rect 0 0 20 4 fill blue", "rect 0 4 20 4 fill light blue", "rect 0 8 20 4 fill green"]).horizon === null &&
+    S.read(["rect 0 0 20 4 fill navy", "rect 0 4 20 3 fill dark blue", "rect 0 7 20 5 fill blue"]).horizon === null && S.read(["rect 0 0 20 12 fill orange", "rect 0 5 20 3 fill pink", "rect 0 8 20 4 fill blue"]).horizon === null &&
+    S.read(["rect 0 0 20 12 fill sky", "rect 0 6 20 3 fill yellow", "rect 0 9 20 3 fill green"]).horizon === null && S.read(["rect 0 8 20 4 fill blue", "circle 10 4 2 fill yellow"]).horizon === null);
   var sc1 = RV.sunOverCloud[0], msc = S.mend(sc1.lines, sc1.q);
   ok("the one right-looking picture Lantern still changes: the sun drawn in front of a cloud goes behind it (Adam, of the 35B\u2019s picture: \u201cThe sun is in front of the clouds\u201d)",
     RV.sunOverCloud.length === 1 && msc.lines[1] === "circle 8.5 2.5 1.5 fill yellow" && msc.said.join() === "put the sun behind the clouds: it was drawn in front" && !msc.problems.length, msc);
-  var wrongNow = RV.wrong.filter(function (c) { var m = S.mend(c.lines, c.q); return (m.said.length ? "mended" : m.problems.length ? "sent back" : "left") !== c.now; });
-  ok("the review\u2019s 19 wrong pictures: 4 are mended, 4 sent back with the line to add, and 11 left as they are (a ground in two halves, a sun drawn as an oval, pink mountains behind a tent: Lantern moves nothing it is not sure of)",
-    RV.wrong.length === 19 && wrongNow.length === 0 && RV.wrong.filter(function (c) { return c.now === "mended"; }).length === 4 && RV.wrong.filter(function (c) { return c.now === "sent back"; }).length === 4, wrongNow.map(function (c) { return c.name; }));
+  function nowOf(c) { var m = S.mend(c.lines, c.q); return m.said.length ? "mended" : m.problems.length ? "sent back" : m.lines.join("\n") === c.lines.join("\n") ? "left" : "changed"; }
+  var wrongNow = RV.wrong.filter(function (c) { return nowOf(c) !== c.now; });
+  ok("the review\u2019s 19 wrong pictures: 4 are mended, 1 is sent back with the line to add, and 14 are left as they are (a ground in two halves, a sun drawn as an oval, pink mountains behind a tent, a road that stops short: Lantern moves nothing it is not sure of)",
+    RV.wrong.length === 19 && wrongNow.length === 0 && RV.wrong.filter(function (c) { return c.now === "mended"; }).length === 4 && RV.wrong.filter(function (c) { return c.now === "sent back"; }).length === 1, wrongNow.map(function (c) { return [c.name, nowOf(c)]; }));
+
+  // --- the second review's pictures ---
+  var RV2 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "scene_review2_1247.json"), "utf8"));
+  function rv2(name) { return RV2.right.filter(function (c) { return c.name === name; })[0]; }
+  function allSame2(names) { return names.every(function (n) { return !!rv2(n) && same(rv2(n)); }); }
+  var rv2Touched = RV2.right.filter(function (c) { return !same(c); });
+  ok("the second review\u2019s 126 right pictures (41 of them were changed or questioned after the first review\u2019s were mended): every one comes through exactly as written", RV2.right.length === 126 && rv2Touched.length === 0,
+    rv2Touched.map(function (c) { return [c.name, S.mend(c.lines, c.q)]; }));
+  ok("...a sky Lantern cannot read is left alone: two blues with the sun across them, a night sky in two, a sunset of a thin dark band over orange and yellow",
+    allSame2(["two-tone day sky, sun across the two blues", "two-tone night sky, moon across the two blues", "sunset: thin navy band, orange, yellow, sun, sea", "sky over light sky, sun across them, hills", "two-tone sky and a right road"]));
+  ok("...a band that may be far land is not taken for the sky: a yellow beach on the far side of a lake, wheat behind a river, lavender, blossom, tulips, a desert shore, far dunes",
+    allSame2(["lake with a yellow beach on the far side and mountains", "wheat field (gold band) behind a river, hills behind", "lavender field (purple band) behind a pond with a hill", "pink blossom band beyond a canal, hills",
+      "red tulip field beyond a ditch, windmill-less, hill", "orange desert shore beyond the sea, mountains", "desert sunset, far gold dunes band, dune on it", "savanna sunset, yellow grass band, hill on its far edge"]));
+  ok("...a question with a word Lantern does not know is not a plain landscape, and nothing in its picture is moved: a hang glider and an eagle over the mountains, a room with a window, a map, a flag, a beach ball on a sunny day, a lion at sunset, a mosque\u2019s golden dome at dusk, a sheep in the moonlight",
+    allSame2(["hang glider, pilot below, no strings", "eagle soaring", "room with a window on the mountains", "map with mountains in the north and sea in the south", "flag of Malawi (red sun on the black band)",
+      "beach ball over the sea, sunny, no sun drawn", "lion at sunset, no sun drawn", "mosque with a gold dome at dusk", "sheep on a moonlit hill, no moon drawn", "peak above mist lines"]) &&
+    !S.plain("Draw a hang glider over the mountains.") && !S.plain("Draw a lion standing on the plain at sunset.") && !S.plain("Draw the flag of Malawi.") && S.plain(SHORE_Q) && S.plain(ROAD_Q) &&
+    S.plain("Draw a road disappearing into the distance.") && S.plain("Draw rolling hills under a blue sky.") && !S.plain("Draw a tent by a lake with mountains behind.") && !S.plain(""));
+  ok("...a road that narrows any other way is the model\u2019s road, and is not sent back: in steps, to a farm in the middle distance, as stepping stones, as footprints, from the left edge, winding in three pieces, as two edges with a centre line or with sleepers; and \u201cdisappearing under a bridge\u201d or \u201cinto a tunnel\u201d is not into the distance",
+    allSame2(["road as stepped rects getting narrower", "road narrowing to a farm in the middle distance", "stepping stones getting smaller", "footprints in the snow", "road coming in from the left edge", "winding road of three tris",
+      "road edges after a white centre line", "railway: sleepers first, then the two rails", "railway: rails first, then sleepers",
+      "canal boat under a bridge (side view)", "train into a tunnel (side view)", "ants into a hole"]));
+  ok("...a shore word where no shore is to be seen: a surfer off the beach, a beach ball on the sea, a whale far from the shore, a bottle far from any shore",
+    allSame2(["surfer off the beach (all water)", "beach ball on the sea", "whale far from the shore", "message in a bottle far from any shore"]));
+  var wrong2 = RV2.wrong.filter(function (c) { return nowOf(c) !== c.now; }), n2 = {};
+  RV2.wrong.forEach(function (c) { n2[c.now] = (n2[c.now] || 0) + 1; });
+  ok("the second review\u2019s 38 wrong pictures: 22 are mended, 2 sent back with the line to add, 14 left as they are", RV2.wrong.length === 38 && wrong2.length === 0 && n2.mended === 22 && n2["sent back"] === 2 && n2.left === 14,
+    [n2, wrong2.map(function (c) { return [c.name, nowOf(c)]; })]);
+  var cap = S.mend(["rect 0 0 20 12 fill sky", "rect 0 8.5 20 3.5 fill green", "tri 3 5.5 10 1 17 5.5 fill gray", "tri 8.4 2 10 1 11.6 2 fill white"], "Draw a snow-capped mountain.");
+  ok("...what is drawn on a mountain goes down with it: a snow cap stays on its peak (the mountain is set down whole; its sides carried down would leave the cap hanging over them)",
+    cap.lines.join("|") === "rect 0 0 20 12 fill sky|tri 3 8.5 10 4 17 8.5 fill gray|rect 0 8.5 20 3.5 fill green|tri 8.4 5 10 4 11.6 5 fill white", cap.lines);
+  var rayed = S.mend(["rect 0 0 20 12 fill sky", "tri 2 8 9 2.5 16 8 fill gray", "rect 0 8 20 4 fill green", "circle 12 4 1.3 fill yellow", "tri 11.6 2.5 12 1.5 12.4 2.5 fill yellow", "tri 13.5 3.6 14.5 4 13.5 4.4 fill yellow",
+    "tri 11.6 5.5 12 6.5 12.4 5.5 fill yellow", "tri 10.5 3.6 9.5 4 10.5 4.4 fill yellow"], "Draw the sun shining behind a mountain.");
+  ok("...the sun\u2019s rays go behind with it, drawn as lines or as small triangles", rayed.lines.slice(1, 6).join("|") === "circle 12 4 1.3 fill yellow|tri 11.6 2.5 12 1.5 12.4 2.5 fill yellow|tri 13.5 3.6 14.5 4 13.5 4.4 fill yellow|tri 11.6 5.5 12 6.5 12.4 5.5 fill yellow|tri 10.5 3.6 9.5 4 10.5 4.4 fill yellow" &&
+    rayed.lines[6] === "tri 2 8 9 2.5 16 8 fill gray" && rayed.said.length === 1, rayed.lines);
   // going away is said of the road itself
   function sentBack(q, lines) { return S.mend(lines, q).problems.length; }
   var FLAT = ["rect 0 0 20 12 fill sky", "rect 0 6 20 6 fill green"];
@@ -175,9 +221,7 @@ var RIGHT = [
   var m1 = mend("Draw a road leading to the horizon across a green plain.", ["rect 0 0 20 12 fill sky", "rect 0 7 20 5 fill green", "rect 9 7 2 5 fill gray"]);
   ok("a road as a strip of one width (a narrow rect from the horizon to the bottom edge): one tri, three times as wide at the bottom, its point on the horizon", m1.lines[2] === "tri 7 12 13 12 10 7 fill gray" && m1.lines.length === 3 && /it was a strip of one width/.test(m1.said[0]), m1);
   var m2 = mend("Draw a road going into the distance.", ["rect 0 0 20 5 fill sky", "rect 0 5 20 7 fill green", "line 6 12 9.5 5 color black width 2", "line 14 12 10.5 5 color black width 2"]);
-  ok("two edges that come together already, with only the ground between them: the road is filled (it was the colour of the ground), the edges stay", m2.lines.join("|") ===
-    "rect 0 0 20 5 fill sky|rect 0 5 20 7 fill green|tri 6 12 14 12 9.5 5 fill gray|tri 14 12 10.5 5 9.5 5 fill gray|line 6 12 9.5 5 color black width 2|line 14 12 10.5 5 color black width 2" &&
-    m2.said[0] === "filled the road between its two edges (gray): it was the colour of the ground", m2);
+  ok("two edges that come together already are the model\u2019s road: left as it drew them (the first draft filled between them, over a canoe on the river and the sleepers of a railway)", m2.lines.length === 4 && m2.said.length === 0 && m2.problems.length === 0, m2);
   var m3 = mend("Draw a river flowing away to the horizon between green banks.", ["rect 0 0 20 12 fill sky", "rect 0 6 20 6 fill green", "rect 8 6 4 6 fill blue", "circle 4 2 1.2 fill yellow"]);
   ok("a river as a strip: the same, in its own blue, and called a river", m3.lines[2] === "tri 5 12 15 12 10 6 fill blue" && /^drew the river as it looks going away/.test(m3.said[0]), m3);
   var m4 = mend("Draw a railway track disappearing into the distance.", ["rect 0 0 20 12 fill sky", "rect 0 5 20 7 fill green", "line 9 5 9 12 color black width 2", "line 11 5 11 12 color black width 2",
@@ -186,7 +230,7 @@ var RIGHT = [
     m4.lines.slice(2).join("|") === "tri 7 12 13 12 10 5 fill gray|line 7 12 10 5 color black width 2|line 13 12 10 5 color black width 2|line 9.57 6 10.43 6 color brown width 2|line 8.29 9 11.71 9 color brown width 2|line 7.09 11.8 12.91 11.8 color brown width 2", m4.lines);
   var m5 = mend("Draw a road disappearing into the distance through fields.", ["rect 0 0 20 12 fill sky", "rect 0 6 20 6 fill green", "rect 0 8 20 1 fill yellow", "circle 16 2 1 fill yellow"]);
   ok("a road asked for and none drawn: nothing is made up; it goes back with the line to add, for this picture\u2019s horizon", m5.said.length === 0 && m5.lines.length === 4 &&
-    m5.problems[0] === "the question asks for a road going into the distance, but nothing in the picture narrows towards the horizon: add tri 7 12 13 12 10 6 fill gray after the ground (a road going away is wide at the bottom edge and comes to a point on the horizon, y 6)", m5);
+    m5.problems[0] === "the question asks for a road going into the distance, and nothing is drawn on the ground: add tri 7 12 13 12 10 6 fill gray after the ground (a road going away is wide at the bottom edge and comes to a point on the horizon, y 6)", m5);
   var m6 = mend("Draw the sun setting over the sea.", ["rect 0 0 20 12 fill orange", "rect 0 8 20 4 fill blue", "circle 10 8 2.5 fill yellow"]);
   ok("a setting sun drawn over the sea: it goes behind the water, so half of it shows", m6.lines.join("|") === "rect 0 0 20 12 fill orange|circle 10 8 2.5 fill yellow|rect 0 8 20 4 fill blue" && m6.said[0] === "put the sun behind the water: it was drawn in front", m6);
   var m7 = mend("Draw the moon over the mountains at night.", ["rect 0 0 20 12 fill dark blue", "tri 0 9 5 4 10 9 fill gray", "tri 7 9 13 3 20 9 fill gray", "rect 0 9 20 3 fill dark green", "circle 12 4 1.5 fill white"]);
@@ -195,8 +239,14 @@ var RIGHT = [
   ok("a small peak high in the sky is set down whole (its sides carried down would make a needle); a wide one has its sides carried down", m8.lines.join("|") === "rect 0 0 20 12 fill sky|tri 3 9 5 7 7 9 fill gray|tri 9 9 14 2 19 9 fill gray|rect 0 9 20 3 fill green", m8.lines);
   var m9 = mend("Draw rolling hills under a blue sky.", ["rect 0 0 20 12 fill sky", "rect 0 9 20 3 fill green", "tri 0 7 5 4 10 7 fill green", "tri 8 8 14 5 20 8 fill dark green"]);
   ok("...hills are called hills", m9.said[0] === "stood the 2 hills on the horizon (y 9), behind what was already on the ground: their bases were in the sky", m9.said);
-  var m10 = mend("Draw a tent by a lake with mountains behind.", ["rect 0 0 20 12 fill sky", "rect 0 7 20 5 fill green", "rect 0 7 20 2 fill blue", "tri 2 5 6 2 10 5 fill gray", "tri 9 5 14 1 19 5 fill gray", "tri 12 11 14 8 16 11 fill orange"]);
-  ok("...and a tent on the ground is left where it is", m10.lines.join("|") === "rect 0 0 20 12 fill sky|tri 2 7 6 2 10 7 fill gray|tri 9 7 14 1 19 7 fill gray|rect 0 7 20 5 fill green|rect 0 7 20 2 fill blue|tri 12 11 14 8 16 11 fill orange", m10.lines);
+  var m10 = mend("Draw a lake with mountains behind.", ["rect 0 0 20 12 fill sky", "rect 0 7 20 5 fill green", "rect 0 7 20 2 fill blue", "tri 2 5 6 2 10 5 fill gray", "tri 9 5 14 1 19 5 fill gray", "tri 12 11 14 8 16 11 fill orange"]);
+  ok("...and what stands on the ground is left where it is (a lake lying on the ground does not move the horizon)", m10.lines.join("|") === "rect 0 0 20 12 fill sky|tri 2 7 6 2 10 7 fill gray|tri 9 7 14 1 19 7 fill gray|rect 0 7 20 5 fill green|rect 0 7 20 2 fill blue|tri 12 11 14 8 16 11 fill orange", m10.lines);
+  var m10b = mend("Draw a tent by a lake with mountains behind.", ["rect 0 0 20 12 fill sky", "rect 0 7 20 5 fill green", "rect 0 7 20 2 fill blue", "tri 2 5 6 2 10 5 fill gray", "tri 9 5 14 1 19 5 fill gray", "tri 12 11 14 8 16 11 fill orange"]);
+  ok("...the same picture asked for with a tent: a word Lantern has no picture of, so nothing is moved (the mountains stay in the air: as the model drew them)", m10b.said.length === 0 && m10b.problems.length === 0 && m10b.lines[3] === "tri 2 5 6 2 10 5 fill gray", m10b);
+  var m12 = mend("Draw a road going into the distance past some hills.", ["rect 0 0 20 12 fill sky", "rect 0 6 20 6 fill green", "tri 1 4 4 2.5 7 4 fill gray", "tri 9 4 14 1 19 4 fill gray", "tri 7 12 13 12 10 6 fill gray"]);
+  ok("...a tri in the air where the question names no mountain or hill is moved only when it is 8 cells wide or more; where it names them, from 4 cells", m12.lines[1] === "tri 1 6 4 2.5 7 6 fill gray" && m12.lines[2] === "tri 9 6 14 1 19 6 fill gray", m12.lines);
+  var m13 = mend("Draw a road going into the distance.", ["rect 0 0 20 12 fill sky", "rect 0 6 20 6 fill green", "tri 1 4 4 2.5 7 4 fill gray", "tri 9 4 14 1 19 4 fill gray", "tri 7 12 13 12 10 6 fill gray"]);
+  ok("......with no mountain named: the wide one only", m13.lines[1] === "tri 9 6 14 1 19 6 fill gray" && m13.lines.indexOf("tri 1 4 4 2.5 7 4 fill gray") > 0, m13.lines);
   var m11 = mend("Draw a simple house with a red roof and a door.", ["rect 0 0 20 12 fill sky", "rect 0 10 20 2 fill green", "rect 9 5 2 5 fill brown", "tri 8 5 10 3 12 5 fill red", "rect 0 10 20 2 fill green", "rect 9 5 2 5 fill brown"]);
   ok("a background written a second time further down (the 2B\u2019s house on 1.24.4: the grass again, after the roof) is left out, and said; the roof on its wall is not a mountain",
     m11.lines.join("|") === "rect 0 0 20 12 fill sky|rect 0 10 20 2 fill green|rect 9 5 2 5 fill brown|tri 8 5 10 3 12 5 fill red|rect 9 5 2 5 fill brown" &&

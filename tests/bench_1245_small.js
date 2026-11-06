@@ -121,17 +121,8 @@ function lastOf(seen, k) { var s = seen[k]; return s ? s[s.length - 1] : ""; }
     kinds["pump-ah"] === "numbers", kinds);
   var pl = item("plants"), seenP = [];
   await A.solve(pl.q, { call: seq(["ANSWER: Not in my library.", right(pl)], seenP) });
-  // (1.24.7: with the question's numbers in it, where each blank's unit names its number; with its blanks where it does not)
-  var mzq = item("maize-bags").q, seenM = [];
-  await A.solve(mzq, { call: seq(["ANSWER: Not in my library.", right(item("maize-bags"))], seenM) });
-  var edq = item("egg-dozens").q, seenE = [];
-  await A.solve(edq, { call: seq(["ANSWER: Not in my library.", right(item("egg-dozens"))], seenE) });
-  ok("...the recipe as it goes back: what it is for and its line -- with the question\u2019s numbers in it where Lantern can be sure which goes where (10 m, 1.2 m, 30 cm; 2 tonnes in 50 kg bags), with its blanks and what goes in each where it cannot (3 dozen: a number in words)",
-    lastOf(seenP, 1).indexOf("Lantern can work this out: it has a recipe for it.\n") === 0 &&
-    /\n=PLANTS\x2810,1\.2,30\x29\nThat is the recipe with the question\u2019s numbers in it\. If it is what the question asks, reply with that = line as it stands, then a line ANSWER: /.test(lastOf(seenP, 1)) &&
-    /\n=CEIL\x282000\/50\x29\nThat is the recipe with the question\u2019s numbers in it\. If it is what the question asks, reply with that = line as it stands, then a line ANSWER: /.test(lastOf(seenM, 1)) &&
-    /\n=\{price\}\*\{qty\}\nReply with that = line, with the question\u2019s values in place of each \{name\} \x28price; qty\x29, then a line ANSWER: /.test(lastOf(seenE, 1)),
-    [lastOf(seenP, 1), lastOf(seenM, 1), lastOf(seenE, 1)]);
+  ok("...the recipe as it goes back: what it is for, its line, and what goes in each blank", lastOf(seenP, 1).indexOf("Lantern can work this out: it has a recipe for it.\n") === 0 &&
+    /\n=PLANTS\x28\{len_m\},\{wid_m\},\{spacing_cm\}\x29\nReply with that = line, with the question\u2019s values in place of each \{name\} \x28len_m in m; wid_m in m; spacing_cm in cm\x29, then a line ANSWER: /.test(lastOf(seenP, 1)), lastOf(seenP, 1));
   var pa = item("pump-ah"), seenA = [];
   await A.solve(pa.q, { call: seq(["ANSWER: Not in my library.", right(pa)], seenA) });
   ok("...and the numbers: \u201cThe question gives numbers (12 V; 5 A; 3 hours): if they make a sum, Lantern works it out\u201d, with NEED still open", /^The question gives numbers \x2812 V; 5 A; 3 hours\x29: if they make a sum, Lantern works it out\.\n/.test(lastOf(seenA, 1)) &&
@@ -159,10 +150,10 @@ function lastOf(seen, k) { var s = seen[k]; return s ? s[s.length - 1] : ""; }
     geo.first === "NEED: What is the radius of the Earth in kilometres?" && geo.reply === geo.first);
   var s420 = [], out420 = await A.solve(i420.q, { call: seq([o420.first, "=ORBITT(CONVERT(420+6371,\"km\",\"m\"))/60\nANSWER: One orbit takes {result} minutes."], s420) });
   ok("the answer is the recipe\u2019s line and what goes in its blank; with it filled in, the question passes", /^Lantern has that number, and the recipe for this question has it in already\.\n/.test(lastOf(s420, 1)) &&
-    /\n=ORBITT\x28CONVERT\x28420\+6371,\x22km\x22,\x22m\x22\x29\x29\/60\nNow reply with that = line as it stands \x28it is the recipe with the question\u2019s numbers in it\x29/.test(lastOf(s420, 1)) &&
+    /\n=ORBITT\x28CONVERT\x28\{alt_km\}\+6371,\x22km\x22,\x22m\x22\x29\x29\/60\nNow reply with that = line, with the question\u2019s value in place of \{alt_km\} \x28alt_km in km\x29/.test(lastOf(s420, 1)) &&
     B.grade(i420, out420.text, out420).pass && out420.rounds === 2, [lastOf(s420, 1), out420.rounds]);
   var sgeo = [], outgeo = await A.solve(igeo.q, { call: seq([geo.first, "=ORBITT(CONVERT(35786+6371,\"km\",\"m\"))/3600\nANSWER: One orbit takes {result} hours."], sgeo) });
-  ok("...in hours where hours are asked: the recipe ends /3600 there, not /60 (the card fitted to the question)", /\n=ORBITT\x28CONVERT\x2835786\+6371,\x22km\x22,\x22m\x22\x29\x29\/3600\n/.test(lastOf(sgeo, 1)) &&
+  ok("...in hours where hours are asked: the recipe ends /3600 there, not /60 (the card fitted to the question)", /\n=ORBITT\x28CONVERT\x28\{alt_km\}\+6371,\x22km\x22,\x22m\x22\x29\x29\/3600\n/.test(lastOf(sgeo, 1)) &&
     B.grade(igeo, outgeo.text, outgeo).pass && A.match(igeo.q)[0].out === "hours per orbit" && A.match(i420.q)[0].out === "minutes per orbit" &&
     /\x2F86400$/.test(A.match("How many days does the ISS take to orbit Earth at 420 km altitude?")[0].compose), [lastOf(sgeo, 1), A.match(igeo.q)[0]]);
   ok("...the card on Lantern\u2019s own list is not changed by that", L.assistCards.filter(function (c) { return c.id === "orbit-period"; })[0].compose === "=ORBITT(CONVERT({alt_km}+6371,\"km\",\"m\"))/60");
@@ -184,9 +175,8 @@ function lastOf(seen, k) { var s = seen[k]; return s ? s[s.length - 1] : ""; }
     ids("What delta-v is needed to go from a radius of 6771 km to a radius of 42164 km?") === "hohmann-dv",
     [ids(ih.q), ids(item("hohmann-geo").q), ids("How long does a transfer take from an orbit of radius 7000 km to one of radius 42164 km?"), ids("How much delta-v does a Hohmann transfer need from a 300 km orbit to a 35786 km orbit?")]);
   var hp = A.buildPrompt(ih.q, A.match(ih.q));
-  // (1.24.7: the recipe with the question's two heights in it -- the two orbits of a transfer go in either order -- and what it gives on a line of its own)
-  ok("...so what there is to copy is right: the recipe for two heights, with 300+6371 and 35786+6371 in it, and no blank left to fill", /\nRECIPE\n- [^\n]+\n  gives: hours\n  =HOHMANNT\x28CONVERT\x28300\+6371,\x22km\x22,\x22m\x22\x29,CONVERT\x2835786\+6371,\x22km\x22,\x22m\x22\x29\x29\/3600\n/.test(hp) &&
-    !/\{r2_km\}/.test(hp) && !/\{alt1_km\}/.test(hp) && !/->/.test(hp.slice(hp.indexOf("\nRECIPE\n"))), hp.slice(-700));
+  ok("...so what there is to copy is right: {alt1_km}+6371 and {alt2_km}+6371", /\nRECIPE\n- [^\n]+\n  needs: alt1_km in km; alt2_km in km\n  gives: hours\n  =HOHMANNT\x28CONVERT\x28\{alt1_km\}\+6371,\x22km\x22,\x22m\x22\x29,CONVERT\x28\{alt2_km\}\+6371,\x22km\x22,\x22m\x22\x29\x29\/3600\n/.test(hp) &&
+    !/\{r2_km\}/.test(hp) && !/->/.test(hp.slice(hp.indexOf("\nRECIPE\n"))), hp.slice(-700));
   var s4 = [], out4 = await A.solve(ih.q, { call: seq([h4.first, LINE + "\nANSWER: The transfer takes {result} hours."], s4) });
   ok("the 4B\u2019s first line as it wrote it: what goes back says it of both heights, with the line; with that line the question passes",
     /radius 300 km is inside the Earth[^\n]*\x29\. Each of 300 km and 35786 km is a height above the surface: add 6371 km to every one\. Write =HOHMANNT\x28CONVERT\x28300\+6371,\x22km\x22,\x22m\x22\x29,CONVERT\x2835786\+6371,\x22km\x22,\x22m\x22\x29\x29\/3600\n/.test(lastOf(s4, 1)) &&
@@ -213,7 +203,7 @@ function lastOf(seen, k) { var s = seen[k]; return s ? s[s.length - 1] : ""; }
   var wm = row(R2, "water-molar"), sw = [], iw = item("water-molar");
   var outw = await A.solve(iw.q, { call: seq([wm.first, right(iw)], sw) });
   ok("\u201c= Molar mass of water is 18.01528 g/mol\u201d: sent back with the recipe\u2019s line", wm.first.indexOf("= Molar mass of water is 18.01528 g/mol\n") === 0 &&
-    /Lantern could not run = Molar mass of water is 18\.01528 g\/mol \x28[^\x29]+\x29\. Lantern has a recipe for this question, here with its numbers in: write =MOLARMASS\x28\x22H2O\x22\x29\n/.test(lastOf(sw, 1)) &&
+    /Lantern could not run = Molar mass of water is 18\.01528 g\/mol \x28[^\x29]+\x29\. Lantern has a recipe for this question: =MOLARMASS\x28\x22\{formula\}\x22\x29 Write that = line, with the question\u2019s value in place of \{formula\}/.test(lastOf(sw, 1)) &&
     B.grade(iw, outw.text, outw).pass, lastOf(sw, 1));
   var rp = row(R2, "rice-price"), irp = item("rice-price"), srp = [], outrp = await A.solve(irp.q, { call: seq([rp.reply, "ANSWER: Not in my library."], srp) });
   ok("left as it is: a NEED where the question is not a sum at all (the price of rice next month) goes to the person, and the bench fails it", srp.length === 1 && !B.grade(irp, outrp.text, outrp).pass, [srp.length, outrp.text]);
@@ -454,8 +444,8 @@ function lastOf(seen, k) { var s = seen[k]; return s ? s[s.length - 1] : ""; }
   async function back8(id) { var it2 = item(id), r2 = row(R8, id), s2 = []; var o2 = await A.solve(it2.q, { call: seq([r2.first || r2.reply, it2.x ? right(it2) : "NEED: x"], s2) }); return { out: o2, text: lastOf(s2, 1), first: r2.first || r2.reply }; }
   var wm8 = await back8("water-molar"), pb8 = await back8("place-bearing"), sk8 = await back8("sack-weight"), rw8 = await back8("radio-wave"), pa8 = await back8("pump-ah"), hk8 = await back8("heater-kwh");
   ok("a NEED and then its own answer under it (\u201cNEED: What is the formula for water? / ANS: H2O / ANS: 18.01528 g/mol\u201d), or a NEED and a decline: the recipe goes back, where the question fills it",
-    /^NEED: What is the formula for water\?\nANS: H2O\n/.test(wm8.first) && wm8.out.noFormula === "card" && /\n=MOLARMASS\x28\x22H2O\x22\x29\nThat is the recipe/.test(wm8.text) &&
-    /^NEED: What is the latitude and longitude of Tulsa/.test(pb8.first) && /Not in my library/.test(pb8.first) && pb8.out.noFormula === "card" && /\n=BEARING\x28\x22Tulsa\x22,\x22Dallas\x22\x29\nThat is the recipe/.test(pb8.text),
+    /^NEED: What is the formula for water\?\nANS: H2O\n/.test(wm8.first) && wm8.out.noFormula === "card" && /\n=MOLARMASS\x28\x22\{formula\}\x22\x29\n/.test(wm8.text) &&
+    /^NEED: What is the latitude and longitude of Tulsa/.test(pb8.first) && /Not in my library/.test(pb8.first) && pb8.out.noFormula === "card" && /\n=BEARING\x28\x22\{from\}\x22,\x22\{to\}\x22\x29\n/.test(pb8.text),
     [wm8.out.noFormula, wm8.text.slice(0, 200), pb8.out.noFormula]);
   var NFn = L.aiNoFormula, pn = function (t) { return A.parseReply(t); }, bq = "How many hours will my 100 Ah battery run a 60 W light?";
   ok("...a NEED on its own is a NEED, and so is one with a guess under it where the question does not fill a recipe (a battery\u2019s voltage)",
@@ -463,11 +453,11 @@ function lastOf(seen, k) { var s = seen[k]; return s ? s[s.length - 1] : ""; }
     NFn(bq, "NEED: What is the battery\u2019s voltage?\nANS: 12", pn("NEED: What is the battery\u2019s voltage?\nANS: 12"), A.match(bq)) === null);
   ok("a NEED for a number the question gives, with the sum already under it (\u201cNEED: What is the value of 50? / =WEIGHT(50,\"kg\")\u201d): the sum is read, and what is wrong with it goes back with the recipe",
     /^NEED: What is the value of 50\?\n=WEIGHT\x2850,\x22kg\x22\x29/.test(sk8.first) && sk8.out.needVoid === "What is the value of 50?" && sk8.out.kind === "rejected" &&
-    /Lantern could not run =WEIGHT\x2850,\x22kg\x22\x29 \x28[^\x29]+\x29\. Lantern has a recipe for this question, here with its numbers in: write =WEIGHT\x2850\x29/.test(sk8.text), [sk8.out.needVoid, sk8.out.kind, sk8.text.slice(0, 300)]);
+    /Lantern could not run =WEIGHT\x2850,\x22kg\x22\x29 \x28[^\x29]+\x29\. Lantern has a recipe for this question: =WEIGHT\x28\{m_kg\}\x29 Write that = line, with the question\u2019s value in place of \{m_kg\} \x28m_kg in kg\x29\./.test(sk8.text), [sk8.out.needVoid, sk8.out.kind, sk8.text.slice(0, 300)]);
   ok("a sum that runs and gives another number than the recipe Lantern can fill itself (one blank, one number, the same unit): =100*10^6/299792458 for a wavelength goes back with the recipe\u2019s line",
     /=100\*10\^6\/299792458/.test(rw8.first) && /Lantern\u2019s recipe for this question gives 2\.9979 \x28metres\x29, and this sum gives 0\.33356: write =WAVELEN\x28100\x29/.test(rw8.text) &&
     L.aiNoFormula.filled(A.match(item("orbit-420").q)[0], item("orbit-420").q) === "=ORBITT(CONVERT(420+6371,\"km\",\"m\"))/60" &&
-    L.aiNoFormula.filled(A.match(item("feed").q)[0], item("feed").q) === "=FEEDKG(20,30,800)" && L.aiNoFormula.filled(A.match("What is the wavelength of a 100 kHz signal?")[0], "What is the wavelength of a 100 kHz signal?") === "",
+    L.aiNoFormula.filled(A.match(item("feed").q)[0], item("feed").q) === "" && L.aiNoFormula.filled(A.match("What is the wavelength of a 100 kHz signal?")[0], "What is the wavelength of a 100 kHz signal?") === "",
     [rw8.text.slice(0, 300), L.aiNoFormula.filled(A.match(item("orbit-420").q)[0], item("orbit-420").q)]);
   var RD = L.assistChecks.filter(function (c) { return c.id === "recipe-differs"; })[0], S35 = fixture("bench_run_1244_35b_sums.json"), touched35 = [];
   S35.rows.forEach(function (r35) { var p35 = A.parseReply(r35.reply), run35 = A.run(p35.exprText), why35 = RD(r35.q, p35.exprText, run35, {}); if (why35) touched35.push([r35.id, why35]); });

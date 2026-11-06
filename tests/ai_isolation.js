@@ -29,7 +29,7 @@ var MODS = ["PLANET_DATA", "AI_RECIPES", "AI_ENGINE", "AI_GUARD", "AI_CHECKS", "
   "HEALTH_CHAT", "HEALTH_RECIPES", "HEALTH_BENCH_DATA", "LESSON_PRINT", "LESSON_WORDS", "FOOD_LESSONS_SAFE", "GUIDE_FOOD", "FOOD_BENCH_DATA",
   "AI_NO_BLOCK", "AI_NEED_GIVEN", "AI_READ", "AI_FIT", "AI_ACT_SENSE", "AI_UNITS", "AI_NO_FORMULA", "AI_NEED_RECIPE", "CHAT_LESSON_SHOWN", "AI_SCHEMATIC_TOTAL", "AI_PUZZLE_ASK",
   // 1.24.7
-  "AI_RECIPE_FILL", "AI_SCENE"];
+  "AI_SCENE"];
 function without(src, name) {
   var a = src.indexOf("// MODULE: " + name + " - START"), b = src.indexOf("// MODULE: " + name + " - END");
   if (a < 0 || b < 0) throw new Error("missing " + name);
