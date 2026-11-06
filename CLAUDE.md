@@ -149,8 +149,11 @@ with nobody clicking. This was first done on 2026-11-05.
    (`Lantern_Office_Suite.html`, `CHANGELOG.md`), and tell Adam which version
    it is. His `E:` stick is the copy he keeps untouched.
 
-Known and not yet looked into: nothing answers on the offline library's port
-(8081) on that laptop, so the encyclopedia questions are left out of its runs.
+The encyclopedia questions are left out of runs made this way. The library
+itself runs (`http://127.0.0.1:8081` opened in the pane says "Welcome to
+Kiwix Server"), but the app's browser pane does not let Lantern's page on
+port 8080 make requests to another port (found 2026-11-05). A run in Adam's
+own Chrome, through the Claude extension, would include them.
 
 ## The bench with the small models, on GitHub
 

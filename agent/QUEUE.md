@@ -49,14 +49,16 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    - check what the AI can reach of it (LESSON:, LOOKUP:, formula functions,
      MAKE tools) and add the hook when it cannot;
    - write the tile's row below, and the gaps left, in the report.
-5. **The offline library on the laptop.** Nothing answers on port 8081 though
-   `kit\library` holds two Wikipedia files and `kit\engine\windows\kiwix` has
-   `kiwix-serve.exe`. Every run there leaves out the 25 fact questions and the
-   library conversations. Needs the text of the Start Lantern window, or a
-   look at the screen. The Windows start script's "library first" change
-   (1.17.0) was never run on Windows. (The GitHub runs have no library
-   either: 12 GB. The Simple English one, 2.5 GB, would fit: worth adding to
-   the workflow for one model.)
+5. **The encyclopedia questions with a real model.** The laptop's library
+   works (see the 1.24.4 report): it is the Claude app's browser pane that
+   cannot reach port 8081 from Lantern's page. Until Adam connects Chrome,
+   no real-model run includes the 25 fact questions and the library
+   conversations. Add the Simple English Wikipedia (2.5 GB,
+   `kit/setup-kit.sh library-simple`) to the 4B's job in the workflow, so
+   one small model is asked them on every version; see which of the fact
+   questions that smaller encyclopedia can answer at all before counting
+   them. The Windows start script's "library first" change (1.17.0) is
+   confirmed working on Adam's laptop by the above.
 6. **Pictures for the Health lessons.** The recovery position, where the
    hands go for chest pushes, the tippy tap, the pit latrine, the arm
    measurement: a drawing each would carry more than the words. Lantern can

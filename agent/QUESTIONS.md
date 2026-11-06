@@ -44,11 +44,14 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    "merge" when a version should become the public one. The 35B scored 103
    of 103 on 1.24.2.
    (Asked 2026-11-05.)
-7. **The offline library on the laptop.** Nothing answers on port 8081, so
-   bench runs there leave out the encyclopedia questions. The next time Start
-   Lantern is run, the lines its window prints about the library (or a
-   screenshot of the window) would show why.
-   (Asked 2026-11-05.)
+7. **The encyclopedia questions need your Chrome.** The library on the laptop
+   is fine: `http://127.0.0.1:8081` answers "Welcome to Kiwix Server". What
+   fails is the Claude app's own browser pane, which does not let Lantern's
+   page (port 8080) talk to another port, so every run I make there leaves
+   out the 25 encyclopedia questions. In your own browser they work. If you
+   connect the Claude extension in Chrome on the laptop, I can run the bench
+   there, library included. Say if you want that.
+   (Asked 2026-11-05; found the same day.)
 8. **How the songs sound.** The songbook's nine tunes and the new bar
    readings are checked by their notes, lengths and bars, not by ear. If one
    sounds wrong, say which.
