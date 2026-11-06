@@ -133,8 +133,13 @@ function needOf(r) { var m = /^\s*NEED:\s*(.+)$/m.exec(r.reply || ""); return m 
   ok("a small model, a sum with no recipe (a pump\u2019s amp-hours): under 1,500 characters; ANS only as the line before; no NEED, no /1000 example; the numbers listed",
     P.active() === "short" && sp.length < 1500 && /A second = line may use ANS, the result of the line before/.test(sp) && !/ANS1/.test(sp) && !/NEED/.test(sp) && !/300\*5\/1000/.test(sp) &&
     /EXAMPLE\nQ: Fuel costs 65 a litre\. How much do 35 litres cost\?\n=65\*35\nANSWER: They cost \{result\}\./.test(sp) && /The question gives these numbers: 12 V; 5 A; 3 hours\.$/.test(sp), [sp.length, sp.slice(-160)]);
-  ok("...a sum with a recipe (feed for goats): the recipe to copy, and no example, no decline and no NEED beside it", /- A recipe below fits: copy its = line/.test(sf) && /\nRECIPE\n- How much feed do animals need/.test(sf) &&
-    /=FEEDKG\(\{animals\},\{days\},\{g_day\}\)   -> kg/.test(sf) && !/EXAMPLE/.test(sf) && !/Not in my library/.test(sf) && !/NEED/.test(sf) && sf.length < 1700, sf.length);
+  // (1.24.7: with the question's numbers in it, where each blank's unit names its number -- 20 goats, 30 days, 800 g each per day)
+  ok("...a sum with a recipe Lantern can fill (feed for goats): the recipe with the question’s numbers in it, to copy as it stands; no blanks, no example, no decline and no NEED beside it",
+    /- The recipe below is the sum for this question, with the question's numbers already in it: copy its = line as it stands\./.test(sf) && /\nRECIPE\n- How much feed do animals need[^\n]*\n  =FEEDKG\(20,30,800\)   -> kg\n/.test(sf) &&
+    !/\{animals\}/.test(sf) && !/needs:/.test(sf) && !/EXAMPLE/.test(sf) && !/Not in my library/.test(sf) && !/NEED/.test(sf) && sf.length < 1700, [sf.length, sf.slice(-420)]);
+  var sq = "How much feed for 50 chickens for 7 days at 120 g each?", sf2 = A.buildPrompt(sq, A.match(sq));
+  ok("...and a recipe it cannot be sure of (120 g each: a day is not said): the recipe with its blanks, to fill in", /- A recipe below fits: copy its = line and put the question's value in place of each \{name\}\./.test(sf2) &&
+    /  needs: animals; days; g_day in g\n  =FEEDKG\(\{animals\},\{days\},\{g_day\}\)   -> kg\n/.test(sf2), sf2.slice(-420));
   ok("...a recipe with more blanks than the question has numbers (a battery, and only the light\u2019s 60 W): NEED is offered",
     /- If the question leaves out a number you need, reply NEED: <what is missing> -- never guess it or use a recipe.s example\./.test(sb) && /=\(\{ah\}\*\{v\}\)\/\{w\}/.test(sb), sb.slice(0, 900));
   ok("...and a question that is no sum Lantern can see (no recipe, under two numbers) keeps the full instructions: a decline, and the example of one", /EXAMPLES\n/.test(sm) && /Q: Who won the last election\?\nANSWER: Not in my library\./.test(sm) && /NEED: <what is missing>/.test(sm));

@@ -231,10 +231,13 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var NFm = L.aiNoFormula;
   function nfm(q, reply) { return NFm(q, reply, A.parseReply(reply), A.match(q)); }
   var c1 = nfm("What is 72 degrees Fahrenheit in Celsius?", "ANSWER: Not in my library."), c2 = nfm("My 30 hens lay 4 eggs each a week. How many eggs is that in a week?", "ANSWER: 120");
-  ok("a decline where a recipe card fits: the card’s line goes back, to be filled in", c1 && c1.kind === "card" &&
-    c1.prompt === "Lantern can work this out: it has a recipe for it.\nConvert a value between units. [Same category only; C/F/K for temperature.]\n=CONVERT({value},\"{from}\",\"{to}\")\n" +
-    "Reply with that = line, with the question’s values in place of each {name} (value; from (mile, kg, liter, C); to), then a line ANSWER: <a sentence with {result} where the number goes>. Lantern does the arithmetic.", c1 && c1.prompt);
-  ok("...a result typed with no sum, where a card fits: the same", c2 && c2.kind === "card" && /\n=EGGS\(\{hens\},\{per_week\}\)\n/.test(c2.prompt), c2 && c2.prompt);
+  // (1.24.7: with the question's numbers in it, where Lantern can be sure which goes where)
+  ok("a decline where a recipe card fits: the card’s line goes back, with the question’s numbers and units in it", c1 && c1.kind === "card" &&
+    c1.prompt === "Lantern can work this out: it has a recipe for it.\nConvert a value between units. [Same category only; C/F/K for temperature.]\n=CONVERT(72,\"Fahrenheit\",\"Celsius\")\n" +
+    "That is the recipe with the question’s numbers in it. Reply with that = line as it stands, then a line ANSWER: <a sentence with {result} where the number goes>. Lantern does the arithmetic.", c1 && c1.prompt);
+  ok("...a result typed with no sum, where a card fits: the same", c2 && c2.kind === "card" && /\n=EGGS\(30,4\)\nThat is the recipe/.test(c2.prompt), c2 && c2.prompt);
+  var c2b = nfm("My 12 hens lay 60 eggs a week. How many eggs is that per hen?", "ANSWER: Not in my library.");
+  ok("...and with its blanks, where the question is not written the way the recipe reads (60 eggs a week from 12 hens: not eggs for each hen)", c2b && c2b.kind === "card" && /\n=EGGS\(\{hens\},\{per_week\}\)\nReply with that = line, with the question’s values in place of each \{name\}/.test(c2b.prompt), c2b && c2b.prompt);
   var c3 = nfm("A family of 4 uses 30 litres of water each a day. How long does a 3000 litre tank last?", "ANS: 25 days\nANS1: 4\nANS: 25 days");
   ok("...a result with no sum and no card: the sum itself is asked for, with the question’s numbers", c3 && c3.kind === "sum" &&
     /write the sum itself, not its result\.\nReply with one line that starts with = and uses the question’s numbers \(4; 30 litres; 3000 litre\), like =A\*B or =A\/B, then a line ANSWER:/.test(c3.prompt), c3 && c3.prompt);
@@ -247,7 +250,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   ok("the fixture: the 2B declined 100 degrees Fahrenheit in Celsius, and typed 60 for the eggs", /^ANSWER: Not in my library\.$/.test(f2c.reply) && egg.reply === "ANSWER: 60" && f2c.why === "no formula" && egg.why === "no formula");
   var on = await A.solve(f2c.q, { call: seq([f2c.reply, "=CONVERT(100,\"F\",\"C\")\nANSWER: That is {result} degrees Celsius."], seenN) }), gn = B.grade(item("f-to-c"), on.text, on);
   var backN = seenN[1] ? String(seenN[1][seenN[1].length - 1].content) : "";
-  ok("the decline goes back once with the CONVERT line, and the sum that comes back passes", on.rounds === 2 && on.noFormula === "card" && gn.pass && /^Lantern can work this out: it has a recipe for it\./.test(backN) && /=CONVERT\(\{value\}/.test(backN), [on.rounds, on.noFormula, gn.why]);
+  ok("the decline goes back once with the CONVERT line, and the sum that comes back passes", on.rounds === 2 && on.noFormula === "card" && gn.pass && /^Lantern can work this out: it has a recipe for it\./.test(backN) && /\n=CONVERT\(100,"Fahrenheit","Celsius"\)\n/.test(backN), [on.rounds, on.noFormula, gn.why]);
   seenN = [];
   on = await A.solve(egg.q, { call: seq([egg.reply, "=EGGS(12,5)\nANSWER: The hens lay {result} eggs a week."], seenN) }); gn = B.grade(item("eggs"), on.text, on);
   ok("the typed 60 goes back once with the EGGS line, and the sum passes", on.rounds === 2 && on.noFormula === "card" && gn.pass, [on.rounds, gn.why]);

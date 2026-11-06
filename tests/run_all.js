@@ -62,7 +62,8 @@ var steps = [
   ["The small models: a NEED for a number the question gives, the short prompt, replies read as they were meant, a request too long for the model, RELKE -- the 2B's and the 0.8B's rows on 1.24.4, replayed (1.24.5)", "node", ["tests/small_models.js"], /ALL SMALL MODEL TESTS PASS/],
   ["What a question is given to answer with: MAKE tools by the sense of its words, one recipe card that fits, functions by name, no lesson where LESSON: finds none (1.24.6)", "node", ["tests/tools_fit.js"], /ALL TOOLS FIT TESTS PASS/],
   ["The 4B's rows on 1.24.4, replayed: a colour on its own line, a deck in several blocks, [n] as the instructions spell it, a lesson asked for where a block was wanted (1.24.6)", "node", ["tests/bench_1244_4b.js"], /ALL BENCH 1\.24\.4 4B CHECKS PASS/],
-  ["The small models' rows on 1.24.5, replayed: a decline where Lantern has the sum, a change of unit, a NEED for a number the recipe has, two heights, LESSON as a heading, the lesson shown when the answer does not use it (1.24.6)", "node", ["tests/bench_1245_small.js"], /ALL BENCH 1\.24\.5 SMALL MODEL CHECKS PASS/]
+  ["The small models' rows on 1.24.5, replayed: a decline where Lantern has the sum, a change of unit, a NEED for a number the recipe has, two heights, LESSON as a heading, the lesson shown when the answer does not use it (1.24.6)", "node", ["tests/bench_1245_small.js"], /ALL BENCH 1\.24\.5 SMALL MODEL CHECKS PASS/],
+  ["The recipe with the question's numbers in it: what Lantern fills is right, and it fills nothing where it cannot be sure -- a number in words, cloudy water, a unit the recipe cannot be said in (1.24.7)", "node", ["tests/recipe_fill.js"], /ALL RECIPE FILL TESTS PASS/]
 ];
 var failed = 0;
 steps.forEach(function (s) {

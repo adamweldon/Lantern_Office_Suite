@@ -157,7 +157,7 @@ function seq(list) { var i = 0; return function () { return Promise.resolve(list
   var need14 = A.parseReply(gp.reply).need, na = L.aiNeedAnswer(need14, "How does the Earth hold the Moon?"), naR = L.aiNeedAnswer(need14, gp.q);
   ok("the 4B's NEED for Earth's mass or GM: Lantern has both (PLANET)", /Earth\u2019s mass is 5\.9722e24 kg: =PLANET\x28\x22Earth\x22,\x22mass\x22\x29; Earth\u2019s GM \x28gravitational parameter\x29 is 3\.986e14 m\^3\/s\^2/.test(na || ""), na);
   ok("...and for the satellite's question, whose recipe needs neither, the answer is the recipe's line", /^Lantern has that number, and the recipe for this question has it in already\./.test(naR || "") &&
-    /\n=ORBITT\x28CONVERT\x28\{alt_km\}\+6371,\x22km\x22,\x22m\x22\x29\x29\/3600\nNow reply with that = line, with the question\u2019s value in place of \{alt_km\}/.test(naR || ""), naR);
+    /\n=ORBITT\x28CONVERT\x2835786\+6371,\x22km\x22,\x22m\x22\x29\x29\/3600\nNow reply with that = line as it stands/.test(naR || ""), naR);
   ok("...but not a NEED for the person's own numbers", L.aiNeedAnswer("How many amp-hours does your battery hold?", "How many hours will my battery run a 60 W light?") === null);
   ok("an exact copy of a result, or a number from the question, is left alone; a rounded copy (133.3 for 133.33) is rechained",
     L.aiResultChecks.rechainNumbers("=100*12\n=1200/60", A.run("=100*12\n=1200/60").steps, "100 Ah 12 V 60 W") === null &&
