@@ -119,11 +119,25 @@ function needOf(r) { var m = /^\s*NEED:\s*(.+)$/m.exec(r.reply || ""); return m 
   ok("a question that truly lacks a number: one turn, the NEED goes to the person, the bench passes it", out.rounds === 1 && seen.length === 1 && !out.needAnswered && g.pass, [out.rounds, g.why]);
 
   // --- the instructions ------------------------------------------------------------------------------------
+  // (the full ones: what any model larger than 3B gets. From 1.24.6 a small model gets a short form for a sum -- below.)
+  P.setMode("full");
   var pq = A.buildPrompt(row(R2, "pump-ah").q, A.match(row(R2, "pump-ah").q)), pn = A.buildPrompt(item("need-battery").q, A.match(item("need-battery").q));
   ok("a question with two numbers or more: its numbers are listed under it, and the NEED example is not shown", /QUESTION: A 12 V pump[^\n]*\nThe question gives these numbers: 12 V; 5 A; 3 hours\.$/.test(pq) && !/fill my water tank/.test(pq) && !/litres a minute flow in/.test(pq), pq.slice(-200));
   ok("a question with fewer: the example stays, and no list", /Q: How long will it take to fill my water tank\?\nNEED: How many litres does the tank hold/.test(pn) && !/The question gives these numbers/.test(pn));
   ok("NEED names what is missing, not “<question>” (the 0.8B wrote NEED: and the question itself), in every place it is said", /NEED: <what is missing> -- never guess it/.test(pq) &&
-    /reply 'NEED: <what is missing>'/.test(L.CHAT.buildSystem("x")) && JS.indexOf("NEED: <question>") < 0 && (JS.match(/NEED: <what is missing>/g) || []).length >= 6);
+    /reply 'NEED: <what is missing>'/.test(L.CHAT.buildSystem("A drum holds 200 litres. How many 20 litre cans fill it?")) && JS.indexOf("NEED: <question>") < 0 && (JS.match(/NEED: <what is missing>/g) || []).length >= 6);
+  P.setMode("auto");
+  // (1.24.6) the short form of Assist's instructions, for a sum: one way to write it, and only what this sum needs
+  var sp = A.buildPrompt(row(R2, "pump-ah").q, A.match(row(R2, "pump-ah").q)), sf = A.buildPrompt(row(R2, "feed").q, A.match(row(R2, "feed").q)),
+    sb = A.buildPrompt(item("need-battery").q, A.match(item("need-battery").q)), sm = A.buildPrompt(item("mayor").q, A.match(item("mayor").q));
+  ok("a small model, a sum with no recipe (a pump\u2019s amp-hours): under 1,500 characters; ANS only as the line before; no NEED, no /1000 example; the numbers listed",
+    P.active() === "short" && sp.length < 1500 && /A second = line may use ANS, the result of the line before/.test(sp) && !/ANS1/.test(sp) && !/NEED/.test(sp) && !/300\*5\/1000/.test(sp) &&
+    /EXAMPLE\nQ: Fuel costs 65 a litre\. How much do 35 litres cost\?\n=65\*35\nANSWER: They cost \{result\}\./.test(sp) && /The question gives these numbers: 12 V; 5 A; 3 hours\.$/.test(sp), [sp.length, sp.slice(-160)]);
+  ok("...a sum with a recipe (feed for goats): the recipe to copy, and no example, no decline and no NEED beside it", /- A recipe below fits: copy its = line/.test(sf) && /\nRECIPE\n- How much feed do animals need/.test(sf) &&
+    /=FEEDKG\(\{animals\},\{days\},\{g_day\}\)   -> kg/.test(sf) && !/EXAMPLE/.test(sf) && !/Not in my library/.test(sf) && !/NEED/.test(sf) && sf.length < 1700, sf.length);
+  ok("...a recipe with more blanks than the question has numbers (a battery, and only the light\u2019s 60 W): NEED is offered",
+    /- If the question leaves out a number you need, reply NEED: <what is missing> -- never guess it or use a recipe.s example\./.test(sb) && /=\(\{ah\}\*\{v\}\)\/\{w\}/.test(sb), sb.slice(0, 900));
+  ok("...and a question that is no sum Lantern can see (no recipe, under two numbers) keeps the full instructions: a decline, and the example of one", /EXAMPLES\n/.test(sm) && /Q: Who won the last election\?\nANSWER: Not in my library\./.test(sm) && /NEED: <what is missing>/.test(sm));
 
   // --- the short prompt for a small model ----------------------------------------------------------------------
   ok("a 2B on the kit's server is small, and gets the short prompt", P.small() === true && P.mode() === "auto" && P.active() === "short");
@@ -133,8 +147,20 @@ function needOf(r) { var m = /^\s*NEED:\s*(.+)$/m.exec(r.reply || ""); return m 
     .filter(function (x) { var id = x.split(":")[0], fn = x.split(":")[1], it = item(id); return A.buildPrompt(it.q, A.match(it.q)).indexOf("\n" + fn) < 0; });
   ok("...ten questions the 2B got wrong or declined: the function each needs is in its short prompt", need2.length === 0, need2);
   var cs = L.CHAT.buildSystem("How do I make river water safe to drink?"), cv = L.CHAT.buildSystem("What voltage is across a 470 ohm resistor carrying 0.02 amps?");
-  ok("...Chat\u2019s own instructions too: under 4,500 characters for a how-to (9,000 with every function), and VOLTS for a question about volts", cs.length < 4500 && !/\nHOHMANN\(/.test(cs) && /\nCONVERT\(/.test(cs) &&
-    /\nVOLTS\(I,R\)/.test(cv) && !/\nMORSE\(/.test(cv), [cs.length, cv.length]);
+  ok("...Chat\u2019s own instructions too: VOLTS for a question about volts, and not every function", /\nVOLTS\(I,R\)/.test(cv) && !/\nMORSE\(/.test(cv) && !/\nHOHMANN\(/.test(cv) && cv.length < 2500, [cs.length, cv.length]);
+  // (1.24.6) by the kind of question: a how-to gets no sums, no functions, no modules to propose and no puzzle tools
+  var cm = L.CHAT.buildSystem("Draw a simple house with a red roof and a door."), cb = L.CHAT.buildSystem("My baby is 8 months old, has a cough and is breathing 56 times a minute. Is that too fast?");
+  ok("...a how-to (9,000 characters with every function, 4,400 on 1.24.5) is under 2,200: Lantern\u2019s lessons and the rule for the model\u2019s own knowledge, and nothing about sums",
+    cs.length < 2200 && L.CHAT.kindOf("How do I make river water safe to drink?") === "talk" && /LESSON: <2 to 5 words>/.test(cs) && /From my own knowledge:/.test(cs) &&
+    !/FUNCTIONS/.test(cs) && !/STARTS? with =/.test(cs) && !/\bANS\b/.test(cs) && !/NEED:/.test(cs) && !/PROPOSE MODULE/.test(cs) && !/PUZZLE TOOLS/.test(cs), [cs.length, L.CHAT.kindOf("How do I make river water safe to drink?")]);
+  ok("...a sum gets the sums, its functions and NEED, and no lessons or modules; a thing to make gets its block and no sums", L.CHAT.kindOf(item("ohms-law").q) === "sum" && /STARTS with =/.test(cv) && /NEED: <what is missing>/.test(cv) &&
+    !/LESSON:/.test(cv) && !/MODULES/.test(cv) && !/PROPOSE MODULE/.test(cv) && L.CHAT.kindOf("Draw a simple house with a red roof and a door.") === "make" && /MAKE DRAWING: <title>/.test(cm) &&
+    !/FUNCTIONS/.test(cm) && !/STARTS with =/.test(cm) && !/LESSON:/.test(cm), [L.CHAT.kindOf(item("ohms-law").q), cv.length, cm.length]);
+  ok("...a health need with numbers in it (a baby\u2019s age, breaths a minute) is a question to answer from the lesson, not a sum; a dose of ORS is a sum", L.CHAT.kindOf(item("health-baby-breathing").turns[0]) === "talk" &&
+    !/FUNCTIONS/.test(cb) && L.CHAT.kindOf(item("ors-five-litres").q) === "sum" && L.CHAT.kindOf("What are your capabilities?") === "talk" && L.CHAT.kindOf("What is half of three quarters?") === "sum",
+    [L.CHAT.kindOf(item("health-baby-breathing").turns[0]), L.CHAT.kindOf(item("ors-five-litres").q)]);
+  ok("...the puzzle tools in full for a puzzle, and proposing a module when the question is about one", /TRACK: <title>/.test(L.CHAT.buildSystem("Three cups stand in a row; the red cup and the blue cup swap places. Where is the coin?")) &&
+    /PROPOSE MODULE: <NAME>/.test(L.CHAT.buildSystem("Can you propose a module that counts words?")));
   P.setMode("full");
   ok("...in full mode Chat\u2019s instructions list every function, as before", /\nHOHMANN\(/.test(L.CHAT.buildSystem("How do I make river water safe to drink?")) && L.CHAT.buildSystem("How do I make river water safe to drink?").length > 8500);
   ok("...the full list when asked for", P.active() === "full" && /\nHOHMANN\(/.test(A.buildPrompt(wave.q, A.match(wave.q))));
@@ -243,7 +269,9 @@ function needOf(r) { var m = /^\s*NEED:\s*(.+)$/m.exec(r.reply || ""); return m 
   var t2 = 0, e2 = "";
   o2.script = function () { t2++; return { status: 400, message: "request (8566 tokens) exceeds the available context size (8192 tokens), try increasing it" }; };
   try { await L2.ai.complete(conv, {}); } catch (e) { e2 = String(e.message); }
+  L2.aiPrompt.setMode("full");   // (the full instructions: ASSIST_CORE's own)
   var p2 = L2.assist.buildPrompt(row(R2, "pump-ah").q, L2.assist.match(row(R2, "pump-ah").q));
+  L2.aiPrompt.setMode("auto");
   ok("without AI_NEED_GIVEN, AI_READ and AI_FIT: boot clean; replies as they came; one request and the server’s error; the NEED example back and no list; the older NEED answers still there",
     o2.errs.length === 0 && plainR === row(R2, "miles-km").reply && t2 === 1 && /exceeds the available context size/.test(e2) && /fill my water tank/.test(p2) && !/The question gives these numbers/.test(p2) &&
     L2.aiNeedGiven === undefined && L2.aiRead === undefined && L2.aiFit === undefined && /a dozen is 12/.test(L2.aiNeedAnswer("How many eggs are in 3 dozen?", "Eggs cost 12 shillings each. How much do 3 dozen eggs cost?")) &&

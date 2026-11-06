@@ -70,6 +70,11 @@ ones that catch people out:
 - A module named in another's `Depends:` header must not lead back in a circle.
 - Prefer a hook (`Lantern.chatAbout`, `Lantern.musicIntent`, ...) over editing
   a big module.
+- Non-ASCII characters in code are written as escapes (`\u2019`, `\u00b0`).
+  A session's own tools turn an escape typed into a file into the character
+  itself (found 2026-11-06, in a shell heredoc and in a whole-file write):
+  patch with a script that emits the backslash, and count the characters
+  afterwards.
 
 ## How Lantern and the AI share the work
 
@@ -83,7 +88,10 @@ These are Adam's design rules, in the order they usually apply.
    added or changed.
 3. **What cannot be right goes back once, with the line to write.** Name the
    place, say why, and write out the corrected line. A list of choices, or the
-   whole guide again, does not get fixed.
+   whole guide again, does not get fixed. Nor does an example: "add a note
+   like ... {=100*200/(100+200)} ohm" came back word for word under a circuit
+   of 4, 6 and 12 ohm (1.24.5). The line is for THIS question, with its own
+   numbers, or Lantern adds the thing itself and says so.
 4. **Lantern supplies what it knows.** A tested example in the language asked
    for, the lines of a tune it knows, a fact from its tables: give it to the
    model with the question.
@@ -156,8 +164,8 @@ with nobody clicking. This was first done on 2026-11-05.
      one, `{ ids: [...] }` or `{ match: "^make-music" }` for chosen questions;
    - `lanternBench.status()` to see where it is;
    - `lanternBench.rows("failed")` for the failed rows as the model wrote them.
-6. Times on that laptop: the quick run about 12 minutes, the full run about 72
-   (109 questions, about 3.5 tokens a second).
+6. Times on that laptop: the quick run about 12 minutes, the full run 67 to 80
+   (118 questions, 112 of them scored, 3.5 to 4.1 tokens a second).
 7. Leave the stick on a build that passed, make the whole folder agree
    (`Lantern_Office_Suite.html`, `CHANGELOG.md`), and tell Adam which version
    it is. His `E:` stick is the copy he keeps untouched.
@@ -201,10 +209,28 @@ grep -n 'scored questions' job.log; sed -n '/=== FAILED ROWS/,/=== END FAILED RO
   instructions said `NEED: <question>`. So before changing how Lantern reads
   a reply, look at what the instructions showed the model. An example in a
   prompt is the likeliest thing a small model will write.
-- A run takes about 36 minutes for the 2B, 50 for the 0.8B and 100 for the
-  4B. Since 1.24.5 the 2B and the 0.8B get the short prompt (only the
-  functions the question is about); the row count and the mode are in the
-  log's summary.
+- What the rows of 1.24.5 taught (the 4B 91%, the 2B 56%, the 0.8B 25%; the
+  35B 99%):
+  - what Lantern sends BACK is copied as surely as what it shows first: the
+    example sum in a request for a note, the tested example that came with
+    the question (Blink, for "without delay"), the two pins and the button
+    of a guide's example in a relay driver;
+  - a recipe card that nearly fits is copied as it stands: both Hohmann
+    cards were wrong for two heights, and three models wrote what the cards
+    showed. Give the card whose blanks are what the question has;
+  - a NEED or a decline often means the model did not see that Lantern has
+    the thing (Earth's radius is in the recipe; there is a function for
+    Fahrenheit): answer with the recipe's line.
+- A run took about 36 minutes for the 2B, 50 for the 0.8B and 100 for the 4B
+  on 1.24.4. Since 1.24.5 the 2B and the 0.8B get the short prompt (only
+  the functions the question is about), and **the 2B's run took 102
+  minutes**: a prompt that differs for every question is read afresh each
+  time (the server keeps only what two requests share from their first
+  character), about 1,000 tokens at 76 a second on GitHub's computer.
+  1.24.6 halves it. Read the run's minutes as well as its score; the row
+  count and the mode are in the log's summary.
+- The log prints a made thing's replies whole from 1.24.6 (a program was cut
+  at 700 characters before, and could not be replayed).
 - The failed rows of a run you act on go in
   `tests/fixtures/bench_run_<version>_<model>.json`, and a test replays them.
 - The same care as on the laptop: one row moving between two runs is not a

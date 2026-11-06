@@ -197,8 +197,9 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   var R19 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "bench_run_1190_35b.json"), "utf8"));
   function row(id) { return R19.rows.filter(function (r) { return r.id === id; })[0]; }
   var od = act.build(row("make-music-ode").reply, row("make-music-ode").q);
-  var TAIL = "the chords go on 4 bars past the melody (bars 5 to 8 have no tune): write the melody for bars 5 to 8 too, or end the chords at bar 4";
-  ok("chords going on well past the melody: questioned, with the bars to fill (and, 1.24.2, the 4th bar's rhythm: Lantern knows the tune)", od.plan && !od.ok && od.problems.length === 2 && od.problems[0] === TAIL &&
+  // (1.24.6: ... and how the tune must end, said with it: "bar 8 ends the tune: end it on G, B or D, the notes of its chord G")
+  var TAIL = /^the chords go on 4 bars past the melody \(bars 5 to 8 have no tune\): write the melody for bars 5 to 8 too \(bar 8 ends the tune: end it on [A-G][#b]?, [A-G][#b]? or [A-G][#b]?, the notes of its chord [A-G][#b]?m?7?\), or end the chords at bar 4$/;
+  ok("chords going on well past the melody: questioned, with the bars to fill (and, 1.24.2, the 4th bar's rhythm: Lantern knows the tune)", od.plan && !od.ok && od.problems.length === 2 && TAIL.test(od.problems[0]) &&
     /^the melody is not Ode to Joy as Lantern knows it -- from bar 4 \(note 13, its length\): write the key, time, chords and melody lines as Lantern gave them:\nkey C major\n/.test(od.problems[1]), od.problems);
   ok("...a bar or two of chords after the tune is an ending, said", S.make({ title: "x", lines: ["chords C | C | G | C | F | C", "melody E D C D | E E E - | D D E D | C - - -"] }).problems.length === 0 &&
     /bars 5 to 6 are chords alone/.test(S.make({ title: "x", lines: ["chords C | C | G | C | F | C", "melody E D C D | E E E - | D D E D | C - - -"] }).summary));
@@ -208,8 +209,8 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     /^the rhythm is off at note 13/.test(oq.check(S.make({ title: "Ode", lines: ["key C", "chords C | G | Am | F", "melody E E F G | G F E D | C C D E | E D D -"] }).plan)) &&
     grade("make-music-ode", song(["key C", "chords C | G | Am | F G", "melody E E F G | G F E D | C C D E | E - - D D - - -"])).pass);
   var o1 = act.build(row("make-music-original").first, orig.q), o2 = act.build(row("make-music-original").reply, orig.q);
-  ok("the 35B's tune of its own: first the short tune and the long F# over G together, then the short tune still", o1.problems.length === 2 && o1.problems[0] === TAIL &&
-    /^bar 4: the melody ends on F# over G \(G B D\), a half step from a note of the chord: end the tune on a note of G -- write bar 4 of the melody as [^\n]*G[^\n]* -- or write D or Bm as its chord$/.test(o1.problems[1]) && o2.problems.length === 1 && o2.problems[0] === TAIL && !grade("make-music-original", row("make-music-original").reply).pass, [o1.problems, o2.problems]);
+  ok("the 35B's tune of its own: first the short tune and the long F# over G together, then the short tune still", o1.problems.length === 2 && TAIL.test(o1.problems[0]) && /end it on G, B or D, the notes of its chord G\)/.test(o1.problems[0]) &&
+    /^bar 4: the melody ends on F# over G \(G B D\), a half step from a note of the chord: end the tune on a note of G -- write bar 4 of the melody as [^\n]*G[^\n]* -- or write D or Bm as its chord$/.test(o1.problems[1]) && o2.problems.length === 1 && TAIL.test(o2.problems[0]) && !grade("make-music-original", row("make-music-original").reply).pass, [o1.problems, o2.problems]);
   ok("...the bench needs the tune itself to fill the 8 bars", /^the tune is 4 bars; the chords go on alone to bar 8$/.test(L.aiBench.grade(orig, "x", { made: { ok: true, action: { kind: "MUSIC" }, plan: S.make({ title: "x",
     lines: ["key G", "chords G | C | D | G | G | C | D | G", "melody G A B G | C - E D | D C B A | G - - - | r | r | r | r"] }).plan } }).why));
 
@@ -596,8 +597,34 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     !ex2.problems.some(function (x) { return /example in Lantern/.test(x); }), [ex1.problems, ex2.problems]);
   var or1 = act.build(song(["key C major", "chords C | G | C | C", "melody C D E F | G - - - | E D C D | C - - -", "arrange orchestra", "form intro soft full coda"], "Song"), QP);
   var or2 = act.build(song(["key C major", "chords C | G | C | C", "melody C D E F | G - - - | E D C D | C - - -", "arrange orchestra"], "Song"), "make this into a playable song for an orchestra");
-  ok("an orchestra the question did not ask for goes back; one it asked for does not", or1.problems.some(function (x) { return /^the question does not ask for an orchestra: leave out the arrange and form lines/.test(x); }) &&
-    !or2.problems.some(function (x) { return /does not ask for an orchestra/.test(x); }), [or1.problems, or2.problems]);
+  // (1.24.6: Lantern leaves the lines out itself, and says so -- it sent them back until now, and on the 35B's run of 1.24.5
+  // its own hint, "write arrange orchestra", was then failed for the orchestra)
+  ok("an orchestra the question did not ask for is left out, and said; one it asked for is kept", or1.ok && !or1.plan.arrangement &&
+    /Lantern left out the lines \u201carrange orchestra\u201d and \u201cform intro soft full coda\u201d: the question does not ask for an orchestra/.test(or1.summary) && or1.plan.said.length >= 1 &&
+    !!or2.plan.arrangement && !/left out/.test(or2.summary || "") && !or2.problems.some(function (x) { return /does not ask for an orchestra/.test(x); }), [or1.problems, or1.summary, or2.problems]);
+  var F35 = JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "fixtures", "bench_run_1245_35b.json"), "utf8")), R35 = F35.rows[0], QO = R35.q;
+  ok("the fixture: the 35B passed 111 of 112 on 1.24.5; its one miss wrote the form on the arrange line, was told \u201cwrite arrange orchestra\u201d, and did",
+    F35.summary.pass === 111 && F35.summary.n === 112 && F35.rows.length === 1 && R35.id === "make-music-original" && /\narrange intro soft full coda\nEND$/.test(R35.first) &&
+    /write arrange orchestra \(or one of those\)/.test(R35.rejected) && /\narrange orchestra\nform intro soft full coda\nEND$/.test(R35.reply) && /does not ask for an orchestra/.test(R35.why));
+  var m35a = act.build(R35.first, QO), m35b = act.build(R35.reply, QO);
+  ok("the 35B\u2019s row on 1.24.5: \u201carrange intro soft full coda\u201d no longer gets \u201cwrite arrange orchestra\u201d back (only the four bars the melody lacks), and its second block passes",
+    !m35a.problems.some(function (x) { return /arrange/.test(x); }) && m35a.problems.some(function (x) { return /4 bars past the melody/.test(x); }) && /left out the line \u201carrange intro soft full coda\u201d/.test(m35a.summary) &&
+    m35b.ok && !m35b.plan.arrangement && /left out the lines \u201carrange orchestra\u201d and \u201cform intro soft full coda\u201d/.test(m35b.summary), [m35a.problems, m35a.summary, m35b.problems, m35b.summary]);
+  // (1.24.6) The same question on 1.24.6: eight bars of chords and four of melody again, in the shape of the guide's
+  // four-bar example; told to write bars 5 to 8, the 35B ended them on C over G, and no turn was left to mend that.
+  var F36 = JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "fixtures", "bench_run_1246_35b.json"), "utf8")), R36 = F36.rows[0];
+  ok("the fixture: the 35B passed 111 of 112 on 1.24.6; its one miss is the same question -- four bars of melody under eight of chords, then four more that end on C over G",
+    F36.summary.pass === 111 && F36.summary.n === 112 && F36.rows.length === 1 && R36.id === "make-music-original" && /\nmelody G A B D \| E - D B \| A G F# E \| D - - r\nEND$/.test(R36.first) &&
+    /\| E D C D \| C - - r\nEND$/.test(R36.reply) && /^Lantern still questions it: bar 8: the melody ends on C over G/.test(R36.why));
+  var g36 = act.prompt(R36.q), g36b = act.prompt("Compose a short, cheerful original tune in G major, with chords.");
+  ok("how many bars the question asks for is said under the guide\u2019s example (which has four), with how a tune ends; a question that names no number of bars is told nothing more",
+    /\nmelody F G A C \| D - C B \| A G F G \| F - - r\nEND\nThe question asks for 8 bars \(the example has 4\): write 8 bars between \| in the chords line and 8 in the melody line, and end the tune on a note of its last chord\./.test(g36) &&
+    !/The question asks for/.test(g36b) && !/The question asks for/.test(act.prompt("Write a 4-bar tune in C major.")) && /The question asks for 16 bars/.test(act.prompt("Write a sixteen-bar melody in D minor with chords.")), g36.slice(-330));
+  var m36a = act.build(R36.first, R36.q), m36b = act.build(R36.reply, R36.q), m36c = act.build(R36.reply.replace("| C - - r\nEND", "| B - - r\nEND"), R36.q);
+  ok("...and where the melody stops four bars short, what goes back says how the last bar must end (G, B or D, the notes of its chord G); the 35B\u2019s own ending is still questioned, with the bar to write, and that bar passes",
+    m36a.problems.length === 1 && /write the melody for bars 5 to 8 too \(bar 8 ends the tune: end it on G, B or D, the notes of its chord G\), or end the chords at bar 4$/.test(m36a.problems[0]) &&
+    m36b.problems.length === 1 && /write bar 8 of the melody as B - - r/.test(m36b.problems[0]) && m36c.ok && grade("make-music-original", R36.reply.replace("| C - - r\nEND", "| B - - r\nEND")).pass,
+    [m36a.problems, m36b.problems, m36c.problems]);
   var takenWas = L.chatPics && L.chatPics.taken, QU = "make this sheet music into a playable song please";
   if (L.chatPics) L.chatPics.taken = function (q) { return q === QU || q === "write a song about this picture" ? [new w.File([new Uint8Array([1, 2, 3])], "page.png", { type: "image/png" })] : []; };
   var unr = await SC.read(QU), sAbout = (L.chatAbout || []).filter(function (x) { return x.id === "sheet music"; })[0], given = sAbout ? await sAbout.provide(QU) : null;

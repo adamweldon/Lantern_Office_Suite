@@ -5,56 +5,66 @@ file in the same commit as the work. Read `CLAUDE.md` first.
 
 ## Next, in order
 
-1. **Read the small models' run on 1.24.5 and act on it.** Every push to a
+1. **Read the small models' run on 1.24.6 and act on it.** Every push to a
    `lantern-x.y.z` branch runs the whole bench with the 0.8B, the 2B and the
-   4B on GitHub (`CLAUDE.md`, "The bench with the small models"). On 1.24.4:
-   **2B 50 of 109, 0.8B 16 of 109** (the 35B, on the laptop: 107 of 109);
-   the 4B 96 of 103 on 1.24.3. 1.24.5 was written from those rows
-   (`tests/fixtures/bench_run_1244_*.json`) and no small model had run it
-   when it was pushed. So first: did the 2B's 11 "asked for a value", its 5
-   "400 Bad Request", its declines and its uncited lesson answers go? What
-   came in their place? Then, from what the 1.24.4 rows already show and
-   1.24.5 does not touch:
-   - **A sum that leaves out a unit change, or puts one in.** `=800*20*30`
-     for kg (grams given); `=2*3*30/1000` for kWh (kW given, and the
-     instructions' own example is `=300*5/1000`). A check: the question
-     gives one unit and asks for another of the same kind, and the lines
-     hold no such factor and no CONVERT (or hold one that is not needed).
-     Send back once with the line.
+   4B on GitHub (`CLAUDE.md`, "The bench with the small models"). On 1.24.5:
+   **4B 102 of 112, 2B 63, 0.8B 28** (the 35B, on the laptop: 111). 1.24.6
+   was written from those rows (`tests/fixtures/bench_run_1245_*.json`) and
+   no small model had run it when it was pushed. So first:
+   - the 2B's eleven "Not in my library" for sums: its instructions for a
+     sum show no decline now. Did they go? When the recipe's line goes back,
+     does it fill it in?
+   - **the 2B's minutes** (102 on 1.24.5, 36 on 1.24.4): its instructions
+     are half the size. If the run is still slow, put what never changes at
+     the top of the short prompt, so the server keeps it between questions;
+   - the 0.8B copied the instructions' words in thirty replies: what does it
+     copy now?
+   - the Hohmann rows, with the card for two heights (4B, 2B);
+   - the answers from a lesson, with instructions that show no sum
+     (`suite-goats`, `food-chicken-done`, the health rows): are sentences
+     cited now, or is the lesson box all the person gets?
+   Then, from what the rows of 1.24.5 show and 1.24.6 does not touch:
+   - **A number nobody gave, unquestioned.** `=100*12/60` for "How many
+     hours will my battery run a 60 W light?" passes Lantern's check: 100
+     and 12 are factors a sum may always use (percent, a dozen), and so is
+     a number of the question times or over one (60/12 = 5). Only the bench
+     catches it. Tighten it against the 35B's right sums
+     (`bench_run_1244_35b_sums.json`) and a run.
    - **A number of the question no line uses** (`=60*5/1000*0.15*30` with
      the 100 W TV left out). Question it once: "the question also gives
      100 W".
    - **A recipe card filled by Lantern.** When a card fits and every blank
      can be filled from the question's numbers by their units, with no
      number left over, give the model the filled line
-     (`=FEEDKG(20,30,800)`), in the prompt or after a NEED. Not when a
-     blank or a number is left over.
-   - **A decline where a function fits** ("Convert 5 kg to pounds", a bed
-     of plants): with the short prompt it may be gone. If not: on a decline
-     to a question with numbers, send back the functions the question's
-     words name, once.
-   - **The wrong recipe card.** For Ohm's law the only card matched is
-     "resistors in parallel", and the 2B typed a number under it. Cards for
-     VOLTS, AMPS, OHMS, WATTS; and look at how loosely cards match ("price
-     of rice" matches total-cost, "How do I make compost?" unit-convert).
-   - **The 4B with the short prompt.** Models under 3 billion parameters
-     now get only the functions their question is about; the 4B (93% with
-     the full list) was left as it was. Run it both ways (the bench records
-     the mode; `Lantern.aiPrompt.setMode("short")` before the run) and keep
-     what scores better: on a slow computer the short one also answers
-     sooner.
-   - **Puzzles.** The 2B passed 1 of 10, the 0.8B none. Read those rows
-     apart: some never asked for PUZZLE TOOLS.
-   - **MAKE blocks questioned and not fixed** (the 2B: a wheel with each
-     formula three times; a sheet with `[C]` for a column; drawings whose
-     background covers the house). The send-back names the fault; does the
-     second try change anything?
+     (`=FEEDKG(20,30,800)`). Not when a blank or a number is left over.
+   - **A step worked out, and a made-up number where it belonged** (the 4B,
+     once: `=5*40` then `=2000/8000`). Lantern questioned it and the 4B then
+     asked for a number. If it is seen again: write `=2000/ANS`.
+   - **The 4B with the short prompt.** The workflow takes an input `prompt`;
+     run it both ways (never on a branch whose run is in progress: a second
+     run cancels the first) and keep what scores better.
+   - **Puzzles.** The 2B passed 1 of 10 on 1.24.5, the 0.8B none, the 4B 9,
+     and the two small ones wrote no block at all. 1.24.6 gives them the
+     puzzle tool alone and asks for the block when the answer has none.
+     What do they write in the block? The host who does not know where the
+     car is (`doors-host-guesses`) has no tool: the 4B and the 2B answered
+     the classic puzzle.
+   - **A guide's own example, copied** (the 0.8B wrote the wheel guide's
+     "The year" for an Ohm's law wheel, and the 2B the electronics guide's
+     button into a relay driver). An example nearer the question, or none
+     where the lines already say enough.
+   - **LESSON: for a program** ("Tank fill/stop logic") was read the Volume
+     lesson: "fill" in its title, "tank" in its text. The word that names
+     the topic (logic) was the one missing.
    A question the 4B fails and the 35B passes comes before a new feature.
    Fix what Lantern gave the model or how it read the reply, for every
    question of its kind; put the failed rows in `tests/fixtures`.
 2. **Confirm each new version on the 35B, twice**, when a chat is linked to
    Adam's laptop (`CLAUDE.md`, "The bench on Adam's laptop"). A version that
-   has not had a full run says so in its report.
+   has not had a full run says so in its report. 1.24.6: one full run (111
+   of 112) on the build before its last change, and the four music
+   questions on the build that was pushed; a full run of that build is
+   still due.
 3. **Finish the five Food lessons on `wip-2026-11-06`.** They are drafted
    and were checked from memory only; the checker's memory differs from the
    drafts where it matters (kidney beans, cassava, the hay box). They need

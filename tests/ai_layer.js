@@ -268,8 +268,15 @@ function go(hash) { w.location.hash = hash; fire(w, "hashchange"); }
   ok("ANSn says what is wrong: a line not yet worked out, or one that failed", /ANS3 is not a line before this one \(there are 2\)/.test(A.run("=2\n=3\n=ANS3").steps[2].err) &&
     /ANS1 has no result: line 1 failed/.test(A.run("=FOO(1)\n=ANS1*2").steps[1].err) &&
     /Unknown name ANS1/.test((function () { try { L.formula.evaluate("ANS1+1", { ans: 0 }); return ""; } catch (e) { return e.message; } })()));
+  // (1.24.6: Chat's short instructions, for a small model, say only "ANS, the result of the line before")
+  var modeWas = L.aiPrompt.mode();
+  L.aiPrompt.setMode("full");
   ok("the prompts tell the AI about ANS1 and ANS2", /ANS1 the first line's, ANS2 the second's/.test(A.buildPrompt("q", [])) &&
     /ANS1 the first line's, ANS2/.test(L.CHAT.buildSystem("A 12 V pump draws 5 A. How many watts?")));
+  L.aiPrompt.setMode("short");
+  ok("...Chat's short instructions for a sum keep it to ANS, the line before", /A second =\nline may use ANS, the result of the line before/.test(L.CHAT.buildSystem("A 12 V pump draws 5 A. How many watts?")) &&
+    !/ANS1/.test(L.CHAT.buildSystem("A 12 V pump draws 5 A. How many watts?")));
+  L.aiPrompt.setMode(modeWas);
   ok("check: a line named by ANSn is used; a numbered ANS written twice is not a slip", !CK.unusedSteps(pb).length &&
     CK.unusedSteps("=60*5/1000\n=100*5/1000\n=ANS2*30").length === 1 && !CK.repeatedStep("=5\n=ANS1*2\n=ANS1*2") &&
     CK.repeatedStep("=150/10\n=420/ANS\n=420/ANS") === "420/ANS");

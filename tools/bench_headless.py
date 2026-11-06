@@ -220,10 +220,14 @@ def main():
     for r in rows:
         if r.get("pass") or r.get("cat") == "alone":
             continue
-        slim = dict((k, r.get(k)) for k in ("id", "cat", "q", "why", "value", "expected", "rounds", "retry", "rejected", "flags", "tokens", "ms") if r.get(k) not in (None, "", [], False))
+        slim = dict((k, r.get(k)) for k in ("id", "cat", "q", "why", "value", "expected", "rounds", "retry", "rejected", "flags", "needAnswered", "commands", "codeInReply", "tokens", "ms") if r.get(k) not in (None, "", [], False))
+        # A thing to make is printed as the page kept it (1500 characters, a
+        # program 6000): the 4B's program on 1.24.5 was cut here at 700,
+        # before its first line of code, and could not be replayed.
+        whole = r.get("cat") == "make"
         for k in ("reply", "first"):
             if r.get(k):
-                slim[k] = str(r[k])[:a.reply_chars]
+                slim[k] = str(r[k]) if whole else str(r[k])[:a.reply_chars]
         if r.get("chat"):
             slim["chat"] = [dict((k, (str(t[k])[:a.reply_chars] if k == "reply" else t[k])) for k in ("q", "searches", "declined", "reply") if t.get(k) not in (None, "", [], False)) for t in r["chat"]]
         print(json.dumps(slim, ensure_ascii=False), flush=True)

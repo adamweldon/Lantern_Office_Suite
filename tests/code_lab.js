@@ -299,7 +299,9 @@ function msgs(list, re) { return list.some(function (p) { return re.test(p.msg);
   var bf = BQ.filter(function (q) { return !gradeCode(q, q.ideal).pass; }).map(function (q) { return q.id + ": " + gradeCode(q, q.ideal).why; });
   ok("every program question passes with its ideal reply", !bf.length, bf);
   var bq1 = BQ.filter(function (q) { return q.id === "code-blink-millis"; })[0];
-  ok("bench: a blink with delay() fails, and says why", gradeCode(bq1, "MAKE CODE: b\nlanguage arduino\nvoid setup() {\n  pinMode(13, OUTPUT);\n}\nvoid loop() {\n  digitalWrite(13, HIGH);\n  delay(500);\n  digitalWrite(13, LOW);\n  delay(500);\n}\nEND").why === "it uses delay()");
+  var wDelay = gradeCode(bq1, "MAKE CODE: b\nlanguage arduino\nvoid setup() {\n  pinMode(13, OUTPUT);\n}\nvoid loop() {\n  digitalWrite(13, HIGH);\n  delay(500);\n  digitalWrite(13, LOW);\n  delay(500);\n}\nEND").why;
+  // (1.24.6: Lantern questions it itself now, before the bench's own check, and says what to write)
+  ok("bench: a blink with delay() fails, and says why", /^Lantern still questions it: line 6 calls delay\x28\x29, and the question says without delay\x28\x29/.test(wDelay), wDelay);
   var bq2 = BQ.filter(function (q) { return q.id === "code-ladder-start-stop"; })[0];
   // (since 1.14.1 Lantern itself questions a missing seal-in before the grader sees it)
   ok("bench: ladder with no seal-in fails", /no seal-in|asks for a seal-in, but no contact examines the coil Motor/.test(gradeCode(bq2, "MAKE CODE: m\nlanguage ladder\nXIC(Start)XIC(Stop)OTE(Motor);\nEND").why));

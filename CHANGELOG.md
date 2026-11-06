@@ -1,5 +1,236 @@
 # Changelog
 
+## 1.24.6 — What a small model is given, and the line to write (2026-11-06)
+
+One piece of work: the small models' runs of 1.24.5 were read row by row,
+and each kind of miss was traced to what Lantern had put in front of the
+model, or to what Lantern sent back.
+
+**What was seen.** On 1.24.5, 112 scored questions, no library:
+
+| Model | Passed | Time | Notes |
+|---|---|---|---|
+| 35B, on the laptop | 111 (99%) | 79 min | 7 sent back once, 6 mended. The miss: Lantern's own hint ("write arrange orchestra") for a tune that asked for no orchestra |
+| 4B, GitHub | 102 (91%) | 106 min | 15 passed only on the second try |
+| 2B, GitHub | 63 (56%) | 102 min | was 50 of 109 (46%) on 1.24.4, in 36 min |
+| 0.8B, GitHub | 28 (25%) | 64 min | was 16 of 109 (15%) |
+
+The failed rows as the models wrote them are
+`tests/fixtures/bench_run_1245_2b.json` (49), `_4b.json` (10), `_08b.json`
+(84) and `_35b.json` (1), with the 4B's seven of 1.24.4
+(`bench_run_1244_4b.json`) and the 35B's 45 right sums of 1.24.4
+(`bench_run_1244_35b_sums.json`: no new check may question one of them).
+
+**What they were traced to.**
+
+- *The short prompt made the 2B's run three times as long.* It differs for
+  every question, so the model server reads it afresh each time (about
+  1,000 tokens at 76 a second on GitHub's computer) where the full prompt
+  had been read once and kept.
+- *"ANSWER: Not in my library."* for eleven sums (the 2B): a temperature in
+  Celsius, 5 kg in pounds, a bed of plants, a compass bearing. The
+  instructions showed a decline and its example; Lantern sent nothing back.
+- *A recipe card that did not fit.* A card fitted when the question had any
+  of its keywords, part of a word included: a bed of plants "10 m long" got
+  the orbit card, "12 hens" the feed sum, a baby breathing "too fast" the
+  fast-moving clock. Nine sums Lantern has functions for had no card.
+- *Functions picked by any shared word*: "each lays 5 eggs" brought CAESAR
+  ("shift each letter").
+- *A change of unit* left out (800 g a day asked in kg, a flow per minute
+  asked in hours) or put in where none belonged (kW x hours / 1000: the
+  instructions' example had /1000).
+- *"NEED: What is the radius of Earth in kilometres?"* for a satellite's
+  period (the 2B, twice; the 0.8B for an escape velocity), with the recipe
+  "{alt_km}+6371" in front of it. Lantern answered with the radius in
+  metres and "use PLANET"; the 2B asked again, the 0.8B wrote
+  `=PLANET("Earth","radius")` and nothing else.
+- *"from a 300 km orbit to a 35786 km orbit"* (the 4B, the 2B, and the 4B on
+  run 3): both heights put in as radii; Lantern said "radius 300 km is
+  inside the Earth"; the model wrote 300+6371 and left 35786. Lantern's own
+  cards led there: one took two radii, the other a height and then a
+  radius. The 2B and the 0.8B also took HOHMANN (a speed) for a time.
+- *"LESSON: <a title>"* as a heading over a whole answer (the 4B, a program
+  and a wheel): Lantern took it for a request, sent passages, and the
+  answer under it was lost. For "LESSON: Ode to Joy Orchestra" (1.24.4) it
+  had sent three passages about slides, sentences and square roots.
+- *An example in what Lantern sends back is copied too.* Asked for a note
+  with the formula "like note Rt = R1 x R2 / (R1 + R2) =
+  {=100*200/(100+200)} ohm", the 2B wrote exactly that under a circuit of
+  4, 6 and 12 ohm. Given Blink (delay(1000), twice) as the tested example
+  for "without using delay()", it wrote delayMicroseconds(500). Given the
+  guide's "Button and LED", it put the button and its two pins into a relay
+  driver.
+- *A lesson given and not used.* For "My brother is having a fit" the 0.8B
+  answered "ANS: = (1) / ANS: = (2)"; the person saw which lesson the AI
+  had been given and nothing of what it says. For "My hens have stopped
+  laying eggs. What could be wrong?" the 2B and the 0.8B were given no
+  lesson at all: the larger models ask for one (LESSON:), they do not.
+- *The 0.8B copied the instructions' own words* in thirty replies ("=
+  (evaluated in order; ANS ...", "ANS1"), and wrote "NEED:" before a sum of
+  its own (`NEED: What is the value of 50?` / `=WEIGHT(50,"kg")`), or a NEED
+  and then its own answer: each went to the person as a question.
+- *Puzzles: the 2B passed 1 of 10, the 0.8B none,* and neither wrote a
+  TRACK, TURN or SOLVE block once. The puzzle tools were the last 1,800
+  characters of 4,000, after the sums and the functions; and nothing went
+  back for an answer with no block.
+
+**What changed.** Seven new modules (411 in all), twelve new recipe cards (44).
+
+*What a question is given*
+
+- **The card that fits** (ASSIST_CORE's match). A keyword counts as a whole
+  word; words of a question's shape (how, many, long, km) count a quarter
+  and never fit a card alone; a card's `when` says what makes it THIS sum (a
+  pattern, or a function of the question); a card must score 0.6 of the
+  best. Cards are fitted to the question (`Lantern.assistCardFits`): an
+  orbit asked in hours is given "/3600 -> hours per orbit", not "/60".
+- **Twelve cards**: Ohm's law three ways and watts (what is ASKED chooses),
+  resistors in series, plants in a bed, eggs a week, a weight in newtons, a
+  wavelength; and the Hohmann transfer by what the question's numbers are
+  -- two heights, one height and a radius, or two radii -- for the time and
+  for delta-v. Earth's cards are no longer offered for Mars or the Moon.
+- **Functions by name** (AI_PROMPT's pick), or by a word of the description
+  that at most two functions have and that is not a unit or a shape word.
+- **Short instructions by kind, for a small model.** A sum: one way to write
+  it, ANS only as the line before, NEED only when the question has fewer
+  numbers than the recipe has blanks, no decline, an example with no change
+  of unit and only when there is no recipe to copy (about 1,100 to 1,700
+  characters; the full ones are 7,300). Words: Chat's own lines and no sum
+  (2,000 characters; 9,100). A thing to make: its block guide, and only
+  the kind the question's words mean (**AI_ACT_SENSE**, new: a ladder to
+  climb is not ladder logic, table salt is not a table). A puzzle of
+  several steps or clues: its puzzle tool and nothing else (1,100 to 1,900
+  characters). The letters of a word: a sum, with the text functions.
+- **AI_UNITS** (new). The change of unit the question asks for is said with
+  the question ("the question gives kW and asks for kWh: kW x hours is kWh
+  already, so no change of unit is needed (no /1000)") and checked in the
+  sum, with the line to write ("divide by 1000 (=800*30*20/1000)").
+
+*What goes back, with the line to write*
+
+- **AI_NO_FORMULA** (new). A decline, or a result typed with no sum, where a
+  recipe fits: the recipe's line goes back with what goes in each blank.
+  With no recipe and two numbers or more: the numbers, and the sum asked
+  for. A line that could not be run, where a recipe with a function fits
+  and the line does not use it: the recipe goes back with the error.
+- **AI_NEED_RECIPE** (new). A NEED for a planet's or the Earth's figure,
+  where the question's recipe has it in its line: the answer is that line.
+- **A NEED that is not one.** A NEED for a number the question gives, with
+  the sum already under it: the sum is read and checked like any other. A
+  NEED with its own answer or a decline under it: the recipe goes back,
+  where the question fills it. A NEED on its own is a NEED.
+- **The recipe Lantern can fill itself** (one blank, one number, the same
+  unit): a sum that runs and gives another number goes back with the
+  recipe's line (`=100*10^6/299792458` for a wavelength: `=WAVELEN(100)`).
+- **Amp-hours the question asks for** are checked when the sentence names
+  no unit, and the line to write counts the days ("=5*3*7").
+- **AI_PUZZLE_ASK** (new). An answer to a puzzle of several steps or clues
+  with no block in it is asked for the block, once, with its first line,
+  for every model (not when the puzzle tools are off).
+- **Heights and speeds** (AI_CHECKS; `Lantern.assistRejectHints`). Every
+  height in the question is named, with the one line to write, whether the
+  formula ran or not. HOHMANN or ORBITV where the question asks how long is
+  questioned (only where the whole line is the speed).
+- **The wheel** (AI_WHEEL_CHECK). A part with a wrong formula, or the same
+  pair of letters twice, is written out: the formulas that were right as
+  the model wrote them, the rest worked out by Lantern from the pairs of
+  letters the part lacks (against two sets of values that obey Ohm's law).
+- **A sunset** under the blue of day, **a pin with two jobs** (the button
+  goes on the pin that is free), **a sketch that waits in a delay** where
+  the question says without, **an output given a value twice** in
+  Structured Text with nothing holding it: each goes back with its line.
+- **A tune's bars.** The number of bars the question asks for is said under
+  the guide's example (which has four), and a melody that stops short of
+  its chords is told how its last bar must end ("end it on G, B or D, the
+  notes of its chord G"). The 35B wrote four bars of melody under eight of
+  chords for the same question on 1.19.0, 1.24.5 and 1.24.6.
+- **LESSON:** A line that heads a long answer is a heading. Where Lantern's
+  lessons have nothing on the words and a thing was asked for, it says so
+  and asks for the block, with its first line. A lesson is read out for a
+  LESSON request only when it is about the words or the question
+  (SUITE_PASSAGES' named).
+
+*Correct by construction, and said*
+
+- **AI_SCHEMATIC_TOTAL** (new). One source and resistors only, all in
+  parallel or all in series (a switch or an ammeter in the line counts as
+  wire), each with a value: when the question asks for the total and no
+  note gives it, Lantern works it out, adds the note and says so. A note
+  whose sum is made of numbers that are not the circuit's goes back with
+  the line. The request for a note no longer carries a sum to copy.
+- Parts nobody wired or asked for are left out of a schematic; a pin a line
+  names and no pin line declares is added; cards written "front: back" and
+  a column named by its symbol ("Celsius (C)", =C*1.8+32) are read; a colour
+  on a line of its own and "Part: P | ..." are read on a wheel; a deck
+  written as several blocks is joined; "arrange" and "form" lines are left
+  out of a tune that asks for no arrangement; a part that plays the tune's
+  own note is not a clash; the guide's explanations copied after a line
+  ("key C major    the key; a plain ...") are taken off; "[n]" written as the
+  instructions spell it is taken off and Lantern cites the sentence. Each
+  is said in the summary.
+- **A button on a 5 V pin was said to read the supply's voltage** ("reads
+  12 V while S1 is pressed"). The drawing fed it from the board's 5 V; the
+  sentence now says 5 V.
+- **The tested example** for "without using delay()" is Blink without
+  delay: a word after "without" counts against an example that uses it.
+
+*For the person*
+
+- **CHAT_LESSON_SHOWN** (new). When the AI's answer uses nothing of the
+  lesson Lantern gave it, the lesson's own words are shown under the reply,
+  with a button to open it. Nothing is added to the AI's answer.
+- **A question about what is wrong** ("My hens have stopped laying eggs.
+  What could be wrong?", "Why won't my engine start?") is one Chat reads
+  its lessons for by itself; the lesson is still given only when it is sure
+  to be about the question.
+
+*The bench*
+
+- `tools/bench_headless.py` prints a made thing's replies whole (a program
+  was cut at 700 characters, before its first line of code).
+
+**What was tested.**
+
+- `npm test`: all 60 suites pass. New: `tests/tools_fit.js` (50 checks),
+  `tests/bench_1244_4b.js` (35) and `tests/bench_1245_small.js` (80), which
+  replay the fixtures' rows through the changed code. Where Lantern sends
+  something back, the reply that returns is scripted: with a right second
+  reply all 20 of the 2B's failed sums pass, 32 of the 0.8B's 33, and five
+  of the 2B's puzzles once the block is written.
+- The 35B's 45 right sums of 1.24.4 replay with nothing questioned.
+- Browser tests (real Chromium, a stand-in model): the headless bench, food
+  (with the lesson box), health, Code Lab, domains (pneumatics, control,
+  electronics), music, bench run 9, hydraulic and Text Reader pass (music
+  on the build that was pushed, the others on the one before the last
+  change).
+- The 35B on the laptop, a full run on the build before the last change
+  (the tune's bars, below): **111 of 112 (99%)**, 67 minutes, 4.1 tokens a
+  second; 4 sent back once, 3 mended. The miss was `make-music-original`
+  again: four bars of melody under eight of chords, in the shape of the
+  guide's four-bar example; told to write four more, it ended them on C
+  over G, which Lantern questioned with no turn left. That is the last
+  change. With it, the four music questions were run again on the build
+  that was pushed: 4 of 4. The first reply was four bars again; the second
+  ended on a note of the chord. Its row is
+  `tests/fixtures/bench_run_1246_35b.json`.
+
+**What was not.**
+
+- **No small model has run 1.24.6.** The push starts their run; what the
+  2B and the 0.8B do with the new instructions is not known until it is
+  read. One row moving is not a finding.
+- The 35B's full run was not repeated on the build that was pushed: only
+  the music questions were (the last change touches nothing else).
+- The lines of the slide guide's new example (a lockout: "Take off your own
+  lock only", "Tell the crew before power returns") are as 29 CFR
+  1910.147(e) is recalled; the page could not be opened from this session.
+- Left failing, and in the tests as such: a roof drawn as a red square; the
+  host who does not know where the car is (answered as the one who does);
+  a battery nobody gave, assumed; `=2000/8000` where `=2000/ANS` was meant
+  (one row, once).
+- How the lesson box and the drawing guide's new example look is Adam's to
+  judge.
+
 ## 1.24.5 — The small models read; the Food tile audited; the right lesson found (2026-11-06)
 
 Three pieces of work under the same aim: a small model with Lantern should

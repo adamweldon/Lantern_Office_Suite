@@ -361,8 +361,14 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   ok("a ground on the way round is a join, its symbol kept", ser.ok && ser.plan.wires.map(function (w) { return w.join("-"); }).join() === "V1-R1,R1-V1,G1-V1", ser.plan && ser.plan.wires);
   var noNotes = act.build(blk("SCHEMATIC", "P", ["part V1 source \"12 V\"", "part R1 resistor \"100 ohm\"", "part R2 resistor \"200 ohm\"", "wire V1 R1", "wire R1 V1", "wire V1 R2", "wire R2 V1"]),
     "draw a schematic in parallel with the formula shown to calculate the resistances");
-  ok("asked for the formula and the block has no notes: sent back once to add them", !noNotes.ok && /asked for the formula on the drawing: add note lines/.test(noNotes.problems.join()) &&
-    act.build(blk("SCHEMATIC", "P", ["part V1 source", "part R1 resistor", "wire V1 R1", "wire R1 V1"]), "draw a lamp circuit").ok, noNotes.problems);
+  // (1.24.6: resistors all in parallel or all in series, each with a value: Lantern adds the note with the total itself, and says so.
+  // A circuit it cannot add up -- here a lamp among the resistors -- still goes back once, with no sum to copy in what it is told.)
+  var noNotes2 = act.build(blk("SCHEMATIC", "P", ["part V1 source \"12 V\"", "part R1 resistor \"100 ohm\"", "part L1 lamp", "wire V1 R1", "wire R1 V1", "wire V1 L1", "wire L1 V1"]),
+    "draw a schematic in parallel with the formula shown to calculate the resistances");
+  ok("asked for the formula and the block has no notes: Lantern adds the total of resistors in parallel itself; a circuit it cannot add up is sent back once to add them",
+    noNotes.ok && noNotes.plan.notes[0] === "1/Rt = 1/R1 + 1/R2 = 1/100 + 1/200, so Rt = 66.67 ohm" && /Lantern added the note/.test(noNotes.summary) &&
+    !noNotes2.ok && /asked for the formula on the drawing: add a note line/.test(noNotes2.problems.join()) && !/100\*200/.test(noNotes2.problems.join()) &&
+    act.build(blk("SCHEMATIC", "P", ["part V1 source", "part R1 resistor", "wire V1 R1", "wire R1 V1"]), "draw a lamp circuit").ok, [noNotes.problems, noNotes.summary, noNotes2.problems]);
   ok("the AI is told to put formulas in note lines, not = lines", /put them in note lines in the block -- not in = lines/.test(act.prompt("draw a circuit with a battery")));
   // --- 1.12.7: a junction no part line made; the power wheel (Adam's Chat) ---
   var jn = act.build(blk("SCHEMATIC", "Ohm's Law Parallel", ["part V1 source \"12 V\"", "part A1 ammeter", "part R1 resistor \"4 ohm\"", "part R2 resistor \"6 ohm\"",

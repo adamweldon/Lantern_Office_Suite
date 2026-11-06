@@ -4,12 +4,14 @@
 #  - the tile: three groups, every topic opens with Print and Close and
 #    closes; the two tables; the daily-needs sum typed into (an adult gets
 #    numbers, a baby does not); on a phone's width nothing runs off the side;
-#  - Chat with a stand-in 2B: the instructions are the short ones; "How do I
+#  - Chat with a stand-in 2B: the instructions are the short ones, by the
+#    kind of question (1.24.6); "How do I
 #    make sauerkraut ..." is given the Fermenting lesson, every step of it;
 #    a reply written "ANSWER: CONVERT(26,"mile","km")" is computed and Chat
 #    says how it read it; a request the server refuses as too long is sent
 #    again, shorter, and Chat says so; a NEED for the question's own numbers
-#    is answered by Lantern.
+#    is answered by Lantern; a reply that uses nothing of the lesson it was
+#    given has the lesson itself shown under it (1.24.6).
 # Screenshots go in the folder given (default: the system temp folder).
 # Usage: python3 tests/browser/food_e2e.py [output folder]
 import json, os, re, subprocess, sys, tempfile, time
@@ -49,6 +51,8 @@ def reply(body):
         return "ANSWER: CONVERT(26,\"mile\",\"km\")"
     if "470 ohm" in last:
         return "NEED: What is the resistance in ohms and the current in amperes?"
+    if "having a fit" in last:
+        return "ANS: = (1)\nANS: = (2)\nANS: = (3)"
     if "about water" in last:
         return "Water is a liquid that every living thing needs."
     return "ANSWER: Not in my library."
@@ -94,7 +98,7 @@ try:
         pg.route("**/*", handle)
         pg.goto("http://127.0.0.1:%d/index.html#food" % PORT)
         pg.wait_for_function("!!(window.Lantern && Lantern.foodNeeds && document.querySelectorAll('table.data').length === 2)", timeout=30000)
-        ok("this is 1.24.5", pg.evaluate("Lantern.version") == "1.24.5", pg.evaluate("Lantern.version"))
+        ok("this is 1.24.6", pg.evaluate("Lantern.version") == "1.24.6", pg.evaluate("Lantern.version"))
 
         # --- the tile ---
         heads = pg.eval_on_selector_all("h2", "els => els.map(e => e.textContent)")
@@ -160,13 +164,17 @@ try:
         text = ask(pg, "How do I make sauerkraut, and how much salt does it need?", "/3 tablespoons of salt/.test(document.body.innerText) && /backed|Lantern gave the AI|from its own lessons/.test(document.body.innerText)")
         sysmsg = text_of(calls[0]["messages"][0]["content"]) if calls else ""
         sent = text_of(calls[-1]["messages"][-1]["content"]) if calls else ""
-        ok("the instructions the model got are the short ones (under 5,000 characters, no orbit functions)", calls and calls[0]["messages"][0]["role"] == "system" and len(sysmsg) < 5000 and "HOHMANN(" not in sysmsg and "CONVERT(" in sysmsg, len(sysmsg))
+        ok("the instructions the model got are the short ones for a question in words (under 2,500 characters: no functions, nothing about sums)", calls and calls[0]["messages"][0]["role"] == "system" and len(sysmsg) < 2500
+           and "HOHMANN(" not in sysmsg and "FUNCTIONS" not in sysmsg and "STARTS with =" not in sysmsg and "LESSON: <2 to 5 words>" in sysmsg, len(sysmsg))
         ok("Chat says which lesson it gave the AI", "Fermenting (Food tile)" in text, text[-500:])
         ok("...the whole procedure was in front of the model: salt, the weight, the weeks, keeping it", "LESSONS: passages" in sent and "3 tablespoons of salt" in sent and "a plate and a weight" in sent
            and "3 to 4 weeks at 21 to 24" in sent and "as cold as you can" in sent, sent[:300])
         pg.screenshot(path=os.path.join(OUT, "food_chat.png"), full_page=True)
 
+        n1 = len(calls)
         text = ask(pg, "Convert 26 miles to kilometres.", "/41\\.84/.test(document.body.innerText)")
+        sys2 = text_of(calls[n1]["messages"][0]["content"]) if len(calls) > n1 else ""
+        ok("...and for a sum they are the sums and its functions (CONVERT), under 2,500 characters", "STARTS with =" in sys2 and "CONVERT(" in sys2 and "LESSON:" not in sys2 and len(sys2) < 2500, len(sys2))
         ok("a formula written after ANSWER: is computed (41.84), and Chat says how it read it", "41.84" in text and "Lantern read a formula written after “ANSWER:” as a formula line." in text, text[-500:])
 
         text = ask(pg, "What voltage is across a 470 ohm resistor carrying 0.02 amps?", "/9\\.4/.test(document.body.innerText)")
@@ -178,6 +186,20 @@ try:
         ok("a request refused as too long is sent again, shorter, and Chat says so", len(calls) == n0 + 2 and len(json.dumps(calls[-1]["messages"])) < len(json.dumps(calls[-2]["messages"]))
            and "That was more than the AI model can hold at once; Lantern sent it a shorter version of the conversation." in text, [len(calls) - n0, text[-300:]])
         pg.screenshot(path=os.path.join(OUT, "food_chat_small.png"), full_page=True)
+
+        # (1.24.6) a reply with not one sentence from the lesson: the lesson itself is shown under it
+        text = ask(pg, "My brother is having a fit. What do I do?", "!!document.querySelector('.la-lesson-shown')")
+        box = pg.locator(".la-lesson-shown").last
+        btxt = box.inner_text()
+        ok("a reply that uses nothing of the lesson Lantern gave: the lesson itself is shown under it, whole, as Lantern\u2019s own words",
+           "The AI\u2019s answer does not use the lesson Lantern gave it. This is what Lantern\u2019s own lesson says:" in btxt and "Fits (seizures, convulsions) (Health tile)" in btxt
+           and "Note the time it starts." in btxt and "Put nothing in the mouth" in btxt, btxt[:400])
+        box.scroll_into_view_if_needed()
+        pg.screenshot(path=os.path.join(OUT, "chat_lesson_shown.png"))
+        box.locator("button", has_text="Open the lesson").click()
+        time.sleep(0.5)
+        ok("...and its button opens the lesson", pg.locator(".lesson-overlay").count() == 1 and "Fits" in pg.locator(".lesson-overlay").inner_text()[:300], pg.url)
+        pg.keyboard.press("Escape")
         ok("no page errors", not errs, errs)
         b.close()
 finally:

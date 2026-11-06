@@ -27,7 +27,7 @@ var MODS = ["PLANET_DATA", "AI_RECIPES", "AI_ENGINE", "AI_GUARD", "AI_CHECKS", "
   "MUSIC_INST_STRUCK", "MUSIC_INST_VOICE", "MUSIC_DRUMS", "MUSIC_SAMPLER", "SHEET_MUSIC_SONG", "SHEET_MUSIC_CHAT", "MUSIC_TUNES", "MUSIC_ARRANGE", "MUSIC_CHAT",
   // 1.24.4 and 1.24.5: Health and Food for the AI, and the small models
   "HEALTH_CHAT", "HEALTH_RECIPES", "HEALTH_BENCH_DATA", "LESSON_PRINT", "LESSON_WORDS", "FOOD_LESSONS_SAFE", "GUIDE_FOOD", "FOOD_BENCH_DATA",
-  "AI_NO_BLOCK", "AI_NEED_GIVEN", "AI_READ", "AI_FIT"];
+  "AI_NO_BLOCK", "AI_NEED_GIVEN", "AI_READ", "AI_FIT", "AI_ACT_SENSE", "AI_UNITS", "AI_NO_FORMULA", "AI_NEED_RECIPE", "CHAT_LESSON_SHOWN", "AI_SCHEMATIC_TOTAL", "AI_PUZZLE_ASK"];
 function without(src, name) {
   var a = src.indexOf("// MODULE: " + name + " - START"), b = src.indexOf("// MODULE: " + name + " - END");
   if (a < 0 || b < 0) throw new Error("missing " + name);

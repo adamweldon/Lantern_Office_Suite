@@ -59,7 +59,10 @@ var steps = [
   ["Food after the audit: three groups, ten topics, the preserving table without oil covering, temperatures first, no number for a child, the figures read on the CDC's and the home-preserving centre's pages, the guide, the lesson for a food how-to given whole, the bench's food conversations (1.24.5)", "node", ["tests/food.js"], /ALL FOOD TESTS PASS/],
   ["The lesson Chat reads by itself: the first that is sure to be about the question, no lesson where none answers, the words people ask with (1.24.5)", "node", ["tests/lesson_search.js"], /ALL LESSON SEARCH TESTS PASS/],
   ["No MAKE block where a thing was asked for: the block is asked for once, with its first line -- the 35B's row on 1.24.4, replayed (1.24.5)", "node", ["tests/no_block.js"], /ALL NO BLOCK TESTS PASS/],
-  ["The small models: a NEED for a number the question gives, the short prompt, replies read as they were meant, a request too long for the model, RELKE -- the 2B's and the 0.8B's rows on 1.24.4, replayed (1.24.5)", "node", ["tests/small_models.js"], /ALL SMALL MODEL TESTS PASS/]
+  ["The small models: a NEED for a number the question gives, the short prompt, replies read as they were meant, a request too long for the model, RELKE -- the 2B's and the 0.8B's rows on 1.24.4, replayed (1.24.5)", "node", ["tests/small_models.js"], /ALL SMALL MODEL TESTS PASS/],
+  ["What a question is given to answer with: MAKE tools by the sense of its words, one recipe card that fits, functions by name, no lesson where LESSON: finds none (1.24.6)", "node", ["tests/tools_fit.js"], /ALL TOOLS FIT TESTS PASS/],
+  ["The 4B's rows on 1.24.4, replayed: a colour on its own line, a deck in several blocks, [n] as the instructions spell it, a lesson asked for where a block was wanted (1.24.6)", "node", ["tests/bench_1244_4b.js"], /ALL BENCH 1\.24\.4 4B CHECKS PASS/],
+  ["The small models' rows on 1.24.5, replayed: a decline where Lantern has the sum, a change of unit, a NEED for a number the recipe has, two heights, LESSON as a heading, the lesson shown when the answer does not use it (1.24.6)", "node", ["tests/bench_1245_small.js"], /ALL BENCH 1\.24\.5 SMALL MODEL CHECKS PASS/]
 ];
 var failed = 0;
 steps.forEach(function (s) {
