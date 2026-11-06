@@ -230,6 +230,8 @@ for multi-threading).
 | `Install Lantern (...)`, `Start Lantern (...)` | The double-click launchers for Windows, Mac and Linux / Raspberry Pi. |
 | `tools/make_lantern_zip.py` | Packs `Lantern.zip`: one `Lantern` folder with the launchers, `site/`, `kit/`, `docs/`, the single file and the readme; never `kit/engine`, `kit/models`, `kit/library`. |
 | `.github/workflows/lantern-zip.yml` | On every push to `main`: builds `Lantern.zip` and puts it on the latest release. |
+| `tools/bench_pane.js` | Lantern Bench started and read from outside the page (a browser console, or a Claude chat linked to the computer): the full or quick run, or chosen questions; the rows are kept as they finish. |
+| `CLAUDE.md`, `agent/` | For Claude sessions working on Lantern: the aim, the rules, how the bench is run on the laptop; the queue of work with every tile's state; a report for each session; questions for Adam. |
 
 ## Working on it
 

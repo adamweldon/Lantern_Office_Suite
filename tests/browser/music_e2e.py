@@ -65,7 +65,8 @@ try:
         back = calls[1]["messages"][-1]["content"] if len(calls) > 1 else ""
         ok("...a word that is not a note, and a note far from the tune, go back once, with how Lantern reads a MAKE MUSIC block", "\u201cF#.\u201d (bar 4) is not a note" in back and
            "\u201cE2\u201d is far below the rest of the tune" in back and
-           "Lantern reads a MAKE MUSIC block line by line" in back and "- holds the note before one more share" in back, back[:700])
+           "Lantern reads these lines of a MAKE MUSIC block like this" in back and "- holds the note before one more share" in back and
+           "instruments (" not in back, back[:900])   # (1.24.2: only the lines the problems are about)
         t = pg.evaluate("document.querySelector('[aria-label=Conversation]').innerText")
         ok("...the corrected song is made: 4 bars in D major", "Lantern made a song: Ode to Joy \u2014 4 bars in D major" in t and "still questions" not in t, t[-600:])
         card = pg.locator(".la-make").last

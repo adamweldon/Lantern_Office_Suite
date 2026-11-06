@@ -1,5 +1,70 @@
 # Changelog
 
+## 1.24.2 — The right example, the rung that works, and tunes Lantern knows whole (2026-11-05)
+
+Adam: "Keep going my direction is the intent with you as the author of the
+code of course. Each module of lantern should be added to with the maximum
+extent you can apply for the purpose of maximizing the rebooting of
+civilization from a usb stick and making all of the answers the AI can give
+as good as possible."
+
+The four misses left by the 35B's runs on 1.24.0 and 1.24.1, each traced to
+what Lantern gave the model, not to the model.
+
+- **The ladder start/stop question was shown an Arduino sketch to start
+  from.** Lantern's tested examples were ranked by words alone: for "Write
+  ladder logic as rung text for a motor start/stop ... a seal-in" the
+  Arduino start/stop sketch scored 26 and the ladder one 22; for "Write
+  Structured Text ..." the Arduino tank sketch won. On one run the 35B asked
+  for the ladder one by name and passed; on the next it wrote rungs of its
+  own with Stop in a branch. An example in a language the question names
+  now comes first (AI_CODE_EXAMPLES).
+- **A Stop or an overload on a branch path of its own** (AI_CODE,
+  `stopProblems`). `[XIC(Start),XIC(Stop),XIC(OL)]OTE(Motor);` runs the
+  motor whenever Stop is not pressed: a branch is OR. Lantern said only that
+  Motor was driven in two rungs, and the second try kept the branch. It now
+  names the path that gets past the contact and writes the rung out the way
+  that works, from the rung's own contacts: `[XIC(Start) ,XIC(Motor) ]
+  XIC(Stop)XIC(OL)OTE(Motor);`. Only a rung that starts or holds its output
+  is looked at -- `[XIC(Stop) ,XIC(Limit) ]OTE(Brake);` is right.
+- **Songs: the bars the way they were meant** (MUSIC_SONG), and said.
+  - A melody over several lines with no bar lines, 17 notes to a line: each
+    line starts a new bar and a rest left over at a line's end is left out
+    (32 bars, not 34 with every line a beat late and long notes against the
+    wrong chords).
+  - A `|` after each 4-bar phrase, two of them over 8 bars of chords: read
+    as 8 bars ("the chords go on 6 bars past the melody" before). Not a bar
+    of finer shares -- `C - - D E - F -` stays one bar.
+- **The line to write, not a choice of things to do.** The waltz's last bar
+  held G over the home chord; told "write G or Em there, or change the
+  note", the 35B sent the same block back. The tune's last note over its
+  home chord now gets the bar itself -- "write bar 8 of the melody as F# - -
+  r" -- and any other bar the chords line with the chord that fits. What
+  goes back with it is the two lines of the guide it is about, not all 35
+  with every instrument (AI_MUSIC `fixHint`); and no full stop after lines
+  to copy -- in a song a `.` is a held note.
+- **Tunes Lantern knows whole: a songbook** (new module MUSIC_SONGBOOK).
+  Three runs out of three the 35B wrote Ode to Joy from memory with its 4th
+  bar's rhythm flattened, and a middle section of its own. Nine old tunes,
+  free for anyone, as the lines Lantern plays with their real note lengths:
+  Ode to Joy (all 16 bars), Twinkle Twinkle, Frère Jacques, Mary Had a Little
+  Lamb, Jingle Bells, London Bridge, Row Row Row Your Boat, Silent Night,
+  Hot Cross Buns.
+  - A question that names one gets its lines to copy with the MAKE MUSIC
+    instructions, as it gets the notes Lantern reads from a picture.
+  - The song made is checked against them, in any key and octave; a
+    flattened rhythm or a wrong note goes back with the lines. A variation,
+    or a tune "in the style of" one, is the AI's own.
+  - The Music tile's "Start from" list has them whole, for a class to play
+    and print with Save parts.
+- Tests: `tests/code_lab.js` (107: the example shown for each program
+  question; the 35B's rungs, first and second try; five rungs that are
+  right); `tests/music.js` (194: the three songs of the run replayed; the
+  songbook -- every tune made with nothing questioned, its bars full, its
+  opening the one MUSIC_TUNES knows it by, its leaps where they belong; the
+  bench's own Ode check on Lantern's lines; the tune from memory sent back
+  and the copy passing).
+
 ## 1.24.1 — A question with "code" in it is not a program to write (2026-11-05)
 
 The first full Lantern Bench run that nobody clicked through: a Claude chat

@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.24.1 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.24.2 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -173,7 +173,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.24.1",
+  version: "1.24.2",
   apps: {},
   order: []
 };
@@ -25766,7 +25766,8 @@ Lantern.RFB = (function () {
     try { hint = b.action && typeof b.action.fixHint === "function" ? b.action.fixHint(b, made, q) : null; } catch (e) { hint = null; }
     if (!hint && b.action && b.action.prompt && b.action.prompt.indexOf("END") > 1 && b.action.prompt.indexOf("END") <= 9)
       hint = ["Lantern reads a MAKE " + b.kind + " block like this:"].concat(b.action.prompt.slice(0, b.action.prompt.indexOf("END")));
-    var lines = ["Lantern checked your MAKE " + b.kind + " block" + (ps.length > 1 ? " and found " + ps.length + " things to fix:" : ": " + (ps[0] || "") + ".")];
+    // (a problem that ends with lines to copy gets no full stop after them: in a song a . is a held note, 1.24.2)
+    var lines = ["Lantern checked your MAKE " + b.kind + " block" + (ps.length > 1 ? " and found " + ps.length + " things to fix:" : ": " + (ps[0] || "") + (/\n/.test(ps[0] || "") ? "" : "."))];
     if (ps.length > 1) ps.forEach(function (p, i) { lines.push((i + 1) + ". " + p); });
     if (hint && hint.length) lines = lines.concat(hint);
     lines.push("Reply with the corrected block only (MAKE " + b.kind + ": " + (b.title || "<title>") + " ... END).");
@@ -42017,12 +42018,98 @@ Lantern.RFB = (function () {
     });
     return out;
   }
+  // stopProblems(lang, text, question) -> problems: a device that has to stop
+  // the output -- a Stop button, an overload contact, an emergency stop -- on
+  // a branch path of its own. A branch is OR: the rung is true while any one
+  // path is, so the output comes on without that contact and nothing it does
+  // turns the output off. The 35B, for the bench's start/stop question
+  // (1.24.1, on the kit): [XIC(Start),XIC(Stop),XIC(OL)]OTE(Motor); -- and
+  // Lantern said only that Motor was driven in two rungs, which its second
+  // try kept. The problem names the path that gets past the contact and
+  // writes the rung out the way that works, from the rung's own contacts.
+  // Only a rung that starts or holds its output (a Start-like contact, or the
+  // coil's own) is looked at: [XIC(Stop) ,XIC(Limit) ]OTE(Brake); puts a
+  // brake on, and is right.
+  var STOP_TAG = /^(e[-_]?stop\w*|emerg\w*|stop\w*|overload\w*|ol\d*|ovl\w*|ovld\w*|trip\w*)$/i;
+  var START_TAG = /^(start\w*|run\w*|go|jog\w*|on|enable\w*|fwd|rev|forward|reverse)$/i;
+  var NOT_DRIVEN = /stop|halt|fault|alarm|lamp|light|indicator|horn|beacon|status|flag|req|brake/i;
+  function ladderPaths(items, cap) {
+    var ps = [[]];
+    items.forEach(function (it) {
+      if (ps.length > cap) return;
+      if (it.op === "BRANCH") {
+        var alts = [], next = [];
+        (it.legs || []).forEach(function (leg) { ladderPaths(leg, cap).forEach(function (a) { alts.push(a); }); });
+        ps.forEach(function (p) { alts.forEach(function (a) { if (next.length <= cap) next.push(p.concat(a)); }); });
+        ps = next;
+      } else if (it.kind === "in") ps = ps.map(function (p) { return p.concat([it]); });
+    });
+    return ps;
+  }
+  function stopProblems(lang, text, q) {
+    var out = [], pr = null;
+    if (lang !== "ladder" || !L.codeLadder || !L.codeLadder.parse) return out;
+    try { pr = L.codeLadder.parse(plainCode(text)); } catch (e) { return out; }
+    var tag = function (it) { return String((it.args || [])[0] || ""); }, low = function (t) { return String(t).toLowerCase(); };
+    var show = function (it) { return String(it.op).toUpperCase() + "\x28" + (it.args || []).join(",") + "\x29"; };
+    var same = function (a, b) { return low(a.op) === low(b.op) && low(tag(a)) === low(tag(b)); };
+    ((pr && pr.rungs) || []).forEach(function (r, k) {
+      var at = -1;
+      r.items.forEach(function (it, i) { if (at < 0 && it.kind === "out") at = i; });
+      if (at < 1) return;
+      var outs = r.items.slice(at).filter(function (it) { return it.kind === "out"; }), coil = tag(outs[0]);
+      if (!coil || !/^(OTE|OTL)$/i.test(outs[0].op) || NOT_DRIVEN.test(coil)) return;
+      var ps = ladderPaths(r.items.slice(0, at), 64);
+      if (ps.length < 2 || ps.length > 64) return;
+      var all = [];
+      ps.forEach(function (p) { p.forEach(function (it) { if (/^(XIC|XIO)$/i.test(it.op) && !all.some(function (x) { return same(x, it); })) all.push(it); }); });
+      if (!all.some(function (it) { return /^XIC$/i.test(it.op) && (START_TAG.test(tag(it)) || low(tag(it)) === low(coil)); })) return;
+      var stops = all.filter(function (it) {
+        return STOP_TAG.test(tag(it)) && low(tag(it)) !== low(coil) && ps.some(function (p) { return !p.some(function (c) { return same(c, it); }); });
+      });
+      if (!stops.length) return;
+      var isStop = function (c) { return stops.some(function (x) { return same(x, c); }); };
+      // the path that gets past them: one with none of the stopping contacts on it, if there is one
+      var past = ps.filter(function (p) { return !p.some(isStop); })[0] || ps.filter(function (p) { return !p.some(function (c) { return same(c, stops[0]); }); })[0];
+      // the rung the way that works: the rung as written with the stopping
+      // contacts taken out of its branches (a branch left with one path is no
+      // branch), then each of them in series, then the outputs. A seal-in the
+      // question asks for and the rung lacks goes in a branch with what starts
+      // it. A rung that could then never start (the coil's own contact on
+      // every path) is written the usual way instead, or not at all.
+      var strip = function (items) {
+        var kept = [];
+        items.forEach(function (it) {
+          if (it.op === "BRANCH") {
+            var legs = (it.legs || []).map(strip).filter(function (l) { return l.length; });
+            if (legs.length === 1) kept = kept.concat(legs[0]);
+            else if (legs.length > 1) kept.push({ op: "BRANCH", legs: legs });
+          } else if (it.kind !== "in" || !isStop(it)) kept.push(it);
+        });
+        return kept;
+      };
+      var render = function (items) {
+        return items.map(function (it) { return it.op === "BRANCH" ? "[" + it.legs.map(render).join(" ,") + " ]" : show(it); }).join("");
+      };
+      var sealIt = { op: "XIC", args: [coil], kind: "in" }, hasCoil = function (pth) { return pth.some(function (c) { return same(c, sealIt); }); };
+      var ins = strip(r.items.slice(0, at)), wantSeal = !!(q && SEAL.test(q));
+      if (wantSeal && ins.length && !ladderPaths(ins, 64).some(hasCoil)) ins = [{ op: "BRANCH", legs: [ins, [sealIt]] }];
+      var after = ladderPaths(ins, 64), starts = all.filter(function (it) { return /^XIC$/i.test(it.op) && START_TAG.test(tag(it)); });
+      if (!ins.length || after.every(hasCoil)) ins = starts.length ? [{ op: "BRANCH", legs: [[starts[0]], [sealIt]] }] : [];
+      var fixed = ins.length ? render(ins) + stops.map(show).join("") + outs.map(show).join("") + ";" : "";
+      var names = stops.map(show), many = names.length > 1;
+      out.push("rung " + (k + 1) + ": " + names.join(" and ") + (many ? " are each" : " is") + " on a branch path of " + (many ? "their" : "its") + " own, and a branch is OR: " +
+        (past && past.length ? past.map(show).join("") + " alone turns " + coil + " on" : coil + " comes on without " + (many ? "them" : "it")) + ", so " + (many ? "they" : "it") +
+        " cannot turn it off. Put " + (many ? "them" : "it") + " in series, outside the brackets" + (fixed ? ": " + fixed : ""));
+    });
+    return out;
+  }
   function build(block, ctx) {
     var p = parse(block), lg = L.codeLangs.get(p.lang), problems = p.problems.slice();
     var found = p.text.trim() ? L.codeCheck.run(p.lang, p.text) : [];
     found.forEach(function (x) { problems.push((x.line ? "line " + x.line + ": " : "") + x.msg); });
     var q = ctx && ctx.question;
-    ncProblems(p.lang, p.text, q).concat(stProblems(p.lang, p.text, q), sealProblems(p.lang, p.text, q))
+    ncProblems(p.lang, p.text, q).concat(stProblems(p.lang, p.text, q), sealProblems(p.lang, p.text, q), stopProblems(p.lang, p.text, q))
       .forEach(function (x) { problems.push(x); found.push({ line: 0, msg: x }); });
     if (!p.text.trim()) return { problems: problems, plan: null };
     var based = L.aiCodeExamples ? L.aiCodeExamples.basedOn(p.text, p.lang) : null;
@@ -42062,7 +42149,7 @@ Lantern.RFB = (function () {
     } });
     return res;
   }
-  window.Lantern.aiCode = { parse: parse, build: build, ncProblems: ncProblems, stProblems: stProblems, sealProblems: sealProblems };
+  window.Lantern.aiCode = { parse: parse, build: build, ncProblems: ncProblems, stProblems: stProblems, sealProblems: sealProblems, stopProblems: stopProblems };
   var MATCH = /\b(code|coding|programs?|programming|programmed|script|scripts|arduino|esp32|esp8266|p1am|plc|ladder|structured text|python|javascript|c\+\+|firmware|microcontroller|gpio|accelstepper|tmc2209|a4988|drv8825|i2c|uart|pwm|serial monitor|compile|compiler|debug)\b/i;
   // "code", "program", "script" and "ladder" are everyday words too: a fault
   // code in a manual, a zip code, a code of conduct, a wash program, a film
@@ -42175,7 +42262,15 @@ Lantern.RFB = (function () {
       if (x.board === "p1am" && /\bp1am/i.test(q) || x.board === "pi" && /\b(raspberry|pi)\b/i.test(q)) s += 3;
       if (hits || want[x.lang]) out.push({ ex: x, score: s, hits: hits });
     });
-    return out.sort(function (a, b) { return b.score - a.score; });
+    // (1.24.2) An example in a language the question names comes before any
+    // other: "Write ladder logic as rung text for a motor start/stop ... a
+    // seal-in" was shown the Arduino start/stop sketch as the example to
+    // start from (26 points to the ladder one's 22), and "Write Structured
+    // Text ..." the Arduino tank sketch. On one bench run the 35B asked for
+    // the ladder one by name (EXAMPLE:) and passed; on the next it wrote
+    // rungs of its own, with Stop in a branch.
+    var named = Object.keys(want).length > 0;
+    return out.sort(function (a, b) { return (named ? (want[b.ex.lang] ? 1 : 0) - (want[a.ex.lang] ? 1 : 0) : 0) || b.score - a.score; });
   }
   function langName(x) { var lg = L.codeLangs.get(x.lang); return (lg ? lg.name : x.lang) + (x.board === "p1am" ? ", P1AM-100" : x.board === "pi" ? ", Raspberry Pi" : ""); }
   // Shown between <<< and >>>, with no "EXAMPLE n:" or "language" line: the
@@ -48101,11 +48196,125 @@ Lantern.RFB = (function () {
 // MODULE: MUSIC_TUNES - END
 // ===========================================================================
 // ===========================================================================
+// MODULE: MUSIC_SONGBOOK - START
+// Depends: CORE (window.Lantern); MUSIC_SONG (Lantern.musicSong.make) at the
+//          time a tune is asked for -- feature-detected; the hook
+//          Lantern.musicIntent
+// Exports: Lantern.musicSongbook = {LIST, named(question) -> tune or null,
+//          lines(tune) -> text, plan(tune) -> the song Lantern makes of it,
+//          differs(plan, tune) -> {note, bar} or null, prompt(question) ->
+//          [line], asksFor(question) -> tune or null}
+// ===========================================================================
+// Tunes Lantern knows whole (1.24.2): old tunes free for anyone to use, each
+// as the lines Lantern plays -- key, time, chords and melody, with its real
+// note lengths. A model's memory of a tune drifts: on the bench the 35B
+// wrote Ode to Joy with the fourth bar's rhythm flattened and a middle
+// section of its own, three runs out of three. When a question names one of
+// these tunes, the AI is given its lines to copy (as it is given the notes
+// Lantern reads from a picture), and the song it makes is checked against
+// them, in any key and any octave. A tune asked for as a variation, or in
+// the style of another, is the AI's own to write.
+// To add a tune: its lines here, and its opening in MUSIC_TUNES; the tests
+// make every one, and compare its first notes with that opening.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var LIST = [
+    { id: "ode-to-joy", title: "Ode to Joy", by: "Beethoven (Symphony No. 9)", year: "1824", ask: /\bode to joy\b|\bhymn to joy\b|\bode an die freude\b/i,
+      key: "C major", time: "4/4", tempo: 112, style: "block",
+      chords: "C | G | C | C G | C | G | C | G C | G | C | G | C G | C | G | C | G C",
+      melody: ["E E F G | G F E D | C C D E | E - - D D - - -", "E E F G | G F E D | C C D E | D - - C C - - -",
+        "D D E C | D - E F E - C - | D - E F E - D - | C D G3 -", "E4 E F G | G F E D | C C D E | D - - C C - - -"] },
+    { id: "twinkle", title: "Twinkle, Twinkle, Little Star", by: "a French tune", year: "1761", ask: /\btwinkle,?\s+twinkle\b/i,
+      key: "C major", time: "4/4", tempo: 100, style: "ballad",
+      chords: "C | F C | F C | G C | C F | C G | C F | C G | C | F C | F C | G C",
+      melody: ["C C G G | A A G - | F F E E | D D C -", "G G F F | E E D - | G G F F | E E D -", "C C G G | A A G - | F F E E | D D C -"] },
+    { id: "frere-jacques", title: "Fr\u00e8re Jacques", by: "traditional", year: "", ask: /\bfr[e\u00e8]re jacques\b|\bbrother john\b|\bare you sleeping\b/i,
+      key: "C major", time: "4/4", tempo: 108, style: "folk",
+      chords: "C | C | C | C | C | C | C | C",
+      melody: ["C D E C | C D E C | E F G - | E F G -", "G A G F E - C - | G A G F E - C - | C G3 C - | C G3 C -"] },
+    { id: "mary-lamb", title: "Mary Had a Little Lamb", by: "traditional", year: "1830", ask: /\bmary had a little lamb\b/i,
+      key: "C major", time: "4/4", tempo: 104, style: "folk",
+      chords: "C | C | G | C | C | C | G | C",
+      melody: ["E D C D | E E E - | D D D - | E G G -", "E D C D | E E E E | D D E D | C - - -"] },
+    { id: "jingle-bells", title: "Jingle Bells", by: "James Lord Pierpont", year: "1857", ask: /\bjingle bells\b/i,
+      key: "C major", time: "4/4", tempo: 120, style: "folk",
+      chords: "C | C | C | C | F | C | D7 | G | C | C | C | C | F | C | G7 | C",
+      melody: ["E E E - | E E E - | E - G - C4 - - D | E - - -", "F F F F | F - E - E - E E | E D D E | D - G -",
+        "E E E - | E E E - | E - G - C4 - - D | E - - -", "F F F F | F - E - E - E E | G G F D | C - - -"] },
+    { id: "london-bridge", title: "London Bridge Is Falling Down", by: "traditional", year: "", ask: /\blondon bridge\b/i,
+      key: "C major", time: "4/4", tempo: 108, style: "folk",
+      chords: "C | C | G7 | C | C | C | G7 | C",
+      melody: ["G - - A G - F - | E F G - | D E F - | E F G -", "G - - A G - F - | E F G - | D - G - | E C - -"] },
+    { id: "row-your-boat", title: "Row, Row, Row Your Boat", by: "traditional", year: "1852", ask: /\brow,?\s+row,?\s+row your boat\b/i,
+      key: "C major", time: "6/8", tempo: 76, style: "folk",
+      chords: "C | C | C | C | C | C | G7 | C",
+      melody: ["C - - C - - | C - D E - - | E - D E - F | G - - - - -", "C5 C C G4 G G | E4 E E C C C | G4 - F E - D | C - - - - -"] },
+    { id: "silent-night", title: "Silent Night", by: "Franz Xaver Gruber", year: "1818", ask: /\bsilent night\b|\bstille nacht\b/i,
+      key: "C major", time: "3/4", tempo: 88, style: "arpeggio",
+      chords: "C | C | C | C | G7 | G7 | C | C | F | F | C | C | F | F | C | C | G7 | G7 | C | C | C | G7 | C | C",
+      melody: ["G - - A G - | E - - - - - | G - - A G - | E - - - - -", "D5 - - - D - | B - - - - - | C5 - - - C - | G - - - - -",
+        "A - - - A - | C5 - - B A - | G - - A G - | E - - - - -", "A - - - A - | C5 - - B A - | G - - A G - | E - - - - -",
+        "D5 - - - D - | F5 - - D B - | C5 - - - - - | E5 - - - - -", "C5 - - G4 E - | G4 - - F D - | C4 - - - - - | - - - - - -"] },
+    { id: "hot-cross-buns", title: "Hot Cross Buns", by: "traditional", year: "", ask: /\bhot cross buns\b/i,
+      key: "C major", time: "4/4", tempo: 100, style: "folk",
+      chords: "C | C | C G | C",
+      melody: ["E D C - | E D C - | C C C C D D D D | E D C -"] }];
+  // a tune asked for as something else: the AI's own to write
+  var OWN = /\b(variations?|improvis\w*|remix\w*|mash-?up|medley|in the style of|inspired by|your own|my own|parody|new (tune|song|melody)|different (tune|melody)|change the (tune|melody|notes)|counter-?melody|descant|harmony part)\b/i;
+  function named(q) { q = String(q || ""); for (var i = 0; i < LIST.length; i++) if (LIST[i].ask.test(q)) return LIST[i]; return null; }
+  function asksFor(q) { var t = named(q); return t && !OWN.test(String(q || "")) ? t : null; }
+  function lines(t) { return "key " + t.key + "\ntime " + t.time + "\nchords " + t.chords + "\nmelody " + t.melody.join(" | "); }
+  function plan(t) {
+    if (t._plan === undefined) {
+      var r = null;
+      try { r = L.musicSong ? L.musicSong.make({ title: t.title, lines: lines(t).split("\n") }) : null; } catch (e) { r = null; }
+      t._plan = r && r.plan && !r.problems.length ? r.plan : null;
+    }
+    return t._plan;
+  }
+  // differs(plan, tune) -> where the song's tune stops being this one (in
+  // any key and octave: the steps between its notes, and each note's length
+  // against the first), or null. A song shorter than the tune is the tune
+  // as far as it goes.
+  function differs(p, t) {
+    var k = plan(t), a = (p && p.melody) || [], b = k ? k.melody : [];
+    if (!k || !a.length) return null;
+    var n = Math.min(a.length, b.length), fa = a[0].len / (p.barLen || 4), fb = b[0].len / (k.barLen || 4);
+    for (var i = 0; i < n; i++) {
+      var step = i ? ((((a[i].midi - a[i - 1].midi) - (b[i].midi - b[i - 1].midi)) % 12) + 12) % 12 : 0;
+      var la = a[i].len / (p.barLen || 4) / fa, lb = b[i].len / (k.barLen || 4) / fb;
+      if (step || (i < n - 1 ? Math.abs(la - lb) > 0.01 : la < lb - 0.01)) return { note: i + 1, bar: a[i].bar, pitch: !!step };
+    }
+    return null;
+  }
+  function prompt(q) {
+    var t = asksFor(q);
+    if (!t || !plan(t)) return [];
+    return ["", "LANTERN KNOWS THIS TUNE: " + t.title + " (" + t.by + (t.year ? ", " + t.year : "") + "; free for anyone to use). A tune written from memory drifts,",
+      "so these are its lines as Lantern plays it -- write the key, time, chords and melody lines in your MAKE MUSIC block exactly as they are:",
+      "title " + t.title].concat(lines(t).split("\n"), [
+      "You may add tempo, style, sound, backing, bass and arrange lines. In another key (only when the person asks for one), write the same tune there, step for step."]);
+  }
+  window.Lantern.musicSongbook = { LIST: LIST, named: named, asksFor: asksFor, lines: lines, plan: plan, differs: differs, prompt: prompt };
+  // the song made for a question that names one of these tunes is that tune
+  (window.Lantern.musicIntent = window.Lantern.musicIntent || []).push(function (p, q) {
+    var t = asksFor(q), d = t ? differs(p, t) : null;
+    if (!d) return [];
+    return ["the melody is not " + t.title + " as Lantern knows it -- from bar " + d.bar + " (note " + d.note + ", its " + (d.pitch ? "pitch" : "length") +
+      "): write the key, time, chords and melody lines as Lantern gave them:\n" + lines(t)];
+  });
+})();
+// ===========================================================================
+// MODULE: MUSIC_SONGBOOK - END
+// ===========================================================================
+// ===========================================================================
 // MODULE: MUSIC_SONG_READ - START
 // Depends: MUSIC_THEORY (Lantern.musicTheory)
 // Exports: Lantern.musicRead = {read(block) -> song, bars(text, per) ->
-//          {bars, times}, STYLES, SOUNDS (without MUSIC_INST), TEMPO, PACE,
-//          HOLD, REST}; reads MUSIC_INST (Lantern.musicInst) -- feature-detected
+//          {bars, times}, toks(text) -> [token], STYLES, SOUNDS (without
+//          MUSIC_INST), TEMPO, PACE, HOLD, REST}; reads MUSIC_INST
+//          (Lantern.musicInst) -- feature-detected
 // ===========================================================================
 // A song as a few lines anyone (or any AI) can write (1.19.0):
 //     key E minor | tempo 76 | time 4/4 | style reggae | sound flute
@@ -48248,7 +48457,7 @@ Lantern.RFB = (function () {
     });
     return s;
   }
-  window.Lantern.musicRead = { read: read, bars: bars, word: word, STYLES: STYLES, SOUNDS: SOUNDS, SOUND_AS: SOUND_AS, STYLE_AS: STYLE_AS, TEMPO: TEMPO, PACE: PACE, HOLD: HOLD, REST: REST };
+  window.Lantern.musicRead = { read: read, bars: bars, toks: toks, word: word, STYLES: STYLES, SOUNDS: SOUNDS, SOUND_AS: SOUND_AS, STYLE_AS: STYLE_AS, TEMPO: TEMPO, PACE: PACE, HOLD: HOLD, REST: REST };
 })();
 // ===========================================================================
 // MODULE: MUSIC_SONG_READ - END
@@ -48433,10 +48642,64 @@ Lantern.RFB = (function () {
     var parts = s.parts.filter(function (p) { return p.chords.length || p.melody.length; });
     if (!parts.length) return { plan: null, problems: probs.concat(["there is no chords or melody line: write chords Em | Am | B7 | Em, a melody line, or both"]) };
     var barLen = time[0] * 4 / time[1];
+    // The bars the way they were meant (1.24.2: the 35B's bench songs on
+    // 1.24.0, neither mended on its second try). What Lantern does is said.
+    //  - No bar lines, a tune over several lines, and a line's notes do not
+    //    fill whole bars: each line starts a new bar. A rest or a hold left
+    //    over at a line's end is left out -- "E E F G G F E D C C D E E D D -
+    //    r" is four bars and a breath; read straight through, the seventeenth
+    //    note pushed every later line a beat out of its bars (34 bars for the
+    //    Ode's 32, and long notes against the wrong chords). A note left over
+    //    is held to the end of a bar of its own.
+    //  - Bar lines at the ends of phrases: "E E F G G F E D C C D E E D D - |
+    //    E E F G ... |" is 16 notes to a |, two of them over 8 bars of chords
+    //    ("the chords go on 6 bars past the melody"). When every | holds two
+    //    or more whole bars of notes, one a beat and few of them held, and
+    //    the tune then fits its chords bar for bar, each is read as that many
+    //    bars.
+    var per = time[0], XN = /^(x|\u00d7)(\d)$|^(\d)(x|\u00d7)$/i;
+    parts.forEach(function (p) {
+      p.mb = p.melody.length ? R.bars(join(p.melody), per).bars : [];
+      p.cb = p.chords.length ? R.bars(join(p.chords), 0).bars : [];
+      if (!p.melody.length || !R.toks) return;
+      var barred = p.melody.some(function (l) { return l.indexOf("|") >= 0; }), i;
+      if (!barred && p.melody.length > 1) {
+        var lines = p.melody.map(function (l) { return R.toks(String(l).replace(/[\x5B\x5D\x7B\x7D\x28\x29\x22\u201c\u201d]/g, " ")); });
+        if (lines.every(function (ts) { return ts.length && !ts.some(function (x) { return XN.test(x); }); }) && lines.some(function (ts) { return ts.length % per; })) {
+          var left = 0, held = 0, all = [];
+          lines.forEach(function (ts) {
+            var over = ts.length % per;
+            if (over && ts.slice(ts.length - over).every(function (x) { return R.REST.test(x) || R.HOLD.test(x); })) { ts = ts.slice(0, ts.length - over); left++; }
+            else if (over) { ts = ts.slice(); for (i = over; i < per; i++) ts.push("-"); held++; }
+            all = all.concat(ts);
+          });
+          var nb = [];
+          for (i = 0; i < all.length; i += per) nb.push(all.slice(i, i + per));
+          if (nb.length) {
+            p.mb = nb;
+            said.push("each line of the melody starts a new bar, " + per + " notes to a bar" + (left ? " (a rest left over at the end of " + (left > 1 ? left + " lines" : "a line") + " is left out)" : "") +
+              (held ? " (the last note of " + (held > 1 ? held + " lines" : "a line") + " is held to the end of its bar)" : "") + "; write | between the bars to say otherwise");
+          }
+        }
+      } else if (barred && p.cb.length > p.mb.length && p.mb.every(function (b) { return b.length >= 2 * per && b.length % per === 0; })) {
+        // ... only where Lantern would otherwise say the chords run on past the
+        // tune, and not for a bar of finer shares ("C - - D E - F -" is one bar
+        // with a dotted rhythm: half of it is holds; a phrase is mostly notes)
+        var total = 0, each = p.mb[0].length / per, holds = 0, count = 0, tail = p.cb.length - p.mb.length;
+        p.mb.forEach(function (b) { total += b.length / per; b.forEach(function (x) { count++; if (R.HOLD.test(x)) holds++; }); });
+        if (total === p.cb.length && tail >= 2 && tail * 2 > p.mb.length && holds < 0.25 * count) {
+          var sb = [];
+          p.mb.forEach(function (b) { for (i = 0; i < b.length; i += per) sb.push(b.slice(i, i + per)); });
+          said.push("each | of the melody ends " + (p.mb.every(function (b) { return b.length / per === each; }) ? "a phrase of " + each + " bars" : "a phrase of several bars") + " (" + per +
+            " notes to a bar): Lantern read the " + p.mb.length + " as " + total + " bars, one for each bar of the chords");
+          p.mb = sb;
+        }
+      }
+    });
     function pass(k) {
       var r = { mel: [], chs: [], badN: [], badC: [], bars: 0, info: [] }, prev = { midi: null };
       parts.forEach(function (p) {
-        var mb = p.melody.length ? R.bars(join(p.melody), time[0]).bars : [], cb = p.chords.length ? R.bars(join(p.chords), 0).bars : [], full = cb;
+        var mb = p.mb, cb = p.cb, full = cb;
         if (cb.length && mb.length > cb.length) { full = []; for (var i = 0; i < mb.length; i++) full.push(cb[i % cb.length]); }
         var n = Math.max(mb.length, cb.length);
         notesIn(mb, k, barLen, r.bars * barLen, r.bars, prev, r.mel, r.badN);
@@ -48543,8 +48806,23 @@ Lantern.RFB = (function () {
         if (clash >= 2 || ov < Math.min(2, n.len) - E || c.pcs.indexOf(pc) >= 0 || !half(pc, c)) return;
         var fit = dia.filter(function (d) { return d.pcs.indexOf(pc) >= 0; }).slice(0, 2).map(function (d) { return d.name; });
         clash++;
-        probs.push("bar " + n.bar + ": the melody holds " + T.spell(pc, key) + " over " + c.name + " (" + c.pcs.map(function (p) { return T.spell(p, key); }).join(" ") + "), a half step from a note of the chord: " +
-          (fit.length ? "write " + fit.join(" or ") + " there (" + T.spell(pc, key) + " is in " + (fit.length > 1 ? "them" : "it") + ")" : "change the chord") + ", or change the note" + again(n.bar));
+        // (1.24.2) What to write, as the line itself: the 35B was told "write
+        // G or Em there, or change the note" for the last bar of its waltz and
+        // sent the same block back. The tune's last note, over the key's own
+        // chord, ends on a note of it -- the bar is written out with the
+        // nearest one; any other bar gets the chords line with the chord that
+        // fits.
+        var inf = P.info.filter(function (f) { return n.bar - 1 >= f.from && n.bar - 1 < f.from + f.n; })[0], bi = inf ? n.bar - 1 - inf.from : -1;
+        var mbar = inf && inf.mb[bi] ? inf.mb[bi].slice() : null, cbar = inf && inf.ch >= inf.mel && inf.cb[bi] && inf.cb[bi].length === 1 ? bi : -1, lineM = "", lineC = "";
+        if (mbar && n === P.mel[P.mel.length - 1] && c.root === key.tonic) {   // (over another chord the chord is what to change: a tune ends on its home chord)
+          var j = Math.round((n.at - (n.bar - 1) * barLen) / (barLen / mbar.length)), bestPc = null;
+          c.pcs.forEach(function (x) { var d = Math.min(T.mod(x - pc, 12), T.mod(pc - x, 12)); if (bestPc === null || d < bestPc.d) bestPc = { pc: x, d: d }; });
+          if (bestPc && j >= 0 && j < mbar.length && T.noteOf(mbar[j])) { mbar[j] = T.spell(bestPc.pc, key); lineM = mbar.join(" "); }
+        }
+        if (cbar >= 0 && fit.length) lineC = "chords " + inf.cb.map(function (b, x) { return x === cbar ? fit[0] : b.join(" "); }).join(" | ");
+        probs.push("bar " + n.bar + ": the melody " + (lineM ? "ends on " : "holds ") + T.spell(pc, key) + " over " + c.name + " (" + c.pcs.map(function (p) { return T.spell(p, key); }).join(" ") + "), a half step from a note of the chord: " +
+          (lineM ? "end the tune on a note of " + c.name + " -- write bar " + n.bar + " of the melody as " + lineM + (fit.length ? " -- or write " + fit.join(" or ") + " as its chord" : "") :
+            (fit.length ? "write " + fit.join(" or ") + " there (" + T.spell(pc, key) + " is in " + (fit.length > 1 ? "them" : "it") + ")" + (lineC ? ", that is " + lineC : "") : "change the chord") + ", or change the note") + again(n.bar));
       });
     });
     var tempo = s.tempoText ? tempoOf(s.tempoText) : null;
@@ -50625,7 +50903,8 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // MODULE: MUSIC_SONG_APP - START
 // Depends: CORE, MUSIC_SONG (Lantern.musicSong); MUSIC_SYNTH, MUSIC_MIDI,
-//          MUSIC_SCORE -- feature-detected; MUSIC's hook Lantern.musicCards
+//          MUSIC_SCORE, MUSIC_SONGBOOK (its tunes join the examples) --
+//          feature-detected; MUSIC's hook Lantern.musicCards
 // Exports: Lantern.musicView(plan, opts) -> element (the score, Play/Stop, a
 //          moving line); Lantern.musicDocs = {open(text, title), save(plan,
 //          kind)}; the "Make a song" card at the top of the Music tile
@@ -50730,6 +51009,11 @@ Lantern.RFB = (function () {
     ["Fr\u00e8re Jacques (a round, traditional)", "title Frere Jacques\nkey F major\ntempo 104\nstyle march\nsound french horn\nchords F\n" +
       "melody F G A F | F G A F | A B C - | A B C - | C D C B A - F - | C D C B A - F - | F C F - | F C F -"],
     ["Harbour lights (a Lantern reggae groove)", "title Harbour lights\nkey A minor\ntempo 76\nstyle reggae\nsound melodica\nrepeat 2\nchords Am | Dm | G | Am\nmelody E - C D | F - E D | D - B C | A - - r"]];
+  // (1.24.2) the songbook's tunes, whole, to start from -- for a class to play, with Save parts (MUSIC_SONGBOOK)
+  if (L.musicSongbook) L.musicSongbook.LIST.forEach(function (t) {
+    EXAMPLES.push(["Songbook: " + t.title + " (" + t.by + (t.year ? ", " + t.year : "") + ")",
+      "title " + t.title + "\n" + L.musicSongbook.lines(t).replace(/\n(time [^\n]*)\n/, "\n$1\ntempo " + t.tempo + "\nstyle " + t.style + "\n")]);
+  });
   function current() { var s = L.store.get("music.song", null); return s && s.text ? s : { title: EXAMPLES[0][0], text: EXAMPLES[0][1] }; }
   function block(text, title) { return { title: title || "", lines: String(text).split("\n") }; }
   // open(text, title): the Music tile, with this song in the card
@@ -50905,7 +51189,29 @@ Lantern.RFB = (function () {
   if (!ACTS.some(function (a) { return a.id === "music"; })) ACTS.push({
     id: "music", kind: "MUSIC", kinds: ["MUSIC", "SONG", "TUNE", "MELODY", "CHORDS", "CHORD PROGRESSION", "PROGRESSION", "SHEET MUSIC"], title: "a song",
     match: asks, prompt: PROMPT, build: build,
-    fixHint: function () { return ["Lantern reads a MAKE MUSIC block line by line, like this:"].concat(HINT); }
+    // (1.24.2) a tune Lantern knows whole, named in the question: its lines, to copy (MUSIC_SONGBOOK)
+    promptFor: function (q) { return PROMPT.concat(L.musicSongbook && L.musicSongbook.prompt ? L.musicSongbook.prompt(q) : []); },
+    // (1.24.2) only the lines the problems are about: the whole guide, 35 lines
+    // with every instrument, came after one sentence about bar 8 -- and the
+    // 35B sent the same block back
+    fixHint: function (b, made) {
+      var ps = ((made && made.problems) || []).join(" "), want = [];
+      if (/\bkey\b|sharp|flat|natural/i.test(ps)) want.push(/^key /);
+      if (/\btime\b|3\x2F4|waltz|beats a bar/i.test(ps)) want.push(/^time /, /^style /);
+      if (/\bbars?\b|melody|tune|chords?|note|rest|share/i.test(ps)) want.push(/^chords /, /^melody /);
+      if (/arrang|orchestra|quartet|players?|\bform\b|\bpart\b/i.test(ps)) want.push(/^arrange /, /^form /, /^part /);
+      var inst = /\b(sound|backing|bass)\b|instrument|plays? it|does not play/i.test(ps);
+      if (inst) want.push(/^sound /, /^backing /, /^bass /);
+      if (!want.length) return ["Lantern reads a MAKE MUSIC block line by line, like this:"].concat(HINT);
+      var from = HINT.length;
+      HINT.forEach(function (l, i) { if (from === HINT.length && /^instruments \x28/.test(l)) from = i; });
+      var lines = HINT.filter(function (l, i) {
+        if (i >= from) return inst;   // the instruments, by their names
+        var head = /^\s/.test(l) ? HINT.slice(0, i).filter(function (x) { return !/^\s/.test(x); }).pop() || "" : l;   // a line and the lines that carry it on
+        return want.some(function (re) { return re.test(head); });
+      });
+      return ["Lantern reads these lines of a MAKE MUSIC block like this (the other lines stay as you wrote them):"].concat(lines);
+    }
   });
   // a request for sheet music is a song, not a picture or a table
   ACTS.forEach(function (a) {

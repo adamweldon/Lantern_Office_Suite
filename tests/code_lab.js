@@ -322,6 +322,45 @@ function msgs(list, re) { return list.some(function (p) { return re.test(p.msg);
   ok("...the bench's path: one send-back, the corrected block made, the question passes", lseen.length === 2 && /driven by OTE in rungs 1 and 2/.test(lseen[1]) && lres.made && lres.made.ok &&
     lres.kind === "questioned" && lres.fixed && lres.rounds === 2 && gradeCode(lq, lfixed).pass, { n: lseen.length, kind: lres.kind, fixed: lres.fixed, why: gradeCode(lq, lfixed).why, back: (lseen[1] || "").slice(0, 300) });
 
+  // --- 1.24.2: why the 35B wrote rungs of its own. For "Write ladder logic as rung text for a motor start/stop ..."
+  // the example Lantern showed it to start from was the Arduino start/stop sketch (26 points to the ladder one's 22);
+  // for "Write Structured Text ..." the Arduino tank sketch. A language the question names comes first. ---
+  var shown = function (q) { var m = /Tested example 1: (.*?) \x28/.exec(L.aiCodeExamples.promptLines(q).join("\n")); return m ? m[1] : ""; };
+  var langOf = function (q) { var r = L.aiCodeExamples.search(q); return r.length ? r[0].ex.lang : ""; };
+  var byId = function (id) { return BQ.filter(function (q) { return q.id === id; })[0].q; };
+  ok("the ladder question is shown the ladder start/stop example, the Structured Text question a Structured Text one",
+    shown(lq.q) === "Ladder: start/stop with seal-in" && langOf(byId("code-st-tank-fill")) === "st" && /^ST:/.test(shown(byId("code-st-tank-fill"))), [shown(lq.q), shown(byId("code-st-tank-fill"))]);
+  ok("...every program question of the bench gets an example in its own language", langOf(byId("code-blink-millis")) === "arduino" && langOf(byId("code-accelstepper")) === "arduino" &&
+    langOf(byId("code-p1am-seal-in")) === "arduino" && langOf(byId("code-python-csv-average")) === "python" && langOf(byId("code-js-ohms-law")) === "javascript" && langOf(lq.q) === "ladder",
+    BQ.map(function (q) { return q.id + ":" + langOf(q.q); }));
+  ok("...others in that language follow it, and a question that names no language is ranked as before", L.aiCodeExamples.search("motor start/stop with seal-in in ladder").slice(0, 3).every(function (r) { return r.ex.lang === "ladder"; }) &&
+    L.aiCodeExamples.search("motor start/stop with seal-in")[0].ex.id === "arduino-motor-start-stop" && shown("Blink an LED without delay") === "Blink without delay",
+    [L.aiCodeExamples.search("motor start/stop with seal-in")[0].ex.id, shown("Blink an LED without delay")]);
+  // a Stop or an overload on a branch path of its own (the 35B's rungs, first and second try)
+  var SP = function (text, q) { return L.aiCode.stopProblems("ladder", text, q === undefined ? lq.q : q); };
+  var ends = function (s, tail) { s = String(s || ""); return s.length >= tail.length && s.lastIndexOf(tail) === s.length - tail.length; };
+  var sp1 = SP("[XIC(Start),XIC(Stop),XIC(OL)]OTE(Motor);\n[XIC(Motor)]XIC(Start)XIC(Stop)XIC(OL)OTE(Motor);");
+  var sp2 = SP("[XIC(Start),XIC(Stop),XIC(OL)]OTE(Motor);\n[XIC(Motor),XIC(Start),XIC(Stop),XIC(OL)]OTE(Motor);");
+  ok("Stop and the overload each on a branch path: said, with the path that gets past them and the rung that works", sp1.length === 1 && /^rung 1: XIC\x28Stop\x29 and XIC\x28OL\x29 are each on a branch path of their own/.test(sp1[0]) &&
+    /XIC\x28Start\x29 alone turns Motor on/.test(sp1[0]) && ends(sp1[0], "brackets: [XIC(Start) ,XIC(Motor) ]XIC(Stop)XIC(OL)OTE(Motor);") &&
+    sp2.length === 2 && ends(sp2[1], "brackets: [XIC(Motor) ,XIC(Start) ]XIC(Stop)XIC(OL)OTE(Motor);"), [sp1, sp2]);
+  ok("...in series it is right; so is a Stop on every path, a brake put on by Stop, a lamp for Stopped, a rung with nothing that starts it",
+    !SP("[XIC(Start) ,XIC(Motor) ]XIC(Stop)XIC(OL)OTE(Motor);").length && !SP("[XIC(Start)XIC(Stop) ,XIC(Motor)XIC(Stop) ]OTE(Motor);").length &&
+    !SP("[XIC(Stop) ,XIC(Limit) ]OTE(Brake);", "Write a rung.").length && !SP("[XIO(Stop) ,XIC(Fault) ]OTE(StoppedLamp);", "Write a rung.").length &&
+    !SP("[XIC(Stop) ,XIC(Reset) ]OTE(Pump);", "Write a rung.").length && !L.aiCode.stopProblems("st", "Motor := Start OR Stop;", lq.q).length);
+  ok("...the rung that works keeps the rung's own shape: an emergency stop past a branch, two outputs, a seal-in in series",
+    ends(SP("[XIC(Start) ,XIC(Run) ,XIC(EStop) ]XIC(Stop)OTE(Run);")[0], "brackets: [XIC(Start) ,XIC(Run) ]XIC(Stop)XIC(EStop)OTE(Run);") &&
+    ends(SP("[XIC(Start),XIC(Stop)]OTE(Motor)OTE(RunLamp);", "Write a rung.")[0], "brackets: XIC(Start)XIC(Stop)OTE(Motor)OTE(RunLamp);") &&
+    ends(SP("XIC(Start)[XIC(Motor) ,XIC(Stop) ]OTE(Motor);")[0], "brackets: [XIC(Start) ,XIC(Motor) ]XIC(Stop)OTE(Motor);"),
+    [SP("[XIC(Start) ,XIC(Run) ,XIC(EStop) ]XIC(Stop)OTE(Run);"), SP("[XIC(Start),XIC(Stop)]OTE(Motor)OTE(RunLamp);", "Write a rung."), SP("XIC(Start)[XIC(Motor) ,XIC(Stop) ]OTE(Motor);")]);
+  // the bench's path again: what goes back now names the rung to write
+  var l2seen = [], l2res = await L.aiAct.solve(lq.q, function (m) { l2seen.push(String(m[m.length - 1].content)); return Promise.resolve(l2seen.length === 1 ? lr : lfixed); });
+  ok("...the send-back for the 35B's one-line reply: the coil driven twice, and the rung to write", l2seen.length === 2 && /driven by OTE in rungs 1 and 2/.test(l2seen[1]) &&
+    l2seen[1].indexOf("Put them in series, outside the brackets: [XIC(Start) ,XIC(Motor) ]XIC(Stop)XIC(OL)OTE(Motor);") > 0 && l2res.fixed && /LANTERN\u2019S TESTED EXAMPLE[\s\S]*Ladder: start\/stop with seal-in/.test(L.CHAT.buildSystem(lq.q)),
+    (l2seen[1] || "").slice(0, 600));
+  var blk2 = L.aiAct.build("MAKE CODE: m\nlanguage ladder\n[XIC(Start),XIC(Stop),XIC(OL)]OTE(Motor);\n[XIC(Motor),XIC(Start),XIC(Stop),XIC(OL)]OTE(Motor);\nEND", lq.q);
+  ok("...and its second try, a MAKE CODE block with the same rungs, is questioned for them too", blk2 && !blk2.ok && blk2.problems.filter(function (x) { return /branch path of their own/.test(x); }).length === 2, blk2 && blk2.problems);
+
   ok("no page errors", errs.length === 0, errs);
   console.log(fails ? fails + " CODE LAB FAILURES (" + passes + " passed)" : "ALL CODE LAB TESTS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);

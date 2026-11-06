@@ -112,7 +112,7 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     /^\u201cHm7\u201d \(bar 2\) is not a chord Lantern knows: write a letter and its kind/.test(bad.problems[1]), bad.problems);
   var clash = act.build(song(["key E minor", "chords Em | B7 | Em", "melody B - - - | C - - - | E - - -"]), "Write a tune in E minor");
   ok("a long note a half step from its chord: drawn, questioned, with the chords of the key that fit it", clash.plan && !clash.ok &&
-    /^bar 2: the melody holds C over B7 \(B D# F# A\), a half step from a note of the chord: write Am or C there \(C is in them\), or change the note$/.test(clash.problems[0]), clash.problems);
+    /^bar 2: the melody holds C over B7 \(B D# F# A\), a half step from a note of the chord: write Am or C there \(C is in them\), that is chords Em \| Am \| Em, or change the note$/.test(clash.problems[0]), clash.problems);
   var far = S.make({ title: "x", lines: ["key C", "melody C D E F | G A B C2"] });
   var lead = S.make({ title: "x", lines: ["melody A B | E2"] });
   ok("a note with its octave written stays where it says, and does not pull the notes before it", names(lead.plan) === "A4 B4 E2" && /\u201cE2\u201d is far below/.test(lead.problems[0]), [names(lead.plan), lead.problems]);
@@ -179,11 +179,14 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   ok("ten actions, music last", L.aiActions.map(function (a) { return a.id; }).join(",") === "schematic,drawing,wheel,sheet,doc,slides,cards,plan,code,music", L.aiActions.map(function (a) { return a.id; }));
   var fx = act.fixText(act.build(song(["key C", "melody C E/2 G"]), "a tune"), "a tune");
   ok("the correction turn names the problem and how Lantern reads a MAKE MUSIC block", /^Lantern checked your MAKE MUSIC block: \u201cE\/2\u201d \(bar 1\) is not a note/.test(fx) &&
-    /Lantern reads a MAKE MUSIC block line by line, like this:\nkey E minor/.test(fx) && /Reply with the corrected block only \(MAKE MUSIC: Song \.\.\. END\)/.test(fx), fx);
+    /Lantern reads these lines of a MAKE MUSIC block like this \(the other lines stay as you wrote them\):\nchords Em \| Am \| B7 \| Em/.test(fx) && /\nmelody B A G E \| A - G F# \| E - - r[^\n]*\n +- holds the note before/.test(fx) &&
+    !/\nkey E minor|instruments \(\d+\)|keyboards:/.test(fx) && /Reply with the corrected block only \(MAKE MUSIC: Song \.\.\. END\)/.test(fx), fx);
   var Q = L.aiBenchQuestions.filter(function (q) { return q.kind === "MUSIC"; });
   function grade(id, reply) { var item = Q.filter(function (q) { return q.id === id; })[0]; return L.aiBench.grade(item, reply, { made: act.build(reply, item.q) }); }
   ok("the bench: four songs (1.22.0: the Ode for an orchestra), every model answer passes", Q.length === 4 && Q.every(function (q) { return q.cat === "make" && grade(q.id, q.ideal).pass; }), Q.map(function (q) { return grade(q.id, q.ideal).why; }));
-  ok("...Ode to Joy with a wrong note fails, named; in another key it passes", /^note 4 of the theme is wrong/.test(grade("make-music-ode", Q[0].ideal.replace("F# F# G A | A G", "F# F# G B | A G")).why) &&
+  ok("...Ode to Joy with a wrong note fails, named (by Lantern, which knows the tune, 1.24.2; by the bench's own check too); in another key it passes",
+    /^Lantern still questions it: the melody is not Ode to Joy as Lantern knows it -- from bar 1 \(note 4, its pitch\)/.test(grade("make-music-ode", Q[0].ideal.replace("F# F# G A | A G", "F# F# G B | A G")).why) &&
+    /^note 4 of the theme is wrong/.test(Q[0].check(S.make(act.find(Q[0].ideal.replace("F# F# G A | A G", "F# F# G B | A G"))[0]).plan)) &&
     grade("make-music-ode", song(["key C", "melody E E F G | G F E D | C C D E | E - - D D - - -"])).pass);
   ok("...the tune of its own: G major, 8 bars, a walking pace, home at the end", /questions it: the question asks for G major, but the song is in D major/.test(grade("make-music-original", song(["key D", "chords D | A | D | A | D | A | D | D", "melody D E F A | A - - - | D E F A | A - - - | D E F A | A - - - | F E D E | D - - -"])).why) &&
     /questions it: the question asks for 8 bars; the tune has 4/.test(grade("make-music-original", song(["key G", "chords G | C | D | G", "melody G A B G | C - - - | A - - - | G - - -"])).why) &&
@@ -195,16 +198,18 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   function row(id) { return R19.rows.filter(function (r) { return r.id === id; })[0]; }
   var od = act.build(row("make-music-ode").reply, row("make-music-ode").q);
   var TAIL = "the chords go on 4 bars past the melody (bars 5 to 8 have no tune): write the melody for bars 5 to 8 too, or end the chords at bar 4";
-  ok("chords going on well past the melody: questioned, with the bars to fill", od.plan && !od.ok && od.problems.length === 1 && od.problems[0] === TAIL, od.problems);
+  ok("chords going on well past the melody: questioned, with the bars to fill (and, 1.24.2, the 4th bar's rhythm: Lantern knows the tune)", od.plan && !od.ok && od.problems.length === 2 && od.problems[0] === TAIL &&
+    /^the melody is not Ode to Joy as Lantern knows it -- from bar 4 \(note 13, its length\): write the key, time, chords and melody lines as Lantern gave them:\nkey C major\n/.test(od.problems[1]), od.problems);
   ok("...a bar or two of chords after the tune is an ending, said", S.make({ title: "x", lines: ["chords C | C | G | C | F | C", "melody E D C D | E E E - | D D E D | C - - -"] }).problems.length === 0 &&
     /bars 5 to 6 are chords alone/.test(S.make({ title: "x", lines: ["chords C | C | G | C | F | C", "melody E D C D | E E E - | D D E D | C - - -"] }).summary));
   var oq = Q.filter(function (q) { return q.id === "make-music-ode"; })[0], orig = Q.filter(function (q) { return q.id === "make-music-original"; })[0];
   ok("...the bench: the 35B's Ode is now questioned, and its 4th bar's rhythm is not the theme's", /^Lantern still questions it: the chords go on 4 bars/.test(grade("make-music-ode", row("make-music-ode").reply).why) &&
-    /^the rhythm is off at note 13/.test(grade("make-music-ode", song(["key C", "chords C | G | Am | F", "melody E E F G | G F E D | C C D E | E D D -"])).why) &&
+    /^Lantern still questions it: the melody is not Ode to Joy as Lantern knows it -- from bar 4 \(note 13, its length\)/.test(grade("make-music-ode", song(["key C", "chords C | G | Am | F", "melody E E F G | G F E D | C C D E | E D D -"])).why) &&
+    /^the rhythm is off at note 13/.test(oq.check(S.make({ title: "Ode", lines: ["key C", "chords C | G | Am | F", "melody E E F G | G F E D | C C D E | E D D -"] }).plan)) &&
     grade("make-music-ode", song(["key C", "chords C | G | Am | F G", "melody E E F G | G F E D | C C D E | E - - D D - - -"])).pass);
   var o1 = act.build(row("make-music-original").first, orig.q), o2 = act.build(row("make-music-original").reply, orig.q);
   ok("the 35B's tune of its own: first the short tune and the long F# over G together, then the short tune still", o1.problems.length === 2 && o1.problems[0] === TAIL &&
-    /^bar 4: the melody holds F# over G/.test(o1.problems[1]) && o2.problems.length === 1 && o2.problems[0] === TAIL && !grade("make-music-original", row("make-music-original").reply).pass, [o1.problems, o2.problems]);
+    /^bar 4: the melody ends on F# over G \(G B D\), a half step from a note of the chord: end the tune on a note of G -- write bar 4 of the melody as [^\n]*G[^\n]* -- or write D or Bm as its chord$/.test(o1.problems[1]) && o2.problems.length === 1 && o2.problems[0] === TAIL && !grade("make-music-original", row("make-music-original").reply).pass, [o1.problems, o2.problems]);
   ok("...the bench needs the tune itself to fill the 8 bars", /^the tune is 4 bars; the chords go on alone to bar 8$/.test(L.aiBench.grade(orig, "x", { made: { ok: true, action: { kind: "MUSIC" }, plan: S.make({ title: "x",
     lines: ["key G", "chords G | C | D | G | G | C | D | G", "melody G A B G | C - E D | D C B A | G - - - | r | r | r | r"] }).plan } }).why));
 
@@ -704,7 +709,8 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   go("music"); await sleep(120);
   var ta = d.querySelector("textarea[aria-label=Song]");
   ok("the Make a song card: the song in its box, written out, with Save MIDI, Save WAV and examples", ta && /title Twinkle/.test(ta.value) && d.querySelector(".la-song canvas") &&
-    btn(d, "Save MIDI") && btn(d, "Save WAV") && btn(d, "Save parts") && btn(d, "Save GMS project") && d.querySelectorAll("select[aria-label='Start from'] option").length === 8, ta && ta.value);
+    btn(d, "Save MIDI") && btn(d, "Save WAV") && btn(d, "Save parts") && btn(d, "Save GMS project") && d.querySelectorAll("select[aria-label='Start from'] option").length === 17 &&
+    /^Songbook: Silent Night \(Franz Xaver Gruber, 1818\)$/.test(d.querySelectorAll("select[aria-label='Start from'] option")[15].textContent), ta && ta.value);
   var sel = d.querySelector("select[aria-label='Start from']");
   sel.value = "2"; fire(sel, "change"); await sleep(30);
   ok("...an example: Ode to Joy, 8 bars in D major", /title Ode to Joy/.test(ta.value) && /8 bars in D major/.test(d.body.textContent));
@@ -718,6 +724,80 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   ok("...a setting for orchestral sample libraries, kept, and Save MIDI follows it (Chat's too)", libBox && L.store.get("music.midiLibrary", false) === true && seen.length === 1 && seen[0].library === true, seen);
   L.musicMidi.file = mf0; L.store.set("music.midiLibrary", false);
   L.musicDocs.EXAMPLES.forEach(function (x) { var r = S.make({ title: "", lines: x[1].split("\n") }); ok("example " + x[0] + ": made, nothing questioned", r.plan && !r.problems.length, r.problems); });
+
+  // --- 1.24.2: the 35B's bench run on 1.24.0 (fixtures/bench_run_1240_35b.json): three songs, none mended on its second
+  // try. The waltz came back the same block; the Ode's melody lines had 17 notes and no bar lines; the orchestra's tune
+  // had a | after each 4-bar phrase. ---
+  var R24 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "bench_run_1240_35b.json"), "utf8"));
+  function row24(id) { return R24.rows.filter(function (r) { return r.id === id; })[0]; }
+  var wrow = row24("make-music-waltz"), wz = act.build(wrow.first, wrow.q), wfx = act.fixText(wz, wrow.q);
+  ok("the waltz's last note, G over the home chord: the bar to write, and the chords that would fit", wz.plan && !wz.ok && wz.problems.length === 1 && wrow.first === wrow.reply &&
+    wz.problems[0] === "bar 8: the melody ends on G over D (D F# A), a half step from a note of the chord: end the tune on a note of D -- write bar 8 of the melody as F# - - r -- or write G or Em as its chord", wz.problems);
+  ok("...what goes back is that sentence and the chords and melody lines, not the whole guide", wfx.split("\n").length <= 9 && /write bar 8 of the melody as F# - - r/.test(wfx) &&
+    /\nchords Em \| Am \| B7 \| Em/.test(wfx) && !/instruments \(\d+\)|\nkey E minor|arrange orchestra|keyboards:/.test(wfx), wfx);
+  var wfixed = wrow.first.replace("| G - - r", "| F# - - r");
+  ok("...with the bar as written there, the waltz is made and passes the bench", wfixed !== wrow.first && act.build(wfixed, wrow.q).ok && grade("make-music-waltz", wfixed).pass, grade("make-music-waltz", wfixed).why);
+  ok("...over another chord it is the chord that changes: the chords line with the one that fits", /write Am or C there \(C is in them\), that is chords Em \| Am \| Em, or change the note$/.test(
+    S.make({ title: "x", lines: ["key E minor", "chords Em | B7 | Em", "melody B - - - | C - - - | E - - -"] }).problems[0]));
+  var orow = row24("make-music-orchestra"), om = S.make(act.find(orow.first)[0]);
+  ok("a | at the end of each 4-bar phrase, over 8 bars of chords: read as 8 bars, and said", om.plan && om.plan.bars === 8 && om.plan.melodyBars === 8 && !om.problems.length &&
+    /each \| of the melody ends a phrase of 4 bars \(4 notes to a bar\): Lantern read the 2 as 8 bars, one for each bar of the chords/.test(om.said.join(". ")) &&
+    om.plan.parts[0].melody.slice(0, 4).join(" | ") === "E E F G | G F E D | C C D E | E D D -", [om.problems, om.said]);
+  var fine = S.make({ title: "x", lines: ["chords C | G | C | G", "melody C - - D E - F - | E - - D C - - - |"] }), nofit = S.make({ title: "x", lines: ["chords C | G | C | G | C", "melody E E F G G F E D | C C D E E D D -"] });
+  ok("...not a bar of finer shares (a dotted rhythm), nor a tune its chords do not fit bar for bar", fine.plan.melodyBars === 2 && !/ends a phrase/.test(fine.said.join(" ")) &&
+    nofit.plan.melodyBars === 2 && /the chords go on 3 bars past the melody/.test(nofit.problems.join(" ")), [fine.said, nofit.problems]);
+  var erow = row24("make-music-ode"), em = S.make(act.find(erow.first)[0]);
+  ok("melody lines with no bar lines, 17 notes each: each line starts a new bar, the rest left over is left out -- 32 bars, not 34, nothing questioned", em.plan && em.plan.bars === 32 && !em.problems.length &&
+    /each line of the melody starts a new bar, 4 notes to a bar \(a rest left over at the end of 8 lines is left out\); write \| between the bars to say otherwise/.test(em.said.join(". ")) &&
+    em.plan.parts[0].melody.slice(3, 5).join(" | ") === "E D D - | E E F G", [em.problems, em.said]);
+  var over = S.make({ title: "x", lines: ["melody C D E F G", "melody E D C -"] }), even = S.make({ title: "x", lines: ["melody C D E F", "melody E D C -"] }), one = S.make({ title: "x", lines: ["melody C D E F G"] });
+  ok("...a note left over is held in a bar of its own; lines that fill their bars, and a tune on one line, are read as before", over.plan.bars === 3 &&
+    /\(the last note of a line is held to the end of its bar\)/.test(over.said.join(" ")) && over.plan.parts[0].melody.join(" | ") === "C D E F | G - - - | E D C -" &&
+    even.plan.bars === 2 && !/starts a new bar/.test(even.said.join(" ")) && one.plan.bars === 2 && !/starts a new bar/.test(one.said.join(" ")), [over.said, over.plan.parts[0].melody]);
+  // Lantern knows the tune (MUSIC_SONGBOOK): its lines for the AI to copy, and the song made checked against them
+  var SB = L.musicSongbook, NAT = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  function midiOf(n) { return NAT[n.charAt(0)] + (n.charAt(1) === "#" ? 1 : n.charAt(1) === "b" ? -1 : 0) + 12 * (+n.slice(-1) + 1); }
+  function steps(ms) { var out = []; for (var i = 1; i < ms.length; i++) out.push(ms[i] - ms[i - 1]); return out; }
+  function tune(id) { return SB.LIST.filter(function (x) { return x.id === id; })[0]; }
+  function pitches(id) { return SB.plan(tune(id)).melody.map(function (n) { return n.midi; }); }
+  var sbBad = SB.LIST.filter(function (t) {
+    var r = S.make({ title: t.title, lines: SB.lines(t).split("\n") }), e = L.musicTunes.LIST.filter(function (x) { return x[0] === t.title; })[0];
+    if (!r.plan || r.problems.length || !e || !SB.plan(t)) return true;
+    var o = steps(e[3].split(" ").map(midiOf)), g = steps(r.plan.melody.map(function (n) { return n.midi; }));
+    var whole = 0; r.plan.melody.forEach(function (n) { whole = Math.max(whole, n.at + n.len); });
+    return o.some(function (d, i) { return g[i] !== d; }) || Math.abs(whole - r.plan.bars * r.plan.barLen) > 1e-6 || SB.named("please play " + t.title) !== t;
+  }).map(function (t) { return t.id; });
+  ok("the songbook: nine old tunes, each made with nothing questioned, its bars full, its opening the one MUSIC_TUNES knows it by", SB.LIST.length === 9 && !sbBad.length, sbBad);
+  ok("...the leaps where they belong: the Ode's low G, Row Your Boat's top C and the way down, Silent Night's last line",
+    steps(pitches("ode-to-joy")).slice(44, 47).join() === "2,-7,9" && steps(pitches("row-your-boat")).slice(9, 26).join() === "5,0,0,-5,0,0,-3,0,0,-4,0,0,7,-2,-1,-2,-2" &&
+    steps(pitches("silent-night")).slice(-7).join() === "-4,-5,-3,3,-2,-3,-2" && pitches("silent-night").length === 46 && SB.plan(tune("silent-night")).bars === 24,
+    [steps(pitches("ode-to-joy")).slice(44, 47), steps(pitches("row-your-boat")).slice(9, 26), steps(pitches("silent-night")).slice(-7)]);
+  var odeT = tune("ode-to-joy"), odeLines = SB.lines(odeT).split("\n"), odeItem = Q.filter(function (q) { return q.id === "make-music-ode"; })[0];
+  ok("...the Ode is the theme the bench checks, rhythm and all, alone and for an orchestra", SB.plan(odeT).bars === 16 && grade("make-music-ode", song(odeLines, "Ode to Joy")).pass &&
+    grade("make-music-orchestra", song(odeLines.concat(["arrange orchestra"]), "Ode to Joy")).pass, [grade("make-music-ode", song(odeLines, "Ode to Joy")).why, grade("make-music-orchestra", song(odeLines.concat(["arrange orchestra"]), "Ode to Joy")).why]);
+  var sysOde = L.CHAT.buildSystem(odeItem.q);
+  ok("a question that names a tune Lantern knows gets its lines to copy; a waltz of the AI's own, a variation, a march in a tune's style do not",
+    /LANTERN KNOWS THIS TUNE: Ode to Joy \(Beethoven \(Symphony No\. 9\), 1824; free for anyone to use\)/.test(sysOde) && sysOde.indexOf("\ntitle Ode to Joy\nkey C major\ntime 4/4\nchords C | G | C | C G |") > 0 &&
+    sysOde.indexOf("melody E E F G | G F E D | C C D E | E - - D D - - - |") > 0 && !/LANTERN KNOWS THIS TUNE/.test(L.CHAT.buildSystem(wrow.q)) && !SB.prompt("Write a variation on Ode to Joy for piano").length &&
+    !SB.prompt("Write a march in the style of Jingle Bells").length && SB.asksFor("Play Frere Jacques on the flute").id === "frere-jacques" && SB.asksFor("can I hear silent night with a harp?").id === "silent-night" &&
+    !SB.asksFor("Write a gentle 8-bar waltz in D major for violin and piano."));
+  var inD = act.build(song(["key D major", "chords D | A | D | D A", "melody F# F# G A | A G F# E | D D E F# | F# - - E E - - -"], "Ode to Joy"), odeItem.q);
+  var flat = act.build(song(["key C", "melody E E F G | G F E D | C C D E | E D D -"], "Ode to Joy"), odeItem.q), flatFx = act.fixText(flat, odeItem.q);
+  ok("the tune in another key, or only its first phrase, is the tune", inD.ok && !SB.differs(inD.plan, odeT), inD.problems);
+  ok("...a flattened 4th bar goes back with Lantern's lines, and no full stop after them", !flat.ok && flat.problems.length === 1 &&
+    flat.problems[0] === "the melody is not Ode to Joy as Lantern knows it -- from bar 4 (note 13, its length): write the key, time, chords and melody lines as Lantern gave them:\n" + SB.lines(odeT) &&
+    flatFx.indexOf("\n" + odeLines[3] + "\nLantern reads these lines") > 0, [flat.problems, flatFx.slice(0, 700)]);
+  var wrong = act.build(song(["key C", "melody E E F G | G F E D | C C D F | E - - D D - - -"], "Ode to Joy"), odeItem.q);
+  ok("...a wrong note too, named by its bar", !wrong.ok && /from bar 3 \(note 12, its pitch\)/.test(wrong.problems[0]), wrong.problems);
+  var e24 = act.build(erow.first, erow.q), o24 = act.build(orow.first, orow.q);
+  ok("...the 35B's Ode from memory (the run on 1.24.0): its 4th bar questioned, in both questions", e24.problems.length === 1 && /^the melody is not Ode to Joy as Lantern knows it -- from bar 4 \(note 13, its length\)/.test(e24.problems[0]) &&
+    o24.problems.length === 1 && /^the melody is not Ode to Joy as Lantern knows it -- from bar 4 \(note 13, its length\)/.test(o24.problems[0]), [e24.problems, o24.problems]);
+  ok("a song of chords alone, and a tune the question does not name, are left alone", act.build(song(["key C", "chords C | F | G | C"]), "What are the chords of Twinkle Twinkle Little Star so I can hear them?").ok &&
+    act.build(song(["key C", "melody E D C D | E E E -"]), "Write a short tune so I can hear it").ok);
+  var oseen = [], ocopy = "MAKE MUSIC: Ode to Joy\n" + SB.lines(odeT) + "\nsound flute\nEND";
+  var ores = await act.solve(odeItem.q, function (m) { oseen.push(String(m[m.length - 1].content)); return Promise.resolve(oseen.length === 1 ? erow.first : ocopy); });
+  ok("the bench's path: the tune from memory goes back with the lines; the copy is made and passes", oseen.length === 2 && /^Lantern checked your MAKE MUSIC block: the melody is not Ode to Joy as Lantern knows it/.test(oseen[1]) &&
+    ores.made && ores.made.ok && ores.fixed && L.aiBench.grade(odeItem, ores.text, ores).pass, [oseen.length, (oseen[1] || "").slice(0, 300), L.aiBench.grade(odeItem, ores.text, ores).why]);
 
   ok("no page errors", errs.length === 0, errs);
   console.log(fails ? fails + " MUSIC TESTS FAILED (" + passes + " passed)" : "ALL MUSIC TESTS PASS (" + passes + ")");
