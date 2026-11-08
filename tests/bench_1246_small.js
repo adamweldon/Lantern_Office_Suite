@@ -57,9 +57,12 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     rd("=VOLTS(0.02,470) -> volts\n\nANSWER: 9.4 volts") === "=VOLTS(0.02,470)\n\nANSWER: 9.4 volts" && rd("=CEIL(2000/50) -> bags (rounded up)\nANS: 40") === "=CEIL(2000/50)\nANS: 40" &&
     rd("=WEIGHT(50)   -> newtons") === "=WEIGHT(50)" && rd("=LEN(\"a->b\")") === "=LEN(\"a->b\")" && rd("=5*3 => 15") === "=5*3" &&
     R("=VOLTS(0.02,470) -> volts").said[0] === "a formula line with \u201c-> \u2026\u201d after the sum as the sum", R("=VOLTS(0.02,470) -> volts"));
-  ok("\u201c= 65*35 = 2275\u201d, \u201c=2000/15/60 = 2000/900 = 200/9 = 22.2\u201d: the line is the sum, up to the second =; a comparison inside a function is left alone",
-    rd("= 65*35 = 2275", HOWMUCH) === "= 65*35" && rd("=2000/15/60 = 2000/900 = 200/9 = 22.22222222222222\nANSWER: 22.2", "How many hours does it take?") === "=2000/15/60\nANSWER: 22.2" &&
-    rd("=CONVERT(26,\"mile\",\"km\") = 6.5\nANS: 6.5", "What is 26 miles in km?") === "=CONVERT(26,\"mile\",\"km\")\nANS: 6.5" && rd("=IF(2>=1,5,6)", HOWMUCH) === "=IF(2>=1,5,6)" && rd("=IF(3=3,5,6)", HOWMUCH) === "=IF(3=3,5,6)" &&
+  // (the reviews of 1.24.7: what follows the second = is cut only where it is the sum's own value, every step of it --
+  // a number that is not may be the model's next step, done in the head, as surely as a slip, and stays as written)
+  ok("\u201c= 65*35 = 2275\u201d, \u201c=2000/15/60 = 2000/900 = 2.2222\u201d: the line is the sum, up to the second =, where what follows is the sum\u2019s own value; the 0.8B\u2019s chain that ends wrong (\u201c= 200/9 = 22.2\u201d), and 6.5 after =CONVERT(26,\"mile\",\"km\"), stay as written; a comparison inside a function is left alone",
+    rd("= 65*35 = 2275", HOWMUCH) === "= 65*35" && rd("=2000/15/60 = 2000/900 = 2.2222\nANSWER: {result}", "How many hours does it take?") === "=2000/15/60\nANSWER: {result}" &&
+    rd("=2000/15/60 = 2000/900 = 200/9 = 22.22222222222222\nANSWER: 22.2", "How many hours does it take?") === "=2000/15/60 = 2000/900 = 200/9 = 22.22222222222222\nANSWER: 22.2" &&
+    rd("=CONVERT(26,\"mile\",\"km\") = 6.5\nANS: 6.5", "What is 26 miles in km?") === "=CONVERT(26,\"mile\",\"km\") = 6.5\nANS: 6.5" && rd("=IF(2>=1,5,6)", HOWMUCH) === "=IF(2>=1,5,6)" && rd("=IF(3=3,5,6)", HOWMUCH) === "=IF(3=3,5,6)" &&
     R("= 65*35 = 2275", HOWMUCH).said[0] === "a formula line with its result typed after a second = as the sum", R("= 65*35 = 2275", HOWMUCH));
   // (the second review: a comparison is a sum too -- 1 for yes)
   ok("...only where the question asks for a number. Where it asks whether something is so (\u201cCheck whether\u201d, \u201cVerify that\u201d, \u201cTell me if\u201d, \u201cConfirm\u201d, \u201cCheck it\u201d, \u201cCompare\u201d, \u201cIs ...?\u201d), where the answer says what 1 and 0 mean, and where Lantern does not know the question, \u201c=17*23=391\u201d is the sum",
@@ -75,30 +78,12 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     R("= 65*35 = 2275\nANSWER: {result}", [{ role: "user", content: "You are a careful calculation assistant.\nQUESTION: " + HOWMUCH + "\nThe question gives these numbers: 65 pesos; 35 litres." }]).text === "= 65*35\nANSWER: {result}");
   ok("\u201c=({2000}/{15})/60\u201d: a number in the { } of a recipe\u2019s blank is the number; a blank with its name in it is left for Lantern to question",
     rd("=({2000}/{15})/60") === "=(2000/15)/60" && rd("=CEIL({2000/50})") === "=CEIL((2000/50))" && rd("=({ah}*{v})/{w}") === "=({ah}*{v})/{w}" && rd("ANSWER: It weighs {result} newtons.") === "ANSWER: It weighs {result} newtons.");
-  ok("a number typed on a = line of its own after a sum Lantern can work out is left out -- the last = line only, or the last before \u201c=ANS\u201d",
-    rd("=CONVERT(26,\"mile\",\"km\")\n=88.5625\n\nANSWER: 88.5625") === "=CONVERT(26,\"mile\",\"km\")\n\nANSWER: 88.5625" &&
-    rd("=PLANET(\"Mars\",\"escape\") -> 50480 m/s\n=ANS\n=50480\n\nANSWER: 50480") === "=PLANET(\"Mars\",\"escape\")\n=ANS\n\nANSWER: 50480" &&
-    rd("=(2000/15)/60\n=133.33333333333334 hours\nANSWER: x") === "=(2000/15)/60\nANSWER: x" &&
-    R("=5*3\n=15").said[0] === "a number typed on a = line after the sum left out (Lantern works the number out)", R("=5*3\n=15"));
-  // (the second review: numbers a model sets down on purpose)
-  ok("...not a whole number that is the sum rounded up or down (12 jerrycans for 250/20, 21 bags for 1020/50, 6 for 17/3, 5 eggs for 4.5): the model rounded as the question asks. Not where the answer says the sum\u2019s own result as well (\u201c144, and there are 7 days in a week\u201d). Not under another typed number. Not where the answer names its lines",
-    rd("=250/20\n=12\nANSWER: 12 jerrycans can be filled.") === "=250/20\n=12\nANSWER: 12 jerrycans can be filled." && rd("=1020/50\n=21\nANSWER: You need 21 bags.") === "=1020/50\n=21\nANSWER: You need 21 bags." &&
-    rd("=17/3\n=6\nANSWER: 6") === "=17/3\n=6\nANSWER: 6" && rd("=3/4*6\n=5\nANSWER: 5 eggs.") === "=3/4*6\n=5\nANSWER: 5 eggs." && rd("=250/20\r\n=12\r\nANSWER: 12 jerrycans") === "=250/20\r\n=12\r\nANSWER: 12 jerrycans" &&
-    rd("=12*12\n=7\nANSWER: 144, and there are 7 days in a week.") === "=12*12\n=7\nANSWER: 144, and there are 7 days in a week." && rd("=1200/60\n=-80\nANSWER: 20, and 100 less is -80.") === "=1200/60\n=-80\nANSWER: 20, and 100 less is -80." &&
-    rd("=2000/15\n=133.33\n=2.22\nANSWER: 2.22 hours") === "=2000/15\n=133.33\n=2.22\nANSWER: 2.22 hours" &&
-    rd("=12*30\n=365\nANSWER: A year has {result} days (365), and 12 months of 30 days make {ANS1}.") === "=12*30\n=365\nANSWER: A year has {result} days (365), and 12 months of 30 days make {ANS1}." &&
-    rd("=60*60\n=24\nANSWER: An hour has {ANS1} seconds and a day has {ANS2} hours.") === "=60*60\n=24\nANSWER: An hour has {ANS1} seconds and a day has {ANS2} hours.");
-  ok("...a typed number that is the sum\u2019s result as far as it is written (1.414 for SQRT(2), 92.4 minutes, 75% for 45/60*100, 720 hours) is left out; so is the 2B\u2019s, with the instructions\u2019 own sentence copied after it",
-    rd("=SQRT(2)\n=1.414\nANSWER: 1.414") === "=SQRT(2)\nANSWER: 1.414" && rd("=45/60*100\n=75%\nANSWER: 75%") === "=45/60*100\nANSWER: 75%" && rd("=30*24\n=720 hours\nANSWER: 720 hours") === "=30*24\nANSWER: 720 hours" &&
-    rd(row(F2, "battery-hours").reply) === "=({ah}*{v})/{w}\n=100*12/60\n\nANSWER: 3.3333333333333335 hours: Lantern works the number out and puts it in place of {result}: never type a result yourself.");
-  // (the fourth review: 14 right replies whose last step was done in the head, each read wrong)
-  ok("...a typed number one step on from the sum -- times or over a number of the question or a factor of units, the count of its numbers, plus or minus a number of the question -- is the model\u2019s last step done in its head, and stays as written (\u201c=2000/15\u201d, \u201c=2.22\u201d for hours; \u201c=350/100\u201d, \u201c=28\u201d for 8 litres per 100 km; \u201c=4+8+12\u201d, \u201c=8\u201d for an average; \u201c=100-32\u201d, \u201c=37.8\u201d); one the sum already holds, or one no step reaches, goes",
-    rd("=2000/15\n=2.22\nANSWER: It takes about 2.22 hours.", "A walker covers 2000 m at 15 m per minute. How many hours does it take?") === "=2000/15\n=2.22\nANSWER: It takes about 2.22 hours." &&
+  // (1.24.7 at first left out a number typed on its own = line under a sum. The fourth and fifth reviews wrote 44 right
+  // replies whose last step was done in the head, and no rule told the step from a slip: the model's number stands)
+  ok("a number typed on a = line of its own under a sum is the model\u2019s, and stays as written: its last step done in its head (\u201c=80*25/100\u201d, \u201c=60\u201d for a coat at 25% off; \u201c=350/100\u201d, \u201c=28\u201d for 8 litres per 100 km) or a slip (the 2B\u2019s 88.5625) -- Lantern cannot tell which",
+    rd("=80*25/100\n=60\nANSWER: The price is 60 dollars.", "A coat costs $80 and is 25% off. What is the sale price?") === "=80*25/100\n=60\nANSWER: The price is 60 dollars." &&
     rd("=350/100\n=28\nANSWER: 28 litres", "A car uses 8 litres per 100 km. How much fuel does it need for 350 km?") === "=350/100\n=28\nANSWER: 28 litres" &&
-    rd("=4+8+12\n=8\nANSWER: 8", "What is the average of 4, 8 and 12?") === "=4+8+12\n=8\nANSWER: 8" && rd("=100-32\n=37.8\nANSWER: 37.8 C", "What is 100 F in Celsius?") === "=100-32\n=37.8\nANSWER: 37.8 C" &&
-    rd("=(2000/15)/60\n=133.33333333333334 hours\nANSWER: x", "How many hours does it take?") === "=(2000/15)/60\nANSWER: x" && rd(row(F2, "miles-km").reply, item("miles-km").q) === "=CONVERT(26,\"mile\",\"km\")\nANSWER: 88.5625" &&
-    rd("=2000/15 = 133.33/60 = 2.22\nANSWER: {result} hours", "How many hours does it take?") === "=2000/15 = 133.33/60 = 2.22\nANSWER: {result} hours" &&
-    rd("=1000*1.05^10 = 1628.89 - 1000\nANSWER: {result} dollars", "How much interest does 1000 dollars earn in 10 years at 5% a year?") === "=1000*1.05^10 = 1628.89 - 1000\nANSWER: {result} dollars");
+    rd(row(F2, "miles-km").reply, item("miles-km").q) === row(F2, "miles-km").reply && R("=5*3\n=15").said.length === 0);
   // (the second review: the older readers inside a document, and lines named later)
   ok("no reader touches a line inside a MAKE block or a code fence: an answer key\u2019s \u201cANS: B\u201d three times running, a quiz\u2019s \u201cANS: 12*12\u201d, a worksheet\u2019s \u201cANSWER: SQRT(49)\u201d; a line of prose that begins \u201cMake sure\u201d opens no block",
     rd("MAKE DOC: Answer key\nAnswers to the quiz.\nANS: B\nANS: B\nANS: B\nANS: C\nEND") === "MAKE DOC: Answer key\nAnswers to the quiz.\nANS: B\nANS: B\nANS: B\nANS: C\nEND" &&
@@ -107,9 +92,10 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     rd("Make sure the units match.\n=2000/15 -> minutes\nANSWER: {result}") === "Make sure the units match.\n=2000/15\nANSWER: {result}");
   ok("...one line three times is read as once only where the lines are not named later: \u201c=10\u201d three times and \u201c=ANS1+ANS2+ANS3\u201d are three resistors",
     rd("=10\n=10\n=10\n=ANS1+ANS2+ANS3\nANSWER: {result} ohms") === "=10\n=10\n=10\n=ANS1+ANS2+ANS3\nANSWER: {result} ohms" && rd("=4*5\n=4*5\n=4*5\nANSWER: {result}") === "=4*5\nANSWER: {result}");
-  ok("...a formula after \u201cANSWER:\u201d is the sum only when Lantern can work it out and the question does not ask for the formula itself: \u201cWhich function gives the larger of two cells?\u201d \u201cMAX(A1,B1)\u201d and \u201cWhat formula changes 5 km to miles?\u201d stay answers",
+  ok("...a formula after \u201cANSWER:\u201d is the sum where Lantern can work it out (not \u201cMAX(A1,B1)\u201d, \u201cPI()*r^2\u201d); where the question names the formula as the thing asked, the answer says the formula and what it gives (\u201cWhat formula changes 5 km to miles?\u201d)",
     rd("ANSWER: MAX(A1,B1)", "Which function gives the larger of two cells?") === "ANSWER: MAX(A1,B1)" && rd("ANSWER: PI()*r^2", "What is the area of a circle of radius r?") === "ANSWER: PI()*r^2" &&
-    rd("ANSWER: CONVERT(5,\"km\",\"mile\")", "What formula changes 5 km to miles?") === "ANSWER: CONVERT(5,\"km\",\"mile\")" && rd("ANSWER: POW(3,2)", "How do I write 3 squared as a formula?") === "ANSWER: POW(3,2)" &&
+    rd("ANSWER: CONVERT(5,\"km\",\"mile\")", "What formula changes 5 km to miles?") === "=CONVERT(5,\"km\",\"mile\")\nANSWER: CONVERT(5,\"km\",\"mile\"), which gives {result}" &&
+    rd("ANSWER: POW(3,2)", "How do I write 3 squared as a formula?") === "=POW(3,2)\nANSWER: POW(3,2), which gives {result}" &&
     rd("ANSWER: CONVERT(26,\"mile\",\"km\")", "What is 26 miles in km?") === "=CONVERT(26,\"mile\",\"km\")\nANSWER: {result}");
   ok("...a number that starts a chain, or stands in the middle of one, may be a value the next line uses: it stays. A number typed with no sum at all stays a number with no sum",
     rd("=1000\n=ANS*2") === "=1000\n=ANS*2" && rd("=5*3\n=1000\n=ANS/2") === "=5*3\n=1000\n=ANS/2" && rd("= 36") === "= 36" && rd("=7.5 cups") === "=7.5 cups" &&
@@ -132,12 +118,16 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     return { pass: pass, left: left };
   }
   var r2 = await replay(F2), r08 = await replay(F08);
-  ok("the 2B\u2019s 27 failed sums, with its replies as it wrote them: 18 pass now. The 9 left are sums it got wrong (RSERIES for two resistors in parallel, 150*10/420 for the fuel of a trip)",
-    r2.pass.length === 18 && r2.left.join() === "moon-weight,water-molar,parallel,field-ha,rice-scale,rice-kg,power-bill,car-fuel,miles-speed", r2);
-  ok("...the ones that pass are the ones it had right: Mars\u2019s escape velocity, the battery\u2019s hours, 26 miles in km, the kinetic energy, the plants of a bed, the eggs, the feed, Ohm\u2019s law, a sack\u2019s weight, the wavelength, the bleach, the tank, the bags, the transfer, the jerrycans, the orbit",
-    ["mars-escape", "miles-km", "car-ke", "escape", "plants", "eggs", "feed", "ohms-law", "sack-weight", "radio-wave", "bleach-jerrycan", "tank-fill", "maize-bags", "hohmann-geo", "jerrycans", "geo-period"].every(function (id) { return r2.pass.indexOf(id) >= 0; }), r2.pass);
-  ok("the 0.8B\u2019s 18 failed sums: 4 pass now (230 V x 4 A, a field in hectares, fuel at 65 a litre, a tank\u2019s hours: each a right sum with its result after a second =)",
-    r08.pass.join() === "appliance-w,tank-fill,field-ha,fuel-cost" && r08.left.length === 14, r08);
+  // (the reviews of 1.24.7 took back what could not be told from a model's own step: a number typed under the sum, a
+  // number after a second = that is not the sum's value. Three of the 2B's rows and two of the 0.8B's that passed with
+  // those readers are left failing as on 1.24.6 -- the 2B's 88.5625 under =CONVERT(26,"mile","km"), 360 under
+  // =12*12*3, 50480 under Mars's escape velocity; the 0.8B's 9.6 after =120*80/10000 and its chain to 22.2)
+  ok("the 2B\u2019s 27 failed sums, with its replies as it wrote them: 15 pass now. The 12 left are sums it got wrong (RSERIES for two resistors in parallel, 150*10/420 for the fuel of a trip) and three where it typed a wrong number under a right sum, which Lantern cannot tell from a step done in the head",
+    r2.pass.length === 15 && r2.left.join() === "mars-escape,moon-weight,water-molar,miles-km,parallel,field-ha,rice-scale,egg-dozens,rice-kg,power-bill,car-fuel,miles-speed", r2);
+  ok("...the ones that pass are ones it had right: the battery\u2019s hours (a 16-digit number copied under the sum is no step done in the head), the kinetic energy, the plants of a bed, the eggs, the feed, Ohm\u2019s law, a sack\u2019s weight, the wavelength, the bleach, the tank, the bags, the transfer, the jerrycans, the orbit",
+    ["battery-hours", "car-ke", "escape", "plants", "eggs", "feed", "ohms-law", "sack-weight", "radio-wave", "bleach-jerrycan", "tank-fill", "maize-bags", "hohmann-geo", "jerrycans", "geo-period"].every(function (id) { return r2.pass.indexOf(id) >= 0; }), r2.pass);
+  ok("the 0.8B\u2019s 18 failed sums: 2 pass now (230 V x 4 A, fuel at 65 a litre: each a right sum with its own value after a second =); a field in hectares (9.6 after =120*80/10000) and a tank\u2019s hours (a chain that ends at 22.2) stay as written",
+    r08.pass.join() === "appliance-w,fuel-cost" && r08.left.length === 16, r08);
 
   // --- what the short prompt shows: nothing after a recipe's line ---
   var withArrow = Q.filter(function (it) { if (!it.x) return false; var p = P.assist(it.q, A.match(it.q)), at = p.indexOf("\nRECIPE\n"); return at >= 0 && /->/.test(p.slice(at, p.indexOf("\nQUESTION:", at))); });
