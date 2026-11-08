@@ -18314,18 +18314,22 @@ Lantern.RFB = (function () {
       // Braces around names ({ah}*{v}) mean the blanks were never filled in.
       var blanks = t.match(/\{\s*[A-Za-z_][A-Za-z_ ]*\}/g);
       var expr = t.slice(1).replace(/\{\s*([^{}]*?)\s*\}/g, "$1");
-      // (1.24.7: ANS after a line that could not be worked out was the line before that, or 0 -- "=2*60 -> minutes",
-      // "=30*ANS" gave 0 litres. Now that line cannot be worked out either, and the reply goes back as one that could
-      // not be run -- the seventh review of 1.24.7)
-      // (ANS1, ANS2 ... say so themselves: "ANS1 has no result: line 1 failed")
+      // (1.24.7: ANS where no line before it was worked out was 0 -- "=2*60 -> minutes", "=30*ANS" gave 0 litres. Now
+      // that line cannot be worked out either, and the reply goes back as one that could not be run -- the seventh
+      // review. After a line that was worked out, ANS is that line's, as before: "=2*60", "=ANS minutes", "=ANS*30" is
+      // 3600 -- the eighth. ANS1, ANS2 ... say so themselves: "ANS1 has no result: line 1 failed")
       var bare0 = expr.replace(/\x22[^\x22]*\x22/g, "").replace(/\x27[^\x27]*\x27/g, "");
-      if (/\bANS\b(?!\d)/.test(bare0) && steps.length > 0 && !steps[steps.length - 1].ok) { steps.push({ expr: expr, ok: false, err: "ANS has no result: line " + steps.length + " failed" }); vals.push(null); continue; }
+      if (/\bans\b(?!\d)/i.test(bare0) && steps.length > 0 && !steps.some(function (x) { return x.ok; })) { steps.push({ expr: expr, ok: false, err: "ANS has no result: no line before it could be worked out" }); vals.push(null); continue; }
       try {
         var v = Lantern.formula.evaluate(expr, { deg: false, ans: last, ansList: vals.slice() });
         steps.push({ expr: expr, ok: true, value: v });
         last = v; vals.push(v);
       } catch (e) {
-        steps.push({ expr: expr, ok: false, err: blanks ? "the recipe's blanks " + blanks.join(", ") + " were left in: put the question's numbers in their place" : e.message || "error" });
+        // (1.24.7: an arrow after the sum -- "=VOLTS(0.02,470) -> volts", "=7/2 -> 4" -- is said for what it is: the
+        // model meant a unit, a result or a step, and only it knows which)
+        var arrow = /->|=>|\u2192/.test(expr.replace(/\x22[^\x22]*\x22/g, "").replace(/\x27[^\x27]*\x27/g, ""));
+        steps.push({ expr: expr, ok: false, err: blanks ? "the recipe's blanks " + blanks.join(", ") + " were left in: put the question's numbers in their place" :
+          arrow ? "a formula line holds only the sum: what follows the arrow cannot be worked out. Put a step (rounding, a change of unit) in the sum itself, and the unit in the ANSWER" : e.message || "error" });
         vals.push(null);
       }
     }
@@ -25018,10 +25022,7 @@ Lantern.RFB = (function () {
   }
   function kindKnown(k) { return !!actOf(k); }
   var MAKES = /^\**\s*make\s+([A-Za-z][A-Za-z ]{0,20}?)\s*:/i;
-  // (in capitals as the instructions write it, "MAKE QUIZ:" opens a block of a kind Lantern does not make, as it does for
-  // AI_ACTIONS, which sends it back -- the seventh review; "Make the sum:" in small letters opens one only of a kind
-  // Lantern makes)
-  function opens(l) { var m; return OPENS.test(l) || /^\**\s*MAKE\s+[A-Z][A-Z]*(?: [A-Z]+){0,2}\s*:/.test(l) || (!!(m = MAKES.exec(l)) && kindKnown(m[1])); }
+  function opens(l) { var m; return OPENS.test(l) || (!!(m = MAKES.exec(l)) && kindKnown(m[1])); }
   // (the sixth review: a MAKE block that is not a program ends at an ANSWER line after a line of its own, as it does
   // for AI_ACTIONS, which makes the table and reads the ANSWER as the answer: "MAKE TABLE: Distance", "5 | ?",
   // "ANSWER: CONVERT(5,"km","mile")" is the formula's answer)
@@ -25034,6 +25035,9 @@ Lantern.RFB = (function () {
       // (a program ends at a bare END, as AI_ACTIONS reads it: "END IF" is a line of a BASIC program -- the seventh review)
       if (inBlock && (code ? /^END$/i : /^END\b/i).test(l)) { inBlock = false; out.push(true); continue; }
       if (inBlock && !inFence && !prog && n > 0 && /^\**\s*ANSWER\s*:/i.test(l)) { inBlock = false; out.push(inFence); continue; }
+      // (a puzzle tool's block -- TRACK, TURN, SOLVE -- has no ANS or ANSWER lines: one ends it. "SOLVE: the cost", "ANS:
+      // 65*35" is a sum -- the eighth review)
+      if (inBlock && !inFence && !m && /^\**\s*ANS(?:WER)?\d*\s*[:=]/i.test(l)) { inBlock = false; out.push(false); continue; }
       if (inBlock && l) n++;
       out.push(inBlock || inFence);
     }
@@ -25119,159 +25123,20 @@ Lantern.RFB = (function () {
     return { text: t.slice(0, m.index) + (closes ? ansL + "\n" + m[1] + "=" + fo : m[1] + "=" + fo + "\n" + ansL) + t.slice(m.index + m[0].length),
       said: "a formula written after \u201cANSWER:\u201d as a formula line" };
   }
-  // (1.24.7) Readers 5 to 8 read sum lines only. Not a line inside a MAKE, TRACK, TURN or SOLVE block (a
+  // (1.24.7) The braces reader reads sum lines only. Not a line inside a MAKE, TRACK, TURN or SOLVE block (a
   // sheet's row "=ROUND(22/7,2) | =A2*2", a program's line that begins with = and holds an arrow function, a
   // document's "= 9.4") nor
   // inside a code fence; a block with no END runs to the end of the reply. And nothing inside quoted text,
   // double or single: =LEN('a->b') is a sum about an arrow.
   function freeLines(ls) { var blk = blockLines(ls); return ls.map(function (l, i) { return !blk[i] && /^[ \t]*=/.test(l); }); }
-  // firstOutside(line, fn) -> the first index, outside quoted text, where fn(char, index) holds; -1 when none
-  function firstOutside(l, fn) {
-    var dq = false, sq = false, i, c;
-    for (i = 0; i < l.length; i++) {
-      c = l.charAt(i);
-      if (c === "\x22" && !sq) dq = !dq;
-      else if (c === "\x27" && !dq) sq = !sq;
-      else if (!dq && !sq && fn(c, i)) return i;
-    }
-    return -1;
-  }
-  // 5. "=VOLTS(0.02,470) -> volts": the line is the sum, up to the arrow
-  // (1.24.7, after seven reviews: only where the line is one of Lantern's own recipe lines with its blanks filled by
-  // numbers, and what follows the arrow is that recipe's own "gives" -- what the short prompt of 1.24.6 showed after
-  // the line, which the 2B copied there in 24 replies. A step after an arrow ("-> bags, rounded up", "-> 4", "->
-  // percent", "-> minutes" for a number given in hours), a unit that is not the sum's, a chain with an arrow on another
-  // line: those lines go back to the model as they are, as on 1.24.6. 1.24.7's short prompt says what a line gives
-  // above it, not after.)
-  // unitOf(word) -> a unit's short name, for the second = reader ("pound" is not one: a weight or a price)
-  var UNITK = {};
-  ("v volt volts|a amp amps ampere amperes|ohm ohms|w watt watts|kw kilowatt kilowatts|kwh|wh|n newton newtons|j joule joules|kj|" +
-    "m metre metres meter meters|km kilometre kilometres kilometer kilometers|cm|mm|kg kilo kilos kilogram kilograms|g gram grams|" +
-    "t tonne tonnes|l litre litres liter liters|ml|h hr hrs hour hours|min mins minute minutes|s sec secs second seconds|" +
-    "day days|ha hectare hectares|acre acres|m/s|km/h kph|mph|mhz|khz|hz|g/mol|c celsius \u00b0c|f fahrenheit \u00b0f|" +
-    "$ dollar dollars|cent cents|\u20ac euro euros|shilling shillings|rupee rupees|naira").split("|").forEach(function (g) {
-    var ws = g.split(" "); ws.forEach(function (w) { UNITK[w] = ws[0]; });
-  });
-  function unitOf(w) { w = String(w || "").toLowerCase().replace(/\s+/g, "").replace(/\.$/, ""); return Object.prototype.hasOwnProperty.call(UNITK, w) ? UNITK[w] : ""; }
-  // answerUnit(text) -> the unit the ANSWER gives {result} in (a currency by its sign), "?" for one Lantern does not
-  // know, or "" when it names none
-  function answerUnit(t) {
-    var a = /^[ \t]*ANSWER[ \t]*:(.*)$/im.exec(t), m;
-    if (!a || !/\{result\}/i.test(a[1])) return "";
-    if ((m = /([$\u00a3\u20ac])\s*\{result\}/i.exec(a[1]))) return unitOf(m[1]) || "?";
-    var w = /\{result\}\s*([$\u00a3\u20ac\u00b0%]?[A-Za-z]*(?:\s*\x2F\s*[A-Za-z]+)?)/i.exec(a[1]);
-    return w && w[1] ? unitOf(w[1]) || "?" : "";
-  }
-  // ownLine(head, tail) -> the head is a recipe's line with numbers in its blanks, and the tail that recipe's "gives"
-  function ownLine(head, tail) {
-    var h = head.replace(/^[ \t]*=\s*/, "").replace(/\s+/g, ""), tl = tail.replace(/^\s+|\s+$/g, "").replace(/\.$/, "").toLowerCase();
-    return (L.assistCards || []).some(function (c) {
-      if (!c || !c.compose || !c.out || String(c.out).toLowerCase() !== tl) return false;
-      var parts = String(c.compose).replace(/^=/, "").replace(/\s+/g, "").split(/\{[A-Za-z_][A-Za-z_0-9]*\}/);
-      var re = new RegExp("^" + parts.map(function (x) { return x.replace(/[.*+?^$(){}|[\]\\\/]/g, "\\$&"); }).join("\\{?-?\\d+(?:\\.\\d+)?\\}?") + "$", "i");
-      return parts.length > 1 && re.test(h);
-    });
-  }
-  // ownValue(head, tail, text) -> what follows the arrow is the sum's own value as far as it is written ("=EGGS(12,5) ->
-  // 60", "=CEIL(1000/20) -> 50", "=PLANET("Earth","escape") -> 11186 m/s"): not a whole number after a sum that is
-  // not whole ("=7/2 -> 4": the count rounded, a step), a unit only if Lantern knows it, and the ANSWER giving the
-  // result in that unit or in none ("=3/8 -> 0.375" under "{result}%" goes back)
-  function ownValue(head, tail, t) {
-    if (freeName(head.replace(/^[ \t]*=\s*/, ""))) return false;
-    var tv = /^\s*(-?\d[\d,]*(?:\.(\d+))?)\s*(.*?)\s*\.?\s*$/.exec(tail), hv = null, tu = "", au = answerUnit(t);
-    if (!tv) return false;
-    try { hv = L.assist.run(head.replace(/^[ \t]*/, "")).value; } catch (e0) { hv = null; }
-    if (typeof hv !== "number" || !isFinite(hv)) return false;
-    var d = (tv[2] || "").length, tvn = parseFloat(tv[1].replace(/,/g, ""));
-    if (Math.abs(hv - tvn) > 0.5 * Math.pow(10, -d) + 1e-9 * Math.max(1, Math.abs(hv)) || (!d && Math.abs(hv - Math.round(hv)) > 1e-9)) return false;
-    if (tv[3] && !(tu = unitOf(tv[3]))) return false;
-    return !au || au === tu;
-  }
-  function arrows(t) {
-    var ls = t.split("\n"), free = freeLines(ls), n = 0, left = 0;
-    ls.forEach(function (l, k) {
-      if (!free[k]) return;
-      var at = firstOutside(l, function (c, i) { return i >= 1 && ((c === "-" && l.charAt(i + 1) === ">") || (c === "=" && l.charAt(i + 1) === ">") || c === "\u2192"); });
-      if (at < 0) return;
-      var head = l.slice(0, at).replace(/\s+$/, ""), tail = l.slice(at + 1).replace(/^>/, "");
-      if (!/^[ \t]*=\s*\S/.test(head) || !(ownLine(head, tail) || ownValue(head, tail, t))) { left++; return; }
-      ls[k] = head; n++;
-    });
-    // (all or nothing: a line left with its arrow cannot be run, and a line after it that uses ANS would get the
-    // wrong number -- the seventh review's "0 litres")
-    return n && !left ? { text: ls.join("\n"), said: "a formula line with \u201c-> \u2026\u201d after the sum as the sum" } : null;
-  }
-  // 6. "= 65*35 = 2275", "=2000/15/60 = 2000/900 = 22.2": the line is the sum, up to the second = (outside
-  // quotes and brackets, and not part of <=, >=, != or ==); what follows is the result the model typed.
-  // Only where the question asks for a number ("How much ...", "What is ..."). Where it asks whether
-  // something is so ("Check that 17 times 23 makes 391", "Tell me if ...", "Is ...?"), or the answer says
-  // what 1 and 0 mean, "=17*23=391" is the sum: 1 for yes. Where Lantern does not know the question, it
-  // cuts nothing.
-  var ASKS_IF = /^\s*(is|are|was|were|does|do|did|can|could|will|would|has|have)\b|[:;\u2013\u2014]\s*(?:is|are|was|were|does|do|did|can|could|will|would|has|have)\b|\s-\s+(?:is|are|was|were|does|do|did)\b|\b(?:find out|work out|figure out|calculate|see|know|test|tell me|say|check) (?:if|whether)\b|\b(divisible|perfect square|leap year|even number|odd number|prime|exactly)\b|\b(check|verify|confirm|compare|prove|whether|tell me if|say if|true|false|equal|equals|the same|match|matches|agree|agrees|correct|right|wrong|greater|less than|bigger|smaller|larger|more than)\b/i;
-  var ASKS_N = /\bhow (?:much|many|long|far|fast|heavy|big|tall|high|old|often|deep|wide)\b|\bwhat(?:\x27s|\u2019s| is| are| was| does| do| will| would)\b|\b(?:find|calculate|compute|work out|convert|give me)\b/i;
-  // (1.24.7, after the third review: nor where the question itself writes the test -- "What do you get from the test
-  // 2^10 = 1024?", "Calculate 3+4=8 for me" -- or gives the number after the second = as a number of its own that
-  // the sum does not hold: "Work out if 17 times 23 is 391", "checking 9^2 against 81". There the line is the
-  // test, as the model wrote it, and Lantern gives 1 or 0, as it did before 1.24.7.)
-  function numsOf(x) { return (String(x).match(/\d+(?:\.\d+)?/g) || []).map(parseFloat); }
-  // (the sixth review: "What do you think: is a dozen dozen a gross?", "Find out: is twelve squared one hundred and
-  // forty-four?" -- a yes/no after a colon, numbers in words, where Lantern cannot see whether the question says the
-  // number after the second =. Those are as the model wrote them: a test)
-  var NUMW = /\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|dozen|gross|score)\b/i;
-  // (the seventh review: "Work out 25 x 4. Is that a hundred?", "Should 12 dozen be a gross? Calculate it.", "Calculate
-  // 12 x 12: a gross or not?", "Give me a yes or no" -- a part of the question that asks yes or no, wherever it is. And
-  // only a question Lantern is sure of: its own QUESTION line, not a message in a conversation)
-  var YESNO = /(?:^|[.?!:;,\u2013\u2014]\s*|\s-\s+)(?:is|are|was|were|does|do|did|can|could|should|shall|must|may|might|will|would|has|have|had)\b|\b(?:or not|yes|no|true|false|correct|right|wrong|whether|if)\b/i;
-  function results(t, q, sure) {
-    if (!q || !sure || !ASKS_N.test(q) || ASKS_IF.test(q) || NUMW.test(q) || YESNO.test(String(q).replace(/^\s*(?:how (?:much|many|long|far|fast|heavy|big|tall|high|old|often|deep|wide)|what(?:\x27s|\u2019s)?)\s+(?:is|are|was|does|do|did|will|would)\b/i, ""))) return null;
-    var ans = /^[ \t]*ANSWER\s*:(.*)$/im.exec(t), qs = String(q).replace(/\s+/g, "").toLowerCase(), qn = numsOf(q);
-    if (ans && /\b[01] (?:means|if|for)\b|\b[01]\s*[:=]|\b(?:yes|no|true|false)\b/i.test(ans[1])) return null;
-    // (nor under an ANSWER that puts a per cent sign after the result: "=3/8 = 0.375", "{result}%" is 37.5% -- the
-    // seventh review)
-    if (ans && /\{result\}\s*(?:%|per ?cent)/i.test(ans[1])) return null;
-    var ls = t.split("\n"), free = freeLines(ls), n = 0;
-    ls.forEach(function (l, k) {
-      if (!free[k]) return;
-      var m = /^([ \t]*=\s*)(.*)$/.exec(l), body = m[2], d = 0;
-      var at = firstOutside(body, function (c, i) {
-        if (c === "(") d++; else if (c === ")") d--;
-        return c === "=" && d === 0 && i > 0 && !/[<>!=]/.test(body.charAt(i - 1)) && body.charAt(i + 1) !== "=";
-      });
-      if (at <= 0) return;
-      var head = body.slice(0, at).replace(/\s+$/, ""), tail = body.slice(at + 1);
-      // (after the second =, numbers, and a unit only at the end, the one the ANSWER gives the result in: "= 300 minutes"
-      // over "{result} minutes". "= 133.33 minutes" over an ANSWER in hours, "= 6000 Wh" over one in kWh, "= 2275
-      // pence" over one in pounds are not this line's answer -- the sixth review. As on 1.24.6, such a line goes back
-      // to the model)
-      var tunit = /\s*([$\u00a3\u20ac\u00b0]?[A-Za-z][A-Za-z\x2F]*)\s*$/.exec(tail), tu0 = tunit ? unitOf(tunit[1]) : "", au0 = answerUnit(t);
-      if (tunit && (!tu0 || (au0 && au0 !== tu0))) return;
-      // (no per cent: "=12/80 = 0.15 = 15%" is 15, and the sum gives 0.15 -- the seventh review)
-      if (!formula(head) || !/\d/.test(tail) || !/^[\s\d.,+\-*\/^()=]*$/.test(tunit ? tail.slice(0, tunit.index) : tail)) return;
-      if (qs.indexOf((head + "=" + tail).replace(/\s+/g, "").toLowerCase()) >= 0) return;
-      // (1.24.7, after the fourth review: what follows the second = is the sum's own value, as far as it is written --
-      // "= 65*35 = 2275", "=2000/15/60 = 2000/900 = ..." -- and a chain of more than one step says no units. A line
-      // that carries the sum on ("=2000/15 = 133.33/60 = 2.22", "= 133.3 min = 2.22 h", "= 1628.89 - 1000") stays as
-      // written)
-      var segs = tail.split("="), A0 = L.assist, hv = null, sv = null;
-      try { hv = A0.run("=" + head).value; } catch (e0) { hv = null; }
-      var s0 = segs[0].replace(/\s*[A-Za-z%\u00b0][A-Za-z%\u00b0\x2F\s]*$/, "").replace(/^\s+|\s+$/g, ""), dec = (/\.(\d+)\s*$/.exec(s0) || ["", ""])[1].length;
-      try { sv = s0 ? A0.run("=" + s0).value : null; } catch (e1) { sv = null; }
-      if (typeof hv !== "number" || typeof sv !== "number") return;
-      // (the fifth review: a number that is not the sum's value may be the model's next step, done in the head --
-      // "=30*9/5 = 86" -- as surely as a slip: it stays as written. So does every step of a chain that is not the same
-      // value, and a 0 or a 1, which is what a test gives: "=MOD(391,17)=0")
-      var agreeWith = function (x, txt) { var d = (/\.(\d+)\s*$/.exec(txt) || ["", ""])[1].length; return Math.abs(hv - x) <= Math.max(0.01 * Math.abs(hv), /^-?\d[\d.,]*$/.test(txt) ? 0.5 * Math.pow(10, -d) : 0) + 1e-9; };
-      if (!agreeWith(sv, s0) || sv === 0 || sv === 1) return;
-      // (a whole number after a sum that is not whole is the count rounded: "=7/2 = 4" cars, "=100/12 = 8" full boxes --
-      // the model's step, done in its head -- the seventh review)
-      if (Math.abs(hv - Math.round(hv)) > 1e-9 && segs.some(function (sg) { return /^\s*-?\d[\d,]*\s*$/.test(sg.replace(/\s*[A-Za-z\u00b0][A-Za-z\u00b0\x2F\s]*$/, "")); })) return;
-      if (segs.length > 1 && (/[A-Za-z]/.test(tail) || !segs.every(function (sg) { var t0 = sg.replace(/^\s+|\s+$/g, ""), v0 = null; try { v0 = A0.run("=" + t0).value; } catch (e2) { v0 = null; } return typeof v0 === "number" && agreeWith(v0, t0); }))) return;
-      var tn = numsOf(tail), hn = numsOf(head);
-      if (tn.length === 1 && qn.indexOf(tn[0]) >= 0 && hn.indexOf(tn[0]) < 0) return;
-      ls[k] = m[1] + head; n++;
-    });
-    return n ? { text: ls.join("\n"), said: "a formula line with its result typed after a second = as the sum" } : null;
-  }
+  // (1.24.7 read "=VOLTS(0.02,470) -> volts" as =VOLTS(0.02,470), and "= 65*35 = 2275" as = 65*35. Eight reviews,
+  // each by an agent that had not seen the readers written, broke each version of them: the arrow was a step still to
+  // do ("-> 4" after 7/2 cars), a unit to change into ("=3 -> minutes"), a unit the ANSWER did not use ("=KE(1000,20) ->
+  // joules" under an ANSWER in kJ: 200000 kJ), half a chain ("0 litres"); the second = was a count rounded, a per cent,
+  // a test asked as "isn't it?". Each time 1.24.6 had sent the reply back, and 1.24.7 handed the person a wrong number.
+  // The model meant one thing by its arrow and Lantern cannot see which. So the line goes back to the model, as on
+  // 1.24.6, with what is wrong said plainly (ASSIST_CORE's run: "a formula line holds only the sum"); the short prompt
+  // no longer shows "-> volts" after a recipe's line, which is where the 2B's arrows came from.)
   // 7. "=({2000}/{15})/60": a number in the { } of a recipe's blank is the number
   function braces(t) {
     var ls = t.split("\n"), free = freeLines(ls), n = 0;
@@ -25296,7 +25161,7 @@ Lantern.RFB = (function () {
   // =CONVERT(26,"mile","km")). A number of ten digits or more was still left out, as one no model works out in its
   // head; the sixth review wrote 16 right replies that did ("=1024^3", "=10737418240" for 10 GiB; "=2000/15",
   // "=2.222222222" for hours). The model's number stands, as on 1.24.6.)
-  var READERS = [verbs, repeats, arrows, results, braces, ansLines, answerFormula];
+  var READERS = [verbs, repeats, braces, ansLines, answerFormula];
   // read(text, question?) -- the question, when it is known, tells a typed result from a comparison
   function questionOf(messages) {
     if (typeof messages === "string") return messages;
@@ -25313,24 +25178,11 @@ Lantern.RFB = (function () {
     }
     return "";
   }
-  // sureOf(messages) -> the question is one Lantern gave itself: a string, or the QUESTION line of the newest message
-  function sureOf(messages) {
-    if (typeof messages === "string") return true;
-    var ms = messages || [], i, c;
-    for (i = ms.length - 1; i >= 0; i--) {
-      if (!ms[i] || ms[i].role !== "user") continue;
-      c = ms[i].content;
-      c = typeof c === "string" ? c : (c || []).filter(function (x) { return x && x.type === "text"; }).map(function (x) { return x.text; }).join("\n");
-      if (c.lastIndexOf("QUESTION:") >= 0) return true;
-      if (!/^\s*Lantern\b/.test(c)) return false;
-    }
-    return false;
-  }
   function read(text, messages) {
-    var t = String(text == null ? "" : text), said = [], q = questionOf(messages), sure = sureOf(messages);
+    var t = String(text == null ? "" : text), said = [], q = questionOf(messages);
     READERS.forEach(function (f) {
       var r = null;
-      try { r = f(t, q, sure); } catch (e) { r = null; }
+      try { r = f(t, q); } catch (e) { r = null; }
       if (r && typeof r.text === "string" && r.text !== t) { t = r.text; said.push(r.said); }
     });
     return { text: t, said: said };
@@ -47441,9 +47293,10 @@ Lantern.RFB = (function () {
     // (a question about the moon, and not the sun: nothing is the sun -- a yellow disc there may be the moon, a lamp, a
     // window, and the moon is left where it was drawn)
     if (MOONQ.test(q) && !/\bsun\b/i.test(q)) return -1;
-    // (nor where the question puts something in front of something: "the sun in front of the clouds", "the moon in front
-    // of the sun" -- the seventh review)
-    if (/\bin front of\b/i.test(q)) return -1;
+    // (nor where the question puts the sun in front: "the sun in front of the clouds", "clouds behind the sun", "the sun
+    // with clouds behind it", "the sun in the foreground", "clouds at the back" -- the seventh and eighth reviews. "The
+    // sun setting behind a hill" asks for what the mend does)
+    if (/\b(?:in front|foreground|background|at the back|in back)\b|\bbehind (?:the |a )?(?:sun|it)\b/i.test(q)) return -1;
     for (i = 0; i < items.length; i++) {
       var o = items[i].o, c = sunColour(o, q), named = SUNQ.test(q);
       if (!c || o.nums[2] < 0.9 || o.nums[2] > 4) continue;

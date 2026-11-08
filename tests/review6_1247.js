@@ -18,6 +18,8 @@
 // a unit the ANSWER gives the result in; the moon is left where it was drawn;
 // a recipe is held to only for a question made of its own words. Its inputs
 // are the fixture; what 1.24.6 and this version give are written beside each.
+// (After the eighth review the readers for the arrow and the second = were taken out: such lines go back to the
+// model as on 1.24.6. The fixture's values are this version's.)
 "use strict";
 var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
 var fs = require("fs"), path = require("path");

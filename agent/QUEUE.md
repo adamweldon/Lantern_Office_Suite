@@ -15,10 +15,14 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    with the 35B; no model had run it when it was pushed. So first:
    - **the 2B's sums.** It had 18 of its 27 failed sums right but for how
      it wrote the line (an arrow after it, a number typed under it, the
-     numbers in braces). Seven reviews took the readers back to what Lantern
-     can be sure of: replayed, 10 of the 27 pass. The short prompt no longer
-     shows "-> volts" after a recipe's line: does the 2B still write
-     arrows? How many pass?
+     numbers in braces). Eight reviews took the readers for the arrow and
+     the second = out (each version handed over wrong numbers where 1.24.6
+     sent the reply back): replayed as written, none of the 27 passes, as
+     on 1.24.6. The short prompt no longer shows "-> volts" after a
+     recipe's line, and a line with an arrow goes back with what is wrong
+     said: does the 2B still write arrows? Does it fix them on the second
+     turn? How many pass? A both-versions hole to look at with the rows:
+     "= 65*35 = 2275" is worked out as a test (1), unquestioned.
    - **the two scene questions** (new: `make-shore-sunset`,
      `make-road-horizon`), and every other drawing: the log prints each one
      between `=== DRAWINGS` and `=== END DRAWINGS ===`. Draw them

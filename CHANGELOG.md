@@ -5,7 +5,7 @@
 Three pieces of work. Adam drew with the 35B on 1.24.6 and sent what came
 back; the small models' run on 1.24.6 was read row by row; and what was
 written for both was given, before anything was pushed, to reviewers who
-had not seen it written and were asked to break it. They did, seven times,
+had not seen it written and were asked to break it. They did, eight times,
 and this version is what was left standing.
 
 **What was seen.**
@@ -164,6 +164,17 @@ and this version is what was left standing.
   write the recipe's line, for a question that named no unit. Of 28
   pictures, 4 where the question asked for the sun in front of the
   clouds, the mountains or a tree, and Lantern put it behind them.
+- *The eighth review*, of the seventh's mends, by an eighth agent, ten of
+  its replies run through Chat and Assist: of 199 replies, 21 broken. A
+  recipe's own line with its own label read where the ANSWER used another
+  unit ("=KE(1000,20) -> joules" under an ANSWER in kJ: "200000 kJ";
+  "=VOLTS(0.02,470) -> volts" under mV: "9.4 mV"), or for a question it
+  did not fit (Earth's weight for the Moon); a value after the arrow in a
+  unit the question did not ask ("=20/60 -> 0.33 hours" for minutes); a
+  tag question ("What is 65 times 35 -- 2,275, isn't it?"); "MAKE A
+  NOTE:" and "SOLVE:" swallowing the ANS lines 1.24.6 read; lowercase
+  "ans" after a failed line. Of 18 pictures, 5 where the question put the
+  clouds behind the sun in other words.
 
 **What they were traced to.**
 
@@ -202,7 +213,7 @@ and this version is what was left standing.
 - *What the third review found* was in what Lantern did once it was sure:
   where it put a thing it moved (to the back of the sky, behind what the
   model had drawn behind it on purpose), and what it moved with it.
-- *What the fourth to the seventh found* was readers that were sure where they
+- *What the fourth to the eighth found* was readers that were sure where they
   could not be. A number typed under a sum may be a slip (the 2B's 88.5625
   under `=CONVERT(26,"mile","km")`) or the model's next step, and the
   fourth review's mend -- a slip is a number no step reaches -- was
@@ -219,6 +230,9 @@ and this version is what was left standing.
   thing to change into, and "pounds" a weight or a price. What Lantern can
   see for certain is its own line: a recipe's line with its own label
   after it, or a number after a sum that is the sum's value as written.
+  The eighth found that not certain either: the label is what the line
+  gives, and the ANSWER may want it in another unit. A model's arrow says
+  what it meant, and only it knows; the line goes back to it.
 
 **What changed.** One new module (412 in all). The filled recipes are not
 in this version (see "What is not in it").
@@ -281,8 +295,9 @@ in this version (see "What is not in it").
     disc at night may be a snow cap, a cloud on a peak, a pale rock, a
     snowy crown, and in a question about the moon a yellow disc may be a
     lamp; nothing in such a picture is moved as the sun. Nor where the
-    question puts something in front of something ("the sun in front of
-    the clouds");
+    question puts the sun in front ("the sun in front of the clouds",
+    "clouds behind the sun", "the sun in the foreground", "clouds at the
+    back"; "the sun setting behind a hill" asks for what Lantern does);
   - a road, path, track or river that the question says goes away ("a
     road disappearing into the distance", "a track to the horizon": said
     of the road itself, not of mountains "in the distance"), written as
@@ -325,38 +340,24 @@ in this version (see "What is not in it").
 
 *Sums*
 
-- **The line is the sum, where Lantern is sure of it** (AI_READ). In a
-  reply's own `=` lines, never inside a block (MAKE, TRACK, TURN or SOLVE,
-  with a colon and a kind Lantern makes) or a code fence. Each reader
-  changes a line only where the line as written cannot be right and what
-  it meant is plain; a model's number Lantern cannot tell from a step done
-  in its head stands, as on 1.24.6:
-  - `=X -> volts` is read as `=X` only where X is one of Lantern's own
-    recipe lines with numbers in its blanks and what follows the arrow is
-    that recipe's own "gives" (`=VOLTS(0.02,470) -> volts`,
-    `=CEIL(2000/50) -> bags (rounded up)`: what the short prompt of 1.24.6
-    showed after the line), or what follows is X's own value as far as it
-    is written (`=EGGS(12,5) -> 60`), not a whole number after a sum that
-    is not whole ("-> 4" after 7/2: the count rounded), with a unit
-    Lantern knows or none, and the ANSWER giving the result in that unit
-    or in none; and only where every arrow of the reply is one of these.
-    Anything else after an arrow ("-> percent", "-> minutes", "-> 4") goes
-    back to the model as on 1.24.6;
-  - `= 65*35 = 2275` is read as `= 65*35` where the question asks for a
-    number and everything after the second = is the sum's own value as
-    far as it is written ("=2000/15/60 = 2000/900 = 2.2222"). Not where it
-    asks whether something is so ("Check whether", "Find out if", "Is
-    ...?", "divisible", "a leap year"), writes the test itself ("the test
-    2^10 = 1024"), or gives the number after the second = as one of its
-    own; not a 0 or a 1 (what a test gives: "=MOD(391,17)=0"); not a number
-    that is not the sum's value ("=30*9/5 = 86": the +32 done in the head,
-    as surely as a slip); not a unit after it other than the ANSWER's own
-    ("= 133.33 minutes" over an ANSWER in hours); not a whole number after
-    a sum that is not whole ("=7/2 = 4"); not a per cent, nor under an
-    ANSWER in per cent. And only for a question Lantern gave itself (the
-    QUESTION line of its own prompt, not a message in a conversation),
-    with no part of it asking yes or no ("Work out 25 x 4. Is that a
-    hundred?", "or not", "Should ...") and no number in words;
+- **An arrow after a sum, or a number after a second =, goes back to the
+  model** (AI_READ, ASSIST_CORE), as on 1.24.6, with what is wrong said
+  plainly: "a formula line holds only the sum: what follows the arrow
+  cannot be worked out. Put a step (rounding, a change of unit) in the
+  sum itself, and the unit in the ANSWER" (with the recipe's line where
+  there is one, as before). For a while this version read
+  `=VOLTS(0.02,470) -> volts` as the sum and `= 65*35 = 2275` as `=
+  65*35`, and replayed with the small models' replies as they wrote them,
+  up to 15 of the 2B's failed sums and 2 of the 0.8B's passed. Eight
+  reviews broke every version of those readers (above): the model meant
+  a step, a unit to change into, a unit the ANSWER did not use, a test,
+  and Lantern cannot see which. Each time 1.24.6 had sent the reply back,
+  and the reader handed the person a wrong number. They are taken out;
+  what this version changes for the 2B's arrows is where they came from,
+  the short prompt (below).
+- **What the readers still do**, only where the line as written cannot be
+  right and what it meant is plain, never inside a block (MAKE, TRACK,
+  TURN or SOLVE, with a colon and a kind Lantern makes) or a code fence:
   - a number in `{ }` is the number; a sum in `{ }` is in brackets;
   - a number typed on its own `=` line under a sum stands as the model's,
     whatever its length -- its last step done in its head ("=80*25/100",
@@ -374,14 +375,16 @@ in this version (see "What is not in it").
     ends the block, as it does where the block is made ("MAKE TABLE:
     Distance", "5 | ?", "ANSWER: CONVERT(5,"km","mile")" is a table and
     its answer); the formula's line goes under the ANSWER, so the table is
-    as written. "MAKE QUIZ:" in capitals opens a block though Lantern does
-    not make quizzes; a program's block ends only at a bare END ("END IF"
-    is a line of BASIC).
-- **A line that uses ANS of a line that could not be worked out cannot be
-  worked out either** (ASSIST_CORE). It was given the line before that, or
-  0: "=2*60 -> minutes", "=30*ANS" gave 0 litres. Now the reply goes back
-  as one that could not be run.
+    as written. A program's block ends only at a bare END ("END IF" is a
+    line of BASIC); a puzzle tool's block (TRACK, TURN, SOLVE) ends at an
+    ANS or ANSWER line, which it never holds ("SOLVE: the cost", "ANS:
+    65*35").
   Chat says what was read.
+- **A line that uses ANS where no line before it could be worked out
+  cannot be worked out either** (ASSIST_CORE). ANS was 0 there:
+  "=2*60 -> minutes", "=30*ANS" gave 0 litres. Now the reply goes back as
+  one that could not be run. After a line that was worked out, ANS is
+  that line's, as before ("=2*60", "=ANS minutes", "=ANS*30" is 3600).
 - **The older readers keep to the reply's own lines too** (they are from
   1.24.5): one line written three times is read as once only outside a
   block and only where the lines are not named later ("=10" three times
@@ -442,33 +445,33 @@ in this version (see "What is not in it").
 
 **What was tested.**
 
-- `npm test`: all 67 suites pass. New: `tests/scene.js` (49 checks: Adam's
+- `npm test`: all 68 suites pass. New: `tests/scene.js` (49 checks: Adam's
   two blocks as the 35B wrote them; each rule on its own; the reviews'
   pictures, every one, from `tests/fixtures/scene_review_1247.json` and
   `scene_review2_1247.json`: 216 right ones that come through exactly as
   written, and what Lantern does with the 57 wrong ones; the plain-word
-  gate; rule 11) and `tests/bench_1246_small.js` (25: with its replies as
-  it wrote them, the 2B's and the 0.8B's failed sums read as the sum; the
-  reviews' replies that must stay as written; the bleach dose held to its
-  own question only; the 4B's wheel and sketch).
+  gate; rule 11) and `tests/bench_1246_small.js` (20: the 2B's and the
+  0.8B's failed sums replayed as they wrote them; an arrow or a second =
+  left as written and sent back with what is wrong said; the reviews'
+  replies that must stay as written; the bleach dose held to its own
+  question only; the 4B's wheel and sketch).
 - The 35B's 45 right sums of 1.24.4: nothing in them is read differently,
   and no check questions one. (The guard caught `=2000/ANS` being taken
   for a typed number while this was written.)
-- Seven independent reviews, each by an agent that had not seen the code
+- Eight independent reviews, each by an agent that had not seen the code
   written, on inputs of its own. The first two are in `scene.js` and
-  `bench_1246_small.js`; the third to the seventh are replayed by
+  `bench_1246_small.js`; the third to the eighth are replayed by
   `tests/review3_1247.js` (pictures, replies, recipe questions:
   `scene_review3_1247.json`, `read_review3_1247.json`), `review4_1247.js`
-  to `review7_1247.js` (`review4_1247.json` to `review7_1247.json`), with
-  what 1.24.6 gave beside each reply. On this build, of all seven reviews'
-  inputs: no right reply that 1.24.6 read right is read wrong (but an
-  ANSWER that is a MAKE DOC's first line, which is the document's, as
-  AI_ACTIONS makes it); where 1.24.6 worked out no number, none that is
-  wrong is handed over; no recipe line is given where it should not be;
-  no right picture is changed (but "the sun shining over the clouds",
-  which can be read either way). Three wrong replies that 1.24.6 gave as
-  0 or 1 now give the model's own number after its second = ("=2000/15 =
-  133.33" under an ANSWER in hours): wrong as written, as before.
+  to `review8_1247.js` (`review4_1247.json` to `review8_1247.json`), with
+  what 1.24.6 gave beside each reply. On this build, of all eight
+  reviews' inputs: no right reply that 1.24.6 read right is read wrong
+  (but an ANSWER that is a MAKE DOC's first line, which is the
+  document's, as AI_ACTIONS makes it); where 1.24.6 worked out no number,
+  none that is wrong is handed over; no recipe line is given where it
+  should not be; no right picture is changed (but three that can be read
+  either way: "the sun shining over the clouds", "the sun above the
+  clouds", "the clouds under the sun").
 - Real Chromium, a stand-in model that sees
   (`tests/browser/scene_e2e.py`, new): the two scenes in Chat, the PNG the
   model is shown checked by its colours: the road gray and narrowing, the
@@ -490,17 +493,18 @@ in this version (see "What is not in it").
 - Lantern arranges a picture only for a plain landscape asked in plain
   words. A tent by the lake, a lion at sunset, a house on the hill: their
   pictures are as the model drew them, mountains in the air and all.
-- Left failing as on 1.24.6, by the reviews: eight rows of the 2B where it
-  typed a number under a right sum or after its arrow (88.5625 under
-  `=CONVERT(26,"mile","km")`, 360 under `=12*12*3`, 50480 under Mars's
-  escape velocity, 3.3333333333333335 under a battery's hours, 1576.89
-  under an orbit's, 133.33 under a tank's, a number of 240 digits after
-  the arrow of a bed's plants, 11186 after Earth's escape velocity of
-  11186.x) and two of the 0.8B (9.6 after `=120*80/10000`, a chain that
-  ends at 22.2): Lantern cannot tell such a number from a step done in
-  the head, and the readers that took it out read 60 right replies wrong.
-  Ten of the 2B's 27 failed sums and two of the 0.8B's 18 pass on this
-  build with their replies as they wrote them.
+- Left failing as on 1.24.6, by the reviews: the 2B's 27 failed sums and
+  the 0.8B's 18, replayed with their replies as they wrote them (the same
+  reply twice), all fail as they did: 18 of the 2B's were right sums
+  written with an arrow after them, a number typed under them, or a
+  number after a second =, and Lantern cannot tell what the model meant
+  by those. The short prompt no longer shows anything after a recipe's
+  line, and a line with an arrow goes back with what is wrong said; the
+  small models' run on 1.24.7 will say whether they still write it.
+- Wrong on both versions, and left: a number after a second = under a
+  question that asks for a number is worked out as a test ("= 65*35 =
+  2275" gives 1, "1 cents"), and no check questions an answer of 1 or 0
+  for such a question.
 - The moon in front of a mountain, a cloud or the sea is left as the model
   drew it.
 - Left as found, and in the tests as such: the 2B's own wrong sums

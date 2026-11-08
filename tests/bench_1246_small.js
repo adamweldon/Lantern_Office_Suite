@@ -10,7 +10,9 @@
 // and the 0.8B wrote "= 65*35 = 2275": the sum and its result after a second =.
 // The 4B wrote every formula of the power wheel on a line of its own, and
 // its sketch for "without delay()" was questioned for the word delay() in a
-// comment. Each row is replayed as the model wrote it.
+// comment. Each row is replayed as the model wrote it. 1.24.7 reads the
+// numbers in braces; an arrow or a second = goes back to the model with what
+// is wrong said plainly (eight reviews took the readers for them back).
 "use strict";
 var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
 var fs = require("fs"), path = require("path");
@@ -53,40 +55,20 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     F2.summary.pass === 57 && F08.summary.pass === 51 && F4.summary.pass === 107, [F2.rows.length, F08.rows.length, F4.rows.length]);
 
   // --- how a line is read ---
-  // (the sixth and seventh reviews of 1.24.7: what follows the arrow is cut only where the line is one of Lantern's own
-  // recipe lines and what follows is that recipe's own "gives", or it is the sum's own value as far as it is written,
-  // and the ANSWER gives the result in that unit or names none -- and only where every arrow of the reply is one of
-  // these. Anything else goes back to the model as on 1.24.6)
-  ok("\u201c=VOLTS(0.02,470) -> volts\u201d: the line is the sum, up to the arrow; an arrow inside quotes is part of the text",
-    rd("=VOLTS(0.02,470) -> volts\n\nANSWER: 9.4 volts") === "=VOLTS(0.02,470)\n\nANSWER: 9.4 volts" && rd("=VOLTS(0.02,470) -> volts\nANSWER: {result} V") === "=VOLTS(0.02,470)\nANSWER: {result} V" &&
-    rd("=WEIGHT(50)   -> newtons") === "=WEIGHT(50)" && rd("=LEN(\"a->b\")") === "=LEN(\"a->b\")" && rd("=5*3 => 15") === "=5*3" &&
-    R("=VOLTS(0.02,470) -> volts").said[0] === "a formula line with \u201c-> \u2026\u201d after the sum as the sum", R("=VOLTS(0.02,470) -> volts"));
-  ok("...Lantern\u2019s own line with its own label is read (\u201c=CEIL(2000/50) -> bags (rounded up)\u201d); not a step still to do, nor a unit the ANSWER does not give the result in: \u201c-> bags, rounded up\u201d, \u201c-> percent\u201d, \u201c-> squared\u201d, \u201c-> both ways\u201d; \u201c-> minutes\u201d over an ANSWER in hours, \u201c-> Wh\u201d over one in kWh, \u201c-> pence\u201d over one in pounds, \u201c-> dollars\u201d over one in cents",
-    rd("=CEIL(2000/50) -> bags (rounded up)\nANS: 40") === "=CEIL(2000/50)\nANS: 40" &&
-    ["=110/25 -> bags, rounded up\nANSWER: You need {result} bags.", "=7/2 -> 4\nANSWER: You need {result} cars.", "=3 -> minutes\nANSWER: {result} minutes.",
-      "=3/8 -> 0.375\nANSWER: {result}%", "=2*60 -> minutes\n=30*ANS -> litres\nANSWER: {result} litres", "=CONVERT(5,\"km\",\"mile\") -> km\nANSWER: {result} km", "=12/80 -> percent\nANSWER: It is {result}%.", "=4.5 -> squared\nANSWER: {result} square metres.",
-      "=3.50 -> both ways\nANSWER: The return trip costs ${result}.", "=2000/15 -> minutes\nANSWER: It takes {result} hours.", "=1500*4 -> Wh\nANSWER: It uses {result} kWh.",
-      "=65*35 -> pence\nANSWER: That is \u00a3{result}.", "=2*2.5 -> dollars\nANSWER: {result} cents"].every(function (t) { return rd(t) === t; }) &&
-    rd("=50-80 -> -30 dollars\nANSWER: {result} dollars") === "=50-80\nANSWER: {result} dollars" && rd("=(10-32)/1.8 -> -12.2 C\nANSWER: {result} C") === "=(10-32)/1.8\nANSWER: {result} C");
-  // (the reviews of 1.24.7: what follows the second = is cut only where it is the sum's own value, every step of it --
-  // a number that is not may be the model's next step, done in the head, as surely as a slip, and stays as written)
-  ok("\u201c= 65*35 = 2275\u201d, \u201c=2000/15/60 = 2000/900 = 2.2222\u201d: the line is the sum, up to the second =, where what follows is the sum\u2019s own value; the 0.8B\u2019s chain that ends wrong (\u201c= 200/9 = 22.2\u201d), and 6.5 after =CONVERT(26,\"mile\",\"km\"), stay as written; a comparison inside a function is left alone",
-    rd("= 65*35 = 2275", HOWMUCH) === "= 65*35" && rd("=2000/15/60 = 2000/900 = 2.2222\nANSWER: {result}", "How many hours does it take?") === "=2000/15/60\nANSWER: {result}" &&
-    rd("=2000/15/60 = 2000/900 = 200/9 = 22.22222222222222\nANSWER: 22.2", "How many hours does it take?") === "=2000/15/60 = 2000/900 = 200/9 = 22.22222222222222\nANSWER: 22.2" &&
-    rd("=CONVERT(26,\"mile\",\"km\") = 6.5\nANS: 6.5", "What is 26 miles in km?") === "=CONVERT(26,\"mile\",\"km\") = 6.5\nANS: 6.5" && rd("=IF(2>=1,5,6)", HOWMUCH) === "=IF(2>=1,5,6)" && rd("=IF(3=3,5,6)", HOWMUCH) === "=IF(3=3,5,6)" &&
-    R("= 65*35 = 2275", HOWMUCH).said[0] === "a formula line with its result typed after a second = as the sum", R("= 65*35 = 2275", HOWMUCH));
-  // (the second review: a comparison is a sum too -- 1 for yes)
-  ok("...only where the question asks for a number. Where it asks whether something is so (\u201cCheck whether\u201d, \u201cVerify that\u201d, \u201cTell me if\u201d, \u201cConfirm\u201d, \u201cCheck it\u201d, \u201cCompare\u201d, \u201cIs ...?\u201d), where the answer says what 1 and 0 mean, and where Lantern does not know the question, \u201c=17*23=391\u201d is the sum",
-    rd("=17*23=391\nANSWER: {result}", "Check whether 17 times 23 makes 391.") === "=17*23=391\nANSWER: {result}" && rd("=12^2=144\nANSWER: {result}", "Verify that 12 squared is 144.") === "=12^2=144\nANSWER: {result}" &&
-    rd("=3*12=36\nANSWER: {result}", "Tell me if 3 dozen eggs is 36 eggs.") === "=3*12=36\nANSWER: {result}" && rd("=LEN(\"abc\")=3\nANSWER: {result}", "Confirm that the word abc has 3 letters.") === "=LEN(\"abc\")=3\nANSWER: {result}" &&
-    rd("=3*65=185\nANSWER: {result} (1 if the bill agrees, 0 if not)", "A bill for 3 items at 65 pesos came to 185 pesos. Check it.") === "=3*65=185\nANSWER: {result} (1 if the bill agrees, 0 if not)" &&
-    rd("=(17*23)=391\nANSWER: {result}", "Compare 17*23 with 391: write 1 if they match.") === "=(17*23)=391\nANSWER: {result}" && rd("=17*23=391\nANSWER: {result}", "Is 17*23 equal to 391?") === "=17*23=391\nANSWER: {result}" &&
-    rd("=17*23-391=0\nANSWER: {result} (1 means it leaves nothing)", "What is 17*23 less 391?") === "=17*23-391=0\nANSWER: {result} (1 means it leaves nothing)" && rd("= 65*35 = 2275") === "= 65*35 = 2275" && rd("= 65*35 = 2275", "") === "= 65*35 = 2275");
-  var twoTurns = [{ role: "user", content: "You are a careful calculation assistant.\nQUESTION: Is 17*23 equal to 391?\nThe question gives these numbers: 17; 23; 391." }, { role: "assistant", content: "=17*23" },
-    { role: "user", content: "Lantern questioned that: the ANSWER says 1, but Lantern\u2019s lines give 391.\nOtherwise reply again with corrected = lines and the ANSWER line only." }];
-  ok("...the question is the person\u2019s, on the second turn too (not what Lantern sent back), and the whole of a message of two lines",
-    R("=17*23=391\nANSWER: {result}", twoTurns).text === "=17*23=391\nANSWER: {result}" && R("=12*12=144\nANSWER: {result}", [{ role: "user", content: "Here is one to check.\nIs 12*12 equal to 144?" }]).text === "=12*12=144\nANSWER: {result}" &&
-    R("= 65*35 = 2275\nANSWER: {result}", [{ role: "user", content: "You are a careful calculation assistant.\nQUESTION: " + HOWMUCH + "\nThe question gives these numbers: 65 pesos; 35 litres." }]).text === "= 65*35\nANSWER: {result}");
+  // (1.24.7 read "=VOLTS(0.02,470) -> volts" as the sum, and "= 65*35 = 2275". Eight reviews broke each version of those
+  // readers: the arrow was a step still to do, a unit to change into, a unit the ANSWER did not use, half a chain; the
+  // second = a count rounded, a per cent, a test. Each time 1.24.6 had sent the reply back and 1.24.7 handed the person
+  // a wrong number. So the lines stay as the model wrote them, and go back with what is wrong said plainly.)
+  ok("an arrow after a sum, or a number after a second =, stays as the model wrote it: Lantern cannot see what the model meant by it (\u201c=VOLTS(0.02,470) -> volts\u201d, \u201c=7/2 -> 4\u201d, \u201c=3 -> minutes\u201d, \u201c=KE(1000,20) -> joules\u201d under kJ, \u201c= 65*35 = 2275\u201d, \u201c=7/2 = 4\u201d, \u201c=12/80 = 0.15 = 15%\u201d)",
+    [["=VOLTS(0.02,470) -> volts\nANSWER: {result} volts", ""], ["=CEIL(2000/50) -> bags (rounded up)\nANS: 40", ""], ["=7/2 -> 4\nANSWER: You need {result} cars.", ""], ["=3 -> minutes\nANSWER: {result} minutes.", ""],
+      ["=KE(1000,20) -> joules\nANSWER: {result} kJ", ""], ["=2*60 -> minutes\n=30*ANS -> litres\nANSWER: {result} litres", ""], ["=5*3 => 15", ""], ["= 65*35 = 2275", HOWMUCH],
+      ["=7/2 = 4\nANSWER: {result} cars", "How many cars for 7 people, 2 to a car?"], ["=12/80 = 0.15 = 15%\nANSWER: It is {result}%.", "What is 12 out of 80 as a percent?"],
+      ["=17*23=391\nANSWER: {result}", "Check whether 17 times 23 makes 391."], ["=LEN(\"a->b\")", ""]].every(function (x) { var r = R(x[0], x[1]); return r.text === x[0] && !r.said.length; }));
+  ok("...and goes back with what is wrong said plainly: a formula line holds only the sum; a step goes in the sum, the unit in the ANSWER (with the recipe\u2019s line where there is one, as on 1.24.6)",
+    /^a formula line holds only the sum: what follows the arrow cannot be worked out\. Put a step \(rounding, a change of unit\) in the sum itself, and the unit in the ANSWER$/.test(A.run("=VOLTS(0.02,470) -> volts").steps[0].err) &&
+    /a formula line holds only the sum/.test(A.run("=7/2 \u2192 4").steps[0].err) && !/a formula line holds/.test(A.run("=LEN(\"a->b\")+FOO(1)").steps[0].err || ""));
+  ok("a line that uses ANS where no line before it could be worked out cannot be worked out either (it was 0: \u201c=2*60 -> minutes\u201d, \u201c=30*ANS\u201d gave 0 litres); after a line that was worked out, ANS is that line\u2019s, as before",
+    A.run("=2*60 -> minutes\n=30*ANS").value === null && A.run("=2*60 -> minutes\n=30*ans").value === null && A.run("=2*60\n=ANS minutes\n=ANS*30").value === 3600 && A.run("=2*60\n=30*ANS").value === 3600);
   ok("\u201c=({2000}/{15})/60\u201d: a number in the { } of a recipe\u2019s blank is the number; a blank with its name in it is left for Lantern to question",
     rd("=({2000}/{15})/60") === "=(2000/15)/60" && rd("=CEIL({2000/50})") === "=CEIL((2000/50))" && rd("=({ah}*{v})/{w}") === "=({ah}*{v})/{w}" && rd("ANSWER: It weighs {result} newtons.") === "ANSWER: It weighs {result} newtons.");
   // (1.24.7 at first left out a number typed on its own = line under a sum. The fourth and fifth reviews wrote 44 right
@@ -100,7 +82,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     rd("MAKE DOC: Answer key\nAnswers to the quiz.\nANS: B\nANS: B\nANS: B\nANS: C\nEND") === "MAKE DOC: Answer key\nAnswers to the quiz.\nANS: B\nANS: B\nANS: B\nANS: C\nEND" &&
     rd("MAKE DOC: Quiz\n1. What is 12 x 12?\nANS: 12*12\n2. What is 9 x 9?\nANS: 9*9\nEND") === "MAKE DOC: Quiz\n1. What is 12 x 12?\nANS: 12*12\n2. What is 9 x 9?\nANS: 9*9\nEND" &&
     rd("MAKE DOC: Roots\nANSWER: SQRT(49)\nEND") === "MAKE DOC: Roots\nANSWER: SQRT(49)\nEND" &&
-    rd("Make sure the units match.\n=2000/15 -> 133.33\nANSWER: {result}") === "Make sure the units match.\n=2000/15\nANSWER: {result}" &&
+    rd("Make sure the units match.\nANS: 2000/15") === "Make sure the units match.\n=2000/15\nANSWER: {result}" &&
     rd("MAKE QUIZ: Seven times\n1. 6 x 7\n=6*7=42\nEND\nANSWER: The answer is 42.", "What is 6 times 7? Make a quiz.") === "MAKE QUIZ: Seven times\n1. 6 x 7\n=6*7=42\nEND\nANSWER: The answer is 42.");
   // (the sixth review: an ANSWER line after a line of a MAKE block that is not a program ends the block, as it does for
   // AI_ACTIONS, which makes the table and reads the ANSWER as the answer. The formula is worked out, and its line goes
@@ -137,23 +119,13 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     return { pass: pass, left: left };
   }
   var r2 = await replay(F2), r08 = await replay(F08);
-  // (the reviews of 1.24.7 took back what could not be told from a model's own step: a number typed under the sum, a
-  // number after a second = that is not the sum's value. Three of the 2B's rows and two of the 0.8B's that passed with
-  // those readers are left failing as on 1.24.6 -- the 2B's 88.5625 under =CONVERT(26,"mile","km"), 360 under
-  // =12*12*3, 50480 under Mars's escape velocity; the 0.8B's 9.6 after =120*80/10000 and its chain to 22.2)
-  // (and the sixth review took back the rest: a number of ten digits or more typed under a sum, or after an arrow, may be
-  // a step done in the head too ("=1024^3", "=10737418240" for 10 GiB); "-> bags (rounded up)" is not a unit. Five more
-  // of the 2B's rows are left failing as on 1.24.6: the battery's hours and the orbit's (a long number typed under the
-  // sum), the tank (133.33 hours typed under it), the plants (a long number after the arrow), the bags)
-  // (the seventh: an arrow is read only before a recipe's own label or the sum's own value; a whole number after a sum
-  // that is not whole is a count rounded, the model's step -- so the 2B's escape velocity, 11186 after a sum of
-  // 11186.x, goes back as on 1.24.6, and its bags, "-> bags (rounded up)" after the recipe's own line, are read)
-  ok("the 2B\u2019s 27 failed sums, with its replies as it wrote them: 10 pass now. The 17 left are sums it got wrong (RSERIES for two resistors in parallel, 150*10/420 for the fuel of a trip), and nine where it typed a number under a right sum or after its arrow, which Lantern cannot tell from a step done in the head",
-    r2.pass.length === 10 && r2.left.join() === "mars-escape,moon-weight,water-molar,battery-hours,miles-km,parallel,escape,plants,tank-fill,field-ha,rice-scale,egg-dozens,geo-period,rice-kg,power-bill,car-fuel,miles-speed", r2);
-  ok("...the ones that pass are ones it had right: the kinetic energy, the eggs, the feed, Ohm\u2019s law, a sack\u2019s weight, the wavelength, the bags, the bleach, the transfer, the jerrycans",
-    ["car-ke", "eggs", "feed", "ohms-law", "sack-weight", "radio-wave", "maize-bags", "bleach-jerrycan", "hohmann-geo", "jerrycans"].every(function (id) { return r2.pass.indexOf(id) >= 0; }), r2.pass);
-  ok("the 0.8B\u2019s 18 failed sums: 2 pass now (230 V x 4 A, fuel at 65 a litre: each a right sum with its own value after a second =); a field in hectares (9.6 after =120*80/10000) and a tank\u2019s hours (a chain that ends at 22.2) stay as written",
-    r08.pass.join() === "appliance-w,fuel-cost" && r08.left.length === 16, r08);
+  // (1.24.7 read the 2B's arrows and the 0.8B's second = for a while, and up to 15 of these rows passed. Eight reviews
+  // took those readers back, and the rows replayed with the replies as the models wrote them -- the same reply on the
+  // second turn as on the first -- fail as on 1.24.6. What 1.24.7 changes for them is at the source: the short prompt
+  // no longer shows "-> volts" after a recipe's line, and a line with an arrow goes back with what is wrong said
+  // plainly. The small models' run on 1.24.7 says whether they still write it.)
+  ok("the 2B\u2019s 27 failed sums and the 0.8B\u2019s 18, replayed with the replies as they wrote them, twice: none passes, as on 1.24.6 -- the lines with an arrow or a second = go back to the model (the run of 1.24.7 says what the models write with its prompt)",
+    r2.pass.length === 0 && r2.left.length === 27 && r08.pass.length === 0 && r08.left.length === 18, [r2, r08]);
 
   // --- what the short prompt shows: nothing after a recipe's line ---
   var withArrow = Q.filter(function (it) { if (!it.x) return false; var p = P.assist(it.q, A.match(it.q)), at = p.indexOf("\nRECIPE\n"); return at >= 0 && /->/.test(p.slice(at, p.indexOf("\nQUESTION:", at))); });

@@ -13,6 +13,8 @@
 // line that could not be worked out cannot be worked out either; a recipe is held to only where the question asks in
 // its unit; the sun asked for in front of something stays there. Its inputs are the fixture; what 1.24.6 and this
 // version give are written beside each.
+// (After the eighth review the readers for the arrow and the second = were taken out: such lines go back to the
+// model as on 1.24.6. The fixture's values are this version's.)
 "use strict";
 var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
 var fs = require("fs"), path = require("path");
