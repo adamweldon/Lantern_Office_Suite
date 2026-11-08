@@ -147,7 +147,7 @@ and 185 nearer what each wanted; 1, 1 and none further (a 4-3 over a tonic
 pedal, made as written where it would be asked about; a known tune a step
 too high, one chord changed, sent back by the songbook all the same).
 
-**What was tested.** `npm test` (N suites) and the browser tests (11; GMS
+**What was tested.** `npm test` (76 suites) and the browser tests (11; GMS
 needs Adam's own file). Not tested: any model on 1.24.10 (the small models'
 run starts with the push; the 35B is Adam's).
 
