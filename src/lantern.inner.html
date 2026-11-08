@@ -46759,75 +46759,89 @@ Lantern.RFB = (function () {
   // (1.24.8: not a shape where everything drawn over it is of its own look, nor a shape written again further down,
   // the same line -- a wall of three green rects, the same circle twice, a car written twice. The question asks for
   // another order, and no order of those shows the person anything more: what is over the first copy is under or
-  // over the second the same way, and anything caught between the two, hidden too, is asked about itself. The 4B's house on 1.24.7
-  // and the 2B's on 1.24.4 and 1.24.5 were asked it to the end. Anything of another colour over it where it has no
-  // copy (a red bull's-eye under a white ring under a red ring, a pepperoni under the sauce and partly under the
-  // cheese), or, between it and what covers it, anything the sampling below does not see -- a line, a curve, words,
-  // a shape drawn as an outline only, a star too small to sample (a clock's hands between two copies of its face) --
-  // that is not written again further down, and it is asked as before. The first and second reviews of 1.24.8)
+  // over the second the same way, and anything caught between the two, hidden too, is asked about itself. The 4B's
+  // house on 1.24.7 and the 2B's on 1.24.4 and 1.24.5 were asked it to the end. Anything of another colour over it
+  // where it has no copy (a red bull's-eye under a white ring under a red ring, a pepperoni under the sauce and
+  // partly under the cheese), or, between it and what covers it, anything the sampling below does not see -- a line,
+  // a curve, words, a shape drawn as an outline only, a star too small to sample (a clock's hands between two copies
+  // of its face) -- that is not written again further down, and it is asked as before.
+  // Three reviews of 1.24.8)
   function hex(c) { c = String(c || "").toLowerCase(); var k = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/.exec(c); return k ? "#" + k[1] + k[1] + k[2] + k[2] + k[3] + k[3] : c; }
-  // dup(a, b): the same shape written twice (its colours by what they are: #fff is white, sky is light blue)
+  // dup(a, b): the same shape written twice (its colours by what they are: #fff is white, sky is light blue; the
+  // width only where it draws an outline)
   function dup(a, b) {
-    return a.kind === b.kind && (a.nums || []).join(" ") === (b.nums || []).join(" ") && hex(fill(a)) === hex(fill(b)) && hex(a.color) === hex(b.color) && (a.width || 0) === (b.width || 0);
+    return a.kind === b.kind && (a.nums || []).join(" ") === (b.nums || []).join(" ") && hex(fill(a)) === hex(fill(b)) && hex(a.color) === hex(b.color) &&
+      ((!a.color && !b.color) || (a.width || 0) === (b.width || 0));
   }
-  function sameLook(a, b) {
-    if (hex(fill(a)) !== hex(fill(b))) return false;
-    // (an outline is drawn at the edge, in its own colour: the same only for the same line written twice)
-    return (!a.color && !b.color) || dup(a, b);
-  }
+  // look(o): two shapes look the same where they cover each other when their looks are equal -- the same fill and no
+  // outline, or the same outlined line written twice (an outline is drawn at the edge, in its own colour)
+  function look(o) { return o.color ? "d " + [o.kind, (o.nums || []).join(" "), hex(fill(o)), hex(o.color), o.width || 0].join("|") : "f " + hex(fill(o)); }
   function span(s) {
     var n = s.nums || [], xs = [], ys = [], i;
     if (s.kind === "circle") return [n[0] - n[2], n[1] - n[2], n[0] + n[2], n[1] + n[2]];
     if (s.kind === "square") return [n[0], n[1], n[0] + n[2], n[1] + n[2]];
     if (/^(rect|oval|ellipse)$/.test(s.kind)) return [n[0], n[1], n[0] + n[2], n[1] + n[3]];
-    // (words are drawn centred on X, about 0.36 of a cell a letter at size 20 -- the second review measured them)
-    if (s.kind === "text") { var f = (s.size || 20) / 20, hw = 0.18 * String(s.text || "").length * f + 0.2, hh = 0.6 * f + 0.2; return [n[0] - hw, n[1] - hh, n[0] + hw, n[1] + hh]; }
+    // (words are drawn centred on X, about 0.36 of a cell a letter and 0.56 high at size 20 -- the second and third
+    // reviews measured them)
+    if (s.kind === "text") { var f = (s.size || 20) / 20, hw = 0.18 * String(s.text || "").length * f + 0.2, hh = 0.3 * f + 0.1; return [n[0] - hw, n[1] - hh, n[0] + hw, n[1] + hh]; }
     for (i = 0; i + 1 < n.length; i += 2) { xs.push(n[i]); ys.push(n[i + 1]); }
     return xs.length ? [Math.min.apply(null, xs), Math.min.apply(null, ys), Math.max.apply(null, xs), Math.max.apply(null, ys)] : null;
   }
   function meets(a, b) { return !!a && !!b && a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3]; }
+  function flatTri(o) { var n = o.nums || []; return /^tri/.test(o.kind) && n.length >= 6 && Math.abs((n[2] - n[0]) * (n[5] - n[1]) - (n[4] - n[0]) * (n[3] - n[1])) < 1e-9; }
   function hidden(shapes) {
-    var solid = shapes.filter(function (s) { return SOLID.test(s.kind) && fill(s); }), top = {}, mine = {}, same = {}, reach = {}, over = {}, out = [], x, y, i, j;
-    if (solid.length < 2) return out;
+    var solid = shapes.filter(function (s) { return SOLID.test(s.kind) && fill(s); }), N = solid.length, lk = solid.map(look),
+      top = {}, mine = {}, same = {}, reach = {}, out = [], under = [], x, y, i, j, c, last, ok;
+    if (N < 2) return out;
     for (x = 0.125; x < 20; x += 0.25) for (y = 0.125; y < 12; y += 0.25) {
-      var last = -1, under = [];
-      for (i = 0; i < solid.length; i++) if (inside(solid[i], x, y)) { mine[i] = (mine[i] || 0) + 1; under.push(i); last = i; }
+      c = 0; last = -1;
+      for (i = 0; i < N; i++) if (inside(solid[i], x, y)) { mine[i] = (mine[i] || 0) + 1; under[c++] = i; last = i; }
       if (last < 0) continue;
       top[last] = (top[last] || 0) + 1;
-      for (j = 0; j + 1 < under.length; j++) {
-        var all = true;
-        over[under[j]] = over[under[j]] || {};
-        for (i = j + 1; i < under.length; i++) { over[under[j]][under[i]] = 1; if (!sameLook(solid[under[j]], solid[under[i]])) all = false; }
-        if (!all) continue;
-        same[under[j]] = (same[under[j]] || 0) + 1;
-        reach[under[j]] = Math.max(reach[under[j]] || 0, last);
+      // (from the top down: everything over under[j] is of its look while each is of the look of the one over it.
+      // Once not, not for any below -- one pass, so 60 large shapes stay quick: the third review timed 4.5 s)
+      for (ok = true, j = c - 2; j >= 0 && ok; j--) {
+        ok = lk[under[j]] === lk[under[j + 1]];
+        if (ok) { same[under[j]] = (same[under[j]] || 0) + 1; reach[under[j]] = Math.max(reach[under[j]] || 0, last); }
       }
     }
+    function isHidden(k) { return !!mine[k] && (top[k] || 0) / mine[k] < 0.03; }
+    // overlap(k, i): a point of the grid in both
+    function overlap(k, i) {
+      var a = span(solid[k]), b = span(solid[i]), x0 = Math.max(a[0], b[0]), x1 = Math.min(a[2], b[2]), y0 = Math.max(a[1], b[1]), y1 = Math.min(a[3], b[3]), px, py;
+      if (x0 > x1 || y0 > y1) return false;
+      for (px = 0.125 + 0.25 * Math.max(0, Math.ceil((x0 - 0.125) / 0.25)); px <= x1 && px < 20; px += 0.25)
+        for (py = 0.125 + 0.25 * Math.max(0, Math.ceil((y0 - 0.125) / 0.25)); py <= y1 && py < 12; py += 0.25)
+          if (inside(solid[k], px, py) && inside(solid[i], px, py)) return true;
+      return false;
+    }
     // crossed(s, t): drawn after s and before t, across s, something the sampling does not see (a line, a curve,
-    // words, a shape drawn as an outline only, a shape too small to sample) and that is not written again after t
+    // words, a shape drawn as an outline only, a shape too small to sample) that is not written again after t, on
+    // top. (A copy of it before s does not count: that one is under s -- a clock's hands drawn before its face and
+    // again between two copies of the face are lost all the same.)
     function sig(o) { return [o.kind, (o.nums || []).join(" "), hex(fill(o)), hex(o.color), o.width || 0, o.text || "", o.size || 0].join("|"); }
     function crossed(s, t) {
-      var from = shapes.indexOf(s), to = shapes.indexOf(t), sp = span(s), q, r, k2;
+      var from = shapes.indexOf(s), to = shapes.indexOf(t), sp = span(s), q, r, k2, g, found;
       for (q = from + 1; q < to; q++) {
         k2 = solid.indexOf(shapes[q]);
-        if (k2 >= 0 && mine[k2]) continue;
-        if (!meets(span(shapes[q]), sp)) continue;
-        for (r = to + 1; r < shapes.length; r++) if (sig(shapes[r]) === sig(shapes[q])) break;
-        if (r >= shapes.length) return true;
+        if ((k2 >= 0 && mine[k2]) || flatTri(shapes[q]) || !meets(span(shapes[q]), sp)) continue;
+        g = sig(shapes[q]); found = false;
+        for (r = to + 1; r < shapes.length && !found; r++) found = sig(shapes[r]) === g;
+        if (!found) return true;
       }
       return false;
     }
     solid.forEach(function (s, k) {
-      if (!mine[k] || (top[k] || 0) / mine[k] >= 0.03) return;
+      if (!isHidden(k)) return;
       if ((top[k] || 0) + (same[k] || 0) === mine[k] && !crossed(s, solid[reach[k]])) return;
       // (what is caught between the copies and across it must be hidden too, so that it is asked about itself, or be a
       // copy itself of a line before it -- the whole block written again: a car, wheels and all. A cloud drawn between
       // two copies of the sun, and the second sun painted over the cloud, is asked about as before)
-      function again(t) { for (var e2 = 0; e2 < k; e2++) if (dup(solid[e2], t)) return true; return false; }
-      for (var d = k + 1; d < solid.length; d++) {
+      function again(i2) { for (var e2 = 0; e2 < k; e2++) if (dup(solid[e2], solid[i2])) return true; return false; }
+      for (var d = k + 1; d < N; d++) {
         if (!dup(s, solid[d])) continue;
         var clear = true;
-        for (i = k + 1; i < d && clear; i++) if (over[k] && over[k][i] && !sameLook(s, solid[i]) && !(mine[i] && (top[i] || 0) / mine[i] < 0.03) && !again(solid[i])) clear = false;
+        for (i = k + 1; i < d && clear; i++) if (lk[i] !== lk[k] && !isHidden(i) && !again(i) && overlap(k, i)) clear = false;
         if (clear && !crossed(s, solid[d])) return;
         break;
       }

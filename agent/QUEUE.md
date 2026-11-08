@@ -20,8 +20,10 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      the small models now: the bench measures the guide, not the example.
      If they draw no road, the guide's words are what to work on (Lantern
      asks for a road only when nothing on the ground can be one);
-   - **a shape under shapes of its own colour is not asked about.** The
-     4B's `make-house` and the 0.8B's `make-sun-sea` failed only on that;
+   - **a shape under its own look, or written again, is not asked about
+     as hidden.** The 4B's `make-house` failed only on that (the 0.8B's
+     `make-sun-sea` is still asked: a rect of another colour lies across
+     its first sun between the copies). Three reviews, 386 drawings;
    - **the minutes.** The log now names the processor. On 1.24.7 the 4B
      and the 2B took 2.4 and 1.8 times as long per question as on 1.24.6,
      short questions as much as long ones; the 0.8B did not.
@@ -153,9 +155,21 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      roughly where, Lantern does the ground line, the order and the size
      by distance), or pieces the AI draws each on a grid of its own, which
      Lantern places by the point where the piece stands. His to choose;
+   - **what lies hidden that is not a filled shape.** Words, a line, a
+     shape drawn as an outline only, or one too small for the 0.25-cell
+     sampling, wholly under a later shape, is asked about by no version
+     (the three reviews of 1.24.8 drew 7 such). A clock's hands under a
+     second copy of the face are caught only through the face's question.
+     A check of its own, tried by a reviewer, with the reviews' drawings
+     (`tests/fixtures/review*_1248_hidden.json`) as the guard;
+   - **a piece of one area under another, something else on top** (a wall
+     in two pieces with its window, a canopy of two greens with apples) is
+     still asked about, as on 1.24.7: Lantern cannot tell it from a
+     pepperoni under the sauce and the cheese (22 of the second review's
+     drawings, 22 of the third's);
    - small things found: a circle written with four numbers (the 2B,
-     once); AI_MAKE_LAYOUT's `inside` reads an oval as a centre and two
-     radii, AI_DRAW draws it as a box.
+     once). (AI_MAKE_LAYOUT read an oval as a centre and two radii: mended
+     in 1.24.8.)
 4. **Confirm each new version on the 35B, twice**, when a chat is linked to
    Adam's laptop (`CLAUDE.md`, "The bench on Adam's laptop"). A version that
    has not had a full run says so in its report. 1.24.6: one full run (111

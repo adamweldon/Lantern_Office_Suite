@@ -153,7 +153,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     R1.length === 120 && lost.length === 0 && asked === 83, [lost, asked]);
   // (the second review wrote the line numbers it judged: should_at, and may_at for a question it would not mind)
   var R2 = fixture("review2_1248_hidden.json"), lost2 = [], found2 = 0, needless2 = 0;
-  function key(l) { var t = l.replace(/^\s+/, "").split(/\s+/), k = t[0].toLowerCase(), n = []; for (var i = 1; i < t.length && /^-?[\d.]+$/.test(t[i]); i++) n.push(parseFloat(t[i])); return k + " " + n.join(" "); }
+  function key(l) { var t = l.replace(/(\d)\s*[x\u00d7]\s*(\d)/gi, "$1 $2").replace(/,/g, " ").replace(/^\s+/, "").split(/\s+/), k = t[0].toLowerCase(), n = []; for (var i = 1; i < t.length && /^-?[\d.]+$/.test(t[i]); i++) n.push(parseFloat(t[i])); return k + " " + n.join(" "); }
   R2.forEach(function (d) {
     var b = act.build("MAKE DRAWING: T\n" + d.lines.join("\n") + "\nEND", d.q), sh = b.plan.shapes, map = [], j = 0;
     d.lines.forEach(function (l, i) { if (j < sh.length && key(l) === sh[j].kind + " " + sh[j].nums.join(" ")) { map[j] = i; j++; } });
@@ -164,6 +164,25 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   });
   ok("the second review\u2019s 128 drawings: no question it judged useful is lost (1.24.7 missed two, both ovals); 141 shapes found hidden, where 1.24.7 found 189; 22 of them it judged of no use (64 on 1.24.7)",
     R2.length === 128 && lost2.length === 0 && found2 === 141 && needless2 === 22, [lost2, found2, needless2]);
+  var R3 = fixture("review3_1248_hidden.json"), lost3 = [], gain3 = [], found3 = 0, needless3 = 0;
+  R3.forEach(function (d) {
+    var b = act.build("MAKE DRAWING: T\n" + d.lines.join("\n") + "\nEND", d.q), sh = b.plan.shapes, map = [], j = 0;
+    d.lines.forEach(function (l, i) { if (j < sh.length && key(l) === sh[j].kind + " " + sh[j].nums.join(" ")) { map[j] = i; j++; } });
+    var at = L.aiMakeLayout.hidden(sh).map(function (x) { return map[sh.indexOf(x)]; });
+    found3 += at.length;
+    (d.should_at || []).forEach(function (i) { if (at.indexOf(i) < 0 && (d.old_at || []).indexOf(i) >= 0) lost3.push(d.name + ": " + d.lines[i]); if (at.indexOf(i) >= 0 && (d.old_at || []).indexOf(i) < 0) gain3.push(d.name); });
+    at.forEach(function (i) { if ((d.should_at || []).indexOf(i) < 0 && (d.may_at || []).indexOf(i) < 0) needless3++; });
+  });
+  // (it judged 7 more useful that neither version asks: words, lines, a shape drawn as an outline only or too small to
+  // sample, hidden under a later shape -- AI_MAKE_LAYOUT looks only at filled shapes it can sample; agent/QUEUE.md)
+  ok("the third review\u2019s 138 drawings: no question 1.24.7 asked that it judged useful is lost, and two are new (an oval bush under the ground, an ellipse lake under the grass); 122 shapes found hidden, where 1.24.7 found 251; 22 of them it judged of no use (148 on 1.24.7)",
+    R3.length === 138 && lost3.length === 0 && gain3.length === 2 && found3 === 122 && needless3 === 22, [lost3, gain3, found3, needless3]);
+  // (the third review timed 60 large outlined rects at 4.5 s on the rule as it then was: every sampled point compared
+  // every pair of shapes over it. One pass from the top down now)
+  var big = [], t0, k;
+  for (k = 0; k < 60; k++) big.push("rect " + (k % 10) / 10 + " " + (k % 7) / 10 + " 20 12 fill green color black");
+  t0 = Date.now(); hid(big); var tBig = Date.now() - t0;
+  ok("...and quick: 60 large outlined rects, one over another, are read in well under a second (" + tBig + " ms)", tBig < 800, tBig);
 
   // --- left for the next version, as they are ---
   var wd = row(F4, "water-days"), pw = A.parseReply(wd.first), said = L.assistChecks.map(function (c) { try { return c(item("water-days").q, pw.exprText, A.run(pw.exprText), { parsed: pw }); } catch (e) { return null; } }).filter(Boolean);

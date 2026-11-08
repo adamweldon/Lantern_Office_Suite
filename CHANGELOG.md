@@ -1,5 +1,198 @@
 # Changelog
 
+## 1.24.8 — What the small models did with 1.24.7 (2026-11-08)
+
+**What was seen.** The small models' run on 1.24.7 (GitHub run
+42456738734, 114 scored questions, no library):
+
+| Model | Passed | Time | On 1.24.6 (of 112) |
+|---|---|---|---|
+| 4B | 106 (93%) | 157 min | 107 (96%), 69 min |
+| 2B | 74 (65%) | 92 min | 57 (51%), 48 min |
+| 0.8B | 56 (49%) | 38 min | 51 (46%), 40 min |
+
+- *The sums.* The 2B wrote no arrow after a sum: 21 of its failed rows had
+  one on 1.24.6, where the short prompt showed "-> volts" after a recipe's
+  line. It passed 14 of the 21 sums (6 on 1.24.6). Its failed sums now are
+  a number typed under a right sum, and huge numbers after one.
+- *The landscape example, copied.* The 0.8B's and the 2B's "road
+  disappearing into the distance" were the example's eight lines, word for
+  word, and passed. The 4B's shore at sunset was six of them, and the 2B's
+  shore was the example in orange with the sea drawn under the green
+  ground. The example was a road to the mountains: the subject of a bench
+  question.
+- *A question nothing could answer.* The 4B's house (a wall of three dark
+  green rects, one wholly under the other two) and the 0.8B's sun over the
+  sea (the same circle written twice) were questioned to the end: "the ...
+  is hidden under shapes drawn after it ... draw the background first".
+  Every drawing in the logs and fixtures since 1.24.4 was read again: the
+  2B's house had been questioned the same way on 1.24.4 (both tries) and
+  1.24.5.
+- *The time.* Against 1.24.6, on the 73 questions both runs passed at the
+  first try, the 4B took 2.4 times as long per question (the middle half
+  2.1 to 2.6), short questions as much as long ones; the 2B 1.8 times; the
+  0.8B the same. The same runner image, the same two threads, the 4B with
+  the same full prompt.
+- *Rows on more than one version* (findings, not yet mended):
+  - `water-days`, the 4B: `=5*40`, `=2000/800` went back with "=5*40 (200)
+    is worked out but never used afterwards ...; the formula uses 800,
+    which is not in the question; if the person did not give it, ask with
+    NEED". It answered "NEED: total daily water consumption in litres",
+    word for word what it answered on 1.24.5 to the same message;
+  - `letters-refrigerator`: the 4B's lines were right (Lantern worked out
+    "otaegife", 8) and its sentence typed "efrgefao"; the 2B did the same
+    on 1.24.5. The check of a retyped word knows only a word with a few
+    slips;
+  - the 0.8B's "= 65*35 = 2275", worked out as a test (1), as on 1.24.6.
+- *Once each:* the 4B's waltz (chords to bar 9) and orchestra (a part
+  called "strings"), which it passed on 1.24.6; Blink without delay() and
+  the AccelStepper sketch, which it failed on 1.24.6, passed.
+
+**What it was traced to.**
+
+- *The example.* A landscape question is shown one picture after the
+  guide, and an example is the likeliest thing a small model writes. The
+  guides for a control circuit, electronics and pneumatics each have a test
+  that their example is not the bench's question; the landscape guide, new
+  in 1.24.7, had none, and its example was a road into the distance. The
+  bench then measured copying, not the guide.
+- *The hidden shape.* The question asks for the lines in another order. A
+  shape covered only by shapes of its own colour looks the same in any
+  order, so nothing the model changes answers it; the small models wrote
+  the same block again.
+- *The time:* not traced. The log does not say which processor the job
+  got.
+
+**What changed.**
+
+- AI_SCENE: the landscape example is "Hills and a tree": the sky; the sun
+  straight after it; a gray mountain and a dark green hill, each with its
+  base on the horizon; the ground; a tree in front, lower and bigger. No
+  road, river, water, sunset or house. The guide's words still say how a
+  road or river going away is drawn, and Lantern still asks for one when a
+  question about a road going away has nothing on the ground that can be
+  it. Lantern changes nothing in the example and questions nothing in it.
+- AI_MAKE_LAYOUT: a hidden shape is not asked about
+  - when everything drawn over it is of its own look; or
+  - when the same line is written again further down, and whatever is
+    caught between the two copies, across it, is hidden too (so it is
+    asked about itself) or is itself a copy of a line before it (a whole
+    block written twice);
+  in both cases only when nothing the sampling does not see -- a line, a
+  curve, words, a shape drawn as an outline only, a shape too small to
+  sample -- is drawn across it in between, unless that too is written
+  again further down. A colour is what it is (#fff is white, sky is light
+  blue); an outline counts as another colour, except for the same outlined
+  line written twice; a width on a shape with no outline does not make two
+  copies differ. Anything else hidden is asked about as before. It is read
+  in one pass over the picture, from the top down.
+- AI_MAKE_LAYOUT reads shapes as AI_DRAW draws them: an oval in the box
+  from X, Y to X+W, Y+H (it was read as a centre and two radii, so an oval
+  pond wholly under the grass was not seen); a tri whose corners are on
+  one point or one line as covering nothing (drawn last, "tri 16 2 16 2
+  16 2" made every shape before it "hidden", on 1.24.7 too); words as far
+  as their length and size reach. The drawing's plan keeps a shape's width
+  and size, where the line gives them, for that.
+- The bench workflow prints the processor, the number of processors, the
+  memory and the instructions it has (AVX2, AVX-512) in the log and on
+  the summary page.
+- The run's failed rows and, new, every drawing it made:
+  `tests/fixtures/bench_run_1247_08b.json`, `_2b`, `_4b`.
+
+**What was tested.**
+
+- `npm test`: all 69 suites pass. New: `tests/bench_1247.js` (20
+  checks): the fixtures; no arrows from the 2B; the failed sums replayed as
+  written (none passes: 1.24.8 does not change how a sum is read); the
+  example copied, and the prompt's example now sharing only the sky and the
+  ground with it; the 4B's house made as written and passing, the 0.8B's
+  sun and the 2B's covered sea still asked about; the rule on its own (a
+  door before its wall, a bull's-eye drawn inside out, a pepperoni partly
+  under the cheese, a clock's face over its hands, an oval pond under the
+  grass: asked about; the same door twice, under a door of its own colour,
+  #fff then white, a wall written twice with its window on top, a car
+  written twice: not); the three reviews' drawings; 60 large outlined
+  rects read in well under a second; and, written as they are so that a
+  change shows, the tank of water and the backwards letters. `tests/scene.js`: the example is not a bench
+  question (no tri from the bottom edge, no blue, orange, red, pink or
+  purple, no road, river, shore, sea, sunset or house), and Lantern
+  changes nothing in it.
+- Three reviews by agents that had not seen the rule written, each with
+  drawings of its own, judged by what a person would see:
+  1. 120 drawings. The first draft spared a shape whose every covered point
+     showed its own colour on top. It lost 14 useful questions in 13
+     drawings: a shape of another colour in between (a bull's-eye, an eye's
+     highlight, a picture frame, drawn from the inside out), lines or words
+     between two copies (a clock's hands, a chalkboard's words, a stop
+     sign's word). It still asked 21 that no order could answer (an
+     outlined line written twice, #fff then white, a wall written twice
+     with its window on top). And it found the oval read wrong. Mended as
+     above: of its drawings' useful questions none is lost (1.24.7 missed
+     two, the ovals), and 89 shapes are found hidden where 1.24.7 found
+     125. Still asked and of no use, 15: mostly a copy with something
+     caught between it and its copy (what is caught is asked about too, and
+     once it is moved the copy is not), and three backgrounds wholly
+     covered by bands or squares, as on 1.24.7. Its drawings are
+     `tests/fixtures/review1_1248_hidden.json`, replayed by
+     `tests/bench_1247.js`.
+  2. 128 drawings, on the rule as mended after the first. 9 useful
+     questions lost: a window drawn as an outline only, a star too small
+     for the sampling, a long caption or a large word, each caught between
+     two copies; 23 still asked that no order could answer (a car, a house,
+     a landscape written twice whole; a tri with no area drawn last). Two
+     differences outside the question, both from the oval now read as the
+     box it is drawn in, in the check of what is above what: an egg below
+     a hen no longer questioned (right); a cloud level with a hilltop,
+     newly questioned (a borderline case). Mended as above: of its
+     drawings' useful questions none is lost, 141 shapes are found hidden
+     where 1.24.7 found 189, and 22 it judged of no use are still asked
+     (64 on 1.24.7): mostly a piece of one area under another piece with
+     something of another colour on top (a wall in two pieces with its
+     window, a canopy of two greens with apples), which Lantern cannot
+     tell from a pepperoni under the sauce and the cheese. Its drawings
+     are `tests/fixtures/review2_1248_hidden.json`.
+  3. 138 drawings, and 1,600 random blocks of up to 60 lines, on the rule
+     as mended after the second. No useful question that 1.24.7 asked is
+     lost, and two are new (an oval bush, an ellipse lake, under the
+     ground); 122 shapes are found hidden where 1.24.7 found 251, and 22 of
+     them it judged of no use (148 on 1.24.7): a line or words that are
+     part of a block written twice, caught between the copies; a background
+     between two copies; something across a shape judged by its box, not
+     its shape. It found the rule slow: 60 large outlined rects took 4.5 s
+     (6 ms on 1.24.7), every sampled point comparing every pair over it.
+     Mended: one pass from the top down (8 ms); a tri with no area caught
+     between copies does not count; words are as high as it measured them
+     (0.56 of a cell at size 20); a width on a shape with no outline does
+     not make two copies differ. It suggested letting a line caught between
+     two copies pass when it copies a line before the first: tried and
+     taken out, since a clock's hands drawn before its face and again
+     between two copies of the face are lost all the same. Its drawings are
+     `tests/fixtures/review3_1248_hidden.json`. These last mends were
+     replayed, before and after, on the three reviews' drawings and its
+     1,600 blocks: no difference but 11 fewer shapes asked about in the
+     blocks, each with words or a flat tri between two copies. No fourth
+     agent tried them.
+- Every drawing in the logs and fixtures since 1.24.4, 57 different
+  replies, built again: 17 had a hidden-shape question on 1.24.7, 11 on
+  1.24.8. The six that lost it: the 4B's house (both tries), the 2B's
+  house on 1.24.4 (both tries), on 1.24.5, and on 1.24.6 (second try), each
+  a shape under its own colour or a copy of one. Two more, the 2B's first
+  houses on 1.24.6 and 1.24.7, lost one question each: a sky written over
+  a sky. The 0.8B's sun is still asked about: between its two copies it
+  drew a dark green rect across the first, and which it meant to show
+  Lantern cannot tell.
+
+**What was not.**
+
+- No model has run 1.24.8. The example is expected to cost the 0.8B and
+  the 2B their road into the distance, which they passed by copying.
+- The time: the next run's log names the processor.
+- Left failing, for the next version (`agent/QUEUE.md`, 1): the tank of
+  water's send-back, the retyped letters, "= 65*35 = 2275".
+- Neither 1.24.7 nor 1.24.8 asks about words, a line, a shape drawn as an
+  outline only or one too small to sample, hidden under a later shape: the
+  check reads only the filled shapes it can sample (`agent/QUEUE.md`).
+
 ## 1.24.7 — A landscape the way the eye sees it, the sum as the model wrote it, and the reviews that tried both (2026-11-06)
 
 Three pieces of work. Adam drew with the 35B on 1.24.6 and sent what came
