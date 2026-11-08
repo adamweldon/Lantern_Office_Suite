@@ -114,6 +114,33 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     wrong3.length === 1 && wrong3[0].s.name === "a tune a step too high, diatonic" && !wrong3[0].b.ok, wrong3.map(function (r) { return [r.s.name, r.said]; }));
   var further3 = r3.filter(function (r) { return r.now !== r.was && r.was === r.s.want; }), nearer3 = r3.filter(function (r) { return r.now !== r.was && r.now === r.s.want; });
   ok("against 1.24.8: " + nearer3.length + " songs nearer what the review wanted, one further (that one)", nearer3.length >= 80 && further3.length === 1, further3.map(function (r) { return r.s.name; }));
+  // --- the fourth review (tests/fixtures/review4_1250_music.json): 400 songs, 54 of them the models'. What it found,
+  // mended: a line cliche (Am | Am | Am7 | Am6 under A G# G F#) read as a clash, the pedal judged by chord names; B held
+  // over G C at the end made C, sounding over G; a mended last note written bare where the reader, placing the whole
+  // tune, would put it an octave off (and in a cello's tune move the note before it); a note over two home chords in
+  // the last bar mended and said twice; a rock shuffle's blue third mended
+  var T4 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review4_1250_music.json"), "utf8"));
+  var r4 = T4.map(function (s) {
+    var b = L.aiAct.build("MAKE MUSIC: " + (s.title || s.name) + "\n" + s.lines.join("\n") + "\nEND", s.q);
+    var said = String(b.summary || "").split(/\. (?=[a-zA-Z])/).filter(function (x) { return /Lantern played|Lantern ended/.test(x); });
+    return { s: s, b: b, said: said, now: kind(said, !!b.ok), was: kind(mends(s.old.said), !!s.old.ok) };
+  });
+  function r4n(n) { return r4.filter(function (r) { return r.s.name === n; })[0]; }
+  ok("the fourth review\u2019s 400 songs (213 to leave, 132 to mend, 55 to ask), each built", T4.length === 400 && r4.every(function (r) { return r.b && r.b.plan; }) &&
+    T4.filter(function (s) { return s.want === "as written"; }).length === 213);
+  var wrong4 = r4.filter(function (r) { return r.now === "mend" && r.s.want !== "mend"; });
+  ok("no song it said to leave or to ask about is mended (the line cliches, B over G C, C then Am, C then C7, a rock shuffle\u2019s blue third)", wrong4.length === 0, wrong4.map(function (r) { return [r.s.name, r.said]; }));
+  var further4 = r4.filter(function (r) { return r.now !== r.was && r.was === r.s.want; }), nearer4 = r4.filter(function (r) { return r.now !== r.was && r.now === r.s.want; });
+  ok("against 1.24.8: " + nearer4.length + " songs nearer what the review wanted, none further", nearer4.length >= 180 && further4.length === 0, further4.map(function (r) { return r.s.name; }));
+  var twice = r4.filter(function (r) { return r.said.length !== r.said.filter(function (x, i, a) { return a.indexOf(x) === i; }).length || r.said.filter(function (x) { return /Lantern ended/.test(x); }).length > 1; });
+  ok("...a mended note is said once (over C C in the last bar it was said twice)", twice.length === 0, twice.map(function (r) { return r.s.name; }));
+  var off4 = r4.filter(function (r) { return r.now === "mend" && r.b.plan.parts.length === 1 && r.s.lines.filter(function (l) { return /^(melody|chords) /.test(l); }).length === 2; }).filter(function (r) {
+    var p = r.b.plan, lines = r.s.lines.map(function (l) { return /^melody /.test(l) ? "melody " + p.parts[0].melody.join(" | ") : /^chords /.test(l) ? "chords " + p.parts[0].chords.join(" | ") : l; });
+    var b2 = L.aiAct.build("MAKE MUSIC: " + (r.s.title || r.s.name) + "\n" + lines.join("\n") + "\nEND", r.s.q);
+    return !b2.plan || b2.plan.melody.map(function (n) { return n.midi; }).join() !== p.melody.map(function (n) { return n.midi; }).join();
+  });
+  ok("...and every mended song\u2019s lines as shown, written out again, play the same notes, as the reader places the whole tune (B4 after G4, a cello\u2019s G - D - B)",
+    off4.length === 0 && r4.filter(function (r) { return r.now === "mend"; }).length >= 120, off4.map(function (r) { return r.s.name; }));
   console.log(fails ? fails + " MUSIC REVIEW FAILURES (" + passes + " passed)" : "ALL MUSIC REVIEW CHECKS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);
 })();
