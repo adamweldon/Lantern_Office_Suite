@@ -72,16 +72,18 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function w3(name) { return SC.wrong.filter(function (c) { return c.name === name; })[0]; }
   var wNow = SC.wrong.filter(function (c) { var m = mend(c); return m.lines.join("\n") !== c.after.join("\n") || m.said.join("|") !== c.said.join("|") || m.problems.join("|") !== c.problems.join("|"); });
   var n = {}; SC.wrong.forEach(function (c) { n[c.now] = (n[c.now] || 0) + 1; });
-  ok("the 45 wrong pictures: 35 mended, 2 sent back with the line to add, 8 left as the model drew them; each drawn as the fixture has it (looked at, as written and as drawn)",
-    wNow.length === 0 && n.mended === 35 && n["sent back"] === 2 && n.left === 8, [n, wNow.map(function (c) { return [c.name, mend(c)]; })]);
+  // (the sixth review of 1.24.7: the moon is left where the model drew it -- a white disc at night is a snow cap or a
+  // cloud as often -- so five of these pictures with the moon in front are left as drawn)
+  ok("the 45 wrong pictures: 30 mended, 2 sent back with the line to add, 13 left as the model drew them (the moon in front of a mountain or a cloud among them); each drawn as the fixture has it (looked at, as written and as drawn)",
+    wNow.length === 0 && n.mended === 30 && n["sent back"] === 2 && n.left === 13, [n, wNow.map(function (c) { return [c.name, mend(c)]; })]);
   function after(name) { return mend(w3(name)).lines.join("|"); }
-  ok("...the sun or moon drawn first, behind a mountain in the air, stays behind it when the mountain is stood on the horizon (the mountain goes just before the ground, not to the back of the sky)",
+  ok("...the sun or moon drawn first, behind a mountain in the air, stays behind it when the mountain is stood on the horizon (the mountain goes just before the ground, not to the back of the sky; the moon, which is not known for the moon, goes down with the peak it was drawn behind)",
     after("sun drawn first (behind), mountain floating in the air") === "rect 0 0 20 12 fill sky|circle 10 3 1.5 fill yellow|tri 4 8 10 2 16 8 fill gray|rect 0 8 20 4 fill green" &&
-    after("moon first, floating mountain overlapping it") === "rect 0 0 20 12 fill navy|circle 12 3 1.4 fill white|tri 5 8 11 2 17 8 fill gray|rect 0 8 20 4 fill dark green");
+    after("moon first, floating mountain overlapping it") === "rect 0 0 20 12 fill navy|circle 12 4.5 1.4 fill white|tri 5 8 11 3.5 17 8 fill gray|rect 0 8 20 4 fill dark green");
   ok("...a near range in the air stays in front of the far range the model drew before it",
     after("far range on the horizon drawn first, near range floating") === "rect 0 0 20 12 fill sky|tri 4 8 12 1.5 20 8 fill purple|tri 0 8 6 3.5 12 8 fill gray|rect 0 8 20 4 fill green");
-  ok("...what is drawn on the moon or the sun goes behind with it: the dark disc that makes a crescent, a face",
-    after("crescent moon (offset sky disc) in front of a mountain") === "rect 0 0 20 12 fill navy|rect 0 8 20 4 fill dark green|circle 10 3.5 1.5 fill white|circle 10.8 3 1.4 fill navy|tri 4 8 9 3 14 8 fill gray" &&
+  ok("...what is drawn on the sun goes behind with it: a face; a crescent moon in front of a mountain is left as drawn",
+    after("crescent moon (offset sky disc) in front of a mountain") === w3("crescent moon (offset sky disc) in front of a mountain").lines.join("|") &&
     after("sun with a smile (curve) in front of a mountain") === "rect 0 0 20 12 fill sky|circle 10 4.5 1.8 fill yellow|circle 9.4 4 0.2 fill black|circle 10.6 4 0.2 fill black|curve 9.2 5 10 5.6 10.8 5 color black width 2|tri 2 8 8 3 14 8 fill gray|rect 0 8 20 4 fill green");
   ok("...what lies on a mountain goes down with it: its other half, a snow cap that pokes out a little; one with a tree on it that pokes out is left as drawn",
     after("two-tone mountain floating (light half)") === "rect 0 0 20 12 fill sky|tri 4 8 9 4 14 8 fill gray|tri 9 4 9 8 14 8 fill light gray|rect 0 8 20 4 fill green" &&

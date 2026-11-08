@@ -58,10 +58,12 @@ function near(a, b) { return typeof a === "number" && typeof b === "number" && M
   var wNow = F.wrong.filter(function (c) { var m = mend(c); return m.lines.join("\n") !== c.after.join("\n") || m.said.join("|") !== c.said.join("|") || m.problems.join("|") !== c.problems.join("|"); });
   ok("the 24 wrong pictures: each drawn as the fixture has it (looked at, as written and as drawn)", wNow.length === 0, wNow.map(function (c) { return [c.name, mend(c)]; }));
   function w5(name) { return F.wrong.filter(function (c) { return c.name === name; })[0]; }
-  ok("...a road with a river drawn across it is left as drawn; two dunes in the air both go down, called dunes; a yellow moon in a question about the moon is called the moon; green hills are hills",
+  // (the sixth review of 1.24.7: in a question about the moon and not the sun, nothing is moved as the sun -- a yellow
+  // disc there may be the moon, a lamp, a window -- and the moon is left where it was drawn)
+  ok("...a road with a river drawn across it is left as drawn; two dunes in the air both go down, called dunes; a yellow moon in a question about the moon is left where it was drawn; green hills are hills",
     mend(w5("road strip crossing a river band (river drawn after the road)")).said.length === 0 &&
     mend(w5("desert dunes floating (6 wide, no mountain word)")).said.join() === "stood the 2 tan dunes on the horizon (y 8), behind what was already on the ground: their bases were in the sky" &&
-    mend(w5("yellow full moon drawn over the mountain's peak")).said.join() === "put the moon behind the mountain: it was drawn in front" &&
+    mend(w5("yellow full moon drawn over the mountain's peak")).said.length === 0 && mend(w5("yellow full moon drawn over the mountain's peak")).lines.join("|") === w5("yellow full moon drawn over the mountain's peak").lines.join("|") &&
     /^stood the 2 green hills on the horizon/.test(mend(w5("valley hills floating, sun after")).said[0]), F.wrong.map(function (c) { return [c.name, mend(c).said]; }));
 
   // --- replies ---

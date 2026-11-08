@@ -15,7 +15,10 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    with the 35B; no model had run it when it was pushed. So first:
    - **the 2B's sums.** It had 18 of its 27 failed sums right but for how
      it wrote the line (an arrow after it, a number typed under it, the
-     numbers in braces). Lantern reads those now. How many pass?
+     numbers in braces). Six reviews took the readers back to what Lantern
+     can be sure of: replayed, 10 of the 27 pass. The short prompt no longer
+     shows "-> volts" after a recipe's line: does the 2B still write
+     arrows? How many pass?
    - **the two scene questions** (new: `make-shore-sunset`,
      `make-road-horizon`), and every other drawing: the log prints each one
      between `=== DRAWINGS` and `=== END DRAWINGS ===`. Draw them
@@ -40,7 +43,11 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      twice on 1.24.6. **This one waits for Adam** (item 13 below; asked in
      `QUESTIONS.md`, 1): it changes what the model wrote, and how a song
      sounds is his;
-   - both need a reviewer who did not write them before they go in.
+   - both need a reviewer who did not write them before they go in. The
+     library change has had three (2026-11-08: 69, then 8, then 37
+     breaks, each mended; a fourth was trying the mends when 1.24.7 was
+     pushed). It is on `wip-2026-11-08-library`, built on 1.24.7, with its
+     tests and the reviews' pages; what is left is the fourth review.
    The filled recipes (a recipe given to a small model with the question's
    numbers in it) are on `wip-2026-11-06-recipe-fill`, out of 1.24.7: two
    reviews found them wrong too often, and a list of words to refuse is

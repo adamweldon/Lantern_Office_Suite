@@ -200,7 +200,9 @@ var RIGHT = [
     allSame2(["surfer off the beach (all water)", "beach ball on the sea", "whale far from the shore", "message in a bottle far from any shore"]));
   var wrong2 = RV2.wrong.filter(function (c) { return nowOf(c) !== c.now; }), n2 = {};
   RV2.wrong.forEach(function (c) { n2[c.now] = (n2[c.now] || 0) + 1; });
-  ok("the second review\u2019s 38 wrong pictures: 22 are mended, 2 sent back with the line to add, 14 left as they are", RV2.wrong.length === 38 && wrong2.length === 0 && n2.mended === 22 && n2["sent back"] === 2 && n2.left === 14,
+  // (the sixth review of 1.24.7: the moon is left where the model drew it -- a white disc at night may be a snow cap or a
+  // cloud -- so the moon in front of a mountain is left as drawn)
+  ok("the second review\u2019s 38 wrong pictures: 21 are mended, 2 sent back with the line to add, 15 left as they are (the moon among them)", RV2.wrong.length === 38 && wrong2.length === 0 && n2.mended === 21 && n2["sent back"] === 2 && n2.left === 15,
     [n2, wrong2.map(function (c) { return [c.name, nowOf(c)]; })]);
   var cap = S.mend(["rect 0 0 20 12 fill sky", "rect 0 8.5 20 3.5 fill green", "tri 3 5.5 10 1 17 5.5 fill gray", "tri 8.4 2 10 1 11.6 2 fill white"], "Draw a snow-capped mountain.");
   ok("...what is drawn on a mountain goes down with it: a snow cap stays on its peak (the mountain is set down whole; its sides carried down would leave the cap hanging over them), and goes behind the ground with it",
@@ -235,7 +237,8 @@ var RIGHT = [
   var m6 = mend("Draw the sun setting over the sea.", ["rect 0 0 20 12 fill orange", "rect 0 8 20 4 fill blue", "circle 10 8 2.5 fill yellow"]);
   ok("a setting sun drawn over the sea: it goes behind the water, so half of it shows", m6.lines.join("|") === "rect 0 0 20 12 fill orange|circle 10 8 2.5 fill yellow|rect 0 8 20 4 fill blue" && m6.said[0] === "put the sun behind the water: it was drawn in front", m6);
   var m7 = mend("Draw the moon over the mountains at night.", ["rect 0 0 20 12 fill dark blue", "tri 0 9 5 4 10 9 fill gray", "tri 7 9 13 3 20 9 fill gray", "rect 0 9 20 3 fill dark green", "circle 12 4 1.5 fill white"]);
-  ok("the moon drawn last, over a mountain: just behind that mountain, and called the moon", m7.lines.slice(1, 4).join("|") === "tri 0 9 5 4 10 9 fill gray|circle 12 4 1.5 fill white|tri 7 9 13 3 20 9 fill gray" && m7.said[0] === "put the moon behind the mountain: it was drawn in front", m7);
+  ok("the moon drawn last, over a mountain: left where the model drew it (a white disc on a peak at night is a snow cap or a cloud as often -- the sixth review); the sun is moved, the moon is not",
+    m7.lines.join("|") === "rect 0 0 20 12 fill dark blue|tri 0 9 5 4 10 9 fill gray|tri 7 9 13 3 20 9 fill gray|rect 0 9 20 3 fill dark green|circle 12 4 1.5 fill white" && !m7.said.length && !m7.problems.length, m7);
   var m8 = mend("Draw mountains.", ["rect 0 0 20 12 fill sky", "rect 0 9 20 3 fill green", "tri 3 3 5 1 7 3 fill gray", "tri 9 4 14 2 19 4 fill gray"]);
   ok("a small peak high in the sky is set down whole (its sides carried down would make a needle); a wide one has its sides carried down", m8.lines.join("|") === "rect 0 0 20 12 fill sky|tri 3 9 5 7 7 9 fill gray|tri 9 9 14 2 19 9 fill gray|rect 0 9 20 3 fill green", m8.lines);
   var m9 = mend("Draw rolling hills under a blue sky.", ["rect 0 0 20 12 fill sky", "rect 0 9 20 3 fill green", "tri 0 7 5 4 10 7 fill green", "tri 8 8 14 5 20 8 fill dark green"]);
