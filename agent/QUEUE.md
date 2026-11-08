@@ -5,35 +5,52 @@ file in the same commit as the work. Read `CLAUDE.md` first.
 
 ## Next, in order
 
-1. **Read the small models' run on 1.24.7 and act on it.** Every push to a
+1. **Read the small models' run on 1.24.8 and act on it.** Every push to a
    `lantern-x.y.z` branch runs the whole bench with the 0.8B, the 2B and the
-   4B on GitHub (`CLAUDE.md`, "The bench with the small models"). On 1.24.6:
-   **4B 107 of 112, 2B 57, 0.8B 51** (the 35B: 111 of 112 without the
-   library on the laptop pane; 134 of 138 with it, in Adam's own browser,
-   2026-11-08). 1.24.7 was written from those rows
-   (`tests/fixtures/bench_run_1246_*.json`) and from two pictures Adam made
-   with the 35B; no model had run it when it was pushed. So first:
-   - **the 2B's sums.** It had 18 of its 27 failed sums right but for how
-     it wrote the line (an arrow after it, a number typed under it, the
-     numbers in braces). Eight reviews took the readers for the arrow and
-     the second = out (each version handed over wrong numbers where 1.24.6
-     sent the reply back): replayed as written, none of the 27 passes, as
-     on 1.24.6. The short prompt no longer shows "-> volts" after a
-     recipe's line, and a line with an arrow goes back with what is wrong
-     said: does the 2B still write arrows? Does it fix them on the second
-     turn? How many pass? A both-versions hole to look at with the rows:
-     "= 65*35 = 2275" is worked out as a test (1), unquestioned.
-   - **the two scene questions** (new: `make-shore-sunset`,
-     `make-road-horizon`), and every other drawing: the log prints each one
-     between `=== DRAWINGS` and `=== END DRAWINGS ===`. Draw them
-     (`python3 tools/draw_log.py job.log <dir>`), look at the sheet, and
-     send it to Adam. What do the models write with the landscape guide
-     and its example? Do they copy the example whole?
-   - the minutes (48, 40 and 69 on 1.24.6).
-2. **1.24.8, ready on the side** (from Adam's run of the 35B on 1.24.6 with
-   the library, `tests/fixtures/bench_run_1246_35b_library.json`; the
-   patches and their tests were written in the session of 2026-11-07 and
-   wait for 1.24.7's run):
+   4B on GitHub (`CLAUDE.md`, "The bench with the small models"). On 1.24.7
+   (run 42456738734, 114 scored): **4B 106 (157 minutes), 2B 74 (92), 0.8B
+   56 (38)**; on 1.24.6, of 112: 107, 57 and 51. Its failed rows and every
+   drawing are `tests/fixtures/bench_run_1247_*.json`, replayed by
+   `tests/bench_1247.js`. The 2B wrote no arrow after a sum (21 rows had
+   one on 1.24.6) and passed 14 of 21 sums (6). What 1.24.8 changes that a
+   run will show:
+   - **the landscape example has no road.** The 0.8B and the 2B passed
+     `make-road-horizon` on 1.24.7 with the example's eight lines word for
+     word, and the 4B's shore was six of them. Expect the road to fail for
+     the small models now: the bench measures the guide, not the example.
+     If they draw no road, the guide's words are what to work on (Lantern
+     asks for a road only when nothing on the ground can be one);
+   - **a shape under shapes of its own colour is not asked about.** The
+     4B's `make-house` and the 0.8B's `make-sun-sea` failed only on that;
+   - **the minutes.** The log now names the processor. On 1.24.7 the 4B
+     and the 2B took 2.4 and 1.8 times as long per question as on 1.24.6,
+     short questions as much as long ones; the 0.8B did not.
+   Then, from the rows of 1.24.7 (each needs a reviewer before it goes in):
+   - **a send-back that ends on a choice.** `water-days`, the 4B: `=5*40`,
+     `=2000/800` went back with "=5*40 (200) is worked out but never used
+     ...; the formula uses 800, which is not in the question; if the person
+     did not give it, ask with NEED", and the 4B asked a NEED, word for
+     word as on 1.24.5 (the same row on two versions). Rule 3: give the
+     line to write. Rule 7: `=2000/ANS1` is that line only when 800 stands
+     for the unused step; a reviewer tries questions where the number is a
+     slip and where it is truly missing. At the least, a NEED is not the
+     last thing said when every number of the question is used;
+   - **a word Lantern worked out, typed otherwise in the sentence.**
+     `letters-refrigerator`, the 4B: its lines right ("otaegife", 8), its
+     sentence "efrgefao". The check of a retyped word knows only a word
+     with a few slips. The 2B did the same on 1.24.5 ("gitefr"). A quoted
+     word in the ANSWER that is not in the question, beside a text the
+     lines worked out, could go back with `{ANS2}` to write;
+   - **"= 65*35 = 2275"** (the 0.8B on 1.24.6 and 1.24.7) is worked out as
+     a test (1) and not questioned: a number question whose answer is a
+     test should go back, said plainly;
+   - **a guide's own line in a block**: the 0.8B's sunset house began with
+     the drawing guide's sentence "One shape per line, back to front ..."
+     and the title "<title> -- a simple picture on a g...";
+   - music, the 4B once each: a waltz's chords to bar 9, an orchestra part
+     called "strings" (with `QUESTIONS.md`, 2).
+2. **1.24.9, ready on the side** (from Adam's run of the 35B on 1.24.6 with
+   the library, `tests/fixtures/bench_run_1246_35b_library.json`):
    - **the part of an article that answers.** A repair guide's steps
      without its readers' comments (iFixit keeps a step's comments inside
      its list item); a travel guide's own section for getting around,
@@ -45,19 +62,25 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      the nearest note of the home chord at the song's end), and said. The
      35B was told the chord and wrote the same one again on 1.24.0 and
      twice on 1.24.6. **This one waits for Adam** (item 13 below; asked in
-     `QUESTIONS.md`, 1): it changes what the model wrote, and how a song
+     `QUESTIONS.md`, 2): it changes what the model wrote, and how a song
      sounds is his;
    - both need a reviewer who did not write them before they go in. The
-     library change has had three (2026-11-08: 69, then 8, then 37
-     breaks, each mended; a fourth was trying the mends when 1.24.7 was
-     pushed). It is on `wip-2026-11-08-library`, built on 1.24.7, with its
-     tests and the reviews' pages; what is left is the fourth review.
+     library change has had five (2026-11-08: 69, 8, 37, 21, then 14
+     answers lost, each mended). It is on `wip-2026-11-08-library`, built
+     on 1.24.7, with its tests and the five reviews' pages
+     (`tests/library_review_1248.js`): of 2,704 questions none lost but 8
+     answered only in a reader's comment and 5 at the length Lantern does
+     not pick; 188 found that 1.24.7 does not find. Its changelog is
+     `agent/drafts/changelog_1248.md` (its files keep the name 1248; it
+     goes in as 1.24.9, on top of 1.24.8). Left: Adam's answer on the
+     comments (`QUESTIONS.md`, 1), then the version bump; a sixth review if
+     the comments come back.
    The filled recipes (a recipe given to a small model with the question's
    numbers in it) are on `wip-2026-11-06-recipe-fill`, out of 1.24.7: two
    reviews found them wrong too often, and a list of words to refuse is
    never finished. The next attempt fills only a question whose every word
    Lantern knows (its note there says how).
-   Then, from what the rows of 1.24.6 show and 1.24.7 does not touch:
+   Then, from what the rows of 1.24.6 show and 1.24.7 and 1.24.8 do not touch:
    - **A guide copied whole.** The 2B and the 0.8B copied the hydraulic,
      pneumatic, control and electronics guides into their blocks, line for
      line, with the explanations, the continuation lines and `<title>`,
@@ -109,9 +132,10 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    for a plain landscape asked in plain words only: three reviews showed
    that a rule which guesses spoils more right pictures than it mends
    wrong ones. Next:
-   - **the 35B on 1.24.7**, when the laptop is linked: Adam's two requests
+   - **the 35B on 1.24.8**, when the laptop is linked: Adam's two requests
      and the two scene questions, and what it writes with the landscape
-     guide. Its picture is the test; send Adam the sheet;
+     guide and its example (no road since 1.24.8). Its picture is the
+     test; send Adam the sheet;
    - **the look turn.** The 35B said LOOKS RIGHT to mountains in the air.
      It is now told what Lantern changed. It could also be asked what
      Lantern cannot work out (is each thing the request names in the
@@ -124,7 +148,7 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      hill is left as the model drew it, mountains in the air and all. The
      words Lantern knows can grow one at a time, each with right pictures
      of its own tried by a reviewer;
-   - **pieces.** Two ways were put to Adam (`QUESTIONS.md`, 1): words for
+   - **pieces.** Two ways were put to Adam (`QUESTIONS.md`, 3): words for
      things Lantern places (mountain, road, tree: the model says what and
      roughly where, Lantern does the ground line, the order and the size
      by distance), or pieces the AI draws each on a grid of its own, which
@@ -138,8 +162,8 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    of 112) on the build before its last change, the four music questions on
    the build that was pushed, and a second full run of that build stopped
    at 73 of 118 with nothing scored failing (Adam said to stop); then a full
-   run with the library by Adam himself (134 of 138, 2026-11-08). 1.24.7:
-   none yet.
+   run with the library by Adam himself (134 of 138, 2026-11-08). 1.24.7
+   and 1.24.8: none yet (the stick holds 1.24.6).
 5. **Finish the five Food lessons on `wip-2026-11-06`.** They are drafted
    and were checked from memory only; the checker's memory differs from the
    drafts where it matters (kidney beans, cassava, the hay box). They need
@@ -203,7 +227,7 @@ file in the same commit as the work. Read `CLAUDE.md` first.
     whether Lantern should apply the fix it named and say so. It did again:
     the 35B's waltz on 1.24.6 (2026-11-08) and its tune of its own on 1.24.6
     (2026-11-06). The mend for a held note against its chord is written and
-    tested (item 2) and asked of Adam (`QUESTIONS.md`, 1).
+    tested (item 2) and asked of Adam (`QUESTIONS.md`, 2).
 14. **The 1.16.0 audit's feature list** (`Lantern_1.16.0_app_audit.pdf`, sent
     to Adam on 2026-10-29) was never answered. With the aim above, take the
     features that serve it without asking again; leave the rest.

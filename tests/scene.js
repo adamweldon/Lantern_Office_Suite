@@ -68,7 +68,7 @@ var ROAD = block("Road to the horizon", ["rect 0 0 20 12 fill sky", "rect 0 6 20
 
 // pictures that are right as written: [what, question, block]
 var RIGHT = [
-    ["example landscape", "Draw a road going to the mountains.", "MAKE DRAWING: Road to the mountains\nrect 0 0 20 12 fill sky\ncircle 16 3 1.5 fill yellow\ntri 1 7 6 3 11 7 fill gray\ntri 8 7 14 4 20 7 fill gray\nrect 0 7 20 5 fill green\ntri 7 12 13 12 10 7 fill tan\nrect 15 8 1 2 fill brown\ncircle 15.5 7.5 1.2 fill dark green\nEND"],
+    ["a road to the mountains (1.24.7\u2019s example)", "Draw a road going to the mountains.", "MAKE DRAWING: Road to the mountains\nrect 0 0 20 12 fill sky\ncircle 16 3 1.5 fill yellow\ntri 1 7 6 3 11 7 fill gray\ntri 8 7 14 4 20 7 fill gray\nrect 0 7 20 5 fill green\ntri 7 12 13 12 10 7 fill tan\nrect 15 8 1 2 fill brown\ncircle 15.5 7.5 1.2 fill dark green\nEND"],
     ["hut by a tree", "Draw a hut by a tree.", "MAKE DRAWING: Hut by a tree\nrect 0 0 20 12 fill sky\ncircle 18 2 1 fill yellow\nrect 0 9 20 3 fill green\nrect 3 6 4 3 fill tan\ntri 2 6 5 3 8 6 fill brown\nrect 4 7 1 2 fill dark green\nrect 13 5 2 4 fill brown\ncircle 14 4 2 fill dark green\nEND"],
     ["pines", "Draw a forest of pine trees on a hill.", "MAKE DRAWING: Pines\nrect 0 0 20 12 fill sky\nrect 0 9 20 3 fill green\nrect 4.5 8 1 2 fill brown\ntri 2 8 5 5 8 8 fill dark green\ntri 3 6 5 3 7 6 fill dark green\nrect 13.5 8 1 2 fill brown\ntri 11 8 14 5 17 8 fill dark green\ntri 12 6 14 3 16 6 fill dark green\nEND"],
     ["sailboat", "Draw a sailboat on the sea.", "MAKE DRAWING: Sailboat\nrect 0 0 20 7 fill sky\nrect 0 7 20 5 fill blue\nrect 7 6.5 6 1 fill brown\ntri 9 1.5 9 6 14 6 fill white\nline 9 1 9 6.5 color black width 2\nEND"],
@@ -265,12 +265,17 @@ var RIGHT = [
   var pl = DR.promptFor(SHORE_Q), ph = DR.promptFor("Draw a simple house with a red roof and a door."), phh = DR.promptFor("Draw a house on a hill at sunset.");
   ok("a landscape question is given three more lines of guide (the ground and its horizon, mountains on it, the sun straight after the sky, a road as a tri) and a landscape as its example",
     S.landscape(SHORE_Q) && S.landscape(ROAD_Q) && pl.join("\n").indexOf("A landscape: the ground is ONE wide rect that reaches the bottom edge; its top is the horizon.") > 0 &&
-    pl.indexOf("MAKE DRAWING: Road to the mountains") > pl.indexOf("END") && pl.indexOf("tri 7 12 13 12 10 7 fill tan") > 0 && pl.indexOf("MAKE DRAWING: Hut by a tree") < 0 && pl.join("\n").length < 1800, pl.join("\n").length);
+    pl.indexOf("MAKE DRAWING: Hills and a tree") > pl.indexOf("END") && pl.indexOf("tri 2 7 7 3 12 7 fill gray") > 0 && pl.indexOf("MAKE DRAWING: Hut by a tree") < 0 && pl.join("\n").length < 1800, pl.join("\n").length);
+  // (1.24.8: 1.24.7's example was a road to the mountains, and on its run the 0.8B, the 2B and the 4B each passed
+  // make-road-horizon with the example's road. As for the other guides, the example is not a bench question)
+  var egL = pl.slice(pl.indexOf("For example:") + 1).join("\n");
+  ok("...its example is not a bench question: no road or river going away (a tri from the bottom edge), no water, no sunset, no house",
+    !/\btri [\d.]+ 12 [\d.]+ 12\b/.test(egL) && !/fill (blue|navy|cyan|dark blue|orange|red|pink|purple)\b/.test(egL) && !/road|river|shore|sea|sunset|house/i.test(egL), egL);
   ok("...a house keeps the hut (its roof is the example a small model needs), on a hill too; so does any other picture", !S.landscape("Draw a house on a hill at sunset.") && ph.indexOf("MAKE DRAWING: Hut by a tree") > 0 &&
     phh.indexOf("MAKE DRAWING: Hut by a tree") > 0 && ph.join("\n").indexOf("A landscape:") < 0 && DR.promptFor("Draw a yellow sun above a blue sea.").indexOf("MAKE DRAWING: Hut by a tree") > 0 &&
     !S.landscape("Draw the magnetic field of a bar magnet.") && !S.landscape("Draw a plain red square.") && S.landscape("Draw a river running through a valley."));
   var eg = pl.slice(pl.indexOf("For example:") + 1).join("\n"), madeE = act.build(eg, "Draw a road going to the mountains.");
-  ok("the landscape example is a picture Lantern changes nothing in and questions nothing in", madeE.ok === true && madeE.plan.shapes.length === 8 && !madeE.plan.said && madeE.summary === "8 shapes", [madeE.summary, madeE.problems]);
+  ok("the landscape example is a picture Lantern changes nothing in and questions nothing in", madeE.ok === true && madeE.plan.shapes.length === 7 && !madeE.plan.said && madeE.summary === "7 shapes", [madeE.summary, madeE.problems]);
 
   // --- rule 11 ---
   var o2 = load(["AI_SCENE"]);
