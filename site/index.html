@@ -46746,7 +46746,9 @@ Lantern.RFB = (function () {
     if (s.kind === "rect") return x >= n[0] && x < n[0] + n[2] && y >= n[1] && y < n[1] + n[3];
     if (s.kind === "square") return x >= n[0] && x < n[0] + n[2] && y >= n[1] && y < n[1] + n[2];
     if (s.kind === "circle") return (x - n[0]) * (x - n[0]) + (y - n[1]) * (y - n[1]) <= n[2] * n[2];
-    if (s.kind === "oval" || s.kind === "ellipse") return n[2] > 0 && n[3] > 0 && Math.pow((x - n[0]) / n[2], 2) + Math.pow((y - n[1]) / n[3], 2) <= 1;
+    // (an oval is drawn in the box from X, Y to X+W, Y+H -- AI_DRAW; until 1.24.8 it was read here as a centre and two
+    // radii, so an oval under the ground was not seen as hidden: the first review of 1.24.8)
+    if (s.kind === "oval" || s.kind === "ellipse") return n[2] > 0 && n[3] > 0 && Math.pow((x - n[0] - n[2] / 2) / (n[2] / 2), 2) + Math.pow((y - n[1] - n[3] / 2) / (n[3] / 2), 2) <= 1;
     if (s.kind === "tri" || s.kind === "triangle") {
       var d1 = (x - n[2]) * (n[1] - n[3]) - (n[0] - n[2]) * (y - n[3]), d2 = (x - n[4]) * (n[3] - n[5]) - (n[2] - n[4]) * (y - n[5]),
         d3 = (x - n[0]) * (n[5] - n[1]) - (n[4] - n[0]) * (y - n[1]);
@@ -46757,22 +46759,68 @@ Lantern.RFB = (function () {
   var SOLID = /^(rect|square|circle|oval|ellipse|tri|triangle)$/;
   function said(s) { return s.kind + " " + (s.nums || []).join(" ") + (s.fill ? " (" + (family(s.fill) || "filled") + ")" : ""); }
   // hidden(shapes) -> [shape]: filled shapes no part of which is left in view
-  // (1.24.8: not a shape that lies only under shapes of its own colour, none of them outlined -- the same line written
-  // twice, a wall of three green rects. Drawn first or last, the picture is the same, so no change of order can answer
-  // the question: the 4B's house and the 0.8B's sun on 1.24.7, the 2B's house on 1.24.4, 1.24.5 and 1.24.6, each
-  // questioned to the end for a shape the person could not have seen either way)
-  function sameLook(a, b) { return !a.color && !b.color && String(fill(a)).toLowerCase() === String(fill(b)).toLowerCase(); }
+  // (1.24.8: not a shape where everything drawn over it is of its own look, nor a shape written again later, the
+  // same line, with nothing of another look over it in between -- the same circle twice, a wall of three green rects,
+  // a wall written twice and its window on it. The question asks for another order, and the order of those changes
+  // nothing the person could see: the 4B's house on 1.24.7 and the 2B's on 1.24.4 and 1.24.5 were asked it to the
+  // end. Anything of another colour over it before that (a red bull's-eye under a white ring under a red ring, a
+  // pepperoni under the sauce and partly under the cheese), or a line, a curve or words drawn across it in between (a
+  // clock's hands between two copies of its face), and it is asked as before -- the first review of 1.24.8)
+  function hex(c) { c = String(c || "").toLowerCase(); var k = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/.exec(c); return k ? "#" + k[1] + k[1] + k[2] + k[2] + k[3] + k[3] : c; }
+  // dup(a, b): the same shape written twice (its colours by what they are: #fff is white, sky is light blue)
+  function dup(a, b) {
+    return a.kind === b.kind && (a.nums || []).join(" ") === (b.nums || []).join(" ") && hex(fill(a)) === hex(fill(b)) && hex(a.color) === hex(b.color) && (a.width || 0) === (b.width || 0);
+  }
+  function sameLook(a, b) {
+    if (hex(fill(a)) !== hex(fill(b))) return false;
+    // (an outline is drawn at the edge, in its own colour: the same only for the same line written twice)
+    return (!a.color && !b.color) || dup(a, b);
+  }
+  function span(s) {
+    var n = s.nums || [], xs = [], ys = [], i;
+    if (s.kind === "circle") return [n[0] - n[2], n[1] - n[2], n[0] + n[2], n[1] + n[2]];
+    if (s.kind === "square") return [n[0], n[1], n[0] + n[2], n[1] + n[2]];
+    if (/^(rect|oval|ellipse)$/.test(s.kind)) return [n[0], n[1], n[0] + n[2], n[1] + n[3]];
+    if (s.kind === "text") return [n[0] - 4, n[1] - 1, n[0] + 4, n[1] + 1];
+    for (i = 0; i + 1 < n.length; i += 2) { xs.push(n[i]); ys.push(n[i + 1]); }
+    return xs.length ? [Math.min.apply(null, xs), Math.min.apply(null, ys), Math.max.apply(null, xs), Math.max.apply(null, ys)] : null;
+  }
+  function meets(a, b) { return !!a && !!b && a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3]; }
   function hidden(shapes) {
-    var solid = shapes.filter(function (s) { return SOLID.test(s.kind) && fill(s); }), top = {}, mine = {}, same = {}, out = [], x, y, i;
+    var solid = shapes.filter(function (s) { return SOLID.test(s.kind) && fill(s); }), top = {}, mine = {}, same = {}, reach = {}, over = {}, out = [], x, y, i, j;
     if (solid.length < 2) return out;
     for (x = 0.125; x < 20; x += 0.25) for (y = 0.125; y < 12; y += 0.25) {
       var last = -1, under = [];
       for (i = 0; i < solid.length; i++) if (inside(solid[i], x, y)) { mine[i] = (mine[i] || 0) + 1; under.push(i); last = i; }
       if (last < 0) continue;
       top[last] = (top[last] || 0) + 1;
-      for (i = 0; i < under.length - 1; i++) if (sameLook(solid[under[i]], solid[last])) same[under[i]] = (same[under[i]] || 0) + 1;
+      for (j = 0; j + 1 < under.length; j++) {
+        var all = true;
+        over[under[j]] = over[under[j]] || {};
+        for (i = j + 1; i < under.length; i++) { over[under[j]][under[i]] = 1; if (!sameLook(solid[under[j]], solid[under[i]])) all = false; }
+        if (!all) continue;
+        same[under[j]] = (same[under[j]] || 0) + 1;
+        reach[under[j]] = Math.max(reach[under[j]] || 0, last);
+      }
     }
-    solid.forEach(function (s, k) { if (mine[k] && (top[k] || 0) / mine[k] < 0.03 && (top[k] || 0) + (same[k] || 0) < mine[k]) out.push(s); });
+    // crossed(s, t): a line, a curve or words drawn after s and before t, across s
+    function crossed(s, t) {
+      var from = shapes.indexOf(s), to = shapes.indexOf(t), sp = span(s), q;
+      for (q = from + 1; q < to; q++) if (!SOLID.test(shapes[q].kind) && meets(span(shapes[q]), sp)) return true;
+      return false;
+    }
+    solid.forEach(function (s, k) {
+      if (!mine[k] || (top[k] || 0) / mine[k] >= 0.03) return;
+      if ((top[k] || 0) + (same[k] || 0) === mine[k] && !crossed(s, solid[reach[k]])) return;
+      for (var d = k + 1; d < solid.length; d++) {
+        if (!dup(s, solid[d])) continue;
+        var clear = true;
+        for (i = k + 1; i < d && clear; i++) if (over[k] && over[k][i] && !sameLook(s, solid[i])) clear = false;
+        if (clear && !crossed(s, solid[d])) return;
+        break;
+      }
+      out.push(s);
+    });
     return out;
   }
   function box(s) {
@@ -46780,7 +46828,7 @@ Lantern.RFB = (function () {
     if (s.kind === "rect") return [n[1], n[1] + n[3]];
     if (s.kind === "square") return [n[1], n[1] + n[2]];
     if (s.kind === "circle") return [n[1] - n[2], n[1] + n[2]];
-    if (s.kind === "oval" || s.kind === "ellipse") return [n[1] - n[3], n[1] + n[3]];
+    if (s.kind === "oval" || s.kind === "ellipse") return [n[1], n[1] + n[3]];
     if (/^tri/.test(s.kind)) return [Math.min(n[1], n[3], n[5]), Math.max(n[1], n[3], n[5])];
     return null;
   }
