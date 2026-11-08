@@ -85,11 +85,26 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     ["G01", "G05", "G07"].every(function (n) { return !r2n(n).asked; }) && ["G02", "G03", "F04"].every(function (n) { return r2n(n).asked; }));
   var b31 = r2n("B31"), line31 = (b31.b.problems.filter(function (p) { return /all water/.test(p); })[0] || "").replace(/^.*add (rect [^a-z]*fill sand).*$/, "$1");
   var fixed31 = act.build(b31.d.text.replace("\nEND", "\n" + line31 + "\nEND"), b31.d.q);
-  ok("...with the horizon at 11.4 the line to write is a strip half a cell tall, and written, it answers the question (B31)",
-    line31 === "rect 0 11.5 20 0.5 fill sand" && !(fixed31.problems || []).some(function (p) { return /all water/.test(p); }), [line31, fixed31.problems]);
+  ok("...with the horizon at 11.4 the line to write is the lower half of the sea, and written, it answers the question (B31)",
+    line31 === "rect 0 11.7 20 0.3 fill sand" && !(fixed31.problems || []).some(function (p) { return /all water/.test(p); }), [line31, fixed31.problems]);
   var unasked2 = r2.filter(function (r) { return !r.asked && was(r, "old"); });
-  ok("nothing 1.24.9 asked about is left unasked but a boat of 1.8 cells, seen as two (E07, a hair from the line; at x 8.2 it is asked)",
-    unasked2.length === 1 && /^E07 /.test(unasked2[0].d.name) && r2n("E08").asked, unasked2.map(function (r) { return r.d.name; }));
+  ok("nothing 1.24.9 asked about is left unasked but a sea under half a cell tall, with no room for a beach in front (B32, the horizon at 11.6); a boat of 1.8 cells is no land (E07, E08)",
+    unasked2.length === 1 && /^B32 /.test(unasked2[0].d.name) && r2n("E07").asked && r2n("E08").asked, unasked2.map(function (r) { return r.d.name; }));
+  // --- the third review (249 pictures, tests/fixtures/review3_1250_shore.json): a point of the grid counted an
+  // eighth of a cell whatever the shape's own area, so a strip 0.08 tall over a row of points, or a tri flat along a
+  // line through one point in each column, was land; a sky written last over everything was "all water"; with the
+  // horizon at 11.5 the line to write covered all the sea
+  var R3 = fixture("review3_1250_shore.json"), r3 = R3.map(function (d) { var b = act.build(d.text, d.q); return { d: d, b: b, asked: (b.problems || []).some(function (p) { return /all water/.test(p); }) }; });
+  function r3n(n) { return r3.filter(function (r) { return r.d.name.split(" ")[0] === n; })[0]; }
+  ok("the third review\u2019s 249 pictures, each built", R3.length === 249 && r3.every(function (r) { return !!r.b; }));
+  ok("a shape counts no more than its own area: a flat tri, a strip 0.08 tall across the sea, is no land, and the sea is asked about (G05, G06, G21, T01, T02, T04)",
+    ["G05", "G06", "G21", "T01", "T02", "T04"].every(function (n) { return r3n(n).asked; }));
+  ok("...a sky written last over everything is not called all water (W28); a sea under half a cell tall is not asked (W24)", !r3n("W28").asked && !r3n("W24").asked);
+  var line23 = (r3n("W23").b.problems.filter(function (p) { return /all water/.test(p); })[0] || "").replace(/^.*add (rect [^a-z]*fill sand).*$/, "$1");
+  ok("...with the horizon at 11.5 the line to write is the lower half of the sea, not all of it (W23)", line23 === "rect 0 11.75 20 0.25 fill sand", line23);
+  var unasked3 = r3.filter(function (r) { return !r.asked && was(r, "old"); });
+  ok("nothing 1.24.9 asked about is left unasked but a sea under half a cell tall (W24) and a foam strip of exactly two cells (T03)",
+    unasked3.map(function (r) { return r.d.name.split(" ")[0]; }).sort().join() === "T03,W24", unasked3.map(function (r) { return r.d.name; }));
   console.log(fails ? fails + " BENCH 1.24.9 FAILURES (" + passes + " passed)" : "ALL BENCH 1.24.9 CHECKS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);
 })();
