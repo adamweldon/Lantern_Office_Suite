@@ -53182,7 +53182,19 @@ Lantern.RFB = (function () {
 // What cannot be right goes back with the line to write: a word that is
 // not a note or a chord, a note far from the rest of the tune, a long note
 // a half step from its chord (with the chords of the key that fit it), a
-// melody wider than its instrument plays. 1.22.0: arrange orchestra (and
+// melody wider than its instrument plays.
+// 1.24.10: a long note a half step from its chord is mended where Lantern
+// is sure of the mend, and said under the song: a note held half a bar or
+// more, in a bar of one chord, the bar not the first or the last, gets the
+// chord of the key that holds it and rubs against no long note of the bar
+// (the dominant before the home chord); the tune's last note, over the key's own home chord, becomes
+// the nearest note of it. A held note that steps to a note of its chord
+// before the chord ends (a suspension, an appoggiatura) is right as written
+// and not asked about. Told the chord to write, the 35B wrote the same chord
+// again: the waltz on 1.24.0 (G over D at its end) and again on 1.24.6 and
+// 1.24.8 (A over E in bar 7), and a tune on 1.24.6 that ended on C over G.
+// A first draft (1.24.9, held back) judged each note alone: of 107 songs of a
+// reviewer's own it changed about 30 that were right. 1.22.0: arrange orchestra (and
 // form, part lines) -- MUSIC_ARRANGE writes every player's part; the song's
 // own lines stay the tune that is checked.
 (function () {
@@ -53506,14 +53518,28 @@ Lantern.RFB = (function () {
       if (!inf) return "";
       return " (bar " + bar + " plays the chords line\u2019s bar " + ((bar - 1 - inf.from) % inf.ch + 1) + " again: write a chord for each of the " + inf.mel + " bars, or leave the chords line out and Lantern chooses them)";
     }
+    // (1.24.10) What Lantern mends, it is sure of: not in a blues (a blue note is meant), nor a tune in a mode the
+    // key line cannot say, nor a song with parts of its own (they were written against the chords line), nor where
+    // the chords line does not agree with its key (key F over the chords of C). Only what is asked counts toward
+    // the two questions.
+    var sure = !/\bblues?\b/i.test(String(s.title || "") + " " + String(s.styleText || "")) &&
+      !/\b(dorian|mixolydian|lydian|phrygian|locrian|aeolian|ionian|modal|mode)\b/i.test(String(s.keyText || "") + " " + String(s.title || "")) &&
+      !(s.partLines && s.partLines.length) && !s.arrangeText && !s.formText;
+    function inKey(x) { return dia.some(function (d) { return d.root === x.root && !!d.minor === !!x.minor && d.pcs.every(function (p) { return x.pcs.indexOf(p) >= 0; }); }); }
+    function within(n) { return n.at >= (n.bar - 1) * barLen - E && n.at + n.len <= n.bar * barLen + E; }
     P.mel.forEach(function (n) {
       if (clash >= 2 || n.len < Math.min(2, barLen / 2) - E) return;
-      var pc = T.mod(n.midi, 12);
+      var pc = T.mod(n.midi, 12), nx = P.mel[P.mel.indexOf(n) + 1];
       chs.forEach(function (c) {
         var ov = Math.min(n.at + n.len, c.at + c.len) - Math.max(n.at, c.at);
         if (clash >= 2 || ov < Math.min(2, n.len) - E || c.pcs.indexOf(pc) >= 0 || !half(pc, c)) return;
+        // (1.24.10) a held note that steps to a note of the chord before the chord ends -- C - B - over G, F - E - over
+        // C, G - F# - over D -- is a suspension or an appoggiatura, right as written; one tied in from the bar before
+        // only if it was a note of the chord there (B tied from C into F, then A, is still asked about)
+        var before = n.at < c.at - E ? chs.filter(function (x) { return x.at <= n.at + E && x.at + x.len > n.at + E; })[0] : null;
+        if (nx && nx.at < c.at + c.len - E && c.pcs.indexOf(T.mod(nx.midi, 12)) >= 0 && Math.abs(nx.midi - n.midi) <= 2 &&
+            (n.at >= c.at - E || (before && before.pcs.indexOf(pc) >= 0))) return;
         var fit = dia.filter(function (d) { return d.pcs.indexOf(pc) >= 0; }).slice(0, 2).map(function (d) { return d.name; });
-        clash++;
         // (1.24.2) What to write, as the line itself: the 35B was told "write
         // G or Em there, or change the note" for the last bar of its waltz and
         // sent the same block back. The tune's last note, over the key's own
@@ -53522,12 +53548,51 @@ Lantern.RFB = (function () {
         // fits.
         var inf = P.info.filter(function (f) { return n.bar - 1 >= f.from && n.bar - 1 < f.from + f.n; })[0], bi = inf ? n.bar - 1 - inf.from : -1;
         var mbar = inf && inf.mb[bi] ? inf.mb[bi].slice() : null, cbar = inf && inf.ch >= inf.mel && inf.cb[bi] && inf.cb[bi].length === 1 ? bi : -1, lineM = "", lineC = "";
-        if (mbar && n === P.mel[P.mel.length - 1] && c.root === key.tonic) {   // (over another chord the chord is what to change: a tune ends on its home chord)
+        var cname = c.name, c0pcs = c.pcs.slice(), cnotes = c.pcs.map(function (p) { return T.spell(p, key); }).join(" ");
+        // (a note held two beats or more: in 2/4 a quarter note is half a bar, and a march's passing note)
+        var others = sure && within(n) && n.len >= 2 - E && chs.every(function (x) { return x === c || inKey(x); });
+        // (1.24.10) The tune's last note, in the song's last bar, over the key's own home chord: the nearest note of
+        // the chord (the root where two are as near), written so that it plays as said
+        if (others && mbar && n === P.mel[P.mel.length - 1] && n.bar === P.bars && c.root === key.tonic && dia[0] && c.bar === n.bar &&
+            !!c.minor === !!dia[0].minor && dia[0].pcs.every(function (p) { return c.pcs.indexOf(p) >= 0; })) {
           var j = Math.round((n.at - (n.bar - 1) * barLen) / (barLen / mbar.length)), bestPc = null;
-          c.pcs.forEach(function (x) { var d = Math.min(T.mod(x - pc, 12), T.mod(pc - x, 12)); if (bestPc === null || d < bestPc.d) bestPc = { pc: x, d: d }; });
-          if (bestPc && j >= 0 && j < mbar.length && T.noteOf(mbar[j])) { mbar[j] = T.spell(bestPc.pc, key); lineM = mbar.join(" "); }
+          c.pcs.forEach(function (x) { var d = Math.min(T.mod(x - pc, 12), T.mod(pc - x, 12)); if (bestPc === null || d < bestPc.d || (d === bestPc.d && x === c.root)) bestPc = { pc: x, d: d }; });
+          var to = bestPc && j >= 0 && j < mbar.length && T.noteOf(mbar[j]) ? T.spell(bestPc.pc, key) : "", nt = to ? T.noteOf(to, key, n.midi) : null;
+          if (nt && T.mod(nt.midi, 12) === bestPc.pc) {
+            var was = T.spell(pc, key);
+            n.midi = nt.midi; n.letter = nt.letter; n.acc = nt.acc; n.oct = nt.oct; n.keyed = nt.keyed; n.tok = to;
+            inf.mb[bi][j] = to;
+            said.push("bar " + n.bar + ": the tune ended on " + was + " over " + cname + " (" + cnotes + "), a half step from its " + to + ": Lantern ended it on " + to + ", a note of the chord");
+            return;
+          }
         }
-        if (cbar >= 0 && fit.length) lineC = "chords " + inf.cb.map(function (b, x) { return x === cbar ? fit[0] : b.join(" "); }).join(" | ");
+        // (1.24.10) A note held half the bar or more, in a bar of one chord from the chords line, the bar not the first
+        // or the last: the chord of the key that holds it and has no note a half step from any long note of the bar
+        // or its first, and the dominant before the home chord (the 35B's waltz: A - F# over E, then D -- A holds both
+        // and keeps the cadence; D would have made the last four bars D)
+        var whole = c.bar === n.bar && Math.abs(c.at - (n.bar - 1) * barLen) < E && Math.abs(c.len - barLen) < E;
+        // (not a chord chosen on purpose: the key's dominant, which carries a cadence; a chord written with a seventh
+        // or more (D7, a secondary dominant); a chord held under the bars on both sides (a drone, a pedal); a major
+        // chord under its own major seventh (Fmaj7's E, a colour) -- the music review of 1.24.9)
+        var nb = function (k) { return chs.filter(function (x) { return x.bar === n.bar + k; })[0]; };
+        var chosen = (dia[1] && c.root === dia[1].root) || c.pcs.length > 3 || (nb(-1) && nb(1) && nb(-1).name === c.name && nb(1).name === c.name) ||
+          (!c.minor && T.mod(c.root - pc, 12) === 1);
+        var held = n.len >= barLen / 2 - E;
+        if (others && cbar >= 0 && whole && held && !chosen && n.bar > 1 && n.bar < P.bars && /^[A-G]/.test(String(inf.cb[bi][0])) && fit.length) {
+          var inBar = P.mel.filter(function (x) { return x.at < n.bar * barLen - E && x.at + x.len > (n.bar - 1) * barLen + E && (x.len >= 1 - E || Math.abs(x.at - (n.bar - 1) * barLen) < E); });
+          var cands = dia.filter(function (d) { return d.pcs.indexOf(pc) >= 0 && inBar.every(function (x) { var p2 = T.mod(x.midi, 12); return d.pcs.indexOf(p2) >= 0 || !half(p2, d); }); });
+          var next = chs.filter(function (x) { return x.bar === n.bar + 1 && Math.abs(x.at - n.bar * barLen) < E; })[0], ch = null;
+          if (next && next.root === key.tonic && dia[1] && cands.indexOf(dia[1]) >= 0) ch = dia[1];
+          if (!ch && cands.length) { var got = pick(cands, P.mel, c.at, c.at + c.len, false); ch = got ? got.c : cands[0]; }
+          if (ch) {
+            c.name = ch.name; c.root = ch.root; c.pcs = ch.pcs; c.bass = ch.bass; c.minor = ch.minor; c.tok = ch.name; c.mended = true;
+            inf.cb[bi] = [ch.name];
+            var rub = c0pcs.filter(function (p) { var d = T.mod(pc - p, 12); return d === 1 || d === 11; })[0];
+            said.push("bar " + n.bar + ": Lantern played " + ch.name + " under the tune\u2019s " + T.spell(pc, key) + ", where the chords line has " + cname + " (" + cnotes + "), whose " + T.spell(rub, key) + " is a half step from it");
+            return;
+          }
+        }
+        clash++;
         probs.push("bar " + n.bar + ": the melody " + (lineM ? "ends on " : "holds ") + T.spell(pc, key) + " over " + c.name + " (" + c.pcs.map(function (p) { return T.spell(p, key); }).join(" ") + "), a half step from a note of the chord: " +
           (lineM ? "end the tune on a note of " + c.name + " -- write bar " + n.bar + " of the melody as " + lineM + (fit.length ? " -- or write " + fit.join(" or ") + " as its chord" : "") :
             (fit.length ? "write " + fit.join(" or ") + " there (" + T.spell(pc, key) + " is in " + (fit.length > 1 ? "them" : "it") + ")" + (lineC ? ", that is " + lineC : "") : "change the chord") + ", or change the note") + again(n.bar));
