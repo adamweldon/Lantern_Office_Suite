@@ -117,10 +117,23 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     hid(base.concat(["rect 9 6 2 3 fill brown", "rect 9 6 1 3 fill brown", "rect 10 6 1 3 fill gray"])).length === 1,
     [hid(base.concat(["rect 9 6 2 3 fill brown", "rect 9 6 1 3 fill brown", "rect 10 6 1 3 fill gray"]))]);
   // (the first review: 120 drawings of its own, tests/fixtures/review1_1248_hidden.json)
-  ok("...a colour is what it is (#fff is white, sky is light blue); a shape written twice with its window on top is not asked about; a wall written twice with the window between is, and so is the window",
+  ok("...a colour is what it is (#fff is white, sky is light blue); a wall written twice with its window on top is not asked about; with the window caught between the two copies, only the window is",
     hid(base.concat(["rect 9 6 2 3 fill #fff", "rect 9 6 2 3 fill white"])).length === 0 && hid(["rect 0 0 20 8 fill light blue", "rect 0 8 20 4 fill green", "rect 0 0 20 8 fill sky", "circle 5 3 1 fill white"]).length === 0 &&
     hid(["rect 0 0 20 12 fill sky", "rect 5 5 10 4 fill tan", "rect 5 5 10 4 fill tan", "rect 6 6 2 2 fill white"]).length === 0 &&
-    hid(["rect 0 0 20 12 fill sky", "rect 5 5 10 4 fill tan", "rect 6 6 2 2 fill white", "rect 5 5 10 4 fill tan"]).length === 2);
+    hid(["rect 0 0 20 12 fill sky", "rect 5 5 10 4 fill tan", "rect 6 6 2 2 fill white", "rect 5 5 10 4 fill tan"]).length === 1 &&
+    /the rect 6 6 2 2 \(white\) is hidden/.test(hid(["rect 0 0 20 12 fill sky", "rect 5 5 10 4 fill tan", "rect 6 6 2 2 fill white", "rect 5 5 10 4 fill tan"])[0]));
+  // (the second review: what lies between two copies and is not hidden itself, or is something the sampling does not
+  // see -- words by their real length and size, a shape drawn as an outline only, a star too small to sample)
+  ok("...the first copy is asked about when what lies between the copies is not asked about itself: a cloud between two suns (the second sun is painted over it), an outline-only window between two walls, a tiny star between two copies of a window, a long caption that reaches the board; not when the same lines are written again after it (a clock\u2019s face and hands written twice, a car written twice)",
+    hidQ("Draw a cloud in front of the sun.", ["rect 0 0 20 12 fill sky", "circle 12 4 2 fill yellow", "circle 11 5 1.6 fill white", "circle 12 4 2 fill yellow"]).length === 1 &&
+    hidQ(Q_, ["rect 0 0 20 12 fill sky", "rect 4 4 12 5 fill tan", "rect 6 5 2 2 color black", "rect 4 4 12 5 fill tan"]).length === 1 &&
+    hidQ("Draw a window at night with a star in it.", ["rect 0 0 20 12 fill tan", "rect 4 2 6 6 fill dark blue", "circle 6 4 0.1 fill white", "rect 4 2 6 6 fill dark blue"]).length === 1 &&
+    hidQ("Draw a sign that says WELCOME HOME.", ["rect 0 0 20 12 fill white", "rect 12.5 4 7.5 4 fill blue", "text 8 6 \"WELCOME HOME\" size 60", "rect 12.5 4 7.5 4 fill blue"]).length === 1 &&
+    hidQ(Q_, ["rect 0 0 20 12 fill white", "rect 5 5 4 4 fill tan", "text 2.5 5.5 \"Home\"", "rect 5 5 4 4 fill tan"]).length === 0 &&
+    hidQ("Draw a clock.", ["circle 10 6 5 fill white", "line 10 6 10 2.5 color black width 5", "circle 10 6 5 fill white", "line 10 6 10 2.5 color black width 5"]).length === 0 &&
+    hidQ("Draw a car.", ["rect 0 0 20 12 fill sky", "rect 3 6 14 3 fill red", "circle 6 9 1.5 fill black", "circle 14 9 1.5 fill black", "rect 3 6 14 3 fill red", "circle 6 9 1.5 fill black", "circle 14 9 1.5 fill black"]).length === 0);
+  ok("...a tri whose corners are on one point covers nothing (\u201ctri 16 2 16 2 16 2\u201d drawn last made every shape before it \u201chidden\u201d, on 1.24.7 too)",
+    hidQ(Q_, ["rect 0 0 20 12 fill sky", "rect 6 5 8 4 fill tan", "tri 16 2 16 2 16 2 fill yellow"]).length === 0);
   var PZ = "Draw a pepperoni pizza.";
   function hidQ(q, lines) { var b = act.build("MAKE DRAWING: T\n" + lines.join("\n") + "\nEND", q); return b.problems.filter(function (p) { return /hidden under shapes drawn after it/.test(p); }); }
   ok("...anything of another colour over it before its own colour comes, and it is asked about: a bull\u2019s-eye drawn from the inside out (the centre and the white ring), a pepperoni under the sauce and partly under the cheese; a clock\u2019s hands drawn between two copies of its face (the first face is asked about: nothing reads lines)",
@@ -136,8 +149,21 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     asked += now.length;
     (d.should || (d.helps ? d.old : [])).forEach(function (l) { var t = l.split(/\s+/), k = t[0], n = []; for (var i = 1; i < t.length && /^-?[\d.]+$/.test(t[i]); i++) n.push(parseFloat(t[i])); if (now.indexOf(k + " " + n.join(" ")) < 0) lost.push(d.name + ": " + l); });
   });
-  ok("the first review\u2019s 120 drawings: no question it judged useful is lost (1.24.7 missed two, both ovals); 89 shapes found hidden, where 1.24.7 found 125",
-    R1.length === 120 && lost.length === 0 && asked === 89, [lost, asked]);
+  ok("the first review\u2019s 120 drawings: no question it judged useful is lost (1.24.7 missed two, both ovals); 83 shapes found hidden, where 1.24.7 found 125",
+    R1.length === 120 && lost.length === 0 && asked === 83, [lost, asked]);
+  // (the second review wrote the line numbers it judged: should_at, and may_at for a question it would not mind)
+  var R2 = fixture("review2_1248_hidden.json"), lost2 = [], found2 = 0, needless2 = 0;
+  function key(l) { var t = l.replace(/^\s+/, "").split(/\s+/), k = t[0].toLowerCase(), n = []; for (var i = 1; i < t.length && /^-?[\d.]+$/.test(t[i]); i++) n.push(parseFloat(t[i])); return k + " " + n.join(" "); }
+  R2.forEach(function (d) {
+    var b = act.build("MAKE DRAWING: T\n" + d.lines.join("\n") + "\nEND", d.q), sh = b.plan.shapes, map = [], j = 0;
+    d.lines.forEach(function (l, i) { if (j < sh.length && key(l) === sh[j].kind + " " + sh[j].nums.join(" ")) { map[j] = i; j++; } });
+    var at = L.aiMakeLayout.hidden(sh).map(function (x) { return map[sh.indexOf(x)]; });
+    found2 += at.length;
+    (d.should_at || []).forEach(function (i) { if (at.indexOf(i) < 0) lost2.push(d.name + ": " + d.lines[i]); });
+    at.forEach(function (i) { if ((d.should_at || []).indexOf(i) < 0 && (d.may_at || []).indexOf(i) < 0) needless2++; });
+  });
+  ok("the second review\u2019s 128 drawings: no question it judged useful is lost (1.24.7 missed two, both ovals); 141 shapes found hidden, where 1.24.7 found 189; 22 of them it judged of no use (64 on 1.24.7)",
+    R2.length === 128 && lost2.length === 0 && found2 === 141 && needless2 === 22, [lost2, found2, needless2]);
 
   // --- left for the next version, as they are ---
   var wd = row(F4, "water-days"), pw = A.parseReply(wd.first), said = L.assistChecks.map(function (c) { try { return c(item("water-days").q, pw.exprText, A.run(pw.exprText), { parsed: pw }); } catch (e) { return null; } }).filter(Boolean);
