@@ -1,5 +1,163 @@
 # Changelog
 
+## 1.24.10 — A line written again, a note held against its chord, a shore seen (2026-11-08)
+
+Adam ran the 35B on 1.24.8 with the encyclopedia on his laptop (2026-11-08,
+15:59 UTC, 100 minutes): 134 of 140 scored questions. Its seven failed rows
+are `tests/fixtures/bench_run_1248_35b_library.json`. The three library
+declines are 1.24.6's rows again (1.24.9 changes how the library is read; his
+run of 1.24.9 is to come). Of the other four, two are mended here, and with
+them the second of his two answers of 2026-11-08: "music - mend it". The
+small models' runs on 1.24.8 and 1.24.9 (GitHub runs 42474037730 and
+42490364017) are `tests/fixtures/bench_run_1248_*.json` and
+`bench_run_1249_*.json`, replayed by `tests/bench_1248.js` and
+`tests/bench_1249.js`.
+
+**What was seen.**
+
+- *The road into the distance.* The 35B's second reply wrote
+  `tri 0 6 20 6 10 0 fill gray` 29 times, and nothing was asked about the
+  road ("no road that narrows towards the horizon").
+- *The waltz.* The 35B held A over E in bar 7, was told "write D or A
+  there", and sent the same chords back: the same row as on 1.24.6.
+- *The shore at sunset* failed for all four models, each its own way: the
+  0.8B kept the day's blue sky, the 2B and the 35B drew off the grid (the
+  35B's sea below the picture, under the example's green ground), the 4B
+  drew no land in front of its sea. The 4B's row was the same on 1.24.8 and
+  1.24.9, with the same two replies.
+- 1.24.9 changed only the library, which the GitHub runs do not have: the
+  0.8B failed the same 55 rows as on 1.24.8 (59 of 114), the 4B the same 4
+  (110; 161 minutes on an Intel Xeon 8573C, 98 on 1.24.8 on an AMD EPYC
+  9V74), the 2B 41 (73; 77 on 1.24.8, six rows moving each way: no finding).
+
+**What it was traced to.**
+
+- *A line written three times stopped the landscape rules.* AI_SCENE left a
+  block with a line written three times or more to AI_DRAW as it was (a
+  reply that ran away is AI_DRAW's to report), and AI_DRAW, since 1.24.8,
+  does not ask about a shape under its own copy. So a road written 29 times
+  was neither arranged nor asked about.
+- *The waltz:* the line to write was given, and the model did not write it.
+  The chord of the key that holds the note can be computed: Lantern's to do
+  (rule 2), where it is sure (rule 7).
+- *The 4B's shore:* its first block drew an orange band below the horizon,
+  then the sea over it. The band, covered, was read as land in front of the
+  sea, so the shore was not asked about; the 4B, asked about the hidden
+  band, took it out, and the shore was asked about only then, in the last
+  turn the bench gives.
+
+**What changed.**
+
+- *Earlier copies left out.* Where a line is written three times or more,
+  and nothing drawn between the copies reaches across it (a curve's drawn
+  line as AI_DRAW samples it, a line or an outline by its width, words), the
+  earlier copies are left out, all of them or none, and Lantern says "left
+  out N earlier copies of ...: a line written again, with nothing drawn
+  between across it, draws nothing new". Not in a block cut off, nor one
+  AI_DRAW reports as run away, nor where what is left would be a run. The
+  35B's road is now asked for with the line to write ("add tri 7 12 13 12
+  10 6 fill gray after the ground"). The picture is the same: a shape drawn
+  again covers its earlier copy wherever it lies.
+- *A railway with sleepers wider than its rails is left as the model drew
+  it* (two level lines or more across a road of lines, reaching half a cell
+  past it). On 1.24.9 the road rule redrew it going away and covered the
+  sleepers drawn before the rails, or left them at their width over its
+  point; with the copies left out, a railway written with its rails three
+  times now reaches that rule. Every other road is as on 1.24.9. (A rule
+  that carried what is drawn on a road with it was tried by two reviews and
+  taken out: it left 26, then 18, right roads flat or spoiled, and carried
+  half of a car or a gate.)
+- *The held note, mended.* In a middle bar of one chord, a note held half
+  the bar or more a half step from the chord written: Lantern plays the
+  chord of the key that holds it (the dominant before the home chord where
+  it can) and says so. The tune's last note, in the last bar, over the key's
+  home triad: Lantern ends it on the nearest note of the chord, in the
+  octave nearest the note written, in the register the tune was written in
+  where it can, with its octave number where the tune wrote one or where the
+  reader, placing the whole tune, would put it elsewhere; it says so once,
+  and the shown lines play as the tune did (where no way of writing it
+  would, it asks). Not in a blues, a mode, a
+  song with parts or a form of its own, a song whose chords are another
+  key's, a song cut to 96 bars, a style whose blue notes are meant (jazz,
+  swing, a shuffle, rock, soul, gospel); not over the dominant, a seventh
+  chord, a pedal (the same chord on both sides, however written: the line
+  cliche Am | Am | Am7 | Am6 is asked about); not a major chord's seventh or
+  a minor chord's ninth (colours), a slash chord's bass; not a last note
+  that begins over another chord or has another chord under it (B held over
+  G C, over C Am, over C C7); not a suspension or an appoggiatura (a held note that
+  steps to a note of the chord before the chord ends -- the same chord under
+  another name too, C then C7 -- in the key, not a tritone over the root,
+  not gone back to); not where the tune touches the chord's own note in the
+  bar; and none at all where one clash in the song must be asked about (a
+  tune a step too high). What is asked is as on 1.24.8, with the line to
+  write. A note is named as the tune wrote it (D#, not Eb).
+- *A shore is judged by what is seen.* Below the horizon, at each point of
+  the grid, the last solid shape there whose box has area: land is a shape
+  of which two cells or more are seen, no more than its own area; water
+  must be seen too. The 4B's first block is now asked about the shore with
+  the rest, in its first turn. A tri of one point ("tri 1 1 1 1 1 1", the
+  2B's on 1.24.7) covers nothing; the line to write, with the horizon low
+  down, is the lower half of the sea, never a strip of no height; a sea
+  under half a cell tall is not asked about.
+- *A drawing is built once* where no line is written three times.
+
+**Reviews.** Each rule was tried by agents that had not seen it written,
+with inputs of their own, kept in `tests/fixtures/` and replayed; each time
+what they found was mended, then tried again by another:
+
+- the repeated-line rule and the road: 142 drawings
+  (`review1_1250_dups.json`: lines across a copy not seen, a run lost, a
+  run-away report lost, two copies of three kept), 211
+  (`review2_1250_dups.json`: the sentence false over a curve's swing and a
+  stroke's width, the railway's sleepers, every drawing built twice), 242
+  (`review3_1250_dups.json`: the first mend of the road left 26 roads 1.24.9
+  drew rightly; "thick" and an ink outline not counted; a 300-point curve
+  quoted whole and sampled for every pair) and 205 road pictures
+  (`review4_1250_road.json`: the rule that carried things with the road
+  spoiled or left flat 18 right roads and carried 16 wrongly; taken out);
+  the narrow case left is replayed over the 447 pictures of the last two:
+  every road as 1.24.9 drew it but the railways with wider sleepers, a wide
+  zebra and a gate;
+- the music mend: 107 songs (`review1_1249_music.json`, which held it out
+  of 1.24.9), 173 (`review2_1250_music.json`: colours, notes out of the key
+  read as suspensions, a tune a step too high, an ending played an octave
+  above its shown line), 230 (`review3_1250_music.json`: B4 over C mended
+  to C4, eleven steps down; C then C7 read as two chords; F over C/F; a song
+  cut to 96 bars), 400 (`review4_1250_music.json`, 54 of them the models':
+  the line cliche, B over G C at the end, a mended note an octave off as
+  the reader places the whole tune, said twice over C C, a rock shuffle's
+  blue third);
+- the shore: 238 pictures (`review1_1250_shore.json`: every change adds the
+  question; a sliver of covered sand at the side edge, a thin strip seen or
+  not by where the horizon was), 217 (`review2_1250_shore.json`: the tri of
+  one point; a strip between two rows of points; the strip of no height)
+  and 249 (`review3_1250_shore.json`: a strip 0.08 tall or a flat tri
+  counted as land; a sky written last called all water; the line over all
+  the sea).
+
+What the last review of each found was mended and is replayed with its
+pictures and songs, but was not tried by another: the narrow road case
+(it only leaves a road as drawn), the fourth music review's mends (each
+makes Lantern ask where it mended, but for where an octave number is
+written), the third shore review's (each asks less where nothing can be
+put in front).
+
+Against 1.24.8, the second, third and fourth music reviews' songs: 72, 97
+and 185 nearer what each wanted; 1, 1 and none further (a 4-3 over a tonic
+pedal, made as written where it would be asked about; a known tune a step
+too high, one chord changed, sent back by the songbook all the same).
+
+**What was tested.** `npm test` (N suites) and the browser tests (11; GMS
+needs Adam's own file). Not tested: any model on 1.24.10 (the small models'
+run starts with the push; the 35B is Adam's).
+
+**Not changed, and written so that a change shows.** The shore at sunset for
+the 0.8B (the day's blue sky), the 2B and the 35B (off the grid); a setting
+sun the colour of its sky put behind the sea (1.24.9's sun rule); a railway
+redrawn as a gray road with gray rails, so the rails do not show; the
+question about a shape hidden between two copies names the copy, not what
+is caught between them (`QUEUE.md`).
+
 ## 1.24.9 — The part of the article that answers (2026-11-08)
 
 Adam answered two questions on 2026-11-08: a repair guide's readers'

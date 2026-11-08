@@ -5,38 +5,26 @@ file in the same commit as the work. Read `CLAUDE.md` first.
 
 ## Next, in order
 
-1. **Read the small models' runs on 1.24.8 and 1.24.9 and act on them.**
-   1.24.8 (run 42474037730): **4B 110 of 114 (98 minutes, AMD EPYC 9V74),
-   2B 77 (87, Intel Xeon 6973P-C), 0.8B 59 (32, AMD EPYC 9V74)**, each up
-   on 1.24.7. The road into the distance failed for the 0.8B and the 2B,
-   as expected without the example's road; the 4B drew its own and passed,
-   and its house passed. Its failed rows and drawings are
-   `tests/fixtures/bench_run_1248_*.json` on `wip-2026-11-08-music` (so as
-   not to start another run on 1.24.9); a replay is still to write. 1.24.9 (run 42490364017) differs from 1.24.8 only in the
-   library, which the GitHub runs do not have: it should score the same.
-   Every push to a
-   `lantern-x.y.z` branch runs the whole bench with the 0.8B, the 2B and the
-   4B on GitHub (`CLAUDE.md`, "The bench with the small models"). On 1.24.7
-   (run 42456738734, 114 scored): **4B 106 (157 minutes), 2B 74 (92), 0.8B
-   56 (38)**; on 1.24.6, of 112: 107, 57 and 51. Its failed rows and every
-   drawing are `tests/fixtures/bench_run_1247_*.json`, replayed by
-   `tests/bench_1247.js`. The 2B wrote no arrow after a sum (21 rows had
-   one on 1.24.6) and passed 14 of 21 sums (6). What 1.24.8 changes that a
-   run will show:
-   - **the landscape example has no road.** The 0.8B and the 2B passed
-     `make-road-horizon` on 1.24.7 with the example's eight lines word for
-     word, and the 4B's shore was six of them. Expect the road to fail for
-     the small models now: the bench measures the guide, not the example.
-     If they draw no road, the guide's words are what to work on (Lantern
-     asks for a road only when nothing on the ground can be one);
-   - **a shape under its own look, or written again, is not asked about
-     as hidden.** The 4B's `make-house` failed only on that (the 0.8B's
-     `make-sun-sea` is still asked: a rect of another colour lies across
-     its first sun between the copies). Three reviews, 386 drawings;
-   - **the minutes.** The log now names the processor. On 1.24.7 the 4B
-     and the 2B took 2.4 and 1.8 times as long per question as on 1.24.6,
-     short questions as much as long ones; the 0.8B did not.
-   Then, from the rows of 1.24.7 (each needs a reviewer before it goes in):
+1. **Read the small models' run on 1.24.10 and act on it.** It starts with
+   the push of `lantern-1.24.10` (`CLAUDE.md`, "The bench with the small
+   models"). On 1.24.9 (run 42490364017, `tests/fixtures/bench_run_1249_*.json`,
+   replayed by `tests/bench_1249.js`): **4B 110 of 114 (161 minutes, Intel
+   Xeon 8573C), 2B 73 (98), 0.8B 59 (31)**; the 0.8B and the 4B failed the
+   same rows as on 1.24.8, the 2B six rows moved each way (no finding).
+   What 1.24.10 changes that a run will show:
+   - **the 4B's shore at sunset** (the same row and replies on 1.24.8 and
+     1.24.9) is asked about the beach in its first turn, with the rest;
+   - **a line written three times** no longer stops the landscape rules:
+     a road written 29 times is asked for with the line to add;
+   - **a held note against its chord** is mended where Lantern is sure
+     (the waltzes), and asked about as on 1.24.8 elsewhere.
+   Then **the shore at sunset**, failed by all four models on 1.24.8, each
+   its own way: the 0.8B kept the day's blue sky after it was told the
+   line (Lantern could colour a sunset's sky itself and say so: rule 2, a
+   reviewer first); the 2B and the 35B drew off the grid, the 35B its sea
+   below the picture under the example's green ground (look at what the
+   guide shows for a sea).
+   Still from the rows of 1.24.7 (each needs a reviewer before it goes in):
    - **a send-back that ends on a choice.** `water-days`, the 4B: `=5*40`,
      `=2000/800` went back with "=5*40 (200) is worked out but never used
      ...; the formula uses 800, which is not in the question; if the person
@@ -60,39 +48,30 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      and the title "<title> -- a simple picture on a g...";
    - music, the 4B once each: a waltz's chords to bar 9, an orchestra part
      called "strings".
-2. **Read Adam's run of 1.24.9 with the library** (he said on 2026-11-08
-   that he would run it on his laptop and send what he sees and the json).
-   1.24.9 holds the first of his two answers of that day:
-   - **the part of an article that answers** ("comments out"): a repair
-     guide's steps without its readers' comments, a travel guide's own
-     section for getting around, eating, sleeping, crime, sights, the
-     sentences that say what a thing is made of. From his run on 1.24.6
-     (`tests/fixtures/bench_run_1246_35b_library.json`): the iPhone 8
-     battery, getting around Nairobi, what oral rehydration solution is
-     made of. Five reviews (`tests/library_review_1248.js`); not yet on the
-     real files, which are on his stick: his run is the test;
-   Save his failed rows as `tests/fixtures/bench_run_1249_35b_library.json`
-   with a test that replays them. His music rows will be as on 1.24.6: the
-   mend is not in yet (next item).
-3. **The held-note mend, narrowed and tried again** (Adam: "mend it",
-   2026-11-08). On `wip-2026-11-08-music`: in a bar of one chord Lantern
-   plays the chord that holds a held note a half step from the chord
-   written; the tune's last note over its home chord becomes the nearest
-   note of the chord. Its first review (107 songs,
-   `tests/fixtures/review1_1249_music.json`): of 71 mends 38 right; about
-   30 right songs changed or made worse, because each long note is judged
-   alone -- a suspension or appoggiatura that resolves by step inside its
-   bar, a cadence's leading note (G# over E before Am), F-E over E, a
-   blue note, a first chord, a Mixolydian C read through the key
-   signature, a 2/4 march's every quarter. And five bugs where what is said
-   or shown is not what plays: an ending said as F and played F# (the key
-   signature applied to the mended note), said as G with G# still played,
-   a "%" bar, a tie across a bar, a tie into the last bar. Narrow it to
-   what is sure: a note held to the end of its bar (no resolution after
-   it), not the bar's only clash with a resolution, not on the first or a
-   cadence's chord, the mended note spelled with its accidental; prefer a
-   chord that also keeps the cadence (the 35B's waltz: A, not D, gives V-I).
-   Then a second reviewer, with the first review's songs as the guard.
+2. **Read Adam's runs of 1.24.9 and 1.24.10 with the library** (he said on
+   2026-11-08 that he would run 1.24.9 on his laptop and send what he sees
+   and the json). 1.24.9 holds the first of his two answers of that day,
+   **the part of an article that answers** ("comments out"); 1.24.10 the
+   second, **the held-note mend** ("mend it"). Save his failed rows as
+   `tests/fixtures/bench_run_1249_35b_library.json` (and `_1250_`) with a
+   test that replays them. From his 1.24.8 run
+   (`tests/fixtures/bench_run_1248_35b_library.json`): the road and the
+   waltz are mended in 1.24.10; the shore at sunset is item 1.
+3. **Music, after the held-note mend** (four reviews, 910 songs,
+   `tests/music_review_1249.js`, `tests/music_review_1250.js`). Left as on
+   1.24.8, found by the reviews:
+   - a note tied into the same chord from the middle of a bar (a 4-3 across
+     C | C) is asked about, and the question names the second chord while
+     its line rewrites the first;
+   - the line to write for the tune's end can be wrong for the song: "F - -
+     C" over C ends on F; a song in C written under key A minor is told to
+     end on E major;
+   - `Am(maj7)` is read as Am and a "maj7" (the brackets dropped);
+   - a last note a whole step above a minor chord's root ends on the third,
+     where a musician ends on the root; a 4-3 over a tonic pedal is now made
+     as written (the second review would have asked);
+   - `style blues` turns the mend off, but the shown lines say `style
+     ballad`; built again, the mend runs;
    The filled recipes (a recipe given to a small model with the question's
    numbers in it) are on `wip-2026-11-06-recipe-fill`, out of 1.24.7: two
    reviews found them wrong too often, and a list of words to refuse is
@@ -183,6 +162,21 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      still asked about, as on 1.24.7: Lantern cannot tell it from a
      pepperoni under the sauce and the cheese (22 of the second review's
      drawings, 22 of the third's);
+   - **found by the reviews of 1.24.10, left as 1.24.9 has them:** a
+     railway redrawn as a gray road with gray rails, so the rails do not
+     show; a setting sun the colour of its sky, over the sea, put behind
+     the water and said so (D47, D71); the question about a shape caught
+     between two copies names the copy, not what is caught; a whole scene
+     written several times is a run to AI_DRAW, and its floating mountain
+     stays (A3, A4, P1); a snow cap drawn across a mountain each time keeps
+     the mountain's copies (P3); a road with a person, a car or a gate on
+     it is redrawn with half of it moved (1.24.9's carrying; a rule that
+     carried all of it was tried and taken out: `review4_1250_road.json`);
+   - **the shore check's gaps** (`review1_1250_shore.json` to `review3_`):
+     a teal sea is read as green land; a boat, the sun's path, foam 0.2
+     tall count as land by colour; "riverbank", "palm", "boat" in the
+     question keep the plain-landscape rules off; a beach of many small
+     pebbles or planks over a covered band is asked about;
    - small things found: a circle written with four numbers (the 2B,
      once). (AI_MAKE_LAYOUT read an oval as a centre and two radii: mended
      in 1.24.8.)
@@ -193,7 +187,8 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    the build that was pushed, and a second full run of that build stopped
    at 73 of 118 with nothing scored failing (Adam said to stop); then a full
    run with the library by Adam himself (134 of 138, 2026-11-08). 1.24.7
-   and 1.24.8: none yet (the stick holds 1.24.6).
+   none; 1.24.8: a full run with the library by Adam himself (134 of 140,
+   2026-11-08); 1.24.9 and 1.24.10: his to come.
 6. **Finish the five Food lessons on `wip-2026-11-06`.** They are drafted
    and were checked from memory only; the checker's memory differs from the
    drafts where it matters (kidney beans, cassava, the hay box). They need
