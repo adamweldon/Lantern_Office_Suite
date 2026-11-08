@@ -85,19 +85,13 @@ function picture(shapes) { var out = [], x, y; for (x = 0.05; x < 20; x += 0.1) 
     G.filter(function (d) { return d.verdict === "right"; }).length === 39 && G.filter(function (d) { return d.verdict === "wrong"; }).length === 5);
   ok("no copy is left out across which something reaches: a curve's drawn line (C13), a line 30 wide (C14), an outline 20 wide (N4)",
     ["C13", "C14", "N4"].every(function (n) { var r = grow(n); return r && !r.said.some(function (x) { return /earlier cop/.test(x); }); }), ["C13", "C14", "N4"].map(function (n) { return grow(n).said; }));
-  // (a sleeper carried with the road: a level brown line, centred, shorter the farther it is; drawn before the rails,
-  // under them -- the second review's railway, mended after the third review: blocking the redraw lost 26 roads)
-  function sleepersRight(r, before) {
-    var sh = (r.b.plan && r.b.plan.shapes) || [], sl = [], rails = [];
-    sh.forEach(function (s, i) { if (s.kind === "line" && s.nums[1] === s.nums[3] && /^#92400e$/i.test(s.color || "")) sl.push({ i: i, y: s.nums[1], w: Math.abs(s.nums[2] - s.nums[0]), c: (s.nums[0] + s.nums[2]) / 2 });
-      else if (s.kind === "line" && s.nums[1] !== s.nums[3]) rails.push(i); });
-    sl.sort(function (u, v) { return u.y - v.y; });
-    return r.said.some(function (x) { return /drew the railway as it looks going away/.test(x); }) && sl.length === 4 && rails.length === 2 &&
-      sl.every(function (x, k) { return Math.abs(x.c - 10) < 0.01 && (k === 0 || x.w > sl[k - 1].w); }) &&
-      sl.every(function (x) { return before ? x.i < rails[0] : x.i > rails[1]; });
-  }
-  ok("a railway whose sleepers are wider than its rails is drawn going away with its sleepers, each as wide as it is at its distance, under the rails where drawn before them (P8, P21) and over them where drawn after (P20)",
-    sleepersRight(grow("P8"), true) && sleepersRight(grow("P21"), true) && sleepersRight(grow("P20"), false), ["P8", "P20", "P21"].map(function (n) { return [grow(n).said, shp(grow(n).b)]; }));
+  // (a railway whose sleepers are wider than its rails, reached through its rails' copies: the road rule, 1.24.9's too,
+  // redrew it and covered the sleepers drawn before the rails, or left them at their width over its point. Three more
+  // reviews tried carrying the sleepers with it, and other things on a road: each found right roads spoiled or left
+  // flat. Such a railway is left as the model drew it; every other road is as on 1.24.9)
+  ok("a railway whose sleepers are wider than its rails is left as drawn, written once or with copies (P8, P20, P21)",
+    ["P8", "P20", "P21"].every(function (n) { var r = grow(n); return r && !r.said.some(function (x) { return /going away/.test(x); }) && r.shapes.filter(function (x) { return /^line 8 (7|8\.5|10|11\.5) 12 /.test(x); }).length === 4; }),
+    ["P8", "P20", "P21"].map(function (n) { return [grow(n).said, grow(n).shapes]; }));
   var lostAway = g.filter(function (r) { return (r.d.old.problems || []).some(function (p) { return /ran away/.test(p); }) && !(r.b.problems || []).some(function (p) { return /ran away/.test(p); }); });
   ok("no run-away report of 1.24.9 is lost", lostAway.length === 0, lostAway.map(function (r) { return r.d.name; }));
   // (what the wip gave the review, kept: where nothing above touched it, the same said and asked, in the same words)
@@ -131,13 +125,23 @@ function picture(shapes) { var out = [], x, y; for (x = 0.05; x < 20; x += 0.1) 
   var lost26 = ["R06", "R11", "R12", "R14", "R15", "R16", "R30", "R31", "R36", "R37", "R38", "R39", "R44", "R58", "R60", "R71", "R72", "R73", "R74", "R90", "R91", "R93", "R99", "R100", "R103"];
   ok("the roads 1.24.9 drew going away rightly, and the first draft of 1.24.10 left: drawn going away again (25; a line across the whole ground, a river, a fence, a frame, a shadow reaching onto it, a stop line, a person on a strip road, ripples, a wavy middle line)",
     lost26.every(function (n) { return away(trow(n)) && trow(n).d.old.said.some(function (x) { return /going away/.test(x); }); }), lost26.filter(function (n) { return !away(trow(n)); }));
-  ok("...a road with a person drawn as lines and a ring across a rail, or between its lines, or a shadow that only half crosses it, is left as drawn (R19, R83, R23): the ring would stay while the lines moved",
-    ["R19", "R83", "R23"].every(function (n) { return !away(trow(n)); }));
-  var zb = trow("R06").b.plan.shapes.filter(function (s) { return s.kind === "line" && s.nums[1] === s.nums[3]; });
-  ok("...a zebra a hair wider than the road is drawn from edge to edge of it at its distance (R06)", zb.length === 3 && zb.every(function (s) {
-    var y = s.nums[1], half = 5 * (y - 6) / 6; return Math.abs(Math.min(s.nums[0], s.nums[2]) - (10 - half)) < 0.02 && Math.abs(Math.max(s.nums[0], s.nums[2]) - (10 + half)) < 0.02; }), zb.map(function (s) { return s.nums; }));
-  ok("...sleepers wider than the rails go with the railway (R07, R08, R46, R49, R54, R64, R81): each centred on it and shorter the farther it is",
-    ["R07", "R08", "R46", "R49", "R54", "R64", "R81"].every(function (n) { var r = trow(n); return away(r) && r.b.plan.shapes.filter(function (s) { return s.kind === "line" && s.nums[1] === s.nums[3] && /^#92400e$/i.test(s.color || ""); }).length >= 1; }));
+  var wider3 = ["R07", "R08", "R46", "R49", "R54"];
+  ok("...a railway with sleepers wider than its rails is left as drawn (R07, R08, R46, R49, R54); every other road of the review is drawn going away or not as 1.24.9 drew it",
+    wider3.every(function (n) { return !away(trow(n)); }) && t3.filter(function (r) { return /^R\d/.test(r.d.name) && wider3.indexOf(r.d.name.split("-")[0]) < 0; }).every(function (r) {
+      return away(r) === (r.d.old.said || []).some(function (x) { return /going away/.test(x); }); }),
+    t3.filter(function (r) { return /^R\d/.test(r.d.name) && wider3.indexOf(r.d.name.split("-")[0]) < 0 && away(r) !== (r.d.old.said || []).some(function (x) { return /going away/.test(x); }); }).map(function (r) { return r.d.name; }));
+  // --- the fourth review: 205 road pictures of its own (tests/fixtures/review4_1250_road.json), on the rule that carried
+  // what is drawn on a road with it: 18 right roads spoiled or newly left flat, 16 carried wrongly (half a car, a
+  // gate's rails past its posts, sleepers off the grid). That rule is gone; what is left is the one narrow case
+  var T4 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review4_1250_road.json"), "utf8"));
+  var t4 = T4.map(function (d) { var b = act.build(d.text, d.q); return { d: d, b: b, said: (b.plan && b.plan.said) || [] }; });
+  var flat4 = ["C04", "C10", "E03", "E04", "E07", "E08", "E09", "E12", "E15", "E17", "E21", "J03", "M21", "M22"];
+  var moved4 = t4.filter(function (r) { var was = (r.d.old.said || []).some(function (x) { return /going away/.test(x); }); return away(r) !== was && flat4.indexOf(r.d.name.split("-")[0]) < 0; });
+  ok("the fourth review\u2019s 205 road pictures: each drawn going away or not as 1.24.9 drew it, but those with two level lines or more across the road reaching half a cell past it -- sleepers, a wide zebra, a gate -- left as drawn (" + flat4.length + ")",
+    T4.length === 205 && moved4.length === 0 && flat4.every(function (n) { var r = t4.filter(function (x) { return x.d.name.split("-")[0] === n; })[0]; return r && !away(r) && (r.d.old.said || []).some(function (x) { return /going away/.test(x); }); }),
+    moved4.map(function (r) { return r.d.name; }));
+  var off4 = t4.filter(function (r) { return (r.b.problems || []).some(function (p) { return /is off the grid/.test(p); }) && !(r.d.old.problems || []).some(function (p) { return /is off the grid/.test(p); }); });
+  ok("...and no line Lantern made is sent back as off the grid", off4.length === 0, off4.map(function (r) { return r.d.name; }));
   ok("no copy is left out across which a line written \u201cthick 30\u201d reaches, or an outline in ink with no colour named (D10, D11, D88, D89)",
     ["D10", "D11", "D88", "D89"].every(function (n) { return !trow(n).said.some(function (x) { return /earlier cop/.test(x); }); }));
   ok("a line quoted in what is said is cut to its first numbers: a curve of 300 points is not quoted whole (T11, T12)",
