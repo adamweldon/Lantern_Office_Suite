@@ -50,33 +50,25 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      the drawing guide's sentence "One shape per line, back to front ..."
      and the title "<title> -- a simple picture on a g...";
    - music, the 4B once each: a waltz's chords to bar 9, an orchestra part
-     called "strings" (with `QUESTIONS.md`, 2).
-2. **1.24.9, ready on the side** (from Adam's run of the 35B on 1.24.6 with
-   the library, `tests/fixtures/bench_run_1246_35b_library.json`):
-   - **the part of an article that answers.** A repair guide's steps
-     without its readers' comments (iFixit keeps a step's comments inside
-     its list item); a travel guide's own section for getting around,
-     getting there, eating, sleeping, crime, sights; the sentences that say
-     what a thing is made of. Stand-in pages laid out as the offline files
-     are, and a guard: every other passage of the test pages is unchanged;
-   - **a held note a half step from its chord** is mended where Lantern can
-     compute it (the chord of the key that holds it, in a bar of one chord;
-     the nearest note of the home chord at the song's end), and said. The
-     35B was told the chord and wrote the same one again on 1.24.0 and
-     twice on 1.24.6. **This one waits for Adam** (item 13 below; asked in
-     `QUESTIONS.md`, 2): it changes what the model wrote, and how a song
-     sounds is his;
-   - both need a reviewer who did not write them before they go in. The
-     library change has had five (2026-11-08: 69, 8, 37, 21, then 14
-     answers lost, each mended). It is on `wip-2026-11-08-library`, built
-     on 1.24.7, with its tests and the five reviews' pages
-     (`tests/library_review_1248.js`): of 2,704 questions none lost but 8
-     answered only in a reader's comment and 5 at the length Lantern does
-     not pick; 188 found that 1.24.7 does not find. Its changelog is
-     `agent/drafts/changelog_1248.md` (its files keep the name 1248; it
-     goes in as 1.24.9, on top of 1.24.8). Left: Adam's answer on the
-     comments (`QUESTIONS.md`, 1), then the version bump; a sixth review if
-     the comments come back.
+     called "strings".
+2. **Read Adam's run of 1.24.9 with the library** (he said on 2026-11-08
+   that he would run it on his laptop and send what he sees and the json).
+   1.24.9 holds his two answers of that day:
+   - **the part of an article that answers** ("comments out"): a repair
+     guide's steps without its readers' comments, a travel guide's own
+     section for getting around, eating, sleeping, crime, sights, the
+     sentences that say what a thing is made of. From his run on 1.24.6
+     (`tests/fixtures/bench_run_1246_35b_library.json`): the iPhone 8
+     battery, getting around Nairobi, what oral rehydration solution is
+     made of. Five reviews (`tests/library_review_1248.js`); not yet on the
+     real files, which are on his stick: his run is the test;
+   - **a held note a half step from its chord, mended** ("mend it"): the
+     chord of the key that holds it, in a bar of one chord; the nearest
+     note of the home chord at the song's end; said under the song. The
+     35B's waltz and tune of its own should now be made as it wrote them.
+     How they sound is his to say.
+   Save his failed rows as `tests/fixtures/bench_run_1249_35b_library.json`
+   with a test that replays them.
    The filled recipes (a recipe given to a small model with the question's
    numbers in it) are on `wip-2026-11-06-recipe-fill`, out of 1.24.7: two
    reviews found them wrong too often, and a list of words to refuse is
@@ -150,7 +142,7 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      hill is left as the model drew it, mountains in the air and all. The
      words Lantern knows can grow one at a time, each with right pictures
      of its own tried by a reviewer;
-   - **pieces.** Two ways were put to Adam (`QUESTIONS.md`, 3): words for
+   - **pieces.** Two ways were put to Adam (`QUESTIONS.md`, 1): words for
      things Lantern places (mountain, road, tree: the model says what and
      roughly where, Lantern does the ground line, the order and the size
      by distance), or pieces the AI draws each on a grid of its own, which
@@ -240,8 +232,10 @@ file in the same commit as the work. Read `CLAUDE.md` first.
     line to use. If a model still sends the same block, decide with Adam
     whether Lantern should apply the fix it named and say so. It did again:
     the 35B's waltz on 1.24.6 (2026-11-08) and its tune of its own on 1.24.6
-    (2026-11-06). The mend for a held note against its chord is written and
-    tested (item 2) and asked of Adam (`QUESTIONS.md`, 2).
+    (2026-11-06). Adam said "mend it" (2026-11-08): in 1.24.9 Lantern plays
+    the chord that holds a held note in a bar of one chord, or ends the tune
+    on the nearest note of its home chord, and says so. A bar of two chords
+    still goes back.
 14. **The 1.16.0 audit's feature list** (`Lantern_1.16.0_app_audit.pdf`, sent
     to Adam on 2026-10-29) was never answered. With the aim above, take the
     features that serve it without asking again; leave the rest.
