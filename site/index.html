@@ -47757,13 +47757,23 @@ Lantern.RFB = (function () {
     // road would cover it)
     if (items.some(function (it) { return wide(it.o) && it.o.nums[1] > H + 0.1 && sc.groundO.indexOf(it.o) < 0; })) return null;
     // (sleepers, a car, a boat, the dashes of its middle drawn as rects: redrawn, the road would narrow under them
-    // and they would keep their width. Lantern leaves such a road as the model drew it)
+    // and they would keep their width. Lantern leaves such a road as the model drew it. So too a line across it that
+    // is not carried with it -- sleepers wider than the rails, the second review of 1.24.10: the rails redrawn as a
+    // tri covered those drawn before them, and those drawn after kept their width over its point. A line between
+    // the rails is carried: it narrows with them)
     var sx0 = idx.length ? Math.min.apply(null, xs) : rects.length === 1 ? items[rects[0]].o.nums[0] : 0,
       sx1 = idx.length ? Math.max.apply(null, xs) : rects.length === 1 ? items[rects[0]].o.nums[0] + items[rects[0]].o.nums[2] : 0;
     if (idx.length) { sx0 -= 0.3; sx1 += 0.3; }
+    // (a line the redraw carries, as section 3 does: level or slanting, between the rails, on the ground)
+    var carried = function (o) {
+      var n = o.nums;
+      return !!idx.length && o.kind === "line" && n.length === 4 && Math.min(n[0], n[2]) >= Math.min.apply(null, xs) - 0.1 && Math.max(n[0], n[2]) <= Math.max.apply(null, xs) + 0.1 &&
+        Math.min(n[1], n[3]) >= H && Math.max(n[1], n[3]) <= GH;
+    };
     if ((idx.length || rects.length === 1) && items.some(function (it, k) {
       var o = it.o, b;
-      if (!solid(o) || wide(o) || rects.indexOf(k) >= 0) return false;
+      if (!o || wide(o) || rects.indexOf(k) >= 0 || idx.indexOf(k) >= 0) return false;
+      if (!solid(o) && !(/^(line|curve)$/.test(o.kind) && !carried(o))) return false;
       b = box(o);
       return b[3] > H + 0.1 && Math.min(b[2], sx1) - Math.max(b[0], sx0) > 0.1;
     })) return null;
@@ -47824,8 +47834,29 @@ Lantern.RFB = (function () {
     // across(t, o): t lies across o -- a line, a curve or words by a box a little wider than they are, so that a
     // level or upright line counts, as the thing across or the thing copied (the review: a clock's hands between two
     // faces were not seen, nor fence posts across a rail written three times)
+    // (the second review: where the paint reaches, not the box of the numbers -- a curve's drawn line swings past its
+    // points, as AI_DRAW samples it, and a line or an outline reaches half its width, in pixels of 36 to a cell, round
+    // its centre: "curve 0 0 10 0 10 10" passes under a box at x 10.3, a line 30 wide at x 9.3 reaches one at 9)
+    function reach(it) {
+      var o = it.o, b = box(o), ln = String(it.line || ""), pad = 0, k, s2;
+      if (o.kind === "curve" && o.nums.length >= 6) {
+        var p = [], q2 = [];
+        for (k = 0; k + 1 < o.nums.length; k += 2) p.push([o.nums[k], o.nums[k + 1]]);
+        p = [p[0]].concat(p, [p[p.length - 1]]);
+        for (k = 1; k < p.length - 2; k++) for (s2 = 0; s2 <= 14; s2++) {
+          var t = s2 / 14, t2 = t * t, t3 = t2 * t, a = p[k - 1], c1 = p[k], c2 = p[k + 1], d = p[k + 2];
+          q2.push([0.5 * (2 * c1[0] + (-a[0] + c2[0]) * t + (2 * a[0] - 5 * c1[0] + 4 * c2[0] - d[0]) * t2 + (-a[0] + 3 * c1[0] - 3 * c2[0] + d[0]) * t3),
+            0.5 * (2 * c1[1] + (-a[1] + c2[1]) * t + (2 * a[1] - 5 * c1[1] + 4 * c2[1] - d[1]) * t2 + (-a[1] + 3 * c1[1] - 3 * c2[1] + d[1]) * t3)]);
+        }
+        b = [b[0], b[1], b[2], b[3]];
+        q2.forEach(function (x) { b[0] = Math.min(b[0], x[0]); b[1] = Math.min(b[1], x[1]); b[2] = Math.max(b[2], x[0]); b[3] = Math.max(b[3], x[1]); });
+      }
+      var wm = /\bwidth\s+(\d+(?:\.\d+)?)/i.exec(ln), stroked = /^(line|curve|text)$/.test(o.kind) || /\b(color|colour|outline|stroke)\b/i.test(ln);
+      if (stroked) pad = Math.max(0.15, (wm ? +wm[1] : 3) / 2 / 36 + 0.05);
+      return { b: b, pad: pad };
+    }
     function across(t, o) {
-      var bt = box(t), bo = box(o), pt = /^(line|curve|text)$/.test(t.kind) ? 0.15 : 0, po = /^(line|curve|text)$/.test(o.kind) ? 0.15 : 0;
+      var rt = reach(t), ro = reach(o), bt = rt.b, bo = ro.b, pt = rt.pad, po = ro.pad;
       if (!pt && !po) return hits(bt, bo);
       return Math.min(bt[2] + pt, bo[2] + po) - Math.max(bt[0] - pt, bo[0] - po) > 0 && Math.min(bt[3] + pt, bo[3] + po) - Math.max(bt[1] - pt, bo[1] - po) > 0;
     }
@@ -47845,7 +47876,7 @@ Lantern.RFB = (function () {
         var lastAt = at[at.length - 1], earlier = at.slice(0, -1);
         if (!earlier.every(function (x) {
           var o = items[x].o;
-          return !!o && !items.slice(x + 1, lastAt).some(function (jt) { return key(jt) !== k && (!jt.o || across(jt.o, o)); });
+          return !!o && !items.slice(x + 1, lastAt).some(function (jt) { return key(jt) !== k && (!jt.o || across(jt, items[x])); });
         })) return;
         earlier.forEach(function (x) { drop.push(x); });
         dropped += earlier.length; names.push(k); count[k] -= earlier.length;
@@ -47860,7 +47891,7 @@ Lantern.RFB = (function () {
         items = items.filter(function (it, x) { return drop.indexOf(x) < 0; });
         said.push("left out " + dropped + " earlier cop" + (dropped === 1 ? "y" : "ies") + " of " +
           names.slice(0, 2).map(function (k) { return "\u201c" + k + "\u201d"; }).join(" and ") + (names.length > 2 ? " and " + (names.length - 2) + " more" : "") +
-          ": a line written again, with nothing between across it, draws nothing new");
+          ": a line written again, with nothing drawn between across it, draws nothing new");
       }
     }
     if (Object.keys(count).some(function (k) { return count[k] >= 3; })) return { lines: items.map(function (it) { return it.line; }), said: said, problems: problems };
@@ -48080,10 +48111,12 @@ Lantern.RFB = (function () {
       try { ra = L.aiAct && L.aiAct.runaway ? L.aiAct.runaway(block, null) : null; } catch (e0) { ra = null; }
       // (a block AI_DRAW reports as run away -- nine copies of a sun off the grid -- is its to report: no copies are
       // left out of it here, so that the report stands; the review of 1.24.10)
-      var away0 = false;
-      try { var b0r = ra ? null : build0.call(act, block, ctx); away0 = !!b0r && (b0r.problems || []).some(function (p) { return /^the reply ran away/.test(p); }); } catch (e1) { away0 = false; }
+      // (built first only where a line is written three times, the one case the report can change -- the second
+      // review found every drawing built twice)
+      var away0 = false, b0r = null, cnt0 = {}, thrice0 = (block.lines || []).some(function (l) { var k0 = String(l).replace(/\s+/g, " ").replace(/^\s+|\s+$/g, ""); cnt0[k0] = (cnt0[k0] || 0) + 1; return cnt0[k0] >= 3; });
+      try { b0r = ra || !thrice0 ? null : build0.call(act, block, ctx); away0 = !!b0r && (b0r.problems || []).some(function (p) { return /^the reply ran away/.test(p); }); } catch (e1) { away0 = false; b0r = null; }
       try { m = ra ? null : mend(block.lines, ctx && ctx.question, { cut: !block.closed || away0 }); } catch (e) { m = null; }
-      if (!m || (!m.said.length && !m.problems.length)) return build0.call(act, block, ctx);
+      if (!m || (!m.said.length && !m.problems.length)) return b0r || build0.call(act, block, ctx);
       for (k in block) b2[k] = block[k];
       b2.lines = m.lines;
       var r = build0.call(act, b2, ctx);
@@ -53215,7 +53248,19 @@ Lantern.RFB = (function () {
 // What cannot be right goes back with the line to write: a word that is
 // not a note or a chord, a note far from the rest of the tune, a long note
 // a half step from its chord (with the chords of the key that fit it), a
-// melody wider than its instrument plays. 1.22.0: arrange orchestra (and
+// melody wider than its instrument plays.
+// 1.24.10: a long note a half step from its chord is mended where Lantern
+// is sure of the mend, and said under the song: a note held half a bar or
+// more, in a bar of one chord, the bar not the first or the last, gets the
+// chord of the key that holds it and rubs against no long note of the bar
+// (the dominant before the home chord); the tune's last note, over the key's own home chord, becomes
+// the nearest note of it. A held note that steps to a note of its chord
+// before the chord ends (a suspension, an appoggiatura) is right as written
+// and not asked about. Told the chord to write, the 35B wrote the same chord
+// again: the waltz on 1.24.0 (G over D at its end) and again on 1.24.6 and
+// 1.24.8 (A over E in bar 7), and a tune on 1.24.6 that ended on C over G.
+// A first draft (1.24.9, held back) judged each note alone: of 107 songs of a
+// reviewer's own it changed about 30 that were right. 1.22.0: arrange orchestra (and
 // form, part lines) -- MUSIC_ARRANGE writes every player's part; the song's
 // own lines stay the tune that is checked.
 (function () {
@@ -53513,15 +53558,22 @@ Lantern.RFB = (function () {
     var ins = I ? I.get(sound) : null, lo = ins ? ins.low : 0, hi = ins ? ins.high : 127, A = Math.max(60, lo), B = Math.min(79, hi - 7);
     if (A > B) { A = lo + 5; B = hi - 7; }
     if (A > B) A = B = Math.round((lo + hi) / 2);
-    var mids = P.mel.map(function (n) { return n.midi; }).sort(num), med = mids.length ? mids[mids.length >> 1] : 67, sh = 0, best = null, x, y;
-    var near = P.mel.filter(function (n) { return Math.abs(n.midi - med) <= 19; });
-    for (x = -36; x <= 36; x += 12) {
-      var outN = 0, dist = Math.max(0, A - (med + x), med + x - B);
-      for (y = 0; y < near.length; y++) if (near[y].midi + x < lo || near[y].midi + x > hi) outN++;
-      if (!best || outN < best.o || (outN === best.o && (dist < best.d || (dist === best.d && Math.abs(x) < Math.abs(best.sh))))) best = { o: outN, d: dist, sh: x };
+    // shiftOf(midis) -> the octaves the tune is moved by (1.24.10: asked again once a note is mended, so that the
+    // shown lines play where the tune did -- the second music review)
+    function shiftOf(ms) {
+      var srt = ms.slice().sort(num), md = srt.length ? srt[srt.length >> 1] : 67, bst = null, xx, yy, nr = ms.filter(function (v) { return Math.abs(v - md) <= 19; });
+      for (xx = -36; xx <= 36; xx += 12) {
+        var oN = 0, ds = Math.max(0, A - (md + xx), md + xx - B);
+        for (yy = 0; yy < nr.length; yy++) if (nr[yy] + xx < lo || nr[yy] + xx > hi) oN++;
+        if (!bst || oN < bst.o || (oN === bst.o && (ds < bst.d || (ds === bst.d && Math.abs(xx) < Math.abs(bst.sh))))) bst = { o: oN, d: ds, sh: xx };
+      }
+      return ms.length ? bst.sh : 0;
     }
-    sh = P.mel.length ? best.sh : 0;
-    if (sh) { P.mel.forEach(function (n) { n.midi += sh; n.oct += sh / 12; }); said.push("Lantern moved the melody " + (sh > 0 ? "up" : "down") + (Math.abs(sh) === 12 ? " an octave" : " " + Math.abs(sh) / 12 + " octaves") + ", where " + (ins && sound !== "flute" ? "the " + sound + " plays it" : "a tune sings")); med += sh; }
+    var mids = P.mel.map(function (n) { return n.midi; }).sort(num), med = mids.length ? mids[mids.length >> 1] : 67, sh = 0;
+    sh = shiftOf(P.mel.map(function (n) { return n.midi; }));
+    function movedText(x) { return "Lantern moved the melody " + (x > 0 ? "up" : "down") + (Math.abs(x) === 12 ? " an octave" : " " + Math.abs(x) / 12 + " octaves") + ", where " + (ins && sound !== "flute" ? "the " + sound + " plays it" : "a tune sings"); }
+    var movedSaid = -1;
+    if (sh) { P.mel.forEach(function (n) { n.midi += sh; n.oct += sh / 12; }); movedSaid = said.length; said.push(movedText(sh)); med += sh; }
     var far = P.mel.filter(function (n) { return Math.abs(n.midi - med) > 19; }).slice(0, 2);
     far.forEach(function (n) { probs.push("bar " + n.bar + ": " + q(n.tok) + " is far " + (n.midi < med ? "below" : "above") + " the rest of the tune: write it without its octave number (Lantern puts a note nearest the one before) or nearer"); });
     function nn(m) { return T.spell(T.mod(m, 12), key) + (Math.floor(m / 12) - 1); }
@@ -53539,14 +53591,50 @@ Lantern.RFB = (function () {
       if (!inf) return "";
       return " (bar " + bar + " plays the chords line\u2019s bar " + ((bar - 1 - inf.from) % inf.ch + 1) + " again: write a chord for each of the " + inf.mel + " bars, or leave the chords line out and Lantern chooses them)";
     }
+    // (1.24.10) What Lantern mends, it is sure of: not in a blues (a blue note is meant), nor a tune in a mode the
+    // key line cannot say, nor a song with parts of its own (they were written against the chords line), nor where
+    // the chords line does not agree with its key (key F over the chords of C: every chord of C, and G is not F's).
+    // Only what is asked counts toward the two questions. (The second music review: "The Blue Bells" is no blues.)
+    var sure = !/\bblues\b/i.test(String(s.title || "") + " " + String(s.styleText || "")) &&
+      !/\b(dorian|mixolydian|lydian|phrygian|locrian|aeolian|ionian|modal|mode)\b/i.test(String(s.keyText || "") + " " + String(s.title || "")) &&
+      !(s.partLines && s.partLines.length) && !s.arrangeText && !s.formText;
+    function inKeyOf(x, ds) { return ds.some(function (d) { return d.root === x.root && !!d.minor === !!x.minor && d.pcs.every(function (p) { return x.pcs.indexOf(p) >= 0; }); }); }
+    function inKey(x) { return inKeyOf(x, dia); }
+    if (sure && !chs.every(inKey)) {
+      var otherKey = ["C", "G", "D", "A", "E", "B", "F#", "Db", "Ab", "Eb", "Bb", "F"].some(function (nm) {
+        return [" major", " minor"].some(function (q2) { var k2 = T.keyOf(nm + q2); return !!k2 && !(k2.tonic === key.tonic && !!k2.minor === !!key.minor) && chs.every(function (x) { return inKeyOf(x, diatonic(k2)); }); });
+      });
+      if (otherKey) sure = false;
+    }
+    var scalePcs = T.scale(key).concat(key.minor ? [T.mod(key.tonic + 11, 12), T.mod(key.tonic + 9, 12)] : []);
+    function within(n) { return n.at >= (n.bar - 1) * barLen - E && n.at + n.len <= n.bar * barLen + E; }
+    // (the second music review: where one clash must be asked about, Lantern mends none -- a tune a step too high
+    // clashes in every bar, and one chord changed among them is not the song meant. So the song is gone through
+    // once without changing anything, to count what would be mended and what asked)
+    var dry = false, noMend = false, would = 0, asks = 0;
+    function clashes() {
     P.mel.forEach(function (n) {
       if (clash >= 2 || n.len < Math.min(2, barLen / 2) - E) return;
-      var pc = T.mod(n.midi, 12);
+      var pc = T.mod(n.midi, 12), nx = P.mel[P.mel.indexOf(n) + 1];
+      // (the note named as the tune has it: D# written in C is D#, not Eb -- the second music review's D# - E over C
+      // was asked about as "Eb")
+      var wrote = n.letter ? n.letter + (n.acc > 0 ? "##".slice(0, n.acc) : n.acc < 0 ? "bb".slice(0, -n.acc) : "") : T.spell(pc, key);
       chs.forEach(function (c) {
         var ov = Math.min(n.at + n.len, c.at + c.len) - Math.max(n.at, c.at);
-        if (clash >= 2 || ov < Math.min(2, n.len) - E || c.pcs.indexOf(pc) >= 0 || !half(pc, c)) return;
+        if (clash >= 2 || ov < Math.min(2, n.len) - E || c.pcs.indexOf(pc) >= 0 || !half(pc, c) || (dry && c.dryMend)) return;
+        // (1.24.10) a held note that steps to a note of the chord before the chord ends -- C - B - over G, F - E - over
+        // C, G - F# - over D -- is a suspension or an appoggiatura, right as written; one tied in from the bar before
+        // only if it was a note of the chord there (B tied from C into F, then A, is still asked about)
+        // (the second music review: a note out of the key -- Bb - - A over Am in C, Db - - C over C -- is no
+        // suspension; nor one the tune goes back to after it -- F - - - E F - - over C; and C | C is one chord's span
+        // as C | - is)
+        var before = n.at < c.at - E ? chs.filter(function (x) { return x.at <= n.at + E && x.at + x.len > n.at + E; })[0] : null;
+        var cEnd = c.at + c.len, ci = chs.indexOf(c);
+        while (chs[ci + 1] && chs[ci + 1].name === c.name && Math.abs(chs[ci + 1].at - cEnd) < E) { ci++; cEnd = chs[ci].at + chs[ci].len; }
+        var back = P.mel.some(function (x) { return x.at > n.at + E && x.at < cEnd - E && x !== nx && T.mod(x.midi, 12) === pc; });
+        if (nx && nx.at < cEnd - E && T.mod(pc - c.root, 12) !== 6 && c.pcs.indexOf(T.mod(nx.midi, 12)) >= 0 && Math.abs(nx.midi - n.midi) <= 2 && scalePcs.indexOf(pc) >= 0 && !back &&
+            (n.at >= c.at - E || (before && before.pcs.indexOf(pc) >= 0))) return;
         var fit = dia.filter(function (d) { return d.pcs.indexOf(pc) >= 0; }).slice(0, 2).map(function (d) { return d.name; });
-        clash++;
         // (1.24.2) What to write, as the line itself: the 35B was told "write
         // G or Em there, or change the note" for the last bar of its waltz and
         // sent the same block back. The tune's last note, over the key's own
@@ -53555,17 +53643,106 @@ Lantern.RFB = (function () {
         // fits.
         var inf = P.info.filter(function (f) { return n.bar - 1 >= f.from && n.bar - 1 < f.from + f.n; })[0], bi = inf ? n.bar - 1 - inf.from : -1;
         var mbar = inf && inf.mb[bi] ? inf.mb[bi].slice() : null, cbar = inf && inf.ch >= inf.mel && inf.cb[bi] && inf.cb[bi].length === 1 ? bi : -1, lineM = "", lineC = "";
-        if (mbar && n === P.mel[P.mel.length - 1] && c.root === key.tonic) {   // (over another chord the chord is what to change: a tune ends on its home chord)
-          var j = Math.round((n.at - (n.bar - 1) * barLen) / (barLen / mbar.length)), bestPc = null;
-          c.pcs.forEach(function (x) { var d = Math.min(T.mod(x - pc, 12), T.mod(pc - x, 12)); if (bestPc === null || d < bestPc.d) bestPc = { pc: x, d: d }; });
-          if (bestPc && j >= 0 && j < mbar.length && T.noteOf(mbar[j])) { mbar[j] = T.spell(bestPc.pc, key); lineM = mbar.join(" "); }
+        var cname = c.name, c0pcs = c.pcs.slice(), cnotes = c.pcs.map(function (p) { return T.spell(p, key); }).join(" ");
+        // (a note held two beats or more: in 2/4 a quarter note is half a bar, and a march's passing note)
+        var others = !noMend && sure && within(n) && n.len >= 2 - E && chs.every(function (x) { return x === c || inKey(x); });
+        // (1.24.10) The tune's last note, in the song's last bar, over the key's own home chord: the nearest note of
+        // the chord (the root where two are as near), written so that it plays as said
+        // (a triad, not C7 under its own thirteenth; the octave the note was written in is kept, and the tune would be
+        // moved by the same octaves with the note mended, so that the shown lines play as the tune did -- the second
+        // music review)
+        if (others && c.pcs.length === 3 && mbar && n === P.mel[P.mel.length - 1] && n.bar === P.bars && c.root === key.tonic && dia[0] && c.bar === n.bar &&
+            !!c.minor === !!dia[0].minor && dia[0].pcs.every(function (p) { return c.pcs.indexOf(p) >= 0; })) {
+          // (the chord's notes, nearest first, the root first where two are as near, each in the octave nearest the
+          // note written -- with its octave number in the line where the line would put it elsewhere: A#4 for B4
+          // after E#5, not A#5 -- and the first with which the tune plays where it was written: D4 for the 35B's C4
+          // over G, where B3 would take the tune up an octave for a flute; C4 for B3 over C after D4, where B3 was
+          // why the tune went up an octave. Then the first that leaves it where it plays; then the first with which
+          // the whole tune, moved again, is in the instrument's reach -- the second music review found the tune
+          // played an octave above its shown lines)
+          var j = Math.round((n.at - (n.bar - 1) * barLen) / (barLen / mbar.length)), octW = j >= 0 && j < mbar.length ? (/(\d+)$/.exec(String(mbar[j])) || [])[1] || "" : "";
+          var order = c.pcs.map(function (x) { return { pc: x, d: Math.min(T.mod(x - pc, 12), T.mod(pc - x, 12)) }; }).sort(function (u, v) { return u.d - v.d || (u.pc === c.root ? -1 : v.pc === c.root ? 1 : 0); });
+          var at0 = P.mel.indexOf(n), prevRaw = at0 > 0 ? P.mel[at0 - 1].midi - sh : null, bestPc = null, to = "", nt = null, sh2 = sh, kept = true;
+          if (j >= 0 && j < mbar.length && T.noteOf(mbar[j])) [0, 1, 2].some(function (pass) {
+            return order.some(function (o2) {
+              var t2 = T.spell(o2.pc, key) + octW, n2 = T.noteOf(t2, key, n.midi - sh), byLine = n2 && !octW ? T.noteOf(t2, key, prevRaw) : n2;
+              if (!n2 || T.mod(n2.midi, 12) !== o2.pc) return false;
+              if (!byLine || byLine.midi !== n2.midi) t2 += n2.oct;
+              var ms2 = P.mel.map(function (x) { return x === n ? n2.midi : x.midi - sh; }), s2 = shiftOf(ms2);
+              if (pass === 0 ? s2 !== 0 : pass === 1 ? s2 !== sh : ms2.some(function (m) { return m + s2 < lo || m + s2 > hi; })) return false;
+              bestPc = o2; to = t2; nt = n2; sh2 = s2; kept = pass < 2; return true;
+            });
+          });
+          if (nt && dry) { would++; return; }
+          if (nt) {
+            var was = wrote;
+            if (sh2 !== sh) {
+              P.mel.forEach(function (x) { x.midi += sh2 - sh; x.oct += (sh2 - sh) / 12; });
+              if (movedSaid >= 0 && sh2) said[movedSaid] = movedText(sh2);
+              else if (movedSaid >= 0) { said.splice(movedSaid, 1); movedSaid = -1; }
+              else { movedSaid = said.length; said.push(movedText(sh2)); }
+              sh = sh2;
+            }
+            n.midi = nt.midi + sh; n.letter = nt.letter; n.acc = nt.acc; n.oct = nt.oct + sh / 12; n.keyed = nt.keyed; n.tok = to;
+            inf.mb[bi][j] = to;
+            var toName = T.spell(bestPc.pc, key), halfPc = order.filter(function (o2) { return o2.d === 1; })[0], halfName = halfPc ? T.spell(halfPc.pc, key) : toName;
+            said.push("bar " + n.bar + ": the tune ended on " + was + " over " + cname + " (" + cnotes + "), a half step from its " + halfName + ": Lantern ended it on " + toName + ", a note of the chord" +
+              (halfName === toName ? "" : kept ? " (" + halfName + " there would have moved the whole tune to another octave)" : " (" + halfName + " there would have taken the tune out of the " + sound + "\u2019s reach)"));
+            return;
+          }
         }
-        if (cbar >= 0 && fit.length) lineC = "chords " + inf.cb.map(function (b, x) { return x === cbar ? fit[0] : b.join(" "); }).join(" | ");
-        probs.push("bar " + n.bar + ": the melody " + (lineM ? "ends on " : "holds ") + T.spell(pc, key) + " over " + c.name + " (" + c.pcs.map(function (p) { return T.spell(p, key); }).join(" ") + "), a half step from a note of the chord: " +
+        // (1.24.10) A note held half the bar or more, in a bar of one chord from the chords line, the bar not the first
+        // or the last: the chord of the key that holds it and has no note a half step from any long note of the bar
+        // or its first, and the dominant before the home chord (the 35B's waltz: A - F# over E, then D -- A holds both
+        // and keeps the cadence; D would have made the last four bars D)
+        var whole = c.bar === n.bar && Math.abs(c.at - (n.bar - 1) * barLen) < E && Math.abs(c.len - barLen) < E;
+        // (not a chord chosen on purpose: the key's dominant, which carries a cadence; a chord written with a seventh
+        // or more (D7, a secondary dominant); a chord held under the bars on both sides (a drone, a pedal); a major
+        // chord under its own major seventh (Fmaj7's E, a colour) -- the music review of 1.24.9)
+        var nb = function (k) { return chs.filter(function (x) { return x.bar === n.bar + k; })[0]; };
+        // (nor a minor chord under its own ninth -- F# over Em, a colour; nor the bar where the tune ends, a bar before
+        // the chords do; nor a chord already asked about in this song -- the second music review)
+        var chosen = (dia[1] && c.root === dia[1].root) || c.pcs.length > 3 || (nb(-1) && nb(1) && nb(-1).name === c.name && nb(1).name === c.name) ||
+          (!c.minor && T.mod(c.root - pc, 12) === 1) || (c.minor && T.mod(pc - c.root, 12) === 2) || n === P.mel[P.mel.length - 1] || c.asked;
+        var held = n.len >= barLen / 2 - E;
+        // (nor where the tune touches the chord's own note in the bar -- F - - - E F - - over C: it hears C)
+        var rubs = c0pcs.filter(function (p) { var d = T.mod(pc - p, 12); return d === 1 || d === 11; });
+        var touches = P.mel.some(function (x) { return x !== n && x.at < n.bar * barLen - E && x.at + x.len > (n.bar - 1) * barLen + E && rubs.indexOf(T.mod(x.midi, 12)) >= 0; });
+        if (others && cbar >= 0 && whole && held && !chosen && !touches && n.bar > 1 && n.bar < P.bars && /^[A-G]/.test(String(inf.cb[bi][0])) && fit.length) {
+          var inBar = P.mel.filter(function (x) { return x.at < n.bar * barLen - E && x.at + x.len > (n.bar - 1) * barLen + E && (x.len >= 1 - E || Math.abs(x.at - (n.bar - 1) * barLen) < E); });
+          var cands = dia.filter(function (d) { return d.pcs.indexOf(pc) >= 0 && inBar.every(function (x) { var p2 = T.mod(x.midi, 12); return d.pcs.indexOf(p2) >= 0 || !half(p2, d); }); });
+          var next = chs.filter(function (x) { return x.bar === n.bar + 1 && Math.abs(x.at - n.bar * barLen) < E; })[0], ch = null;
+          if (next && next.root === key.tonic && dia[1] && cands.indexOf(dia[1]) >= 0) ch = dia[1];
+          if (!ch && cands.length) { var got = pick(cands, P.mel, c.at, c.at + c.len, false); ch = got ? got.c : cands[0]; }
+          if (ch && dry) { would++; c.dryMend = true; return; }
+          if (ch) {
+            c.name = ch.name; c.root = ch.root; c.pcs = ch.pcs; c.bass = ch.bass; c.minor = ch.minor; c.tok = ch.name; c.mended = true;
+            inf.cb[bi] = [ch.name];
+            var rub = c0pcs.filter(function (p) { var d = T.mod(pc - p, 12); return d === 1 || d === 11; })[0];
+            said.push("bar " + n.bar + ": Lantern played " + ch.name + " under the tune\u2019s " + wrote + ", where the chords line has " + cname + " (" + cnotes + "), whose " + T.spell(rub, key) + " is a half step from it");
+            return;
+          }
+        }
+        // (what is asked gives the line to write, as on 1.24.8: the tune's last bar over its home chord written with
+        // the nearest note of it, or the chords line with the chord that fits -- the second music review found the
+        // first draft had lost both)
+        if (mbar && n === P.mel[P.mel.length - 1] && c.root === key.tonic) {
+          var jj = Math.round((n.at - (n.bar - 1) * barLen) / (barLen / mbar.length)), near = null;
+          c.pcs.forEach(function (x) { var d = Math.min(T.mod(x - pc, 12), T.mod(pc - x, 12)); if (near === null || d < near.d) near = { pc: x, d: d }; });
+          if (near && jj >= 0 && jj < mbar.length && T.noteOf(mbar[jj])) { mbar[jj] = T.spell(near.pc, key); lineM = mbar.join(" "); }
+        }
+        if (cbar >= 0 && fit.length) lineC = "chords " + inf.cb.map(function (b2, x) { return x === cbar ? fit[0] : b2.join(" "); }).join(" | ");
+        clash++; c.asked = true;
+        if (dry) { asks++; return; }
+        probs.push("bar " + n.bar + ": the melody " + (lineM ? "ends on " : "holds ") + wrote + " over " + c.name + " (" + c.pcs.map(function (p) { return T.spell(p, key); }).join(" ") + "), a half step from a note of the chord: " +
           (lineM ? "end the tune on a note of " + c.name + " -- write bar " + n.bar + " of the melody as " + lineM + (fit.length ? " -- or write " + fit.join(" or ") + " as its chord" : "") :
-            (fit.length ? "write " + fit.join(" or ") + " there (" + T.spell(pc, key) + " is in " + (fit.length > 1 ? "them" : "it") + ")" + (lineC ? ", that is " + lineC : "") : "change the chord") + ", or change the note") + again(n.bar));
+            (fit.length ? "write " + fit.join(" or ") + " there (" + wrote + " is in " + (fit.length > 1 ? "them" : "it") + ")" + (lineC ? ", that is " + lineC : "") : "change the chord") + ", or change the note") + again(n.bar));
       });
     });
+    }
+    dry = true; clashes();
+    chs.forEach(function (c) { c.asked = false; delete c.dryMend; });
+    clash = 0; noMend = asks > 0 && would > 0; dry = false; clashes();
     var tempo = s.tempoText ? tempoOf(s.tempoText) : null;
     if (s.tempoText && tempo == null) said.push("Lantern did not understand the tempo " + q(s.tempoText) + "; it plays a " + style + "\u2019s pace");
     if (tempo == null) tempo = R.PACE[style];
