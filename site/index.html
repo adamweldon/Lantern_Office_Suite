@@ -47785,7 +47785,7 @@ Lantern.RFB = (function () {
   var FROMSEA = /\b(?:from|off) (?:the |a )?(?:sea|ocean|water|lake|boat|ship|deck|air)\b|\boffshore\b/i;
 
   // mend(lines, question) -> {lines, said, problems}
-  function mend(lines, q) {
+  function mend(lines, q, opts) {
     q = String(q || "");
     var items = (lines || []).map(function (l) { return { line: l, o: read1(l) }; }), said = [], problems = [], i, count = {};
     if (items.length > 40) return { lines: lines, said: said, problems: problems };
@@ -47808,9 +47808,39 @@ Lantern.RFB = (function () {
       said.push("left out " + (again.length === 1 ? "a background line that was" : again.length + " background lines that were") + " written a second time (\u201c" + again[0].line + "\u201d)" +
         (skyAgain ? ": drawn again, it would cover what came before it" : ": it covered nothing drawn in between"));
     }
-    // (a block that still says one line three times over is a model going round in a circle: AI_DRAW's to
-    // question, not a scene to arrange)
-    items.forEach(function (it) { var k = String(it.line).replace(/\s+/g, " "); count[k] = (count[k] || 0) + 1; });
+    // A line written three times or more: its earlier copies are left out, and said, and the picture is
+    // arranged as any other. The last copy is kept where it is, and an earlier one goes only when nothing drawn
+    // between it and the last, but its own copies, lies across it: then the picture is the same (where it was,
+    // the last copy covers it). Until 1.24.10 such a block was left to AI_DRAW to question as a model going round
+    // in a circle; AI_DRAW asks about a run of eight or more that is cut off or longer than 30 lines, and the
+    // hidden-shape question asked about the copies until 1.24.8, which no longer asks about a shape under its own
+    // copy. So the 35B's "tri 0 6 20 6 10 0 fill gray", written 29 times for a road into the distance, was asked
+    // about by nothing, and the road it had not drawn was not asked for (Adam's run of 1.24.8). A copy with
+    // something across it in between (a cloud between two suns, the second painted over it), a block cut off (AI_DRAW
+    // says it ran away), or a line still written three times after that, and the block is left to AI_DRAW as before.
+    function key(it) { return String(it.line).replace(/\s+/g, " ").replace(/^\s+|\s+$/g, ""); }
+    items.forEach(function (it) { var k = key(it); count[k] = (count[k] || 0) + 1; });
+    var thrice = Object.keys(count).filter(function (k) { return count[k] >= 3; });
+    if (thrice.length && !(opts && opts.cut)) {
+      var drop = [], dropped = 0, names = [];
+      thrice.forEach(function (k) {
+        var at = [], n;
+        items.forEach(function (it, x) { if (key(it) === k) at.push(x); });
+        var lastAt = at[at.length - 1], gone = 0;
+        at.slice(0, -1).forEach(function (x) {
+          var o = items[x].o;
+          if (!o || items.slice(x + 1, lastAt).some(function (jt) { return key(jt) !== k && (!jt.o || hits(box(jt.o), box(o))); })) return;
+          drop.push(x); gone++;
+        });
+        if (gone) { dropped += gone; names.push(k); count[k] -= gone; }
+      });
+      if (dropped) {
+        items = items.filter(function (it, x) { return drop.indexOf(x) < 0; });
+        said.push("left out " + dropped + " earlier cop" + (dropped === 1 ? "y" : "ies") + " of " +
+          names.slice(0, 2).map(function (k) { return "\u201c" + k + "\u201d"; }).join(" and ") + (names.length > 2 ? " and " + (names.length - 2) + " more" : "") +
+          ": a line written again, with nothing between across it, draws nothing new");
+      }
+    }
     if (Object.keys(count).some(function (k) { return count[k] >= 3; })) return { lines: items.map(function (it) { return it.line; }), said: said, problems: problems };
     // a plain landscape, asked for in words Lantern knows, with one sky and a ground it can read: or nothing
     var sc = plain(q) ? scene(items) : { H: null }, H = sc.H;
@@ -48026,7 +48056,7 @@ Lantern.RFB = (function () {
     act.build = function (block, ctx) {
       var m = null, b2 = {}, k, ra = null;
       try { ra = L.aiAct && L.aiAct.runaway ? L.aiAct.runaway(block, null) : null; } catch (e0) { ra = null; }
-      try { m = ra ? null : mend(block.lines, ctx && ctx.question); } catch (e) { m = null; }
+      try { m = ra ? null : mend(block.lines, ctx && ctx.question, { cut: !block.closed }); } catch (e) { m = null; }
       if (!m || (!m.said.length && !m.problems.length)) return build0.call(act, block, ctx);
       for (k in block) b2[k] = block[k];
       b2.lines = m.lines;
