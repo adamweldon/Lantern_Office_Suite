@@ -204,7 +204,10 @@ graphics card), then the whole bench in a headless browser
 (`tools/bench_headless.py`), once each for the 0.8B, the 2B and the 4B. It
 needs nobody and no laptop. A job is green when the run finished, whatever it
 scored. A push that changes only `agent/`, `docs/`, `README.md` or
-`CLAUDE.md` does not start it.
+`CLAUDE.md` does not start it, and nor does a new branch whose last commit
+changes nothing outside them (found 2026-11-08: an empty version commit on
+top of the work started no run; a session cannot start one by hand, the
+dispatch is refused).
 
 ```sh
 gh run list --repo adamweldon/Lantern_Office_Suite --workflow "Lantern Bench" --limit 6
