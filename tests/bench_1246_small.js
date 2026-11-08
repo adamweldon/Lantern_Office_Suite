@@ -53,15 +53,18 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     F2.summary.pass === 57 && F08.summary.pass === 51 && F4.summary.pass === 107, [F2.rows.length, F08.rows.length, F4.rows.length]);
 
   // --- how a line is read ---
-  // (the sixth review of 1.24.7: what follows the arrow is cut only where it is a unit and nothing else, or the sum's own
-  // value, and the ANSWER gives the result in that unit or names none. A step still to do, or a unit the ANSWER does not
-  // use, stays, and the line goes back to the model as on 1.24.6)
+  // (the sixth and seventh reviews of 1.24.7: what follows the arrow is cut only where the line is one of Lantern's own
+  // recipe lines and what follows is that recipe's own "gives", or it is the sum's own value as far as it is written,
+  // and the ANSWER gives the result in that unit or names none -- and only where every arrow of the reply is one of
+  // these. Anything else goes back to the model as on 1.24.6)
   ok("\u201c=VOLTS(0.02,470) -> volts\u201d: the line is the sum, up to the arrow; an arrow inside quotes is part of the text",
     rd("=VOLTS(0.02,470) -> volts\n\nANSWER: 9.4 volts") === "=VOLTS(0.02,470)\n\nANSWER: 9.4 volts" && rd("=VOLTS(0.02,470) -> volts\nANSWER: {result} V") === "=VOLTS(0.02,470)\nANSWER: {result} V" &&
     rd("=WEIGHT(50)   -> newtons") === "=WEIGHT(50)" && rd("=LEN(\"a->b\")") === "=LEN(\"a->b\")" && rd("=5*3 => 15") === "=5*3" &&
     R("=VOLTS(0.02,470) -> volts").said[0] === "a formula line with \u201c-> \u2026\u201d after the sum as the sum", R("=VOLTS(0.02,470) -> volts"));
-  ok("...not a step still to do, nor a unit the ANSWER does not give the result in: \u201c-> bags (rounded up)\u201d, \u201c-> bags, rounded up\u201d, \u201c-> percent\u201d, \u201c-> squared\u201d, \u201c-> both ways\u201d; \u201c-> minutes\u201d over an ANSWER in hours, \u201c-> Wh\u201d over one in kWh, \u201c-> pence\u201d over one in pounds, \u201c-> dollars\u201d over one in cents",
-    ["=CEIL(2000/50) -> bags (rounded up)\nANS: 40", "=110/25 -> bags, rounded up\nANSWER: You need {result} bags.", "=12/80 -> percent\nANSWER: It is {result}%.", "=4.5 -> squared\nANSWER: {result} square metres.",
+  ok("...Lantern\u2019s own line with its own label is read (\u201c=CEIL(2000/50) -> bags (rounded up)\u201d); not a step still to do, nor a unit the ANSWER does not give the result in: \u201c-> bags, rounded up\u201d, \u201c-> percent\u201d, \u201c-> squared\u201d, \u201c-> both ways\u201d; \u201c-> minutes\u201d over an ANSWER in hours, \u201c-> Wh\u201d over one in kWh, \u201c-> pence\u201d over one in pounds, \u201c-> dollars\u201d over one in cents",
+    rd("=CEIL(2000/50) -> bags (rounded up)\nANS: 40") === "=CEIL(2000/50)\nANS: 40" &&
+    ["=110/25 -> bags, rounded up\nANSWER: You need {result} bags.", "=7/2 -> 4\nANSWER: You need {result} cars.", "=3 -> minutes\nANSWER: {result} minutes.",
+      "=3/8 -> 0.375\nANSWER: {result}%", "=2*60 -> minutes\n=30*ANS -> litres\nANSWER: {result} litres", "=CONVERT(5,\"km\",\"mile\") -> km\nANSWER: {result} km", "=12/80 -> percent\nANSWER: It is {result}%.", "=4.5 -> squared\nANSWER: {result} square metres.",
       "=3.50 -> both ways\nANSWER: The return trip costs ${result}.", "=2000/15 -> minutes\nANSWER: It takes {result} hours.", "=1500*4 -> Wh\nANSWER: It uses {result} kWh.",
       "=65*35 -> pence\nANSWER: That is \u00a3{result}.", "=2*2.5 -> dollars\nANSWER: {result} cents"].every(function (t) { return rd(t) === t; }) &&
     rd("=50-80 -> -30 dollars\nANSWER: {result} dollars") === "=50-80\nANSWER: {result} dollars" && rd("=(10-32)/1.8 -> -12.2 C\nANSWER: {result} C") === "=(10-32)/1.8\nANSWER: {result} C");
@@ -97,7 +100,8 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     rd("MAKE DOC: Answer key\nAnswers to the quiz.\nANS: B\nANS: B\nANS: B\nANS: C\nEND") === "MAKE DOC: Answer key\nAnswers to the quiz.\nANS: B\nANS: B\nANS: B\nANS: C\nEND" &&
     rd("MAKE DOC: Quiz\n1. What is 12 x 12?\nANS: 12*12\n2. What is 9 x 9?\nANS: 9*9\nEND") === "MAKE DOC: Quiz\n1. What is 12 x 12?\nANS: 12*12\n2. What is 9 x 9?\nANS: 9*9\nEND" &&
     rd("MAKE DOC: Roots\nANSWER: SQRT(49)\nEND") === "MAKE DOC: Roots\nANSWER: SQRT(49)\nEND" &&
-    rd("Make sure the units match.\n=2000/15 -> minutes\nANSWER: {result}") === "Make sure the units match.\n=2000/15\nANSWER: {result}");
+    rd("Make sure the units match.\n=2000/15 -> 133.33\nANSWER: {result}") === "Make sure the units match.\n=2000/15\nANSWER: {result}" &&
+    rd("MAKE QUIZ: Seven times\n1. 6 x 7\n=6*7=42\nEND\nANSWER: The answer is 42.", "What is 6 times 7? Make a quiz.") === "MAKE QUIZ: Seven times\n1. 6 x 7\n=6*7=42\nEND\nANSWER: The answer is 42.");
   // (the sixth review: an ANSWER line after a line of a MAKE block that is not a program ends the block, as it does for
   // AI_ACTIONS, which makes the table and reads the ANSWER as the answer. The formula is worked out, and its line goes
   // under the ANSWER, so the table is as the model wrote it)
@@ -141,10 +145,13 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   // a step done in the head too ("=1024^3", "=10737418240" for 10 GiB); "-> bags (rounded up)" is not a unit. Five more
   // of the 2B's rows are left failing as on 1.24.6: the battery's hours and the orbit's (a long number typed under the
   // sum), the tank (133.33 hours typed under it), the plants (a long number after the arrow), the bags)
-  ok("the 2B\u2019s 27 failed sums, with its replies as it wrote them: 10 pass now. The 17 left are sums it got wrong (RSERIES for two resistors in parallel, 150*10/420 for the fuel of a trip), and eight where it typed a number under a right sum or after its arrow, which Lantern cannot tell from a step done in the head",
-    r2.pass.length === 10 && r2.left.join() === "mars-escape,moon-weight,water-molar,battery-hours,miles-km,parallel,plants,tank-fill,maize-bags,field-ha,rice-scale,egg-dozens,geo-period,rice-kg,power-bill,car-fuel,miles-speed", r2);
-  ok("...the ones that pass are ones it had right: the kinetic energy, the escape velocity, the eggs, the feed, Ohm\u2019s law, a sack\u2019s weight, the wavelength, the bleach, the transfer, the jerrycans",
-    ["car-ke", "escape", "eggs", "feed", "ohms-law", "sack-weight", "radio-wave", "bleach-jerrycan", "hohmann-geo", "jerrycans"].every(function (id) { return r2.pass.indexOf(id) >= 0; }), r2.pass);
+  // (the seventh: an arrow is read only before a recipe's own label or the sum's own value; a whole number after a sum
+  // that is not whole is a count rounded, the model's step -- so the 2B's escape velocity, 11186 after a sum of
+  // 11186.x, goes back as on 1.24.6, and its bags, "-> bags (rounded up)" after the recipe's own line, are read)
+  ok("the 2B\u2019s 27 failed sums, with its replies as it wrote them: 10 pass now. The 17 left are sums it got wrong (RSERIES for two resistors in parallel, 150*10/420 for the fuel of a trip), and nine where it typed a number under a right sum or after its arrow, which Lantern cannot tell from a step done in the head",
+    r2.pass.length === 10 && r2.left.join() === "mars-escape,moon-weight,water-molar,battery-hours,miles-km,parallel,escape,plants,tank-fill,field-ha,rice-scale,egg-dozens,geo-period,rice-kg,power-bill,car-fuel,miles-speed", r2);
+  ok("...the ones that pass are ones it had right: the kinetic energy, the eggs, the feed, Ohm\u2019s law, a sack\u2019s weight, the wavelength, the bags, the bleach, the transfer, the jerrycans",
+    ["car-ke", "eggs", "feed", "ohms-law", "sack-weight", "radio-wave", "maize-bags", "bleach-jerrycan", "hohmann-geo", "jerrycans"].every(function (id) { return r2.pass.indexOf(id) >= 0; }), r2.pass);
   ok("the 0.8B\u2019s 18 failed sums: 2 pass now (230 V x 4 A, fuel at 65 a litre: each a right sum with its own value after a second =); a field in hectares (9.6 after =120*80/10000) and a tank\u2019s hours (a chain that ends at 22.2) stay as written",
     r08.pass.join() === "appliance-w,fuel-cost" && r08.left.length === 16, r08);
 
@@ -173,7 +180,10 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
       // (the third review: drinking not said; liquid chlorine; drops of water; bleach water; to clear; bleach to drink)
       "How many drops of bleach for 20 litres of clear water?", "How many drops of liquid chlorine do I add to 20 litres of water to drink?", "How many drops of water do I add to 1 litre of bleach to make it safe?",
       "How many drops of bleach do I need to make 10 litres of bleach water?", "How many drops of bleach will clear 10 litres of water?", "How many drops of bleach can I drink in 1 litre of water?"].every(function (q) { return dose(q, "=20*7") === null; }));
-  ok("...the other one-blank recipes are held as on 1.24.6 (a wavelength worked as frequency over the speed of light)", /write =WAVELEN\(100\)$/.test(dose("What is the wavelength of a 100 MHz signal?", "=100*10^6/299792458")));
+  // (the seventh review: only where the question names the unit the recipe gives -- a wavelength asked with no unit is
+  // answered right in centimetres as well)
+  ok("...the other one-blank recipes are held as on 1.24.6 where the question asks in the recipe\u2019s unit (a wavelength in metres worked as frequency over the speed of light); asked with no unit, nothing is said",
+    /write =WAVELEN\(100\)$/.test(dose("What is the wavelength of a 100 MHz signal, in metres?", "=100*10^6/299792458")) && !dose("What is the wavelength of a 100 MHz signal?", "=100*10^6/299792458"));
 
   // --- the 4B ---
   var w4 = row(F4, "make-power-wheel"), iw = item("make-power-wheel"), mw = act.fromReply(w4.first.replace(/^LESSON:[^\n]*\n+[^\n]*\n+/, ""), iw.q);

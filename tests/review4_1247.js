@@ -84,12 +84,15 @@ function near(a, b) { return typeof a === "number" && typeof b === "number" && M
   var cNow = F.recipes.filter(function (r) { return speaks(r) !== r.speaks; });
   ok("the 42 recipe questions: Lantern says nothing of a recipe where the question asks for what it does not give -- drops of bleach per litre, a half-wave dipole, a wavelength in feet, a radio signal\u2019s time, the orbits in a day, an escape velocity in km/h, the weight on one leg of a table, a black hole\u2019s diameter",
     cNow.length === 0 && F.recipes.every(function (r) { return !r.speaks || r.shouldSpeak; }), cNow.map(function (r) { return r.q; }));
-  ok("...and still holds a sum to the recipe for its own plain question: drops of bleach for a jerrycan of water to drink, the wavelength of a 100 MHz signal, a satellite\u2019s minutes at 420 km, a 50 kg sack in newtons, an escape velocity at 400 km (a sum that does not run gets the recipe another way: with the error)",
+  ok("...and still holds a sum to the recipe for its own plain question, asked in the recipe\u2019s unit: drops of bleach for a jerrycan of water to drink, the wavelength of a 100 MHz signal in metres, a satellite\u2019s minutes at 420 km, a 50 kg sack in newtons, an escape velocity at 400 km in m/s (a sum that does not run gets the recipe another way: with the error); asked with no unit, a right sum in km/s or hours is not told to be the recipe\u2019s",
     /write =2\*20$/.test(RDc("How many drops of household bleach make a 20 litre jerrycan of clear water safe to drink?", "=20*4", A.run("=20*4"), {}) || "") &&
     /write =WAVELEN\(100\)$/.test(RDc("What is the wavelength of a 100 MHz radio signal, in metres?", "=100*10^6/299792458", A.run("=100*10^6/299792458"), {}) || "") &&
     /write =ORBITT\(CONVERT\(420\+6371,"km","m"\)\)\/60$/.test(RDc("How long does a satellite take to orbit Earth at 420 km altitude, in minutes?", "=CONVERT(420+6371,\"km\",\"m\")/60", A.run("=CONVERT(420+6371,\"km\",\"m\")/60"), {}) || "") &&
     /write =WEIGHT\(50\)$/.test(RDc("What is the weight in newtons of a 50 kg sack?", "=50*10*10", A.run("=50*10*10"), {}) || "") &&
-    /write =ESCV\(CONVERT\(400\+6371,"km","m"\)\)$/.test(RDc("What is the escape velocity at 400 km altitude?", "=SQRT(2*9.8*400000)", A.run("=SQRT(2*9.8*400000)"), {}) || ""));
+    /write =ESCV\(CONVERT\(400\+6371,"km","m"\)\)$/.test(RDc("What is the escape velocity at 400 km altitude, in m/s?", "=SQRT(2*9.8*400000)", A.run("=SQRT(2*9.8*400000)"), {}) || "") &&
+    // (the seventh review: asked with no unit, a sum in km/s or hours is right too, and nothing is said)
+    !RDc("What is the escape velocity at 400 km altitude?", "=SQRT(2*9.8*400000)/1000", A.run("=SQRT(2*9.8*400000)/1000"), {}) &&
+    !RDc("How long does one orbit take at 550 km?", "=ORBITT(CONVERT(550+6371,\"km\",\"m\"))/3600", A.run("=ORBITT(CONVERT(550+6371,\"km\",\"m\"))/3600"), {}));
 
   console.log(fails ? fails + " REVIEW 4 FAILURES (" + passes + " passed)" : "ALL REVIEW 4 CHECKS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);

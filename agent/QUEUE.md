@@ -15,7 +15,7 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    with the 35B; no model had run it when it was pushed. So first:
    - **the 2B's sums.** It had 18 of its 27 failed sums right but for how
      it wrote the line (an arrow after it, a number typed under it, the
-     numbers in braces). Six reviews took the readers back to what Lantern
+     numbers in braces). Seven reviews took the readers back to what Lantern
      can be sure of: replayed, 10 of the 27 pass. The short prompt no longer
      shows "-> volts" after a recipe's line: does the 2B still write
      arrows? How many pass?

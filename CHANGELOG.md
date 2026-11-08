@@ -5,7 +5,7 @@
 Three pieces of work. Adam drew with the 35B on 1.24.6 and sent what came
 back; the small models' run on 1.24.6 was read row by row; and what was
 written for both was given, before anything was pushed, to reviewers who
-had not seen it written and were asked to break it. They did, six times,
+had not seen it written and were asked to break it. They did, seven times,
 and this version is what was left standing.
 
 **What was seen.**
@@ -148,6 +148,22 @@ and this version is what was left standing.
   5 right ones changed: a snow cap, a pale rock, a cloud on a peak taken
   for the moon where the moon was drawn small, as an oval, or rising
   behind the land.
+- *The seventh review*, of the sixth's mends, by a seventh agent, which
+  also ran six of its replies through the whole of Chat and Assist with a
+  scripted model: of 162 replies, 38 broken. A chain with an arrow on
+  each line, where one arrow was read and the other not, and the next
+  line's ANS was 0 ("=2*60 -> minutes", "=30*ANS -> litres": "0 litres",
+  where 1.24.6 sent it back); a count rounded after the arrow or the
+  second = ("=7/2 -> 4": "3.5 cars"); a chain ending in a per cent
+  ("=12/80 = 0.15 = 15%": "0.15%"); an arrow's unit that is not the
+  CONVERT's own; an arrow that meant "change it into" ("=3 -> minutes":
+  "3 minutes" for a film of 3 hours); "pounds" taken for a price; yes or
+  no asked after a full stop ("Work out 25 x 4. Is that a hundred?") or
+  with "or not"; Lantern's own message taken for the question. Of 50
+  recipe questions, 5 right sums in another unit (hours, km/s) told to
+  write the recipe's line, for a question that named no unit. Of 28
+  pictures, 4 where the question asked for the sun in front of the
+  clouds, the mountains or a tree, and Lantern put it behind them.
 
 **What they were traced to.**
 
@@ -186,7 +202,7 @@ and this version is what was left standing.
 - *What the third review found* was in what Lantern did once it was sure:
   where it put a thing it moved (to the back of the sky, behind what the
   model had drawn behind it on purpose), and what it moved with it.
-- *What the fourth, fifth and sixth found* was readers that were sure where they
+- *What the fourth to the seventh found* was readers that were sure where they
   could not be. A number typed under a sum may be a slip (the 2B's 88.5625
   under `=CONVERT(26,"mile","km")`) or the model's next step, and the
   fourth review's mend -- a slip is a number no step reaches -- was
@@ -198,7 +214,11 @@ and this version is what was left standing.
   that the last of these lists of exceptions -- a long number is a copy,
   any word after an arrow is a label, a white disc in a question about the
   moon is the moon, a weight refuses "half" and "in water" -- were lists of
-  exceptions still, and each was taken back to what Lantern can see.
+  exceptions still, and each was taken back to what Lantern can see. The
+  seventh found the same of the units: a unit after an arrow can be the
+  thing to change into, and "pounds" a weight or a price. What Lantern can
+  see for certain is its own line: a recipe's line with its own label
+  after it, or a number after a sum that is the sum's value as written.
 
 **What changed.** One new module (412 in all). The filled recipes are not
 in this version (see "What is not in it").
@@ -260,7 +280,9 @@ in this version (see "What is not in it").
     nearer than the sun). The moon is left where the model drew it: a white
     disc at night may be a snow cap, a cloud on a peak, a pale rock, a
     snowy crown, and in a question about the moon a yellow disc may be a
-    lamp; nothing in such a picture is moved as the sun;
+    lamp; nothing in such a picture is moved as the sun. Nor where the
+    question puts something in front of something ("the sun in front of
+    the clouds");
   - a road, path, track or river that the question says goes away ("a
     road disappearing into the distance", "a track to the horizon": said
     of the road itself, not of mountains "in the distance"), written as
@@ -309,13 +331,17 @@ in this version (see "What is not in it").
   changes a line only where the line as written cannot be right and what
   it meant is plain; a model's number Lantern cannot tell from a step done
   in its head stands, as on 1.24.6:
-  - `=X -> volts` is read as `=X` where what follows the arrow is a unit
-    and nothing else, or X's own value with or without its unit, and the
-    ANSWER gives the result in that unit or names none. Not "-> bags
-    (rounded up)", "-> percent", "-> squared", "-> halved" (a step still
-    to do); not "-> minutes" over an ANSWER in hours, "-> Wh" over one in
-    kWh, "-> pence" over one in pounds; not `=PI()*A1^2 -> the area` (a
-    cell). Those lines go back to the model as on 1.24.6;
+  - `=X -> volts` is read as `=X` only where X is one of Lantern's own
+    recipe lines with numbers in its blanks and what follows the arrow is
+    that recipe's own "gives" (`=VOLTS(0.02,470) -> volts`,
+    `=CEIL(2000/50) -> bags (rounded up)`: what the short prompt of 1.24.6
+    showed after the line), or what follows is X's own value as far as it
+    is written (`=EGGS(12,5) -> 60`), not a whole number after a sum that
+    is not whole ("-> 4" after 7/2: the count rounded), with a unit
+    Lantern knows or none, and the ANSWER giving the result in that unit
+    or in none; and only where every arrow of the reply is one of these.
+    Anything else after an arrow ("-> percent", "-> minutes", "-> 4") goes
+    back to the model as on 1.24.6;
   - `= 65*35 = 2275` is read as `= 65*35` where the question asks for a
     number and everything after the second = is the sum's own value as
     far as it is written ("=2000/15/60 = 2000/900 = 2.2222"). Not where it
@@ -325,10 +351,12 @@ in this version (see "What is not in it").
     own; not a 0 or a 1 (what a test gives: "=MOD(391,17)=0"); not a number
     that is not the sum's value ("=30*9/5 = 86": the +32 done in the head,
     as surely as a slip); not a unit after it other than the ANSWER's own
-    ("= 133.33 minutes" over an ANSWER in hours); not a yes or no asked
-    after a colon ("What do you think: is a dozen dozen a gross?") or a
-    question with its numbers in words. The question is the person's, on
-    a second turn too, and the newest one in a conversation;
+    ("= 133.33 minutes" over an ANSWER in hours); not a whole number after
+    a sum that is not whole ("=7/2 = 4"); not a per cent, nor under an
+    ANSWER in per cent. And only for a question Lantern gave itself (the
+    QUESTION line of its own prompt, not a message in a conversation),
+    with no part of it asking yes or no ("Work out 25 x 4. Is that a
+    hundred?", "or not", "Should ...") and no number in words;
   - a number in `{ }` is the number; a sum in `{ }` is in brackets;
   - a number typed on its own `=` line under a sum stands as the model's,
     whatever its length -- its last step done in its head ("=80*25/100",
@@ -346,7 +374,13 @@ in this version (see "What is not in it").
     ends the block, as it does where the block is made ("MAKE TABLE:
     Distance", "5 | ?", "ANSWER: CONVERT(5,"km","mile")" is a table and
     its answer); the formula's line goes under the ANSWER, so the table is
-    as written.
+    as written. "MAKE QUIZ:" in capitals opens a block though Lantern does
+    not make quizzes; a program's block ends only at a bare END ("END IF"
+    is a line of BASIC).
+- **A line that uses ANS of a line that could not be worked out cannot be
+  worked out either** (ASSIST_CORE). It was given the line before that, or
+  0: "=2*60 -> minutes", "=30*ANS" gave 0 litres. Now the reply goes back
+  as one that could not be run.
   Chat says what was read.
 - **The older readers keep to the reply's own lines too** (they are from
   1.24.5): one line written three times is read as once only outside a
@@ -380,7 +414,11 @@ in this version (see "What is not in it").
   km/h, mph); the weight in newtons of a sack, a box, a person, a car, in
   its own words (not an axle's share, in water, in orbit); a radio
   wave's whole wavelength in metres, in its own words (not ultrasound,
-  sonar, a harmonic, in km).
+  sonar, a harmonic, in km). And each only where the question asks in the
+  recipe's unit (minutes, m/s, metres): asked with no unit, a right sum in
+  hours or km/s is not told to write the recipe's line. Not where the
+  drops of bleach are what is drunk ("How many drops of bleach are safe
+  to drink, in 1 litre?").
   The others (a geostationary orbit, the Schwarzschild radius, a fast
   clock, sugar and salt for ORS) say nothing: on 1.24.6 the orbit card
   told the 2B, which had the hours right for a geostationary orbit, to
@@ -404,7 +442,7 @@ in this version (see "What is not in it").
 
 **What was tested.**
 
-- `npm test`: all 66 suites pass. New: `tests/scene.js` (49 checks: Adam's
+- `npm test`: all 67 suites pass. New: `tests/scene.js` (49 checks: Adam's
   two blocks as the 35B wrote them; each rule on its own; the reviews'
   pictures, every one, from `tests/fixtures/scene_review_1247.json` and
   `scene_review2_1247.json`: 216 right ones that come through exactly as
@@ -416,17 +454,21 @@ in this version (see "What is not in it").
 - The 35B's 45 right sums of 1.24.4: nothing in them is read differently,
   and no check questions one. (The guard caught `=2000/ANS` being taken
   for a typed number while this was written.)
-- Six independent reviews, each by an agent that had not seen the code
+- Seven independent reviews, each by an agent that had not seen the code
   written, on inputs of its own. The first two are in `scene.js` and
-  `bench_1246_small.js`; the third to the sixth are replayed by
+  `bench_1246_small.js`; the third to the seventh are replayed by
   `tests/review3_1247.js` (pictures, replies, recipe questions:
-  `scene_review3_1247.json`, `read_review3_1247.json`), `review4_1247.js`,
-  `review5_1247.js` and `review6_1247.js` (`review4_1247.json`,
-  `review5_1247.json`, `review6_1247.json`), with what 1.24.6 gave beside
-  each reply. On this build none of the six reviews' inputs breaks: no
-  right reply that 1.24.6 read right is read wrong, no wrong one is turned
-  into another wrong number, no recipe line is given for a question that
-  is not the card's own, no right picture is changed.
+  `scene_review3_1247.json`, `read_review3_1247.json`), `review4_1247.js`
+  to `review7_1247.js` (`review4_1247.json` to `review7_1247.json`), with
+  what 1.24.6 gave beside each reply. On this build, of all seven reviews'
+  inputs: no right reply that 1.24.6 read right is read wrong (but an
+  ANSWER that is a MAKE DOC's first line, which is the document's, as
+  AI_ACTIONS makes it); where 1.24.6 worked out no number, none that is
+  wrong is handed over; no recipe line is given where it should not be;
+  no right picture is changed (but "the sun shining over the clouds",
+  which can be read either way). Three wrong replies that 1.24.6 gave as
+  0 or 1 now give the model's own number after its second = ("=2000/15 =
+  133.33" under an ANSWER in hours): wrong as written, as before.
 - Real Chromium, a stand-in model that sees
   (`tests/browser/scene_e2e.py`, new): the two scenes in Chat, the PNG the
   model is shown checked by its colours: the road gray and narrowing, the
@@ -453,12 +495,12 @@ in this version (see "What is not in it").
   `=CONVERT(26,"mile","km")`, 360 under `=12*12*3`, 50480 under Mars's
   escape velocity, 3.3333333333333335 under a battery's hours, 1576.89
   under an orbit's, 133.33 under a tank's, a number of 240 digits after
-  the arrow of a bed's plants, "-> bags (rounded up)") and two of the 0.8B
-  (9.6 after `=120*80/10000`, a chain that ends at 22.2): Lantern cannot
-  tell such a number from a step done in the head, and the readers that
-  took it out read 60 right replies wrong. Ten of the 2B's 27 failed sums
-  and two of the 0.8B's 18 pass on this build with their replies as they
-  wrote them.
+  the arrow of a bed's plants, 11186 after Earth's escape velocity of
+  11186.x) and two of the 0.8B (9.6 after `=120*80/10000`, a chain that
+  ends at 22.2): Lantern cannot tell such a number from a step done in
+  the head, and the readers that took it out read 60 right replies wrong.
+  Ten of the 2B's 27 failed sums and two of the 0.8B's 18 pass on this
+  build with their replies as they wrote them.
 - The moon in front of a mountain, a cloud or the sea is left as the model
   drew it.
 - Left as found, and in the tests as such: the 2B's own wrong sums

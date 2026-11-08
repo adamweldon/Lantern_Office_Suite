@@ -129,7 +129,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   ok("the 23 other recipe questions: a recipe is held to only for its own question, in its own words (twice round, from the centre, in km/s, a half-wave, a quarter-wave, in centimetres, in water, along a slope, in miles are other questions): Lantern says nothing of the recipe for any of the 9; the cards that do not say which questions are their own say nothing at all (the Schwarzschild radius, a geostationary orbit, a fast clock)",
     cNow.length === 0 && cOwn.every(function (x) { return !speaks(x); }) && cOwn.length >= 9, cNow.map(function (x) { return x.q; }));
   ok("...a sum written without it is still held to the recipe (the 0.8B\u2019s wavelength as frequency over the speed of light)",
-    /write =WAVELEN\(100\)$/.test(RDc("What is the wavelength of a 100 MHz signal?", "=100*10^6/299792458", A.run("=100*10^6/299792458"), {})));
+    /write =WAVELEN\(100\)$/.test(RDc("What is the wavelength of a 100 MHz signal, in metres?", "=100*10^6/299792458", A.run("=100*10^6/299792458"), {})));
 
   console.log(fails ? fails + " REVIEW 3 FAILURES (" + passes + " passed)" : "ALL REVIEW 3 CHECKS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);
