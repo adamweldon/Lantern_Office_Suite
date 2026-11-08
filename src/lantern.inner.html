@@ -47750,13 +47750,23 @@ Lantern.RFB = (function () {
     // road would cover it)
     if (items.some(function (it) { return wide(it.o) && it.o.nums[1] > H + 0.1 && sc.groundO.indexOf(it.o) < 0; })) return null;
     // (sleepers, a car, a boat, the dashes of its middle drawn as rects: redrawn, the road would narrow under them
-    // and they would keep their width. Lantern leaves such a road as the model drew it)
+    // and they would keep their width. Lantern leaves such a road as the model drew it. So too a line across it that
+    // is not carried with it -- sleepers wider than the rails, the second review of 1.24.10: the rails redrawn as a
+    // tri covered those drawn before them, and those drawn after kept their width over its point. A line between
+    // the rails is carried: it narrows with them)
     var sx0 = idx.length ? Math.min.apply(null, xs) : rects.length === 1 ? items[rects[0]].o.nums[0] : 0,
       sx1 = idx.length ? Math.max.apply(null, xs) : rects.length === 1 ? items[rects[0]].o.nums[0] + items[rects[0]].o.nums[2] : 0;
     if (idx.length) { sx0 -= 0.3; sx1 += 0.3; }
+    // (a line the redraw carries, as section 3 does: level or slanting, between the rails, on the ground)
+    var carried = function (o) {
+      var n = o.nums;
+      return !!idx.length && o.kind === "line" && n.length === 4 && Math.min(n[0], n[2]) >= Math.min.apply(null, xs) - 0.1 && Math.max(n[0], n[2]) <= Math.max.apply(null, xs) + 0.1 &&
+        Math.min(n[1], n[3]) >= H && Math.max(n[1], n[3]) <= GH;
+    };
     if ((idx.length || rects.length === 1) && items.some(function (it, k) {
       var o = it.o, b;
-      if (!solid(o) || wide(o) || rects.indexOf(k) >= 0) return false;
+      if (!o || wide(o) || rects.indexOf(k) >= 0 || idx.indexOf(k) >= 0) return false;
+      if (!solid(o) && !(/^(line|curve)$/.test(o.kind) && !carried(o))) return false;
       b = box(o);
       return b[3] > H + 0.1 && Math.min(b[2], sx1) - Math.max(b[0], sx0) > 0.1;
     })) return null;
@@ -47817,8 +47827,29 @@ Lantern.RFB = (function () {
     // across(t, o): t lies across o -- a line, a curve or words by a box a little wider than they are, so that a
     // level or upright line counts, as the thing across or the thing copied (the review: a clock's hands between two
     // faces were not seen, nor fence posts across a rail written three times)
+    // (the second review: where the paint reaches, not the box of the numbers -- a curve's drawn line swings past its
+    // points, as AI_DRAW samples it, and a line or an outline reaches half its width, in pixels of 36 to a cell, round
+    // its centre: "curve 0 0 10 0 10 10" passes under a box at x 10.3, a line 30 wide at x 9.3 reaches one at 9)
+    function reach(it) {
+      var o = it.o, b = box(o), ln = String(it.line || ""), pad = 0, k, s2;
+      if (o.kind === "curve" && o.nums.length >= 6) {
+        var p = [], q2 = [];
+        for (k = 0; k + 1 < o.nums.length; k += 2) p.push([o.nums[k], o.nums[k + 1]]);
+        p = [p[0]].concat(p, [p[p.length - 1]]);
+        for (k = 1; k < p.length - 2; k++) for (s2 = 0; s2 <= 14; s2++) {
+          var t = s2 / 14, t2 = t * t, t3 = t2 * t, a = p[k - 1], c1 = p[k], c2 = p[k + 1], d = p[k + 2];
+          q2.push([0.5 * (2 * c1[0] + (-a[0] + c2[0]) * t + (2 * a[0] - 5 * c1[0] + 4 * c2[0] - d[0]) * t2 + (-a[0] + 3 * c1[0] - 3 * c2[0] + d[0]) * t3),
+            0.5 * (2 * c1[1] + (-a[1] + c2[1]) * t + (2 * a[1] - 5 * c1[1] + 4 * c2[1] - d[1]) * t2 + (-a[1] + 3 * c1[1] - 3 * c2[1] + d[1]) * t3)]);
+        }
+        b = [b[0], b[1], b[2], b[3]];
+        q2.forEach(function (x) { b[0] = Math.min(b[0], x[0]); b[1] = Math.min(b[1], x[1]); b[2] = Math.max(b[2], x[0]); b[3] = Math.max(b[3], x[1]); });
+      }
+      var wm = /\bwidth\s+(\d+(?:\.\d+)?)/i.exec(ln), stroked = /^(line|curve|text)$/.test(o.kind) || /\b(color|colour|outline|stroke)\b/i.test(ln);
+      if (stroked) pad = Math.max(0.15, (wm ? +wm[1] : 3) / 2 / 36 + 0.05);
+      return { b: b, pad: pad };
+    }
     function across(t, o) {
-      var bt = box(t), bo = box(o), pt = /^(line|curve|text)$/.test(t.kind) ? 0.15 : 0, po = /^(line|curve|text)$/.test(o.kind) ? 0.15 : 0;
+      var rt = reach(t), ro = reach(o), bt = rt.b, bo = ro.b, pt = rt.pad, po = ro.pad;
       if (!pt && !po) return hits(bt, bo);
       return Math.min(bt[2] + pt, bo[2] + po) - Math.max(bt[0] - pt, bo[0] - po) > 0 && Math.min(bt[3] + pt, bo[3] + po) - Math.max(bt[1] - pt, bo[1] - po) > 0;
     }
@@ -47838,7 +47869,7 @@ Lantern.RFB = (function () {
         var lastAt = at[at.length - 1], earlier = at.slice(0, -1);
         if (!earlier.every(function (x) {
           var o = items[x].o;
-          return !!o && !items.slice(x + 1, lastAt).some(function (jt) { return key(jt) !== k && (!jt.o || across(jt.o, o)); });
+          return !!o && !items.slice(x + 1, lastAt).some(function (jt) { return key(jt) !== k && (!jt.o || across(jt, items[x])); });
         })) return;
         earlier.forEach(function (x) { drop.push(x); });
         dropped += earlier.length; names.push(k); count[k] -= earlier.length;
@@ -47853,7 +47884,7 @@ Lantern.RFB = (function () {
         items = items.filter(function (it, x) { return drop.indexOf(x) < 0; });
         said.push("left out " + dropped + " earlier cop" + (dropped === 1 ? "y" : "ies") + " of " +
           names.slice(0, 2).map(function (k) { return "\u201c" + k + "\u201d"; }).join(" and ") + (names.length > 2 ? " and " + (names.length - 2) + " more" : "") +
-          ": a line written again, with nothing between across it, draws nothing new");
+          ": a line written again, with nothing drawn between across it, draws nothing new");
       }
     }
     if (Object.keys(count).some(function (k) { return count[k] >= 3; })) return { lines: items.map(function (it) { return it.line; }), said: said, problems: problems };
@@ -48073,10 +48104,12 @@ Lantern.RFB = (function () {
       try { ra = L.aiAct && L.aiAct.runaway ? L.aiAct.runaway(block, null) : null; } catch (e0) { ra = null; }
       // (a block AI_DRAW reports as run away -- nine copies of a sun off the grid -- is its to report: no copies are
       // left out of it here, so that the report stands; the review of 1.24.10)
-      var away0 = false;
-      try { var b0r = ra ? null : build0.call(act, block, ctx); away0 = !!b0r && (b0r.problems || []).some(function (p) { return /^the reply ran away/.test(p); }); } catch (e1) { away0 = false; }
+      // (built first only where a line is written three times, the one case the report can change -- the second
+      // review found every drawing built twice)
+      var away0 = false, b0r = null, cnt0 = {}, thrice0 = (block.lines || []).some(function (l) { var k0 = String(l).replace(/\s+/g, " ").replace(/^\s+|\s+$/g, ""); cnt0[k0] = (cnt0[k0] || 0) + 1; return cnt0[k0] >= 3; });
+      try { b0r = ra || !thrice0 ? null : build0.call(act, block, ctx); away0 = !!b0r && (b0r.problems || []).some(function (p) { return /^the reply ran away/.test(p); }); } catch (e1) { away0 = false; b0r = null; }
       try { m = ra ? null : mend(block.lines, ctx && ctx.question, { cut: !block.closed || away0 }); } catch (e) { m = null; }
-      if (!m || (!m.said.length && !m.problems.length)) return build0.call(act, block, ctx);
+      if (!m || (!m.said.length && !m.problems.length)) return b0r || build0.call(act, block, ctx);
       for (k in block) b2[k] = block[k];
       b2.lines = m.lines;
       var r = build0.call(act, b2, ctx);

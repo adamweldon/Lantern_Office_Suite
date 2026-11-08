@@ -7,6 +7,11 @@
 // 11 wrong, 3 neutral) and found: lines across a copy not seen (a clock's hands between two faces), a run of squares
 // half off the grid left out whole once the sun between them went, a run-away report lost, two of three copies kept
 // and one moved by the landscape's rules. Each was mended; this replays them.
+// A second agent, that had seen neither, drew 211 more (tests/fixtures/review2_1250_dups.json: 39 right, 5 wrong,
+// 167 neutral) and found: "with nothing between across it" said where a curve's drawn line swung onto the copy, or a
+// line or outline reached it by its width; a railway whose sleepers are wider than its rails redrawn going away with
+// its sleepers spoiled (the road rule, 1.24.9's too, now reached through copies); every drawing built twice. Mended;
+// this replays them too.
 "use strict";
 var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
 var fs = require("fs"), path = require("path");
@@ -71,6 +76,41 @@ function picture(shapes) { var out = [], x, y; for (x = 0.05; x < 20; x += 0.1) 
     ["run-9-off-grid-closed", "run-alternate-off-grid", "run-31-closed", "cut-road-block-x3"].every(function (n) { var r = rows.filter(function (x) { return x.d.name === n; })[0]; return asOld(n) && /^the reply ran away/.test(r.b.problems[0]); }));
   ok("a run of squares with a sun written between each keeps its sun copies, and its squares on the grid", asOld("stepping-row-off-edge-sun-between"));
   ok("two copies kept and one left out does not happen: all of a line\u2019s earlier copies go, or none (the mountain over a cloud, three times, is asked about as on 1.24.9)", asOld("two-floating-copies-kept"));
+  // --- the second review
+  var G = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review2_1250_dups.json"), "utf8"));
+  function gname(n) { return G.filter(function (d) { return d.name.split(" ")[0] === n; })[0]; }
+  var g = G.map(function (d) { var b = act.build(d.text, d.q); return { d: d, b: b, said: (b.plan && b.plan.said) || [], shapes: shp(b) }; });
+  function grow(n) { return g.filter(function (r) { return r.d.name.split(" ")[0] === n; })[0]; }
+  ok("the second review\u2019s 211 drawings (39 right, 5 wrong, 167 neutral), each built without an error", G.length === 211 && g.every(function (r) { return r.b; }) &&
+    G.filter(function (d) { return d.verdict === "right"; }).length === 39 && G.filter(function (d) { return d.verdict === "wrong"; }).length === 5);
+  ok("no copy is left out across which something reaches: a curve's drawn line (C13), a line 30 wide (C14), an outline 20 wide (N4)",
+    ["C13", "C14", "N4"].every(function (n) { var r = grow(n); return r && !r.said.some(function (x) { return /earlier cop/.test(x); }); }), ["C13", "C14", "N4"].map(function (n) { return grow(n).said; }));
+  ok("a railway whose sleepers are wider than its rails is left as drawn, written once or with copies (P8, P20, P21): no road redrawn under its sleepers",
+    ["P8", "P20", "P21"].every(function (n) { var r = grow(n); return r && !r.said.some(function (x) { return /going away/.test(x); }) && r.shapes.filter(function (x) { return /^line 8 (7|8\.5|10|11\.5) 12 /.test(x); }).length === 4; }),
+    ["P8", "P20", "P21"].map(function (n) { return [grow(n).said, grow(n).shapes]; }));
+  var lostAway = g.filter(function (r) { return (r.d.old.problems || []).some(function (p) { return /ran away/.test(p); }) && !(r.b.problems || []).some(function (p) { return /ran away/.test(p); }); });
+  ok("no run-away report of 1.24.9 is lost", lostAway.length === 0, lostAway.map(function (r) { return r.d.name; }));
+  // (what the wip gave the review, kept: where nothing above touched it, the same said and asked, in the same words)
+  var mendedNames = ["C8", "C9", "C13", "C14", "N4", "N5", "P8", "P20", "P21"];
+  var moved = g.filter(function (r) { return mendedNames.indexOf(r.d.name.split(" ")[0]) < 0; }).filter(function (r) {
+    var was = (r.d.now.said || []).map(function (x) { return x.replace("with nothing between across it", "with nothing drawn between across it"); });
+    return JSON.stringify(r.said) !== JSON.stringify(was) || JSON.stringify(r.b.problems || []) !== JSON.stringify(r.d.now.problems || []);
+  });
+  ok("every other drawing is said and asked about as the review found it (" + (G.length - mendedNames.length) + ")", moved.length === 0, moved.map(function (r) { return r.d.name; }));
+  // (leaving out copies is the same as the block written without them: built again with the earlier copies taken
+  // out by hand, each drawing gives the same shapes and the same questions)
+  var notSame = g.filter(function (r) { return r.said.some(function (x) { return /earlier cop/.test(x); }); }).filter(function (r) {
+    var ls = r.d.text.split("\n"), cnt = {}, seenAt = {}, keep;
+    ls.forEach(function (l, i) { var k = l.replace(/\s+/g, " ").trim(); cnt[k] = (cnt[k] || 0) + 1; seenAt[k] = i; });
+    var names2 = (r.said.filter(function (x) { return /earlier cop/.test(x); })[0].match(/\u201c[^\u201d]+\u201d/g) || []).map(function (x) { return x.slice(1, -1); });
+    if (/ and \d+ more:/.test(r.said.join())) return false;
+    keep = ls.filter(function (l, i) { var k = l.replace(/\s+/g, " ").trim(); return names2.indexOf(k) < 0 || seenAt[k] === i; });
+    var b2 = act.build(keep.join("\n"), r.d.q), s2 = (b2.plan && b2.plan.said) || [];
+    return shp(b2).join() !== r.shapes.join() || JSON.stringify(b2.problems) !== JSON.stringify(r.b.problems) ||
+      JSON.stringify(s2) !== JSON.stringify(r.said.filter(function (x) { return !/earlier cop/.test(x); }));
+  });
+  var withCopies = g.filter(function (r) { return r.said.some(function (x) { return /earlier cop/.test(x); }); }).length;
+  ok("...and where copies are left out (" + withCopies + " drawings), the drawing is what the block gives written without them", withCopies >= 120 && notSame.length === 0, notSame.map(function (r) { return r.d.name; }));
   console.log(fails ? fails + " DUPS REVIEW FAILURES (" + passes + " passed)" : "ALL DUPS REVIEW CHECKS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);
 })();
