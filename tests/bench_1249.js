@@ -59,6 +59,22 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     !shore([sky, mt, sea, "rect 0 10.5 20 1.5 fill tan"]) && shore([sky, mt, "rect 0 10.5 20 1.5 fill tan", sea]) &&
     !shore([sky, mt, sea, "circle 15 10.5 1 fill gray"]) && shore([sky, mt, sea, "circle 15 10.5 0.3 fill gray"]),
     [shore([sky, mt, sea, "rect 0 10.5 20 1.5 fill tan"]), shore([sky, mt, "rect 0 10.5 20 1.5 fill tan", sea])]);
+  // --- the review of the change (238 pictures of shore questions, tests/fixtures/review1_1250_shore.json: its own, the
+  // models' shore replies, earlier reviews' shores; "old" is 1.24.9, "now" the first draft). It found: a sliver of a
+  // land band seen at the side edge stopped the question (now two cells are needed, as of any shape); the rows were
+  // sampled from the horizon, so a strip of sand 0.2 tall was seen or not by where the horizon was (now the grid's
+  // own points)
+  var RS = fixture("review1_1250_shore.json"), rs = RS.map(function (d) { var b = act.build(d.text, d.q); return { d: d, b: b, asked: (b.problems || []).some(function (p) { return /all water/.test(p); }) }; });
+  function was(r, k) { return (r.d[k].problems || []).some(function (p) { return /all water/.test(p); }); }
+  ok("the review\u2019s 238 pictures, each built", RS.length === 238 && rs.every(function (r) { return !!r.b; }));
+  var newly = rs.filter(function (r) { return r.asked && !was(r, "old"); }), unasked = rs.filter(function (r) { return !r.asked && was(r, "old"); });
+  ok("nothing asked on 1.24.9 is left unasked; what is newly asked is a sea over its land (" + newly.length + "), but for three the review would leave: a beach covered by a boardwalk of small planks (L47), and a sea Lantern does not draw, in an unknown colour or off the grid, over the sand (D01, D02: that goes back too)",
+    unasked.length === 0 && newly.every(function (r) { return r.d.want === "ask" || /^(L47|D01|D02) /.test(r.d.name); }) && newly.length >= 25, [unasked.map(function (r) { return r.d.name; }), newly.filter(function (r) { return r.d.want !== "ask"; }).map(function (r) { return r.d.name; })]);
+  ok("...a sliver of the sand band seen at the side edge is no land in front (A24, A25, A38); a strip of sand 0.2 tall at the bottom is, wherever the horizon is (L42, L43)",
+    ["A24", "A25", "A38"].every(function (n) { return rs.filter(function (r) { return r.d.name.split(" ")[0] === n; })[0].asked; }) &&
+    ["L42", "L43"].every(function (n) { return !rs.filter(function (r) { return r.d.name.split(" ")[0] === n; })[0].asked; }));
+  var other = rs.filter(function (r) { return JSON.stringify((r.b.problems || []).filter(function (p) { return !/all water/.test(p); })) !== JSON.stringify((r.d.now.problems || []).filter(function (p) { return !/all water/.test(p); })); });
+  ok("...and every other question is as the review found it", other.length === 0, other.map(function (r) { return r.d.name; }));
   console.log(fails ? fails + " BENCH 1.24.9 FAILURES (" + passes + " passed)" : "ALL BENCH 1.24.9 CHECKS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);
 })();
