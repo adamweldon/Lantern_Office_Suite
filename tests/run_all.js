@@ -19,6 +19,8 @@ var steps = [
   ["Compose modules isolated (rule 11)", "node", ["tests/compose_isolation.js"], /COMPOSE MODULES ISOLATED/],
   ["AI layer (routing, app, bench)", "node", ["tests/ai_layer.js"], /ALL AI LAYER TESTS PASS/],
   ["Offline library (search, read, citations)", "node", ["tests/library.js"], /ALL LIBRARY TESTS PASS/],
+  ["The part of an article that answers (1.24.8): a repair guide\u2019s steps without its readers\u2019 comments, a travel guide\u2019s own section, what a thing is made of", "node", ["tests/library_sections.js"], /ALL LIBRARY SECTION CHECKS PASS/],
+  ["The five reviews of 1.24.8\u2019s library change, replayed: 261 pages and 2,704 questions, no answer 1.24.7 found lost but those written with why", "node", ["tests/library_review_1248.js"], /ALL LIBRARY REVIEW CHECKS PASS/],
   ["Open modules: shelves (WikiMed, iFixit, Wikivoyage ...), places and distances, codes (1.14)", "node", ["tests/open_modules.js"], /ALL OPEN MODULE TESTS PASS/],
   ["AI makes things (drawings, schematics, tables)", "node", ["tests/ai_actions.js"], /ALL AI ACTION TESTS PASS/],
   ["Waiting for the kit's model to load (progress bar, connects by itself)", "node", ["tests/ai_server_wait.js"], /ALL SERVER WAIT TESTS PASS/],

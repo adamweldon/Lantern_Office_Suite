@@ -26785,6 +26785,42 @@ Lantern.RFB = (function () {
 // treats them as one family: quick fact questions search and read the small
 // one, explanation questions ("explain", "in detail", "how does") the full
 // one, with a bigger reading allowance.
+// 1.24.8: the part of the article that answers. Adam's run of the 35B on
+// 1.24.6 with six books (2026-11-08) said "Not in my library" three times
+// with the right article in front of it and the wrong part of it:
+//  - a repair guide (iFixit's offline file keeps each step's readers'
+//    comments inside the step's list item, with the step's heading): the
+//    whole item was read as one paragraph, "Step 1Before you begin ... 2
+//    commentsI don't have a pick". The comments are now left out; a list item
+//    that holds a heading is read as its own words, and each line of a step,
+//    however short, is a paragraph that begins "Step n:";
+//  - a travel guide (Wikivoyage writes every town under the same headings):
+//    "a good way to get around Nairobi as a visitor" was given the sentences
+//    that say "visitors" -- the railway's history, the internet cafes -- and
+//    none of "Get around". On a page with those headings, a question about
+//    getting around, getting there, eating, going out, sleeping, crime,
+//    staying healthy, sights or things to do now takes the first sentences of
+//    that section first, and a sentence's section is its top heading too
+//    ("Get around / By taxi");
+//  - "What is oral rehydration solution made of?": the sentences that say
+//    "solution" and "made" (homemade solutions, the 1940s) came before the
+//    one that says what it holds ("small amounts of sugar and salts", "the
+//    recommended formulation ..."). A question about what a thing is made of
+//    now counts the words that say so (formulation, amounts of, consists of,
+//    by volume).
+// A reviewer that had not seen the first draft tried it on 62 pages and 423
+// questions of its own. The first draft read every list item that holds a
+// list as its own words, and lost the short parent line (a year, a
+// dictionary sense, a spec): a list item is read whole again, as before, and
+// what it holds again on its own (a sentence said twice is given once); it skipped a whole section under "Sources"
+// ("Plant sources" of vitamin C); it lost a step's number in short passages;
+// "What should I do if I am robbed?" was given the "Do" section; "contains"
+// and "including" counted as saying what a thing is made of. So: only a list
+// item that holds a heading is read as its own words; a section is skipped by
+// its own heading; each step line carries its number; a section is asked for
+// only on a page that has a travel guide's headings, by words that ask for
+// it ("things to do", not "what should I do if"), and only its first six
+// sentences come first.
 (function () {
   var L = window.Lantern;
   if (!L) return;
@@ -27010,7 +27046,9 @@ Lantern.RFB = (function () {
     return out.slice(0, Math.max(n, 12));
   };
   var DROP = "script,style,table,figure,sup,.thumb,.infobox,.navbox,.reference,.references,.reflist,.mw-ref,.noprint," +
-    ".hatnote,.mw-editsection,.gallery,.metadata,.PieChartTemplate,.mw-empty-elt,link,meta,noscript";
+    ".hatnote,.mw-editsection,.gallery,.metadata,.PieChartTemplate,.mw-empty-elt,link,meta,noscript," +
+    // a guide's readers' comments (iFixit: on each step and under the guide; the show-more button is inside) (1.24.8)
+    ".js-comment-container,.comments-container,.guide-comments-container,.comment-row";
   // Infobox rows that are catalogue numbers, links or pictures, not facts.
   var JUNK = /^(cas|chebi|chembl|chemspider|echa|ec number|e number|kegg|mesh|pubchem|rtecs|unii|un number|comptox|beilstein|gmelin|3dmet|3d model|jsmol|inchi|smiles|website|url|signature|image|map|flag|coat of arms|seal|emblem|logo|isbn|issn|oclc|dewey|lc class|iso 3166|calling code|internet tld|identifiers?|external links?|wikidata|geonames|gnd|viaf|footnotes?|notes?)\b/i;
   function cellText(c) {
@@ -27044,6 +27082,23 @@ Lantern.RFB = (function () {
     return out;
   }
   var SKIP = /^(references|notes|citations|sources|bibliography|further reading|external links|see also|footnotes|works cited|gallery)$/i;
+  // ownText(li) -> what a list item says itself, without the headings, paragraphs and lists it holds (1.24.8)
+  // a step's heading, in the languages iFixit writes guides in
+  // (the labels of ifixit2zim's own language table: Step, \u00c9tape, Passo, Schritt, Stap, Paso, Adim, \u0428\u0430\u0433, \u624b\u9806, \u6b65\u9aa4, and the
+  // Korean "3 \ub2e8\uacc4" with its number first -- the fourth review)
+  var STEPH = /^(?:(?:step|\u00e9tape|etape|paso|schritt|passo|stap|krok|etapa|steg|trin|vaihe|ad\u0131m|adim|\u0448\u0430\u0433|\u624b\u9806|\u6b65\u9aa4) ?\d+|\d+ ?\ub2e8\uacc4)$/i;
+  // stepOf(text) -> "Step 3" when a paragraph begins with a guide's step label ("Step 3: ..."), else ""
+  function stepOf(t) { var k = /^(\S+ \d+): /.exec(String(t || "")); return k && STEPH.test(k[1]) ? k[1] : ""; }
+  // bare(text) -> the text without its step label: the label is not the question's word "step" (the third review:
+  // "What is the first step ...?" matched the first sentence of every line, and their second sentences went)
+  function bare(t) { var k = stepOf(t); return k ? String(t).slice(k.length + 2) : t; }
+  // liOf(el) -> the list item el is in (iFixit: li.step > div.step > h2 "Step 3"), or null
+  function liOf(el) { for (var x = el.parentNode; x && x.tagName; x = x.parentNode) if (/^li$/i.test(x.tagName)) return x; return null; }
+  function ownText(el) {
+    var c = el.cloneNode(true);
+    Array.prototype.forEach.call(c.querySelectorAll("p, li, ul, ol, dl, h2, h3, h4, table"), function (x) { if (x.parentNode) x.parentNode.removeChild(x); });
+    return c.textContent || "";
+  }
   // read(hit) -> Promise<{title, paras, sec, facts}>: the article as plain
   // paragraphs (sec[i] = the section heading paragraph i sits under) and its
   // infobox rows as facts.
@@ -27054,12 +27109,42 @@ Lantern.RFB = (function () {
       var root = d.getElementById("mw-content-text") || d.body || d.documentElement;
       var facts = infobox(root);
       Array.prototype.forEach.call(root.querySelectorAll(DROP), function (x) { if (x.parentNode) x.parentNode.removeChild(x); });
-      var paras = [], sec = [], here = "";
+      var paras = [], sec = [], top = "", sub = "", step = "", stepIn = null;
       Array.prototype.forEach.call(root.querySelectorAll("h2, h3, h4, p, li, dd"), function (p) {
-        var s = (p.textContent || "").replace(/\[\d+\]/g, "").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "");
-        if (/^h[234]$/i.test(p.tagName)) { here = s; return; }
-        if (SKIP.test(here)) return;
-        if (s.length >= 40 && paras.indexOf(s) < 0 && paras.length < 400) { paras.push(s); sec.push(here); }
+        // (a list item that holds a heading -- an iFixit step holds "Step 3", its lines and its comments -- is read as
+        // its own words: what it holds is read on its own. Any other list item is read whole, as before 1.24.8: a
+        // year, a dictionary sense, a spec is often a short line that holds a list)
+        // (only a step's heading: a card on a page made from a website, "<li><h3>Whistle</h3><p>To signal for help</p>", is
+        // read whole, as before -- the third review)
+        var hd = /^li$/i.test(p.tagName) ? p.querySelector("h2, h3, h4") : null;
+        var hdt = hd ? (hd.textContent || "").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "") : "", whole = !(hd && STEPH.test(hdt));
+        // (and its step is its own from here: a step whose lines are in a div, not in paragraphs, is "Step 5: ...", not a
+        // line of step 4 -- the fourth review)
+        if (!whole) { step = hdt; stepIn = p; }
+        var s = (whole ? p.textContent || "" : ownText(p)).replace(/\[\d+\]/g, "").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "");
+        if (/^h[234]$/i.test(p.tagName)) {
+          if (/^h2$/i.test(p.tagName)) { top = s; sub = ""; } else sub = s;
+          // (a guide's step: a heading "Step n" inside the list item that holds the step, as iFixit's offline file
+          // writes it; an article with sections called "Step 1", "Step 2" is read as any other)
+          stepIn = STEPH.test(s) ? liOf(p) : null; step = stepIn ? s : "";
+          return;
+        }
+        if (step && !stepIn.contains(p)) step = "";
+        // (a section is skipped by its own heading: "Plant sources" under "Sources" is read)
+        if (SKIP.test(sub || top)) return;
+        // (a guide of 90 steps of short lines is more than 400 lines: steps 80 to 92 were lost)
+        if (paras.length >= 1500) return;
+        // a guide's step: each line, however short, is a paragraph that says its step
+        if (step) {
+          if (!s || /^li$/i.test(p.tagName) && p.querySelector("p")) return;
+          s = step + ": " + s + (/[.!?:]$/.test(s) ? "" : ".");
+          if (paras.indexOf(s) < 0) { paras.push(s); sec.push(""); }
+          return;
+        }
+        var here = sub ? (top ? top + " / " + sub : sub) : top;
+        // (what a list item holds is read again on its own, as before 1.24.8: a month of a timeline, 870 characters with
+        // no full stop, does not fit a short passage whole, and its days do. A sentence said twice is given once)
+        if (s.length >= 40 && paras.indexOf(s) < 0) { paras.push(s); sec.push(here); }
       });
       var title = (d.querySelector("title") && d.querySelector("title").textContent) || hit.title;
       return { title: String(title).replace(/^\s+|\s+$/g, ""), paras: paras, sec: sec, facts: facts };
@@ -27088,7 +27173,9 @@ Lantern.RFB = (function () {
     { q: ["deep", "depth"], t: ["depth", "deep"] }, { q: ["wide", "width"], t: ["width", "wide"] },
     { q: ["big", "large", "area", "size"], t: ["area", "size"] }, { q: ["heavy", "weigh", "mass"], t: ["weigh", "mass"] },
     { q: ["popul", "inhab"], t: ["popul", "inhab"] }, { q: ["hot", "cold", "tempe"], t: ["tempe", "\u00b0c", "\u00b0f"] },
-    { q: ["fast", "speed"], t: ["speed", "km/h", "mph"] }];
+    { q: ["fast", "speed"], t: ["speed", "km/h", "mph"] },
+    // (1.24.8: a travel guide lists a hostel as "Backpackers" and "dorm bed" -- the second library review)
+    { q: ["hoste"], t: ["hoste", "backp", "dorm"] }];
   var QUANT = /\bhow (tall|high|long|far|deep|wide|big|large|heavy|old|many|much|hot|cold|fast)\b|\b(what|which) year\b|\bwhen (was|were|did|is|does)\b|\bwhat is the (height|length|population|area|distance|depth|width|weight|mass|elevation|temperature|speed|size|age)\b/i;
   function subjectOf(title) { var sub = {}; LIB.keywords(title || "").forEach(function (w) { sub[stem(w)] = 1; }); return sub; }
   // groups(keys, sub) -> [{t: [text stems], w: weight, subject}]: one group a
@@ -27103,13 +27190,129 @@ Lantern.RFB = (function () {
     });
     return out;
   }
-  function scorer(words, title, question) {
-    var gs = groups(words.map(stem), subjectOf(title)), num = QUANT.test(String(question || ""));
-    return function (text) {
+  // (1.24.8) What a thing is made of: the question says "made of", "ingredients", "composition"; the sentence
+  // that answers says "formulation", "with small amounts of", "consists of", "by volume". ("amounts of" alone is
+  // not: "Chocolate contains moderate amounts of caffeine" -- the third review.) (Not "contains", "including" or a
+  // per cent: "Air also contains water vapour", a vaccine's school-entry rules, carbon dioxide "up by 50%" said them
+  // as often.)
+  var MADEOF = /\b(?:ingredients?|composition|composed of|consists? of)\b|\bmade (?:of|from|up of|with)\s*[?.!]*\s*$/i;
+  var SAYSMADE = /\b(ingredients?|formulations?|formulated|composition|composed (?:\w+ )?of|consist(?:s|ing)? (?:\w+ )?of|(?:made|produced|manufactured) (?:\w+ )?(?:of|from|up of|with)|(?:made|produced|prepared|manufactured) by (?:heating|mixing|adding|blending|combining|grinding|boiling|fermenting|cooking|dissolving|melting|roasting|pressing|baking|burning|stirring)|mixture of|mixed with|with (?:\w+ ){0,2}amounts? of|alloy of|emulsion of|blend of|suspension of|solution of|by (?:volume|weight|mass|mole fraction)|(?:is|are) (?:about |around |roughly |nearly |almost |mostly |some |over |under )?\d[\d.]* ?(?:percent|per cent|%))(?![\w])/i;
+  // (and only where the thing itself is named, or "it", before the words that say so: "Mortar is a mixture of cement" is
+  // what mortar is made of, not cement -- the second review)
+  // thingOf(question) -> the stems of the thing a made-of question asks about: "What is white chocolate made of?" ->
+  // white, choco; "the ingredients of mortar" -> mortar. [] when the question does not say.
+  var THING = /\bwhat (?:is|are|was|were) (?:an? |the )?(.+?) (?:made|composed) (?:of|from|up of|with)\b|\b(?:ingredients?|composition) (?:of|in|for) (?:an? |the )?(.+?)\s*[?.!]*\s*$|\bwhat (?:goes|go) into (?:an? |the )?(.+?)\s*[?.!]*\s*$|\bwhat does (?:an? |the )?(.+?) consist of\b/i;
+  function thingOf(question) {
+    var t = THING.exec(String(question || ""));
+    if (!t) return [];
+    return LIB.keywords(t[1] || t[2] || t[3] || t[4] || "").map(stem);
+  }
+  // named(text, stem) -> the word is in the text as a word: a stem of five letters begins one ("honey" in "honeys"), a
+  // shorter word is one ("sun", not "sunlight" or "sunspot" -- the fifth review)
+  function named(t, k) { var i = -1; while ((i = t.indexOf(k, i + 1)) >= 0) { if ((i === 0 || !/[a-z0-9]/.test(t.charAt(i - 1))) && (k.length >= 5 || !/[a-z0-9]/.test(t.charAt(i + k.length) || ""))) return true; } return false; }
+  function saysMade(text, sub, thing, lead) {
+    // (the thing's own words where it is not the article's subject: on "Cement", what mortar is made of is said by a
+    // sentence that names mortar, and "it" there is cement; "white chocolate" on "Chocolate" needs "white" -- the third
+    // review)
+    // (the article's own thing begins with the title's word and is more than half the title's words: "oral rehydration
+    // solution" on "Oral rehydration therapy". A kind or a part of it is not -- "stainless steel" on "Steel", "white
+    // chocolate", "Earth's core" on "Earth", "Saturn's rings" -- nor another thing on its page, "cocoa butter" on
+    // "Chocolate": each of its own words is named before the words that say what it is made of -- the fourth review)
+    var th = (thing || []).filter(function (k) { return k.length > 2; }), inT = th.filter(function (k) { return sub[k]; });
+    var own = th.length && sub[th[0]] && 2 * inT.length > th.length ? [] : th.filter(function (k) { return !sub[k]; }), re = new RegExp(SAYSMADE.source, "gi"), m;
+    while ((m = re.exec(text))) {
+      var pre = text.slice(0, m.index).toLowerCase();
+      if (own.length) { if (own.every(function (k) { return named(pre, k); })) return true; continue; }
+      // (a sentence about the ingredients themselves names them at its start: "The recommended formulation includes ...")
+      if (/^(ingredients?|formulations?|formulated|composition)$/i.test(m[1]) && pre.split(/\s+/).filter(Boolean).length <= 3) return true;
+      // ("it" is the article's subject only in its lead: "It is made largely of rock" under "The Moon" on "Earth" is the
+      // Moon's -- the fourth review)
+      if ((lead && /^\s*(?:it|its|they|their|this|these)\b/.test(pre)) || Object.keys(sub).some(function (k) { return k.length > 2 && named(pre, k); })) return true;
+    }
+    return false;
+  }
+  function scorer(words, title, question, guide) {
+    var subj = subjectOf(title), gs = groups(words.map(stem), subj), num = QUANT.test(String(question || "")), made = MADEOF.test(String(question || "")), thing = made ? thingOf(question) : [];
+    // (on a travel guide, "visitor", "tourist", "traveller" say who asks, not what: every page speaks to visitors, and
+    // the sentences that say so filled the passage for "a good way to get around Nairobi as a visitor")
+    if (guide) gs.forEach(function (g) { if (/^(visit|touri|trave|forei)/.test(g.t[g.t.length - 1])) g.w = Math.min(g.w, 0.25); });
+    // (raw: the text with its step label, whose number still counts as a number -- every step had it on 1.24.7, and a
+    // step that says "T5 screws" did not come before the one that says "pea-sized")
+    return function (text, raw, lead) {
       var low = text.toLowerCase(), s = 0;
       gs.forEach(function (g) { if (g.t.some(function (m) { return low.indexOf(m) >= 0; })) s += g.w; });
-      return s + (num && /\d/.test(text) ? 0.5 : 0);
+      return s + (num && /\d/.test(raw || text) ? 0.5 : 0) + (made && saysMade(text, subj, thing, lead) ? 1.5 : 0);
     };
+  }
+  // (1.24.8) The section a question asks about, on a travel guide. Wikivoyage writes every town under the same
+  // headings, and the sentences under "Get around" say "minibus" and "taxi", not "get around". Only on a page
+  // with four or more of those headings (a history with "Arrival", an article with "Sources", is not a guide),
+  // and only by words that ask for the section: "What should I do if I am robbed?" is Stay safe, not Do.
+  var GUIDE = /^(understand|get in|get around|see|do|buy|eat|drink|sleep|stay safe|stay healthy|connect|cope|respect|go next)$/i;
+  var SECTIONS = [
+    { q: /\b(get(?:ting)? (?:around|about)|go(?:ing)? around|mov(?:e|ing) around|travel(?:l?ing)? (?:around|within)|public transport|transportation|commut\w*)\b/i,
+      h: /^(get(?:ting)? around|transport|transportation|public transport)\b/i },
+    // (getting to a place: the town itself is Get in, a beach or a village near it is Get around)
+    { q: /\b(get(?:ting)? (?:to|there|into)|fly(?:ing)? (?:to|into)|how (?:do|can|to) (?:i |we |you )?(?:reach|go to|travel to)|(?:i|we|you) arrive|arriving (?:at|in|by)|on arrival|airports?|flights?)\b/i,
+      h: /^(get(?:ting)? in|get(?:ting)? around|arriving|arrival)\b/i, away: /^(get(?:ting)? around|go next)\b/i },
+    { q: /\b(eat|eating|restaurants?|cuisine|local food|where to have (?:lunch|dinner))\b/i, not: /\bsafe|\bsick|\bill\b|\bpay|\bcards?\b|\bcash\b|m-?pesa|\bmoney\b|\btip/i, h: /^eat\b/i },
+    { q: /\b(pay|paying|credit cards?|cash|money|currency|atms?|m-?pesa|tipping|bargain\w*|shopping|souvenirs?)\b/i, h: /^buy\b/i },
+    { q: /\b(nightlife|bars|pubs|go(?:ing)? out (?:at night|for a drink))\b/i, not: /\bsafe|\brob|\bstolen|\bdanger/i, h: /^drink\b/i },
+    { q: /\b(hotels?|hostels?|guest ?houses?|accommodation|lodging|where (?:to|can i|should i) (?:stay|sleep)|a place to (?:stay|sleep))\b/i, h: /^sleep\b/i },
+    { q: /\b(crime|scams?|theft|thie(?:f|ves)|robb\w*|stolen|pickpocket\w*|muggings?|police|safe|danger\w*)\b/i, not: /\b(sick|ill|malaria|doctors?|hospitals?|tap water|street food|food|animals?|wildlife)\b/i, h: /^stay safe\b/i },
+    // (health: Stay healthy where the page has it -- Stay safe comes first on every page, and would take all the room)
+    { q: /\b(sick|ill|illness|malaria|doctors?|hospitals?|clinics?|altitude sickness|vaccin\w*|tap water|street food|drinking water)\b/i, h: /^stay healthy\b/i, alt: /^stay safe\b/i },
+    { q: /\b(sights|sightseeing|attractions?|landmarks?|what (?:is there|to|can i|should i) (?:to )?see)\b/i, h: /^see\b/i },
+    { q: /\b(things to do|activities|what (?:is there to|to|can (?:i|we|you)) do (?:in|at|around|there|here)\b)/i, not: /\bif\b|\bnight\b/i, h: /^do\b/i }];
+  function isGuide(doc) {
+    var seen = {};
+    (doc && doc.sec || []).forEach(function (x) { var t = String(x).split(" / ")[0]; if (GUIDE.test(t)) seen[t.toLowerCase()] = 1; });
+    return Object.keys(seen).length >= 4;
+  }
+  function sectionsAsked(question, doc) {
+    var out = [], q = String(question || "");
+    if (!isGuide(doc)) return out;
+    // (a place named that is not the page's own -- "How do I get to Diani from Mombasa?" on Mombasa -- is reached from
+    // the town: Get around, or Go next; Get in is how to reach the town -- the second library review)
+    var dest = /\b(?:get(?:ting)? to|reach|go to|travel to|fly(?:ing)? to)\s+(?:the\s+)?([A-Z][\w\x27-]*)/.exec(q), sub = subjectOf(doc && doc.title);
+    // (the town under another name -- "Bombay" on Mumbai, "Leningrad" -- is in the page's first paragraph; a place whose
+    // name begins as the town's, "Peterhof" on Saint Petersburg, is not the town -- the fifth review)
+    var dw = dest ? dest[1].toLowerCase() : "", tw = String(doc && doc.title || "").toLowerCase().split(/[^a-z0-9\x27-]+/);
+    var elsewhere = !!dest && tw.indexOf(dw) < 0 && !new RegExp("\\b" + dw.replace(/[.*+?^$(){}|[\]\\\/]/g, "\\$&") + "\\b").test(String((doc && doc.paras || [])[0] || "").toLowerCase());
+    SECTIONS.forEach(function (x) {
+      if (!x.q.test(q) || (x.not && x.not.test(q))) return;
+      if (x.away && elsewhere) { out.push(x.away); return; }
+      out.push(x.alt && !(doc.sec || []).some(function (z) { return String(z).split(" / ").some(function (y) { return x.h.test(y); }); }) ? x.alt : x.h);
+    });
+    return out;
+  }
+  // joinSteps(items) -> consecutive lines of one step ("Step 3: ...") as one item, its number said once
+  function joinSteps(items) {
+    var out = [];
+    items.forEach(function (x) {
+      var k = /^(\S+ \d+): /.exec(x.text), prev = out[out.length - 1];
+      // (up to 800 characters: a step of eight long lines joined was 1,500, and did not fit beside a long lead -- the
+      // third review. The rest of it goes on under its number.)
+      if (k && STEPH.test(k[1]) && prev && prev.step === k[1] && prev.text.length + x.text.length - k[0].length < 800) { prev.text += " " + x.text.slice(k[0].length); return; }
+      out.push({ text: x.text, para: x.para, step: k && STEPH.test(k[1]) ? k[1] : "" });
+    });
+    return out;
+  }
+  // (the step a question asks for: "the first step", "step 3", "the last step")
+  var NTH = { first: 1, "1st": 1, second: 2, "2nd": 2, third: 3, "3rd": 3, fourth: 4, "4th": 4, fifth: 5, "5th": 5 };
+  function stepAsked(question, doc) {
+    var q = String(question || "").toLowerCase(), m = /\b(first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|last|final)\s+step\b/.exec(q), n = /\bstep\s+(\d+)\b/.exec(q);
+    if (n) return parseInt(n[1], 10);
+    if (!m) return 0;
+    if (NTH[m[1]]) return NTH[m[1]];
+    var last = 0;
+    (doc.paras || []).forEach(function (t) { var k = /^\S+ (\d+): /.exec(t); if (k && STEPH.test(t.slice(0, t.indexOf(":")))) last = Math.max(last, parseInt(k[1], 10)); });
+    return last;
+  }
+  function inSection(sec, hs) {
+    if (!hs.length || !sec) return false;
+    var parts = String(sec).split(" / ");
+    return hs.some(function (h) { return parts.some(function (x) { return h.test(x); }); });
   }
   // passage(doc, words, max) -> the article's first sentence plus the
   // sentences that share the most words with the question, then the rest of
@@ -27130,24 +27333,40 @@ Lantern.RFB = (function () {
     max = max || 1000;
     var ss = detail ? (doc.paras || []).map(function (p, i) { return { text: p, para: i }; }) : sentences(doc), i;
     if (!ss.length) return "";
-    var score = scorer(words, doc.title, question);
+    // (in a detailed passage a step's lines are one item again, under its number: "Use a pea-sized drop" goes with "Apply
+    // new thermal paste", "It should spin freely" with "Turn the drum by hand")
+    if (detail) ss = joinSteps(ss);
+    var score = scorer(words, doc.title, question, isGuide(doc)), asked = sectionsAsked(question, doc), inAsked = {}, stepN = stepAsked(question, doc);
     var items = ss.map(function (x, i) {
-      return { i: i, text: detail && x.text.length > 900 ? x.text.slice(0, 900).replace(/[^.!?]*$/, "") || x.text.slice(0, 900) : x.text,
-        s: i === 0 ? 1e6 : score(x.text) * 1000 - i, sec: detail && doc.sec ? doc.sec[x.para] || "" : "" };
+      // (the first three sentences of a section asked for, or the first two of each part of it ("By taxi"), by 0.9: less
+      // than one word of the question, so a sentence that says what was asked comes first wherever it is -- the second
+      // review's M-Pesa in "Buy", the matatu from the airport -- and the section comes before the rest)
+      var sec = doc.sec ? doc.sec[x.para] || "" : "", bonus = 0;
+      if (i > 0 && inSection(sec, asked)) { inAsked[sec] = (inAsked[sec] || 0) + 1; if (inAsked[sec] <= (/ \/ /.test(sec) ? 2 : 3)) bonus = 0.9; }
+      // (the step asked for: every sentence of its lines, by the paragraph it came from -- a line's second sentence
+      // has no label of its own)
+      var st = stepOf(doc.paras ? doc.paras[x.para] : x.text);
+      if (stepN && st && parseInt(st.split(" ")[1], 10) === stepN) bonus += 2;
+      var cut = 900;
+      return { i: i, text: detail && x.text.length > cut ? x.text.slice(0, cut).replace(/[^.!?]*$/, "") || x.text.slice(0, cut) : x.text,
+        s: i === 0 ? 1e6 : (score(bare(x.text), x.text, !sec) + bonus) * 1000 - i, sec: detail ? sec : "" };
     });
     (doc.facts || []).forEach(function (f, j) { items.push({ i: 1e5 + j, text: f + ".", s: score(f) * 1000 - 500 - j, fact: true }); });
     items.sort(function (a, b) { return b.s - a.s; });
     // Sentences first, up to three quarters of the room when there are
     // facts; then the facts (at most 6, or 12 for detail); then more
     // sentences while there is room.
-    var pick = [], len = 0, nfacts = 0, used = {}, hasFacts = !!(doc.facts && doc.facts.length);
+    var pick = [], len = 0, nfacts = 0, used = {}, usedText = {}, labs = {}, hasFacts = !!(doc.facts && doc.facts.length);
     function take(ok, limit) {
       for (i = 0; i < items.length; i++) {
         var it = items[i];
-        if (used[it.i] || !ok(it)) continue;
+        if (used[it.i] || !ok(it) || usedText[it.text]) continue;
         if (it.fact && nfacts >= (detail ? 12 : 6)) continue;
-        if (len + it.text.length > limit && pick.length) continue;
-        used[it.i] = 1; pick.push(it); len += it.text.length + 1; if (it.fact) nfacts++;
+        var lab = it.sec && !labs[it.sec] && it.sec.indexOf(" / ") >= 0 ? it.sec.indexOf(" / ") + 3 : 0;
+        if (len + it.text.length + lab > limit && pick.length) continue;
+        // (the top heading of a label, "Get around / ", is counted, once a label: a detailed passage of Wikipedia's sections
+        // ran past its room and lost its last lines, the infobox's -- the fourth review)
+        used[it.i] = 1; usedText[it.text] = 1; pick.push(it); len += it.text.length + 1 + lab; if (it.sec) labs[it.sec] = 1; if (it.fact) nfacts++;
       }
     }
     take(function (it) { return !it.fact; }, hasFacts ? Math.round(max * 0.75) : max);

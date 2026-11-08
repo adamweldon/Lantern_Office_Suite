@@ -45,13 +45,18 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      the nearest note of the home chord at the song's end), and said. The
      35B was told the chord and wrote the same one again on 1.24.0 and
      twice on 1.24.6. **This one waits for Adam** (item 13 below; asked in
-     `QUESTIONS.md`, 1): it changes what the model wrote, and how a song
+     `QUESTIONS.md`, 2): it changes what the model wrote, and how a song
      sounds is his;
    - both need a reviewer who did not write them before they go in. The
-     library change has had three (2026-11-08: 69, then 8, then 37
-     breaks, each mended; a fourth was trying the mends when 1.24.7 was
-     pushed). It is on `wip-2026-11-08-library`, built on 1.24.7, with its
-     tests and the reviews' pages; what is left is the fourth review.
+     library change has had five (2026-11-08: 69, 8, 37, 21, then 14
+     answers lost, each mended). It is on `wip-2026-11-08-library`, built
+     on 1.24.7, with its tests and the five reviews' pages
+     (`tests/library_review_1248.js`): of 2,704 questions none lost but 8
+     answered only in a reader's comment and 5 at the length Lantern does
+     not pick; 188 found that 1.24.7 does not find. Its changelog is
+     `agent/drafts/changelog_1248.md`. Left: Adam's answer on the comments
+     (`QUESTIONS.md`, 1), then the version bump; a sixth review if the
+     comments come back.
    The filled recipes (a recipe given to a small model with the question's
    numbers in it) are on `wip-2026-11-06-recipe-fill`, out of 1.24.7: two
    reviews found them wrong too often, and a list of words to refuse is
@@ -124,7 +129,7 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      hill is left as the model drew it, mountains in the air and all. The
      words Lantern knows can grow one at a time, each with right pictures
      of its own tried by a reviewer;
-   - **pieces.** Two ways were put to Adam (`QUESTIONS.md`, 1): words for
+   - **pieces.** Two ways were put to Adam (`QUESTIONS.md`, 3): words for
      things Lantern places (mountain, road, tree: the model says what and
      roughly where, Lantern does the ground line, the order and the size
      by distance), or pieces the AI draws each on a grid of its own, which
@@ -203,7 +208,7 @@ file in the same commit as the work. Read `CLAUDE.md` first.
     whether Lantern should apply the fix it named and say so. It did again:
     the 35B's waltz on 1.24.6 (2026-11-08) and its tune of its own on 1.24.6
     (2026-11-06). The mend for a held note against its chord is written and
-    tested (item 2) and asked of Adam (`QUESTIONS.md`, 1).
+    tested (item 2) and asked of Adam (`QUESTIONS.md`, 2).
 14. **The 1.16.0 audit's feature list** (`Lantern_1.16.0_app_audit.pdf`, sent
     to Adam on 2026-10-29) was never answered. With the aim above, take the
     features that serve it without asking again; leave the rest.
