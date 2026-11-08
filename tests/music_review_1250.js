@@ -76,6 +76,44 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     [better.length, worse.map(function (r) { return [r.s.name, r.was, r.now]; })]);
   var dsharp = L.aiAct.build("MAKE MUSIC: x\nkey C major\nchords C | F | C | G | C\nmelody E - G - | A - F - | D# - - E | D - B - | C - - -\nEND", "a tune in C");
   ok("a note is named as the tune wrote it: D# over C is asked about as D#, not Eb", (dsharp.problems || []).some(function (p) { return /^bar 3: the melody holds D# over C \(C E G\)/.test(p); }), dsharp.problems);
+  // --- the third review (tests/fixtures/review3_1250_music.json): 230 songs, a title to each (a title with "blues"
+  // turns the mend off). What it found, mended: a last note mended kept the octave number written, and B4 over C
+  // became C4, eleven steps down; a held note resolving over the same chord under another name (C then C7, C/G, C/E)
+  // was taken for a clash; a slash chord's bass was not a note of it (F held over C/F); a song cut to 96 bars had its
+  // 96th mended as its end.
+  var T3 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review3_1250_music.json"), "utf8"));
+  function mends(x) { return (x || []).filter(function (y) { return /Lantern played|Lantern ended/.test(y); }); }
+  var r3 = T3.map(function (s) {
+    var b = L.aiAct.build("MAKE MUSIC: " + (s.title || s.name) + "\n" + s.lines.join("\n") + "\nEND", s.q);
+    var said = String(b.summary || "").split(/\. (?=[a-zA-Z])/).filter(function (x) { return /Lantern played|Lantern ended/.test(x); });
+    return { s: s, b: b, said: said, now: kind(said, !!b.ok), was: kind(mends(s.old.said), !!s.old.ok) };
+  });
+  function r3n(n) { return r3.filter(function (r) { return r.s.name === n; })[0]; }
+  ok("the third review\u2019s 230 songs (115 to leave, 82 to mend, 33 to ask), each built", T3.length === 230 && r3.every(function (r) { return r.b && r.b.plan; }) &&
+    T3.filter(function (s) { return s.want === "as written"; }).length === 115 && T3.filter(function (s) { return s.want === "mend"; }).length === 82);
+  var lastBars = { "end B3 over C, every octave written": "C4 - - -", "end B4 over C after high notes": "C5 - - -", "end C5 B4 over C, octaves written": "C5 - C5 -",
+    "end Bn4 over Cm, octave written": "C5 - - -", "end B#4 over C#, octave written": "C#5 - - -", "end B2 over C, cello octaves": "C3 - - -",
+    "G major ends C5 over G": "B4 - - -", "E minor ends C5 over Em": "B4 - - -", "35B original, C4 written over G": "D4 - - r" };
+  var badLast = Object.keys(lastBars).filter(function (n) { var r = r3n(n), m = r.b.plan.parts[r.b.plan.parts.length - 1].melody; return r.now !== "mend" || m[m.length - 1] !== lastBars[n]; });
+  ok("a mended last note is in the octave nearest the note written, a half step or a step from it, its own octave number where the tune wrote one (B4 over C is C5, not C4)",
+    badLast.length === 0, badLast.map(function (n) { var r = r3n(n); return [n, r.b.plan.parts[0].melody.slice(-1)[0], r.said]; }));
+  var off3 = r3.filter(function (r) { return r.now === "mend" && r.b.plan.parts.length === 1 && r.s.lines.filter(function (l) { return /^(melody|chords) /.test(l); }).length === 2; }).filter(function (r) {
+    var p = r.b.plan, lines = r.s.lines.map(function (l) { return /^melody /.test(l) ? "melody " + p.parts[0].melody.join(" | ") : /^chords /.test(l) ? "chords " + p.parts[0].chords.join(" | ") : l; });
+    var b2 = L.aiAct.build("MAKE MUSIC: " + (r.s.title || r.s.name) + "\n" + lines.join("\n") + "\nEND", r.s.q);
+    return !b2.plan || b2.plan.melody.map(function (n) { return n.midi; }).join() !== p.melody.map(function (n) { return n.midi; }).join();
+  });
+  ok("...and every mended song\u2019s lines as shown, written out again, play the same notes", off3.length === 0, off3.map(function (r) { return r.s.name; }));
+  ok("a held F resolving to E over the same chord under another name, or held over C/F, is made as written (C then C7, C/G, C/E; C/F)",
+    ["delayed 4-3, C then C7", "delayed 4-3, C then C/G", "2/4 delayed 4-3, C then C/E", "C/F with F held"].every(function (n) { return r3n(n).now === "as written"; }),
+    ["delayed 4-3, C then C7", "delayed 4-3, C then C/G", "2/4 delayed 4-3, C then C/E", "C/F with F held"].map(function (n) { return [n, r3n(n).b.problems, r3n(n).said]; }));
+  ok("a song cut to 96 bars has nothing mended: its 96th bar is not its end", r3n("100 bars, bar 96 B over C").now === "ask" && !/Lantern ended/.test(r3n("100 bars, bar 96 B over C").b.summary));
+  var wrong3 = r3.filter(function (r) { return r.now === "mend" && r.s.want !== "mend"; });
+  // (one, written so that a change shows: a known tune a step too high, its one long rub given a chord -- the
+  // songbook sends the song back with the tune as Lantern knows it all the same)
+  ok("no song the review said to leave or to ask about is mended but one, which goes back all the same (Mary a step too high)",
+    wrong3.length === 1 && wrong3[0].s.name === "a tune a step too high, diatonic" && !wrong3[0].b.ok, wrong3.map(function (r) { return [r.s.name, r.said]; }));
+  var further3 = r3.filter(function (r) { return r.now !== r.was && r.was === r.s.want; }), nearer3 = r3.filter(function (r) { return r.now !== r.was && r.now === r.s.want; });
+  ok("against 1.24.8: " + nearer3.length + " songs nearer what the review wanted, one further (that one)", nearer3.length >= 80 && further3.length === 1, further3.map(function (r) { return r.s.name; }));
   console.log(fails ? fails + " MUSIC REVIEW FAILURES (" + passes + " passed)" : "ALL MUSIC REVIEW CHECKS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);
 })();

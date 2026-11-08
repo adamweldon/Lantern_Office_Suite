@@ -77,7 +77,7 @@ var steps = [
   ["The rows of 1.24.8, replayed: the 35B's waltz played with A under bar 7 and passes; its road asked for; the shore at sunset failed by all four models, questioned as before; no other failed row passes (1.24.10)", "node", ["tests/bench_1248.js"], /ALL BENCH 1\.24\.8 CHECKS PASS/],
   ["The two reviews of the rule for a line written three times or more, replayed: the 35B's road on 1.24.8 asked for; 142 and 211 drawings of two reviewers' own, the picture the same wherever copies are left out; lines across a copy, runs and cut-off blocks left as before (1.24.10)", "node", ["tests/review_dups_1250.js"], /ALL DUPS REVIEW CHECKS PASS/],
   ["The first music review of the held-note mend, replayed: 107 songs of a reviewer's own; no song it said to leave or ask about is mended; what is said is what plays (1.24.10)", "node", ["tests/music_review_1249.js"], /ALL MUSIC REVIEW CHECKS PASS/],
-  ["The second music review of the held-note mend, replayed: 173 songs of another reviewer's own; none it said to leave or ask about is mended; what is said is what plays; against 1.24.8 72 songs nearer what it wanted, one further (1.24.10)", "node", ["tests/music_review_1250.js"], /ALL MUSIC REVIEW CHECKS PASS/]
+  ["The second and third music reviews of the held-note mend, replayed: 173 and 230 songs of two more reviewers' own; none they said to leave or ask about is mended but one that goes back all the same; a mended last note in the octave nearest the note written; what is said is what plays (1.24.10)", "node", ["tests/music_review_1250.js"], /ALL MUSIC REVIEW CHECKS PASS/]
 ];
 var failed = 0;
 steps.forEach(function (s) {
