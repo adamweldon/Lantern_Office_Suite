@@ -5,7 +5,16 @@ file in the same commit as the work. Read `CLAUDE.md` first.
 
 ## Next, in order
 
-1. **Read the small models' run on 1.24.8 and act on it.** Every push to a
+1. **Read the small models' runs on 1.24.8 and 1.24.9 and act on them.**
+   1.24.8 (run 42474037730): **4B 110 of 114 (98 minutes, AMD EPYC 9V74),
+   2B 77 (87, Intel Xeon 6973P-C), 0.8B 59 (32, AMD EPYC 9V74)**, each up
+   on 1.24.7. The road into the distance failed for the 0.8B and the 2B,
+   as expected without the example's road; the 4B drew its own and passed,
+   and its house passed. Its failed rows and drawings are
+   `tests/fixtures/bench_run_1248_*.json` on `wip-2026-11-08-music` (so as
+   not to start another run on 1.24.9); a replay is still to write. 1.24.9 (run 42490364017) differs from 1.24.8 only in the
+   library, which the GitHub runs do not have: it should score the same.
+   Every push to a
    `lantern-x.y.z` branch runs the whole bench with the 0.8B, the 2B and the
    4B on GitHub (`CLAUDE.md`, "The bench with the small models"). On 1.24.7
    (run 42456738734, 114 scored): **4B 106 (157 minutes), 2B 74 (92), 0.8B
