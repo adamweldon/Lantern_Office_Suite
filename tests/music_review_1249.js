@@ -39,7 +39,9 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var wrong = rows.filter(function (r) { return r.mended && r.s.want !== "mend"; });
   ok("no song the review said to leave as written, or to ask about, is mended", wrong.length === 0, wrong.map(function (r) { return [r.s.name, r.said]; }));
   var mended = rows.filter(function (r) { return r.mended; });
-  ok("22 songs are mended, each one the review said to mend (the draft mended 71)", mended.length === 22, mended.map(function (r) { return r.s.name; }));
+  // (18 after the second review: a minor chord's ninth -- E over Dm, B over Am -- is a colour, and B - - - | A over Am | Am
+  // is a 9-8 suspension, not changed; a tune that ends before the chords do is asked how it ends, not given a chord)
+  ok("18 songs are mended, each one the review said to mend (the draft mended 71)", mended.length === 18, mended.map(function (r) { return r.s.name; }));
   // what is said is what plays: "bar N: Lantern played X ..." -> the chord played in bar N is X, and the chords line shows X;
   // "bar N: ... Lantern ended it on Y" -> the last note plays Y and the melody line shows it
   var off = [];
@@ -55,7 +57,8 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
       if (m2) {
         var last = p.melody[p.melody.length - 1], nm = last.letter + (last.acc > 0 ? "#" : last.acc < 0 ? "b" : "");
         var lastPart = p.parts[p.parts.length - 1], lastBar = lastPart.melody[lastPart.melody.length - 1];
-        if (nm !== m2[2] || String(lastBar).split(/\s+/).indexOf(m2[2]) < 0) off.push([r.s.name, t, nm, lastBar]);
+        // (the bar as shown keeps the octave number the tune wrote: F#4 - r)
+        if (nm !== m2[2] || String(lastBar).split(/\s+/).map(function (x) { return x.replace(/\d+$/, ""); }).indexOf(m2[2]) < 0) off.push([r.s.name, t, nm, lastBar]);
       }
     });
   });
