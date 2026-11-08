@@ -64,7 +64,9 @@ var steps = [
   ["The 4B's rows on 1.24.4, replayed: a colour on its own line, a deck in several blocks, [n] as the instructions spell it, a lesson asked for where a block was wanted (1.24.6)", "node", ["tests/bench_1244_4b.js"], /ALL BENCH 1\.24\.4 4B CHECKS PASS/],
   ["The small models' rows on 1.24.5, replayed: a decline where Lantern has the sum, a change of unit, a NEED for a number the recipe has, two heights, LESSON as a heading, the lesson shown when the answer does not use it (1.24.6)", "node", ["tests/bench_1245_small.js"], /ALL BENCH 1\.24\.5 SMALL MODEL CHECKS PASS/],
   ["A landscape drawn the way the eye sees one: mountains stood on the horizon, the sun behind the land, a road that narrows -- Adam's two pictures with the 35B, replayed; twelve right pictures left alone (1.24.7)", "node", ["tests/scene.js"], /ALL SCENE TESTS PASS/],
-  ["The small models' rows on 1.24.6, replayed: what a recipe gives copied onto its line, a result after a second =, numbers in { }, a number typed after the sum; a wheel of bare formulas; delay() in a comment (1.24.7)", "node", ["tests/bench_1246_small.js"], /ALL BENCH 1\.24\.6 SMALL MODEL CHECKS PASS/]
+  ["The small models' rows on 1.24.6, replayed: what a recipe gives copied onto its line, a result after a second =, numbers in { }, a number typed after the sum; a wheel of bare formulas; delay() in a comment (1.24.7)", "node", ["tests/bench_1246_small.js"], /ALL BENCH 1\.24\.6 SMALL MODEL CHECKS PASS/],
+  ["The third review of 1.24.7, replayed: 287 right pictures left alone but one that looks the same, 45 wrong ones as Lantern now draws them, 154 replies, 88 bleach questions, 23 other recipes", "node", ["tests/review3_1247.js"], /ALL REVIEW 3 CHECKS PASS/],
+  ["The fourth review of 1.24.7, replayed: 84 right pictures left alone, 24 wrong ones as Lantern now draws them, 58 replies (a step done in the head stays), 42 recipe questions (a recipe only for its own question)", "node", ["tests/review4_1247.js"], /ALL REVIEW 4 CHECKS PASS/]
 ];
 var failed = 0;
 steps.forEach(function (s) {

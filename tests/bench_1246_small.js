@@ -91,8 +91,14 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   ok("...a typed number that is the sum\u2019s result as far as it is written (1.414 for SQRT(2), 92.4 minutes, 75% for 45/60*100, 720 hours) is left out; so is the 2B\u2019s, with the instructions\u2019 own sentence copied after it",
     rd("=SQRT(2)\n=1.414\nANSWER: 1.414") === "=SQRT(2)\nANSWER: 1.414" && rd("=45/60*100\n=75%\nANSWER: 75%") === "=45/60*100\nANSWER: 75%" && rd("=30*24\n=720 hours\nANSWER: 720 hours") === "=30*24\nANSWER: 720 hours" &&
     rd(row(F2, "battery-hours").reply) === "=({ah}*{v})/{w}\n=100*12/60\n\nANSWER: 3.3333333333333335 hours: Lantern works the number out and puts it in place of {result}: never type a result yourself.");
-  ok("what is left as it was written, and why it matters: a typed number that is another step done in the head (\u201c=2000/15\u201d, \u201c=2.22\u201d, \u201cIt takes about 2.22 hours\u201d) is left out like a wrong one, Lantern\u2019s number is then the sum\u2019s (133.33), and the answer is questioned -- as it was before, for the number typed",
-    rd("=2000/15\n=2.22\nANSWER: It takes about 2.22 hours.") === "=2000/15\nANSWER: It takes about 2.22 hours.");
+  // (the fourth review: 14 right replies whose last step was done in the head, each read wrong)
+  ok("...a typed number one step on from the sum -- times or over a number of the question or a factor of units, the count of its numbers, plus or minus a number of the question -- is the model\u2019s last step done in its head, and stays as written (\u201c=2000/15\u201d, \u201c=2.22\u201d for hours; \u201c=350/100\u201d, \u201c=28\u201d for 8 litres per 100 km; \u201c=4+8+12\u201d, \u201c=8\u201d for an average; \u201c=100-32\u201d, \u201c=37.8\u201d); one the sum already holds, or one no step reaches, goes",
+    rd("=2000/15\n=2.22\nANSWER: It takes about 2.22 hours.", "A walker covers 2000 m at 15 m per minute. How many hours does it take?") === "=2000/15\n=2.22\nANSWER: It takes about 2.22 hours." &&
+    rd("=350/100\n=28\nANSWER: 28 litres", "A car uses 8 litres per 100 km. How much fuel does it need for 350 km?") === "=350/100\n=28\nANSWER: 28 litres" &&
+    rd("=4+8+12\n=8\nANSWER: 8", "What is the average of 4, 8 and 12?") === "=4+8+12\n=8\nANSWER: 8" && rd("=100-32\n=37.8\nANSWER: 37.8 C", "What is 100 F in Celsius?") === "=100-32\n=37.8\nANSWER: 37.8 C" &&
+    rd("=(2000/15)/60\n=133.33333333333334 hours\nANSWER: x", "How many hours does it take?") === "=(2000/15)/60\nANSWER: x" && rd(row(F2, "miles-km").reply, item("miles-km").q) === "=CONVERT(26,\"mile\",\"km\")\nANSWER: 88.5625" &&
+    rd("=2000/15 = 133.33/60 = 2.22\nANSWER: {result} hours", "How many hours does it take?") === "=2000/15 = 133.33/60 = 2.22\nANSWER: {result} hours" &&
+    rd("=1000*1.05^10 = 1628.89 - 1000\nANSWER: {result} dollars", "How much interest does 1000 dollars earn in 10 years at 5% a year?") === "=1000*1.05^10 = 1628.89 - 1000\nANSWER: {result} dollars");
   // (the second review: the older readers inside a document, and lines named later)
   ok("no reader touches a line inside a MAKE block or a code fence: an answer key\u2019s \u201cANS: B\u201d three times running, a quiz\u2019s \u201cANS: 12*12\u201d, a worksheet\u2019s \u201cANSWER: SQRT(49)\u201d; a line of prose that begins \u201cMake sure\u201d opens no block",
     rd("MAKE DOC: Answer key\nAnswers to the quiz.\nANS: B\nANS: B\nANS: B\nANS: C\nEND") === "MAKE DOC: Answer key\nAnswers to the quiz.\nANS: B\nANS: B\nANS: B\nANS: C\nEND" &&
@@ -146,7 +152,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var RDc = L.assistChecks.filter(function (c) { return c.id === "recipe-differs"; })[0];
   function dose(q, expr) { return RDc(q, expr, A.run(expr), {}); }
   ok("a sum for drops of bleach in clear water to drink that gives another number is held to the recipe (2 drops a litre): 20 drops a litre is ten times the dose",
-    /^Lantern\u2019s recipe for this question gives 40 \(drops for clear water/.test(dose("How many drops of bleach for 20 litres of clear water?", "=20*20")) &&
+    /^Lantern\u2019s recipe for this question gives 40 \(drops for clear water/.test(dose("How many drops of bleach for 20 litres of clear water to drink?", "=20*20")) &&
     /write =2\*20$/.test(dose("How many drops of household bleach make a 20 litre jerrycan of clear water safe to drink?", "=20*4")) && /gives 30 /.test(dose("How many drops of bleach for 15 L of drinking water?", "=15*7")));
   ok("...and for any other question about bleach Lantern says nothing about the recipe: another use (handwashing, soaking instruments, an aquarium, nappies), water that may not be clear (from the dam, milky, icy, stagnant), another bleach (scented, thick, diluted), another measure (teaspoons, capfuls, cc), the time to wait",
     ["How many drops of bleach in 5 litres of water for handwashing?", "How many drops of bleach in 2 litres of water to soak instruments?", "How many drops of bleach in the water of my 100 litre aquarium?",
@@ -154,7 +160,10 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
       "How many drops of bleach for 20 litres of icy water?", "How many drops of bleach for 20 litres of stagnant water?", "How many drops of scented bleach for 10 litres of drinking water?",
       "How many drops of thick bleach for 10 litres of drinking water?", "How many drops of diluted bleach for 10 litres of drinking water?", "How many teaspoons of bleach for 200 litres of water?",
       "How many capfuls of bleach for 200 litres of water?", "How much bleach, in cc, for 100 litres of water?", "How long must I wait after adding bleach to 20 litres of water?",
-      "How many drops of bleach do I need for 20 litres of cloudy water?"].every(function (q) { return dose(q, "=20*7") === null; }));
+      "How many drops of bleach do I need for 20 litres of cloudy water?",
+      // (the third review: drinking not said; liquid chlorine; drops of water; bleach water; to clear; bleach to drink)
+      "How many drops of bleach for 20 litres of clear water?", "How many drops of liquid chlorine do I add to 20 litres of water to drink?", "How many drops of water do I add to 1 litre of bleach to make it safe?",
+      "How many drops of bleach do I need to make 10 litres of bleach water?", "How many drops of bleach will clear 10 litres of water?", "How many drops of bleach can I drink in 1 litre of water?"].every(function (q) { return dose(q, "=20*7") === null; }));
   ok("...the other one-blank recipes are held as on 1.24.6 (a wavelength worked as frequency over the speed of light)", /write =WAVELEN\(100\)$/.test(dose("What is the wavelength of a 100 MHz signal?", "=100*10^6/299792458")));
 
   // --- the 4B ---

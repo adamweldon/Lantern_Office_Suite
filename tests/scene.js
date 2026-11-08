@@ -92,8 +92,8 @@ var RIGHT = [
 
   // --- Adam's shore ---
   var ms = S.mend(linesOf(SHORE), SHORE_Q);
-  ok("the shore: the two gray mountains stand on the horizon (their sides carried down to y 8, their peaks where the model put them), behind the brown hill that was already on the ground; the sun comes straight after the sky",
-    ms.lines.join("\n") === ["rect 0 0 20 12 fill orange", "circle 16 3 2 fill yellow", "tri 1 8 6 2 11 8 fill gray", "tri 8 8 14 3 19 8 fill gray", "rect 0 8 20 4 fill blue", "tri 2 8 10 4 18 8 fill brown"].join("\n"), ms.lines);
+  ok("the shore: the two gray mountains stand on the horizon (their sides carried down to y 8, their peaks where the model put them), just before the sea and behind the brown hill that was already on the ground; the sun goes just behind the mountain it was drawn over",
+    ms.lines.join("\n") === ["rect 0 0 20 12 fill orange", "tri 1 8 6 2 11 8 fill gray", "circle 16 3 2 fill yellow", "tri 8 8 14 3 19 8 fill gray", "rect 0 8 20 4 fill blue", "tri 2 8 10 4 18 8 fill brown"].join("\n"), ms.lines);
   ok("...and Lantern says what it did, in plain words", ms.said.length === 2 &&
     ms.said[0] === "stood the 2 gray mountains on the horizon (y 8), behind what was already on the ground: their bases were in the sky" &&
     ms.said[1] === "put the sun behind the mountain: it was drawn in front", ms.said);
@@ -110,7 +110,7 @@ var RIGHT = [
   // --- Adam's road ---
   var mr = S.mend(linesOf(ROAD), ROAD_Q);
   ok("the road: three upright lines side by side become a road going away -- a gray tri from the bottom edge to a point on the horizon, the three lines along its edges and its middle; the mountains stand on the horizon, the sun behind them",
-    mr.lines.join("\n") === ["rect 0 0 20 12 fill sky", "circle 16 3 2 fill yellow", "tri 1 6 6 2 11 6 fill gray", "tri 9 6 14 3 19 6 fill gray", "rect 0 6 20 6 fill green", "tri 7 12 13 12 10 6 fill gray",
+    mr.lines.join("\n") === ["rect 0 0 20 12 fill sky", "tri 1 6 6 2 11 6 fill gray", "circle 16 3 2 fill yellow", "tri 9 6 14 3 19 6 fill gray", "rect 0 6 20 6 fill green", "tri 7 12 13 12 10 6 fill gray",
       "line 10 12 10 6 fill black width 1", "line 7 12 10 6 fill black width 1", "line 13 12 10 6 fill black width 1", "tri 2 6 10 4 18 6 fill brown"].join("\n"), mr.lines);
   ok("...said, and nothing sent back", mr.problems.length === 0 && mr.said.length === 3 &&
     mr.said[2] === "drew the road as it looks going away: wide at the bottom edge, a point on the horizon (its 3 lines were side by side, the same distance apart all the way; what is far looks smaller)", [mr.said, mr.problems]);
@@ -168,7 +168,8 @@ var RIGHT = [
     S.read(["rect 0 0 20 12 fill sky", "rect 0 6 20 3 fill yellow", "rect 0 9 20 3 fill green"]).horizon === null && S.read(["rect 0 8 20 4 fill blue", "circle 10 4 2 fill yellow"]).horizon === null);
   var sc1 = RV.sunOverCloud[0], msc = S.mend(sc1.lines, sc1.q);
   ok("the one right-looking picture Lantern still changes: the sun drawn in front of a cloud goes behind it (Adam, of the 35B\u2019s picture: \u201cThe sun is in front of the clouds\u201d)",
-    RV.sunOverCloud.length === 1 && msc.lines[1] === "circle 8.5 2.5 1.5 fill yellow" && msc.said.join() === "put the sun behind the clouds: it was drawn in front" && !msc.problems.length, msc);
+    RV.sunOverCloud.length === 1 && msc.lines.join("|") === "rect 0 0 20 12 fill sky|circle 5 3 1 fill white|circle 8.5 2.5 1.5 fill yellow|circle 6.2 3 1.3 fill white|circle 7.5 3.2 1 fill white|rect 0 9 20 3 fill green" &&
+    msc.said.join() === "put the sun behind the clouds: it was drawn in front" && !msc.problems.length, msc);
   function nowOf(c) { var m = S.mend(c.lines, c.q); return m.said.length ? "mended" : m.problems.length ? "sent back" : m.lines.join("\n") === c.lines.join("\n") ? "left" : "changed"; }
   var wrongNow = RV.wrong.filter(function (c) { return nowOf(c) !== c.now; });
   ok("the review\u2019s 19 wrong pictures: 4 are mended, 1 is sent back with the line to add, and 14 are left as they are (a ground in two halves, a sun drawn as an oval, pink mountains behind a tent, a road that stops short: Lantern moves nothing it is not sure of)",
@@ -202,8 +203,8 @@ var RIGHT = [
   ok("the second review\u2019s 38 wrong pictures: 22 are mended, 2 sent back with the line to add, 14 left as they are", RV2.wrong.length === 38 && wrong2.length === 0 && n2.mended === 22 && n2["sent back"] === 2 && n2.left === 14,
     [n2, wrong2.map(function (c) { return [c.name, nowOf(c)]; })]);
   var cap = S.mend(["rect 0 0 20 12 fill sky", "rect 0 8.5 20 3.5 fill green", "tri 3 5.5 10 1 17 5.5 fill gray", "tri 8.4 2 10 1 11.6 2 fill white"], "Draw a snow-capped mountain.");
-  ok("...what is drawn on a mountain goes down with it: a snow cap stays on its peak (the mountain is set down whole; its sides carried down would leave the cap hanging over them)",
-    cap.lines.join("|") === "rect 0 0 20 12 fill sky|tri 3 8.5 10 4 17 8.5 fill gray|rect 0 8.5 20 3.5 fill green|tri 8.4 5 10 4 11.6 5 fill white", cap.lines);
+  ok("...what is drawn on a mountain goes down with it: a snow cap stays on its peak (the mountain is set down whole; its sides carried down would leave the cap hanging over them), and goes behind the ground with it",
+    cap.lines.join("|") === "rect 0 0 20 12 fill sky|tri 3 8.5 10 4 17 8.5 fill gray|tri 8.4 5 10 4 11.6 5 fill white|rect 0 8.5 20 3.5 fill green", cap.lines);
   var rayed = S.mend(["rect 0 0 20 12 fill sky", "tri 2 8 9 2.5 16 8 fill gray", "rect 0 8 20 4 fill green", "circle 12 4 1.3 fill yellow", "tri 11.6 2.5 12 1.5 12.4 2.5 fill yellow", "tri 13.5 3.6 14.5 4 13.5 4.4 fill yellow",
     "tri 11.6 5.5 12 6.5 12.4 5.5 fill yellow", "tri 10.5 3.6 9.5 4 10.5 4.4 fill yellow"], "Draw the sun shining behind a mountain.");
   ok("...the sun\u2019s rays go behind with it, drawn as lines or as small triangles", rayed.lines.slice(1, 6).join("|") === "circle 12 4 1.3 fill yellow|tri 11.6 2.5 12 1.5 12.4 2.5 fill yellow|tri 13.5 3.6 14.5 4 13.5 4.4 fill yellow|tri 11.6 5.5 12 6.5 12.4 5.5 fill yellow|tri 10.5 3.6 9.5 4 10.5 4.4 fill yellow" &&
@@ -234,7 +235,7 @@ var RIGHT = [
   var m6 = mend("Draw the sun setting over the sea.", ["rect 0 0 20 12 fill orange", "rect 0 8 20 4 fill blue", "circle 10 8 2.5 fill yellow"]);
   ok("a setting sun drawn over the sea: it goes behind the water, so half of it shows", m6.lines.join("|") === "rect 0 0 20 12 fill orange|circle 10 8 2.5 fill yellow|rect 0 8 20 4 fill blue" && m6.said[0] === "put the sun behind the water: it was drawn in front", m6);
   var m7 = mend("Draw the moon over the mountains at night.", ["rect 0 0 20 12 fill dark blue", "tri 0 9 5 4 10 9 fill gray", "tri 7 9 13 3 20 9 fill gray", "rect 0 9 20 3 fill dark green", "circle 12 4 1.5 fill white"]);
-  ok("the moon drawn last, over a mountain: behind it, and called the moon", m7.lines[1] === "circle 12 4 1.5 fill white" && m7.said[0] === "put the moon behind the mountain: it was drawn in front", m7);
+  ok("the moon drawn last, over a mountain: just behind that mountain, and called the moon", m7.lines.slice(1, 4).join("|") === "tri 0 9 5 4 10 9 fill gray|circle 12 4 1.5 fill white|tri 7 9 13 3 20 9 fill gray" && m7.said[0] === "put the moon behind the mountain: it was drawn in front", m7);
   var m8 = mend("Draw mountains.", ["rect 0 0 20 12 fill sky", "rect 0 9 20 3 fill green", "tri 3 3 5 1 7 3 fill gray", "tri 9 4 14 2 19 4 fill gray"]);
   ok("a small peak high in the sky is set down whole (its sides carried down would make a needle); a wide one has its sides carried down", m8.lines.join("|") === "rect 0 0 20 12 fill sky|tri 3 9 5 7 7 9 fill gray|tri 9 9 14 2 19 9 fill gray|rect 0 9 20 3 fill green", m8.lines);
   var m9 = mend("Draw rolling hills under a blue sky.", ["rect 0 0 20 12 fill sky", "rect 0 9 20 3 fill green", "tri 0 7 5 4 10 7 fill green", "tri 8 8 14 5 20 8 fill dark green"]);
@@ -246,7 +247,8 @@ var RIGHT = [
   var m12 = mend("Draw a road going into the distance past some hills.", ["rect 0 0 20 12 fill sky", "rect 0 6 20 6 fill green", "tri 1 4 4 2.5 7 4 fill gray", "tri 9 4 14 1 19 4 fill gray", "tri 7 12 13 12 10 6 fill gray"]);
   ok("...a tri in the air where the question names no mountain or hill is moved only when it is 8 cells wide or more; where it names them, from 4 cells", m12.lines[1] === "tri 1 6 4 2.5 7 6 fill gray" && m12.lines[2] === "tri 9 6 14 1 19 6 fill gray", m12.lines);
   var m13 = mend("Draw a road going into the distance.", ["rect 0 0 20 12 fill sky", "rect 0 6 20 6 fill green", "tri 1 4 4 2.5 7 4 fill gray", "tri 9 4 14 1 19 4 fill gray", "tri 7 12 13 12 10 6 fill gray"]);
-  ok("......with no mountain named: the wide one only", m13.lines[1] === "tri 9 6 14 1 19 6 fill gray" && m13.lines.indexOf("tri 1 4 4 2.5 7 4 fill gray") > 0, m13.lines);
+  ok("......with no mountain named: from 8 cells wide; a narrower one beside it, on the same base and of its colour, is of the same range and goes down with it (the fourth review: half a range left in the air)",
+    m13.lines[1] === "tri 1 6 4 2.5 7 6 fill gray" && m13.lines[2] === "tri 9 6 14 1 19 6 fill gray", m13.lines);
   var m11 = mend("Draw a simple house with a red roof and a door.", ["rect 0 0 20 12 fill sky", "rect 0 10 20 2 fill green", "rect 9 5 2 5 fill brown", "tri 8 5 10 3 12 5 fill red", "rect 0 10 20 2 fill green", "rect 9 5 2 5 fill brown"]);
   ok("a background written a second time further down (the 2B\u2019s house on 1.24.4: the grass again, after the roof) is left out, and said; the roof on its wall is not a mountain",
     m11.lines.join("|") === "rect 0 0 20 12 fill sky|rect 0 10 20 2 fill green|rect 9 5 2 5 fill brown|tri 8 5 10 3 12 5 fill red|rect 9 5 2 5 fill brown" &&

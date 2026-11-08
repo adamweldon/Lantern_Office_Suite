@@ -1,12 +1,12 @@
 # Changelog
 
-## 1.24.7 — A landscape the way the eye sees it, the sum as the model wrote it, and three reviews (2026-11-06)
+## 1.24.7 — A landscape the way the eye sees it, the sum as the model wrote it, and the reviews that tried both (2026-11-06)
 
 Three pieces of work. Adam drew with the 35B on 1.24.6 and sent what came
 back; the small models' run on 1.24.6 was read row by row; and what was
 written for both was given, before anything was pushed, to reviewers who
-had not seen it written and were asked to break it. They did, twice, and
-this version is what was left standing.
+had not seen it written and were asked to break it. They did, four times,
+and this version is what was left standing.
 
 **What was seen.**
 
@@ -69,6 +69,51 @@ this version is what was left standing.
     1.24.5, an answer key's "ANS: B" three times running inside a MAKE DOC
     read as once, a quiz's "ANS: 12*12" turned into a sum, "MAX(A1,B1)" as
     the answer to "which function ...?" run as a sum and failed.
+- *The third review*, of what was about to be pushed, by a third agent:
+  - 287 more right pictures, and 26 were changed or questioned: the sun
+    put behind its own glow (a gold oval round it at sunset); a gorse bush
+    on a hill, an autumn tree on a short trunk, a haystack on the horizon
+    at dusk taken for the sun; "a light" (a ceiling lamp, a traffic light)
+    taken for a plain landscape; a cliff or a dune rising from the bottom
+    edge not counted as a shore; "a path over the hills far away" read as
+    a road going away; a coast seen from above; a sea or grass written
+    again on purpose (over the setting sun's lower half, a swimmer, a duck,
+    the feet of fence posts) left out;
+  - 45 wrong pictures, and 15 were mended into another wrong one: the sun
+    drawn first, behind a mountain in the air, came in front of it once
+    the mountain was stood on the horizon (the mountain went to the back of
+    the sky, behind the sun); a near range went behind the far one; the
+    dark disc that makes a crescent, the sun's face, a mountain's other
+    half and its snow cap were left where they were; strokes of light on
+    the sea were taken for the sun's rays; a road was narrowed under its
+    sleepers, its dashes, a car, a boat;
+  - 154 replies: 59 read otherwise than written, 38 of them right ones
+    that 1.24.6 read correctly: a test the question itself writes ("What
+    do you get from the test 2^10 = 1024?") cut at its second = and given
+    1024; lines inside "MAKE doc:" (a kind in small letters) read as sums;
+  - 88 questions about bleach: 18 given the drinking-water dose that were
+    not that question ("drops of liquid chlorine", "drops of water in 1
+    litre of bleach", "bleach water", "will clear 10 litres", "can I
+    drink"); and, as on 1.24.6, 9 right sums for the other one-blank
+    recipes told to be the recipe's ("twice round", "a half-wave", "in
+    km/s", "in miles", "7000 km from the centre").
+- *The fourth review*, of the third's mends, by a fourth agent:
+  - of 84 right pictures, 3 changed, all one way: a star the moon was
+    drawn over was put in front of the moon. Of 24 wrong ones, a road was
+    redrawn over the river the model drew across it, one of two dunes in
+    the air was stood on the sand and the other left floating, a moon at
+    night was not known for the moon; a yellow moon was called the sun;
+  - of 58 replies, 30 that 1.24.6 read right were read wrong. 14 were a
+    model's last step done in its head: "=350/100", then "=28", "ANSWER: 28
+    litres" for 8 litres per 100 km, read as 3.5; "=4+8+12", "=8" for an
+    average, read as 24. 8 were sums asked with a formula word ("Using the
+    CONVERT function, how many km ...?") left unworked. "Make the sum:"
+    opened a block. A Chat answer saying what to type ("=PI()*A1^2 -> the
+    area, with the radius in A1") lost its words;
+  - of 42 recipe questions, 26 were given a recipe's line for another
+    question: drops of bleach "per litre" given the line for the whole
+    drum (40 for each litre), a half-wave dipole the whole wavelength, the
+    time of a radio signal to a satellite the satellite's orbit.
 
 **What they were traced to.**
 
@@ -104,6 +149,15 @@ this version is what was left standing.
   is held to only for a question made of its own words.
 - *The first draft's tests had passed* because they were written by the
   same hand as the rules, from the same cases.
+- *What the third review found* was in what Lantern did once it was sure:
+  where it put a thing it moved (to the back of the sky, behind what the
+  model had drawn behind it on purpose), and what it moved with it.
+- *What the fourth found* was readers that were sure where they could not
+  be. A number typed under a sum may be a slip (the 2B's 88.5625 under
+  `=CONVERT(26,"mile","km")`) or the model's next step; only a number no
+  step reaches can be called a slip. And a recipe card that fits a question
+  is not its recipe: only a card that says which questions are its own can
+  be held to.
 
 **What changed.** One new module (412 in all). The filled recipes are not
 in this version (see "What is not in it").
@@ -117,10 +171,10 @@ in this version (see "What is not in it").
     placing, colours, and sky, sun, moon, cloud, mountain, hill, valley,
     sea, lake, river, shore, beach, desert, plain, field, tree, road,
     path, track, railway and their like. One word that is not on it (a
-    tent, a lion, a flag, a map, a mosque) and the picture is the model's:
-    nothing is moved;
+    tent, a lion, a flag, a map, a mosque, a light) and the picture is the
+    model's: nothing is moved. Nor a picture seen from above (a map);
   - *the block has one sky and a ground Lantern can read.* The sky is the
-    one band at the top edge. The ground is the band that reaches the
+    one band at the top edge, not of grass or sand. The ground is the band that reaches the
     bottom edge, with at most one band lying on it (the sea behind a strip
     of sand), in a colour of land or water that is not the sky's own and
     not a sunset's. A sky in two bands, a sunset in bands, a yellow band
@@ -131,19 +185,38 @@ in this version (see "What is not in it").
   - a mountain or hill (a tri on a flat base, in a mountain's colours)
     whose base is in the sky is stood on the horizon: its sides carried
     down and its peak left where the model put it, or the whole of it set
-    down when that would make a needle or when something is drawn on it (a
-    snow cap goes down with it). It is drawn behind what already stood on
-    the ground. From 4 cells wide where the question names mountains or
+    down when that would make a needle or when something is drawn on it:
+    what lies on it goes down with it (a snow cap, even one that pokes out
+    a little, its other half, a hut). It goes just before the first band of
+    ground, when the model drew it after it: behind what stands on the
+    ground, and still in front of a far range or a sun the model drew
+    before it. From 4 cells wide where the question names mountains or
     hills; from 8 where it does not (the model put them in). Not when
-    something holds it up: a wall under a roof, a trunk under or through a
-    crown, a pole, a mast, a hull, a string, the tier below in a pine;
-  - the sun or the moon drawn over land, water or cloud is put straight
-    after the sky: it is the farthest thing in any picture. A setting sun
-    drawn over the sea shows as half a sun. A circle is the sun only when
-    it is the ONE circle of the sun's colours in the sky that is not the
-    top of something (a lamp on its post, a balloon over its basket, a
-    flower on its stem) and not inside something. A disc drawn inside it
-    and its rays, lines or small triangles, go with it;
+    something holds it up: a wall under a roof (a wall with no fill too), a
+    trunk under or through a crown, a pole, a mast, a hull, a string, the
+    tier below in a pine. Not when something on it pokes out (a tree on its
+    slope): set down, it would leave the tree in the air. A narrower one
+    beside it, on the same base and of its colour, goes down with it; if
+    another would be left in the air, none is moved. Lantern calls them
+    what the question does, or by their colour: hills when green, dunes when
+    sand-coloured;
+  - the sun or the moon drawn over land, water or cloud, and seen in front
+    of it, goes just behind the first thing it was drawn over: a glow of
+    its own colours drawn before that stays behind it. A setting sun drawn
+    over the sea shows as half a sun; strokes of light on the water under
+    it stay on the water. A circle is the sun only when it is the ONE
+    circle of the sun's colours in the sky that is not the top of something
+    (a lamp on its post, a balloon over its basket, a flower on its stem, a
+    crown on a trunk however short) and not inside something; sitting on
+    the horizon only over the sea, or red or orange at sunset (on a field
+    at dusk, a gold one is a haystack as likely); and, where the question
+    does not name the sun, not on a slope below the top of the land it is
+    drawn over (a bush, an autumn tree). What is drawn on it goes with it:
+    a disc inside it, its face, the dark disc that makes a crescent, its
+    rays, lines that point away from it or small triangles. It goes behind
+    land, water and clouds, not behind a star or a bird (in the sky, only a
+    shape the size of a cloud is nearer than the sun). A white disc at
+    night is the moon;
   - a road, path, track or river that the question says goes away ("a
     road disappearing into the distance", "a track to the horizon": said
     of the road itself, not of mountains "in the distance"), written as
@@ -152,14 +225,18 @@ in this version (see "What is not in it").
     already, is drawn as it looks going away: a filled tri three times as
     wide at the bottom edge with its point on the horizon, the model's
     lines carried along its edges and its middle, and any line across it
-    (a sleeper) as long as the road is wide at that distance.
+    (a sleeper) as long as the road is wide at that distance. Not a road
+    with a shape on it (a car, a boat, sleepers or dashes drawn as rects):
+    it would narrow under them; nor one a river or a hedge crosses.
   What it cannot make goes back once with the line to add, worked out for
   the picture's own horizon: a road asked for "into the distance" where
   nothing at all is drawn on the ground; a shore where everything below
   the horizon is water.
-  In any picture, whatever the question: a background line written a
-  second time further down (the 2B's house on 1.24.4 and 1.24.6: the
-  grass and the sky again after the roof) is left out.
+  In any picture, whatever the question: the sky written a second time
+  further down (the 2B's house on 1.24.6: the sky again after the roof,
+  twice) is left out, and so is a band written again that covers nothing
+  drawn in between (the 2B's grass on 1.24.4). A sea or grass written
+  again over something is the model's.
 - **The guide for a landscape.** A question about mountains, hills, a
   shore, a road, a river, a horizon (and no house) gets three more lines
   of guide and a landscape as its example: the sun straight after the
@@ -184,16 +261,29 @@ in this version (see "What is not in it").
 
 - **The line is the sum** (AI_READ). In a reply's own `=` lines, never
   inside a MAKE, TRACK, TURN or SOLVE block or a code fence:
-  - `=X -> anything` is read as `=X` (outside quotes of either kind);
+  - `=X -> anything` is read as `=X` (outside quotes of either kind), where
+    X is a sum Lantern can run (not `=PI()*A1^2 -> the area`, with a cell in
+    it: a Chat answer that says what to type keeps its words) and what
+    follows is not the next step (`=2000/15 -> /60 -> 2.22`);
   - `=X = 2275` is read as `=X` where the question asks for a number ("How
     much ...", "What is ..."). Where it asks whether something is so
-    ("Check whether", "Verify", "Tell me if", "Is ...?"), where the answer
-    says what 1 and 0 mean, or where Lantern does not know the question,
-    `=17*23=391` is the sum: 1 for yes. The question is the person's, on
-    a second turn too;
+    ("Check whether", "Verify", "Tell me if", "Is ...?"), where it writes
+    the test itself ("the test 2^10 = 1024") or gives the number after the
+    second = as a number of its own ("Work out if 17 times 23 is 391"),
+    where the answer says what 1 and 0 mean ("1: it is"), or where Lantern
+    does not know the question, `=17*23=391` is the sum: 1 for yes. The
+    number after the second = has to be the sum's own value, as far as it
+    is written, or a slip no step reaches (6.5 after
+    `=CONVERT(26,"mile","km")`): a line that carries on ("=2000/15 =
+    133.33/60 = 2.22", "= 133.3 min = 2.22 h") stays as written. The
+    question is the person's, on a second turn too;
   - a number in `{ }` is the number; a sum in `{ }` is in brackets;
   - a number typed on the last `=` line, right under a sum Lantern can
-    work out, is left out: Lantern works the number out. Not a whole
+    work out, is left out: Lantern works the number out. Not a number one
+    step on from the sum -- times or over a number of the question, the
+    count of its numbers, a factor of units (60, 100, 1000, 3600, 10000,
+    1.8 ...), plus or minus a number of the question -- which is the
+    model's last step done in its head ("=350/100", "=28"); not a whole
     number that is the sum rounded up or down (12 jerrycans under
     `=250/20`); not where the answer says the sum's own result as well
     ("144, and there are 7 days in a week"); not under another typed
@@ -205,19 +295,38 @@ in this version (see "What is not in it").
   and "=ANS1+ANS2+ANS3" are three resistors); "ANS: 12*12" and "ANSWER:
   SQRT(49)" inside a MAKE DOC are the document's; a formula after
   "ANSWER:" is run as the sum only when Lantern can work it out and the
-  question does not ask for the formula itself. A line of prose that
-  begins "Make sure ..." no longer opens a block.
+  question does not ask for the formula itself: where it names the
+  formula as the thing asked ("Which Calc command", "the spreadsheet entry
+  for", "What goes in the cell", "What do I type") and asks no "how many"
+  or "how much". "How can I make Calc show 3 to the power 4?" is worked
+  out; its formula stays on its = line. A line of prose that begins "Make
+  sure ...", "Make the sum:", "Make it simple:" opens no block; a kind
+  Lantern makes ("MAKE doc:", "Make drawing:") does, in capitals or not.
 - **What a recipe gives is on a line of its own, above its line** in the
   short prompt, so nothing follows the line for a model to copy.
-- **A dose is held to its recipe only for its own question**
+- **A recipe is held to only for its own question**
   (`fillOnly`, a new field of a card). Since 1.24.6 a sum that gives
   another number than a one-blank recipe is sent back with the recipe's
   line. For drops of bleach in water to drink that is right when the
   question is that and nothing else (20 drops a litre is ten times the
   dose) and wrong for handwashing water, an aquarium or water from a dam.
-  The card now says which questions are its own: drops, bleach, so many
-  litres of clear water to drink, in those words. For any other, Lantern
-  says nothing about the recipe.
+  The card now says which questions are its own: every word one of its own
+  (drops, bleach, so many litres, a jerrycan, clear water, safe, drink
+  ...), "drops of bleach" said, bleach said once and not "bleach water",
+  "clear" not a verb, the water to drink and not the bleach ("can I
+  drink"), drinking said, and not "per litre" or "each litre". For any
+  other, Lantern says nothing about the recipe.
+  The same for the other one-blank recipes: the check speaks only for a
+  card that says which questions are its own, and four now do, each for
+  its plain question in its own words: a satellite's minutes for one
+  orbit (not twice round, half way, a signal's time, the orbits in a day,
+  in hours); an escape velocity in m/s (not km/s, km/h, mph); a weight in
+  newtons (not half of it, each leg's share, in water); a wavelength in
+  metres (not a half-wave dipole, a quarter-wave antenna, feet, inches).
+  The others (a geostationary orbit, the Schwarzschild radius, a fast
+  clock, sugar and salt for ORS) say nothing: on 1.24.6 the orbit card
+  told the 2B, which had the hours right for a geostationary orbit, to
+  write minutes.
 - **A wheel of bare formulas** ("P = V^2 / R", one to a line): each goes
   into the part for the letter it gives.
 - **delay() in a comment** is not a call.
@@ -234,10 +343,6 @@ in this version (see "What is not in it").
   and `fill_review2_1247.json`, 757) and a note of what the next attempt
   has to do: fill only a question whose every word Lantern knows. A small
   model is given a recipe with its blanks, as on 1.24.6.
-- Still as on 1.24.6, and found by the first review: the check that holds
-  a sum to a one-blank recipe tells "How long should a dipole be for 14.2
-  MHz?" to write `=WAVELEN(14.2)`. It needs the same list of words; it
-  has it for bleach only.
 
 **What was tested.**
 
