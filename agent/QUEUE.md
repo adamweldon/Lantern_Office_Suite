@@ -8,15 +8,14 @@ file in the same commit as the work. Read `CLAUDE.md` first.
 1. **Read the small models' run on 1.24.7 and act on it.** Every push to a
    `lantern-x.y.z` branch runs the whole bench with the 0.8B, the 2B and the
    4B on GitHub (`CLAUDE.md`, "The bench with the small models"). On 1.24.6:
-   **4B 107 of 112, 2B 57, 0.8B 51** (the 35B, on the laptop: 111). 1.24.7
-   was written from those rows (`tests/fixtures/bench_run_1246_*.json`) and
-   from two pictures Adam made with the 35B; no model had run it when it
-   was pushed. So first:
+   **4B 107 of 112, 2B 57, 0.8B 51** (the 35B: 111 of 112 without the
+   library on the laptop pane; 134 of 138 with it, in Adam's own browser,
+   2026-11-08). 1.24.7 was written from those rows
+   (`tests/fixtures/bench_run_1246_*.json`) and from two pictures Adam made
+   with the 35B; no model had run it when it was pushed. So first:
    - **the 2B's sums.** It had 18 of its 27 failed sums right but for how
      it wrote the line (an arrow after it, a number typed under it, the
-     numbers in braces). Lantern reads those now, and the short prompt
-     gives a recipe with the question's numbers in it, alone. Does the 2B
-     copy that line as it stands? What does the 0.8B do with it?
+     numbers in braces). Lantern reads those now. How many pass?
    - **the two scene questions** (new: `make-shore-sunset`,
      `make-road-horizon`), and every other drawing: the log prints each one
      between `=== DRAWINGS` and `=== END DRAWINGS ===`. Draw them
@@ -24,6 +23,29 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      send it to Adam. What do the models write with the landscape guide
      and its example? Do they copy the example whole?
    - the minutes (48, 40 and 69 on 1.24.6).
+2. **1.24.8, ready on the side** (from Adam's run of the 35B on 1.24.6 with
+   the library, `tests/fixtures/bench_run_1246_35b_library.json`; the
+   patches and their tests were written in the session of 2026-11-07 and
+   wait for 1.24.7's run):
+   - **the part of an article that answers.** A repair guide's steps
+     without its readers' comments (iFixit keeps a step's comments inside
+     its list item); a travel guide's own section for getting around,
+     getting there, eating, sleeping, crime, sights; the sentences that say
+     what a thing is made of. Stand-in pages laid out as the offline files
+     are, and a guard: every other passage of the test pages is unchanged;
+   - **a held note a half step from its chord** is mended where Lantern can
+     compute it (the chord of the key that holds it, in a bar of one chord;
+     the nearest note of the home chord at the song's end), and said. The
+     35B was told the chord and wrote the same one again on 1.24.0 and
+     twice on 1.24.6. **This one waits for Adam** (item 13 below; asked in
+     `QUESTIONS.md`, 1): it changes what the model wrote, and how a song
+     sounds is his;
+   - both need a reviewer who did not write them before they go in.
+   The filled recipes (a recipe given to a small model with the question's
+   numbers in it) are on `wip-2026-11-06-recipe-fill`, out of 1.24.7: two
+   reviews found them wrong too often, and a list of words to refuse is
+   never finished. The next attempt fills only a question whose every word
+   Lantern knows (its note there says how).
    Then, from what the rows of 1.24.6 show and 1.24.7 does not touch:
    - **A guide copied whole.** The 2B and the 0.8B copied the hydraulic,
      pneumatic, control and electronics guides into their blocks, line for
@@ -68,12 +90,14 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    A question the 4B fails and the 35B passes comes before a new feature.
    Fix what Lantern gave the model or how it read the reply, for every
    question of its kind; put the failed rows in `tests/fixtures`.
-2. **Pictures.** Adam's direction (2026-11-06): get the fundamentals of a
+3. **Pictures.** Adam's direction (2026-11-06): get the fundamentals of a
    scene right first -- what stands on what, what is behind what, how
    things narrow with distance -- and then let the AI draw many small
    pieces that Lantern puts together into a bigger, more detailed picture.
-   1.24.7 does the first for mountains, the sun and a road (AI_SCENE).
-   Next:
+   1.24.7 does the first for mountains, the sun and a road (AI_SCENE),
+   for a plain landscape asked in plain words only: three reviews showed
+   that a rule which guesses spoils more right pictures than it mends
+   wrong ones. Next:
    - **the 35B on 1.24.7**, when the laptop is linked: Adam's two requests
      and the two scene questions, and what it writes with the landscape
      guide. Its picture is the test; send Adam the sheet;
@@ -85,6 +109,10 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    - **things that stand.** A house or a tree whose foot is above the
      ground line has not been seen yet; look for it in each run's drawings
      before writing a rule for it;
+   - **more than plain landscapes.** A tent by the lake or a house on the
+     hill is left as the model drew it, mountains in the air and all. The
+     words Lantern knows can grow one at a time, each with right pictures
+     of its own tried by a reviewer;
    - **pieces.** Two ways were put to Adam (`QUESTIONS.md`, 1): words for
      things Lantern places (mountain, road, tree: the model says what and
      roughly where, Lantern does the ground line, the order and the size
@@ -93,20 +121,21 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    - small things found: a circle written with four numbers (the 2B,
      once); AI_MAKE_LAYOUT's `inside` reads an oval as a centre and two
      radii, AI_DRAW draws it as a box.
-3. **Confirm each new version on the 35B, twice**, when a chat is linked to
+4. **Confirm each new version on the 35B, twice**, when a chat is linked to
    Adam's laptop (`CLAUDE.md`, "The bench on Adam's laptop"). A version that
    has not had a full run says so in its report. 1.24.6: one full run (111
    of 112) on the build before its last change, the four music questions on
    the build that was pushed, and a second full run of that build stopped
-   at 73 of 118 with nothing scored failing (Adam said to stop). 1.24.7:
+   at 73 of 118 with nothing scored failing (Adam said to stop); then a full
+   run with the library by Adam himself (134 of 138, 2026-11-08). 1.24.7:
    none yet.
-4. **Finish the five Food lessons on `wip-2026-11-06`.** They are drafted
+5. **Finish the five Food lessons on `wip-2026-11-06`.** They are drafted
    and were checked from memory only; the checker's memory differs from the
    drafts where it matters (kidney beans, cassava, the hay box). They need
    the pages of WHO, FAO, the US FDA and USDA's food safety service opened
    -- which needs Adam at the app to approve them, or a session that may
    fetch them. The branch's `agent/wip/README.md` says what to do.
-5. **Tile audits**, one tile a session, in the order of the table below. For
+6. **Tile audits**, one tile a session, in the order of the table below. For
    each tile:
    - open it in a real browser and use everything in it; fix what is broken,
      each fix with a test;
@@ -128,39 +157,43 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    - check what the AI can reach of it (LESSON:, LOOKUP:, formula functions,
      MAKE tools) and add the hook when it cannot;
    - write the tile's row below, and the gaps left, in the report.
-6. **Lessons Lantern does not have, which people will ask for** (found by
+7. **Lessons Lantern does not have, which people will ask for** (found by
    asking, 1.24.5): making soap, keeping bees, pruning, sharpening a knife,
    a rocket stove, wiring a lamp to a battery, a solar charger; and the
    five held Food lessons. Each belongs to a tile's audit (Repair, Farming,
    Animals, Engineering).
-7. **The offline library in the runs.** On the laptop it works, but the
+8. **The offline library in the runs.** On the laptop it works, but the
    Claude app's browser pane does not let Lantern's page reach it, so runs
-   made there leave out the 25 encyclopedia questions (a run in Adam's
-   Chrome would include them: question for Adam). The GitHub runs have no
+   made there leave out the encyclopedia questions. A run in Adam's own
+   browser includes them: he made one on 1.24.6 (Firefox, 2026-11-08: 21 of
+   the 24 library questions; the three misses are item 2). The GitHub runs have no
    library either: the Simple English one, 2.5 GB, would fit: worth adding
    to the workflow for one model.
-8. **The kit's 8,192 tokens.** Lantern now shortens a request that is too
+9. **The kit's 8,192 tokens.** Lantern now shortens a request that is too
    long and sends it again (AI_FIT). Better not to get there: measure what
    Chat sends in a long puzzle conversation, and what 16,384 tokens cost in
    memory for the 0.8B, the 2B and the 4B. Whether to raise it is Adam's.
-9. **Pictures for the Health lessons.** The recovery position, where the
+10. **Pictures for the Health lessons.** The recovery position, where the
    hands go for chest pushes, the tippy tap, the pit latrine, the arm
    measurement: a drawing each would carry more than the words. Lantern can
    draw (Draw's shapes, SVG). Whether a drawing is clear is Adam's to judge:
    make them, show him, keep what he passes.
-10. **Words that differ by an ending** ("charger" and "charge", "purify" and
+11. **Words that differ by an ending** ("charger" and "charge", "purify" and
    "purification") do not match in Lantern's search. `LESSON_WORDS` covers
    the cases found; the stemmer itself could do more, with care (it is used
    everywhere).
-11. **Songbook.** Nine tunes so far, all starting on the first beat. Tunes
+12. **Songbook.** Nine tunes so far, all starting on the first beat. Tunes
     that start with a pickup (Amazing Grace, Auld Lang Syne, Brahms' Lullaby,
     Greensleeves, Happy Birthday's 1893 tune) need a pickup bar checked
     through the score, the parts and the arrangement first.
-12. **A second try that changes nothing.** In the run on 1.24.0 three songs
+13. **A second try that changes nothing.** In the run on 1.24.0 three songs
     came back unchanged or worse after Lantern's send-back. 1.24.2 writes the
     line to use. If a model still sends the same block, decide with Adam
-    whether Lantern should apply the fix it named and say so.
-13. **The 1.16.0 audit's feature list** (`Lantern_1.16.0_app_audit.pdf`, sent
+    whether Lantern should apply the fix it named and say so. It did again:
+    the 35B's waltz on 1.24.6 (2026-11-08) and its tune of its own on 1.24.6
+    (2026-11-06). The mend for a held note against its chord is written and
+    tested (item 2) and asked of Adam (`QUESTIONS.md`, 1).
+14. **The 1.16.0 audit's feature list** (`Lantern_1.16.0_app_audit.pdf`, sent
     to Adam on 2026-10-29) was never answered. With the aim above, take the
     features that serve it without asking again; leave the rest.
 

@@ -1,9 +1,12 @@
 # Changelog
 
-## 1.24.7 — A landscape the way the eye sees it, and the sum as the model wrote it (2026-11-06)
+## 1.24.7 — A landscape the way the eye sees it, the sum as the model wrote it, and three reviews (2026-11-06)
 
-Two pieces of work. Adam drew with the 35B on 1.24.6 and sent what came
-back; and the small models' run on 1.24.6 was read row by row.
+Three pieces of work. Adam drew with the 35B on 1.24.6 and sent what came
+back; the small models' run on 1.24.6 was read row by row; and what was
+written for both was given, before anything was pushed, to reviewers who
+had not seen it written and were asked to break it. They did, twice, and
+this version is what was left standing.
 
 **What was seen.**
 
@@ -28,6 +31,44 @@ back; and the small models' run on 1.24.6 was read row by row.
   The 2B fell from 12 to 6 of the 21 function questions while the 0.8B rose
   from 6 to 16. The failed rows are `tests/fixtures/bench_run_1246_2b.json`
   (55), `_08b.json` (61) and `_4b.json` (5).
+- *The first review.* The first draft had three new things: rules that
+  rearrange a landscape, readers that tidy a model's reply, and recipes
+  handed to a small model with the question's numbers already in them. All
+  its own tests passed. A separate agent tried each on inputs of its own:
+  - it drew 91 pictures that were right as written, and the scene rules
+    changed or questioned 46 of them. The lamp of a lighthouse, lamps on
+    their posts, balloons, sunflowers and a girl's head were taken for the
+    sun and put behind things; an umbrella, a dhow's sail, kites on their
+    strings and the tiers of a pine were taken for mountains in the air;
+    the piers of a bridge, the posts of a gate, a horse's legs and a tree's
+    trunk were redrawn as a road going away; a sunset's second band of sky
+    and a long castle wall were read as the ground;
+  - it asked 199 sums another way. The recipe was filled for 160 of them,
+    and 86 of the filled lines were wrong: the answer wanted in another
+    unit ("how many teaspoons of bleach" given the recipe for drops),
+    another thing asked of the same numbers (the current a lamp draws, the
+    momentum of a car), a step more (there and back, a week of days), a
+    number in words, a radius read as a height;
+  - it wrote replies the readers spoiled: a number set down on purpose
+    dropped as a typed result, `=17*23=391` cut where the question asks
+    whether they are equal, an arrow inside a quoted string, a line inside
+    a MAKE block.
+- *The second review*, after all of that was mended, by another agent:
+  - 126 more right pictures, and 41 were changed or questioned again: a sky
+    in two blues, a far beach or a field of wheat drawn as a band, a hang
+    glider and an eagle over mountains, a beach ball on a "sunny" day, a
+    lion's mane "at sunset", a mosque's golden dome "at dusk", a flag, a
+    map, a road drawn in steps or coming in from the side;
+  - 757 more sums asked another way: 406 filled, 222 wrongly. For bleach
+    alone: water "from the dam", "milky water", "icy water", bleach "for
+    handwashing", "to soak instruments", "in my aquarium", "scented bleach"
+    each got the drinking-water recipe for drops;
+  - 95 more replies, 34 read into something else: "Check whether 17 times
+    23 makes 391", "Tell me if ...", "Verify that ..."; 12 jerrycans typed
+    under `=250/20`; and, in readers that have been in Lantern since
+    1.24.5, an answer key's "ANS: B" three times running inside a MAKE DOC
+    read as once, a quiz's "ANS: 12*12" turned into a sum, "MAX(A1,B1)" as
+    the answer to "which function ...?" run as a sum and failed.
 
 **What they were traced to.**
 
@@ -49,43 +90,76 @@ back; and the small models' run on 1.24.6 was read row by row.
   no part line; and its sketch for "without delay()", timed with millis(),
   was questioned for the word delay() in its opening comment (a check
   added in 1.24.6 that looked inside block comments).
-- *A recipe with its blanks is still a thing to fill in.* The 2B wrote
-  RSERIES for two resistors in parallel with the parallel recipe in front
-  of it; the 0.8B wrote `=PLANET("body","escape")`.
+- *What the two reviews found comes to one thing.* Each rule asked "could
+  this be a mountain, the sun, a road, the recipe's sum?" and acted when
+  the answer was yes. A rule that changes what a model wrote, or hands it
+  a line to copy, has to ask "can it be anything else?" and act only when
+  the answer is no.
+- *And a list of things to refuse is never finished.* After the first
+  review each rule was given its exceptions (a tri on a pole is not a
+  mountain; a recipe is not filled when the question says "each way").
+  The second reviewer simply used other words. What can be finished is a
+  list of what Lantern does know: so the scene rules now act only on a
+  question made of the words of a plain landscape, and the bleach recipe
+  is held to only for a question made of its own words.
+- *The first draft's tests had passed* because they were written by the
+  same hand as the rules, from the same cases.
 
-**What changed.** Two new modules (413 in all).
+**What changed.** One new module (412 in all). The filled recipes are not
+in this version (see "What is not in it").
 
 *Pictures*
 
-- **AI_SCENE** (new). Lantern reads the scene from the block: the ground is
-  the wide rect that reaches the bottom edge (and any wide rect lying on
-  it, a sea behind a strip of sand), and its top is the horizon. Then it
-  does what can be computed, and says so under the picture and to the
-  model when it is shown the picture:
-  - a mountain or hill (a tri on a flat base, 4 cells wide or more) whose
-    base is in the sky with nothing under it is stood on the horizon: its
-    sides carried down and its peak left where the model put it, or the
-    whole of it set down when that would make a needle. It is drawn behind
-    what already stood on the ground. A roof on its wall, a crown on its
-    trunk, the upper tier of a pine, a snow cap, a sail, a kite are left
-    alone;
+- **AI_SCENE** (new). Lantern arranges a picture only when it can do so
+  without guessing:
+  - *the question is a plain landscape, in words Lantern knows.* Every
+    word of it has to be on a list of some 300: the words of asking and
+    placing, colours, and sky, sun, moon, cloud, mountain, hill, valley,
+    sea, lake, river, shore, beach, desert, plain, field, tree, road,
+    path, track, railway and their like. One word that is not on it (a
+    tent, a lion, a flag, a map, a mosque) and the picture is the model's:
+    nothing is moved;
+  - *the block has one sky and a ground Lantern can read.* The sky is the
+    one band at the top edge. The ground is the band that reaches the
+    bottom edge, with at most one band lying on it (the sea behind a strip
+    of sand), in a colour of land or water that is not the sky's own and
+    not a sunset's. A sky in two bands, a sunset in bands, a yellow band
+    behind a lake (a far beach, or the glow?): no horizon Lantern is sure
+    of, and nothing is moved.
+  Then it does what can be computed, and says so under the picture and to
+  the model when it is shown the picture:
+  - a mountain or hill (a tri on a flat base, in a mountain's colours)
+    whose base is in the sky is stood on the horizon: its sides carried
+    down and its peak left where the model put it, or the whole of it set
+    down when that would make a needle or when something is drawn on it (a
+    snow cap goes down with it). It is drawn behind what already stood on
+    the ground. From 4 cells wide where the question names mountains or
+    hills; from 8 where it does not (the model put them in). Not when
+    something holds it up: a wall under a roof, a trunk under or through a
+    crown, a pole, a mast, a hull, a string, the tier below in a pine;
   - the sun or the moon drawn over land, water or cloud is put straight
     after the sky: it is the farthest thing in any picture. A setting sun
-    drawn over the sea shows as half a sun;
-  - a road, path, track or river written as upright lines side by side, or
-    as one strip, from the horizon to the bottom edge is drawn as it looks
-    going away: a filled tri three times as wide at the bottom edge with
-    its point on the horizon, the model's lines carried along its edges
-    and its middle, and any line across it (a sleeper) as long as the road
-    is wide at that distance. Two edges that come together already, with
-    only the ground between them, get a fill;
-  - a background line written a second time further down (the 2B's house
-    on 1.24.4 and 1.24.6: the grass and the sky again after the roof) is
-    left out.
+    drawn over the sea shows as half a sun. A circle is the sun only when
+    it is the ONE circle of the sun's colours in the sky that is not the
+    top of something (a lamp on its post, a balloon over its basket, a
+    flower on its stem) and not inside something. A disc drawn inside it
+    and its rays, lines or small triangles, go with it;
+  - a road, path, track or river that the question says goes away ("a
+    road disappearing into the distance", "a track to the horizon": said
+    of the road itself, not of mountains "in the distance"), written as
+    two to four upright lines side by side or as one strip from the
+    horizon to the bottom edge, with nothing in the picture that narrows
+    already, is drawn as it looks going away: a filled tri three times as
+    wide at the bottom edge with its point on the horizon, the model's
+    lines carried along its edges and its middle, and any line across it
+    (a sleeper) as long as the road is wide at that distance.
   What it cannot make goes back once with the line to add, worked out for
   the picture's own horizon: a road asked for "into the distance" where
-  nothing narrows; a shore where everything below the horizon is water.
-  A block that ran away, or says one line three times, is not arranged.
+  nothing at all is drawn on the ground; a shore where everything below
+  the horizon is water.
+  In any picture, whatever the question: a background line written a
+  second time further down (the 2B's house on 1.24.4 and 1.24.6: the
+  grass and the sky again after the roof) is left out.
 - **The guide for a landscape.** A question about mountains, hills, a
   shore, a road, a river, a horizon (and no house) gets three more lines
   of guide and a landscape as its example: the sun straight after the
@@ -102,44 +176,48 @@ back; and the small models' run on 1.24.6 was read row by row.
   not drawn over the land, there is land in front of the water, a road
   narrows towards the horizon.
 - `tools/bench_headless.py` prints every drawing a model made, passed or
-  not, between `=== DRAWINGS` and `=== END DRAWINGS ===`: a score cannot
-  show how a picture looks, and a session can draw the block again.
+  not, between `=== DRAWINGS` and `=== END DRAWINGS ===`, and
+  `tools/draw_log.py` (new) draws each of them as written and as Lantern
+  draws it, side by side: a score cannot show how a picture looks.
 
 *Sums*
 
-- **The line is the sum** (AI_READ). `=X -> anything` is read as `=X`;
-  `=X = 2275` as `=X` (outside quotes and brackets, and not a comparison);
-  a number in `{ }` as the number; a number typed on a `=` line of its own
-  after a sum Lantern can work out is left out, the last such line only
-  (`=2000/ANS` is a sum and stays; a number in the middle of a chain
-  stays). Chat says what was read.
+- **The line is the sum** (AI_READ). In a reply's own `=` lines, never
+  inside a MAKE, TRACK, TURN or SOLVE block or a code fence:
+  - `=X -> anything` is read as `=X` (outside quotes of either kind);
+  - `=X = 2275` is read as `=X` where the question asks for a number ("How
+    much ...", "What is ..."). Where it asks whether something is so
+    ("Check whether", "Verify", "Tell me if", "Is ...?"), where the answer
+    says what 1 and 0 mean, or where Lantern does not know the question,
+    `=17*23=391` is the sum: 1 for yes. The question is the person's, on
+    a second turn too;
+  - a number in `{ }` is the number; a sum in `{ }` is in brackets;
+  - a number typed on the last `=` line, right under a sum Lantern can
+    work out, is left out: Lantern works the number out. Not a whole
+    number that is the sum rounded up or down (12 jerrycans under
+    `=250/20`); not where the answer says the sum's own result as well
+    ("144, and there are 7 days in a week"); not under another typed
+    number; not where the answer names its lines ({result}, {ANS2}).
+  Chat says what was read.
+- **The older readers keep to the reply's own lines too** (they are from
+  1.24.5): one line written three times is read as once only outside a
+  block and only where the lines are not named later ("=10" three times
+  and "=ANS1+ANS2+ANS3" are three resistors); "ANS: 12*12" and "ANSWER:
+  SQRT(49)" inside a MAKE DOC are the document's; a formula after
+  "ANSWER:" is run as the sum only when Lantern can work it out and the
+  question does not ask for the formula itself. A line of prose that
+  begins "Make sure ..." no longer opens a block.
 - **What a recipe gives is on a line of its own, above its line** in the
   short prompt, so nothing follows the line for a model to copy.
-- **The recipe with the question's numbers in it** (AI_NO_FORMULA's
-  `filled`; **AI_RECIPE_FILL**, new). Where Lantern can be sure which
-  number goes in which blank it fills the recipe itself and gives the
-  line to copy as it stands: in the short prompt (alone, with no blanks),
-  for a decline, for a NEED Lantern can answer, for a line that could not
-  be run, and for a sum that gives another number. It can be sure when
-  each blank's unit is the unit of exactly one of the question's numbers
-  (or of several the recipe takes in any order: the two sides of a field,
-  two resistors, the two orbits of a transfer), with one blank at most
-  for the number left over; a blank that is a word is the planet or the
-  chemical formula in the question; and eleven recipes have a filler of
-  their own (a change of units as the question names them, bags, a tank,
-  two places, a height and a radius, a price for one, so much for so
-  many, the fuel of a trip, hens and eggs). It fills nothing for a number
-  written as a word ("Two 12 V batteries"), for a card's own exception
-  (a card's `fillWhen`: bleach for cloudy water, feed with no "a day"),
-  or where the question asks for a unit the recipe cannot be said in.
-  Where it asks for another unit of the same kind (minutes, and the
-  recipe gives hours) the line is the recipe inside a CONVERT. Every
-  line is run before it is given.
-- **A sum in another unit than the recipe's is not a wrong sum.** The
-  check that compares a sum with the recipe speaks only where the
-  question says the unit, or where the recipe is a function of Lantern's
-  that the sum does not use; and it says nothing where another check has
-  already written a line that gives the recipe's number.
+- **A dose is held to its recipe only for its own question**
+  (`fillOnly`, a new field of a card). Since 1.24.6 a sum that gives
+  another number than a one-blank recipe is sent back with the recipe's
+  line. For drops of bleach in water to drink that is right when the
+  question is that and nothing else (20 drops a litre is ten times the
+  dose) and wrong for handwashing water, an aquarium or water from a dam.
+  The card now says which questions are its own: drops, bleach, so many
+  litres of clear water to drink, in those words. For any other, Lantern
+  says nothing about the recipe.
 - **A wheel of bare formulas** ("P = V^2 / R", one to a line): each goes
   into the part for the letter it gives.
 - **delay() in a comment** is not a call.
@@ -147,45 +225,78 @@ back; and the small models' run on 1.24.6 was read row by row.
   question's numbers; the molar mass card is not offered for "how many
   moles".
 
+**What is not in it.**
+
+- **The recipe with the question's numbers in it.** Written for this
+  version, mended after the first review, and taken out after the second
+  (222 wrong lines of 406). It is on `wip-2026-11-06-recipe-fill` with
+  both reviews' questions (`tests/fixtures/fill_review_1247.json`, 199,
+  and `fill_review2_1247.json`, 757) and a note of what the next attempt
+  has to do: fill only a question whose every word Lantern knows. A small
+  model is given a recipe with its blanks, as on 1.24.6.
+- Still as on 1.24.6, and found by the first review: the check that holds
+  a sum to a one-blank recipe tells "How long should a dipole be for 14.2
+  MHz?" to write `=WAVELEN(14.2)`. It needs the same list of words; it
+  has it for bleach only.
+
 **What was tested.**
 
-- `npm test`: all 63 suites pass. New: `tests/scene.js` (28 checks: Adam's
-  two blocks as the 35B wrote them, each rule on its own, twelve pictures
-  that are right as written and come through untouched, the drawings in
-  the bench fixtures, rule 11), `tests/recipe_fill.js` (19: of 73
-  questions that are not the bench's wording Lantern fills 44, each equal
-  to a truth written apart from the recipe, and no other; of the bench's
-  35 sums with one recipe it fills 31, each the bench's own answer),
-  `tests/bench_1246_small.js` (14: with its replies as it wrote them, 18
-  of the 2B's 27 failed sums pass and 4 of the 0.8B's 18; the 4B's wheel
-  and sketch).
+- `npm test`: all 62 suites pass. New: `tests/scene.js` (49 checks: Adam's
+  two blocks as the 35B wrote them; each rule on its own; the reviews'
+  pictures, every one, from `tests/fixtures/scene_review_1247.json` and
+  `scene_review2_1247.json`: 216 right ones that come through exactly as
+  written, and what Lantern does with the 57 wrong ones; the plain-word
+  gate; rule 11) and `tests/bench_1246_small.js` (25: with its replies as
+  it wrote them, the 2B's and the 0.8B's failed sums read as the sum; the
+  reviews' replies that must stay as written; the bleach dose held to its
+  own question only; the 4B's wheel and sketch).
 - The 35B's 45 right sums of 1.24.4: nothing in them is read differently,
   and no check questions one. (The guard caught `=2000/ANS` being taken
   for a typed number while this was written.)
+- Three independent reviews, each by an agent that had not seen the code
+  written, on inputs of its own (THIRD_REVIEW).
 - Real Chromium, a stand-in model that sees
   (`tests/browser/scene_e2e.py`, new): the two scenes in Chat, the PNG the
   model is shown checked by its colours: the road gray and narrowing, the
   mountains on the horizon, the mountain in front of the sun, sand along
-  the bottom.
+  the bottom; exactly 720 by 432.
 - Ten more real-browser tests pass on this build with a stand-in model
   (bench run 9, the headless bench, Code Lab, the drawing domains,
   hydraulics, music, health, food, Text Reader, sheet reading).
   `gms_e2e.py` was not run: it needs the Generative Music Studio file.
-- Looked at: 24 pictures before and after, side by side.
+- Looked at: Adam's two pictures before and after, and the reviews'
+  pictures that Lantern changes, side by side.
 
 **What was not.**
 
 - **No model has run 1.24.7.** The push starts the small models' run. The
   35B has not run it: the laptop was not linked. The guide for a landscape
   and its example are new to every model.
-- Whether the mended pictures look right is Adam's to judge: they are in
-  the report.
+- Whether the mended pictures look right is Adam's to judge.
+- Lantern arranges a picture only for a plain landscape asked in plain
+  words. A tent by the lake, a lion at sunset, a house on the hill: their
+  pictures are as the model drew them, mountains in the air and all.
 - Left as found, and in the tests as such: the 2B's own wrong sums
   (`=150*10/420`), units written inside a sum (`=3 cups * 15 people / 6
   people`), the hydraulic and pneumatic guides copied whole by the 2B and
-  the 0.8B with their explanations, a house or a tree whose foot is above
-  the ground line (not seen yet), and "from a 300 km orbit to the Moon's
+  the 0.8B with their explanations, and "from a 300 km orbit to the Moon's
   distance" given the recipe for two radii.
+
+**Seen after this was written, and left for 1.24.8.** Adam ran the 35B on
+1.24.6 with the encyclopedia, in his own browser on the laptop (2026-11-08,
+95 minutes): 134 of 138 scored, the first full run with the 24 library
+questions (21 passed). The failed rows are
+`tests/fixtures/bench_run_1246_35b_library.json`. Each of the three
+"Not in my library" answers had the right article and the wrong part of
+it: the opening of "Oral rehydration therapy", not what it is made of;
+the first step of the iFixit guide and its readers' comments, not the
+steps (the offline file keeps a step's comments inside the step's list
+item, and Lantern read the whole item as one paragraph); sentences of
+Wikivoyage's Nairobi about the railway and internet cafes, not its "Get
+around". And the waltz again: a note a half step from its chord,
+questioned with the chord to write, not mended on the second try (as on
+1.24.0, and on 1.24.6 without the library). Whether Lantern should play
+the chord it names itself is Adam's (`agent/QUESTIONS.md`).
 
 ## 1.24.6 — What a small model is given, and the line to write (2026-11-06)
 
