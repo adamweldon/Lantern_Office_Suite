@@ -47816,24 +47816,46 @@ Lantern.RFB = (function () {
     // hidden-shape question asked about the copies until 1.24.8, which no longer asks about a shape under its own
     // copy. So the 35B's "tri 0 6 20 6 10 0 fill gray", written 29 times for a road into the distance, was asked
     // about by nothing, and the road it had not drawn was not asked for (Adam's run of 1.24.8). A copy with
-    // something across it in between (a cloud between two suns, the second painted over it), a block cut off (AI_DRAW
-    // says it ran away), or a line still written three times after that, and the block is left to AI_DRAW as before.
+    // something across it in between (a cloud between two suns, the second painted over it; a clock's hands, a line
+    // being across it however thin), a block cut off or with a run of lines in it (AI_DRAW says it ran away), or a line
+    // still written three times after that, and the block is left to AI_DRAW as before: all of a line's earlier copies
+    // go, or none (two kept, and the landscape's rules would have moved one copy and not the other -- the review of
+    // 1.24.10).
+    // across(t, o): t lies across o -- a line, a curve or words by a box a little wider than they are, so that a
+    // level or upright line counts, as the thing across or the thing copied (the review: a clock's hands between two
+    // faces were not seen, nor fence posts across a rail written three times)
+    function across(t, o) {
+      var bt = box(t), bo = box(o), pt = /^(line|curve|text)$/.test(t.kind) ? 0.15 : 0, po = /^(line|curve|text)$/.test(o.kind) ? 0.15 : 0;
+      if (!pt && !po) return hits(bt, bo);
+      return Math.min(bt[2] + pt, bo[2] + po) - Math.max(bt[0] - pt, bo[0] - po) > 0 && Math.min(bt[3] + pt, bo[3] + po) - Math.max(bt[1] - pt, bo[1] - po) > 0;
+    }
+    // ran(lines) -> a run of eight or more lines whose numbers step, off the grid or not: AI_DRAW's to report as a run
+    // away (the same line written again and again is not one: it is what is left out here)
+    function ran(ls) {
+      try { var r = L.aiAct && L.aiAct.runaway ? L.aiAct.runaway({ lines: ls, closed: true }, function () { return true; }) : null; return !!r && r.first !== r.last; } catch (e) { return false; }
+    }
     function key(it) { return String(it.line).replace(/\s+/g, " ").replace(/^\s+|\s+$/g, ""); }
     items.forEach(function (it) { var k = key(it); count[k] = (count[k] || 0) + 1; });
     var thrice = Object.keys(count).filter(function (k) { return count[k] >= 3; });
-    if (thrice.length && !(opts && opts.cut)) {
+    if (thrice.length && !(opts && opts.cut) && !ran(items.map(function (it) { return it.line; }))) {
       var drop = [], dropped = 0, names = [];
       thrice.forEach(function (k) {
         var at = [], n;
         items.forEach(function (it, x) { if (key(it) === k) at.push(x); });
-        var lastAt = at[at.length - 1], gone = 0;
-        at.slice(0, -1).forEach(function (x) {
+        var lastAt = at[at.length - 1], earlier = at.slice(0, -1);
+        if (!earlier.every(function (x) {
           var o = items[x].o;
-          if (!o || items.slice(x + 1, lastAt).some(function (jt) { return key(jt) !== k && (!jt.o || hits(box(jt.o), box(o))); })) return;
-          drop.push(x); gone++;
-        });
-        if (gone) { dropped += gone; names.push(k); count[k] -= gone; }
+          return !!o && !items.slice(x + 1, lastAt).some(function (jt) { return key(jt) !== k && (!jt.o || across(jt.o, o)); });
+        })) return;
+        earlier.forEach(function (x) { drop.push(x); });
+        dropped += earlier.length; names.push(k); count[k] -= earlier.length;
       });
+      // (and not when what is left would be a run: the review's stepping squares, a sun written between each, left a
+      // run of squares half off the grid, and AI_DRAW then left out all of them)
+      if (dropped && ran(items.filter(function (it, x) { return drop.indexOf(x) < 0; }).map(function (it) { return it.line; }))) {
+        thrice.forEach(function (k) { items.forEach(function (it, x) { if (key(it) === k && drop.indexOf(x) >= 0) count[k]++; }); });
+        drop = []; dropped = 0;
+      }
       if (dropped) {
         items = items.filter(function (it, x) { return drop.indexOf(x) < 0; });
         said.push("left out " + dropped + " earlier cop" + (dropped === 1 ? "y" : "ies") + " of " +
@@ -48056,7 +48078,11 @@ Lantern.RFB = (function () {
     act.build = function (block, ctx) {
       var m = null, b2 = {}, k, ra = null;
       try { ra = L.aiAct && L.aiAct.runaway ? L.aiAct.runaway(block, null) : null; } catch (e0) { ra = null; }
-      try { m = ra ? null : mend(block.lines, ctx && ctx.question, { cut: !block.closed }); } catch (e) { m = null; }
+      // (a block AI_DRAW reports as run away -- nine copies of a sun off the grid -- is its to report: no copies are
+      // left out of it here, so that the report stands; the review of 1.24.10)
+      var away0 = false;
+      try { var b0r = ra ? null : build0.call(act, block, ctx); away0 = !!b0r && (b0r.problems || []).some(function (p) { return /^the reply ran away/.test(p); }); } catch (e1) { away0 = false; }
+      try { m = ra ? null : mend(block.lines, ctx && ctx.question, { cut: !block.closed || away0 }); } catch (e) { m = null; }
       if (!m || (!m.said.length && !m.problems.length)) return build0.call(act, block, ctx);
       for (k in block) b2[k] = block[k];
       b2.lines = m.lines;
