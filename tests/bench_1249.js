@@ -75,6 +75,21 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     ["L42", "L43"].every(function (n) { return !rs.filter(function (r) { return r.d.name.split(" ")[0] === n; })[0].asked; }));
   var other = rs.filter(function (r) { return JSON.stringify((r.b.problems || []).filter(function (p) { return !/all water/.test(p); })) !== JSON.stringify((r.d.now.problems || []).filter(function (p) { return !/all water/.test(p); })); });
   ok("...and every other question is as the review found it", other.length === 0, other.map(function (r) { return r.d.name; }));
+  // --- the second review (217 pictures, tests/fixtures/review2_1250_shore.json): a tri whose corners are one point
+  // ("tri 1 1 1 1 1 1", which the 2B wrote 35 times on 1.24.7) drew nothing and covered everything before it; a strip
+  // between two rows of points was not seen; the line to write, with the horizon at 11.4, was a strip of no height
+  var R2 = fixture("review2_1250_shore.json"), r2 = R2.map(function (d) { var b = act.build(d.text, d.q); return { d: d, b: b, asked: (b.problems || []).some(function (p) { return /all water/.test(p); }) }; });
+  function r2n(n) { return r2.filter(function (r) { return r.d.name.split(" ")[0] === n; })[0]; }
+  ok("the second review\u2019s 217 pictures, each built", R2.length === 217 && r2.every(function (r) { return !!r.b; }));
+  ok("a tri of one point covers nothing and is no land: a beach with one after it is left (G01, G05, G07); a sea with only such tris is asked about (G02, G03, F04)",
+    ["G01", "G05", "G07"].every(function (n) { return !r2n(n).asked; }) && ["G02", "G03", "F04"].every(function (n) { return r2n(n).asked; }));
+  var b31 = r2n("B31"), line31 = (b31.b.problems.filter(function (p) { return /all water/.test(p); })[0] || "").replace(/^.*add (rect [^a-z]*fill sand).*$/, "$1");
+  var fixed31 = act.build(b31.d.text.replace("\nEND", "\n" + line31 + "\nEND"), b31.d.q);
+  ok("...with the horizon at 11.4 the line to write is a strip half a cell tall, and written, it answers the question (B31)",
+    line31 === "rect 0 11.5 20 0.5 fill sand" && !(fixed31.problems || []).some(function (p) { return /all water/.test(p); }), [line31, fixed31.problems]);
+  var unasked2 = r2.filter(function (r) { return !r.asked && was(r, "old"); });
+  ok("nothing 1.24.9 asked about is left unasked but a boat of 1.8 cells, seen as two (E07, a hair from the line; at x 8.2 it is asked)",
+    unasked2.length === 1 && /^E07 /.test(unasked2[0].d.name) && r2n("E08").asked, unasked2.map(function (r) { return r.d.name; }));
   console.log(fails ? fails + " BENCH 1.24.9 FAILURES (" + passes + " passed)" : "ALL BENCH 1.24.9 CHECKS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);
 })();
