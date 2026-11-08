@@ -111,8 +111,23 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     /^\u201cE\/2\u201d \(bar 1\), \u201cA4\/8\u201d \(bar 2\) are not notes: .*its length is its share of the bar/.test(bad.problems[0]) &&
     /^\u201cHm7\u201d \(bar 2\) is not a chord Lantern knows: write a letter and its kind/.test(bad.problems[1]), bad.problems);
   var clash = act.build(song(["key E minor", "chords Em | B7 | Em", "melody B - - - | C - - - | E - - -"]), "Write a tune in E minor");
-  ok("a long note a half step from its chord: drawn, questioned, with the chords of the key that fit it", clash.plan && !clash.ok &&
+  // (1.24.10: over the key's own dominant the chord is not changed -- C over B7 in E minor is its flat ninth, and a
+  // dominant carries a cadence; it is asked about, as before. Over another chord in the middle, Lantern plays the chord
+  // that holds the note: D# over Am, where B holds it. B over Am is Am's ninth, a colour: asked about, not changed --
+  // the second music review)
+  var clashM = act.build(song(["key E minor", "chords Em | Am | Em", "melody G - - - | D# - - - | E - - -"]), "Write a tune in E minor");
+  var clash9 = act.build(song(["key E minor", "chords Em | Am | Em", "melody G - - - | B - - - | E - - -"]), "Write a tune in E minor");
+  // (1.24.9) In a bar of one chord, Lantern plays the chord that fits and says so (the 35B, told the chord to write, wrote
+  // the same chord again on 1.24.0 and 1.24.6); in a bar of two chords it cannot tell which to change, and asks.
+  var clash2 = act.build(song(["key E minor", "chords Em | B7 Em | Em", "melody B - - - | C - - - | E - - -"]), "Write a tune in E minor");
+  ok("a long note a half step from its chord, in a bar of one chord: Lantern plays the chord of the key that holds it, and says so", clashM.plan && clashM.ok && !clashM.problems.length &&
+    clashM.plan.parts[0].chords.join(" | ") === "Em | B | Em" && /bar 2: Lantern played B under the tune\u2019s D#, where the chords line has Am \(A C E\), whose E is a half step from it/.test(clashM.summary), [clashM.problems, clashM.summary]);
+  ok("...B over Am, Am's own ninth, is not changed: asked about, with the chords line to write", clash9.plan && !clash9.ok && clash9.problems.length === 1 && !/Lantern played/.test(clash9.summary) &&
+    /^bar 2: the melody holds B over Am \(A C E\), a half step from a note of the chord: write Em or B there \(B is in them\), that is chords Em \| Em \| Em, or change the note$/.test(clash9.problems[0]), [clash9.problems, clash9.summary]);
+  ok("...over the key's dominant (C over B7 in E minor) it is asked about, with the chords that fit", clash.plan && !clash.ok && clash.problems.length === 1 &&
     /^bar 2: the melody holds C over B7 \(B D# F# A\), a half step from a note of the chord: write Am or C there \(C is in them\), that is chords Em \| Am \| Em, or change the note$/.test(clash.problems[0]), clash.problems);
+  ok("...in a bar of two chords: questioned, with the chords of the key that fit it", clash2.plan && !clash2.ok &&
+    /^bar 2: the melody holds C over B7 \(B D# F# A\), a half step from a note of the chord: write Am or C there \(C is in them\), or change the note$/.test(clash2.problems[0]), clash2.problems);
   var far = S.make({ title: "x", lines: ["key C", "melody C D E F | G A B C2"] });
   var lead = S.make({ title: "x", lines: ["melody A B | E2"] });
   ok("a note with its octave written stays where it says, and does not pull the notes before it", names(lead.plan) === "A4 B4 E2" && /\u201cE2\u201d is far below/.test(lead.problems[0]), [names(lead.plan), lead.problems]);
@@ -209,8 +224,11 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     /^the rhythm is off at note 13/.test(oq.check(S.make({ title: "Ode", lines: ["key C", "chords C | G | Am | F", "melody E E F G | G F E D | C C D E | E D D -"] }).plan)) &&
     grade("make-music-ode", song(["key C", "chords C | G | Am | F G", "melody E E F G | G F E D | C C D E | E - - D D - - -"])).pass);
   var o1 = act.build(row("make-music-original").first, orig.q), o2 = act.build(row("make-music-original").reply, orig.q);
-  ok("the 35B's tune of its own: first the short tune and the long F# over G together, then the short tune still", o1.problems.length === 2 && TAIL.test(o1.problems[0]) && /end it on G, B or D, the notes of its chord G\)/.test(o1.problems[0]) &&
-    /^bar 4: the melody ends on F# over G \(G B D\), a half step from a note of the chord: end the tune on a note of G -- write bar 4 of the melody as [^\n]*G[^\n]* -- or write D or Bm as its chord$/.test(o1.problems[1]) && o2.problems.length === 1 && TAIL.test(o2.problems[0]) && !grade("make-music-original", row("make-music-original").reply).pass, [o1.problems, o2.problems]);
+  // (1.24.10: F# over G is G's own major seventh, a colour in one song and a clash in another -- not changed, asked about)
+  ok("the 35B's tune of its own: the short tune goes back (bars 5 to 8, and how bar 8 must end); its long F# over G in bar 4 is G's major seventh, which Lantern does not change: it is asked about, with the chords that fit; the short tune again is still short",
+    o1.problems.length === 2 && TAIL.test(o1.problems[0]) && /end it on G, B or D, the notes of its chord G\)/.test(o1.problems[0]) &&
+    /^bar 4: the melody ends on F# over G \(G B D\), a half step from a note of the chord: end the tune on a note of G -- write bar 4 of the melody as [^\n]*G[^\n]* -- or write D or Bm as its chord$/.test(o1.problems[1]) && !/Lantern played|Lantern ended/.test(o1.summary) &&
+    o2.problems.length === 1 && TAIL.test(o2.problems[0]) && !grade("make-music-original", row("make-music-original").reply).pass, [o1.problems, o1.summary, o2.problems]);
   ok("...the bench needs the tune itself to fill the 8 bars", /^the tune is 4 bars; the chords go on alone to bar 8$/.test(L.aiBench.grade(orig, "x", { made: { ok: true, action: { kind: "MUSIC" }, plan: S.make({ title: "x",
     lines: ["key G", "chords G | C | D | G | G | C | D | G", "melody G A B G | C - E D | D C B A | G - - - | r | r | r | r"] }).plan } }).why));
 
@@ -621,10 +639,11 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     /\nmelody F G A C \| D - C B \| A G F G \| F - - r\nEND\nThe question asks for 8 bars \(the example has 4\): write 8 bars between \| in the chords line and 8 in the melody line, and end the tune on a note of its last chord\./.test(g36) &&
     !/The question asks for/.test(g36b) && !/The question asks for/.test(act.prompt("Write a 4-bar tune in C major.")) && /The question asks for 16 bars/.test(act.prompt("Write a sixteen-bar melody in D minor with chords.")), g36.slice(-330));
   var m36a = act.build(R36.first, R36.q), m36b = act.build(R36.reply, R36.q), m36c = act.build(R36.reply.replace("| C - - r\nEND", "| B - - r\nEND"), R36.q);
-  ok("...and where the melody stops four bars short, what goes back says how the last bar must end (G, B or D, the notes of its chord G); the 35B\u2019s own ending is still questioned, with the bar to write, and that bar passes",
+  ok("...and where the melody stops four bars short, what goes back says how the last bar must end (G, B or D, the notes of its chord G); the 35B\u2019s own ending, C over G, is mended by Lantern (1.24.10): it ends on D, the nearest note of G that keeps the tune in its octave (B there is under the flute's lowest note), and says so -- the song is made and passes",
     m36a.problems.length === 1 && /write the melody for bars 5 to 8 too \(bar 8 ends the tune: end it on G, B or D, the notes of its chord G\), or end the chords at bar 4$/.test(m36a.problems[0]) &&
-    m36b.problems.length === 1 && /write bar 8 of the melody as B - - r/.test(m36b.problems[0]) && m36c.ok && grade("make-music-original", R36.reply.replace("| C - - r\nEND", "| B - - r\nEND")).pass,
-    [m36a.problems, m36b.problems, m36c.problems]);
+    m36b.ok && !m36b.problems.length && /bar 8: the tune ended on C over G \(G B D\), a half step from its B: Lantern ended it on D, a note of the chord \(B there would have moved the whole tune to another octave\)/.test(m36b.summary) &&
+    m36b.plan.parts[0].melody[7] === "D - - r" && !/Lantern moved the melody/.test(m36b.summary) && grade("make-music-original", R36.reply).pass && m36c.ok && grade("make-music-original", R36.reply.replace("| C - - r\nEND", "| B - - r\nEND")).pass,
+    [m36a.problems, m36b.problems, m36b.summary, m36c.problems]);
   var takenWas = L.chatPics && L.chatPics.taken, QU = "make this sheet music into a playable song please";
   if (L.chatPics) L.chatPics.taken = function (q) { return q === QU || q === "write a song about this picture" ? [new w.File([new Uint8Array([1, 2, 3])], "page.png", { type: "image/png" })] : []; };
   var unr = await SC.read(QU), sAbout = (L.chatAbout || []).filter(function (x) { return x.id === "sheet music"; })[0], given = sAbout ? await sAbout.provide(QU) : null;
@@ -758,14 +777,26 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   var R24 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "bench_run_1240_35b.json"), "utf8"));
   function row24(id) { return R24.rows.filter(function (r) { return r.id === id; })[0]; }
   var wrow = row24("make-music-waltz"), wz = act.build(wrow.first, wrow.q), wfx = act.fixText(wz, wrow.q);
-  ok("the waltz's last note, G over the home chord: the bar to write, and the chords that would fit", wz.plan && !wz.ok && wz.problems.length === 1 && wrow.first === wrow.reply &&
-    wz.problems[0] === "bar 8: the melody ends on G over D (D F# A), a half step from a note of the chord: end the tune on a note of D -- write bar 8 of the melody as F# - - r -- or write G or Em as its chord", wz.problems);
-  ok("...what goes back is that sentence and the chords and melody lines, not the whole guide", wfx.split("\n").length <= 9 && /write bar 8 of the melody as F# - - r/.test(wfx) &&
-    /\nchords Em \| Am \| B7 \| Em/.test(wfx) && !/instruments \(\d+\)|\nkey E minor|arrange orchestra|keyboards:/.test(wfx), wfx);
+  // (1.24.9) Told "write bar 8 of the melody as F# - - r", the 35B sent the same block back (wrow.first === wrow.reply).
+  // The tune's last note over its home chord is what Lantern can compute: the nearest note of the chord, said.
+  ok("the waltz's last note, G over the home chord: Lantern ends the tune on F#, the nearest note of D, and says so; the waltz is made as the 35B wrote it, and passes the bench",
+    wz.plan && wz.ok && !wz.problems.length && wrow.first === wrow.reply && wz.plan.parts[0].melody[7] === "F# - - r" &&
+    /bar 8: the tune ended on G over D \(D F# A\), a half step from its F#: Lantern ended it on F#, a note of the chord/.test(wz.summary) && grade("make-music-waltz", wrow.first).pass, [wz.problems, wz.summary]);
+  var wfx2 = act.fixText(clash2, "Write a tune in E minor");
+  ok("...what still goes back (a bar of two chords) is the sentence and the chords and melody lines, not the whole guide", wfx2.split("\n").length <= 11 && /write Am or C there \(C is in them\), or change the note/.test(wfx2) &&
+    /\nchords Em \| Am \| B7 \| Em/.test(wfx2) && !/instruments \(\d+\)|\nkey E minor|arrange orchestra|keyboards:/.test(wfx2), wfx2);
   var wfixed = wrow.first.replace("| G - - r", "| F# - - r");
-  ok("...with the bar as written there, the waltz is made and passes the bench", wfixed !== wrow.first && act.build(wfixed, wrow.q).ok && grade("make-music-waltz", wfixed).pass, grade("make-music-waltz", wfixed).why);
-  ok("...over another chord it is the chord that changes: the chords line with the one that fits", /write Am or C there \(C is in them\), that is chords Em \| Am \| Em, or change the note$/.test(
-    S.make({ title: "x", lines: ["key E minor", "chords Em | B7 | Em", "melody B - - - | C - - - | E - - -"] }).problems[0]));
+  ok("...with the bar written F# by the model, the waltz is made as written and passes the bench", wfixed !== wrow.first && act.build(wfixed, wrow.q).ok && !/Lantern ended it/.test(act.build(wfixed, wrow.q).summary) && grade("make-music-waltz", wfixed).pass, grade("make-music-waltz", wfixed).why);
+  // (1.24.10: not over the key's dominant, B7 in E minor -- that is asked about; over the iv chord in the middle)
+  var mid = S.make({ title: "x", lines: ["key E minor", "chords Em | Am | Em", "melody G - - - | D# - - - | E - - -"] });
+  ok("...over another chord in the middle of the tune it is the chord that changes: Lantern plays B there (the dominant before the home chord)", !mid.problems.length && mid.plan.parts[0].chords.join(" | ") === "Em | B | Em", [mid.problems, mid.said]);
+  // (1.24.9) Adam's run of the 35B on 1.24.6 with the library: the waltz again, A over E in bar 7, told "write D or A there" and sent back the same E
+  var W8 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "bench_run_1246_35b_library.json"), "utf8")).rows.filter(function (r) { return r.id === "make-music-waltz"; })[0], w8 = act.build(W8.reply, W8.q);
+  // (1.24.10: A, the dominant before the home chord, holds bar 7's A and F# and keeps the cadence -- the music review
+  // of 1.24.9: D made the last four bars D)
+  ok("the waltz of 2026-11-08 (A - F# over E in bar 7, not mended on the second try): Lantern plays A in bar 7, says so, and the waltz passes", w8.ok && !w8.problems.length &&
+    w8.plan.parts[0].chords.join(" | ") === "D | A | Bm | G | D | D | A | D" && /bar 7: Lantern played A under the tune\u2019s A, where the chords line has E \(E G# B\), whose G# is a half step from it/.test(w8.summary) &&
+    /Lantern still questions it: bar 7: the melody holds A over E/.test(W8.why) && grade("make-music-waltz", W8.reply).pass, [w8.problems, w8.summary]);
   var orow = row24("make-music-orchestra"), om = S.make(act.find(orow.first)[0]);
   ok("a | at the end of each 4-bar phrase, over 8 bars of chords: read as 8 bars, and said", om.plan && om.plan.bars === 8 && om.plan.melodyBars === 8 && !om.problems.length &&
     /each \| of the melody ends a phrase of 4 bars \(4 notes to a bar\): Lantern read the 2 as 8 bars, one for each bar of the chords/.test(om.said.join(". ")) &&
