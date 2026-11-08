@@ -53,7 +53,7 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      called "strings".
 2. **Read Adam's run of 1.24.9 with the library** (he said on 2026-11-08
    that he would run it on his laptop and send what he sees and the json).
-   1.24.9 holds his two answers of that day:
+   1.24.9 holds the first of his two answers of that day:
    - **the part of an article that answers** ("comments out"): a repair
      guide's steps without its readers' comments, a travel guide's own
      section for getting around, eating, sleeping, crime, sights, the
@@ -62,13 +62,28 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      battery, getting around Nairobi, what oral rehydration solution is
      made of. Five reviews (`tests/library_review_1248.js`); not yet on the
      real files, which are on his stick: his run is the test;
-   - **a held note a half step from its chord, mended** ("mend it"): the
-     chord of the key that holds it, in a bar of one chord; the nearest
-     note of the home chord at the song's end; said under the song. The
-     35B's waltz and tune of its own should now be made as it wrote them.
-     How they sound is his to say.
    Save his failed rows as `tests/fixtures/bench_run_1249_35b_library.json`
-   with a test that replays them.
+   with a test that replays them. His music rows will be as on 1.24.6: the
+   mend is not in yet (next item).
+3. **The held-note mend, narrowed and tried again** (Adam: "mend it",
+   2026-11-08). On `wip-2026-11-08-music`: in a bar of one chord Lantern
+   plays the chord that holds a held note a half step from the chord
+   written; the tune's last note over its home chord becomes the nearest
+   note of the chord. Its first review (107 songs,
+   `tests/fixtures/review1_1249_music.json`): of 71 mends 38 right; about
+   30 right songs changed or made worse, because each long note is judged
+   alone -- a suspension or appoggiatura that resolves by step inside its
+   bar, a cadence's leading note (G# over E before Am), F-E over E, a
+   blue note, a first chord, a Mixolydian C read through the key
+   signature, a 2/4 march's every quarter. And five bugs where what is said
+   or shown is not what plays: an ending said as F and played F# (the key
+   signature applied to the mended note), said as G with G# still played,
+   a "%" bar, a tie across a bar, a tie into the last bar. Narrow it to
+   what is sure: a note held to the end of its bar (no resolution after
+   it), not the bar's only clash with a resolution, not on the first or a
+   cadence's chord, the mended note spelled with its accidental; prefer a
+   chord that also keeps the cadence (the 35B's waltz: A, not D, gives V-I).
+   Then a second reviewer, with the first review's songs as the guard.
    The filled recipes (a recipe given to a small model with the question's
    numbers in it) are on `wip-2026-11-06-recipe-fill`, out of 1.24.7: two
    reviews found them wrong too often, and a list of words to refuse is
@@ -118,7 +133,7 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    A question the 4B fails and the 35B passes comes before a new feature.
    Fix what Lantern gave the model or how it read the reply, for every
    question of its kind; put the failed rows in `tests/fixtures`.
-3. **Pictures.** Adam's direction (2026-11-06): get the fundamentals of a
+4. **Pictures.** Adam's direction (2026-11-06): get the fundamentals of a
    scene right first -- what stands on what, what is behind what, how
    things narrow with distance -- and then let the AI draw many small
    pieces that Lantern puts together into a bigger, more detailed picture.
@@ -162,7 +177,7 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    - small things found: a circle written with four numbers (the 2B,
      once). (AI_MAKE_LAYOUT read an oval as a centre and two radii: mended
      in 1.24.8.)
-4. **Confirm each new version on the 35B, twice**, when a chat is linked to
+5. **Confirm each new version on the 35B, twice**, when a chat is linked to
    Adam's laptop (`CLAUDE.md`, "The bench on Adam's laptop"). A version that
    has not had a full run says so in its report. 1.24.6: one full run (111
    of 112) on the build before its last change, the four music questions on
@@ -170,13 +185,13 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    at 73 of 118 with nothing scored failing (Adam said to stop); then a full
    run with the library by Adam himself (134 of 138, 2026-11-08). 1.24.7
    and 1.24.8: none yet (the stick holds 1.24.6).
-5. **Finish the five Food lessons on `wip-2026-11-06`.** They are drafted
+6. **Finish the five Food lessons on `wip-2026-11-06`.** They are drafted
    and were checked from memory only; the checker's memory differs from the
    drafts where it matters (kidney beans, cassava, the hay box). They need
    the pages of WHO, FAO, the US FDA and USDA's food safety service opened
    -- which needs Adam at the app to approve them, or a session that may
    fetch them. The branch's `agent/wip/README.md` says what to do.
-6. **Tile audits**, one tile a session, in the order of the table below. For
+7. **Tile audits**, one tile a session, in the order of the table below. For
    each tile:
    - open it in a real browser and use everything in it; fix what is broken,
      each fix with a test;
@@ -198,45 +213,43 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    - check what the AI can reach of it (LESSON:, LOOKUP:, formula functions,
      MAKE tools) and add the hook when it cannot;
    - write the tile's row below, and the gaps left, in the report.
-7. **Lessons Lantern does not have, which people will ask for** (found by
+8. **Lessons Lantern does not have, which people will ask for** (found by
    asking, 1.24.5): making soap, keeping bees, pruning, sharpening a knife,
    a rocket stove, wiring a lamp to a battery, a solar charger; and the
    five held Food lessons. Each belongs to a tile's audit (Repair, Farming,
    Animals, Engineering).
-8. **The offline library in the runs.** On the laptop it works, but the
+9. **The offline library in the runs.** On the laptop it works, but the
    Claude app's browser pane does not let Lantern's page reach it, so runs
    made there leave out the encyclopedia questions. A run in Adam's own
    browser includes them: he made one on 1.24.6 (Firefox, 2026-11-08: 21 of
    the 24 library questions; the three misses are item 2). The GitHub runs have no
    library either: the Simple English one, 2.5 GB, would fit: worth adding
    to the workflow for one model.
-9. **The kit's 8,192 tokens.** Lantern now shortens a request that is too
+10. **The kit's 8,192 tokens.** Lantern now shortens a request that is too
    long and sends it again (AI_FIT). Better not to get there: measure what
    Chat sends in a long puzzle conversation, and what 16,384 tokens cost in
    memory for the 0.8B, the 2B and the 4B. Whether to raise it is Adam's.
-10. **Pictures for the Health lessons.** The recovery position, where the
+11. **Pictures for the Health lessons.** The recovery position, where the
    hands go for chest pushes, the tippy tap, the pit latrine, the arm
    measurement: a drawing each would carry more than the words. Lantern can
    draw (Draw's shapes, SVG). Whether a drawing is clear is Adam's to judge:
    make them, show him, keep what he passes.
-11. **Words that differ by an ending** ("charger" and "charge", "purify" and
+12. **Words that differ by an ending** ("charger" and "charge", "purify" and
    "purification") do not match in Lantern's search. `LESSON_WORDS` covers
    the cases found; the stemmer itself could do more, with care (it is used
    everywhere).
-12. **Songbook.** Nine tunes so far, all starting on the first beat. Tunes
+13. **Songbook.** Nine tunes so far, all starting on the first beat. Tunes
     that start with a pickup (Amazing Grace, Auld Lang Syne, Brahms' Lullaby,
     Greensleeves, Happy Birthday's 1893 tune) need a pickup bar checked
     through the score, the parts and the arrangement first.
-13. **A second try that changes nothing.** In the run on 1.24.0 three songs
+14. **A second try that changes nothing.** In the run on 1.24.0 three songs
     came back unchanged or worse after Lantern's send-back. 1.24.2 writes the
     line to use. If a model still sends the same block, decide with Adam
     whether Lantern should apply the fix it named and say so. It did again:
     the 35B's waltz on 1.24.6 (2026-11-08) and its tune of its own on 1.24.6
-    (2026-11-06). Adam said "mend it" (2026-11-08): in 1.24.9 Lantern plays
-    the chord that holds a held note in a bar of one chord, or ends the tune
-    on the nearest note of its home chord, and says so. A bar of two chords
-    still goes back.
-14. **The 1.16.0 audit's feature list** (`Lantern_1.16.0_app_audit.pdf`, sent
+    (2026-11-06). Adam said "mend it" (2026-11-08); the mend is item 3, held
+    back from 1.24.9 after its first review.
+15. **The 1.16.0 audit's feature list** (`Lantern_1.16.0_app_audit.pdf`, sent
     to Adam on 2026-10-29) was never answered. With the aim above, take the
     features that serve it without asking again; leave the rest.
 

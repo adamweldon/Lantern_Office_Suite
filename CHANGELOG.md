@@ -1,13 +1,19 @@
 # Changelog
 
-## 1.24.9 — Adam's two answers: the part of an article that answers, and a held note mended (2026-11-08)
+## 1.24.9 — The part of the article that answers (2026-11-08)
 
 Adam answered two questions on 2026-11-08: a repair guide's readers'
-comments stay out of what the library gives, and a held note a half step
-from its chord is mended by Lantern. Both changes were waiting for him.
-
-### The part of the article that answers
-
+comments stay out of what the library gives ("comments out"), and a held
+note a half step from its chord is to be mended by Lantern ("mend it").
+The library change is here. The mend is not yet: an agent that had not
+seen it written tried it on 107 songs of its own, and of its 71 mends 38
+were right; about 30 right songs were changed or made worse (a suspension
+that resolves inside its bar, a cadence's leading note, a blue note, a
+Mixolydian C read through the key signature, each judged alone), and in
+five songs what was said or shown was not what played (an ending said as
+F and played F#). It waits on `wip-2026-11-08-music` with the review's
+songs (`tests/fixtures/review1_1249_music.json`), to be narrowed and tried
+again.
 
 **What was seen.** Adam ran the 35B on 1.24.6 with the encyclopedia, in
 Firefox on his laptop from the `D:` stick (2026-11-08 UTC, 95 minutes):
@@ -125,7 +131,7 @@ come back), and 5 at the length Lantern does not pick for the question.
 
 **What was tested.**
 
-- `npm test`: all SUITES suites pass. New: `tests/library_sections.js`
+- `npm test`: all 71 suites pass. New: `tests/library_sections.js`
   (13 checks) with stand-in pages in `tests/fixtures/kiwix/sections_1248.json`,
   written in Lantern's own words and laid out as the offline files are: an
   iFixit guide as the scraper writes one, a Wikivoyage town long enough
@@ -155,43 +161,6 @@ come back), and 5 at the length Lantern does not pick for the question.
   of a passage changed.
 - No model has run 1.24.9.
 
-### A held note a half step from its chord, mended
-
-**What was seen.** Told the chord to write, the 35B sent the same song
-back: its waltz on 1.24.0 (G held over D at the end), the same waltz in
-Adam's run on 1.24.6 with the library (A held over E in bar 7: "write D or
-A there"), and its tune of its own on 1.24.6 (C over G at the end, and F#
-over G in bar 4). Each failed with "Lantern still questions it". Adam's
-answer, 2026-11-08: "mend it".
-
-**What it was traced to.** Rule 3: what goes back is a choice ("write D
-or A there, or change the note"), and a model given a choice for a song
-it thinks is right sends the song again. Where only one answer can be
-computed, Lantern can give it.
-
-**What changed** (MUSIC_SONG).
-
-- In a bar of one chord from the chords line, a long note a half step from
-  a note of that chord: Lantern plays the chord of the key that holds the
-  note and most of the bar's tune (chosen as it chooses a chord where none
-  is written), and says so under the song: "bar 7: Lantern played D under
-  the tune's A, where the chords line has E (E G# B), whose G# is a half
-  step from it".
-- The tune's last note, held over its home chord in the song's last bar,
-  a half step from it: Lantern ends the tune on the nearest note of the
-  chord, and says so: "bar 8: the tune ended on G over D (D F# A), a half
-  step from its F#: Lantern ended it on F#, a note of the chord". A tune
-  that stops before the chords do has not ended there.
-- In a bar of two chords Lantern cannot tell which to change: the song
-  goes back as before, with the chords that fit.
-
-**What was tested.** `tests/music.js` (201): the three 35B songs as it
-wrote them, each made and passing; a bar of two chords still sent back,
-with the sentence and the two lines, not the whole guide; the waltz with
-bar 8 written right by the model, left as written. REVIEW_MUSIC
-
-**What was not.** No model has run it; how the mended songs sound is
-Adam's to hear.
 
 ## 1.24.8 — What the small models did with 1.24.7 (2026-11-08)
 
