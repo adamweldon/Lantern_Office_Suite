@@ -58,8 +58,8 @@ the model's memory, stays the model's own quotes.
 `tests/library_quote_1251.js` replays the 339 answers: each verified or not
 as on 1.24.10, no QUOTE line added.
 
-**What was tested.** `npm test` (SUITES suites) and the browser tests
-(BROWSER). Not tested: any model on 1.24.11 (the small models' run starts
+**What was tested.** `npm test` (79 suites) and the browser tests,
+11, on the build that was pushed (GMS needs Adam's own file). Not tested: any model on 1.24.11 (the small models' run starts
 with the push).
 
 **Not changed.** The iPhone's and Nairobi's citations go back as on 1.24.9;
