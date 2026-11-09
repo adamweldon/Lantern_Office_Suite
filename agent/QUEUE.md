@@ -69,9 +69,18 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    `tests/bench_1249_35b.js`): 134 of 140, the same seven questions as
    1.24.8; the three library questions now answered from the library and
    failing on what they cite: 1.24.11 reads the medicine shelf for
-   rehydration and supplies the QUOTE a cited passage lacks where Lantern is
-   sure (`tests/library_quote_1251.js`, under review). Nairobi's "Bolt and
-   Uber are available [3]" is not found (passage 3 has "Bolt." and "Uber.").
+   rehydration. A rule that wrote the missing QUOTE for the model, finding
+   the cited sentence by its words, was tried by a reviewer and taken out:
+   it verified 101 of 181 wrong answers (a dose swapped, "do not leave"
+   quoted for "leave", over for under; `tests/library_quote_1251.js`,
+   `tests/fixtures/review1_1251_quote.json`). The iPhone's and Nairobi's
+   citations go back as before. What could help instead, each for a
+   reviewer: hand the model the sentence to quote (rule 3), as "no quote
+   says ..." already does, so that the model, not Lantern, says it is the
+   one; and **verify()'s own holes** the review found: one good quote per
+   cited passage is enough, and a majority of the answer's words, so a part
+   no quote says rides on the others (a 12 in 24 hours that no quote has
+   passes on 1.24.10 too).
 3. **Music, after the held-note mend** (four reviews, 910 songs,
    `tests/music_review_1249.js`, `tests/music_review_1250.js`). Left as on
    1.24.8, found by the reviews:

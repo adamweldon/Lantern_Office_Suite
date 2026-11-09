@@ -1,8 +1,13 @@
-// library_quote_1251.js -- the QUOTE a cited passage lacks, found by Lantern (LIBRARY_CHECKS supply(), 1.24.11).
+// library_quote_1251.js -- why Lantern does not write a QUOTE for the model (1.24.11).
 // Adam's run of the 35B on 1.24.9 (tests/fixtures/bench_run_1249_35b_library.json): the iPhone 8's battery answered
-// rightly from iFixit, "discharge the iPhone below 25% [3]" with no QUOTE [3] line, and its steps cited [2] with one
-// QUOTE [2] that said none of them -- sent back, and the same again. Each part of the ANSWER that cites one passage is
-// looked for in that passage; the sentence that says it, where Lantern is sure, is quoted, and said.
+// rightly from iFixit, "discharge the iPhone below 25% [3]" with no QUOTE [3] line, and sent back. A rule was drafted
+// that looked for the sentence in the cited passage itself -- the part's numbers, three of its words in four, the same
+// "not" -- and quoted it. An agent that had not seen it written tried it on 339 answers of its own
+// (tests/fixtures/review1_1251_quote.json): of 181 wrong or partly wrong answers, 1.24.10 verified 1 and the rule 101 --
+// a dose swapped, 165 C for F, "do not leave the building" quoted for "leave", "over" for "under", a step the passage
+// never had carried by the quotes of the others -- and told the person Lantern had found the sentence. Words in common
+// do not say what a sentence means. The rule was taken out: the check that an answer is the library's, not the
+// model's memory, stays the model's quotes. These answers are replayed so that no such rule comes back unseen.
 "use strict";
 var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
 var fs = require("fs"), path = require("path");
@@ -35,31 +40,23 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 (async function () {
   var o = load(), L = o.L;
   await sleep(60);
-  var F = fixture("bench_run_1249_35b_library.json");
-  function row(id) { return F.rows.filter(function (r) { return r.id === id; })[0]; }
-  function srcs(r) { return r.library.passages.map(function (t, i) { return { n: i + 1, title: r.library.sources[i], text: t }; }); }
-  ok("boot clean", o.errs.length === 0, o.errs);
-  var ip = row("shelf-iphone-battery"), ips = srcs(ip), rn = L.libraryRenumber(ip.reply, ips), v0 = L.libraryVerify(ip.reply, ips, ip.q), v = L.libraryVerify(rn.text, ips, ip.q);
-  ok("the 35B\u2019s iPhone battery: sent back on 1.24.9 (no QUOTE [3]); Lantern quotes passage 3\u2019s \u201cdischarge your iPhone battery below 25%\u201d and the steps of passage 2 it cites, and the answer is verified",
-    !v0.ok && /there is no QUOTE \[3\] line/.test(v0.problems[0]) && v.ok && rn.quoted.length === 5 &&
-    rn.quoted[0].n === 3 && rn.quoted[0].text === "Before you begin, discharge your iPhone battery below 25%." &&
-    rn.quoted.slice(1).every(function (q) { return q.n === 2; }) && /Slowly pull one battery adhesive tab away/.test(rn.quoted[1].text), [rn.quoted, v.problems]);
-  var nb = row("shelf-nairobi-transport"), nbs = srcs(nb), rn2 = L.libraryRenumber(nb.reply, nbs), v2 = L.libraryVerify(rn2.text, nbs, nb.q);
-  ok("Nairobi: the two sentences it says as passages 1 and 2 have them are quoted; \u201cBolt and Uber are available [3]\u201d is not found (passage 3 has \u201cBolt.\u201d and \u201cUber.\u201d), nor the sentence with \u201cnot\u201d in it, and it is asked about as before",
-    rn2.quoted.length === 2 && /^Prices should always be negotiated before the trip/.test(rn2.quoted[0].text) && /^Hiring a car or using a ride-hailing app/.test(rn2.quoted[1].text) &&
-    !v2.ok && v2.problems.join() === "there is no QUOTE [3] line", [rn2.quoted, v2.problems]);
-  var ors = row("shelf-ors"), orss = srcs(ors), rn3 = L.libraryRenumber(ors.reply, orss);
-  ok("an answer whose quotes say what it cites is left as written (oral rehydration solution)", rn3.quoted.length === 0 && rn3.text === ors.reply);
-  // made-up passages: where Lantern is not sure, nothing is quoted
-  var P = [{ n: 1, title: "Kettle", text: "A kettle boils water quickly. Do not fill the kettle above the maximum line. Descale the kettle every month with vinegar. The kettle switches off by itself when the water boils." },
-    { n: 2, title: "Teapot", text: "Warm the teapot with hot water first. Brew black tea for three to five minutes. Green tea is brewed for two minutes." }];
-  function q1(ans) { return L.libraryRenumber("ANSWER: " + ans, P).quoted; }
-  ok("...the sentence is found where it is sure: three words in four, the numbers too (\u201cbrew black tea for three to five minutes [2]\u201d; \u201cdescale the kettle with vinegar every month [1]\u201d)",
-    q1("Brew black tea for three to five minutes [2].").length === 1 && q1("Descale the kettle with vinegar every month [1].")[0].text === "Descale the kettle every month with vinegar.");
-  ok("...and nowhere else: a \u201cnot\u201d the sentence lacks; a number it does not say; a part citing two passages; a part of one word; a passage that says it in another passage\u2019s words; a word only near",
-    q1("Fill the kettle above the maximum line [1].").length === 0 && q1("Brew green tea for four minutes [2].").length === 0 && q1("Brew black tea for three to five minutes [1][2].").length === 0 &&
-    q1("Vinegar [1].").length === 0 && q1("Brew black tea for three to five minutes [1].").length === 0 && q1("The kettle stops on its own at the boil [1].").length === 0,
-    [q1("Fill the kettle above the maximum line [1]."), q1("Brew green tea for four minutes [2]."), q1("The kettle stops on its own at the boil [1].")]);
+  var R = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review1_1251_quote.json"), "utf8"));
+  ok("boot clean; the review\u2019s 339 answers", o.errs.length === 0 && R.length === 339, o.errs);
+  var rows = R.map(function (c) {
+    var rn = L.libraryRenumber(c.reply, c.sources), v = L.libraryVerify(rn.text, c.sources, c.q);
+    return { c: c, rn: rn, ok: !!v.ok };
+  });
+  var added = rows.filter(function (r) { return (r.rn.quoted && r.rn.quoted.length) || (r.rn.text.match(/^\s*QUOTE/gim) || []).length > (String(r.c.reply).match(/^\s*QUOTE/gim) || []).length; });
+  ok("Lantern adds no QUOTE line to a reply", added.length === 0, added.map(function (r) { return r.c.name; }));
+  var wrongOk = rows.filter(function (r) { return r.c.truth !== "right" && r.ok; });
+  ok("no wrong or partly wrong answer is verified but the one 1.24.10 verified too (a quote that has its words and not its 12 in 24 hours: verify\u2019s own hole, in the queue)",
+    wrongOk.length === 1 && wrongOk[0].c.name === "dose-model-quote-covers-12-in-24", wrongOk.map(function (r) { return r.c.name; }));
+  var same = rows.filter(function (r) { return r.ok !== !!r.c.old.ok; });
+  ok("...every answer is verified or not as on 1.24.10", same.length === 0, same.map(function (r) { return r.c.name; }));
+  var F = fixture("bench_run_1249_35b_library.json"), ip = F.rows.filter(function (r) { return r.id === "shelf-iphone-battery"; })[0];
+  var ips = ip.library.passages.map(function (t, i) { return { n: i + 1, title: ip.library.sources[i], text: t }; });
+  ok("...and the 35B\u2019s iPhone battery goes back as on 1.24.9: there is no QUOTE [3] line (written so that a change shows)",
+    !L.libraryVerify(L.libraryRenumber(ip.reply, ips).text, ips, ip.q).ok);
   console.log(fails ? fails + " LIBRARY QUOTE FAILURES (" + passes + " passed)" : "ALL LIBRARY QUOTE CHECKS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);
 })();

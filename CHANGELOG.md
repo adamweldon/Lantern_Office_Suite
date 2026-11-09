@@ -1,5 +1,70 @@
 # Changelog
 
+## 1.24.11 — Adam's run of 1.24.9, the 4B on another processor (2026-11-08)
+
+Adam ran the 35B on 1.24.9 with the library on his laptop (2026-11-08,
+17:48 UTC, 103 minutes): 134 of 140, the same seven questions failed as on
+1.24.8 (`tests/fixtures/bench_run_1249_35b_library.json`, replayed by
+`tests/bench_1249_35b.js`). The small models' run on 1.24.10 (GitHub run
+42509727008, `tests/fixtures/bench_run_1250_*.json`, `tests/bench_1250.js`):
+the 0.8B 59 of 114 and the 2B 73, the same rows as on 1.24.9; the 4B 106
+(110 on 1.24.8 and 1.24.9).
+
+**What was seen.**
+
+- *The library questions are answered from the library.* What oral
+  rehydration solution is made of, how to replace an iPhone 8's battery,
+  how to get around Nairobi: declined on 1.24.6 and 1.24.8 ("Not in my
+  library"), answered rightly from the library on 1.24.9, the part of an
+  article that answers now in front of the model. They fail on what they
+  cite: the solution was read in Wikipedia, not WikiMed; the iPhone and
+  Nairobi cite a passage without a quote from it.
+- *The 4B wrote its 1.24.7 replies again.* On 1.24.10 it ran on an AMD EPYC
+  7763 (on 1.24.8 an EPYC 9V74, on 1.24.9 a Xeon 8573C) and wrote, word for
+  word, the replies of its 1.24.7 run to six questions, failing them again.
+  1.24.10's own changes left the 0.8B and the 2B as they were; the 4B's
+  shore at sunset passed, its first block (the same as on 1.24.8 and
+  1.24.9) asked about the beach with the rest, the line it was given
+  written back.
+- The make rows of Adam's run are 1.24.8's replies word for word: on 1.24.10
+  the waltz passes and the road is asked for with the line to add.
+
+**What it was traced to, and what changed.**
+
+- *"rehydration" was not one of the medicine shelf's words* ("dehydration"
+  was), so a question about oral rehydration solution did not read WikiMed.
+  Now it is, with ORS and electrolytes.
+- *"part strings"* (the 4B's orchestra, on 1.24.7 and 1.24.10) went back as
+  "Lantern has no such instrument": the instrument table has strings, and
+  the rule that takes a plural's s off had made it "string". The name is
+  looked up with its s as well. Its brass and bass parts, a bar or two
+  short, still go back.
+- *A run's replies follow its processor*: written into `CLAUDE.md`, with the
+  six rows the 4B failed twice with the same reply as the queue's first
+  item (`QUEUE.md`).
+
+**Tried and taken out.** A rule that wrote the missing QUOTE for the model:
+each part of the answer citing one passage looked for in it, the sentence
+with the part's numbers, three of its words in four and the same "not"
+quoted, and said. It verified the 35B's iPhone answer. An agent that had not
+seen it written tried it on 339 answers of its own
+(`tests/fixtures/review1_1251_quote.json`): of 181 wrong or partly wrong
+answers, 1.24.10 verified 1 and the rule 101 -- a dose swapped, 165 C for
+165 F, "do not leave the building" quoted for "leave the building", "over"
+for "under", a step no passage has carried by the quotes of the others --
+and told the person Lantern had found the sentence. Words in common do not
+say what a sentence means; the check that an answer is the library's, not
+the model's memory, stays the model's own quotes.
+`tests/library_quote_1251.js` replays the 339 answers: each verified or not
+as on 1.24.10, no QUOTE line added.
+
+**What was tested.** `npm test` (SUITES suites) and the browser tests
+(BROWSER). Not tested: any model on 1.24.11 (the small models' run starts
+with the push).
+
+**Not changed.** The iPhone's and Nairobi's citations go back as on 1.24.9;
+the shore at sunset for the 0.8B, the 2B and the 35B; the 4B's six rows.
+
 ## 1.24.10 — A line written again, a note held against its chord, a shore seen (2026-11-08)
 
 Adam ran the 35B on 1.24.8 with the encyclopedia on his laptop (2026-11-08,
