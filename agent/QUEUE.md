@@ -5,19 +5,27 @@ file in the same commit as the work. Read `CLAUDE.md` first.
 
 ## Next, in order
 
-1. **Read the small models' run on 1.24.10 and act on it.** It starts with
-   the push of `lantern-1.24.10` (`CLAUDE.md`, "The bench with the small
-   models"). On 1.24.9 (run 42490364017, `tests/fixtures/bench_run_1249_*.json`,
-   replayed by `tests/bench_1249.js`): **4B 110 of 114 (161 minutes, Intel
-   Xeon 8573C), 2B 73 (98), 0.8B 59 (31)**; the 0.8B and the 4B failed the
-   same rows as on 1.24.8, the 2B six rows moved each way (no finding).
-   What 1.24.10 changes that a run will show:
-   - **the 4B's shore at sunset** (the same row and replies on 1.24.8 and
-     1.24.9) is asked about the beach in its first turn, with the rest;
-   - **a line written three times** no longer stops the landscape rules:
-     a road written 29 times is asked for with the line to add;
-   - **a held note against its chord** is mended where Lantern is sure
-     (the waltzes), and asked about as on 1.24.8 elsewhere.
+1. **The 4B's six rows that fail again, word for word.** The small models'
+   run on 1.24.10 (42509727008, `tests/fixtures/bench_run_1250_*.json`,
+   replayed by `tests/bench_1250.js`): **0.8B 59 of 114, 2B 73, the same
+   rows as on 1.24.9; 4B 106** (110 on 1.24.8 and 1.24.9). The 4B ran on an
+   AMD EPYC 7763 and wrote its 1.24.7 replies to six questions word for word
+   (a run's replies follow its processor, `CLAUDE.md`), so these have failed
+   on two versions with the same reply, and are the work: **water-days**
+   ("asked for a value"), **letters-refrigerator** (the letters retyped),
+   **make-power-wheel** (three lines twice on the wheel),
+   **make-music-orchestra** ("part strings": an instrument Lantern does not
+   have), **doors-host-guesses**, **code-st-tank-fill** (no MAKE block).
+   Its road was drawn under a ground written after it (asked about as
+   hidden: Lantern could put the ground first and say so, rule 0, a
+   reviewer first) and its waltz ends on E over D, a whole step from the
+   chord, which the mend does not touch (only a half step) and the bench's
+   check fails: whether a last note a whole step off is mended too is a
+   question for the music reviews. 1.24.10's own changes (a line written
+   again, the held-note mend, the shore seen) left the 0.8B and the 2B as
+   they were; the 4B's shore at sunset passed: its first block the same as
+   on 1.24.8 and 1.24.9, asked about the beach with the rest, it wrote the
+   line it was given (`rect 0 10.5 20 1.5 fill tan`).
    Then **the shore at sunset**, failed by all four models on 1.24.8, each
    its own way: the 0.8B kept the day's blue sky after it was told the
    line (Lantern could colour a sunset's sky itself and say so: rule 2, a
@@ -48,15 +56,14 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      and the title "<title> -- a simple picture on a g...";
    - music, the 4B once each: a waltz's chords to bar 9, an orchestra part
      called "strings".
-2. **Read Adam's runs of 1.24.9 and 1.24.10 with the library** (he said on
-   2026-11-08 that he would run 1.24.9 on his laptop and send what he sees
-   and the json). 1.24.9 holds the first of his two answers of that day,
-   **the part of an article that answers** ("comments out"); 1.24.10 the
-   second, **the held-note mend** ("mend it"). Save his failed rows as
-   `tests/fixtures/bench_run_1249_35b_library.json` (and `_1250_`) with a
-   test that replays them. From his 1.24.8 run
-   (`tests/fixtures/bench_run_1248_35b_library.json`): the road and the
-   waltz are mended in 1.24.10; the shore at sunset is item 1.
+2. **Read Adam's run of 1.24.10 with the library** when he sends it. His
+   1.24.9 run (2026-11-08, `tests/fixtures/bench_run_1249_35b_library.json`,
+   `tests/bench_1249_35b.js`): 134 of 140, the same seven questions as
+   1.24.8; the three library questions now answered from the library and
+   failing on what they cite: 1.24.11 reads the medicine shelf for
+   rehydration and supplies the QUOTE a cited passage lacks where Lantern is
+   sure (`tests/library_quote_1251.js`, under review). Nairobi's "Bolt and
+   Uber are available [3]" is not found (passage 3 has "Bolt." and "Uber.").
 3. **Music, after the held-note mend** (four reviews, 910 songs,
    `tests/music_review_1249.js`, `tests/music_review_1250.js`). Left as on
    1.24.8, found by the reviews:

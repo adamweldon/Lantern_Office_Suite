@@ -279,6 +279,14 @@ grep -n 'scored questions' job.log; sed -n '/=== FAILED ROWS/,/=== END FAILED RO
   `tests/fixtures/bench_run_<version>_<model>.json`, and a test replays them.
 - The same care as on the laptop: one row moving between two runs is not a
   finding. The same row failing on two versions, or on two models, is.
+- **A run's replies follow the processor it gets** (found 2026-11-08). On
+  1.24.10 the 4B ran on an AMD EPYC 7763 and wrote, word for word, the
+  replies of its 1.24.7 run to six questions, and failed them again (106 of
+  114); on 1.24.8 and 1.24.9 it ran on an EPYC 9V74 and a Xeon 8573C, wrote
+  other replies, and passed them (110). The log names the processor
+  (`Processor:`). Compare a run with the last one on the same processor
+  before reading a change of score as the version's; a row that fails with
+  the same reply on two versions is about the questions, and is work.
 - `python3 tools/bench_headless.py --url <address>` does the same against any
   running Lantern (for example Adam's laptop, by hand).
 - Inside a cloud session the engine can be fetched
