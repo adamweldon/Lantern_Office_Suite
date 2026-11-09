@@ -21,9 +21,18 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    **doors-host-guesses** (the classic Monty Hall from memory, for a host
    who does not know), **code-st-tank-fill** (no MAKE block: the first
    reply was "LESSON: Tank fill/stop logic" twenty times, the second prose
-   and a fenced program cut off at the question's 1000 tokens, so there is
-   no whole program to read; a reply cut off inside a fence could be asked
-   to go on).
+   and a fenced program cut off at the question's 1000 tokens).
+   **On 1.24.11** (run 42543507663, `tests/fixtures/bench_run_1251_*.json`,
+   `tests/bench_1251.js`) the 4B ran on the same EPYC 7763 and failed the
+   same eight rows, seven with the same reply; the 0.8B wrote its 1.24.10
+   replies word for word (59); the 2B 72, on another processor. **1.24.12
+   answers code-st-tank-fill and the 2B's two program rows** (the tank fill
+   and Blink, written without the MAKE CODE line, on two versions): the
+   runaway request is kept once, the lessons for a thing to make end with
+   the block's first line, a program cut off inside its fence is read and
+   sent back as cut, and a program under a `<title>` or `language` line is
+   read. To be seen on the next run: did the 4B write the block, and did
+   the 2B mend what was sent back?
    Its road was drawn under a ground written after it (asked about as
    hidden: Lantern could put the ground first and say so, rule 0, a
    reviewer first) and its waltz ends on E over D, a whole step from the
@@ -64,7 +73,14 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      and the title "<title> -- a simple picture on a g...";
    - music, the 4B once each: a waltz's chords to bar 9, an orchestra part
      called "strings".
-2. **Read Adam's run of 1.24.10 with the library** when he sends it. His
+2. **Read Adam's run of 1.24.12 with the library** when he sends it. His
+   1.24.11 run (2026-11-09, `tests/fixtures/bench_run_1251_35b_library.json`,
+   `tests/bench_1251_35b.js`): 134 of 140 again; rehydration from the
+   medicine shelf and the waltz pass now; the iPhone and Nairobi fail on
+   their citations as on 1.24.9 (the same rows twice); new: the P1AM
+   seal-in (Start wins over Stop: 1.24.12), the two coins in the cups (once:
+   not a finding until it fails again) and two puzzles without the tools
+   (not scored). His
    1.24.9 run (2026-11-08, `tests/fixtures/bench_run_1249_35b_library.json`,
    `tests/bench_1249_35b.js`): 134 of 140, the same seven questions as
    1.24.8; the three library questions now answered from the library and
@@ -81,7 +97,40 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    cited passage is enough, and a majority of the answer's words, so a part
    no quote says rides on the others (a 12 in 24 hours that no quote has
    passes on 1.24.10 too).
-3. **Music, after the held-note mend** (four reviews, 910 songs,
+3. **Programs: what 1.24.12 leaves** (`CHANGELOG.md` 1.24.12,
+   `tests/review_1252.js`, the reviews in `tests/fixtures/review*_1252_*`).
+   - **A Stop that turns the motor on.** The 35B on the 1.24.12 test build:
+     `if (startPressed || motorRunning) { if (stopPressed) { motorRunning =
+     true; } else { motorRunning = false; } }` -- it runs only while Stop is
+     pressed. Lantern says nothing; the bench fails it. A rule that swapped
+     the two bodies was taken out: of review 2's 193 right programs it spoke
+     about 27 and made 17 less safe (a stop that turns a brake, a dump valve
+     or an e-stop's safe state ON is right). A surer rule would need the
+     output to be the one a Start turns on elsewhere, the stop branch inside
+     the start's own seal, and nothing else written there; a reviewer first.
+   - **Start wins, missed:** 28 of review 1's 77 wrong programs, 41 of
+     review 2's 94 and 15 of review 3's 62 are left unsaid (a ternary, an
+     SR or RS block, a state machine, a timer's .Q, a start behind a
+     function, two hands, a stop handled again later, a toggle, a start
+     gated by an e-stop, names that differ only in case, `&` for AND). A
+     miss, not a mistake: each new shape needs its own reviewer.
+   - **The one-line seal's line moves only the stop terms** out of the
+     seal: an interlock (`NOT Fwd`), a mode (`Auto OR Manual`) or an
+     overload it does not know by name (`OL1`) stays where the model put
+     it, so Start still starts as the model wrote it (review 3's W12, W53,
+     W56; its reviewer put them outside too). Whether those should move
+     with Stop is for a reviewer with a PLC man's eye.
+   - **The readers' misses** (review 2 of the readers, 12): a program not
+     read, or read without its title; and a command asked for in the middle
+     of a reply longer than 240 characters (neither its first nor its last
+     line) is not taken (`cmdArg`), by design since 1.24.6 -- review 2 wrote
+     replies where it should be. A reviewer decides.
+   - **The 0.8B writes the MAKE CODE instructions back** as its program
+     (1.24.10 and 1.24.11, the same rows): look at what the instructions
+     show it (rule 1).
+   - **The 35B's shore at sunset**: "dark gray" is not one of the drawing's
+     colours (1.24.11, once).
+4. **Music, after the held-note mend** (four reviews, 910 songs,
    `tests/music_review_1249.js`, `tests/music_review_1250.js`). Left as on
    1.24.8, found by the reviews:
    - a note tied into the same chord from the middle of a bar (a 4-3 across
@@ -145,7 +194,7 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    A question the 4B fails and the 35B passes comes before a new feature.
    Fix what Lantern gave the model or how it read the reply, for every
    question of its kind; put the failed rows in `tests/fixtures`.
-4. **Pictures.** Adam's direction (2026-11-06): get the fundamentals of a
+5. **Pictures.** Adam's direction (2026-11-06): get the fundamentals of a
    scene right first -- what stands on what, what is behind what, how
    things narrow with distance -- and then let the AI draw many small
    pieces that Lantern puts together into a bigger, more detailed picture.
@@ -204,7 +253,7 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    - small things found: a circle written with four numbers (the 2B,
      once). (AI_MAKE_LAYOUT read an oval as a centre and two radii: mended
      in 1.24.8.)
-5. **Confirm each new version on the 35B, twice**, when a chat is linked to
+6. **Confirm each new version on the 35B, twice**, when a chat is linked to
    Adam's laptop (`CLAUDE.md`, "The bench on Adam's laptop"). A version that
    has not had a full run says so in its report. 1.24.6: one full run (111
    of 112) on the build before its last change, the four music questions on
@@ -212,14 +261,17 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    at 73 of 118 with nothing scored failing (Adam said to stop); then a full
    run with the library by Adam himself (134 of 138, 2026-11-08). 1.24.7
    none; 1.24.8: a full run with the library by Adam himself (134 of 140,
-   2026-11-08); 1.24.9 and 1.24.10: his to come.
-6. **Finish the five Food lessons on `wip-2026-11-06`.** They are drafted
+   2026-11-08); 1.24.9: his, with the library (134 of 140); 1.24.10 none;
+   1.24.11: his, with the library (134 of 140, 2026-11-09); 1.24.12: the
+   seven program questions on its test build (7 of 7, 2026-11-09) and the
+   P1AM seal-in on the build that was pushed; a full run is his to come.
+7. **Finish the five Food lessons on `wip-2026-11-06`.** They are drafted
    and were checked from memory only; the checker's memory differs from the
    drafts where it matters (kidney beans, cassava, the hay box). They need
    the pages of WHO, FAO, the US FDA and USDA's food safety service opened
    -- which needs Adam at the app to approve them, or a session that may
    fetch them. The branch's `agent/wip/README.md` says what to do.
-7. **Tile audits**, one tile a session, in the order of the table below. For
+8. **Tile audits**, one tile a session, in the order of the table below. For
    each tile:
    - open it in a real browser and use everything in it; fix what is broken,
      each fix with a test;
@@ -241,43 +293,43 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    - check what the AI can reach of it (LESSON:, LOOKUP:, formula functions,
      MAKE tools) and add the hook when it cannot;
    - write the tile's row below, and the gaps left, in the report.
-8. **Lessons Lantern does not have, which people will ask for** (found by
+9. **Lessons Lantern does not have, which people will ask for** (found by
    asking, 1.24.5): making soap, keeping bees, pruning, sharpening a knife,
    a rocket stove, wiring a lamp to a battery, a solar charger; and the
    five held Food lessons. Each belongs to a tile's audit (Repair, Farming,
    Animals, Engineering).
-9. **The offline library in the runs.** On the laptop it works, but the
+10. **The offline library in the runs.** On the laptop it works, but the
    Claude app's browser pane does not let Lantern's page reach it, so runs
    made there leave out the encyclopedia questions. A run in Adam's own
    browser includes them: he made one on 1.24.6 (Firefox, 2026-11-08: 21 of
    the 24 library questions; the three misses are item 2). The GitHub runs have no
    library either: the Simple English one, 2.5 GB, would fit: worth adding
    to the workflow for one model.
-10. **The kit's 8,192 tokens.** Lantern now shortens a request that is too
+11. **The kit's 8,192 tokens.** Lantern now shortens a request that is too
    long and sends it again (AI_FIT). Better not to get there: measure what
    Chat sends in a long puzzle conversation, and what 16,384 tokens cost in
    memory for the 0.8B, the 2B and the 4B. Whether to raise it is Adam's.
-11. **Pictures for the Health lessons.** The recovery position, where the
+12. **Pictures for the Health lessons.** The recovery position, where the
    hands go for chest pushes, the tippy tap, the pit latrine, the arm
    measurement: a drawing each would carry more than the words. Lantern can
    draw (Draw's shapes, SVG). Whether a drawing is clear is Adam's to judge:
    make them, show him, keep what he passes.
-12. **Words that differ by an ending** ("charger" and "charge", "purify" and
+13. **Words that differ by an ending** ("charger" and "charge", "purify" and
    "purification") do not match in Lantern's search. `LESSON_WORDS` covers
    the cases found; the stemmer itself could do more, with care (it is used
    everywhere).
-13. **Songbook.** Nine tunes so far, all starting on the first beat. Tunes
+14. **Songbook.** Nine tunes so far, all starting on the first beat. Tunes
     that start with a pickup (Amazing Grace, Auld Lang Syne, Brahms' Lullaby,
     Greensleeves, Happy Birthday's 1893 tune) need a pickup bar checked
     through the score, the parts and the arrangement first.
-14. **A second try that changes nothing.** In the run on 1.24.0 three songs
+15. **A second try that changes nothing.** In the run on 1.24.0 three songs
     came back unchanged or worse after Lantern's send-back. 1.24.2 writes the
     line to use. If a model still sends the same block, decide with Adam
     whether Lantern should apply the fix it named and say so. It did again:
     the 35B's waltz on 1.24.6 (2026-11-08) and its tune of its own on 1.24.6
-    (2026-11-06). Adam said "mend it" (2026-11-08); the mend is item 3, held
+    (2026-11-06). Adam said "mend it" (2026-11-08); the mend is item 4, held
     back from 1.24.9 after its first review.
-15. **The 1.16.0 audit's feature list** (`Lantern_1.16.0_app_audit.pdf`, sent
+16. **The 1.16.0 audit's feature list** (`Lantern_1.16.0_app_audit.pdf`, sent
     to Adam on 2026-10-29) was never answered. With the aim above, take the
     features that serve it without asking again; leave the rest.
 

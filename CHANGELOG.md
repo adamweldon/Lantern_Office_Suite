@@ -48,7 +48,10 @@ the 2B 72 (73), on another processor; the 4B 106, the same eight rows as on
   with the program's own lines written the way that works: the whole chain
   again, every branch kept (an e-stop, a fault, a jog, an else), the Stop
   branches moved up to just before the branch they lose to; or the two ifs
-  the other way round; or `out = (start || out) && stopOk`. Said with why:
+  the other way round; or `out = (start || out) && stopOk`, the stop terms
+  moved out of the seal and every other term left where the model put it,
+  with its brackets (`Motor := Start OR (Motor AND Auto AND NOT Stop)` ->
+  `Motor := (Start OR (Motor AND Auto)) AND NOT Stop;`). Said with why:
   a stop overrides the start it belongs to (NFPA 79, 9.2.5.3.2; IEC
   60204-1). It speaks only where it is sure: the question names a machine
   and starting or running and stopping; the output is a machine's (not a
@@ -59,10 +62,13 @@ the 2B 72 (73), on another processor; the 4B 106, the same eight rows as on
   Stop input is named so (stop, e-stop, emergency, halt, overload, trip;
   not "stopped" or a stopwatch); the start does not look at that stop
   already (a "permissive"). Left alone: a toggle (a negated output in the
-  condition: moving the Stop test does not mend it), a start on its rising
-  edge, a stop handled again later in the scan, a chain inside another
-  chain, a Stop branch that returns or breaks, code in a string or under
-  `#if`.
+  condition: moving the Stop test does not mend it); a start that lasts one
+  scan (its rising edge, a block's output `Q => StartPulse`, a bit the
+  program clears after reading it); a level or float switch; Stop having
+  its say later in the scan (it turns the output off again, or a later line
+  gives the machine the output together with a stop); the line or chain
+  inside another if; a Stop test before it that returns or breaks; code in
+  a string, in a comment (nested ones too) or under `#if`.
 - *A Stop that turns the output on: tried and taken out.* The 35B's second
   try at the same question, on the 1.24.12 test build, with Lantern's
   tested P1AM example in front of it: `if (startPressed || motorRunning) {
@@ -97,10 +103,14 @@ the 2B 72 (73), on another processor; the 4B 106, the same eight rows as on
   blank line, its brackets closed and its last line ending it) is read
   whole, not cut; one mostly sentences is not a program. A fence closed at
   the end of a code line is whole; a fence indented under a list item
-  loses that indent; a fence is closed by one at least as long (four
-  backticks close three), and a fence shown inside a four-backtick one is
-  not read. A MAKE CODE block whose fence opens and never closes goes back
-  cut.
+  loses that indent; a fence is closed by one of its own kind at least as
+  long (four backticks close three; a fence opened with four and closed
+  with three, a model's slip, is closed there), and a fence shown inside a
+  four-backtick or a `~~~` one is not read, nor one between Lantern's own
+  `<<<` and `>>>`. A fence glued to the end of a code line closes it only
+  inside a fence, and not at the end of a comment. `~~~` fences and the
+  tags `structured_text` and `structured text` are read. A MAKE CODE block
+  whose fence opens and never closes goes back cut.
 - *A request kept once* (ASSIST_CHAT, AI_ACTIONS). A reply that asked for a
   command stays in the conversation with each command line once, a last
   line cut off part-way through one dropped, at most 500 characters, the
@@ -154,20 +164,44 @@ written, with inputs of their own (all in `tests/fixtures/`, replayed by
   fences whose program is whole (read whole, not "cut off"), 12 misses
   (not read, or read without a title), 1 MAKE block whose open fence
   Chat also shows. No reply is told it was cut off where it was not;
-- a last pass after review 2 (a fence closed by four backticks, a fence
-  inside a four-backtick one, a `<<<` example whose title line comes
-  before its language line, a Structured Text seal-in with `OR (`) was
-  tried by a third agent: REVIEW3_PLACEHOLDER
+- review 3, by a third agent, of what was mended after review 2 (a
+  Structured Text seal-in with `OR (`, read as plain inputs at last; fence
+  lengths; `<<<` examples): 147 programs of its own, each line it was
+  given checked by truth table over every input and the old state, and 63
+  replies (`tests/fixtures/review3_1252_*.json`). It found the one-line
+  seal without the guards the ifs had: 14 of its 85 right programs spoken
+  about (a Stop handled later, the line inside `IF NOT Stop`, a `RETURN`
+  after Stop, starts of one scan, level switches, a latch the machine
+  output gates with Stop, a strobe, a nested comment); and 5 lines that
+  lost a bracket -- `(NOT Stop OR Maintenance)` handed back as `NOT Stop
+  OR Maintenance`, which runs the motor on Maintenance alone. In the
+  reader, 15 of 63 not as it expected (a sentence ending in three
+  backticks opened a fence, a comment ending in them closed one, the form
+  shown inside a fence or a `<<<` example read as the model's ...).
+  Mended as above: none of the 85 is spoken about; 47 of 62 found; every
+  line it is given does what the reviewer's own line does, but three,
+  where Lantern moves only the stop terms and leaves an interlock, a mode
+  and an overload it does not know by name (`OL1`) where the model put
+  them: Stop wins, Start starts as the model wrote it. 59 of the 63
+  replies read as expected; the 4 left are programs not read;
+- REVIEW4_PLACEHOLDER
 
-**What was run.** `npm test`: ALL CHECKS PASS (NNN suites). The 35B on
-Adam's laptop, the seven program questions on the 1.24.12 test build:
-RUN35B_PLACEHOLDER. Not run: the small models (their run starts with the
-push).
+**What was run.** `npm test`: ALL CHECKS PASS (NNN suites); the browser
+tests of Code Lab, the text reader and the bench (code_lab, text_reader,
+bench_headless, bench_run9). The 35B on Adam's laptop, the seven program
+questions, on the build after the first reviews (b9f57ac, 2026-11-09):
+7 of 7 (`tests/fixtures/bench_run_1252_35b_code.json`). Two rows kept: the
+P1AM seal-in, whose program that time turned the motor on only while Stop
+was pressed -- passed by that build's bench, failed by 1.24.12's -- and
+the ladder, whose first reply asked for a LESSON and whose second, with
+the lessons ending in the block's first line, was the block. Not run: a
+full 35B run of the build that was pushed; the small models (their run
+starts with the push).
 
 **Not changed.** The iPhone's and Nairobi's citations, the shore at sunset
 ("dark gray" is not one of the drawing's colours), the road to the horizon,
 the 4B's other repeated rows (QUEUE 1), a reply that echoes the MAKE CODE
-instructions (the 0.8B).
+instructions (the 0.8B, QUEUE 3), a Stop that turns the motor on (QUEUE 3).
 
 ## 1.24.11 — Adam's run of 1.24.9, the 4B on another processor (2026-11-08)
 

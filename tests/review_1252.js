@@ -154,6 +154,45 @@ function seq(list, seen) { var i = 0; return function (msgs) { if (seen) seen.pu
   var a42 = C2.filter(function (c) { return c.id === "a42"; })[0], m42 = act.fromReply(a42.reply, a42.q);
   ok("a MAKE CODE block with its fence opened and no END goes back cut", m42 && !m42.ok && /^the program stops at line 6, inside its \x60\x60\x60 fence/.test(m42.problems[0]), m42 && m42.problems);
 
+  // --- the third reviews (1.24.12): the one-line seal in Structured Text, and the fences ---
+  // tests/fixtures/review3_1252_startwins.json: 147 programs. On the build it was given, 14 of its 85 right ones were
+  // spoken about (the IF part's guards were missing from the one-line seal: a Stop handled later, the line inside
+  // IF NOT Stop, a RETURN after Stop; and starts of one scan, level switches, a strobe, a nested comment) and 5 lines
+  // lost a bracket ((NOT Stop OR Maintenance) ran the motor on Maintenance alone). Mended.
+  var S3 = require("./review_stsim.js"), R3 = fixture("review3_1252_startwins.json").items;
+  var loud3 = R3.filter(function (x) { return x.expect === "silent" && SW(x.lang, x.text, x.q).length; });
+  ok("review 3: none of its 85 right programs is spoken about (14 were)", R3.filter(function (x) { return x.expect === "silent"; }).length === 85 && !loud3.length, loud3.map(function (x) { return [x.id, SW(x.lang, x.text, x.q)]; }));
+  var found3 = R3.filter(function (x) { return x.expect === "flag" && SW(x.lang, x.text, x.q).length; });
+  ok("review 3: of its 62 that let Start win, " + found3.length + " are found (47 when mended; a start through a block\u2019s Q, a line inside IF Auto are left now)", found3.length >= 47, found3.length);
+  // every line handed back, run by the reviewer's interpreter over every input and old state: the same as the
+  // reviewer's own corrected line -- but for three, where Lantern moves only the stop terms out of the seal and
+  // leaves an interlock, a mode and an overload it does not know by name where the model put them (Start still
+  // starts as the model wrote it; Stop now wins)
+  var own3 = { W12: "Rev := (RevPB OR (Rev AND NOT Fwd)) AND NOT Stop;", W53: "Motor := (Start OR (Motor AND (NOT (OL1 OR OL2)))) AND NOT Stop;", W56: "Motor := (Start OR (Motor AND (Auto OR Manual))) AND NOT Stop;" };
+  var lineBad = [];
+  found3.forEach(function (x) {
+    SW(x.lang, x.text, x.q).forEach(function (msg) {
+      var g = /Write: (.*)$/.exec(msg) || /every branch kept: (.*)$/.exec(msg) || /Put the Stop test last: (.*)$/.exec(msg);
+      if (!g) { lineBad.push([x.id, "no line"]); return; }
+      if (own3[x.id]) { if (g[1] !== own3[x.id]) lineBad.push([x.id, g[1]]); return; }
+      if (!x.fix) return;
+      try {
+        var gst = x.lang === "arduino" ? S3.c2st(g[1]) : g[1], outs = Object.keys(S3.assigned(S3.parse(gst)));
+        var ref = x.fix.split("\n").filter(function (l) { return outs.some(function (o) { return new RegExp("^\\s*" + o + "\\s*:=", "i").test(l); }); });
+        if (!ref.length || /\bIF\b/.test(gst)) ref = x.fix.split("\n");
+        if (S3.same(ref.join("\n"), gst, outs).length) lineBad.push([x.id, g[1]]);
+      } catch (e) { lineBad.push([x.id, "does not parse: " + g[1]]); }
+    });
+  });
+  ok("review 3: every line handed back keeps its brackets and does what the reviewer\u2019s own line does, but three that move only the stop terms", !lineBad.length, lineBad);
+  // tests/fixtures/review3_1252_codeblocks.json: 63 replies; 15 not as expected on the build it was given
+  var F3 = fixture("review3_1252_codeblocks.json").items, fbad = F3.filter(function (it) {
+    var got = L.chatCode.blocks(it.reply), exp = it.expect.blocks;
+    return got.length !== exp.length || exp.some(function (e, k) { var g = got[k]; return g.lang !== e.lang || g.text !== e.text || !!g.cut !== !!e.cut || (e.title != null && g.title !== e.title); });
+  }).map(function (it) { return it.id; });
+  ok("review 3 of the readers: its 63 replies read as it expected, but four programs not read (>>> glued to a brace, a fence in a blockquote, a fence named scl, code of its own between <<< and >>>)",
+    fbad.join() === "F27,F45,F58,F59" && ["F27", "F45", "F58", "F59"].every(function (id) { var it = F3.filter(function (x) { return x.id === id; })[0]; return L.chatCode.blocks(it.reply).length < it.expect.blocks.length; }), fbad);
+
   // --- part C: a command kept once ---
   var seen = [], q = "Write a Structured Text PLC program for a tank: open the fill valve when the low float switch comes on, and close it when the high float switch comes on.";
   function kept(first) { seen = []; return act.solve(q, seq([first, "MAKE CODE: T\nlanguage st\nPROGRAM P\nVAR\n    A : BOOL;\nEND_VAR\nA := TRUE;\nEND_PROGRAM\nEND"], seen)).then(function () { var m = (seen[1] || []).filter(function (x) { return x.role === "assistant"; }); return m.length ? m[m.length - 1].content : null; }); }
