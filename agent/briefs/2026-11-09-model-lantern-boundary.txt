@@ -1,0 +1,110 @@
+BRIEF FOR THE LANTERN THREAD: TIGHTEN THE BOUNDARY BETWEEN THE MODEL AND LANTERN
+From: the research thread (Adam Weldon with Claude), 9 Nov 2026
+For: the Claude working on Lantern Office Suite with Adam
+
+WHY THIS EXISTS
+Adam's aim is a least-action path: correct answers from the smallest model at the lowest energy, by letting
+Lantern do everything that can be exact and asking the model only for what needs language. A separate thread
+ran experiments on how language models hold meaning, then read the latest bench file against those findings.
+This brief hands over what follows for Lantern. You know the suite and its conventions; this thread has not
+read the suite source, so treat every implementation detail below as a suggestion and the principle and the
+acceptance tests as the substance.
+
+THE PRINCIPLE
+Ask the model only for coarse choices. Never ask it to write exact content by hand.
+A coarse choice is: which formula, which sentence, which shape, which component, which chord.
+Exact content is: a number, a coordinate, a sentence copied word for word, a long repeated structure,
+a multi-step state tracked in its head.
+
+Evidence from the experiments (Qwen3-1.7B and XGLM-564M, eight languages; details available on request):
+- Inside the model, numbers sit on a coarse logarithmic line. Cutting the model's own number representation
+  and writing back one hand-computed log value restored 86% of its accuracy on "less or more than ten".
+  The model works with rough magnitudes and relations, not exact values.
+- Answers survive at 5-7 bits of precision per value. Exactness is not what the weights are spent on.
+- A two-layer transformer written entirely by formula got 3,000,000 of 3,000,000 number comparisons right.
+  Skills that follow from structure can be coded, and plain code is their simplest exact form.
+So the model is the wrong place for anything exact, and the right place for reading the question and choosing.
+
+WHAT THE BENCH SHOWS
+File: lantern-bench-202611081748.json (Lantern Bench v3, Lantern 1.24.9, Qwen3.5-35B-A3B-UD-IQ4_XS on the
+local server, full prompt). 134 of 140 passed.
+
+Where the boundary already has the right shape:
+- tool, multi and need: 45 of 45 passed, median about 27 tokens and 11 seconds. The model writes one formula
+  line (for example =PLANET("Mars","escape")) and an ANSWER template; Lantern computes. One retry
+  (miles-speed), caught by the unit check and fixed.
+
+Where it fails - every failure is the model writing exact content by hand:
+- shelf-iphone-battery   cited [3] with no QUOTE [3] line (3 rounds, 521 tokens)
+- shelf-nairobi-transport  QUOTE [3] not word for word from passage 3 (3 rounds, 410 tokens)
+- shelf-ors              "did not read the medicine shelf" (a routing miss, not a copying one)
+- make-shore-sunset      "rect 0 12 20 12 fill blue" is off the grid
+- make-road-horizon      one tri line repeated 37 times until cut off; no narrowing road (1,275 tokens, 178 s)
+- make-music-waltz       melody note a half step from a chord tone in bar 7
+- die-four-moves-alone   tracked a die through four moves with no tool; wrong top face (1,221 tokens, 149 s)
+
+Passed, but only after Lantern questioned it (same cause, caught in time):
+- seasons-cause (added 23.5 from memory, not in the passage), make-house (tri with 4 numbers),
+  make-parallel-ohm (wired in series), make-pneumatic (no auto-return), make-doc-oil-change (list format).
+
+Cost: tokens are the energy. Formula answers cost about 27 tokens; library answers about 94; make about 176;
+the unaided puzzles about 950. Rows with more than one round used 32 of 103 minutes of model time.
+
+FOUR CHANGES, IN SUGGESTED ORDER
+No new layer. Each change narrows what the model has to write at the boundary that already exists.
+
+1. Point, don't copy (library answers).
+   Number the sentences inside each retrieved passage and have the model cite pointers such as [2.3].
+   Lantern inserts the exact sentence as the quote and verifies the pointer exists. A misquote or a missing
+   QUOTE line then cannot happen, and the model writes fewer tokens. Keep the existing check that every
+   content word in the answer is supported by a cited sentence.
+
+2. Move the checker's knowledge into the tools (make).
+   In several rejections Lantern already states the fix ("write rect 0 0 20 12 fill orange", "wire each
+   resistor across V1 on its own", "write D or A there"). Where Lantern knows the right construction, offer
+   it as a higher-level command the model can choose - a sunset sky, a road to the horizon, a parallel bank
+   of resistors, a melody note drawn from the current chord - and let Lantern generate the coordinates,
+   wiring and notes. Adam has already set this direction for the drawing tools: the correct construction
+   should be the path of least resistance. Raw shapes stay available for what the commands do not cover.
+
+3. Constrain the output form at generation time.
+   If the local server is llama.cpp (assumed from the GGUF model; please verify), it accepts a grammar or a
+   JSON schema per request. A grammar for each reply format (formula line + ANSWER; MAKE DRAWING lines with
+   the right number of in-range numbers; pointers for citations; a cap on repeated lines) removes malformed
+   lines, off-grid values and runaway repetition at the source. The checker stays as the second line.
+   Courier/copy-paste mode cannot use grammars, so the checker must not depend on them.
+
+4. Give state-tracking a tool.
+   The die puzzle is pure structure. A small function for orientation and rotation (and the general family:
+   track a state through a list of moves) belongs in the FORMULA engine like the physics functions. Then
+   "alone" questions of this kind become tool questions.
+
+Also worth checking: all 24 library answers took two rounds. If one round is a deliberate look-up step,
+fine. If the second round is a routine verification pass, change 1 may make it unnecessary.
+
+HOW TO MEASURE
+Add to the bench summary, per category: tokens generated per correct answer, and rounds per answer.
+The target is to move every category toward the formula categories (about 27 tokens, 1 round, 100%).
+Report these before and after each change, on the same model and prompt.
+
+ACCEPTANCE TESTS
+After changes 1-4, on the same model:
+- The seven failing ids above pass.
+- The five "questioned then fixed" ids above pass in one fewer round.
+- tool, multi, need, chat and reason do not regress (currently 45/45, 25/25, 10/10).
+- Median tokens for fact and make go down, not up.
+Add fresh variants of each failing case (a different passage, a different scene, a different key, a
+different sequence of die moves) so a pass means the boundary improved, not that the prompt learned the test.
+
+WHAT NOT TO DO
+- Do not add a third model, a second verifier model, or a longer prompt to fix these. Each failure is a
+  demand for exactness that belongs on Lantern's side.
+- Do not loosen the checks to raise the score. The citation and unit checks are doing their job.
+- Do not claim 100% for the whole chain. Computation and look-up can be exact; reading the question is the
+  step that can still be wrong, which is why the model should keep stating how it read the question
+  (the formula line already does this) and Lantern should keep checking units and ranges.
+
+WHAT THE RESEARCH THREAD WILL DO NEXT, IF ADAM WANTS
+Measure the routing step directly: how reliably small models map a freely worded question to the right
+formula or shelf, across languages, and how small the model can be before that breaks. That sets the
+minimum model size for Lantern once exactness has moved out of the model.
