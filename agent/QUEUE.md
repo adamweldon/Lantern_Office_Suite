@@ -112,8 +112,15 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      review 2's 94 and 15 of review 3's 62 are left unsaid (a ternary, an
      SR or RS block, a state machine, a timer's .Q, a start behind a
      function, two hands, a stop handled again later, a toggle, a start
-     gated by an e-stop, names that differ only in case, `&` for AND). A
-     miss, not a mistake: each new shape needs its own reviewer.
+     gated by an e-stop, names that differ only in case, `&` for AND, an
+     e-stop put outside the seal with Stop left inside, three OR terms,
+     a later output line that has only the e-stop) -- and 17 of review 4's
+     83. A miss, not a mistake: each new shape needs its own reviewer.
+   - **A fifth review** of what was mended after review 4 (names read by
+     their words, "later" read anywhere outside the line's own function,
+     `NOT (A OR B)` split, fences that hold fences, glued fences after
+     `//`): checked against all four reviews' inputs, not yet by someone
+     new.
    - **The one-line seal's line moves only the stop terms** out of the
      seal: an interlock (`NOT Fwd`), a mode (`Auto OR Manual`) or an
      overload it does not know by name (`OL1`) stays where the model put

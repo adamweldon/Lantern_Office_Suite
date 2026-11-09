@@ -168,13 +168,15 @@ function seq(list, seen) { var i = 0; return function (msgs) { if (seen) seen.pu
   // reviewer's own corrected line -- but for three, where Lantern moves only the stop terms out of the seal and
   // leaves an interlock, a mode and an overload it does not know by name where the model put them (Start still
   // starts as the model wrote it; Stop now wins)
-  var own3 = { W12: "Rev := (RevPB OR (Rev AND NOT Fwd)) AND NOT Stop;", W53: "Motor := (Start OR (Motor AND (NOT (OL1 OR OL2)))) AND NOT Stop;", W56: "Motor := (Start OR (Motor AND (Auto OR Manual))) AND NOT Stop;" };
+  // (review 4: NOT (OL1 OR OL2) is written NOT OL1 AND NOT OL2, so that only a stop in it would go out; and the forward
+  // line of W12 is found too, the reverse line's NOT Fwd being an interlock, not Stop's say)
+  var own3 = { W12: ["Fwd := (FwdPB OR (Fwd AND NOT Rev)) AND NOT Stop;", "Rev := (RevPB OR (Rev AND NOT Fwd)) AND NOT Stop;"], W53: ["Motor := (Start OR (Motor AND NOT OL1 AND NOT OL2)) AND NOT Stop;"], W56: ["Motor := (Start OR (Motor AND (Auto OR Manual))) AND NOT Stop;"] };
   var lineBad = [];
   found3.forEach(function (x) {
     SW(x.lang, x.text, x.q).forEach(function (msg) {
       var g = /Write: (.*)$/.exec(msg) || /every branch kept: (.*)$/.exec(msg) || /Put the Stop test last: (.*)$/.exec(msg);
       if (!g) { lineBad.push([x.id, "no line"]); return; }
-      if (own3[x.id]) { if (g[1] !== own3[x.id]) lineBad.push([x.id, g[1]]); return; }
+      if (own3[x.id]) { if (own3[x.id].indexOf(g[1]) < 0) lineBad.push([x.id, g[1]]); return; }
       if (!x.fix) return;
       try {
         var gst = x.lang === "arduino" ? S3.c2st(g[1]) : g[1], outs = Object.keys(S3.assigned(S3.parse(gst)));
@@ -192,6 +194,24 @@ function seq(list, seen) { var i = 0; return function (msgs) { if (seen) seen.pu
   }).map(function (it) { return it.id; });
   ok("review 3 of the readers: its 63 replies read as it expected, but four programs not read (>>> glued to a brace, a fence in a blockquote, a fence named scl, code of its own between <<< and >>>)",
     fbad.join() === "F27,F45,F58,F59" && ["F27", "F45", "F58", "F59"].every(function (id) { var it = F3.filter(function (x) { return x.id === id; })[0]; return L.chatCode.blocks(it.reply).length < it.expect.blocks.length; }), fbad);
+
+  // --- the fourth reviews (1.24.12) ---
+  // tests/fixtures/review4_1252_startwins.json: 175 programs. On the build it was given, 16 of its 92 right ones were
+  // spoken about (a pressure switch, a photo eye, a thermostat; an edge memory set in an if; a start bit cleared
+  // after a ")"; a Stop handled in a function above or below; an if that runs the machine from a request bit and
+  // stops it on Stop; a permissive holding the Stop; a Clamp and a TripperConveyor taken for a lamp and a trip) and
+  // NOT (Stop OR Reset) went out whole, so Reset won over Start too. Mended: names are read by their words, "later"
+  // is anywhere but before the line in its own function, NOT (A OR B) is split.
+  var R4 = fixture("review4_1252_startwins.json").items, r4 = require("./review4_seal_check.js")(L, R4);
+  ok("review 4: none of its 92 right programs is spoken about (16 were)", r4.right === 92 && !r4.rightSpoken.length, r4.rightSpoken.map(function (x) { return [x.id, x.got]; }));
+  ok("review 4: of its 83 that let Start win, " + r4.found + " are found (55 when written, 66 when mended); every line handed back stops the output on any stop and is otherwise the model\u2019s own",
+    r4.wrong === 83 && r4.found >= 66 && r4.linesChecked >= 70 && !r4.badLines.length, r4.badLines);
+  var F4 = fixture("review4_1252_codeblocks.json").items, f4bad = F4.filter(function (it) {
+    var got = L.chatCode.blocks(it.reply), exp = it.expect.blocks;
+    return got.length !== exp.length || exp.some(function (e, k) { var g = got[k]; return g.lang !== e.lang || g.text !== e.text || !!g.cut !== !!e.cut || (e.title != null && g.title !== e.title); });
+  }).map(function (it) { return it.id; });
+  ok("review 4 of the readers: its 60 replies read as it expected (10 were not), but one program not read (a code line in a Python string that ends with three backticks closes its fence)",
+    f4bad.join() === "f06" && !L.chatCode.blocks(F4.filter(function (x) { return x.id === "f06"; })[0].reply).length, f4bad);
 
   // --- part C: a command kept once ---
   var seen = [], q = "Write a Structured Text PLC program for a tank: open the fill valve when the low float switch comes on, and close it when the high float switch comes on.";

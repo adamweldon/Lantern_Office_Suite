@@ -45910,17 +45910,24 @@ Lantern.RFB = (function () {
     // (review 2) the start must be a start (a status lamp following a run flag is not), the output a machine's (a
     // lamp, an alarm or a count is not), and a start on its rising edge (start && !lastStart) wins for one scan only
     var STARTISH = /start|jog|fwd|forward|^rev(erse)?(pb|btn|button|pressed|sw|cmd)?$|^run(btn|button|pb|pressed|sw|cmd|req\w*)?$|^go(btn|button|pb)?$|^on(btn|button|pb)$|enable/i;
-    var NOT_MACHINE = /lamp|light|^led|led$|indicator|alarm|status|flag|count|horn|beacon|buzzer|siren|strobe|bell|beep|chime|sounder|pilot|display|msg|text|fault|trip/i;
+    // (review 4) a name is read by its words, not its letters: a Clamp is no lamp, a TripperConveyor no trip
+    function words(w) { return String(w).replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2").replace(/[_\d]+/g, " ").toLowerCase().split(/\s+/).filter(function (x) { return x; }); }
+    var LAMPISH = /^(lamps?|lights?|leds?|indicators?|alarms?|status|flags?|counts?|counters?|horns?|beacons?|buzzers?|sirens?|strobes?|bells?|beeps?|chimes?|sounders?|pilots?|displays?|msg|text|faults?|trips?|tripped|warnings?|warn)$/;
+    function notMachine(w) { return words(w).some(function (x) { return LAMPISH.test(x); }) || /^led|led$/i.test(w); }
     // (review 3) not a button: a start that lasts one scan (a pulse, an edge, a one-shot), a level or float switch
-    // (a sump's high float winning may be the safe side), a sensor
-    var ONE_SCAN = /pulse|edge|trig|one_?shot|^os|os$|ons$|rising|level|float|sensor/i;
+    // (a sump's high float winning may be the safe side), a sensor (review 4: a pressure switch, a photo eye, a
+    // thermostat)
+    var ONE_SCAN = /pulse|edge|trig|one_?shot|^os|os$|ons$|rising|level|float|sensor|press(ure)?_?sw|pressure|^pe_|_pe$|photo|eye|temp|thermo|prox/i;
+    var MEMORY = /^(last|prev|previous|old|was|mem|memory|before|held|edge)$/;
     function startish(e) {
       var d = deep(e), ws = idents(d), nm, neg = /(?:!|\bNOT\s+)\s*\x28?\s*([A-Za-z_]\w*)/gi;
       if (!ws.some(function (w) { return STARTISH.test(w) && !STOPISH.test(w) && !ONE_SCAN.test(w); })) return false;
-      // a start on its rising edge: start && !lastStart, or StartOS := Start AND NOT StartMem with StartMem := Start
-      while ((nm = neg.exec(d))) if (/last|prev|old|was|mem|before/i.test(nm[1]) || (defs[nm[1]] || []).some(function (x) { return idents(x).some(function (w) { return STARTISH.test(w) && !STOPISH.test(w); }); })) return false;
-      // (review 3) a block's output (StartEdge(CLK := StartPB, Q =\x3E StartPulse)), or a bit the program clears after reading it (HmiStart := FALSE)
-      return !ws.some(function (w) { var q = w.replace(/\./g, "\\."); if (!STARTISH.test(w) || STOPISH.test(w)) return false; return new RegExp("=\\x3E\\s*" + q + "\\b").test(c) || new RegExp("(^|[;\\x7B\\x7D]\\s*|\\b(THEN|ELSE|DO)\\s+)" + q + "\\s*:?=\\s*(FALSE|false|0|LOW)\\s*;").test(c); });
+      // a start on its rising edge: start && !lastStart, StartOS := Start AND NOT StartMem with StartMem := Start, a
+      // memory named Held (review 4); by the name's words (Hold is not Old, washdown not was)
+      while ((nm = neg.exec(d))) if (words(nm[1]).some(function (x) { return MEMORY.test(x); }) || (defs[nm[1]] || []).some(function (x) { return idents(x).some(function (w) { return STARTISH.test(w) && !STOPISH.test(w); }); })) return false;
+      // (review 3) a block's output (StartEdge(CLK := StartPB, Q =\x3E StartPulse)), or a bit the program clears after
+      // reading it (HmiStart := FALSE; review 4: if (remoteStart) remoteStart = false;)
+      return !ws.some(function (w) { var q = w.replace(/\./g, "\\."); if (!STARTISH.test(w) || STOPISH.test(w)) return false; return new RegExp("=\\x3E\\s*" + q + "\\b").test(c) || new RegExp("(^|[;\\x7B\\x7D\\x29]\\s*|\\b(THEN|ELSE|DO)\\s+)" + q + "\\s*:?=\\s*(FALSE|false|0|LOW)\\s*;").test(c); });
     }
     function looksAt(e, names) { return idents(deep(e)).some(function (w) { return names.indexOf(w) >= 0; }); }
     // the output itself in a condition: as a seal (Start OR Motor) it is fine; negated (start && !running) it
@@ -45932,7 +45939,7 @@ Lantern.RFB = (function () {
         (els != null ? (st ? " ELSE " + body(els) : " else { " + body(els) + " }") : "") + (st ? " END_IF;" : "");
     }
     // a branch that turns T on from plain inputs that do not look at Stop or at T; a branch that turns T off on a Stop input
-    function onFor(b, t) { return !NOT_MACHINE.test(t) && sets(b.body, st).some(function (x) { return x.on && x.t === t; }) && plainDeep(b.cond) && startish(b.cond) && !stopsIn(deep(b.cond)).length && !negates(deep(b.cond), t); }
+    function onFor(b, t) { return !notMachine(t) && sets(b.body, st).some(function (x) { return x.on && x.t === t; }) && plainDeep(b.cond) && startish(b.cond) && !stopsIn(deep(b.cond)).length && !negates(deep(b.cond), t); }
     function offFor(b, t) {
       return sets(b.body, st).some(function (x) { return !x.on && x.t === t; }) && plainDeep(b.cond) && stopsIn(b.cond).length && !looksAt(b.cond, [t]) &&
         !sets(b.body, st).some(function (x) { return x.on && x.t === t; });
@@ -45941,15 +45948,39 @@ Lantern.RFB = (function () {
     // (review 2, review 3) Stop has its say after this point: Stop turns T off again later (the last write in a scan
     // counts), or a later line gives a machine T with a stop (Motor := Latch AND NOT Stop; digitalWrite(8, run &&
     // !stopBtn)). A line that only shows T on a lamp does not count.
+    // (review 4) "later" in the order the code runs, which Lantern cannot follow into functions: so the rest of this
+    // function and every other part of the program (stopCheck() defined above loop(), updateMotor() below it), all
+    // but what comes before the line in its own function. What drives nothing (a print, a timer's IN) or only a lamp,
+    // or uses T only negated (an interlock: NOT MotorFwd) does not count; a stop is looked for in what the names stand
+    // for too (Motor := Latch AND Permissive, Permissive := NOT Stop), but not in T's own line.
     var LEAVES = /\b(return|break|continue|goto|RETURN|EXIT)\b/;
-    function lateStop(t, from) {
-      var said = c.slice(from).split(";").some(function (x) {
+    function home(at) {
+      var k, h = 0, d = 0, r = /\b(PROGRAM|FUNCTION_BLOCK|FUNCTION|METHOD|ACTION)\b/g, mm;
+      if (st) { while ((mm = r.exec(c)) && mm.index < at) h = mm.index; return h; }
+      for (k = 0; k < at; k++) { var q = c.charAt(k); if (q === "\x7B") { if (!d) h = k; d++; } else if (q === "\x7D" && d) d--; }
+      return h;
+    }
+    function esc(t) { return t.replace(/[.\x28\x29]/g, "\\$&"); }
+    function positive(x, t) { return idents(String(x).replace(new RegExp("(!|\\bNOT\\s+)\\s*" + esc(t) + "\\b", "g"), " ")).indexOf(t) >= 0; }
+    function deepBut(x, t) { return idents(x).map(function (w) { return w !== t && defs[w] ? "(" + defs[w].join(") (") + ")" : w; }).join(" ") + " " + x; }
+    function lateStop(t, from, at) {
+      var h = home(at), inScan = function (pos) { return pos >= from || pos < h; };
+      var said = (c.slice(from) + ";" + c.slice(0, h)).split(";").some(function (x) {
         // (a lamp named for a stop, stopSignLamp, is not a stop)
-        if (idents(x).indexOf(t) < 0 || !stopsIn(x).filter(function (w) { return !NOT_MACHINE.test(w); }).length) return false;
-        var to = /^[\s\x7B\x7D]*(?:(?:if\s*\x28[^;]*?\x29|(?:ELS)?IF\b[^;]*?\bTHEN\b|else\b|ELSE\b)\s*\x7B?\s*)?([A-Za-z_]\w*)\s*:?=(?!=)/.exec(x);
-        return !(to && to[1] !== t && NOT_MACHINE.test(to[1]));
+        if (idents(x).indexOf(t) < 0 || !stopsIn(deepBut(x, t)).filter(function (w) { return !notMachine(w); }).length) return false;
+        var to = /^[\s\x7B\x7D]*(?:(?:if\s*\x28[^;]*?\x29|(?:ELS)?IF\b[^;]*?\bTHEN\b|else\b|ELSE\b)\s*\x7B?\s*)?(?:(?:const\s+)?(?:bool|boolean|int|byte|uint8_t)\s+)?([A-Za-z_]\w*)\s*:?=(?!=)/.exec(x),
+          wr = /\b(?:digitalWrite|analogWrite)\s*\x28\s*([A-Za-z_]\w*|\d+)/.exec(x) || (/\bwriteDiscrete\s*\x28/.test(x) ? [0, ""] : null);
+        var target = to ? to[1] : wr ? wr[1] : null;
+        if (target === null) return false;
+        return target === t || (!notMachine(target) && positive(x, t));
       });
-      return said || chains.some(function (o) { return o.at >= from && o.branches.some(function (b) { return offFor(b, t); }); });
+      return said || chains.some(function (o) {
+        if (!inScan(o.at)) return false;
+        if (o.branches.some(function (b) { return offFor(b, t); })) return true;
+        // (review 4) an if that runs the machine from T and stops it on a Stop: IF Stop THEN Motor := FALSE; ELSIF RunReq THEN Motor := TRUE
+        return o.branches.some(function (b) { return positive(b.cond, t); }) &&
+          o.branches.some(function (b) { return stopsIn(deep(b.cond)).length && sets(b.body, st).some(function (y) { return !y.on && !notMachine(y.t); }); });
+      });
     }
     // (A rule for the other way round -- a branch on a Stop that is pressed turning the motor on, the 35B's next
     // try at the same question -- was tried and taken out: of a second reviewer's 193 right programs it spoke
@@ -45963,7 +45994,7 @@ Lantern.RFB = (function () {
         for (j = i + 1; j < brs.length; j++) if (offFor(brs[j], x.t)) { first = i; return; }
       });
       // (review 2) ... unless Stop turns it off again later in the program: the last write in a scan counts
-      var later = function (t) { return lateStop(t, ch.end); };
+      var later = function (t) { return lateStop(t, ch.end, ch.at); };
       // (review 2) a chain inside another if (IF NOT Stop THEN ... ) is reached only as that one allows: left alone
       if (chains.some(function (o) { return o !== ch && o.at < ch.at && ch.end <= o.end; })) return;
       if (first >= 0) {
@@ -45998,15 +46029,21 @@ Lantern.RFB = (function () {
     while ((m = re.exec(c))) {
       var t = st ? m[1] : m[2], e = (st ? m[2] : m[3]).replace(/\s+/g, " ").replace(/^\s+|\s+$/g, ""), ors = split2(e, st ? "OR" : "||"), at = m.index, to = re.lastIndex;
       if (ors.length !== 2 || !plainDeep(e)) continue;
-      if (chains.some(function (o) { return o.at < at && to <= o.end; }) || lateStop(t, to) ||
+      if (chains.some(function (o) { return o.at < at && to <= o.end; }) || lateStop(t, to, at) ||
         chains.some(function (o) { return o.end <= at && o.branches.some(function (b) { return stopsIn(b.cond).length && LEAVES.test(b.body); }); })) continue;
       [0, 1].forEach(function (k) {
         var a = ors[1 - k], ands = split2(ors[k], st ? "AND" : "&&"), rest = ands.filter(function (f) { return f !== t; });
         if (ands.length - rest.length !== 1 || !rest.length || looksAt(a, [t])) return;
         var stops = stopsIn(rest.join(" "));
-        if (!stops.length || looksAt(a, stops) || stopsIn(deep(a)).length || !startish(a) || NOT_MACHINE.test(t)) return;
-        var AND = st ? " AND " : " && ", s = rest.map(br).join(AND);
-        var off = rest.filter(function (f) { return stopsIn(f).length; }), keep = rest.filter(function (f) { return !stopsIn(f).length; });
+        if (!stops.length || looksAt(a, stops) || stopsIn(deep(a)).length || !startish(a) || notMachine(t)) return;
+        var AND = st ? " AND " : " && ", s = rest.map(br).join(AND), terms = [];
+        // (review 4) NOT (Stop OR Reset) is NOT Stop AND NOT Reset: only the Stop goes out (Reset moved with it would win over Start)
+        rest.forEach(function (f) {
+          var nm2 = (st ? /^NOT\s*\x28([\s\S]*)\x29$/i : /^!\s*\x28([\s\S]*)\x29$/).exec(f), parts = nm2 && closing(f, f.indexOf("\x28"), "\x28", "\x29") === f.length - 1 ? split2(nm2[1], st ? "OR" : "||") : null;
+          if (parts && parts.length > 1 && parts.every(function (x) { return /^[A-Za-z_]\w*$/.test(x); })) parts.forEach(function (x) { terms.push((st ? "NOT " : "!") + x); });
+          else terms.push(f);
+        });
+        var off = terms.filter(function (f) { return stopsIn(f).length; }), keep = terms.filter(function (f) { return !stopsIn(f).length; });
         out.push("Start wins over Stop: " + t + (st ? " := " : " = ") + e + " turns " + t + " on whenever " + a + " is on, whatever " + s + " says, so Stop cannot stop it while Start is held." + why +
           " Write: " + t + (st ? " := (" : " = (") + br(a) + (st ? " OR " : " || ") + (keep.length ? "(" + [t].concat(keep.map(br)).join(AND) + ")" : t) + ")" + AND + off.map(br).join(AND) + ";");
       });
@@ -46345,13 +46382,15 @@ Lantern.RFB = (function () {
       var ind = om[1].length, tag = om[3].toLowerCase(), body = [], j = i + 1, closed = false, lang = null, shut = new RegExp("^[ \\t]*" + fc + "{" + n + ",}[ \\t]*$");
       // (1.24.12, review 2 of the readers) a closing fence on the end of a code line ("blink(3)\x60\x60\x60") closes it too:
       // otherwise the fence was missed, and the prose and the next fence were read into the program. Only inside a
-      // fence (review 3: a sentence ending "... like \x60\x60\x60" opened one), and not at the end of a comment
-      // ("# wrap the text in \x60\x60\x60", review 3)
-      var glue = fc === "~" ? null : new RegExp("^(.*[^\\s\\x60])[ \\t]*\\x60{" + n + ",}[ \\t]*$");
+      // fence (review 3: a sentence ending "... like \x60\x60\x60" opened one), and not on a line that is all comment
+      // ("# wrap the text in \x60\x60\x60", review 3; but "print(total // count)" and "main()  # run it" end code, review 4).
+      // Backticks beyond the fence's own are the code's (a template literal, review 4).
+      var glue = fc === "~" ? null : /^(.*[^\s\x60])[ \t]*(\x60+)[ \t]*$/;
       for (; j < ls.length; j++) {
         if (shut.test(ls[j])) { closed = true; break; }
         var gm = glue && glue.exec(ls[j]);
-        if (gm && !/(^|\s)(#|\x2F\x2F)/.test(gm[1])) { body.push(gm[1]); closed = true; break; }
+        // (a comment that ends in backticks with the fence on the next line is the comment's: review 4)
+        if (gm && gm[2].length >= n && !/^\s*(#|\x2F\x2F)/.test(gm[1]) && !(/(#|\x2F\x2F)/.test(gm[1]) && shut.test(ls[j + 1] || ""))) { body.push(gm[1] + gm[2].slice(n)); closed = true; break; }
         body.push(ls[j]);
       }
       // (review 3) opened with four backticks and closed with three, a model's slip: the shorter fence closes it
@@ -46359,6 +46398,9 @@ Lantern.RFB = (function () {
       if (ex[i]) { i = closed ? j + 1 : ls.length; continue; }
       // a fence indented under a list item: its lines lose that indent (1.24.12, review 2)
       body = dedent(body, ind);
+      // (review 4) a fence that holds fences (a README, a bare four-backtick or ~~~ fence around a cpp one) is not a
+      // program; one named for a language keeps them as its own lines (a Python string, review 3)
+      if (closed && !(tag && TAG[tag]) && body.some(function (l) { return /^\s*(\x60{3,}|~{3,})/.test(l); })) { i = j + 1; continue; }
       if (closed) {
         var bt = body.join("\n").replace(/\s+$/, "") + "\n";
         if (tag) lang = TAG[tag] || null;
@@ -46402,8 +46444,15 @@ Lantern.RFB = (function () {
         var tl = ls[k].replace(/^\s+|\s+$/g, ""), fm = /^(\x60{3,}|~{3,})/.exec(tl);
         if (tl === "<<<") inEx = true; else if (tl === ">>>") inEx = false;
         // (review 3) nor inside a fence: the form shown in a README in a fence is the README's
-        if (fm) { if (!inF) inF = fm[1]; else if (fm[1].charAt(0) === inF.charAt(0) && fm[1].length >= inF.length && /^(\x60+|~+)$/.test(tl)) inF = null; continue; }
-        if (inF) continue;
+        // (review 4) "\x60\x60\x60st\x60\x60\x60 marks Structured Text." is inline code, not a fence; a fence closed by one glued to
+        // its last line, or opened with four and closed with three, is closed (as the reader above takes them)
+        if (!inF) { if (fm && !(fm[1].charAt(0) === "\x60" && tl.slice(fm[1].length).indexOf("\x60") >= 0)) { inF = fm[1]; continue; } }
+        else {
+          var gl = /[^\s\x60][ \t]*(\x60+)$/.exec(tl);
+          if ((fm && /^(\x60+|~+)$/.test(tl) && fm[1].charAt(0) === inF.charAt(0) && (fm[1].length >= inF.length || inF.charAt(0) === "\x60")) ||
+            (inF.charAt(0) === "\x60" && gl && gl[1].length >= inF.length && !/^(#|\x2F\x2F)/.test(tl))) inF = null;
+          continue;
+        }
         var tm = /^<title>\s*(.*?)\s*(?:<\x2Ftitle>)?$/i.exec(tl), lm = /^language\s*[:=]?\s*([A-Za-z+ 0-9-]+?)\s*$/i.exec(tl);
         if (tm && !/<\x2Ftitle>/i.test(tl) && tm[1]) tm = null;   // "<title>" then text on the same line, never closed: not a title line
         // (review 2) inside <<< ... >>>, the form Lantern shows its own examples in, nothing starts -- not a

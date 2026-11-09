@@ -51,24 +51,32 @@ the 2B 72 (73), on another processor; the 4B 106, the same eight rows as on
   the other way round; or `out = (start || out) && stopOk`, the stop terms
   moved out of the seal and every other term left where the model put it,
   with its brackets (`Motor := Start OR (Motor AND Auto AND NOT Stop)` ->
-  `Motor := (Start OR (Motor AND Auto)) AND NOT Stop;`). Said with why:
+  `Motor := (Start OR (Motor AND Auto)) AND NOT Stop;`; `NOT (Stop OR
+  Reset)` is taken as `NOT Stop AND NOT Reset`, and only the Stop goes
+  out). Said with why:
   a stop overrides the start it belongs to (NFPA 79, 9.2.5.3.2; IEC
   60204-1). It speaks only where it is sure: the question names a machine
   and starting or running and stopping; the output is a machine's (not a
-  lamp, an alarm, a count or a status flag); the start is named as one
-  (start, run, jog, forward; not a two-hand pair or "s1"); the conditions
+  lamp, an alarm, a count or a status flag -- read by the words of its
+  name, so a Clamp is no lamp); the start is named as one (start, run,
+  jog, forward; not a two-hand pair or "s1", nor a sensor: a level or
+  float switch, a pressure switch, a photo eye, a thermostat); the conditions
   are plain inputs (names, digitalRead, readDiscrete, NOT, AND, OR, and
   what those names were set to), not comparisons, calls or members; the
   Stop input is named so (stop, e-stop, emergency, halt, overload, trip;
   not "stopped" or a stopwatch); the start does not look at that stop
   already (a "permissive"). Left alone: a toggle (a negated output in the
   condition: moving the Stop test does not mend it); a start that lasts one
-  scan (its rising edge, a block's output `Q => StartPulse`, a bit the
-  program clears after reading it); a level or float switch; Stop having
-  its say later in the scan (it turns the output off again, or a later line
-  gives the machine the output together with a stop); the line or chain
-  inside another if; a Stop test before it that returns or breaks; code in
-  a string, in a comment (nested ones too) or under `#if`.
+  scan (its rising edge, a memory named held or last, a block's output
+  `Q => StartPulse`, a bit the program clears after reading it); Stop
+  having its say elsewhere in the program -- after the line, or in another
+  function, since Lantern cannot follow the order functions are called in
+  (it turns the output off again; a later line gives a machine the output
+  together with a stop, or a permissive holding one; an if runs the
+  machine from it and stops it on Stop) -- but not a lamp, a print or a
+  timer's input, nor an interlock that uses the output negated; the line
+  or chain inside another if; a Stop test before it that returns or
+  breaks; code in a string, in a comment (nested ones too) or under `#if`.
 - *A Stop that turns the output on: tried and taken out.* The 35B's second
   try at the same question, on the 1.24.12 test build, with Lantern's
   tested P1AM example in front of it: `if (startPressed || motorRunning) {
@@ -108,8 +116,11 @@ the 2B 72 (73), on another processor; the 4B 106, the same eight rows as on
   with three, a model's slip, is closed there), and a fence shown inside a
   four-backtick or a `~~~` one is not read, nor one between Lantern's own
   `<<<` and `>>>`. A fence glued to the end of a code line closes it only
-  inside a fence, and not at the end of a comment. `~~~` fences and the
-  tags `structured_text` and `structured text` are read. A MAKE CODE block
+  inside a fence, and not on a line that is all comment (code with `//`
+  or `#` in it, or a comment after code, ends there; backticks beyond the
+  fence's own are the code's). A fence with no language that holds other
+  fences (a README) is not read. `~~~` fences and the tags
+  `structured_text` and `structured text` are read. A MAKE CODE block
   whose fence opens and never closes goes back cut.
 - *A request kept once* (ASSIST_CHAT, AI_ACTIONS). A reply that asked for a
   command stays in the conversation with each command line once, a last
@@ -149,7 +160,7 @@ written, with inputs of their own (all in `tests/fixtures/`, replayed by
   under `#if`, a status lamp following a run flag, a start behind a
   function or a `#define`, a Stop that returns, a Stop that wins later in
   the scan, a chain inside `IF NOT Stop`). Mended: none of the 193 is
-  spoken about; 53 of its 94 wrong programs are found, and every
+  spoken about; 54 of its 94 wrong programs are found, and every
   correction it gives compiles and, run with Start and Stop held
   together, stops the motor (four more, whose stop is a thermal trip, an
   e-stop, a normally closed contact or a command on the serial line, which
@@ -179,14 +190,32 @@ written, with inputs of their own (all in `tests/fixtures/`, replayed by
   backticks opened a fence, a comment ending in them closed one, the form
   shown inside a fence or a `<<<` example read as the model's ...).
   Mended as above: none of the 85 is spoken about; 47 of 62 found; every
-  line it is given does what the reviewer's own line does, but three,
-  where Lantern moves only the stop terms and leaves an interlock, a mode
-  and an overload it does not know by name (`OL1`) where the model put
-  them: Stop wins, Start starts as the model wrote it. 59 of the 63
+  line it is given does what the reviewer's own line does, but those of
+  three programs, where Lantern moves only the stop terms and leaves an
+  interlock, a mode and an overload it does not know by name (`OL1`)
+  where the model put them: Stop wins, Start starts as the model wrote it. 59 of the 63
   replies read as expected; the 4 left are programs not read;
-- REVIEW4_PLACEHOLDER
+- review 4, by a fourth agent that had seen neither the rule written nor
+  the earlier reviews (175 programs, 92 right, each line it was given run
+  against the model's own logic: any stop on -> off, every stop off -> as
+  the model wrote it; and 60 replies; `tests/fixtures/review4_1252_*.json`):
+  16 of its 92 right programs spoken about (sensors not named so, an edge
+  memory set in an if, a Stop handled in a helper function above or below
+  loop(), an if that runs the machine from a request bit, a permissive
+  holding the Stop, a Clamp read as a lamp) and one line wrong: `NOT (Stop
+  OR Reset)` moved out whole, so Reset won over Start too. In the reader,
+  10 of 60 not as expected (a bare four-backtick or `~~~` fence around a
+  cpp one read as a program; `print(total // count)` with the fence glued
+  on taken for a comment ...). Mended as above: none of the 92 is spoken
+  about, 66 of 83 found, all 70 lines it is given pass its three tests;
+  59 of the 60 replies read as expected (the one left: a line in a Python
+  string ending in three backticks closes the fence, a program not read).
+  The same build against the first three reviews' inputs: none of their
+  433 right programs spoken about; 49 of 77, 54 of 94, 47 of 62 found.
+  These last mends were checked against all four reviews' inputs, not by
+  a fifth reviewer.
 
-**What was run.** `npm test`: ALL CHECKS PASS (NNN suites); the browser
+**What was run.** `npm test`: ALL CHECKS PASS (82 suites); the browser
 tests of Code Lab, the text reader and the bench (code_lab, text_reader,
 bench_headless, bench_run9). The 35B on Adam's laptop, the seven program
 questions, on the build after the first reviews (b9f57ac, 2026-11-09):
