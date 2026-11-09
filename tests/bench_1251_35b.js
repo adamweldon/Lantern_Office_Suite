@@ -98,6 +98,27 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   ok("Lantern\u2019s own tested examples (" + ex.length + " in Arduino and Structured Text) give it nothing to say", ex.length >= 25 && !exHit.length, exHit.map(function (x) { return x.id; }));
   var ideals = Q.filter(function (q) { return /^code-/.test(q.id) && /language (arduino|st)\b/.test(q.ideal); });
   ok("nor do the bench\u2019s own model programs", ideals.length >= 4 && ideals.every(function (q) { var p = act.build(q.ideal, q.q); return p && p.ok; }), ideals.map(function (q) { var p = act.build(q.ideal, q.q); return [q.id, p && p.problems]; }));
+
+  // --- the 35B on the 1.24.12 test build (tests/fixtures/bench_run_1252_35b_code.json): the seven program questions passed ---
+  var T = fixture("bench_run_1252_35b_code.json"), tp = row(T, "code-p1am-seal-in"), tl = row(T, "code-ladder-start-stop");
+  ok("the test build\u2019s run: 7 of 7 program questions, two rows kept as written", T.summary && T.summary.pass === 7 && T.summary.n === 7 && T.rows.length === 2 && tp.pass === true && tl.pass === true, T.summary);
+  // its P1AM seal-in: the motor runs only while Stop is pressed (stopPressed is !readDiscrete, so it is on when Stop is pressed)
+  var tm = act.fromReply(tp.reply, sq.q);
+  ok("the P1AM program the test build\u2019s bench passed turns the motor on only while Stop is pressed; 1.24.12\u2019s bench fails it and says so",
+    /if \(stopPressed\) \{\s*motorRunning = true;/.test(tp.reply) && tm && B.grade(sq, tp.reply, { made: tm }).pass === false &&
+    B.grade(sq, tp.reply, { made: tm }).why === "Stop turns the motor on: it runs only while Stop is pressed", tm && [tm.problems, B.grade(sq, tp.reply, { made: tm })]);
+  // a rule in Lantern that said so was written, tried by a second reviewer, and taken out: of its 193 right programs
+  // it spoke about 27, and its swap made 17 less safe (an e-stop's safe state, a dump valve, a brake). So Lantern
+  // says nothing about this program; the bench does. QUEUE: a Stop that turns the motor on needs a surer rule.
+  ok("...Lantern itself says nothing about it (the rule that did was taken out after review 2)", !AC.startWins("arduino", tm.plan.text, sq.q).length);
+  // the ladder: the first reply asked for a lesson, and the lessons came with the block's first line
+  var lq = item("code-ladder-start-stop"), lseen = [];
+  function seq2(list) { var i = 0; return function (msgs) { lseen.push(msgs); return Promise.resolve(list[Math.min(i++, list.length - 1)]); }; }
+  var lo = await act.solve(lq.q, seq2([tl.first, tl.reply]));
+  var llast = lseen[1] ? lseen[1][lseen[1].length - 1] : null, ltxt = llast ? (typeof llast.content === "string" ? llast.content : llast.content.map(function (x) { return x.text || ""; }).join("\n")) : "";
+  ok("the ladder: its LESSON request brought the lessons with the block\u2019s first line, and its next reply was the block, which passes",
+    tl.first === "LESSON: motor start stop ladder" && /reply with ONLY the block, with no \[n\]/.test(ltxt) && !/QUOTE \[n\]/.test(ltxt) &&
+    lo.made && lo.made.ok && B.grade(lq, lo.text, lo).pass === true, [ltxt.slice(-500), lo.made && lo.made.problems]);
   console.log(fails ? fails + " BENCH 1.24.11 35B FAILURES (" + passes + " passed)" : "ALL BENCH 1.24.11 35B CHECKS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);
 })();

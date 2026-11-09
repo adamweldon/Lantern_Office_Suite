@@ -55,9 +55,11 @@ function seq(list, seen) { var i = 0; return function (msgs) { if (seen) seen.pu
   ok("the 155 programs the reviewer said to leave alone are left alone (the first draft spoke about 12)", R.filter(function (x) { return x.expect === "silent"; }).length === 155 && !loud.length,
     loud.map(function (x) { return [id(x), said(x)]; }));
   var flagged = R.filter(function (x) { return x.expect === "flag" && said(x).length; }), quiet = R.filter(function (x) { return x.expect === "flag" && !said(x).length; }).map(id).sort();
-  ok("of the 77 that let Start win, 54 are found; the 23 left are those a reader cannot be sure of (a ternary, an SR block, a state machine, a timer\u2019s .Q, a start that looks at another stop, a stop if with an else, a toggle ...)",
-    flagged.length === 54 && quiet.join() === "AF18,AF25,AF28,AF29,AF30,AF32,AF33,AF36,AF39,AF40,AF42,AF43,SF14,SF15,SF17,SF20,SF21,XF1,XF10,XF11,XF2,XF3,XF4,XF5".split(",").filter(function (k) { return quiet.indexOf(k) >= 0; }).sort().join() &&
-    quiet.length === 23, quiet);
+  // after review 2 the reader asks more before it speaks: a start behind a function (AF14), a stop handled again
+  // later (AF16), a start that is two hands or a name that does not say start (AF22, AF37, AF44) are left alone now;
+  // Run in the question is a start (AF42 is found)
+  ok("of the 77 that let Start win, 49 are found; the 28 left are those a reader cannot be sure of (a ternary, an SR block, a state machine, a timer\u2019s .Q, a start behind a function, two hands, a stop handled again later, a toggle ...)",
+    flagged.length === 49 && quiet.join() === "AF14,AF16,AF18,AF22,AF25,AF28,AF29,AF30,AF32,AF33,AF36,AF37,AF39,AF40,AF43,AF44,SF14,SF15,SF17,SF20,SF21,XF1,XF10,XF11,XF2,XF3,XF4,XF5", quiet);
   function fix(k) { var p = said(item(k)); return p.length === 1 ? p[0].split(" every branch kept: ")[1] || p[0].split("Put the Stop test last: ")[1] : null; }
   var want = {
     AF9: "if (stopPressed) { conveyorOn = false; } else if (estopPressed) { conveyorOn = false; faultLamp = true; } else if (startPressed) { conveyorOn = true; }",
@@ -94,8 +96,9 @@ function seq(list, seen) { var i = 0; return function (msgs) { if (seen) seen.pu
   // what the review found that is left: each reads nothing it should not (a program not read, or read without its title)
   var LEFT = ["arduino with a bare fence, cut", "language javascript to the end of the reply", "language python, no END, prose explanation at the end of the reply (prose must not be code)",
     "two B programs in one reply", "title + language line, then the code in a fence, then END", "short 2-line B program", "title tag then a full MAKE CODE block (read once)",
-    "closing fence of 4 backticks (closed by CommonMark)", "MAKE CODE block then an unclosed output fence", "language python, no END, markdown explanation after the code",
-    "language st, no END, a sentence after the code", "title + language arduino, no END, a sentence after the sketch", "two full-size B programs in one reply"];
+    "MAKE CODE block then an unclosed output fence", "language python, no END, markdown explanation after the code",
+    "language st, no END, a sentence after the code", "title + language arduino, no END, a sentence after the sketch", "two full-size B programs in one reply",
+    "ladder cut after 2 lines"];   // its one rung is whole (it ends with ;), so the open fence is not called cut
   var wrong = C.filter(function (it) { return judge(it).bad.length && LEFT.indexOf(it.note) < 0; });
   ok("the reviewer\u2019s 99 replies: every one read as it expected, but for " + LEFT.length + " left as misses", C.length === 99 && !wrong.length, wrong.map(function (it) { return [it.note, judge(it).bad]; }));
   var left = C.filter(function (it) { return LEFT.indexOf(it.note) >= 0; }), unsafe = left.filter(function (it) {
@@ -105,6 +108,51 @@ function seq(list, seen) { var i = 0; return function (msgs) { if (seen) seen.pu
   ok("...and none of those reads anything wrong: each is a program not read, or the second of two not read, or read without its title", left.length === LEFT.length && !unsafe.length, unsafe.map(function (it) { return it.note; }));
   var page = "<title>Counter</title>\n<button id=\"b\">Click</button>\n<script>\nvar n = 0;\ndocument.getElementById(\"b\").onclick = function () { n++; };\n</script>\nEND";
   ok("an HTML page with a <title> and a <script> is not read as a program, even with an END after it", !L.chatCode.blocks(page).length && !act.replyCode(page, "Write a JavaScript click counter"));
+
+  // --- the second reviews (1.24.12) ---
+  // Start wins over Stop, review 2 (tests/fixtures/review2_1252_startwins.json): 287 programs. The second kind of
+  // message ("Stop turns X on", for the 35B's motor that ran only while Stop was pressed) spoke about 27 of 193
+  // right programs and its swap made 17 less safe (an e-stop's SafeState, a dump valve, a brake, a ramp-down):
+  // taken out. The first kind spoke about 25 right ones (code in a string, under #if, a status lamp, a start
+  // behind a function or a macro, a Stop that returns, a Stop that wins later, a chain inside IF NOT Stop):
+  // mended; every correction it gives was compiled and run scan by scan by the reviewer's own scripts.
+  var R2 = fixture("review2_1252_startwins.json").items;
+  var loud2 = R2.filter(function (x) { return x.expect === "silent" && SW(x.lang, x.text, x.q).length; });
+  ok("review 2: none of its 193 right programs is spoken about", R2.filter(function (x) { return x.expect === "silent"; }).length === 193 && !loud2.length, loud2.map(function (x) { return [x.id, SW(x.lang, x.text, x.q)]; }));
+  var found2 = R2.filter(function (x) { return x.expect === "flag" && SW(x.lang, x.text, x.q).length; }).length;
+  ok("review 2: of its 94 programs that let Start win, " + found2 + " are found (50 when written)", R2.filter(function (x) { return x.expect === "flag"; }).length === 94 && found2 >= 50, found2);
+  ok("no message says Stop turns a thing on (that rule is out)", R.concat(R2).every(function (x) { return SW(x.lang, x.text, x.q).every(function (m) { return !/^Stop turns/.test(m); }); }));
+  // the readers, review 2 (tests/fixtures/review2_1252_codeblocks_cases.json): 195 replies
+  var C2 = fixture("review2_1252_codeblocks_cases.json").items;
+  function nlines(t) { var s0 = String(t).replace(/\n$/, ""); return s0 === "" ? 0 : s0.split("\n").length; }
+  function judge2(c) {
+    var bl = L.chatCode.blocks(c.reply), rc = act.replyCode(c.reply, c.q), bad = [], eb = c.expect.blocks;
+    if (eb.length !== bl.length) bad.push("count " + bl.length);
+    else eb.forEach(function (e, i) { var b = bl[i]; if (b.lang !== e.lang || b.text !== e.text || !!b.cut !== !!e.cut || b.lines !== nlines(b.text) || (e.title && b.title !== e.title)) bad.push("block " + i); });
+    var p = rc ? rc.problems : null, want = c.expect.rc;
+    if (/^cut:/.test(want) && !(p && p.length === 1 && new RegExp("^the program stops at line " + want.slice(4) + ", inside its \x60\x60\x60 fence: the reply was cut off").test(p[0]))) bad.push("not the cut");
+    if (want === "nocut" && p && p.some(function (x) { return /cut off|stops at line/.test(x); })) bad.push("a cut said");
+    if (want === "null" && p) bad.push("sent back");
+    return bad;
+  }
+  // what is left as it is, each for its reason:
+  var LEFT2 = {
+    // a fence never closed, the program in it whole (its brackets closed, its last line ends it): read whole, not
+    // "cut off" -- the reviewer took every open fence for a cut one; Lantern says cut only where the code shows it
+    a01: "whole", a08: "whole", a18: "whole", a21: "whole", a27: "whole", a39: "whole", a25: "whole", a38: "whole",
+    // misses: not read, or read without its title
+    a31: "miss", a36: "miss", a37: "miss", a48: "miss", a49: "miss", b15: "miss", b22: "miss", b28: "miss", b30: "miss", b35: "miss", b36: "miss", a55: "miss",
+    // a MAKE line and an open fence: the block goes back cut (fromReply); blocks() reads the fence too, as Chat never shows it
+    a42: "made" };
+  var wrong2 = C2.filter(function (c) { return judge2(c).length && !LEFT2[c.id]; });
+  ok("review 2 of the readers: its 195 replies read as it expected, but for " + Object.keys(LEFT2).length + " each with its reason", C2.length === 195 && !wrong2.length, wrong2.map(function (c) { return [c.id, judge2(c)]; }));
+  var n2 = C2.filter(function (c) { return c.id === "n21" || c.id === "n46"; });
+  ok("...a fence shown inside a four-backtick one is not read, nor a program between <<< and >>> with a title line and a language line (both were left on the first pass)",
+    n2.length === 2 && n2.every(function (c) { return !judge2(c).length && !L.chatCode.blocks(c.reply).length; }));
+  var cutWrong = C2.filter(function (c) { var rc = act.replyCode(c.reply, c.q); return rc && rc.problems.some(function (x) { return /cut off/.test(x); }) && !/^cut:/.test(c.expect.rc); });
+  ok("...and no reply is told it was cut off where it was not", !cutWrong.length, cutWrong.map(function (c) { return c.id; }));
+  var a42 = C2.filter(function (c) { return c.id === "a42"; })[0], m42 = act.fromReply(a42.reply, a42.q);
+  ok("a MAKE CODE block with its fence opened and no END goes back cut", m42 && !m42.ok && /^the program stops at line 6, inside its \x60\x60\x60 fence/.test(m42.problems[0]), m42 && m42.problems);
 
   // --- part C: a command kept once ---
   var seen = [], q = "Write a Structured Text PLC program for a tank: open the fill valve when the low float switch comes on, and close it when the high float switch comes on.";

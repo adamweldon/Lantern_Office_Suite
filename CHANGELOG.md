@@ -51,25 +51,34 @@ the 2B 72 (73), on another processor; the 4B 106, the same eight rows as on
   the other way round; or `out = (start || out) && stopOk`. Said with why:
   a stop overrides the start it belongs to (NFPA 79, 9.2.5.3.2; IEC
   60204-1). It speaks only where it is sure: the question names a machine
-  and starting or running and stopping; the conditions are plain inputs
-  (names, digitalRead, readDiscrete, NOT, AND, OR, one assignment back),
-  not comparisons; the Stop input is named so (stop, e-stop, emergency,
-  halt, overload, trip; not "stopped" or a stopwatch); the start does not
-  look at that stop already, directly or through a name (a "permissive");
-  a negated output in a condition (a toggle) is left alone, since moving
-  the Stop test does not mend it.
-- *A Stop that turns the output on.* The 35B's second try at the same
-  question, on the 1.24.12 test build, with Lantern's tested P1AM example in
-  front of it: `if (stopPressed) { motorRunning = true; } else {
-  motorRunning = false; }` -- the motor on only while Stop is held. A
-  branch on a name that says a stop is pressed (stopPressed, estopActive;
-  a bare "stop" may be wired NC and mean the opposite) that turns on an
-  output turned off elsewhere (not a lamp, an alarm or a count) goes back
-  with the two bodies swapped, or the whole chain with that branch turning
-  it off.
-- *The bench's P1AM question* says what is wrong: "Start wins over Stop",
-  "Stop turns the motor on", or "no seal-in: nothing keeps the motor on
-  once Start is let go"; a stop-first set and reset passes.
+  and starting or running and stopping; the output is a machine's (not a
+  lamp, an alarm, a count or a status flag); the start is named as one
+  (start, run, jog, forward; not a two-hand pair or "s1"); the conditions
+  are plain inputs (names, digitalRead, readDiscrete, NOT, AND, OR, and
+  what those names were set to), not comparisons, calls or members; the
+  Stop input is named so (stop, e-stop, emergency, halt, overload, trip;
+  not "stopped" or a stopwatch); the start does not look at that stop
+  already (a "permissive"). Left alone: a toggle (a negated output in the
+  condition: moving the Stop test does not mend it), a start on its rising
+  edge, a stop handled again later in the scan, a chain inside another
+  chain, a Stop branch that returns or breaks, code in a string or under
+  `#if`.
+- *A Stop that turns the output on: tried and taken out.* The 35B's second
+  try at the same question, on the 1.24.12 test build, with Lantern's
+  tested P1AM example in front of it: `if (startPressed || motorRunning) {
+  if (stopPressed) { motorRunning = true; } else { motorRunning = false; }
+  }` -- the motor on only while Stop is held. A rule that sent that back
+  with the two bodies swapped was written, and the second review took it
+  apart: of its 193 right programs it spoke about 27, and its swap made 17
+  of them less safe (an e-stop's safe state, a dump valve, a brake, a
+  ramp-down: a stop that turns something on is often the safe thing).
+  Taken out. The bench says it instead (below); a surer rule is in the
+  queue.
+- *The bench's P1AM question* says what is wrong: "Start wins over Stop:
+  while Start is held, Stop cannot stop the motor", "Stop turns the motor
+  on: it runs only while Stop is pressed", or "no seal-in: nothing keeps
+  the motor on once Start is let go"; a stop-first set and reset passes.
+  (The bench may say what Lantern may not: it knows the question's wiring.)
 - *A program without its MAKE line* (CHAT_CODE_BLOCKS). A line
   `<title>...</title>` and/or `language <one of the five>`, the program,
   then END, `>>>` or `</title>` -- or a sketch between `<title>` and
@@ -83,14 +92,21 @@ the 2B 72 (73), on another processor; the 4B 106, the same eight rows as on
   back is "the program stops at line N, inside its fence: the reply was
   cut off ... write the whole program again as a MAKE CODE block, with
   fewer and shorter comments". Chat says the same under the reply. A bare
-  fence left open is not read (output and data are often in one); a fence
-  closed at the end of a code line is whole; a fence indented under a list
-  item loses that indent.
+  fence left open is not read (output and data are often in one), nor one
+  named pascal; one whose program ends (an END line, a sentence after a
+  blank line, its brackets closed and its last line ending it) is read
+  whole, not cut; one mostly sentences is not a program. A fence closed at
+  the end of a code line is whole; a fence indented under a list item
+  loses that indent; a fence is closed by one at least as long (four
+  backticks close three), and a fence shown inside a four-backtick one is
+  not read. A MAKE CODE block whose fence opens and never closes goes back
+  cut.
 - *A request kept once* (ASSIST_CHAT, AI_ACTIONS). A reply that asked for a
   command stays in the conversation with each command line once, a last
   line cut off part-way through one dropped, at most 500 characters, the
   first command always kept. Other lines -- a draft program beside the
-  command -- are kept as written.
+  command -- are kept as written while there is room. In Chat a LOOKUP
+  reply is kept the same way.
 - *Lessons for a thing to make* (SUITE_COMMANDS, SUITE_CHAT). LESSON
   passages for a question that asks for something Lantern makes from a
   block end with that block's first line ("reply with ONLY the block ...
@@ -107,16 +123,41 @@ written, with inputs of their own (all in `tests/fixtures/`, replayed by
   "permissive" ...) and wrote 13 corrections wrong -- above all, a chain's
   other branches left off, so that the line, pasted in, dropped an e-stop
   or a fault. Mended as above: none of the 155 it said to leave alone is
-  spoken about; every correction is the whole chain. 23 of its 77 wrong
+  spoken about; every correction is the whole chain. 28 of its 77 wrong
   programs are left unsaid (a ternary, an SR block, a state machine, a
-  timer's .Q, a start that looks at another stop, a stop if with an else,
-  a toggle ...): a miss, not a mistake;
+  timer's .Q, a start behind a function, two hands, a stop handled again
+  later, a toggle ...): a miss, not a mistake;
 - the readers, review 1 (140 replies): with no END, the explanation after a
   program was read into it; an HTML page's `<title>` and `<script>` were
   read as JavaScript; a draft beside a command lost its repeated lines; a
   command at the end of a long reply was cut off with the rest; output in
   a bare fence left open was read as a sketch. Mended as above.
-- REVIEW2_PLACEHOLDER
+- Start wins over Stop, review 2, by another agent (287 programs, 193
+  right; the sketches and their corrections compiled with g++ against
+  stub headers and run scan by scan): the "Stop turns on" rule, as above;
+  the Start-wins rule spoke about 25 right programs (code in a string,
+  under `#if`, a status lamp following a run flag, a start behind a
+  function or a `#define`, a Stop that returns, a Stop that wins later in
+  the scan, a chain inside `IF NOT Stop`). Mended: none of the 193 is
+  spoken about; 53 of its 94 wrong programs are found, and every
+  correction it gives compiles and, run with Start and Stop held
+  together, stops the motor (four more, whose stop is a thermal trip, an
+  e-stop, a normally closed contact or a command on the serial line, which
+  the simulation's two buttons do not work, test that stop first as they
+  should);
+- the readers, review 2, by another agent (250 replies; 33 read wrong on
+  the first pass): a closing fence glued to a code line, a fence indented
+  under a list, prose after an open fence read as code, a fence named
+  pascal, `<<<` examples read as the model's, a MAKE CODE block with an
+  open fence not called cut, a LOOKUP runaway in Chat. Mended as above;
+  of its 195 code replies, 21 are left, each for its reason: 8 open
+  fences whose program is whole (read whole, not "cut off"), 12 misses
+  (not read, or read without a title), 1 MAKE block whose open fence
+  Chat also shows. No reply is told it was cut off where it was not;
+- a last pass after review 2 (a fence closed by four backticks, a fence
+  inside a four-backtick one, a `<<<` example whose title line comes
+  before its language line, a Structured Text seal-in with `OR (`) was
+  tried by a third agent: REVIEW3_PLACEHOLDER
 
 **What was run.** `npm test`: ALL CHECKS PASS (NNN suites). The 35B on
 Adam's laptop, the seven program questions on the 1.24.12 test build:

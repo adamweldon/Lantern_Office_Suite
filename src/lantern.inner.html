@@ -19894,6 +19894,8 @@ Lantern.RFB = (function () {
       var wantLook = parsed.lookup || moreLook || (!ownWords && (A.isDecline(parsed.answer) || A.needEcho(parsed.need, q) || A.needLibrary(parsed.need) || (quotes && !sources && libReady())));
       if (!looked && !rec.noLibrary && window.Lantern.assistLookup && !parsed.exprText && wantLook) {
         looked = true; canMore = false;
+        // (1.24.12, review 2) a LOOKUP written over and over stays in the conversation once, as a command does
+        if (parsed.lookup) for (var al = msgs.length - 1; al >= 0; al--) if (msgs[al].role === "assistant") { if (typeof msgs[al].content === "string") msgs[al].content = once(msgs[al].content); break; }
         var lk = null, wantDetail = !!(Lantern.library && Lantern.library.wantsDetail && Lantern.library.wantsDetail(q)), words = parsed.lookup || "";
         if (!words && rec.contextual) words = await C.askSearch(msgs.slice(0, -2), q, call);
         if (words !== "none") { try { lk = await window.Lantern.assistLookup(q, words, { detail: wantDetail }); } catch (e) { lk = null; } }
@@ -28128,7 +28130,7 @@ Lantern.RFB = (function () {
     var out = [], cur = null, last = null, all = String(text || "").replace(/\r/g, "").split("\n");
     all.forEach(function (raw, i) {
       var line = raw.replace(/^\s+|\s+$/g, "");
-      if (/^\x60\x60\x60/.test(line)) return;   // a code fence
+      if (/^\x60\x60\x60/.test(line)) { if (cur) cur.fences = (cur.fences || 0) + 1; return; }   // a code fence (counted: 1.24.12)
       if (!cur && last && /^note\s+\S/i.test(line)) { last.lines.push(line); (last.raw = last.raw || []).push(raw.replace(/\s+$/, "")); last.noteAfterEnd = true; return; }
       if (line) last = null;
       var m = /^\**\s*MAKE\s+([A-Za-z][A-Za-z ]{1,20}?)\s*:\s*(.*?)\**$/i.exec(line);
@@ -45792,9 +45794,9 @@ Lantern.RFB = (function () {
   // (a member of a block -- StartEdge.Q, a timer's .DN -- is worked out, not pressed: R_TRIG and F_TRIG of one
   // signal are never on together, review 1)
   function plain(e) {
-    var r = String(e).replace(/\b(?:P1\.)?readDiscrete\s*\x28\s*\w+\s*,\s*\w+\s*\x29|\bdigitalRead\s*\x28\s*\w+\s*\x29/g, " x ");
-    if (/[A-Za-z_]\w*\.\w/.test(r)) return false;
-    r = r.replace(/(?:[!=]?=|<>)\s*(LOW|HIGH|0|1|true|false)\b|\b(LOW|HIGH|true|false)\s*(?:[!=]?=|<>)/gi, " ").replace(/\b(AND|OR|NOT)\b/gi, " ").replace(/&&|\|\||!|\x28|\x29/g, " ").replace(/[A-Za-z_]\w*/g, " ");
+    var r = String(e).replace(/\b(?:P1\.)?readDiscrete\s*\x28\s*\w+\s*,\s*\w+\s*\x29|\bdigitalRead\s*\x28\s*\w+\s*\x29/g, " x ").replace(/\b(AND|OR|NOT|XOR)\b/gi, " @ ");   // a word, not a space: "Start OR (" is not a call
+    if (/[A-Za-z_]\w*\.\w/.test(r) || /[A-Za-z_]\w*\s*\x28/.test(r)) return false;   // a member, or a call: worked out, not read (review 2)
+    r = r.replace(/(?:[!=]?=|<>)\s*(LOW|HIGH|0|1|true|false)\b|\b(LOW|HIGH|true|false)\s*(?:[!=]?=|<>)/gi, " ").replace(/\b(AND|OR|NOT)\b/gi, " ").replace(/&&|\|\||!|@|\x28|\x29/g, " ").replace(/[A-Za-z_]\w*/g, " ");
     return !/\S/.test(r);
   }
   function closing(s, i, open, close) {
@@ -45830,15 +45832,15 @@ Lantern.RFB = (function () {
         while (/\s/.test(c.charAt(j))) j++;
         if (c.charAt(j) === "\x7B") { be = closing(c, j, "\x7B", "\x7D"); if (be < 0) { ok = false; break; } body = c.slice(j + 1, be); }
         else { be = c.indexOf(";", j); if (be < 0) { ok = false; break; } body = c.slice(j, be + 1); }
-        ch.branches.push({ cond: c.slice(p + 1, pe).replace(/\s+/g, " ").replace(/^\s+|\s+$/g, ""), body: body });
+        ch.branches.push({ cond: c.slice(p + 1, pe).replace(/\s+/g, " ").replace(/^\s+|\s+$/g, ""), body: body, cAt: p + 1, cTo: pe, bAt: c.charAt(j) === "\x7B" ? j + 1 : j, bTo: c.charAt(j) === "\x7B" ? be : be + 1 });
         ch.end = be + 1;
         var rest = c.slice(be + 1), em = /^\s*else\s+if\s*\x28/.exec(rest);
         if (em) { k = be + 1 + em[0].length - 1; skip[be + 1 + em[0].search(/if\s*\x28$/)] = 1; continue; }
         var el = /^\s*else\b\s*/.exec(rest);
         if (el) {
           var s0 = be + 1 + el[0].length, se;
-          if (c.charAt(s0) === "\x7B") { se = closing(c, s0, "\x7B", "\x7D"); if (se < 0) { ok = false; break; } ch.els = c.slice(s0 + 1, se); ch.end = se + 1; }
-          else { se = c.indexOf(";", s0); if (se < 0) { ok = false; break; } ch.els = c.slice(s0, se + 1); ch.end = se + 1; }
+          if (c.charAt(s0) === "\x7B") { se = closing(c, s0, "\x7B", "\x7D"); if (se < 0) { ok = false; break; } ch.els = c.slice(s0 + 1, se); ch.eAt = s0 + 1; ch.eTo = se; ch.end = se + 1; }
+          else { se = c.indexOf(";", s0); if (se < 0) { ok = false; break; } ch.els = c.slice(s0, se + 1); ch.eAt = s0; ch.eTo = se + 1; ch.end = se + 1; }
         }
         break;
       }
@@ -45853,9 +45855,9 @@ Lantern.RFB = (function () {
       var w = m[1].toUpperCase(), top = stack[stack.length - 1];
       if (w === "IF") { stack.push({ branches: [], els: null, at: m.index, end: -1, condAt: re.lastIndex, cur: null, elsAt: -1 }); continue; }
       if (!top) continue;
-      if (w === "THEN") { if (top.condAt >= 0) { top.cur = { cond: c.slice(top.condAt, m.index).replace(/\s+/g, " ").replace(/^\s+|\s+$/g, ""), from: re.lastIndex }; top.condAt = -1; } continue; }
-      if (top.cur) { top.cur.body = c.slice(top.cur.from, m.index); top.branches.push(top.cur); top.cur = null; }
-      if (top.elsAt >= 0) { top.els = c.slice(top.elsAt, m.index); top.elsAt = -1; }
+      if (w === "THEN") { if (top.condAt >= 0) { top.cur = { cond: c.slice(top.condAt, m.index).replace(/\s+/g, " ").replace(/^\s+|\s+$/g, ""), from: re.lastIndex, cAt: top.condAt, cTo: m.index }; top.condAt = -1; } continue; }
+      if (top.cur) { top.cur.body = c.slice(top.cur.from, m.index); top.cur.bAt = top.cur.from; top.cur.bTo = m.index; top.branches.push(top.cur); top.cur = null; }
+      if (top.elsAt >= 0) { top.els = c.slice(top.elsAt, m.index); top.eAt = top.elsAt; top.eTo = m.index; top.elsAt = -1; }
       if (w === "ELSIF") top.condAt = re.lastIndex;
       else if (w === "ELSE") { top.condAt = -1; top.elsAt = re.lastIndex; }
       else {
@@ -45883,17 +45885,30 @@ Lantern.RFB = (function () {
   function startWins(lang, text, q) {
     q = String(q || "");
     if ((lang !== "arduino" && lang !== "st") || !/\bstop/i.test(q) || !/\b(start|run)/i.test(q) || !MACHINE.test(q)) return [];
-    var st = lang === "st", c = plainCode(text), out = [], m, re;
+    // (review 2) the words of a string are not code ("if (start)" printed on Serial), and code under #if may never
+    // be built: strings are blanked for reading (the corrections are written from the code as it was), #if left alone
+    var st = lang === "st", c0 = plainCode(text), out = [], m, re;
+    var c = c0.replace(/\x22(?:[^\x22\\\n]|\\.)*\x22|\x27(?:[^\x27\\\n]|\\.)*\x27/g, function (x) { return x.charAt(0) + x.slice(1, -1).replace(/[^\n]/g, " ") + x.charAt(0); });
+    if (!st && /^[ \t]*#[ \t]*(if|ifdef|ifndef|elif|else)\b/m.test(c)) return [];
     var why = " A stop must override the start it belongs to (NFPA 79, IEC 60204-1).";
-    // what a name stands for, one assignment back (bool permissive = !stop && !estop;)
+    // what a name stands for: every assignment of it, and a #define (bool permissive = !stop && !estop;
+    // a global set in another function -- review 2)
     var defs = {};
+    re = /^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)[ \t]+([^\n]+)$/gm;
+    while ((m = re.exec(c))) (defs[m[1]] = defs[m[1]] || []).push(m[2]);
     re = st ? /\b([A-Za-z_]\w*)\s*:=\s*([^;]+);/g : /(?:^|[;\x7B\x7D\s])(?:(?:const\s+)?(?:bool|boolean|int|byte|uint8_t)\s+)?([A-Za-z_]\w*)\s*=\s*([^=;][^;]*);/g;
     while ((m = re.exec(c))) split2(m[1] + " = " + m[2], st ? "\x01" : ",").forEach(function (d) {
       var dm = /^([A-Za-z_]\w*)\s*:?=\s*([\s\S]+)$/.exec(d);
       if (dm && !/^\s*(A?\d+|[A-Z][A-Z0-9_]*)\s*$/.test(dm[2])) (defs[dm[1]] = defs[dm[1]] || []).push(dm[2]);
     });
-    function deep(e) { return idents(e).map(function (w) { return defs[w] && defs[w].length === 1 ? "(" + defs[w][0] + ")" : w; }).join(" ") + " " + e; }
-    function plainDeep(e) { return plain(e) && idents(e).every(function (w) { return !defs[w] || defs[w].length !== 1 || plain(defs[w][0]); }); }
+    function deep(e) { return idents(e).map(function (w) { return defs[w] ? "(" + defs[w].join(") (") + ")" : w; }).join(" ") + " " + e; }
+    function plainDeep(e) { return plain(e) && idents(e).every(function (w) { return !defs[w] || defs[w].every(plain); }); }
+    function raw(b) { return { cond: c0.slice(b.cAt, b.cTo).replace(/\s+/g, " ").replace(/^\s+|\s+$/g, ""), body: c0.slice(b.bAt, b.bTo) }; }
+    // (review 2) the start must be a start (a status lamp following a run flag is not), the output a machine's (a
+    // lamp, an alarm or a count is not), and a start on its rising edge (start && !lastStart) wins for one scan only
+    var STARTISH = /start|jog|fwd|forward|^rev(erse)?$|^run(btn|button|pb|pressed|sw|cmd|req\w*)?$|^go(btn|button|pb)?$|^on(btn|button|pb)$|enable/i;
+    var NOT_MACHINE = /lamp|light|^led|led$|indicator|alarm|status|flag|count|horn|beacon|buzzer|siren|pilot|display|msg|text|fault|trip/i;
+    function startish(e) { var d = deep(e); return idents(d).some(function (w) { return STARTISH.test(w) && !STOPISH.test(w); }) && !/(!|\bNOT\s+)\s*\x28?\s*\w*(last|prev|old|was)\w*/i.test(d); }
     function looksAt(e, names) { return idents(deep(e)).some(function (w) { return names.indexOf(w) >= 0; }); }
     // the output itself in a condition: as a seal (Start OR Motor) it is fine; negated (start && !running) it
     // makes a toggle, which moving the Stop test does not mend (review 1: it chatters while both are held)
@@ -45904,33 +45919,16 @@ Lantern.RFB = (function () {
         (els != null ? (st ? " ELSE " + body(els) : " else { " + body(els) + " }") : "") + (st ? " END_IF;" : "");
     }
     // a branch that turns T on from plain inputs that do not look at Stop or at T; a branch that turns T off on a Stop input
-    function onFor(b, t) { return sets(b.body, st).some(function (x) { return x.on && x.t === t; }) && plainDeep(b.cond) && !stopsIn(deep(b.cond)).length && !negates(deep(b.cond), t); }
+    function onFor(b, t) { return !NOT_MACHINE.test(t) && sets(b.body, st).some(function (x) { return x.on && x.t === t; }) && plainDeep(b.cond) && startish(b.cond) && !stopsIn(deep(b.cond)).length && !negates(deep(b.cond), t); }
     function offFor(b, t) {
       return sets(b.body, st).some(function (x) { return !x.on && x.t === t; }) && plainDeep(b.cond) && stopsIn(b.cond).length && !looksAt(b.cond, [t]) &&
         !sets(b.body, st).some(function (x) { return x.on && x.t === t; });
     }
     var chains = st ? stChains(c) : cChains(c);
-    // (1.24.12) the other way round: a branch on a Stop that is PRESSED turns the output on, so it runs only while
-    // Stop is held. The 35B on the 1.24.12 test build, for the same P1AM question, after Lantern's tested example:
-    // stopPressed = !P1.readDiscrete(...); if (startPressed || motorRunning) { if (stopPressed) { motorRunning = true; }
-    // else { motorRunning = false; } }. Only a name that says pressed (stopPressed, estopActive) -- a bare "stop" may
-    // be wired NC and mean the opposite -- and an output that is turned off elsewhere and is not a lamp or a count.
-    var PRESSED = /stop\w*(pressed|press|active|pushed|hit|down|requested)|(pressed|pushed)\w*stop/i, LAMPISH = /stop|fault|alarm|lamp|light|led|indicator|brake|horn|beacon|count/i;
-    var offs = {};
-    chains.forEach(function (ch) { ch.branches.concat(ch.els != null ? [{ body: ch.els }] : []).forEach(function (b) { sets(b.body, st).forEach(function (x) { if (!x.on) offs[x.t] = 1; }); }); });
-    chains.forEach(function (ch) {
-      ch.branches.forEach(function (b, k) {
-        var cnd = unwrap(b.cond.replace(/\s*(?:==|=)\s*(true|TRUE|1)\s*$/, ""));
-        if (!/^[A-Za-z_]\w*$/.test(cnd) || !PRESSED.test(cnd) || NOT_STOP.test(cnd)) return;
-        sets(b.body, st).forEach(function (x) {
-          if (!x.on || !offs[x.t] || LAMPISH.test(x.t)) return;
-          var only = ch.branches.length === 1 && ch.els != null && sets(ch.els, st).some(function (y) { return !y.on && y.t === x.t; });
-          out.push("Stop turns " + x.t + " on: " + (st ? "IF " + b.cond + " THEN" : "if (" + b.cond + ")") + " turns it on while " + cnd + " is on, so it runs only while Stop is pressed and stops when Stop is let go." +
-            (only ? " Swap the two: " + render([{ cond: b.cond, body: ch.els }], b.body) : " That branch must turn " + x.t + " off -- the whole " + (st ? "IF" : "if") + " again, every branch kept: " +
-              render(ch.branches.map(function (o, n) { return n !== k ? o : { cond: o.cond, body: o.body.replace(new RegExp("(\\b" + x.t.replace(/[.\x28\x29]/g, "\\$&") + "\\s*:?=\\s*)(true|HIGH|1|TRUE)\\b", "g"), function (a, l, v) { return l + (st ? "FALSE" : v === "HIGH" ? "LOW" : v === "1" ? "0" : "false"); }) }; }), ch.els)));
-        });
-      });
-    });
+    // (A rule for the other way round -- a branch on a Stop that is pressed turning the motor on, the 35B's next
+    // try at the same question -- was tried and taken out: of a second reviewer's 193 right programs it spoke
+    // about 27, and its swap made 17 less safe, an e-stop's SafeState, a dump valve, a brake, a ramp-down turned
+    // off. Outputs a stop SHOULD turn on are many and have no name in common. The bench says it.)
     chains.forEach(function (ch, ci) {
       var brs = ch.branches, first = -1, moved = [], i, j;
       // the first branch that turns an output on before a Stop branch turns that output off
@@ -45938,24 +45936,36 @@ Lantern.RFB = (function () {
         if (first >= 0 || !x.on || !onFor(brs[i], x.t)) return;
         for (j = i + 1; j < brs.length; j++) if (offFor(brs[j], x.t)) { first = i; return; }
       });
+      // (review 2) ... unless Stop turns it off again later in the program: the last write in a scan counts
+      var later = function (t) {
+        var re2 = new RegExp("(^|[^\\w.])" + t.replace(/[.\x28\x29]/g, "\\$&") + "\\s*:?=\\s*([^;=][^;]*);", "g"), m2, rest = c.slice(ch.end);
+        while ((m2 = re2.exec(rest))) if (stopsIn(m2[2]).length) return true;   // motorRunning = motorRunning && !stopPressed;
+        return chains.some(function (o) { return o.at >= ch.end && o.branches.some(function (b) { return offFor(b, t); }); });
+      };
+      // (review 2) a chain inside another if (IF NOT Stop THEN ... ) is reached only as that one allows: left alone
+      if (chains.some(function (o) { return o !== ch && o.at < ch.at && ch.end <= o.end; })) return;
       if (first >= 0) {
         var outs = {};
-        brs.slice(first).forEach(function (b, k) { if (k === 0 || !stopsIn(b.cond).length) sets(b.body, st).forEach(function (x) { if (x.on && onFor(b, x.t)) outs[x.t] = 1; }); });
+        brs.slice(first).forEach(function (b, k) { if (k === 0 || !stopsIn(b.cond).length) sets(b.body, st).forEach(function (x) { if (x.on && onFor(b, x.t) && !later(x.t)) outs[x.t] = 1; }); });
         for (j = first + 1; j < brs.length; j++) if (Object.keys(outs).some(function (t) { return offFor(brs[j], t); })) moved.push(j);
-        var fixed = brs.slice(0, first).concat(moved.map(function (k) { return brs[k]; }), brs.filter(function (b, k) { return k >= first && moved.indexOf(k) < 0; }));
-        var mine = sets(brs[first].body, st).filter(function (x) { return x.on && onFor(brs[first], x.t); }).map(function (x) { return x.t; });
-        out.push("Start wins over Stop: while both are on, " + (st ? "IF " + brs[first].cond + " THEN" : "if (" + brs[first].cond + ")") + " turns " + mine.join(" and ") + " on and " +
-          moved.map(function (k) { return (st ? "ELSIF " : "else if (") + brs[k].cond + (st ? "" : ")"); }).join(" and ") + (moved.length > 1 ? " are" : " is") +
-          " never reached, so Stop cannot stop it while Start is held." + why + " Test Stop first -- the whole " + (st ? "IF" : "if") + " again, every branch kept: " + render(fixed, ch.els));
+        var mine = sets(brs[first].body, st).filter(function (x) { return x.on && outs[x.t]; }).map(function (x) { return x.t; });
+        if (!moved.length || !mine.length) return;
+        var fixed = brs.slice(0, first).concat(moved.map(function (k) { return brs[k]; }), brs.filter(function (b, k) { return k >= first && moved.indexOf(k) < 0; })).map(raw);
+        out.push("Start wins over Stop: while both are on, " + (st ? "IF " + raw(brs[first]).cond + " THEN" : "if (" + raw(brs[first]).cond + ")") + " turns " + mine.join(" and ") + " on and " +
+          moved.map(function (k) { return (st ? "ELSIF " : "else if (") + raw(brs[k]).cond + (st ? "" : ")"); }).join(" and ") + (moved.length > 1 ? " are" : " is") +
+          " never reached, so Stop cannot stop it while Start is held." + why + " Test Stop first -- the whole " + (st ? "IF" : "if") + " again, every branch kept: " +
+          render(fixed, ch.els != null ? c0.slice(ch.eAt, ch.eTo) : null));
         return;
       }
       // two single ifs side by side, the Stop one first
       var nx = chains[ci + 1];
       if (brs.length !== 1 || ch.els != null || !nx || nx.branches.length !== 1 || nx.els != null || nx.at < ch.end || c.slice(ch.end, nx.at).replace(/\s+/g, "")) return;
-      var hit = sets(nx.branches[0].body, st).filter(function (x) { return x.on && onFor(nx.branches[0], x.t) && offFor(brs[0], x.t); })[0];
+      // (review 2) not when the Stop branch leaves the scan (return, break) or clears the start itself
+      if (/\b(return|break|continue|goto|RETURN|EXIT)\b/.test(brs[0].body) || sets(brs[0].body, st).some(function (x) { return idents(nx.branches[0].cond).indexOf(x.t) >= 0; })) return;
+      var hit = sets(nx.branches[0].body, st).filter(function (x) { return x.on && onFor(nx.branches[0], x.t) && offFor(brs[0], x.t) && !later(x.t); })[0];
       if (!hit) return;
-      out.push("Start wins over Stop: " + (st ? "IF " + nx.branches[0].cond : "if (" + nx.branches[0].cond + ")") + " comes after the Stop test, so while both are on it turns " + hit.t +
-        " on again in the same scan and Stop cannot stop it while Start is held." + why + " Put the Stop test last: " + render([nx.branches[0]], null) + " " + render([brs[0]], null));
+      out.push("Start wins over Stop: " + (st ? "IF " + raw(nx.branches[0]).cond : "if (" + raw(nx.branches[0]).cond + ")") + " comes after the Stop test, so while both are on it turns " + hit.t +
+        " on again in the same scan and Stop cannot stop it while Start is held." + why + " Put the Stop test last: " + render([raw(nx.branches[0])], null) + " " + render([raw(brs[0])], null));
     });
     // out = start || (out && stopOk)
     re = st ? /\b([A-Za-z_]\w*)\s*:=\s*([^;]+);/g : /(^|[^=!<>\w.])([A-Za-z_]\w*)\s*=\s*([^=;][^;]*);/g;
@@ -45966,7 +45976,7 @@ Lantern.RFB = (function () {
         var a = ors[1 - k], ands = split2(ors[k], st ? "AND" : "&&"), rest = ands.filter(function (f) { return f !== t; });
         if (ands.length - rest.length !== 1 || !rest.length || looksAt(a, [t])) return;
         var stops = stopsIn(rest.join(" "));
-        if (!stops.length || looksAt(a, stops) || stopsIn(deep(a)).length) return;
+        if (!stops.length || looksAt(a, stops) || stopsIn(deep(a)).length || !startish(a) || NOT_MACHINE.test(t)) return;
         var s = rest.join(st ? " AND " : " && ");
         out.push("Start wins over Stop: " + t + (st ? " := " : " = ") + e + " turns " + t + " on whenever " + a + " is on, whatever " + s + " says, so Stop cannot stop it while Start is held." + why +
           " Write: " + t + (st ? " := (" + a + " OR " + t + ") AND " : " = (" + a + " || " + t + ") && ") + (rest.length > 1 ? "(" + s + ")" : s) + ";");
@@ -45984,7 +45994,8 @@ Lantern.RFB = (function () {
     // (1.24.12) code read from a fence the reply never closed (Lantern.chatCode.blocks):
     // the reply ran out before the end of the program, so what is missing is the
     // problem, not the brackets it left open
-    if (block.cut) {
+    // (review 2 of the readers) a MAKE CODE block with no END whose fence was opened and never closed: cut too
+    if (block.cut || (!block.closed && block.fences % 2 === 1 && !block.inReply)) {
       var cl = p.text.replace(/\n$/, "").split("\n").length, cut = "the program stops at line " + cl + ", inside its \x60\x60\x60 fence: the reply was cut off before the end of the code. " +
         "Write the whole program again as a MAKE CODE block, with fewer and shorter comments";
       problems = [cut]; found = [{ line: cl, msg: cut }];
@@ -46274,36 +46285,61 @@ Lantern.RFB = (function () {
     ladder: "ladder", lad: "ladder", ld: "ladder", rll: "ladder" };
   var JSLIKE = /\b(function|const|let|var)\s+\w|console\.\w+\s*\x28|=>/;
   // blocks(text) -> the fenced code in a reply that Code Lab can check
+  // (1.24.12) Lines that are prose, not code: a sentence of four words or more, with nothing of a program in it.
+  var PROSE = /^\s*[A-Za-z][A-Za-z']*(?:\s+[A-Za-z0-9',\-]+){4,}[.!?,:]?\s*$/;
+  function prose(l) { return PROSE.test(l) && !/[;{}=<>\x5B\x5D#\x28\x29\x2F\x22]/.test(l); }
+  // whole(langId, text): a program that has its end, though its fence was never closed -- brackets and comments
+  // all closed, Structured Text to its END_PROGRAM, C and JavaScript to a } or ; and Python to a line at the
+  // margin (a last line inside a loop or a function, "        time.sleep(1)", is where a cut program stops)
+  function whole(id, t) {
+    var lg = L.codeLangs.get(id), ls = t.replace(/\s+$/, "").split("\n"), last = ls[ls.length - 1] || "";
+    if (L.codeCheck.brackets && lg && L.codeCheck.brackets(t, lg).length) return false;
+    if (id === "st") return /^\s*(PROGRAM|FUNCTION_BLOCK|FUNCTION)\b/im.test(t) ? /\bEND_(PROGRAM|FUNCTION_BLOCK|FUNCTION)\s*;?\s*$/i.test(t.replace(/\s+$/, "")) : /;\s*$/.test(last);
+    if (id === "ladder") return /;\s*$/.test(last);
+    if (id === "python") return /^\S/.test(last) && !/[:,\x28\x5B\x7B\\]\s*$/.test(last);
+    return /[;\x7D]\s*$/.test(last);
+  }
+  function dedent(ls, n) { return ls.map(function (l) { var k = /^[ \t]*/.exec(l)[0].length; return l.slice(Math.min(k, n)); }); }
+  // blocks(text) -> the code in a reply that Code Lab can check
   function blocks(text) {
-    var out = [], re = /^[ \t]*\x60\x60\x60[ \t]*([A-Za-z0-9+#_-]*)[^\n]*\n([\s\S]*?)^[ \t]*\x60\x60\x60[ \t]*$/gm, m;
-    while ((m = re.exec(String(text || ""))) && out.length < 4) {
-      var tag = m[1].toLowerCase(), body = m[2].replace(/\s+$/, "") + "\n", lang = null;
-      if (tag) lang = TAG[tag] || null;
-      else {
-        lang = L.codeLangs.guess(body);
-        if (lang === "javascript" && !JSLIKE.test(body)) lang = null;
+    var out = [], all = String(text || "").replace(/\r/g, "");
+    // (1.24.12, review 2 of the readers) a closing fence on the end of a code line ("blink(3)\x60\x60\x60") goes on a
+    // line of its own first: otherwise the fence was missed, and the prose and the next fence were read into the program
+    var src = all.replace(/^([^\n]*?[^\s\x60])[ \t]*\x60{3,}[ \t]*$/gm, function (m0, a) { return /^[ \t]*\x60\x60\x60/.test(m0) ? m0 : a + "\n\x60\x60\x60"; });
+    var ls = src.split("\n"), i = 0;
+    while (i < ls.length && out.length < 4) {
+      var om = /^([ \t]*)(\x60{3,})[ \t]*([A-Za-z0-9+#_-]*)[^\x60]*$/.exec(ls[i]);
+      if (!om) { i++; continue; }
+      // a fence is closed by one at least as long (CommonMark): "\x60\x60\x60\x60" closes "\x60\x60\x60" (review 1), and a fence
+      // shown inside a four-backtick one ("\x60\x60\x60\x60markdown") is part of that one, not a program (review 2)
+      var ind = om[1].length, tag = om[3].toLowerCase(), body = [], j = i + 1, closed = false, lang = null, shut = new RegExp("^[ \\t]*\\x60{" + om[2].length + ",}[ \\t]*$");
+      for (; j < ls.length; j++) { if (shut.test(ls[j])) { closed = true; break; } body.push(ls[j]); }
+      // a fence indented under a list item: its lines lose that indent (1.24.12, review 2)
+      body = dedent(body, ind);
+      if (closed) {
+        var bt = body.join("\n").replace(/\s+$/, "") + "\n";
+        if (tag) lang = TAG[tag] || null;
+        else { lang = L.codeLangs.guess(bt); if (lang === "javascript" && !JSLIKE.test(bt)) lang = null; }
+        var lines = bt.replace(/\n$/, "").split("\n").length;
+        if (lang && lines >= (lang === "ladder" ? 1 : 3)) out.push({ lang: lang, text: bt, lines: lines });
+        i = j + 1;
+        continue;
       }
-      var lines = body.replace(/\n$/, "").split("\n").length;
-      if (lang && lines >= (lang === "ladder" ? 1 : 3)) out.push({ lang: lang, text: body, lines: lines });
-    }
-    var all = String(text || "").replace(/\r/g, ""), fences = all.match(/^[ \t]*\x60\x60\x60/gm) || [];
-    // (1.24.12) a fence opened and never closed: the reply ran out in the middle
-    // of the program. The 4B, for the bench's tank fill on 1.24.8 to 1.24.11,
-    // stopped at "(* Logic: Open valve if low float" -- and Lantern said "no MAKE
-    // block". What there is gets read, marked cut, so Lantern can say so.
-    // Only a fence that names its language (output or data in a bare fence is not a program), and not
-    // one closed at the end of a code line ("count_down(10)\x60\x60\x60"): that program is whole.
-    if (fences.length % 2 === 1 && out.length < 4) {
-      var fm, last = null, fre = /^[ \t]*\x60\x60\x60[ \t]*([A-Za-z0-9+#_-]*)[^\n]*$/gm;
-      while ((fm = fre.exec(all))) last = fm;
-      var ctag = last[1].toLowerCase(), cbody = all.slice(last.index + last[0].length).replace(/^\n/, ""), clang = ctag ? TAG[ctag] || null : null, shut = cbody.indexOf("\x60\x60\x60");
-      if (shut >= 0) cbody = cbody.slice(0, shut);
-      // a fence indented under a list item: its lines lose that indent, as a closed one is read
-      var ind = /^[ \t]*/.exec(last[0])[0].length;
-      if (ind) cbody = cbody.split("\n").map(function (l) { var n = /^[ \t]*/.exec(l)[0].length; return l.slice(Math.min(n, ind)); }).join("\n");
-      cbody = cbody.replace(/\s+$/, "") + "\n";
-      var clines = cbody.replace(/\n$/, "").split("\n").length;
-      if (clang && clines >= (clang === "ladder" ? 1 : 3) && cbody.replace(/\s+/g, "")) out.push({ lang: clang, text: cbody, lines: clines, cut: shut < 0 });
+      // (1.24.12) a fence opened and never closed: the reply ran out in the middle of the program. The 4B, for
+      // the bench's tank fill on 1.24.8 to 1.24.11, stopped at "(* Logic: Open valve if low float" -- and Lantern
+      // said "no MAKE block". What there is gets read, marked cut, so Lantern can say so. Only a fence that
+      // names its language (output or data in a bare fence is not a program). A program that ends -- an END
+      // line, a sentence after a blank line, or its own end (whole) -- with the fence left open is read whole.
+      lang = tag && tag !== "pascal" ? TAG[tag] || null : null;
+      var cut = true, k;
+      for (k = 0; k < body.length; k++) {
+        if (/^\s*(END|>>>)\s*$/.test(body[k]) || (k > 0 && !body[k - 1].replace(/\s+/g, "") && prose(body[k]))) { body = body.slice(0, k); cut = false; break; }
+      }
+      while (body.length && !body[body.length - 1].replace(/\s+/g, "")) body.pop();
+      var ct = body.join("\n") + "\n", cl = body.length, said = body.filter(prose).length;
+      // (review 1 again) sentences in a fence named python are not a program
+      if (lang && cl >= (lang === "ladder" ? 1 : 3) && said * 2 < body.filter(function (l) { return l.replace(/\s+/g, ""); }).length) out.push({ lang: lang, text: ct, lines: cl, cut: cut && !whole(lang, ct) });
+      i = ls.length;
     }
     // (1.24.12) a program written the way the MAKE CODE instructions show one,
     // without their first line: "<title>ST: Tank Fill Valve Control</title>",
@@ -46318,10 +46354,15 @@ Lantern.RFB = (function () {
     // an HTML page's <title> and <script> were read as JavaScript.) It needs its END, >>> or </title>,
     // no HTML tag in it, and no MAKE line in the reply (that block is read as a block).
     if (!out.length && !/^[ \t]*\**[ \t]*MAKE\s+[A-Z]/m.test(all)) {
-      var ls = all.split("\n"), k, from = -1, wlang = null, wtitle = "";
+      var ls = all.split("\n"), k, from = -1, wlang = null, wtitle = "", inEx = false;
       for (k = 0; k < ls.length && from < 0; k++) {
-        var tl = ls[k].replace(/^\s+|\s+$/g, ""), tm = /^<title>\s*(.*?)\s*(?:<\x2Ftitle>)?$/i.exec(tl), lm = /^language\s*[:=]?\s*([A-Za-z+ 0-9-]+?)\s*$/i.exec(tl);
+        var tl = ls[k].replace(/^\s+|\s+$/g, "");
+        if (tl === "<<<") inEx = true; else if (tl === ">>>") inEx = false;
+        var tm = /^<title>\s*(.*?)\s*(?:<\x2Ftitle>)?$/i.exec(tl), lm = /^language\s*[:=]?\s*([A-Za-z+ 0-9-]+?)\s*$/i.exec(tl);
         if (tm && !/<\x2Ftitle>/i.test(tl) && tm[1]) tm = null;   // "<title>" then text on the same line, never closed: not a title line
+        // (review 2) inside <<< ... >>>, the form Lantern shows its own examples in, nothing starts -- not a
+        // title line after <<<, nor a language line after that title
+        if (inEx) { tm = null; lm = null; }
         if (tm) {
           wtitle = tm[1];
           var nx = (ls[k + 1] || "").replace(/^\s+|\s+$/g, ""), nm = /^language\s*[:=]?\s*([A-Za-z+ 0-9-]+?)\s*$/i.exec(nx);
@@ -46336,12 +46377,16 @@ Lantern.RFB = (function () {
           body2.push(ls[k].replace(/\s+$/, ""));
         }
         if (!shut2 || body2.some(function (l) { return /^\s*<\x2F?[A-Za-z][A-Za-z0-9]*(\s[^>]*)?>/.test(l); })) body2 = [];
-        while (body2.length && !body2[0]) body2.shift();
-        while (body2.length && !body2[body2.length - 1]) body2.pop();
+        while (body2.length && !body2[0].replace(/\s+/g, "")) body2.shift();
+        while (body2.length && !body2[body2.length - 1].replace(/\s+/g, "")) body2.pop();
+        // (review 2) indented under a list item: the indent all its lines share goes; prose is not a program
+        var common = Math.min.apply(null, body2.filter(function (l) { return l.replace(/\s+/g, ""); }).map(function (l) { return /^[ \t]*/.exec(l)[0].length; }).concat([99]));
+        if (common < 99) body2 = dedent(body2, common);
         var wtext = body2.join("\n") + "\n", glang = wlang || L.codeLangs.guess(wtext);
         if (!wlang && glang === "javascript" && !JSLIKE.test(wtext)) glang = null;
-        var coded = body2.filter(function (l) { return /[;{}:]\s*$/.test(l) || /^\s*(?:#include\b|def\s|import\s|from\s+\w+\s+import\b|print\s*\x28|PROGRAM\b|END_\w+|VAR\b|IF\b|\x5B?XI[CO]\s*\x28)/i.test(l); }).length;
-        if (glang && body2.length >= (glang === "ladder" ? 1 : 3) && coded >= (wlang || glang === "ladder" ? 1 : 2)) out.push({ lang: glang, text: wtext, lines: body2.length, title: wtitle });
+        var coded = body2.filter(function (l) { return !prose(l) && (/[;{}:]\s*$/.test(l) || /^\s*(?:#include\b|def\s|import\s|from\s+\w+\s+import\b|print\s*\x28)/.test(l) || /^\s*(?:PROGRAM|END_\w+|VAR|IF)\b|^\s*\x5B?XI[CO]\s*\x28/.test(l)); }).length;
+        var said = body2.filter(prose).length;
+        if (glang && body2.length >= (glang === "ladder" ? 1 : 3) && coded >= (wlang || glang === "ladder" ? 1 : 2) && said < coded) out.push({ lang: glang, text: wtext, lines: body2.length, title: wtitle });
       }
     }
     // ladder rungs written on their own lines, with no fence: one rung is a
