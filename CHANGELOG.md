@@ -1,5 +1,133 @@
 # Changelog
 
+## 1.24.12 — Adam's run of 1.24.11: a stop that does not stop, and programs written without their first line (2026-11-09)
+
+Adam ran the 35B on 1.24.11 with the library on his laptop (2026-11-09,
+14:05 UTC, 128 minutes): 134 of 140, as on 1.24.9
+(`tests/fixtures/bench_run_1251_35b_library.json`, replayed by
+`tests/bench_1251_35b.js`). The small models' run on 1.24.11 (GitHub run
+42543507663, `tests/fixtures/bench_run_1251_*.json`, `tests/bench_1251.js`):
+the 0.8B 59 of 114, its 1.24.10 replies word for word on the same processor;
+the 2B 72 (73), on another processor; the 4B 106, the same eight rows as on
+1.24.10 on the same AMD EPYC 7763, seven with the same reply.
+
+**What was seen.**
+
+- *1.24.11's changes did their work on the 35B.* What oral rehydration
+  solution is made of is read on the medicine shelf and passes; so does the
+  waltz. The iPhone and Nairobi fail on their citations, as on 1.24.9.
+- *A stop that does not stop.* For "a Start button ... and a normally closed
+  Stop button ... with a seal-in" on a P1AM, the 35B wrote
+  `if (startPressed) { motorRunning = true; } else if (stopPressed) {
+  motorRunning = false; }`. While Start is held, the else if is never
+  reached: Stop cannot stop the motor. Lantern found no problem; the bench
+  said "no seal-in", which was not what was wrong.
+- *Programs written without the MAKE CODE line.* The 2B, for the tank fill
+  and for Blink on 1.24.10 and 1.24.11 (the same rows twice): a line
+  `<title>ST: Tank Fill Valve Control</title>`, a line `language st`, the
+  program, END -- or the sketch between a line `<title>` and a line
+  `</title>`. The instructions show `MAKE CODE: <title>`, and the
+  placeholder was taken for a tag. Lantern said "no MAKE block" and never
+  read the programs, one of which waited in `delay(500)` in a sketch asked
+  not to.
+- *The 4B's tank fill, on 1.24.8 to 1.24.11.* Its first reply was "LESSON:
+  Tank fill/stop logic" over and over until its 1,000 tokens ran out; the
+  second the same; the last, prose with [2] as the lessons asked and a
+  program that stops half-way inside its fence -- the conversation, with
+  the two runaway replies kept whole, left it too little room. Its
+  orchestra began with a runaway LESSON line the same way.
+
+**What it was traced to, and what changed.**
+
+- *Start wins over Stop* (AI_CODE). Nothing looked at which of Start and
+  Stop a program lets win. Now a program for a machine started and stopped
+  by buttons is read for three shapes, in Arduino and in Structured Text:
+  an if / else if chain that turns the output on before a Stop branch
+  turns it off; two ifs side by side, the Stop one first (the last write
+  in a scan counts); `out = start || (out && stopOk)`. It goes back once
+  with the program's own lines written the way that works: the whole chain
+  again, every branch kept (an e-stop, a fault, a jog, an else), the Stop
+  branches moved up to just before the branch they lose to; or the two ifs
+  the other way round; or `out = (start || out) && stopOk`. Said with why:
+  a stop overrides the start it belongs to (NFPA 79, 9.2.5.3.2; IEC
+  60204-1). It speaks only where it is sure: the question names a machine
+  and starting or running and stopping; the conditions are plain inputs
+  (names, digitalRead, readDiscrete, NOT, AND, OR, one assignment back),
+  not comparisons; the Stop input is named so (stop, e-stop, emergency,
+  halt, overload, trip; not "stopped" or a stopwatch); the start does not
+  look at that stop already, directly or through a name (a "permissive");
+  a negated output in a condition (a toggle) is left alone, since moving
+  the Stop test does not mend it.
+- *A Stop that turns the output on.* The 35B's second try at the same
+  question, on the 1.24.12 test build, with Lantern's tested P1AM example in
+  front of it: `if (stopPressed) { motorRunning = true; } else {
+  motorRunning = false; }` -- the motor on only while Stop is held. A
+  branch on a name that says a stop is pressed (stopPressed, estopActive;
+  a bare "stop" may be wired NC and mean the opposite) that turns on an
+  output turned off elsewhere (not a lamp, an alarm or a count) goes back
+  with the two bodies swapped, or the whole chain with that branch turning
+  it off.
+- *The bench's P1AM question* says what is wrong: "Start wins over Stop",
+  "Stop turns the motor on", or "no seal-in: nothing keeps the motor on
+  once Start is let go"; a stop-first set and reset passes.
+- *A program without its MAKE line* (CHAT_CODE_BLOCKS). A line
+  `<title>...</title>` and/or `language <one of the five>`, the program,
+  then END, `>>>` or `</title>` -- or a sketch between `<title>` and
+  `</title>` -- is read as the model's program, with its title, and goes
+  through the same checks: the 2B's Blink goes back with the millis()
+  lines, its tank fill with what is wrong in it. It needs its end line, no
+  HTML tag in it, and no MAKE line in the reply; `<<<` never starts one
+  (that is how Lantern shows its own examples).
+- *A program cut off inside its fence.* A fence that names its language,
+  opened and never closed, is read, marked cut, and the one problem sent
+  back is "the program stops at line N, inside its fence: the reply was
+  cut off ... write the whole program again as a MAKE CODE block, with
+  fewer and shorter comments". Chat says the same under the reply. A bare
+  fence left open is not read (output and data are often in one); a fence
+  closed at the end of a code line is whole; a fence indented under a list
+  item loses that indent.
+- *A request kept once* (ASSIST_CHAT, AI_ACTIONS). A reply that asked for a
+  command stays in the conversation with each command line once, a last
+  line cut off part-way through one dropped, at most 500 characters, the
+  first command always kept. Other lines -- a draft program beside the
+  command -- are kept as written.
+- *Lessons for a thing to make* (SUITE_COMMANDS, SUITE_CHAT). LESSON
+  passages for a question that asks for something Lantern makes from a
+  block end with that block's first line ("reply with ONLY the block ...
+  Its first line is: MAKE CODE: <a short title>"), not with "answer from
+  these passages and QUOTE one"; other questions end as before.
+
+**Reviews.** Each new rule was tried by agents that had not seen it
+written, with inputs of their own (all in `tests/fixtures/`, replayed by
+`tests/review_1252.js`):
+
+- Start wins over Stop, review 1 (232 programs): the first draft spoke
+  about 12 programs it should have left alone (two stopwatches, a traffic
+  light, a robot car, a bus stop, a selector switch, a start behind a
+  "permissive" ...) and wrote 13 corrections wrong -- above all, a chain's
+  other branches left off, so that the line, pasted in, dropped an e-stop
+  or a fault. Mended as above: none of the 155 it said to leave alone is
+  spoken about; every correction is the whole chain. 23 of its 77 wrong
+  programs are left unsaid (a ternary, an SR block, a state machine, a
+  timer's .Q, a start that looks at another stop, a stop if with an else,
+  a toggle ...): a miss, not a mistake;
+- the readers, review 1 (140 replies): with no END, the explanation after a
+  program was read into it; an HTML page's `<title>` and `<script>` were
+  read as JavaScript; a draft beside a command lost its repeated lines; a
+  command at the end of a long reply was cut off with the rest; output in
+  a bare fence left open was read as a sketch. Mended as above.
+- REVIEW2_PLACEHOLDER
+
+**What was run.** `npm test`: ALL CHECKS PASS (NNN suites). The 35B on
+Adam's laptop, the seven program questions on the 1.24.12 test build:
+RUN35B_PLACEHOLDER. Not run: the small models (their run starts with the
+push).
+
+**Not changed.** The iPhone's and Nairobi's citations, the shore at sunset
+("dark gray" is not one of the drawing's colours), the road to the horizon,
+the 4B's other repeated rows (QUEUE 1), a reply that echoes the MAKE CODE
+instructions (the 0.8B).
+
 ## 1.24.11 — Adam's run of 1.24.9, the 4B on another processor (2026-11-08)
 
 Adam ran the 35B on 1.24.9 with the library on his laptop (2026-11-08,

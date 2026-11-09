@@ -45910,6 +45910,27 @@ Lantern.RFB = (function () {
         !sets(b.body, st).some(function (x) { return x.on && x.t === t; });
     }
     var chains = st ? stChains(c) : cChains(c);
+    // (1.24.12) the other way round: a branch on a Stop that is PRESSED turns the output on, so it runs only while
+    // Stop is held. The 35B on the 1.24.12 test build, for the same P1AM question, after Lantern's tested example:
+    // stopPressed = !P1.readDiscrete(...); if (startPressed || motorRunning) { if (stopPressed) { motorRunning = true; }
+    // else { motorRunning = false; } }. Only a name that says pressed (stopPressed, estopActive) -- a bare "stop" may
+    // be wired NC and mean the opposite -- and an output that is turned off elsewhere and is not a lamp or a count.
+    var PRESSED = /stop\w*(pressed|press|active|pushed|hit|down|requested)|(pressed|pushed)\w*stop/i, LAMPISH = /stop|fault|alarm|lamp|light|led|indicator|brake|horn|beacon|count/i;
+    var offs = {};
+    chains.forEach(function (ch) { ch.branches.concat(ch.els != null ? [{ body: ch.els }] : []).forEach(function (b) { sets(b.body, st).forEach(function (x) { if (!x.on) offs[x.t] = 1; }); }); });
+    chains.forEach(function (ch) {
+      ch.branches.forEach(function (b, k) {
+        var cnd = unwrap(b.cond.replace(/\s*(?:==|=)\s*(true|TRUE|1)\s*$/, ""));
+        if (!/^[A-Za-z_]\w*$/.test(cnd) || !PRESSED.test(cnd) || NOT_STOP.test(cnd)) return;
+        sets(b.body, st).forEach(function (x) {
+          if (!x.on || !offs[x.t] || LAMPISH.test(x.t)) return;
+          var only = ch.branches.length === 1 && ch.els != null && sets(ch.els, st).some(function (y) { return !y.on && y.t === x.t; });
+          out.push("Stop turns " + x.t + " on: " + (st ? "IF " + b.cond + " THEN" : "if (" + b.cond + ")") + " turns it on while " + cnd + " is on, so it runs only while Stop is pressed and stops when Stop is let go." +
+            (only ? " Swap the two: " + render([{ cond: b.cond, body: ch.els }], b.body) : " That branch must turn " + x.t + " off -- the whole " + (st ? "IF" : "if") + " again, every branch kept: " +
+              render(ch.branches.map(function (o, n) { return n !== k ? o : { cond: o.cond, body: o.body.replace(new RegExp("(\\b" + x.t.replace(/[.\x28\x29]/g, "\\$&") + "\\s*:?=\\s*)(true|HIGH|1|TRUE)\\b", "g"), function (a, l, v) { return l + (st ? "FALSE" : v === "HIGH" ? "LOW" : v === "1" ? "0" : "false"); }) }; }), ch.els)));
+        });
+      });
+    });
     chains.forEach(function (ch, ci) {
       var brs = ch.branches, first = -1, moved = [], i, j;
       // the first branch that turns an output on before a Stop branch turns that output off
@@ -46540,7 +46561,9 @@ Lantern.RFB = (function () {
           // The 35B's set and reset on 1.24.11 was told "no seal-in"; what was wrong with it was that Start won.
           !/\|\|/.test(c) && !(/=\s*(true|HIGH|1)\s*;/.test(c) && /=\s*(false|LOW|0)\s*;/.test(c)) ? "no seal-in: nothing keeps the motor on once Start is let go" :
           /\bif\s*\x28[^\x29]*start[^\x29]*\x29\s*\x7B?\s*\w+\s*=\s*(true|HIGH|1)\s*;\s*\x7D?\s*else\s+if\s*\x28[^\x29]*stop/i.test(c) ||
-          /=\s*\x28?\s*\w*start\w*\s*\|\|\s*\x28?\s*\w+\s*&&/i.test(c) ? "Start wins over Stop: while Start is held, Stop cannot stop the motor" : "");
+          /=\s*\x28?\s*\w*start\w*\s*\|\|\s*\x28?\s*\w+\s*&&/i.test(c) ? "Start wins over Stop: while Start is held, Stop cannot stop the motor" :
+          // (1.24.12) ... and the 35B's next try, on the test build: the motor on only while Stop is pressed
+          /\bif\s*\x28\s*\w*stop\w*(pressed|active|pushed)\w*\s*\x29\s*\x7B?\s*\w+\s*=\s*(true|HIGH|1)\s*;/i.test(c) ? "Stop turns the motor on: it runs only while Stop is pressed" : "");
       } },
     { id: "code-python-csv-average", kind: "CODE", max_tokens: 1000,
       q: "Write a Python script that reads a CSV file called readings.csv and prints the average of its temp column.",
