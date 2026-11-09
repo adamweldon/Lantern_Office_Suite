@@ -52,8 +52,8 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   ok("the 35B wrote its program in a fence, not a MAKE CODE block: a set and a reset, Start tested first", !/MAKE CODE/.test(sr.reply) && /if \(startPressed\) \{\s*motorRunning = true;\s*\} else if \(stopPressed\)/.test(sr.reply.replace(/\/\/[^\n]*/g, "")));
   var made = act.fromReply(sr.reply, sq.q), back = act.replyCode(sr.reply, sq.q);
   ok("1.24.12: Lantern reads it and sends it back once: Start wins over Stop, with the lines to write -- the model\u2019s own names, Stop first",
-    made && !made.ok && back && made.problems.length === 1 && /^Start wins over Stop: while both are on, if \(startPressed\) turns motorRunning on and the else if \(stopPressed\) is never reached/.test(made.problems[0]) &&
-    /NFPA 79, IEC 60204-1/.test(made.problems[0]) && /Test Stop first: if \(stopPressed\) \{ motorRunning = false; \} else if \(startPressed\) \{ motorRunning = true; \}$/.test(made.problems[0]), made && made.problems);
+    made && !made.ok && back && made.problems.length === 1 && /^Start wins over Stop: while both are on, if \(startPressed\) turns motorRunning on and else if \(stopPressed\) is never reached/.test(made.problems[0]) &&
+    /NFPA 79, IEC 60204-1/.test(made.problems[0]) && /Test Stop first -- the whole if again, every branch kept: if \(stopPressed\) \{ motorRunning = false; \} else if \(startPressed\) \{ motorRunning = true; \}$/.test(made.problems[0]), made && made.problems);
   ok("...and the message that goes back holds that line", back && /Lantern checked the code in your reply: Start wins over Stop/.test(act.replyCodeText(back)));
   // the program with the line written in, as a model would: Lantern finds nothing, and the bench passes it
   var fixed = sr.reply.replace(/if \(startPressed\) \{\s*motorRunning = true;\s*\} else if \(stopPressed\) \{\s*motorRunning = false;\s*\}/, "if (stopPressed) { motorRunning = false; } else if (startPressed) { motorRunning = true; }");
@@ -69,15 +69,15 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var SQ = "Write a sketch with a Start button and a Stop button that runs a motor, with a seal-in.";
   function sw(lang, text, q) { return AC.startWins(lang, text, q || SQ); }
   var wrong = [
-    ["arduino", "void loop() {\n  if (start) run = true;\n  else if (stop) run = false;\n}\n", /Test Stop first: if \(stop\) \{ run = false; \} else if \(start\) \{ run = true; \}/],
+    ["arduino", "void loop() {\n  if (start) run = true;\n  else if (stop) run = false;\n}\n", /every branch kept: if \(stop\) \{ run = false; \} else if \(start\) \{ run = true; \}$/],
     ["arduino", "void loop() {\n  if (digitalRead(stopPin) == LOW) { running = false; }\n  if (digitalRead(startPin) == LOW) { running = true; }\n}\n", /Put the Stop test last: if \(digitalRead\(startPin\) == LOW\) \{ running = true; \} if \(digitalRead\(stopPin\) == LOW\) \{ running = false; \}/],
     ["arduino", "void loop() {\n  motor = start || (motor && !stopPressed);\n}\n", /Write: motor = \(start \|\| motor\) && !stopPressed;$/],
     ["arduino", "void loop() {\n  motor = startBtn || motor && stopOk;\n}\n", /Write: motor = \(startBtn \|\| motor\) && stopOk;$/],
-    ["arduino", "void loop() {\n  if (startBtn) { digitalWrite(MOTOR, HIGH); } else if (stopBtn) { digitalWrite(MOTOR, LOW); }\n}\n", /if \(stopBtn\) \{ digitalWrite\(MOTOR, LOW\); \} else if \(startBtn\) \{ digitalWrite\(MOTOR, HIGH\); \}/],
-    ["st", "PROGRAM M\nIF Start THEN Motor := TRUE; ELSIF Stop THEN Motor := FALSE; END_IF;\nEND_PROGRAM\n", /Test Stop first: IF Stop THEN Motor := FALSE; ELSIF Start THEN Motor := TRUE; END_IF;$/],
+    ["arduino", "void loop() {\n  if (startBtn) { digitalWrite(MOTOR, HIGH); } else if (stopBtn) { digitalWrite(MOTOR, LOW); }\n}\n", /every branch kept: if \(stopBtn\) \{ digitalWrite\(MOTOR, LOW\); \} else if \(startBtn\) \{ digitalWrite\(MOTOR, HIGH\); \}$/],
+    ["st", "PROGRAM M\nIF Start THEN Motor := TRUE; ELSIF Stop THEN Motor := FALSE; END_IF;\nEND_PROGRAM\n", /every branch kept: IF Stop THEN Motor := FALSE; ELSIF Start THEN Motor := TRUE; END_IF;$/],
     ["st", "PROGRAM M\nIF Stop THEN Motor := FALSE; END_IF;\nIF Start THEN Motor := TRUE; END_IF;\nEND_PROGRAM\n", /Put the Stop test last: IF Start THEN Motor := TRUE; END_IF; IF Stop THEN Motor := FALSE; END_IF;$/],
     ["st", "PROGRAM M\nMotor := Start OR (Motor AND NOT StopPB);\nEND_PROGRAM\n", /Write: Motor := \(Start OR Motor\) AND NOT StopPB;$/],
-    ["st", "PROGRAM M\nIF Start THEN\n  IF Ready THEN Motor := TRUE; END_IF;\nELSIF EStop THEN Motor := FALSE;\nEND_IF;\nEND_PROGRAM\n", /Test Stop first: IF EStop THEN Motor := FALSE; ELSIF Start THEN IF Ready THEN Motor := TRUE; END_IF; END_IF;$/]];
+    ["st", "PROGRAM M\nIF Start THEN\n  IF Ready THEN Motor := TRUE; END_IF;\nELSIF EStop THEN Motor := FALSE;\nEND_IF;\nEND_PROGRAM\n", /every branch kept: IF EStop THEN Motor := FALSE; ELSIF Start THEN IF Ready THEN Motor := TRUE; END_IF; END_IF;$/]];
   var bad = wrong.filter(function (x) { var p = sw(x[0], x[1]); return p.length !== 1 || !x[2].test(p[0]); });
   ok("each way of letting Start win is found, and the line to write is the model\u2019s own conditions, Stop first or last", !bad.length, bad.map(function (x) { return [x[1], sw(x[0], x[1])]; }));
   var right = [
