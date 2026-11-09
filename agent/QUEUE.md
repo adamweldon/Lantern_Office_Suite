@@ -99,6 +99,22 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    passes on 1.24.10 too).
 3. **Programs: what 1.24.12 leaves** (`CHANGELOG.md` 1.24.12,
    `tests/review_1252.js`, the reviews in `tests/fixtures/review*_1252_*`).
+   - **First: the bench passes a P1AM program whose motor runs only while
+     Stop is pressed.** The 35B on the pushed 1.24.12 (2026-11-09,
+     `tests/fixtures/bench_run_1252_35b_code_final.json`, on
+     `wip-2026-11-09-1.24.12`): `bool stopPressed = !P1.readDiscrete(inSlot,
+     2);` and `motorRunning = (startPressed || motorRunning) && stopPressed;`.
+     It is Lantern's own tested example (`stopOk = P1.readDiscrete(...)`,
+     `&& stopOk`, "NC: on while not pressed") with the name changed to
+     "pressed" and a `!` added. Three times now, two shapes. The bench's
+     check (AI_CODE_BENCH_DATA, code-p1am-seal-in) knows the wiring and
+     should fail it ("Stop turns the motor on"); then rule 1: what in the
+     example makes renaming it the likely move? (an example whose Stop name
+     says what it is when ON: `stopNotPressed`? or the line `// stopOk is
+     ON while Stop is NOT pressed: never call it stopPressed`). A Lantern
+     rule for it needs a reviewer: a name that says pressed, read through a
+     `!` from an input the question calls normally closed, used un-negated
+     to keep an output on.
    - **A Stop that turns the motor on.** The 35B on the 1.24.12 test build:
      `if (startPressed || motorRunning) { if (stopPressed) { motorRunning =
      true; } else { motorRunning = false; } }` -- it runs only while Stop is
@@ -270,8 +286,9 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    none; 1.24.8: a full run with the library by Adam himself (134 of 140,
    2026-11-08); 1.24.9: his, with the library (134 of 140); 1.24.10 none;
    1.24.11: his, with the library (134 of 140, 2026-11-09); 1.24.12: the
-   seven program questions on its test build (7 of 7, 2026-11-09) and the
-   P1AM seal-in on the build that was pushed; a full run is his to come.
+   seven program questions on its test build (7 of 7, 2026-11-09) and on
+   the build that was pushed (7 of 7, but the P1AM program is wrong: item
+   3); a full run is his to come.
 7. **Finish the five Food lessons on `wip-2026-11-06`.** They are drafted
    and were checked from memory only; the checker's memory differs from the
    drafts where it matters (kidney beans, cassava, the hay box). They need
