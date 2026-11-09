@@ -52,6 +52,9 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var wz = row(A4, "make-music-waltz");
   ok("...its waltz ends on E over D, a whole step from the chord: made, and failed by the bench\u2019s own ending check (Lantern mends only a half step)",
     /does not end on a note of its last chord/.test(wz.why) && /G - - F# - E\s*$/m.test(wz.reply.split("\n").filter(function (l) { return /^melody /.test(l); })[0] || ""));
+  var orch = row(A4, "make-music-orchestra"), ob = act.build(orch.reply, "Arrange the main theme of Beethoven\u2019s Ode to Joy for orchestra, so I can hear the whole orchestra play it.");
+  ok("...its orchestra: \u201cpart strings\u201d is the strings (the table has them; the plural rule made it \u201cstring\u201d), no longer \u201cno such instrument\u201d; its brass and bass parts, a bar or two short, are asked about as before",
+    /part strings: Lantern has no such instrument/.test(orch.why) && !ob.problems.some(function (p) { return /part strings/.test(p); }) && /^part brass has 14 bars; the tune has 16/.test(ob.problems[0]), ob.problems);
   console.log(fails ? fails + " BENCH 1.24.10 FAILURES (" + passes + " passed)" : "ALL BENCH 1.24.10 CHECKS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);
 })();
