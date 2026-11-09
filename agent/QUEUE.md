@@ -14,8 +14,16 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    on two versions with the same reply, and are the work: **water-days**
    ("asked for a value"), **letters-refrigerator** (the letters retyped),
    **make-power-wheel** (three lines twice on the wheel),
-   **make-music-orchestra** ("part strings": an instrument Lantern does not
-   have), **doors-host-guesses**, **code-st-tank-fill** (no MAKE block).
+   **make-music-orchestra** ("part strings": the table has strings, the
+   plural rule made it "string" -- mended in 1.24.11; its brass and bass
+   parts are a bar or two short and go back: Lantern arranges for orchestra
+   itself, and could leave out a written part it cannot play and say so),
+   **doors-host-guesses** (the classic Monty Hall from memory, for a host
+   who does not know), **code-st-tank-fill** (no MAKE block: the first
+   reply was "LESSON: Tank fill/stop logic" twenty times, the second prose
+   and a fenced program cut off at the question's 1000 tokens, so there is
+   no whole program to read; a reply cut off inside a fence could be asked
+   to go on).
    Its road was drawn under a ground written after it (asked about as
    hidden: Lantern could put the ground first and say so, rule 0, a
    reviewer first) and its waltz ends on E over D, a whole step from the
