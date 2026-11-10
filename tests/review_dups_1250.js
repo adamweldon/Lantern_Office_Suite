@@ -59,7 +59,8 @@ function picture(shapes) { var out = [], x, y; for (x = 0.05; x < 20; x += 0.1) 
   var b35 = act.build(R35.reply, R35.q);
   ok("boot clean; the 35B\u2019s road on 1.24.8 (the triangle 29 times) now gets the road asked for, with the line to write, and the copies left out said",
     o.errs.length === 0 && /no road that narrows/.test(R35.why) && b35.ok === false &&
-    /^the question asks for a road going into the distance, and nothing is drawn on the ground: add tri 7 12 13 12 10 6 fill gray after the ground/.test(b35.problems[0]) &&
+    // (1.24.14: its tri, going up from the horizon to the top of the picture, is named, the line written in its place)
+    /^the question asks for a road going into the distance, and nothing is drawn on the ground: if \u201ctri 0 6 20 6 10 0 fill gray\u201d is the road, it goes up from the horizon to a point at y 0, in the sky -- write tri 7 12 13 12 10 6 fill gray in its place, after the ground/.test(b35.problems[0]) &&
     b35.plan.said.some(function (t) { return /^left out 25 earlier copies of \u201ctri 0 6 20 6 10 0 fill gray\u201d/.test(t); }), [o.errs, b35.problems, b35.plan.said]);
   function shp(b) { return (b.plan && b.plan.shapes || []).map(function (s) { return s.kind + " " + s.nums.join(" ") + (s.fill ? " fill " + s.fill : ""); }); }
   var rows = F.map(function (d) { var b = act.build(d.text, d.q); return { d: d, b: b, said: (b.plan && b.plan.said) || [], shapes: shp(b) }; });
@@ -98,7 +99,9 @@ function picture(shapes) { var out = [], x, y; for (x = 0.05; x < 20; x += 0.1) 
   var mendedNames = ["C8", "C9", "C13", "C14", "N4", "N5", "P8", "P20", "P21"];
   var moved = g.filter(function (r) { return mendedNames.indexOf(r.d.name.split(" ")[0]) < 0; }).filter(function (r) {
     var was = (r.d.now.said || []).map(function (x) { return x.replace("with nothing between across it", "with nothing drawn between across it"); });
-    return JSON.stringify(r.said) !== JSON.stringify(was) || JSON.stringify(r.b.problems || []) !== JSON.stringify(r.d.now.problems || []);
+    // (1.24.14: a road drawn going up from the horizon is named, with the same line to write in its place)
+    var asked = (r.b.problems || []).map(function (p) { return p.replace(/: if \u201c[^\u201d]+\u201d is the (\w+), it goes up from the horizon to a point at y [\d.]+, in the sky -- write (.+?) in its place, after the ground/, ": add $2 after the ground"); });
+    return JSON.stringify(r.said) !== JSON.stringify(was) || JSON.stringify(asked) !== JSON.stringify(r.d.now.problems || []);
   });
   ok("every other drawing is said and asked about as the review found it (" + (G.length - mendedNames.length) + ")", moved.length === 0, moved.map(function (r) { return r.d.name; }));
   // (leaving out copies is the same as the block written without them: built again with the earlier copies taken

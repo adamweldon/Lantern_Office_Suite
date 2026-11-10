@@ -133,7 +133,9 @@ var RIGHT = [
         if (!b) return;
         blocks++;
         var m = S.mend(b.lines, r.q);
-        if (m.said.some(function (x) { return !/^left out /.test(x); }) || (m.problems.length && !/shore|road/.test(r.q))) moved.push([f, r.id, m.said, m.problems]);
+        // (1.24.14: but the 4B's road drawn under the ground, moved after it -- tests/bench_1254.js)
+        if (m.said.some(function (x) { return !/^left out /.test(x) && !(r.id === "make-road-horizon" && /^moved \u201ctri 0 12 10 6 20 12 fill gray\u201d after \u201crect 0 6 20 6 fill green\u201d/.test(x)); }) ||
+          (m.problems.length && !/shore|road/.test(r.q))) moved.push([f, r.id, m.said, m.problems]);
       });
     });
   });

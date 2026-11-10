@@ -37,7 +37,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var o = load(), L = o.L, w = o.w;
   await sleep(60);
   var S = L.codeScan, act = L.aiAct, B = L.aiBench, AC = L.aiCode;
-  ok("boot clean; 1.24.13; the runner is there", o.errs.length === 0 && L.version === "1.24.13" && S && typeof S.startStop === "function" && typeof AC.stopScan === "function", o.errs);
+  ok("boot clean; 1.24.13; the runner is there", o.errs.length === 0 && /^1\.24\.(1[3-9]|[2-9]\d)$/.test(L.version) && S && typeof S.startStop === "function" && typeof AC.stopScan === "function", o.errs);
   var sq = L.aiBenchQuestions.filter(function (q) { return q.id === "code-p1am-seal-in"; })[0];
   function body(t) { var m = /language arduino\n([\s\S]*?)\nEND\s*$/.exec(t) || /\x60\x60\x60\w*\n([\s\S]*?)\x60\x60\x60/.exec(t); return m ? m[1] : t; }
   function benchWhy(text) { var mk = act.fromReply(text, sq.q); return mk && mk.plan ? B.grade(sq, text, { made: { ok: true, plan: mk.plan, action: mk.action, problems: [] } }).why : "not read"; }

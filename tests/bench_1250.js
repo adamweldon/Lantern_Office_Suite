@@ -47,8 +47,9 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   ok("the 4B\u2019s six rows of 1.24.7, failed again with the same replies, word for word (" + six.join(", ") + ")",
     six.every(function (id) { var a = row(A4, id), c = row(C4, id); return a && c && a.reply === c.reply && (a.first || "") === (c.first || ""); }));
   var rd = row(A4, "make-road-horizon"), mr = act.build(rd.reply, rd.q || "Draw a road going into the distance, toward the horizon.");
-  ok("...its road, drawn under the ground written after it, is asked about as hidden (the line to write is the order), as before",
-    /the tri 0 12 10 6 20 12 \(gray\) is hidden/.test(rd.why) && !mr.ok);
+  // (1.24.14: moved after the ground and said -- the same reply on four versions, tests/bench_1254.js)
+  ok("...its road, drawn under the ground written after it, was asked about as hidden (the line to write is the order); since 1.24.14 it is moved after the ground",
+    /the tri 0 12 10 6 20 12 \(gray\) is hidden/.test(rd.why) && mr.ok && JSON.stringify(mr).indexOf("moved \u201ctri 0 12 10 6 20 12 fill gray\u201d after") >= 0);
   var wz = row(A4, "make-music-waltz");
   ok("...its waltz ends on E over D, a whole step from the chord: made, and failed by the bench\u2019s own ending check (Lantern mends only a half step)",
     /does not end on a note of its last chord/.test(wz.why) && /G - - F# - E\s*$/m.test(wz.reply.split("\n").filter(function (l) { return /^melody /.test(l); })[0] || ""));

@@ -60,8 +60,9 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     /bar 7: the melody holds A over E/.test(wz.why) && mw.ok && /bar 7: Lantern played A under the tune\u2019s A, where the chords line has E/.test(mw.summary) &&
     B.grade(item("make-music-waltz"), wz.reply, { made: mw, text: wz.reply }).pass === true, [mw.problems, mw.summary]);
   var rd = row(F35, "make-road-horizon"), mr = act.build(rd.reply, item("make-road-horizon").q);
+  // (1.24.14: its tri, going up from the horizon to the top of the picture, is named, the road's line to write in its place)
   ok("...its road (the triangle 29 times): the road is asked for, with the line to write", /no road that narrows/.test(rd.why) && !mr.ok &&
-    /add tri 7 12 13 12 10 6 fill gray after the ground/.test(mr.problems.join("\n")), mr.problems);
+    mr.problems.join("\n").indexOf("if \u201ctri 0 6 20 6 10 0 fill gray\u201d is the road, it goes up from the horizon to a point at y 0, in the sky -- write tri 7 12 13 12 10 6 fill gray in its place, after the ground") >= 0, mr.problems);
 
   // --- the shore at sunset, four ways
   var sh = [F08, F2, F4, F35].map(function (F) { var r = row(F, "make-shore-sunset"), b = act.build(r.reply, item("make-shore-sunset").q); return { r: r, b: b }; });
