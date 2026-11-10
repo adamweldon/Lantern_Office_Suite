@@ -45543,7 +45543,7 @@ Lantern.RFB = (function () {
       if (!m || m.index !== at) return null;
       at = re.lastIndex;
       if (m[1] !== undefined) out.push({ t: "num", v: /^0[xX]/.test(m[1]) ? parseInt(m[1], 16) : parseFloat(m[1]) });
-      else if (m[2] !== undefined) out.push(/^(true|HIGH)$/.test(m[2]) ? { t: "num", v: 1 } : /^(false|LOW)$/.test(m[2]) ? { t: "num", v: 0 } : { t: "id", v: m[2] });
+      else if (m[2] !== undefined) { if (m[2].length > 64) return null; out.push(/^(true|HIGH)$/.test(m[2]) ? { t: "num", v: 1 } : /^(false|LOW)$/.test(m[2]) ? { t: "num", v: 0 } : { t: "id", v: m[2] }); }
       else if (m[3] !== undefined) out.push({ t: "op", v: m[3] });
     }
     return out;
@@ -45620,12 +45620,16 @@ Lantern.RFB = (function () {
   }
   // sketch(text): the sketch read, or null when it is more than this can run
   function sketch(text) {
+    // (review 6) a sketch of a size a program for a start and a stop has: a name of 64 letters at most, a text of 30,000
+    // characters, macros that do not grow it past 40,000
+    if (String(text || "").length > 30000) return null;
     var c = strip(text);
     if (/\bstatic\b/.test(c)) return null;
     var macros = [];
     c = c.replace(/^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)([ \t]+[^\n]*)?$/gm, function (m, n, v) { macros.push([n, (v || "").replace(/^\s+|\s+$/g, "")]); return ""; });
     if (/^[ \t]*#/m.test(c) || macros.some(function (d) { return /^\x28/.test(d[1]) && /^[A-Za-z_]\w*\x28/.test(d[0] + d[1]); })) return null;
-    for (var mi = 0; mi < 3; mi++) macros.forEach(function (d) { c = c.replace(new RegExp("\\b" + d[0] + "\\b", "g"), d[1] === "" ? "" : "(" + d[1] + ")"); });
+    for (var mi = 0; mi < 3 && c.length <= 40000; mi++) macros.forEach(function (d) { if (c.length <= 40000) c = c.replace(new RegExp("\\b" + d[0] + "\\b", "g"), d[1] === "" ? "" : "(" + d[1] + ")"); });
+    if (c.length > 40000) return null;
     c = c.replace(/\bwhile\s*\x28\s*!\s*P1\s*\.\s*init\s*\x28\s*\x29\s*\x29\s*(?:\x7B[^\x7B\x7D]*\x7D|;)/g, "")
       .replace(/\bP1\s*\.\s*init\s*\x28\s*\x29\s*;/g, ";")
       // an empty statement, not nothing: "if (running) Serial.println(...);" keeps its if (review 5)
@@ -45780,7 +45784,7 @@ Lantern.RFB = (function () {
   // and "pass" is true when one of them works (a healthy overload), "sure" when they all say the same.
   function startStop(text, w) {
     if (!w || !/readDiscrete/.test(String(text))) return null;
-    var s = sketch(text);
+    var began = Date.now(), s = sketch(text);
     if (!s) return null;
     function base(start, stop) {
       var o = {}, sv = start ? 1 : 0, pv = w.stop.nc ? (stop ? 0 : 1) : (stop ? 1 : 0);
@@ -45794,7 +45798,8 @@ Lantern.RFB = (function () {
     function run(seq, extra) {
       if (!s.reset()) return null;
       var o = null, ins;
-      if (s.spent() > 3000000) return null;   // enough: a sketch this costly is not run to the end (review 5)
+      // enough: a sketch this costly is not run to the end -- three million steps, or a third of a second (reviews 5, 6)
+      if (s.spent() > 3000000 || Date.now() - began > 300) return null;
       // each press held for eight scans: a debounce that counts five scans sees it (review 5)
       for (var i = 0; i < seq.length; i++) for (var k = 0; k < 8; k++) {
         ins = base(seq[i][0], seq[i][1]);
@@ -46431,6 +46436,10 @@ Lantern.RFB = (function () {
   // (review 5: a motor that starts again when Stop is let go is not a Stop read the wrong way round -- the bench says it)
   var SCAN_STOP = /^(Stop turns the motor on|Stop does not stop the motor)/;
   function stopScan(lang, text, q) {
+    // (review 6) whatever a sketch is, this rule does not stop the reading of a reply: an error is nothing to say
+    try { return stopScan1(lang, text, q); } catch (e) { return []; }
+  }
+  function stopScan1(lang, text, q) {
     var S = L.codeScan;
     // (review 5) not where time is part of it -- a run-on after Stop, a delayed start: the run's scans are short. Time
     // said as time ("30 seconds", run-on, a timer), not "keeps running after Start is let go", which is a seal-in
@@ -46477,7 +46486,7 @@ Lantern.RFB = (function () {
         if (chosen.length === size) { subsets.push(chosen.slice()); return; }
         for (var u = from; u < cand.length; u++) { chosen.push(cand[u]); pick(u + 1, chosen); chosen.pop(); }
       })(0, []);
-      for (var si = 0; si < subsets.length && si < 20 && Date.now() - t0 < 1500; si++) {
+      for (var si = 0; si < subsets.length && si < 20 && Date.now() - t0 < 1000; si++) {
         var tr = ls.slice();
         subsets[si].forEach(function (x) { tr[x.k] = x.nl; });
         var again = S.startStop(tr.join("\n"), w);

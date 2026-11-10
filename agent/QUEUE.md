@@ -85,16 +85,17 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    choices (which formula, which sentence, which shape, which wiring), never
    for exact content (a number, a coordinate, a sentence copied word for
    word, a long repeated structure). Read against Lantern as it stands:
-   - **Measure first.** The bench summary has seconds and tokens a second;
-     add, per category, tokens generated per correct answer and rounds per
-     answer, so each change below is read before and after on the same
-     model and prompt.
-   - **The P1AM seal-in as a choice, not a line** (item 4, first): three
-     times the 35B wrote this Stop inverted, each time copying the shape of
-     Lantern's own example with the meaning changed. The coarse choice is
-     what the Stop contact is (NC or NO, on which input); the exact line
-     `run = (start || run) && stopOk` is Lantern's. Fix the bench's check
-     first, then try the construction, with a reviewer.
+   - **Measure first.** Done in 1.24.13: the bench summary and the
+     headless table give, per kind, the tokens per right answer and the
+     rounds per question. Read the next runs by them (the 35B's and the
+     small models'), before and after each change below.
+   - **The P1AM seal-in as a choice, not a line** (item 4, first). 1.24.13:
+     the bench runs the sketch; Lantern runs it too and sends back a Stop
+     read the wrong way round, with a line it has run; its own example now
+     names the Stop as the model does and uses it right (rule 1). What
+     the brief asks beyond that -- the model says only how the Stop is
+     wired, Lantern writes the seal-in -- is next, once a run shows whether
+     the example change alone is enough.
    - **Point, don't copy** (item 3): cite a sentence by its number, [2.3],
      and Lantern writes the quote. This is "hand the model the sentence"
      made exact; unlike 1.24.11's rule that was taken out, the model, not
@@ -146,31 +147,19 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    passes on 1.24.10 too).
 4. **Programs: what 1.24.12 leaves** (`CHANGELOG.md` 1.24.12,
    `tests/review_1252.js`, the reviews in `tests/fixtures/review*_1252_*`).
-   - **First: the bench passes a P1AM program whose motor runs only while
-     Stop is pressed.** The 35B on the pushed 1.24.12 (2026-11-09,
-     `tests/fixtures/bench_run_1252_35b_code_final.json`, on
-     `wip-2026-11-09-1.24.12`): `bool stopPressed = !P1.readDiscrete(inSlot,
-     2);` and `motorRunning = (startPressed || motorRunning) && stopPressed;`.
-     It is Lantern's own tested example (`stopOk = P1.readDiscrete(...)`,
-     `&& stopOk`, "NC: on while not pressed") with the name changed to
-     "pressed" and a `!` added. Three times now, two shapes. The bench's
-     check (AI_CODE_BENCH_DATA, code-p1am-seal-in) knows the wiring and
-     should fail it ("Stop turns the motor on"); then rule 1: what in the
-     example makes renaming it the likely move? (an example whose Stop name
-     says what it is when ON: `stopNotPressed`? or the line `// stopOk is
-     ON while Stop is NOT pressed: never call it stopPressed`). A Lantern
-     rule for it needs a reviewer: a name that says pressed, read through a
-     `!` from an input the question calls normally closed, used un-negated
-     to keep an output on.
-   - **A Stop that turns the motor on.** The 35B on the 1.24.12 test build:
-     `if (startPressed || motorRunning) { if (stopPressed) { motorRunning =
-     true; } else { motorRunning = false; } }` -- it runs only while Stop is
-     pressed. Lantern says nothing; the bench fails it. A rule that swapped
-     the two bodies was taken out: of review 2's 193 right programs it spoke
-     about 27 and made 17 less safe (a stop that turns a brake, a dump valve
-     or an e-stop's safe state ON is right). A surer rule would need the
-     output to be the one a Start turns on elsewhere, the stop branch inside
-     the start's own seal, and nothing else written there; a reviewer first.
+   - **Done in 1.24.13: a Stop that turns the motor on.** Three times the
+     35B read the P1AM's normally closed Stop the wrong way round (an if on
+     the test build; `&& stopPressed` on the build pushed, which the bench
+     passed). Now the sketch is run press by press by Lantern's own
+     interpreter (CODE_SCAN): the bench grades what the motor does, and
+     Lantern sends the sketch back with a line it has run, where the
+     question says how the Stop is wired. Lantern's P1AM example names its
+     Stop `stopPressed` and uses `&& !stopPressed`. Left: questions that
+     do not say how the Stop is wired (Lantern cannot know which way round
+     is right), sketches timed with millis(), a Stop on a digitalRead pin
+     with a pull-up (only P1AM inputs are run), and a motor that starts
+     again when Stop is let go (the bench says it, Lantern does not).
+     Watch the next 35B run: does the example's new name hold?
    - **Start wins, missed:** 28 of review 1's 77 wrong programs, 41 of
      review 2's 94 and 15 of review 3's 62 are left unsaid (a ternary, an
      SR or RS block, a state machine, a timer's .Q, a start behind a
