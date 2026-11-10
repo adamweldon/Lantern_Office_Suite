@@ -77,8 +77,8 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var r5 = track(["row A B C D E F G", "put coin in F", "swap holder of coin and left of left of holder of coin", "move first to last"], seven);
   ok("\u201c2 left of\u201d and \u201cleft of left of\u201d run alike, with nothing questioned", r4.ok && r5.ok && PZ.resultText(r4).split("\n").pop() === PZ.resultText(r5).split("\n").pop(), [r4.problems, r5.problems]);
   var C = L.aiPuzzleCheck;
-  ok("chain(): left of left of X is 2, 2 left of left of X is 3, two places behind X is 2",
-    C.chain("left of left of X").n === 2 && C.chain("2 left of left of X").n === 3 && C.chain("two places behind X").n === 2 && C.chain("X").n === 0);
+  ok("chain(): left of left of X is 2, 2 left of left of X is 3; \u201cbehind behind\u201d and \u201c2 seats left of\u201d are not read as chains (the runner does not)",
+    C.chain("left of left of X").n === 2 && C.chain("2 left of left of X").n === 3 && C.chain("behind behind X").links === 0 && C.chain("2 seats left of X").links === 0 && C.chain("X").n === 0);
 
   // --- the library: the line to write ---
   var ip = row(F, "shelf-iphone-battery"), ips = srcs(ip), iq = item("shelf-iphone-battery");
@@ -105,11 +105,15 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     "QUOTE [3]: Ride-hailing apps such as Bolt and Uber work in Nairobi.\n" +
     "QUOTE [1]: Prices should always be negotiated before the trip, and paid afterwards (only cash is accepted, often with limited change available).";
   var nv = L.libraryVerify(L.libraryRenumber(nt, ns).text, ns, nr.q);
-  ok("Nairobi (its QUOTE [3] in no passage) goes back with the passage that says it, and to leave out the QUOTE [3] line",
-    !nv.ok && nv.problems.length === 1 && nv.problems[0] === "QUOTE [3] is not in passage 3: copy the sentence exactly: \u201cusing ride-hailing apps\u201d is in passage [2], not [3] \u2014 write [2] after it in place of [3], and QUOTE [2]: Hiring a car or using a ride-hailing app is the most convenient way to reach Kiambu from Nairobi. \u2014 and leave out your QUOTE [3] line", nv.problems);
-  var nt2 = nt.replace("ride-hailing apps [3]", "ride-hailing apps [2]").split("\n").filter(function (l) { return !/^QUOTE \[3\]/.test(l); }).join("\n");
-  var nv2 = L.libraryVerify(L.libraryRenumber(nt2, ns).text, ns, nr.q);
-  ok("...written so, it is verified, and its answer is what the bench wants", nv2.ok && new RegExp(nq.want, "i").test(nt2.split("\n")[0]), nv2.problems);
+  // (the first draft handed it "Hiring a car or using a ride-hailing app is the most convenient way to reach Kiambu from
+  // Nairobi" for its "ride-hailing apps [3]": a sentence about another town, that says more than the part. The review
+  // made the rule ask for the whole sentence: Nairobi goes back as before)
+  ok("Nairobi (its QUOTE [3] in no passage) goes back as before: no sentence is its part and nothing more",
+    !nv.ok && nv.problems.length === 1 && nv.problems[0] === "QUOTE [3] is not in passage 3: copy the sentence exactly", nv.problems);
+  var mv = [{ n: 1, title: "Kampala", text: "Kampala is the capital of Uganda. Boda-bodas are fast but dangerous." }, { n: 2, title: "Mombasa", text: "Mombasa is on an island. Matatus run on fixed routes across the island." }];
+  var mvv = L.libraryVerify("ANSWER: Matatus run on fixed routes across the island [1].\nQUOTE [1]: Matatus are minibuses.", mv, "How do I get around Mombasa?");
+  ok("a part that is all of a sentence of another passage is moved there, the bad QUOTE line left out",
+    mvv.problems[0] === "QUOTE [1] is not in passage 1: copy the sentence exactly: \u201cMatatus run on fixed routes across the island\u201d is in passage [2], not [1] \u2014 write [2] after it in place of [1], and QUOTE [2]: Matatus run on fixed routes across the island. \u2014 and leave out your QUOTE [1] line", mvv.problems);
   // what the line is not handed to
   var gold = [{ n: 1, title: "Burns", text: "Cool the burn under cool running water for 20 minutes. Do not put butter, oil or ice on a burn. Cover it loosely with cling film." }];
   function lines(t, q) { return L.libraryVerify(t, gold, q).problems.join(" | "); }
@@ -140,8 +144,8 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     handed++;
     if (L.libraryVerify(L.libraryRenumber(t, c.sources).text, c.sources, c.q).ok) { if (c.truth === "right") rightNow++; else wrongNow.push(c.name); }
   });
-  ok("the 1.24.11 review's answers: lines handed to about a hundred, some 75 right answers verified once written, and one not right -- the 8 Plus guide's step cited for the 8",
-    handed >= 90 && rightNow >= 70 && wrongNow.join() === "bench-iphone-wrong-passage-number", [handed, rightNow, wrongNow]);
+  ok("the 1.24.11 review's answers: lines handed to some sixty, 46 right answers verified once written, and one not right -- the 8 Plus guide's step cited for the 8, which passage 3 does say",
+    handed >= 55 && rightNow >= 44 && wrongNow.join() === "bench-iphone-wrong-passage-number", [handed, rightNow, wrongNow]);
 
   // --- the drawings ---
   function made(id, text) { var it = item(id), m = act.fromReply(text, it.q); return { m: m, g: m ? B.grade(it, text, { made: m }) : null }; }
