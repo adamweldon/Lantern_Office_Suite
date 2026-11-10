@@ -93,9 +93,18 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   ok("the quotes for [2] are passage 2's own sentences", q2.every(function (s) { return ips[1].text.indexOf(s) >= 0; }));
   var it1 = ip.reply.split("\n")[0] + "\n" + q2.map(function (s) { return "QUOTE [2]: " + s; }).join("\n");
   var v1 = L.libraryVerify(L.libraryRenumber(it1, ips).text, ips, ip.q);
-  ok("the iPhone goes back with the line to write: for \u201c... discharge the battery below 25%\u201d, QUOTE [3]: Step 1: Before you begin, discharge your iPhone battery below 25%.",
-    !v1.ok && v1.problems.length === 1 && v1.problems[0] === "there is no QUOTE [3] line: for \u201cTo replace the battery, discharge the battery below 25%\u201d write QUOTE [3]: Step 1: Before you begin, discharge your iPhone battery below 25%.", v1.problems);
-  var it2 = it1 + "\nQUOTE [3]: Step 1: Before you begin, discharge your iPhone battery below 25%.", v2 = L.libraryVerify(L.libraryRenumber(it2, ips).text, ips, ip.q);
+  // (the first draft handed the 35B's own answer its line. Three reviews made the rule ask, of every other part of the
+  // answer, that its words come in its own quote in order, but one in four: the 35B's [2] parts are its paraphrases --
+  // "remove the four adhesive strips securing it" beside "secured by four pieces of stretch-release adhesive",
+  // "Finally, remove the battery" -- and it goes back as on 1.24.13)
+  ok("the 35B's iPhone answer goes back as on 1.24.13: its other parts are paraphrases of their quotes",
+    !v1.ok && v1.problems.length === 1 && v1.problems[0] === "there is no QUOTE [3] line", v1.problems);
+  var ia = "ANSWER: To replace the battery, discharge the battery below 25% [3], then pull one battery adhesive tab away from the battery [2], and remove the battery from the iPhone [2].\n" +
+    "QUOTE [2]: Step 3: Slowly pull one battery adhesive tab away from the battery, towards the bottom of the iPhone.\nQUOTE [2]: Step 6: Remove the battery from the iPhone.";
+  var va = L.libraryVerify(L.libraryRenumber(ia, ips).text, ips, ip.q);
+  ok("...one whose other parts are their quotes' own words is handed the line for [3]: QUOTE [3]: Step 1: Before you begin, discharge your iPhone battery below 25%.",
+    !va.ok && va.problems.length === 1 && va.problems[0] === "there is no QUOTE [3] line: for \u201cTo replace the battery, discharge the battery below 25%\u201d write QUOTE [3]: Step 1: Before you begin, discharge your iPhone battery below 25%.", va.problems);
+  var it2 = ia + "\nQUOTE [3]: Step 1: Before you begin, discharge your iPhone battery below 25%.", v2 = L.libraryVerify(L.libraryRenumber(it2, ips).text, ips, ip.q);
   ok("...that line written, it is verified, and its answer is what the bench wants", v2.ok && new RegExp(iq.want, "i").test(it2.split("\n")[0]), v2.problems);
   var nr = row(F, "shelf-nairobi-transport"), ns = srcs(nr), nq = item("shelf-nairobi-transport");
   var nt = nr.reply.split("\n")[0] + "\nQUOTE [1]: Walking around Nairobi is fairly easy since the city is small and places are easy to get to.\n" +
@@ -112,8 +121,9 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     !nv.ok && nv.problems.length === 1 && nv.problems[0] === "QUOTE [3] is not in passage 3: copy the sentence exactly", nv.problems);
   var mv = [{ n: 1, title: "Kampala", text: "Kampala is the capital of Uganda. Boda-bodas are fast but dangerous." }, { n: 2, title: "Mombasa", text: "Mombasa is on an island. Matatus run on fixed routes across the island." }];
   var mvv = L.libraryVerify("ANSWER: Matatus run on fixed routes across the island [1].\nQUOTE [1]: Matatus are minibuses.", mv, "How do I get around Mombasa?");
-  ok("a part that is all of a sentence of another passage is moved there, the bad QUOTE line left out",
-    mvv.problems[0] === "QUOTE [1] is not in passage 1: copy the sentence exactly: \u201cMatatus run on fixed routes across the island\u201d is in passage [2], not [1] \u2014 write [2] after it in place of [1], and QUOTE [2]: Matatus run on fixed routes across the island. \u2014 and leave out your QUOTE [1] line", mvv.problems);
+  // (a draft moved such a part to the passage that has it; the third review moved K2's facts to Everest's passage
+  // and a paracetamol limit to ibuprofen's: a line is handed only from the passage the answer cites)
+  ok("a part in another passage than the one it cites is not moved there", mvv.problems[0] === "QUOTE [1] is not in passage 1: copy the sentence exactly", mvv.problems);
   // what the line is not handed to
   var gold = [{ n: 1, title: "Burns", text: "Cool the burn under cool running water for 20 minutes. Do not put butter, oil or ice on a burn. Cover it loosely with cling film." }];
   function lines(t, q) { return L.libraryVerify(t, gold, q).problems.join(" | "); }
@@ -144,8 +154,8 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     handed++;
     if (L.libraryVerify(L.libraryRenumber(t, c.sources).text, c.sources, c.q).ok) { if (c.truth === "right") rightNow++; else wrongNow.push(c.name); }
   });
-  ok("the 1.24.11 review's answers: lines handed to some fifty, 42 right answers verified once written, and one not right -- the 8 Plus guide's step cited for the 8, which passage 3 does say",
-    handed >= 50 && rightNow >= 40 && wrongNow.join() === "bench-iphone-wrong-passage-number", [handed, rightNow, wrongNow]);
+  ok("the 1.24.11 review's answers: lines handed to some thirty, 25 right answers verified once written, none not right",
+    handed >= 28 && rightNow >= 24 && wrongNow.length === 0, [handed, rightNow, wrongNow]);
 
   // --- the drawings ---
   function made(id, text) { var it = item(id), m = act.fromReply(text, it.q); return { m: m, g: m ? B.grade(it, text, { made: m }) : null }; }
