@@ -39,13 +39,17 @@ it had written before:
 - *TRACK's check counted a chain as one place* (AI_PUZZLE_CHECK). The
   runner reads "left of left of X" as the place left of the place left of
   X; the check that a step's "two places" has a line that moves two looked
-  only for a written 2. Now the step's own line, when it is a swap whose
-  place is a chain of "left of" or "right of", all one way, decides: it
-  passes when it moves the step's number of places the step's way, and
-  goes back otherwise with the chain written as one ("moves 3 places:
-  write “2 left of holder of coin”"). The 35B's block of 1.24.11 and
-  1.24.13 runs with nothing questioned and gives the bench's answer. Every
-  other block is checked as on 1.24.13.
+  only for a written 2. Now a step "X swaps with the ... N places to its
+  left (right)" is accepted when the block swaps X with a chain of "left
+  of" ("right of") from X itself, N places in all -- the phrase once in the
+  steps, the step a swap, X's own words in it (`chained()`). A chain is
+  only ever accepted by this, never the cause of a question. A number
+  inside a chain ("2 right of right of Bible", three places) no longer
+  counts as a 2 for any step. And when a line goes back and its place is
+  a chain, the line to write is the chain written as one ("moves 3
+  places: write “2 left of holder of coin”"), not 1.24.13's "2 left of
+  left of ...". The 35B's block of 1.24.11 and 1.24.13 runs with nothing
+  questioned and gives the bench's answer.
 - *The library's send-back gave no line to write* (LIBRARY_CHECKS, rule
   3). When an answer cites [n] and has no QUOTE [n] that is in passage n,
   the problem now ends with the line: "there is no QUOTE [3] line: for “To
@@ -56,15 +60,19 @@ it had written before:
   before; the model writes the line, and the answer is checked as any
   other. The line is handed only when:
   - every part of the answer that cites [n] is a whole sentence of a
-    passage in its own words, but for what says nothing -- an article, the
-    question's own words, a "Step 1:" -- with nothing left out that says
-    something (a condition, a qualifier, a number, a unit), its words in
-    order, the same "not", and no word the opposite of one of the part's
-    (over and under, °F and °C, on and off, mild and severe ...);
-  - the part is not a yes or a no (the yes is the answer, and no sentence
-    says it);
+    passage in its own words, but for what says nothing -- an article, a
+    word like "of" or "with", the question's own words, a "Step 1:", a "To
+    replace the battery," that the passage is about -- with nothing left
+    out that says something (a condition, "more than", "usually", a number,
+    a unit, a minus), its words in order, the same "not", and no word the
+    opposite of one of the part's (over and under, °F and °C, warm and
+    cold, on and off, mild and severe ...);
+  - a fact for children, adults, babies, pregnant women, a dog ... is
+    handed only from a sentence that names who it is for;
+  - the answer has no yes or no in it (the yes is the answer, and no
+    sentence says it);
   - every other part is backed by one of the model's own quotes of its
-    passage, with the same "not";
+    passage, with the same "not" and no opposite;
   - nothing in the answer is left uncited, and the answer does not go on
     below its ANSWER line (verify reads that line only);
   - at most three lines.
@@ -76,19 +84,22 @@ it had written before:
   "dark green" and "dark blue". Now "dark gray" is in it (a neutral one),
   and dark, deep, light, pale or bright before any colour of the table is
   read as a shade of it (dark: 45% toward black; light and pale: 50%
-  toward white) -- not "dark white" nor "light black". A sun drawn in a
-  shade of yellow, orange, red or white is a sun.
+  toward white) -- not "dark white" nor "light black". A shade is its own
+  fill to the landscape rules ("dark orange" is of orange's family and is
+  not taken for an orange sun). A sun drawn in a pale, light, bright or
+  deep yellow, orange, red or white, or a dark yellow, gold or orange, is a
+  sun; a sunset sky in a light shade of a day's blue is asked about as one.
 - *The beach line covered the model's own band* (the landscape mend). The
   35B's first shore had "rect 0 10 20 2 fill sky" at the bottom; the beach
   Lantern asked for, "rect 0 9.5 20 2.5 fill sand", covers all of it, and
-  the retry was asked about the band as hidden. A band of water the beach
-  would cover, and that shows, is now named: "write rect 0 9.5 20 2.5 fill
-  sand in place of “rect 0 10 20 2 fill sky”".
+  the retry was asked about the band as hidden. A band of light, shallow
+  water the beach would cover, and that shows, is now named: "write rect 0
+  9.5 20 2.5 fill sand in place of “rect 0 10 20 2 fill sky”".
 - *The road drawn going up was not named.* When a road going away has
   nothing on the ground, and one tri of a road's colour stands on the
   horizon with its point at the top of the picture (y 1 or above), and the
-  question asks for no mountain, hill, tree, tent, dune, house, boat or the
-  like, the message names it: "if “tri 0 6 20 6 10 0 fill gray” is the
+  question asks for no mountain, hill, tree, tent, dune, rock, sand, house,
+  boat or the like, the message names it: "if “tri 0 6 20 6 10 0 fill gray” is the
   road, it goes up from the horizon to a point at y 0, in the sky -- write
   tri 7 12 13 12 10 6 fill gray in its place, after the ground".
 - *A road under the ground is moved* (the landscape mend, rule 2). For a
@@ -97,8 +108,9 @@ it had written before:
   another colour, goes just after the band, and Lantern says so ("moved
   “tri 0 12 10 6 20 12 fill gray” after “rect 0 6 20 6 fill green”: drawn
   before it, it was hidden under it"). Not when the question puts it under
-  snow, flood water, fog or cloud, nor when another band drawn later still
-  covers part of it, nor when it is written again after the band. The
+  something -- snow, flood water, the tide, drifting sand, ice, fog, cloud
+  -- nor when another band drawn later still covers part of it, nor when
+  it is written again after the band. The
   4B's road of four versions passes the bench now.
 
 **Reviews.** By agents that had not seen the rules written, their inputs in
@@ -124,11 +136,31 @@ and `review2_1254_*.json`:
   blocks 12 are questioned, each on 1.24.13 as well (31 were then), and 4 of
   its wrong ones pass, each passing on 1.24.13 too; no wrong answer is
   verified once its line is written, and 60 of its 148 right ones are; no
-  right picture is asked anything it was not asked on 1.24.13. On the 339
-  answers of the 1.24.11 review, 46 right answers are helped, and one
-  partly right one: the iPhone 8 Plus guide's step 1 cited for the iPhone
-  8, which that passage does say.
-REVIEW2
+  right picture is asked anything it was not asked on 1.24.13;
+- review 2, by another agent (84 blocks, 310 answers, 116 drawings of its
+  own) tried the mended rules. TRACK: 8 wrong blocks passed that 1.24.13
+  caught, and 4 right ones were questioned that it ran -- a chain counted
+  from another thing ("right of right of Bible" for the book with the
+  bookmark), a step's phrase paired with another step's line, one phrase
+  at two steps, "behind" in a queue listed back to front. The library: 38
+  wrong and 15 partly wrong answers verified once the line was written --
+  "Yes." as a sentence of its own, a "For children," frame cut, a minus
+  written as a dash, "more than", "usually", "over" left out, warm and
+  cold, a sentence cut at "p.m.", "week" for "weekday", an adult's dose
+  handed for a child. Drawings: the road moved out from under the tide,
+  drifting sand and ice; a rock and a dune named as the road; a sea seen
+  from far out named for the beach; an autumn tree's dark orange crown
+  put behind the land as the sun. Each mended as above (TRACK's rule
+  became the acceptance it is now);
+- on both reviews' cases now: no wrong block passes that 1.24.13 caught
+  and no right one is questioned that it ran (16 and 11 right ones are
+  questioned, 31 and 30 were); no wrong or partly wrong answer is verified
+  once its handed line is written, and 59 and 102 right ones are; no right
+  picture is asked or changed in a way 1.24.13 did not. On the 339 answers
+  of the 1.24.11 review, 42 right answers are helped, and one partly right
+  one: the iPhone 8 Plus guide's step 1 cited for the iPhone 8, which that
+  passage does say.
+REVIEW3
 
 **What was run.** TESTS Replayed only: no model has run 1.24.14; whether
 the 35B writes the lines it is handed is for Adam's next run, and the
