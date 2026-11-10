@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.24.14 — Point, don't copy: a library answer names its sentences and Lantern quotes them (2026-11-10)
+
+Adam ran the 35B on 1.24.12 with the library on his laptop (2026-11-10,
+01:46 UTC, 114 minutes): 136 of 140, up from 134
+(`tests/fixtures/bench_run_1252_35b_library.json`, `tests/bench_1254.js`).
+The tool, multi-step, chat and reasoning questions all passed; the P1AM
+seal-in was right this time (`stopNotPressed`), and 1.24.13's run of it
+agrees. The four that failed are the four that failed on 1.24.9 and
+1.24.11: the iPhone's battery and getting around Nairobi on their
+citations ("there is no QUOTE [3] line"; "QUOTE [3] is not in passage 3"),
+the shore at sunset and the road to the horizon on their drawings.
+
+**What it was traced to.** The library answer asked the model to copy a
+sentence word for word into a QUOTE line: exact content, by hand, from a
+model that holds meaning, not letters. The research thread's brief
+(`agent/briefs/2026-11-09-model-lantern-boundary.txt`): ask the model for
+the choice -- which sentence -- and let Lantern do the copying.
+
+**What changed.**
+
+- *Numbered sentences* (LIBRARY_ENGINE, LIBRARY_CHECKS). The passages go to
+  the model with each sentence numbered: `[2.3]` is the third sentence of
+  passage 2 (a break after `.`, `!`, `?` or `...` before a capital or a
+  digit, not after "e.g.", "St." or an initial). The model writes
+  "ANSWER: ... [2.3]" and no QUOTE line; Lantern turns each `[n.m]` into
+  `[n]` and writes "QUOTE [n]: <that sentence>" under the answer itself.
+  `[1.2, 1.4]`, `[1.2][1.4]` and `[1.2-4]` name several; "QUOTE [2.3]"
+  becomes the sentence. What the answer says is still checked against the
+  sentence it names: a pointer to a sentence that does not say the fact
+  goes back with the number of the one that does ("no sentence it cites
+  says discharge, below: [3.3] says it ... -- cite [3.3]"); a pointer to
+  no sentence goes back with the numbers there are. The old form, `[n]`
+  and a QUOTE line copied from the passage, still works. Chat's own
+  instructions and the second try say the same.
+- *What each kind of question costs*, from 1.24.13, now has its "before":
+  on Adam's run, a formula 27 tokens a right answer and one round, a
+  library answer 169 and 2.17 rounds, a made thing 250 and 1.6, a chat 400
+  and 1.68; rounds after the first took 36 of the 114 minutes.
+- *The small models' run of 1.24.13* saved (`bench_run_1253_*.json`): the
+  4B 107, the same seven rows as on 1.24.12 on the same EPYC 7763; the 2B
+  74; the 0.8B 54 (on another processor than last time).
+
+REVIEW_PLACEHOLDER
+
+**What was run.** RUN_PLACEHOLDER
+
+**Not changed.** The lessons (LESSON:) still ask for a copied QUOTE line;
+they can take numbered sentences the same way once the library's are seen
+to work. The shore and the road wait on Adam's answer about drawing
+(`agent/QUESTIONS.md` 1).
+
 ## 1.24.13 — A Start/Stop sketch run, not read by its names; what each kind of question costs (2026-11-09)
 
 The 35B's P1AM seal-in on 1.24.12, on Adam's laptop, the seven program

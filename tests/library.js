@@ -162,7 +162,7 @@ function firstSentence(body, n) {
   var lk = await LIB.lookup("What is ocean acidification?", "ocean acidification");
   ok("lookup gives numbered passages and a reading prompt", lk.sources.length >= 1 && lk.sources[0].n === 1 &&
     // (1.24.14) each sentence numbered, [1.1] ..., and the model asked for the number, not a QUOTE line
-    /^\[1\] Ocean acidification$/m.test(lk.prompt) && /^\[1\.1\] \S/m.test(lk.prompt) && / \[1\.2\] \S/.test(lk.prompt) && /like \[2\.3\]/.test(lk.prompt) &&
+    /^\[1\] Ocean acidification$/m.test(lk.prompt) && /^\[1\.1\] \S/m.test(lk.prompt) && / \[1\.2\] \S/.test(lk.prompt) && /like \[4\.2\]/.test(lk.prompt) &&
     !/QUOTE \[n\]/.test(lk.prompt) && lk.sources.every(function (x) { return x.pointers === true; }) && /QUESTION: What is ocean acidification\?$/.test(lk.prompt) &&
     lk.sources[0].url === "http://127.0.0.1:8081/content/" + BOOK + "/Ocean_acidification", lk.sources.map(function (s) { return s.title; }));
 
@@ -429,8 +429,9 @@ function firstSentence(body, n) {
     return r && /^Elevation: 8,848\.86 m/.test(r.text);
   })());
   modelReplies = [function () { return "LOOKUP: Mount Everest height"; }, function () { return "ANSWER: Not in my library."; },
-    function (m) { var last = m[m.length - 1].content; return /^Passage \[1\] says: \u201cIts elevation of 8,849 metres/.test(last) ?
-      "ANSWER: Mount Everest is 8,849 metres tall [1].\nQUOTE [1]: Its elevation of 8,849 metres was set in 2020 by the Chinese and Nepali authorities." : "?"; }];
+    // (1.24.14) with numbered sentences the pointer names the sentence, and the model cites its number
+    function (m) { var last = m[m.length - 1].content, sm = /^Sentence \[1\.(\d+)\] says: \u201cIts elevation of 8,849 metres/.exec(last); return sm ?
+      "ANSWER: Mount Everest is 8,849 metres tall [1." + sm[1] + "]." : "?"; }];
   var rp = await A.solve(evq, { call: call });
   ok("solve: a decline with the answer in front of it gets one pointer turn", rp.pointed === 1 && rp.rounds === 3 && /8,849 metres/.test(rp.parsed.answer) &&
     !rp.flags.length && L.aiBench.grade(L.aiBenchQuestions.filter(function (x) { return x.id === "everest-height"; })[0], rp.text, rp).pass, rp);
@@ -444,7 +445,8 @@ function firstSentence(body, n) {
   var cb = logText().length;
   modelReplies = ["LOOKUP: Mount Everest height", "ANSWER: Not in my library.", function (body) {
     var last = body.messages[body.messages.length - 1].content;
-    return /^Passage \[1\] says/.test(last) ? "ANSWER: Mount Everest is 8,849 metres tall [1].\nQUOTE [1]: Its elevation of 8,849 metres was set in 2020 by the Chinese and Nepali authorities." : "?"; }];
+    var sm = /^Sentence \[1\.(\d+)\] says/.exec(last);
+    return sm ? "ANSWER: Mount Everest is 8,849 metres tall [1." + sm[1] + "]." : "?"; }];
   chatAsk(evq); await sleep(250);
   var ct = logText().slice(cb);
   ok("Chat: a decline with the answer in front of it gets one pointer turn", modelCalls.length === 3 && /passage \[1\] looks like the answer/.test(ct) &&

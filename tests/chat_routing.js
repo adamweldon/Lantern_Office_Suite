@@ -130,6 +130,8 @@ function good(last) {
   if (/hens have stopped laying/i.test(last)) return "LESSON: chickens laying eggs";
   if (/LIBRARY: passages/.test(last)) {
     var s = firstPassageSentence(last);
+    // (1.24.14) the sentences come numbered: a model that behaves well cites the number, and Lantern quotes it
+    if (/^\[1\.1\] /.test(s)) return s.replace(/^\[1\.1\] /, "").replace(/\.$/, "") + " [1.1].";
     return s.replace(/\.$/, "") + " [1].\nQUOTE [1]: " + s;
   }
   if (/\(Lantern: this question is about you|\(Lantern: the person asks you to answer from your own knowledge|This is not a library question/.test(last)) {
