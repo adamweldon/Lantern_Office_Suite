@@ -87,15 +87,20 @@ def summary_md(label, st, rows, report):
     if report and not report.get("library"):
         out.append("No offline library was attached, so the encyclopedia questions were left out.")
     out.append("")
+    # (1.24.13) what each kind costs: the tokens the model wrote (every round) per question answered right,
+    # and rounds per question -- the measure the boundary work is read by (agent/briefs/2026-11-09-...)
     cats = {}
     for r in scored:
-        c = cats.setdefault(r.get("cat") or "?", [0, 0])
+        c = cats.setdefault(r.get("cat") or "?", [0, 0, 0, 0])
         c[0] += 1
         c[1] += 1 if r.get("pass") else 0
-    out.append("| Kind of question | Passed | Of |")
-    out.append("|---|---|---|")
+        c[2] += r.get("tokens") or 0
+        c[3] += r.get("rounds") if isinstance(r.get("rounds"), int) else 1
+    out.append("| Kind of question | Passed | Of | Tokens per right answer | Rounds per question |")
+    out.append("|---|---|---|---|---|")
     for k in sorted(cats):
-        out.append("| %s | %d | %d |" % (k, cats[k][1], cats[k][0]))
+        c = cats[k]
+        out.append("| %s | %d | %d | %s | %.2f |" % (k, c[1], c[0], str(round(c[2] / c[1])) if c[1] else "-", c[3] / c[0]))
     failed = [r for r in scored if not r.get("pass")]
     if failed:
         out.append("")

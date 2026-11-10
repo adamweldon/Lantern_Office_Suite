@@ -106,7 +106,9 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var tm = act.fromReply(tp.reply, sq.q);
   ok("the P1AM program the test build\u2019s bench passed turns the motor on only while Stop is pressed; 1.24.12\u2019s bench fails it and says so",
     /if \(stopPressed\) \{\s*motorRunning = true;/.test(tp.reply) && tm && B.grade(sq, tp.reply, { made: tm }).pass === false &&
-    B.grade(sq, tp.reply, { made: tm }).why === "Stop turns the motor on: it runs only while Stop is pressed", tm && [tm.problems, B.grade(sq, tp.reply, { made: tm })]);
+    // (1.24.13: Lantern itself now runs the sketch and sends it back, so the bench says "Lantern still questions it")
+    (B.grade(sq, tp.reply, { made: tm }).why === "Stop turns the motor on: it runs only while Stop is pressed" || /^Lantern still questions it: Stop turns the motor on/.test(B.grade(sq, tp.reply, { made: tm }).why)) &&
+    B.grade(sq, tp.reply, { made: { ok: true, plan: tm.plan, action: tm.action, problems: [] } }).why === "Stop turns the motor on: it runs only while Stop is pressed", tm && [tm.problems, B.grade(sq, tp.reply, { made: tm })]);
   // a rule in Lantern that said so was written, tried by a second reviewer, and taken out: of its 193 right programs
   // it spoke about 27, and its swap made 17 less safe (an e-stop's safe state, a dump valve, a brake). So Lantern
   // says nothing about this program; the bench does. QUEUE: a Stop that turns the motor on needs a surer rule.

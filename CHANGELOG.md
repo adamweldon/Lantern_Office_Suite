@@ -1,5 +1,68 @@
 # Changelog
 
+## 1.24.13 — A Start/Stop sketch run, not read by its names; what each kind of question costs (2026-11-09)
+
+The 35B's P1AM seal-in on 1.24.12, on Adam's laptop, the seven program
+questions on the build that was pushed (2026-11-09, 22:30 UTC): 7 of 7 by
+the bench -- but its P1AM program read the normally closed Stop as
+`stopPressed = !P1.readDiscrete(inSlot, 2)` (on while pressed) and then
+`motorRunning = (startPressed || motorRunning) && stopPressed`: the motor
+starts only with Stop held and runs only while it is held
+(`tests/fixtures/bench_run_1252_35b_code_final.json`). The test build's
+program had done the same with an if; 1.24.11's had let Start win. Three
+times, three shapes, the same Stop.
+
+**What it was traced to.** The bench's check read names: an if on a
+"stopPressed" that turns the motor on was caught, `&& stopPressed` was not.
+And Lantern's own tested P1AM example, given to the model with the
+question, reads the Stop as `stopOk` (on while NOT pressed) and writes
+`&& stopOk`: the 35B kept its shape, renamed the Stop the way people name
+it -- stopPressed, with a `!` to make the name true -- and kept `&&`.
+
+**What changed.**
+
+- *A sketch run, press by press* (CODE_SCAN, new). A P1AM-100 sketch is
+  turned into a few lines of JavaScript and run scan by scan through the
+  presses a person makes: Start, let go, Stop, let go, both together, Stop
+  first. Only a small part of C is taken -- declarations, if and else,
+  functions, logic and arithmetic, P1.readDiscrete and writeDiscrete --
+  and anything else (a loop, an array, a string, a member) means no run.
+  What runs is that and nothing else: every name is the sketch's own, and
+  recursion is counted, so a sketch cannot call the page's functions,
+  navigate, or hang it. An input the question does not mention (an
+  overload contact) is tried both ways.
+- *The bench's P1AM question is graded by what the motor does*:
+  "Stop turns the motor on: it runs only while Stop is pressed", "Stop does
+  not stop the motor", "Start wins over Stop", "no seal-in", "Start does not
+  start the motor"; the name-reading checks stay for a sketch that cannot
+  be run.
+- *Lantern sends it back* (AI_CODE, stopScan). When the question says how
+  the Stop is wired (a normally closed or open Stop on input N, a Start on
+  input M) and the run shows the Stop wrong every way an open input can
+  be, the sketch goes back once with what the question says, what the run
+  showed, and the line with the Stop name used the other way round --
+  only when the sketch, run again with that line, works: "Write:
+  motorRunning = (startPressed || motorRunning) && !stopPressed;". The rule
+  taken out in 1.24.12 went by names, and a stop that turns a brake ON is
+  right; this one goes by the wiring the question gives, and by the run.
+- *Lantern's P1AM example names its Stop as the model does*: `bool
+  stopPressed = !P1.readDiscrete(inSlot, 2);  // NC: the input is OFF while
+  Stop is pressed`, and `running = (startPressed || running) &&
+  !stopPressed && !overloadTripped;` -- so the shape a model copies, with
+  the name it likes, is right (rule 1). Checked by the runner on the
+  question's wiring and with g++ against stub headers, not against the real
+  P1AM headers.
+- *What each kind of question costs* (AI_BENCH, tools/bench_headless.py):
+  the summary and the table give, per kind, the tokens the model wrote (all
+  rounds) per right answer, the median, and the rounds per question; the
+  measure for the research thread's brief on the boundary between the
+  model and Lantern (`agent/briefs/2026-11-09-model-lantern-boundary.txt`,
+  `agent/QUEUE.md` 2).
+
+REVIEW_PLACEHOLDER
+
+**What was run.** RUN_PLACEHOLDER
+
 ## 1.24.12 — Adam's run of 1.24.11: a stop that does not stop, and programs written without their first line (2026-11-09)
 
 Adam ran the 35B on 1.24.11 with the library on his laptop (2026-11-09,

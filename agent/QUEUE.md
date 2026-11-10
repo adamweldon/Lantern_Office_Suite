@@ -31,8 +31,14 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    runaway request is kept once, the lessons for a thing to make end with
    the block's first line, a program cut off inside its fence is read and
    sent back as cut, and a program under a `<title>` or `language` line is
-   read. To be seen on the next run: did the 4B write the block, and did
-   the 2B mend what was sent back?
+   read. **On 1.24.12** (run 42701646389, `tests/fixtures/bench_run_1252_*.json`,
+   `tests/bench_1253.js`): the 4B 107, on the same EPYC 7763 -- its tank
+   fill passes (and its orchestra); its tune of its own failed for the first
+   time (once: not a finding). The 2B 73 (on a Xeon 8573C): Blink passes;
+   its tank fill is read now and sent back ("put the AT %I/%Q variables in a
+   VAR block of their own"), and it did not mend that -- next: the line to
+   write for that message, as rule 3 asks. The 0.8B 59, its replies of
+   1.24.11 word for word, one of them the MAKE CODE instructions (item 4).
    Its road was drawn under a ground written after it (asked about as
    hidden: Lantern could put the ground first and say so, rule 0, a
    reviewer first) and its waltz ends on E over D, a whole step from the
