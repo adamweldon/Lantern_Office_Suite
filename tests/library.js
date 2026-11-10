@@ -161,7 +161,9 @@ function firstSentence(body, n) {
   ok("nothing found for nonsense", (await LIB.search("qqqxxyy", 3)).length === 0);
   var lk = await LIB.lookup("What is ocean acidification?", "ocean acidification");
   ok("lookup gives numbered passages and a reading prompt", lk.sources.length >= 1 && lk.sources[0].n === 1 &&
-    /^\[1\] Ocean acidification$/m.test(lk.prompt) && /QUOTE \[n\]/.test(lk.prompt) && /QUESTION: What is ocean acidification\?$/.test(lk.prompt) &&
+    // (1.24.14) each sentence numbered, [1.1] ..., and the model asked for the number, not a QUOTE line
+    /^\[1\] Ocean acidification$/m.test(lk.prompt) && /^\[1\.1\] \S/m.test(lk.prompt) && / \[1\.2\] \S/.test(lk.prompt) && /like \[2\.3\]/.test(lk.prompt) &&
+    !/QUOTE \[n\]/.test(lk.prompt) && lk.sources.every(function (x) { return x.pointers === true; }) && /QUESTION: What is ocean acidification\?$/.test(lk.prompt) &&
     lk.sources[0].url === "http://127.0.0.1:8081/content/" + BOOK + "/Ocean_acidification", lk.sources.map(function (s) { return s.title; }));
 
   // citation checks
@@ -171,8 +173,12 @@ function firstSentence(body, n) {
   ok("verify: a real quote passes", good.ok && good.quotes[0].ok, good);
   var bent = V("ANSWER: The oceans get more acidic [1].\nQUOTE [1]: The oceans are becoming acidic because fish breathe more air every year.", src);
   ok("verify: an invented quote fails", !bent.ok && /QUOTE \[1\] is not in passage 1/.test(bent.problems.join(" ")), bent);
-  ok("verify: no citation fails", /cites no passage/.test(V("ANSWER: The oceans get more acidic.", src).problems.join(" ")));
-  ok("verify: a quote line is required", /no QUOTE \[1\] line/.test(V("ANSWER: The oceans get more acidic [1].", src).problems.join(" ")));
+  ok("verify: no citation fails", /cites no sentence: put \[n\.m\]/.test(V("ANSWER: The oceans get more acidic.", src).problems.join(" ")));
+  ok("verify: a passage with no sentence named is asked for its sentence's number", /\[1\] names no sentence: write \[1\.m\]/.test(V("ANSWER: The oceans get more acidic [1].", src).problems.join(" ")));
+  // (passages given the old way, without numbered sentences, keep the old words)
+  var plain = src.map(function (x) { return { n: x.n, title: x.title, text: x.text }; });
+  ok("verify, passages without numbered sentences: no citation, and a missing QUOTE line, said as before", /cites no passage/.test(V("ANSWER: The oceans get more acidic.", plain).problems.join(" ")) &&
+    /no QUOTE \[1\] line/.test(V("ANSWER: The oceans get more acidic [1].", plain).problems.join(" ")));
   ok("verify: a number not in the cited passage fails", /says 47/.test(V("ANSWER: The pH fell by 47 units [1].\nQUOTE [1]: " + s1, src).problems.join(" ")));
   ok("verify: a citation beyond the passages fails", /no passage \[9\]/.test(V("ANSWER: Yes [9].\nQUOTE [9]: something here to quote", src).problems.join(" ")));
   ok("verify: declining is fine", V("ANSWER: Not in my library.", src).declined === true);
@@ -238,7 +244,7 @@ function firstSentence(body, n) {
   // a real quote that does not say the answer's fact (natural gas: "methane"
   // quoting a sentence about fossil fuels)
   var unsup = V("ANSWER: Ocean acidification is caused by volcanoes [1].\nQUOTE [1]: " + s1, src, "What causes ocean acidification?");
-  ok("verify: a real quote that does not say the fact fails", !unsup.ok && /no quote says volcanoes/.test(unsup.problems.join(" ")), unsup.problems);
+  ok("verify: a real quote that does not say the fact fails", !unsup.ok && /no sentence it cites says volcanoes/.test(unsup.problems.join(" ")), unsup.problems);
   ok("verify: a quote that says the fact passes the support check",
     V("ANSWER: It is the ongoing decrease in the pH of the oceans [1].\nQUOTE [1]: " + s1, src, "What is ocean acidification?").ok);
   ok("verify: a number the quote states is support enough",

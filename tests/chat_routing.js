@@ -256,7 +256,7 @@ function good(last) {
   var OWN = L.chatOwn, sys9 = C.buildSystem("How do I set the date and time on a rpi400");
   ok("the instructions: Lantern first, then the AI's own knowledge, said with “From my own knowledge:”", !!OWN && /Use Lantern first/.test(sys9) &&
     /still help: answer from your own knowledge/.test(sys9) && /“From my own knowledge:”/.test(sys9) && !/never type data from memory/.test(sys9) &&
-    /Answer from them, with \[n\]/.test(sys9) && /then answer from your own knowledge as above/.test(sys9) && /only for what no one could know offline/.test(sys9), sys9.slice(0, 1600));
+    /Answer from them, and after each sentence that\s+uses one, put the number of the sentence it comes from, like \[2\.3\]/.test(sys9) && /then answer from your own knowledge as above/.test(sys9) && /only for what no one could know offline/.test(sys9), sys9.slice(0, 1600));
   var sent9 = [], turn9 = [];
   script = function (last, body) {
     sent9.push(body.messages.map(function (m) { return typeof m.content === "string" ? m.content : ""; }).join("\n----\n"));
