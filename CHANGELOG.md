@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.24.14 — Adam's run of 1.24.13: a right puzzle block questioned, and the line to write for a quote, a beach and a road (2026-11-10)
+## 1.24.14 — Adam's run of 1.24.13: a right puzzle block questioned, and the line to write for a beach, a road and a quote (2026-11-10)
 
 Adam ran the 35B on 1.24.13 with the library on his laptop (2026-11-10,
 16:18 UTC, 123 minutes): **135 of 140** (134 on 1.24.9 and 1.24.11), the
@@ -39,69 +39,44 @@ it had written before:
 - *TRACK's check counted a chain as one place* (AI_PUZZLE_CHECK). The
   runner reads "left of left of X" as the place left of the place left of
   X; the check that a step's "two places" has a line that moves two looked
-  only for a written 2. Now a step "X swaps with the ... N places to its
-  left (right)" is accepted when the block swaps X with a chain of "left
-  of" ("right of") from X itself, N places in all -- the phrase once in the
-  steps, the step a swap, X's own words in it (`chained()`). A chain is
-  only ever accepted by this, never the cause of a question. A number
-  inside a chain ("2 right of right of Bible", three places) no longer
-  counts as a 2 for any step. And when a line goes back and its place is
-  a chain, the line to write is the chain written as one ("moves 3
-  places: write “2 left of holder of coin”"), not 1.24.13's "2 left of
-  left of ...". The 35B's block of 1.24.11 and 1.24.13 runs with nothing
-  questioned and gives the bench's answer.
-- *The library's send-back gave no line to write* (LIBRARY_CHECKS, rule
-  3). When an answer cites [n] and has no QUOTE [n] that is in passage n,
-  the problem now ends with the line: "there is no QUOTE [3] line: for “To
-  replace the battery, discharge the battery below 25%” write QUOTE [3]:
-  Step 1: Before you begin, discharge your iPhone battery below 25%."
-  Lantern does not write the quote (1.24.11 took out a rule that did: it
-  verified 101 of 181 wrong answers), and verifies nothing more than
-  before; the model writes the line, and the answer is checked as any
-  other. The line is handed only when:
-  - every part of the answer that cites [n] is a whole sentence of a
-    passage in its own words, but for what says nothing -- an article, a
-    word like "of" or "with", the question's own words, a "Step 1:", a "To
-    replace the battery," that the passage is about -- with nothing left
-    out that says something (a condition, "more than", "usually", a number,
-    a unit, a minus), its words in order, the same "not", and no word the
-    opposite of one of the part's (over and under, °F and °C, warm and
-    cold, on and off, mild and severe ...);
-  - a fact for children, adults, babies, pregnant women, a dog ... is
-    handed only from a sentence that names who it is for;
-  - the answer has no yes or no in it (the yes is the answer, and no
-    sentence says it);
-  - every other part is backed by one of the model's own quotes of its
-    passage, with the same "not" and no opposite;
-  - nothing in the answer is left uncited, and the answer does not go on
-    below its ANSWER line (verify reads that line only);
-  - at most three lines.
-  When the part is in another passage, the line says so: "“...” is in
-  passage [2], not [1] -- write [2] after it in place of [1], and QUOTE
-  [2]: ... -- and leave out your QUOTE [1] line". Nairobi's part is in no
-  sentence by itself, and goes back as before.
+  only for a written 2. Now a step that reads, word for word, "<a name of
+  the row> swaps with the <thing> N places to its left (right)", or "The
+  <thing> holding the <token> swaps ...", from its own number to the next,
+  with no other step saying the same of the same thing, is answered when
+  the block swaps that name (or "holder of <token>") with a chain of "left
+  of" ("right of") from it, N places in all (`chained()`). That is all it
+  does: it never questions a block. A count that starts a chain ("2 right
+  of right of Bible", three places) no longer counts as a 2 for another
+  step. And when a line goes back and its place is a chain, the line to
+  write is the chain written as one, the step's way ("moves 3 places:
+  write “2 left of holder of coin”") -- 1.24.13 handed "2 left of left of
+  ...", three places -- or the model's way when the question lists the row
+  from right to left or back to front. The 35B's block of 1.24.11 and
+  1.24.13 runs with nothing questioned and gives the bench's answer.
 - *"dark gray" was not a colour* (AI_DRAW). The table had "light gray",
   "dark green" and "dark blue". Now "dark gray" is in it (a neutral one),
   and dark, deep, light, pale or bright before any colour of the table is
   read as a shade of it (dark: 45% toward black; light and pale: 50%
   toward white) -- not "dark white" nor "light black". A shade is its own
-  fill to the landscape rules ("dark orange" is of orange's family and is
-  not taken for an orange sun). A sun drawn in a pale, light, bright or
-  deep yellow, orange, red or white, or a dark yellow, gold or orange, is a
-  sun; a sunset sky in a light shade of a day's blue is asked about as one.
+  fill to the landscape rules ("dark orange" is of orange's family, and is
+  not taken for an orange sun). A sun in a pale, light, bright or deep
+  yellow, orange, red or white, or a dark yellow, gold or orange, is a sun;
+  a sunset sky in a light shade of a day's blue is asked about as one.
 - *The beach line covered the model's own band* (the landscape mend). The
   35B's first shore had "rect 0 10 20 2 fill sky" at the bottom; the beach
   Lantern asked for, "rect 0 9.5 20 2.5 fill sand", covers all of it, and
   the retry was asked about the band as hidden. A band of light, shallow
   water the beach would cover, and that shows, is now named: "write rect 0
-  9.5 20 2.5 fill sand in place of “rect 0 10 20 2 fill sky”".
+  9.5 20 2.5 fill sand in place of “rect 0 10 20 2 fill sky”". The 35B's
+  shore, written so, passes the bench.
 - *The road drawn going up was not named.* When a road going away has
-  nothing on the ground, and one tri of a road's colour stands on the
-  horizon with its point at the top of the picture (y 1 or above), and the
+  nothing on the ground, one tri of a road's colour stands on the horizon
+  with its point at the top of the picture (y 1 or above), and the
   question asks for no mountain, hill, tree, tent, dune, rock, sand, house,
-  boat or the like, the message names it: "if “tri 0 6 20 6 10 0 fill gray” is the
-  road, it goes up from the horizon to a point at y 0, in the sky -- write
-  tri 7 12 13 12 10 6 fill gray in its place, after the ground".
+  boat or the like, the message names it: "if “tri 0 6 20 6 10 0 fill gray”
+  is the road, it goes up from the horizon to a point at y 0, in the sky --
+  write tri 7 12 13 12 10 6 fill gray in its place, after the ground". The
+  35B's road, written so, passes the bench.
 - *A road under the ground is moved* (the landscape mend, rule 2). For a
   road, path or river going away, a tri from the bottom edge up to the top
   of the ground, drawn before a band of ground that covers all of it, in
@@ -110,61 +85,93 @@ it had written before:
   before it, it was hidden under it"). Not when the question puts it under
   something -- snow, flood water, the tide, drifting sand, ice, fog, cloud
   -- nor when another band drawn later still covers part of it, nor when
-  it is written again after the band. The
-  4B's road of four versions passes the bench now.
+  it is written again after the band. The 4B's road of four versions
+  passes the bench now.
+- *The library's send-back gave no line to write* (LIBRARY_CHECKS, rule
+  3). When an answer cites [n] and has no QUOTE [n] that is in passage n,
+  the problem may now end with the line: "there is no QUOTE [1] line: for
+  “...” write QUOTE [1]: <the sentence>". Lantern does not write the quote
+  (1.24.11 took out a rule that did: it verified 101 of 181 wrong
+  answers), and verifies nothing more than before; the model writes the
+  line, and the answer is checked as any other. Three reviews narrowed it
+  until no wrong answer of theirs was verified once its line was written.
+  The line is handed only when:
+  - every part that cites [n] is a whole sentence of passage n in its own
+    words, but for what says nothing -- an article, a word like "of" or
+    "with", a "Step 1:", the question's own words, a "To replace the
+    battery," that the passage's title or the sentence names -- with
+    nothing left out that says something (a condition, "more than",
+    "usually", a number, a unit, a minus, "First of all"), its words in
+    order, the same "not", and no word the opposite of one of the part's
+    (over and under, °F and °C, warm and cold, on and off ...);
+  - the sentence does not point back ("It is about half the size of
+    Earth"), and every word the question asks with (not "treat", "best",
+    "way") is in the sentence or in the passage's title: no clear water's
+    dose for cloudy water, no dog's for a ferret, no adults' for a child;
+  - the answer has no yes or no in it, nothing uncited, and nothing below
+    its ANSWER line (verify reads that line only);
+  - every other part is said by one of the model's own quotes of its
+    passage, its words there in order but one in four, with the same "not"
+    and no opposite;
+  - at most three lines, all from the passage the answer cites.
+  **This does not mend the iPhone row**: the 35B's other parts paraphrase
+  their quotes ("remove the four adhesive strips securing it", "Finally,
+  remove the battery"), and the answer goes back as on 1.24.13. An answer
+  whose other parts are their quotes' own words is handed "QUOTE [3]: Step
+  1: Before you begin, discharge your iPhone battery below 25%." Nairobi's
+  part is in no sentence by itself, and goes back as before.
 
 **Reviews.** By agents that had not seen the rules written, their inputs in
-`tests/fixtures/review1_1254_*.json` (replayed by `tests/review_1254.js`)
-and `review2_1254_*.json`:
+`tests/fixtures/review{1,2,3}_1254_*.json`, replayed by `tests/review_1254.js`:
 
 - review 1 (106 TRACK blocks, 286 library answers with their passages, 157
   drawings) tried the first draft. TRACK: 16 wrong blocks passed only
-  because of the new count -- a chain anywhere in the block counted for a
+  because of the new count (a chain anywhere in the block counted for a
   step; "behind behind" and "2 seats left of" were counted, which the
-  runner reads otherwise; a "move ... to left of left of" line was counted
-  as two places; the way a chain went was not looked at. The library: 34
-  wrong answers and 7 partly wrong ones verified once the handed line was
-  written -- a yes stripped before matching, a "do not" or an "if" before a
-  comma left out, "In children" left out, 74 °F matched to "74 °C (165
-  °F)", a wrong part riding on the other quotes. Drawings: the road moved
-  out from under snow and flood water, and from under a far field with a
-  near one over it; a tall dark pine the question asked for named as the
-  road; sand "in place of" a strip the sea covers; a sun in pale yellow
-  asked for again. Each mended as above (the first draft moved any shape a
-  band covered, and the older reviews' pictures caught it too: a swimmer's
-  body under the sea, a lime band over two greens). Now: of its 42 right
-  blocks 12 are questioned, each on 1.24.13 as well (31 were then), and 4 of
-  its wrong ones pass, each passing on 1.24.13 too; no wrong answer is
-  verified once its line is written, and 60 of its 148 right ones are; no
-  right picture is asked anything it was not asked on 1.24.13;
-- review 2, by another agent (84 blocks, 310 answers, 116 drawings of its
-  own) tried the mended rules. TRACK: 8 wrong blocks passed that 1.24.13
-  caught, and 4 right ones were questioned that it ran -- a chain counted
-  from another thing ("right of right of Bible" for the book with the
-  bookmark), a step's phrase paired with another step's line, one phrase
-  at two steps, "behind" in a queue listed back to front. The library: 38
-  wrong and 15 partly wrong answers verified once the line was written --
-  "Yes." as a sentence of its own, a "For children," frame cut, a minus
-  written as a dash, "more than", "usually", "over" left out, warm and
-  cold, a sentence cut at "p.m.", "week" for "weekday", an adult's dose
-  handed for a child. Drawings: the road moved out from under the tide,
-  drifting sand and ice; a rock and a dune named as the road; a sea seen
-  from far out named for the beach; an autumn tree's dark orange crown
-  put behind the land as the sun. Each mended as above (TRACK's rule
-  became the acceptance it is now);
-- on both reviews' cases now: no wrong block passes that 1.24.13 caught
-  and no right one is questioned that it ran (16 and 11 right ones are
-  questioned, 31 and 30 were); no wrong or partly wrong answer is verified
-  once its handed line is written, and 59 and 102 right ones are; no right
-  picture is asked or changed in a way 1.24.13 did not. On the 339 answers
-  of the 1.24.11 review, 42 right answers are helped, and one partly right
-  one: the iPhone 8 Plus guide's step 1 cited for the iPhone 8, which that
-  passage does say.
-REVIEW3
+  runner reads otherwise; a move line was counted as two places). The
+  library: 34 wrong answers and 7 partly wrong ones verified once the
+  handed line was written (a yes stripped, a "do not" or an "if" left out,
+  "In children" left out, 74 °F matched to "74 °C (165 °F)", a wrong part
+  riding on the other quotes). Drawings: the road moved out from under
+  snow, flood water and a near field; a tall dark pine named as the road;
+  sand "in place of" a strip the sea covers; a sun in pale yellow asked for
+  again. The first draft also moved any shape a band covered, and the
+  older reviews' pictures caught it (a swimmer's body under the sea, a
+  lime band over two greens);
+- review 2, by another agent (84 blocks, 310 answers, 116 drawings): TRACK
+  passed 8 wrong blocks that 1.24.13 caught and questioned 4 right ones it
+  ran (a chain counted from another thing, a step's phrase paired with
+  another step's line, one phrase at two steps, "behind" in a queue listed
+  back to front); the library verified 38 wrong and 15 partly wrong
+  answers ("Yes." as a sentence of its own, a "For children," frame cut, a
+  minus written as a dash, "more than" or "usually" left out, a sentence cut
+  at "p.m.", an adult's dose handed for a child); drawings: the road moved
+  out from under the tide, drifting sand and ice, a rock and a dune named
+  as the road, an autumn tree's dark orange crown put behind the land as
+  the sun;
+- review 3, by a third agent (75 blocks, 241 answers): TRACK passed 16
+  wrong blocks that 1.24.13 caught (the step's text read from step 1, so
+  another step gave the swap or the thing's words; a step that lifts a
+  coin; "the cup next to the gold cup"; "Di" found in "directly"); the
+  library verified 65 wrong or partly wrong answers (30 moved to a passage
+  about another town, drug or mountain; "It is ..." sentences; a ferret, a
+  6-year-old; sentences cut at "p.m. (" and "approx."; "First of all" for
+  step 4; "1/2" read as 1 to 2; "white" chocolate beside its quote's
+  "dark").
+- Each mended as above. Now, on the three reviews' cases: no wrong TRACK
+  block passes that 1.24.13 caught, and no right one is questioned that it
+  ran (18, 16 and 25 right ones are questioned; 31, 30 and 34 were); no
+  wrong or partly wrong answer is verified once its handed line is written
+  (23, 45 and 36 right ones are; 25 of the 1.24.11 review's 158 right
+  ones); no right picture is asked or changed in a way 1.24.13 did not.
+  The mends after review 3 were checked against the three reviews' inputs
+  and the 1.24.11 review's, not by a fourth reviewer.
 
-**What was run.** TESTS Replayed only: no model has run 1.24.14; whether
-the 35B writes the lines it is handed is for Adam's next run, and the
-small models' run starts with the push.
+**What was run.** `npm test`: ALL CHECKS PASS (85 suites); the browser
+tests of the landscape (scene), the bench (bench_run9, bench_headless).
+Replayed only: no model has run 1.24.14. Whether
+the 35B writes the lines it is handed -- the beach, the road, the TRACK
+line -- is for Adam's next run; the small models' run starts with the push.
 
 ## 1.24.13 — A Start/Stop sketch run, not read by its names; what each kind of question costs (2026-11-09)
 

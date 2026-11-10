@@ -6,8 +6,9 @@
 //    it to write "2 left of left of holder of gold" (three places, off the row). The check now counts a chain as the
 //    runner reads it, and when a line moves the wrong number of places it rewrites the whole chain;
 //  - the iPhone's battery and Nairobi's transport, word for word as on 1.24.11 (and on 1.24.9): a cited [3] with no
-//    QUOTE [3] line, a QUOTE [3] in no passage. The send-back now ends with the line to write, when every part of the
-//    answer that cites [3] is a sentence's own words and every other part is backed by its passage;
+//    QUOTE [3] line, a QUOTE [3] in no passage. The send-back may now end with the line to write -- only when sure
+//    (three reviews, tests/review_1254.js); the 35B's own answers still go back as before: the iPhone's other parts
+//    paraphrase their quotes, and Nairobi's part is in no sentence by itself;
 //  - the shore at sunset, on "dark gray": the dark and light shades of the table's colours are read now, and a band of
 //    water the beach line would cover is named, the beach written in its place;
 //  - the road to the horizon, "tri 0 6 20 6 10 0 fill gray" again and again: the road drawn going up from the horizon

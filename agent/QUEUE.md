@@ -132,21 +132,27 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    `tests/bench_1254.js`): 135 of 140, the P1AM seal-in passing. The iPhone,
    Nairobi and the two coins failed with their replies of 1.24.11 word for
    word; the shore on "dark gray"; the road with its tri 37 times. 1.24.14:
-   the coins' block was right and Lantern's check wrong (mended); the iPhone
-   is handed its QUOTE [3] line; the shore's colour is read and its beach
-   named in place of the band it covers; the road's tri is named with the
-   line to write in its place. **Nairobi still goes back as before**: its
-   "ride-hailing apps [3]" is in no sentence by itself (passage 3 has "Works
-   in Nairobi. Bolt. Uber."; passage 2 a sentence about reaching Kiambu).
-   Watch: does the 35B write the lines it is handed? **Left by the reviews
-   of 1.24.14** (`tests/review_1254.js`): TRACK chains written in the step's
-   words ("the cup to the left of the cup holding gold") still count as one
-   place, and the line handed for them is wrong, as on 1.24.13; "N places
-   in front of" is not read; a count anywhere in the block still answers a
-   step; a move line's "to left of" is a place to insert before. And
-   **verify()'s own holes**, below, stand: the line is not handed where they
-   would let a wrong part through, but an answer that writes its own quotes
-   still rides on them. His
+   the coins' block was right and Lantern's check wrong (mended); the
+   shore's colour is read and its beach named in place of the band it
+   covers; the road's tri is named with the line to write in its place.
+   **The iPhone and Nairobi still go back as before.** A line to write for
+   a missing quote went in, but three reviews narrowed it until no wrong
+   answer of theirs verified once it was written (`tests/review_1254.js`):
+   it is handed only when every other part of the answer is its own quote's
+   words in order, and the 35B paraphrases ("remove the four adhesive strips
+   securing it"); Nairobi's "ride-hailing apps [3]" is in no sentence by
+   itself (passage 3 has "Works in Nairobi. Bolt. Uber."). What could help
+   next, each for a reviewer: point, don't copy (item 2: cite a sentence by
+   its number); or ask the model for one quote per part. Watch: does the
+   35B write the lines it is handed (the beach, the road, the TRACK line)?
+   **Left by the reviews of 1.24.14**: TRACK chains in the step's own words
+   ("the cup to the left of the cup holding gold") or not in the step's
+   exact form are questioned as on 1.24.13, some with a wrong line; "N
+   places in front of" is not read; a count anywhere in the block answers
+   a step; a move line's "to left of" is a place to insert before. A fourth
+   reviewer for the mends after review 3. And **verify()'s own holes**,
+   below, stand: an answer that writes its own quotes still rides on them.
+   His
    1.24.11 run (2026-11-09, `tests/fixtures/bench_run_1251_35b_library.json`,
    `tests/bench_1251_35b.js`): 134 of 140 again; rehydration from the
    medicine shelf and the waltz pass now; the iPhone and Nairobi fail on
