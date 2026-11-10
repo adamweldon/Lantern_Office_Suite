@@ -27738,6 +27738,7 @@ Lantern.RFB = (function () {
     ["months", "years"], ["grams", "kilograms"], ["milligrams", "grams"], ["metres", "kilometres"], ["meters", "kilometers"],
     ["adult", "child"], ["adults", "children"], ["male", "female"], ["men", "women"], ["daily", "weekly"], ["hydrogen", "helium"],
     ["oxygen", "nitrogen"], ["acid", "alkali"], ["cathode", "anode"], ["input", "output"], ["mild", "severe"], ["mild", "moderate"], ["moderate", "severe"],
+    ["warm", "cold"], ["open", "closed"], ["opens", "closes"], ["daily", "monthly"], ["weekdays", "weekends"],
     ["on", "off"], ["leave", "remove"], ["keep", "remove"], ["with", "without"], ["allowed", "forbidden"], ["safe", "dangerous"]];
   // opp(a, b): a says one of a pair of opposites that b has the other of, and not the first
   function opp(a, b) {
@@ -27753,16 +27754,25 @@ Lantern.RFB = (function () {
   var NUMBER = { zero: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10",
     eleven: "11", twelve: "12", fifteen: "15", twenty: "20", thirty: "30", forty: "40", fifty: "50", hundred: "100", half: "0.5", once: "1", twice: "2" };
   var SKIP = { the: 1, a: 1, an: 1, your: 1, its: 1, their: 1, his: 1, her: 1, our: 1, my: 1, this: 1, that: 1, these: 1, those: 1, it: 1, they: 1, you: 1, is: 1, are: 1 };
-  function root(w) { return w.length > 4 ? w.replace(/(?:ing|ed|es|e|s|ly)$/, "") : w.length > 3 ? w.replace(/s$/, "") : w; }
+  // the words a sentence may have that its part leaves out: nothing that counts, limits or qualifies ("more than",
+  // "most", "usually", "often", "over" -- the second review's partly wrong answers)
+  var EMPTY = {};
+  ("of in on at to for from by with and or was were be been being which who whom whose as also then can will would " +
+   "may do does did has have had there here into onto upon s").split(" ").forEach(function (w) { EMPTY[w] = 1; });
+  function root1(w) { return w.length > 4 ? w.replace(/(?:ment|ing|ed|es|e|s|ly)$/, "") : w.length > 3 ? w.replace(/s$/, "") : w; }
+  function root(w) { return root1(root1(w)); }
+  // who a fact is for: a sentence that names none of the question's is not handed for it ("The usual dose is 200 to
+  // 400 mg" under "This section is for adults", for a child -- the second review)
+  var WHO = /^(child|children|kid|kids|baby|babies|infant|infants|toddler|toddlers|newborn|newborns|adult|adults|teen|teens|teenager|teenagers|adolescent|adolescents|elderly|pregnant|pregnancy|woman|women|man|men|dog|dogs|cat|cats|horse|horses|cattle|livestock)$/;
   function alike(a, b) {
     if (a === b) return true;
     var s = a.length < b.length ? a : b, l = s === a ? b : a;
-    return root(a) === root(b) || (s.length >= 4 && l.indexOf(s) === 0 && l.length - s.length <= 3);
+    return root(a) === root(b) || (s.length >= 4 && l.indexOf(s) === 0 && l.length - s.length <= 2);
   }
   // words1(t) -> words, numbers (words for numbers as numbers; a minus as the word minus) and "|" where a comma,
   // a semicolon, a colon, a bracket or a sentence's end falls
   function words1(t) {
-    t = String(t || "").replace(/(^|[\s\x28:=])[\u2212\-](?=\d)/g, "$1 minus ").replace(/(\d)\s*%/g, "$1 percent ").replace(/(\d),(\d{3})/g, "$1$2")
+    t = String(t || "").replace(/\b(before you (?:begin|start)|to begin with|first of all)\b/gi, " ").replace(/(^|[\s\x28:=\/])[\u2212\u2013\-](?=\d)/g, "$1 minus ").replace(/(\d)\s*%/g, "$1 percent ").replace(/(\d),(\d{3})/g, "$1$2")
       .replace(/[,;:()\u2013\u2014!?]|\.(?!\d)/g, " | ").replace(/\[\d+\]/g, " ");
     return (t.toLowerCase().match(/[a-z\u00c0-\u024f]+(?:[\x27\u2019][a-z]+)?|\d+(?:\.\d+)?|\|/g) || []).map(function (w) { return NUMBER[w] || w.replace(/[\u2019]/g, "'"); });
   }
@@ -27773,13 +27783,17 @@ Lantern.RFB = (function () {
   // the dose is ...", "boil for 3 minutes" for "At altitudes above 2,000 m, boil for 3 minutes", "wait another 15
   // minutes" for "if not, repeat the dose and wait another 15 minutes", "74 \u00b0F" for "74 \u00b0C (165 \u00b0F)"; and an answer
   // of yes or no, whose yes is the answer and no sentence says it: tests/fixtures/review1_1254_quote.json)
-  function says1(part, question, sentence) {
+  function says1(part, question, sentence, passage) {
     if (/^\s*(yes|no|yeah|nope)\b/i.test(String(part))) return false;
     var qw = words1(question), sw = words1(sentence), pw = words1(part);
+    var who = qw.filter(function (w) { return WHO.test(w); });
+    if (who.length && !who.some(function (w) { return sw.some(function (x) { return alike(w, x); }); })) return false;
     // a frame that says what the question asks for again ("To replace the battery, discharge ...") is not the
     // part's fact; a place or a thing it is about is ("In Kampala, matatus run ...")
-    var cut = pw.indexOf("|");
-    if (cut > 0 && /^(to|for)$/.test(pw[0]) && pw.slice(0, cut).every(function (w) { return !content(w) || qw.some(function (x) { return alike(w, x); }); })) pw = pw.slice(cut + 1);
+    // (and only when what it names is the passage's own: "To rewarm frostbitten fingers, cool the person quickly"
+    // matched the heat stroke's passage -- the second review)
+    var cut = pw.indexOf("|"), pass = words1(passage || "");
+    if (cut > 0 && pw[0] === "to" && pw.slice(0, cut).every(function (w) { return !content(w) || (qw.some(function (x) { return alike(w, x); }) && pass.some(function (x) { return alike(w, x); })); })) pw = pw.slice(cut + 1);
     pw = pw.filter(function (w) { return w !== "|"; });
     var need = pw.filter(function (w) { return !SKIP[w] && !FRAME[w]; });
     if (!need.some(function (w) { return content(w) && !qw.some(function (x) { return alike(w, x); }); })) return false;
@@ -27801,7 +27815,7 @@ Lantern.RFB = (function () {
     for (k = 0; k < sw.length; k++) {
       var w2 = sw[k];
       if (used[k] || w2 === "|" || SKIP[w2] || FRAME[w2]) continue;
-      if (/^\d/.test(w2) ? !(k > 0 && /^steps?$/.test(sw[k - 1])) : HOLD[w2] || NEG.test(w2) || (!WEAK[w2] && !qw.some(function (x) { return alike(w2, x); }))) return false;
+      if (/^\d/.test(w2) ? !(k > 0 && /^steps?$/.test(sw[k - 1])) : HOLD[w2] || NEG.test(w2) || WHO.test(w2) || (!EMPTY[w2] && !(!WEAK[w2] && qw.some(function (x) { return alike(w2, x); })))) return false;
     }
     if (NEG.test(pw.join(" ")) !== NEG.test(sw.slice(first, at + 1).join(" "))) return false;
     // a "not" before the part in its clause ("Don't use a hair dryer on the battery")
@@ -27828,7 +27842,8 @@ Lantern.RFB = (function () {
   }
   function sentencesOf(t) {
     // (a point inside a number, "2.8 percent", or a word, "e.g.x", does not end a sentence)
-    return (String(t || "").match(/(?:[^.!?]|[.!?](?=[^\s.!?]))+(?:[.!?]+|$)/g) || []).map(function (x) { return x.replace(/^\s+|\s+$/g, ""); })
+    // (nor a point before a small letter: "9 p.m. on Sundays" -- the second review)
+    return (String(t || "").match(/(?:[^.!?]|[.!?](?=[^\s.!?])|\.(?=\s+[a-z]))+(?:[.!?]+|$)/g) || []).map(function (x) { return x.replace(/^\s+|\s+$/g, ""); })
       .filter(function (x) { return x.length > 12 && x.length <= 300; });
   }
   // backs(part, question, passage): the words the part adds to the question, but frame words ("include",
@@ -27838,11 +27853,15 @@ Lantern.RFB = (function () {
     var add = pw.filter(function (w, i) { return content(w) && !/^\d/.test(w) && pw.indexOf(w) === i && !qw.some(function (x) { return alike(w, x); }); });
     var miss = add.filter(function (w) { return !sw.some(function (x) { return alike(w, x); }); });
     var nums = pw.filter(function (w) { return /^\d/.test(w); });
-    return miss.length * 2 <= add.length && nums.every(function (x) { return sw.some(function (y) { return /^\d/.test(y) && parseFloat(y) === parseFloat(x); }); });
+    // (a part of the question's own words says nothing to back: the second review's "the museum is open [2]")
+    return (add.length > 0 || nums.length > 0) && miss.length * 2 <= add.length && nums.every(function (x) { return sw.some(function (y) { return /^\d/.test(y) && parseFloat(y) === parseFloat(x); }); });
   }
   function lineFor(answer, n, question, sources, quotes) {
     var ps = parts(answer), mine = ps.list.filter(function (p) { return p.n === n; }), lines = [];
     if (ps.loose || !mine.length) return null;
+    // (a yes or a no is the answer, said by no sentence -- also as a sentence of its own, "Yes. Give ... [1]": the
+    // second review)
+    if (/(^|[.!?;:]\s*)(yes|no|nope|yeah|yep|not at all|not really|correct|incorrect|true|false|right|wrong)\b/i.test(String(answer || "").replace(/\[\d+\]/g, ""))) return null;
     // every other part of the answer is said by the passage it cites, as Chat's check of a sentence reads it (the
     // words it adds to the question are there, and its numbers): a line is not handed to an answer whose other
     // parts would then ride on the quotes of the rest (the review of 1.24.11: "gently overheat the device to soften
@@ -27860,7 +27879,7 @@ Lantern.RFB = (function () {
       var hit = null;
       for (var k = 0; k < order.length && !hit; k++) {
         var src = sources[order[k] - 1], ss = src ? sentencesOf(src.text) : [];
-        for (var j = 0; j < ss.length && !hit; j++) if (says1(mine[i].text, question || "", ss[j])) hit = { n: order[k], part: mine[i].text, text: ss[j] };
+        for (var j = 0; j < ss.length && !hit; j++) if (says1(mine[i].text, question || "", ss[j], (src.title || "") + ". " + src.text)) hit = { n: order[k], part: mine[i].text, text: ss[j] };
       }
       if (!hit) return null;
       if (!lines.some(function (l) { return l.n === hit.n && l.text === hit.text; })) lines.push(hit);
@@ -29301,7 +29320,7 @@ Lantern.RFB = (function () {
     var a = (words[at] || "").toLowerCase(), b = (words[at + 1] || "").toLowerCase();
     if (/^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(a)) return { c: a, n: 1 };
     if (COLORS[a + " " + b]) return { c: COLORS[a + " " + b], n: 2 };
-    if (SHADE[a] && COLORS[b] && /^#[0-9a-f]{6}$/.test(COLORS[b]) && !(b === "white" && SHADE[a][0] === 0) && !(b === "black" && SHADE[a][0] === 255)) return { c: shade(COLORS[b], SHADE[a][0], SHADE[a][1]), n: 2 };
+    if (SHADE[a] && COLORS[b] && /^#[0-9a-f]{6}$/.test(COLORS[b]) && !(b === "white" && SHADE[a][0] === 0 && SHADE[a][1] > 0) && !(b === "black" && SHADE[a][0] === 255)) return { c: shade(COLORS[b], SHADE[a][0], SHADE[a][1]), n: 2 };
     if (COLORS[a]) return { c: COLORS[a], n: 1 };
     return null;
   }
@@ -29510,12 +29529,13 @@ Lantern.RFB = (function () {
       }
     }
     // (1.24.14: and a shade of one, "pale yellow", "deep orange" -- the review: a sun drawn so was asked for again)
-    if (SUN.test(q) && !shapes.some(function (o) { return /^(circle|oval|ellipse)$/.test(o.kind) && (/^#(facc15|f97316|d4a017|dc2626|ffffff)$/i.test(o.fill || o.color || "") || /(^|\s)(yellow|orange|gold|red|white)$/.test(o.fillName || "")); }))
+    if (SUN.test(q) && !shapes.some(function (o) { return /^(circle|oval|ellipse)$/.test(o.kind) && (/^#(facc15|f97316|d4a017|dc2626|ffffff)$/i.test(o.fill || o.color || "") || /(^|\s)(?:(?:pale|light|bright|deep)\s+(?:yellow|orange|gold|red|white)|dark\s+(?:yellow|gold|orange))$/.test(o.fillName || "")); }))
       out.push("the question asks for a sun, but no circle is one: add circle 16 3 2 fill yellow");
     var when = SUNSET.exec(q);
     if (when) {
       // the sky: a wide rect that starts at the top, in the blue of day
-      var sky = shapes.filter(function (o) { return o.kind === "rect" && o.nums[1] <= 1 && o.nums[2] >= 10 && DAYBLUE.test(o.fill || ""); })[0];
+      // (1.24.14: and a light shade of a day's blue -- "pale blue", the second review)
+      var sky = shapes.filter(function (o) { return o.kind === "rect" && o.nums[1] <= 1 && o.nums[2] >= 10 && (DAYBLUE.test(o.fill || "") || /^(pale|light|bright) (blue|sky|cyan)$/.test(o.fillName || "")); })[0];
       if (sky) out.push("the question says " + when[0].toLowerCase() + ", and the sky (\u201c" + sky.line + "\u201d) is the blue of day: write rect " + sky.nums.slice(0, 4).map(num).join(" ") + " fill orange");
     }
     return out;
@@ -48105,12 +48125,6 @@ Lantern.RFB = (function () {
     out.base = s;
     return out;
   }
-  // moves(line) -> the number of places each chained place in a line moves ("left of left of X": 2)
-  function moves(line) {
-    var re = new RegExp("(?:^|[\\s,(])((?:" + LINK + ")+)", "gi"), out = [], m;
-    while ((m = re.exec(String(line || "")))) out.push(chain(m[1] + "x").n);
-    return out;
-  }
   // pairLine(steps, lines, at) -> {text, ref} or null: the block line that
   // writes the step phrase found at "at". The steps' place phrases ("two
   // places to its left", "directly to the left of") and the block's "left
@@ -48118,7 +48132,7 @@ Lantern.RFB = (function () {
   // 15: told only that no line moved 2 places, the 4B wrote 2 in both of its
   // "left of" lines, and the second one, "directly to the left", fell off
   // the row).
-  function pairLine(steps, lines, at, any) {
+  function pairLine(steps, lines, at) {
     // (a place next to a thing -- "to its left", "to the left of", "behind"
     // -- not the whole row moving "one place to the right")
     var ph = [], m, re = /\b(?:(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:places?|spots?|positions?|seats?|steps?)\s+)?(?:(?:directly|immediately|just)\s+)?(?:to\s+(?:its|their|his|her)\s+(?:left|right)|(?:to\s+the\s+)?(?:left|right)\s+of|behind|in\s+front\s+of|ahead\s+of)\b/gi;
@@ -48130,23 +48144,45 @@ Lantern.RFB = (function () {
     });
     var k = -1, i;
     for (i = 0; i < ph.length; i++) if (Math.abs(ph[i] - at) <= 3) k = i;
-    if (k < 0 || ph.length !== refs.length || (refs[k].counted && !any)) return null;
+    if (k < 0 || ph.length !== refs.length || refs[k].counted) return null;
     return refs[k];
   }
-  // sw(line) -> the chain in one of a swap line's two places ("swap holder of gold and left of left of holder of
-  // gold"), when it is of "left of" or "right of", all one way, with two links or a count, and the other place
-  // has none: {n, link, base}, or null
-  function sw(line) {
-    var mm = /^\s*(?:swap|exchange|switch|trade)\s+(.+?)\s+and\s+(.+)$/i.exec(String(line || ""));
-    if (!mm) return null;
-    var a = chain(mm[1]), b = chain(mm[2]), c = a.links && !b.links ? a : b.links && !a.links ? b : null;
-    if (!c || c.mixed || !c.base || (c.links < 2 && c.n < 2)) return null;
-    return c;
+  // chained(lines, steps, m, n) -> a step "X swaps with the cup N places to its left" written as the swap of X with a
+  // chain from X itself: "swap holder of gold and left of left of holder of gold". Only that, and only when sure (the
+  // second review of the first draft, tests/fixtures/review2_1254_track.json: a chain counted from another thing --
+  // "right of right of Bible" for the book with the bookmark -- a step's phrase paired with another step's line, the
+  // same phrase at two steps, "behind" in a queue listed back to front): the phrase is "N places to its (their, his,
+  // her) left/right", once in the steps; its step is a swap; the line is a swap of a thing with a chain of "left of"
+  // (or "right of"), all the step's way, from that same thing, N places in all; and the thing's own words are in that
+  // step. Nothing else is accepted, and nothing is questioned that 1.24.13 did not question.
+  function chained(lines, steps, m, n) {
+    if (!/\bto\s+(its|their|his|her)\s+(left|right)\b/i.test(m[0])) return false;
+    var side = /(left|right)\b\s*$/i.exec(m[0])[1].toLowerCase(), esc2 = m[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if ((steps.match(new RegExp(esc2, "gi")) || []).length !== 1) return false;
+    // the step: from its number to the next
+    var before = steps.slice(0, m.index), start = Math.max(before.search(/(?:^|[\s:])\d+[.\x29]\s[^]*$/), 0), rest = steps.slice(m.index), end = rest.search(/(?:^|[\s:])\d+[.\x29]\s/);
+    var step = steps.slice(start, m.index + (end < 0 ? rest.length : end));
+    if (!/\bswap|\bexchange|\btrade places|\bchange places|\bswitch/i.test(step)) return false;
+    return lines.some(function (l) {
+      var mm = /^\s*(?:swap|exchange|switch|trade)\s+(.+?)\s+and\s+(.+)$/i.exec(String(l || "")), a, b, c, x;
+      if (!mm) return false;
+      a = chain(mm[1]); b = chain(mm[2]);
+      c = a.links && !b.links ? a : b.links && !a.links ? b : null;
+      x = c === a ? mm[2] : mm[1];
+      if (!c || c.mixed || c.n !== n || c.link !== side + " of" || (c.links < 2 && c.n < 2)) return false;
+      if (c.base.replace(/\s+/g, " ").trim().toLowerCase() !== String(x).replace(/\s+/g, " ").trim().toLowerCase()) return false;
+      var own = (x.toLowerCase().match(/[a-z]+/g) || []).filter(function (w) { return !/^(holder|holding|of|the|a|an|cup|with|that|which|holds|has)$/.test(w); });
+      return own.length > 0 && own.every(function (w) { return new RegExp("\\b" + w, "i").test(step); });
+    });
   }
   function distances(block, q) {
     var at = String(q).search(/(^|[\s:])1[.\x29]\s/), out = [], m, seen = {};
     if (at < 0) return out;
-    var steps = String(q).slice(at), body = block.lines.join("\n").toLowerCase();
+    // (a number inside a chain -- "2 right of right of Bible", three places -- is not a count of 2 for any step: the
+    // second review's block had a one-place step 2 pass on step 4's chain)
+    var steps = String(q).slice(at), body = block.lines.filter(function (l) {
+      return !/\b(left|right)\s+of\s+(?:(?:\d+|one|two|three|four|five)\s+(?:places?\s+|spots?\s+)?)?(?:(?:immediately|directly|just)\s+)?(?:to\s+(?:the\s+)?)?(left|right)\s+of\b/i.test(l);
+    }).join("\n").toLowerCase();
     // only a block that works through every step (a part of one is not judged)
     var nsteps = 0, sm, sre = /(^|[\s:])(\d+)[.\x29]\s/g;
     while ((sm = sre.exec(steps))) nsteps = Math.max(nsteps, parseInt(sm[2], 10));
@@ -48159,16 +48195,13 @@ Lantern.RFB = (function () {
       if (seen[key]) continue;
       seen[key] = 1;
       var lr = side === "left" || side === "forward" || side === "ahead" || side === "up" ? "left" : side === "right" || side === "back" || side === "backwards" || side === "behind" || side === "down" ? "right" : side;
-      var ok = new RegExp("\\b" + n + "\\s+(left|right|places?|before|after|ahead|behind)\\b|\\bshift\\s+(left|right)\\s+" + n + "\\b|\\b(left|right)\\s+" + n + "\\b").test(body);
-      // the step's own line, when it is a swap with a chain of "left of" or "right of", all one way, decides: by the
-      // places it moves and the way it moves them ("left of left of holder of gold" is two places left; "2 left of
-      // left of X" three -- the line 1.24.13 handed the 35B)
-      var own = pairLine(steps, block.lines, m.index, true), oc = own && /^\s*(swap|exchange|switch|trade)\b/i.test(own.text) ? sw(own.text) : null;
-      if (oc) ok = oc.n === n && oc.link === lr + " of";
+      var ok = new RegExp("\\b" + n + "\\s+(left|right|places?|before|after|ahead|behind)\\b|\\bshift\\s+(left|right)\\s+" + n + "\\b|\\b(left|right)\\s+" + n + "\\b").test(body) ||
+        chained(block.lines, steps, m, n);
       if (!ok) {
-        var pl = oc ? own : pairLine(steps, block.lines, m.index), pn = oc ? oc.n : 1;
-        out.push(pl ? "the steps say \u201c" + m[0] + "\u201d, but its line, \u201c" + pl.text + "\u201d, moves " + pn + " place" + (pn === 1 ? "" : "s") + (oc && oc.link !== lr + " of" ? " to the " + oc.link.replace(/ of$/, "") : "") +
-          ": write \u201c" + n + " " + (oc ? lr + " of " + oc.base : pl.ref) + "\u201d in that line, and leave the other lines as they are" :
+        // (a chain in the line is rewritten whole: 1.24.13 handed "2 left of left of holder of gold" -- three places)
+        var pl = pairLine(steps, block.lines, m.index), pc = pl ? chain(pl.ref) : null, one = pc && pc.links >= 2 && !pc.mixed && pc.base;
+        out.push(pl ? "the steps say \u201c" + m[0] + "\u201d, but its line, \u201c" + pl.text + "\u201d, moves " + (one ? pc.n + " places" : "1 place") +
+          ": write \u201c" + n + " " + (one ? pc.link + " " + pc.base : pl.ref) + "\u201d in that line, and leave the other lines as they are" :
           "the steps say \u201c" + m[0] + "\u201d, but no line of the block moves " + n + " places: write it with the number, as in \u201c" + n + " " + lr + " of holder of \u2026\u201d " +
           "(or \u201cshift " + lr + " " + n + "\u201d when every one moves)");
       }
@@ -48177,7 +48210,7 @@ Lantern.RFB = (function () {
   }
   var tr = (window.Lantern.aiSolvers || []).filter(function (s) { return s.kind === "TRACK"; })[0];
   if (tr && !tr.check) tr.check = function (block, q, r) { return named(block, q, r).concat(distances(block, q)); };
-  window.Lantern.aiPuzzleCheck = { named: named, distances: distances, chain: chain, moves: moves };
+  window.Lantern.aiPuzzleCheck = { named: named, distances: distances, chain: chain, chained: chained };
 })();
 // ===========================================================================
 // MODULE: AI_PUZZLE_CHECK - END
@@ -48597,6 +48630,10 @@ Lantern.RFB = (function () {
   function famOf(name) {
     name = String(name || "").toLowerCase();
     if (FAM[name]) return FAM[name];
+    // (1.24.14) a shade: "dark orange" is of orange's family, and is not taken for an orange sun (sunColour reads
+    // the name) -- the second review's autumn tree, its crown in dark orange, put behind the land as the sun
+    var sh = /^(dark|deep|light|pale|bright) ([a-z]+)$/.exec(name);
+    if (sh && FAM[sh[2]]) return FAM[sh[2]];
     if (!/^#/.test(name)) return "";
     if (/^#7dd3fc$/.test(name)) return "sky";
     var f = L.aiMakeLayout && L.aiMakeLayout.family ? L.aiMakeLayout.family(name) : "";
@@ -48616,7 +48653,7 @@ Lantern.RFB = (function () {
     for (k = 0; k < rest.length && !fill; k++) {
       var w = rest[k].toLowerCase(), two = w + " " + String(rest[k + 1] || "").toLowerCase();
       if (/^(color|colour|outline|stroke)$/.test(w)) { k += FAM[String(rest[k + 1] || "").toLowerCase() + " " + String(rest[k + 2] || "").toLowerCase()] ? 2 : 1; continue; }   // an outline is not a fill
-      if (FAM[two]) fill = two; else if (FAM[w] || /^#[0-9a-f]{3,6}$/.test(w)) fill = w;
+      if (FAM[two] || (/^(dark|deep|light|pale|bright)$/.test(w) && FAM[String(rest[k + 1] || "").toLowerCase()])) fill = two; else if (FAM[w] || /^#[0-9a-f]{3,6}$/.test(w)) fill = w;
     }
     return { kind: kind, nums: nums, rest: rest.join(" "), fill: fill, fam: famOf(fill) };
   }
@@ -49177,7 +49214,7 @@ Lantern.RFB = (function () {
     // in the sea that is asked about -- each moved on top.)
     // (nor when the question puts the road under something -- snow, a flood -- nor when another band drawn later still
     // covers part of it: the review's road under snow, under flood water, and under a near field drawn after the far one)
-    if (!(opts && opts.cut) && away(q) && !/\b(snow\w*|flood\w*|buried|bur(y|ies)|covered|under|beneath|hidden|submerged|underwater|drifts?|fog\w*|mist\w*|haze|hazy|smoke|smoky|clouds?)\b/i.test(q)) {
+    if (!(opts && opts.cut) && away(q) && !/\b(snow\w*|flood\w*|buried|bur(y|ies)|cover\w*|hidden|hide\w*|submerge\w*|underwater|drift\w*|tide\w*|tidal|blizzard\w*|whiteout|ic(e|ed|y)|frost\w*|sandstorm\w*|dust\w*|mud\w*|fog\w*|mist\w*|haze|hazy|smoke|smoky|clouds?)\b/i.test(q)) {
       var under = [];
       items.forEach(function (it, a) {
         var A = it.o, bA, pts = [], x, y, b, j;
@@ -49372,7 +49409,7 @@ Lantern.RFB = (function () {
         // (one such tri, reaching the top of the picture, as a road drawn going up does; a mountain or two the model
         // drew unasked, their points lower down, are mountains -- the review of 1.24.10's F1, two gray peaks; and not
         // when the question asks for a thing a tri can be, a tree, a tent, a dune: the review's tall dark pine)
-        var ups = MOUNT.test(q) || /\b(trees?|pines?|firs?|forests?|woods?|tents?|pyramids?|roofs?|houses?|huts?|barns?|sails?|boats?|spires?|towers?|church\w*|volcano\w*|dunes?|desert|cliffs?|rocks?|castles?|cones?|flags?)\b/i.test(q) ? [] : items.filter(function (it) {
+        var ups = MOUNT.test(q) || /\b(tree|pine|fir|forest|wood|tent|pyramid|roof|house|hut|barn|sail|boat|spire|tower|church|volcan|dune|desert|cliff|rock|stone|boulder|sand|castle|cone|flag|crag|crystal|spike)\w*/i.test(q) ? [] : items.filter(function (it) {
           var t = stands(it.o);
           return t && Math.abs(t.B - H) <= 0.5 && t.a[1] < H - 0.5 && t.w >= 1 && (wet ? /^(water|sky)$/.test(it.o.fam) : /^(gray|dark|earth)$/.test(it.o.fam));
         }), upside = ups.length === 1 && stands(ups[0].o).a[1] <= 1 ? ups[0] : null;
@@ -49436,8 +49473,9 @@ Lantern.RFB = (function () {
         // (1.24.14) a band of water the beach would cover all of is named, the line written in its place: the 35B's
         // "rect 0 10 20 2 fill sky" at the bottom of its shore, on 1.24.13, was covered by the sand it then added, and
         // asked about as hidden (bench_run_1253_35b_library.json)
-        // (and seen: a strip drawn before the sea that covers it, written over, would be covered too -- the review)
-        var inBeach = items.filter(function (it, k3) { return wide(it.o) && !isSkyO(it.o) && /^(water|sky)$/.test(it.o.fam) && it.o.nums[1] >= y - 0.01 && it.o.nums[1] + it.o.nums[3] <= GH + 0.01 && seenA[k3] >= 2; });
+        // (and seen: a strip drawn before the sea that covers it, written over, would be covered too -- the review; and
+        // of a shallow water's light blue: a near band of deep blue is the sea the picture is seen from -- the second)
+        var inBeach = items.filter(function (it, k3) { return wide(it.o) && !isSkyO(it.o) && it.o.fam === "sky" && it.o.nums[1] >= y - 0.01 && it.o.nums[1] + it.o.nums[3] <= GH + 0.01 && seenA[k3] >= 2; });
         problems.push("the question asks for a shore, but below the horizon (y " + num(H) + ") the picture is all water: " + (inBeach.length === 1 ? "write" : "add") + " rect 0 " + num(y) + " " + GW + " " + num(GH - y) + " fill sand " +
           (inBeach.length === 1 ? "in place of \u201c" + inBeach[0].line + "\u201d" : "after the water") + " (the beach, at the front of the picture)");
       }
