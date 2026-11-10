@@ -1,5 +1,139 @@
 # Changelog
 
+## 1.24.14 — Adam's run of 1.24.13: a right puzzle block questioned, and the line to write for a quote, a beach and a road (2026-11-10)
+
+Adam ran the 35B on 1.24.13 with the library on his laptop (2026-11-10,
+16:18 UTC, 123 minutes): **135 of 140** (134 on 1.24.9 and 1.24.11), the
+P1AM seal-in passing now (`tests/fixtures/bench_run_1253_35b_library.json`,
+replayed by `tests/bench_1254.js`). The small models' run on 1.24.13
+(GitHub 42740634844, all three on an AMD EPYC 7763,
+`tests/fixtures/bench_run_1253_{4b,2b,08b}.json`): the 4B 107 of 114, the
+same seven rows as on 1.24.12; the 2B 74; the 0.8B 54.
+
+**What was seen.** Five rows failed on the 35B, four of them with a reply
+it had written before:
+
+- *The two coins under the cups*, its reply of 1.24.11 word for word. Its
+  TRACK block was right: step 2, "the cup two places to its left", was
+  "swap holder of gold and left of left of holder of gold", and Lantern ran
+  the block to the right order. Then Lantern's own check said the line
+  "moves 1 place" and told it to write "2 left of left of holder of gold" --
+  three places, off the row. That block could not run, and the 35B worked
+  the puzzle out itself, wrong, both times.
+- *The iPhone 8's battery* and *Nairobi's transport*, word for word as on
+  1.24.11 (failing as on 1.24.9): "discharge the battery below 25% [3]" with
+  no QUOTE [3] line; "ride-hailing apps [3]" with a QUOTE [3] in no passage.
+  Told "there is no QUOTE [3] line", the 35B wrote the same reply again.
+- *The shore at sunset*: "tri 5 6 12 1 19 6 fill dark gray" -- an unknown
+  colour "dark" -- written again on the retry.
+- *The road to the horizon*: "tri 0 6 20 6 10 0 fill gray", a tri standing
+  on the horizon with its point at the top of the picture, 37 times, then
+  26; asked to add a road on the ground, the 35B wrote its own line again
+  (the same tri on 1.24.8 and 1.24.9).
+- The 4B's road, with the same first reply on 1.24.10, 1.24.11, 1.24.12 and
+  1.24.13: the road, then the ground over it; asked about the hidden road
+  ("draw the background first"), it kept the order.
+
+**What it was traced to, and what changed.**
+
+- *TRACK's check counted a chain as one place* (AI_PUZZLE_CHECK). The
+  runner reads "left of left of X" as the place left of the place left of
+  X; the check that a step's "two places" has a line that moves two looked
+  only for a written 2. Now the step's own line, when it is a swap whose
+  place is a chain of "left of" or "right of", all one way, decides: it
+  passes when it moves the step's number of places the step's way, and
+  goes back otherwise with the chain written as one ("moves 3 places:
+  write “2 left of holder of coin”"). The 35B's block of 1.24.11 and
+  1.24.13 runs with nothing questioned and gives the bench's answer. Every
+  other block is checked as on 1.24.13.
+- *The library's send-back gave no line to write* (LIBRARY_CHECKS, rule
+  3). When an answer cites [n] and has no QUOTE [n] that is in passage n,
+  the problem now ends with the line: "there is no QUOTE [3] line: for “To
+  replace the battery, discharge the battery below 25%” write QUOTE [3]:
+  Step 1: Before you begin, discharge your iPhone battery below 25%."
+  Lantern does not write the quote (1.24.11 took out a rule that did: it
+  verified 101 of 181 wrong answers), and verifies nothing more than
+  before; the model writes the line, and the answer is checked as any
+  other. The line is handed only when:
+  - every part of the answer that cites [n] is a whole sentence of a
+    passage in its own words, but for what says nothing -- an article, the
+    question's own words, a "Step 1:" -- with nothing left out that says
+    something (a condition, a qualifier, a number, a unit), its words in
+    order, the same "not", and no word the opposite of one of the part's
+    (over and under, °F and °C, on and off, mild and severe ...);
+  - the part is not a yes or a no (the yes is the answer, and no sentence
+    says it);
+  - every other part is backed by one of the model's own quotes of its
+    passage, with the same "not";
+  - nothing in the answer is left uncited, and the answer does not go on
+    below its ANSWER line (verify reads that line only);
+  - at most three lines.
+  When the part is in another passage, the line says so: "“...” is in
+  passage [2], not [1] -- write [2] after it in place of [1], and QUOTE
+  [2]: ... -- and leave out your QUOTE [1] line". Nairobi's part is in no
+  sentence by itself, and goes back as before.
+- *"dark gray" was not a colour* (AI_DRAW). The table had "light gray",
+  "dark green" and "dark blue". Now "dark gray" is in it (a neutral one),
+  and dark, deep, light, pale or bright before any colour of the table is
+  read as a shade of it (dark: 45% toward black; light and pale: 50%
+  toward white) -- not "dark white" nor "light black". A sun drawn in a
+  shade of yellow, orange, red or white is a sun.
+- *The beach line covered the model's own band* (the landscape mend). The
+  35B's first shore had "rect 0 10 20 2 fill sky" at the bottom; the beach
+  Lantern asked for, "rect 0 9.5 20 2.5 fill sand", covers all of it, and
+  the retry was asked about the band as hidden. A band of water the beach
+  would cover, and that shows, is now named: "write rect 0 9.5 20 2.5 fill
+  sand in place of “rect 0 10 20 2 fill sky”".
+- *The road drawn going up was not named.* When a road going away has
+  nothing on the ground, and one tri of a road's colour stands on the
+  horizon with its point at the top of the picture (y 1 or above), and the
+  question asks for no mountain, hill, tree, tent, dune, house, boat or the
+  like, the message names it: "if “tri 0 6 20 6 10 0 fill gray” is the
+  road, it goes up from the horizon to a point at y 0, in the sky -- write
+  tri 7 12 13 12 10 6 fill gray in its place, after the ground".
+- *A road under the ground is moved* (the landscape mend, rule 2). For a
+  road, path or river going away, a tri from the bottom edge up to the top
+  of the ground, drawn before a band of ground that covers all of it, in
+  another colour, goes just after the band, and Lantern says so ("moved
+  “tri 0 12 10 6 20 12 fill gray” after “rect 0 6 20 6 fill green”: drawn
+  before it, it was hidden under it"). Not when the question puts it under
+  snow, flood water, fog or cloud, nor when another band drawn later still
+  covers part of it, nor when it is written again after the band. The
+  4B's road of four versions passes the bench now.
+
+**Reviews.** By agents that had not seen the rules written, their inputs in
+`tests/fixtures/review1_1254_*.json` (replayed by `tests/review_1254.js`)
+and `review2_1254_*.json`:
+
+- review 1 (106 TRACK blocks, 286 library answers with their passages, 157
+  drawings) tried the first draft. TRACK: 16 wrong blocks passed only
+  because of the new count -- a chain anywhere in the block counted for a
+  step; "behind behind" and "2 seats left of" were counted, which the
+  runner reads otherwise; a "move ... to left of left of" line was counted
+  as two places; the way a chain went was not looked at. The library: 34
+  wrong answers and 7 partly wrong ones verified once the handed line was
+  written -- a yes stripped before matching, a "do not" or an "if" before a
+  comma left out, "In children" left out, 74 °F matched to "74 °C (165
+  °F)", a wrong part riding on the other quotes. Drawings: the road moved
+  out from under snow and flood water, and from under a far field with a
+  near one over it; a tall dark pine the question asked for named as the
+  road; sand "in place of" a strip the sea covers; a sun in pale yellow
+  asked for again. Each mended as above (the first draft moved any shape a
+  band covered, and the older reviews' pictures caught it too: a swimmer's
+  body under the sea, a lime band over two greens). Now: of its 42 right
+  blocks 12 are questioned, each on 1.24.13 as well (31 were then), and 4 of
+  its wrong ones pass, each passing on 1.24.13 too; no wrong answer is
+  verified once its line is written, and 60 of its 148 right ones are; no
+  right picture is asked anything it was not asked on 1.24.13. On the 339
+  answers of the 1.24.11 review, 46 right answers are helped, and one
+  partly right one: the iPhone 8 Plus guide's step 1 cited for the iPhone
+  8, which that passage does say.
+REVIEW2
+
+**What was run.** TESTS Replayed only: no model has run 1.24.14; whether
+the 35B writes the lines it is handed is for Adam's next run, and the
+small models' run starts with the push.
+
 ## 1.24.13 — A Start/Stop sketch run, not read by its names; what each kind of question costs (2026-11-09)
 
 The 35B's P1AM seal-in on 1.24.12, on Adam's laptop, the seven program

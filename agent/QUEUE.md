@@ -5,7 +5,13 @@ file in the same commit as the work. Read `CLAUDE.md` first.
 
 ## Next, in order
 
-1. **The 4B's six rows that fail again, word for word.** The small models'
+1. **The 4B's six rows that fail again, word for word.** **On 1.24.13**
+   (run 42740634844, `tests/fixtures/bench_run_1253_*.json`, replayed by
+   `tests/bench_1254.js`, all three on an AMD EPYC 7763): the 4B 107, the
+   same seven rows as on 1.24.12 -- water-days, the power wheel, the road,
+   the doors, the letters, the tune of its own, the waltz; the 2B 74; the
+   0.8B 54. The 4B's road (the same first reply on 1.24.10 to 1.24.13, the
+   ground drawn over it) is moved after the ground by 1.24.14. The small models'
    run on 1.24.10 (42509727008, `tests/fixtures/bench_run_1250_*.json`,
    replayed by `tests/bench_1250.js`): **0.8B 59 of 114, 2B 73, the same
    rows as on 1.24.9; 4B 106** (110 on 1.24.8 and 1.24.9). The 4B ran on an
@@ -121,7 +127,26 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      variants of each; tool, multi, need, chat and reason do not regress;
      median tokens for fact and make go down. Do not loosen a check to
      raise a score; no second model.
-3. **Read Adam's run of 1.24.12 with the library** when he sends it. His
+3. **Read Adam's next run with the library** when he sends it. His 1.24.13
+   run (2026-11-10, `tests/fixtures/bench_run_1253_35b_library.json`,
+   `tests/bench_1254.js`): 135 of 140, the P1AM seal-in passing. The iPhone,
+   Nairobi and the two coins failed with their replies of 1.24.11 word for
+   word; the shore on "dark gray"; the road with its tri 37 times. 1.24.14:
+   the coins' block was right and Lantern's check wrong (mended); the iPhone
+   is handed its QUOTE [3] line; the shore's colour is read and its beach
+   named in place of the band it covers; the road's tri is named with the
+   line to write in its place. **Nairobi still goes back as before**: its
+   "ride-hailing apps [3]" is in no sentence by itself (passage 3 has "Works
+   in Nairobi. Bolt. Uber."; passage 2 a sentence about reaching Kiambu).
+   Watch: does the 35B write the lines it is handed? **Left by the reviews
+   of 1.24.14** (`tests/review_1254.js`): TRACK chains written in the step's
+   words ("the cup to the left of the cup holding gold") still count as one
+   place, and the line handed for them is wrong, as on 1.24.13; "N places
+   in front of" is not read; a count anywhere in the block still answers a
+   step; a move line's "to left of" is a place to insert before. And
+   **verify()'s own holes**, below, stand: the line is not handed where they
+   would let a wrong part through, but an answer that writes its own quotes
+   still rides on them. His
    1.24.11 run (2026-11-09, `tests/fixtures/bench_run_1251_35b_library.json`,
    `tests/bench_1251_35b.js`): 134 of 140 again; rehydration from the
    medicine shelf and the waltz pass now; the iPhone and Nairobi fail on
@@ -328,7 +353,8 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    1.24.11: his, with the library (134 of 140, 2026-11-09); 1.24.12: the
    seven program questions on its test build (7 of 7, 2026-11-09) and on
    the build that was pushed (7 of 7, but the P1AM program is wrong: item
-   4); a full run is his to come.
+   4); 1.24.13: his, with the library (135 of 140, 2026-11-10); 1.24.14:
+   none yet.
 8. **Finish the five Food lessons on `wip-2026-11-06`.** They are drafted
    and were checked from memory only; the checker's memory differs from the
    drafts where it matters (kidney beans, cassava, the hay box). They need
