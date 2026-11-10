@@ -105,16 +105,56 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var rightOut = r5.out.filter(function (x) { return x.right; }), wrongOut = r5.out.filter(function (x) { return !x.right; });
   ok("review 5: none of its 95 right sketches gets a message, and the bench passes those that answer its question (7 spoken about, 4 failed, on the build it was given)",
     rightOut.length === 95 && rightOut.every(function (x) { return !x.stopScan.length && !x.bench; }), rightOut.filter(function (x) { return x.stopScan.length || x.bench; }).map(function (x) { return [x.id, x.stopScan, x.bench]; }));
-  ok("review 5: of its 69 wrong ones, every one the bench is asked about fails it, and 45 get a message; the six left are a motor that starts again when Stop is let go (the Stop read right: the bench says it) and a sketch timed with millis()",
-    wrongOut.length === 69 && wrongOut.filter(function (x) { return x.stopScan.length; }).length >= 45 &&
+  ok("review 5: of its 69 wrong ones, every one the bench is asked about fails it, and 48 get a message; the six left are a motor that starts again when Stop is let go (the Stop read right: the bench says it) and a sketch timed with millis()",
+    wrongOut.length === 69 && wrongOut.filter(function (x) { return x.stopScan.length; }).length >= 48 &&
     r5.misses.map(function (m) { return m[0]; }).join() === "W11-output-gated-restart,W12-ternary-gate-restart,W26-request-latch-restart,W46-latch-gate-right-read,W65-B0-restart-gate-two-uses,W66-millis-beacon-wrong-stop" &&
     !r5.findings.some(function (f) { return /bench passes a wrong program|wiring read wrong|message on a right|bench fails a right/.test(f[1]); }), [r5.misses.map(function (m) { return m[0]; }), r5.findings]);
+  // (review 6's mends: an input the question leaves open that holds the motor off whatever is pressed -- an overload left
+  // tripped -- says nothing about the Stop; so three wrong sketches its spec left to silence are spoken about now, and
+  // truly: a Stop read from input 3 where the question has it on 2, and two with an overload, each given a line that works)
+  var allowed = { "W10-stop-wrong-channel": /^Stop does not stop the motor/, "W19-overload-plus-wrong-stop": /Write: running = \(start \|\| running\) && !stopPressed && olOk;$/,
+    "W57-QQ-overload-named-wrong": /Write: running = \(start \|\| running\) && !stopPressed && olOk;$/ };
   ok("review 5: every line to write, put in the sketch and run by the reviewer's own evaluator, works (one, a statement over two lines, is given whole on one line: its placing tool cannot set it back, the line is right)",
-    r5.out.filter(function (x) { return x.writeCheck === "works"; }).length >= 33 && r5.findings.every(function (f) { return f[0] === "W38-split-line" && /could not place/.test(f[2]); }), r5.findings);
+    r5.out.filter(function (x) { return x.writeCheck === "works"; }).length >= 35 && r5.findings.every(function (f) {
+      return (f[0] === "W38-split-line" && /could not place/.test(f[2])) || (allowed[f[0]] && f[1] === "message where the spec says silent" && allowed[f[0]].test(f[2]));
+    }), r5.findings);
   var esc = require("child_process").spawnSync(process.execPath, [path.join(__dirname, "review5_escape_run.js")], { timeout: 120000, encoding: "utf8" }), er = null;
   try { er = JSON.parse(String(esc.stdout).trim().split("\n").pop()); } catch (e) { er = null; }
   ok("review 5's 45 sketches that try to get out (12 reached the page and 11 hung or crawled through the first runner, which turned the sketch into JavaScript): nothing reached, no navigation, none over 3 seconds",
     er && er.cases.length === 45 && !er.navigated && !er.name && er.cases.every(function (c) { return !c.reached.length && c.ms < 3000; }), er ? er.cases.filter(function (c) { return c.reached.length || c.ms >= 3000; }) : [esc.status, esc.signal, String(esc.stderr).slice(0, 300)]);
+
+  // --- the sixth review (tests/fixtures/review6_1253_*.json) ---
+  // 77 small sketches run by Lantern's interpreter and, by the reviewer, as C++ (g++): the outputs C gave are kept
+  var I6 = fixture("review6_1253_interp.json").items, view6 = function (out) {
+    var v = {}, slots = {};
+    Object.keys(out || {}).forEach(function (k) { var sl = +k.split(":")[0], ch = +k.split(":")[1]; if (sl >= 9 && sl <= 15 && k.indexOf("pin") < 0) { slots[sl] = slots[sl] || 0; if (out[k]) slots[sl] |= (1 << (ch - 1)); } else v[k] = out[k] ? 1 : 0; });
+    for (var sl in slots) v["s" + sl] = slots[sl] | 0;
+    return v;
+  };
+  var idiff = I6.filter(function (c) {
+    var sk = S.sketch(c.sketch); if (!sk) return true;
+    return c.scans.some(function (inp, i) { var a = view6(sk.scan(inp)), b = c.c[i], ks = {}; Object.keys(a).concat(Object.keys(b)).forEach(function (k) { ks[k] = 1; }); return Object.keys(ks).some(function (k) { return a[k] !== b[k]; }); });
+  }).map(function (c) { return c.id + " " + c.desc; });
+  ok("review 6: its 77 sketches run as C runs them, scan by scan (18 did not: a bool not made 0 or 1, integer sizes, float division, octal and character literals, macros)", I6.length === 77 && !idiff.length, idiff);
+  // 59 start/stop sketches in other words
+  var P6 = fixture("review6_1253_p1am.json").items, item6 = sq;
+  var p6 = P6.map(function (c) {
+    var said = AC.stopScan("arduino", c.sketch, c.q), rp = wrap(c.sketch), mk = act.fromReply(rp, c.q);
+    return { id: c.id, right: c.kind === "right", bench: !!c.bench, said: said, why: c.bench ? B.grade(item6, rp, { made: mk }).why : null };
+  });
+  var r6bad = p6.filter(function (x) { return x.right && (x.said.length || (x.bench && x.why)); }), w6 = p6.filter(function (x) { return !x.right; });
+  ok("review 6: none of its 37 right sketches gets a message, and the bench passes those that answer its question (a // inside a string and a bool from a bitmask failed it)",
+    p6.filter(function (x) { return x.right; }).length === 37 && !r6bad.length, r6bad);
+  ok("review 6: of its 22 wrong ones, all but one get a message (the one left keeps its inputs in an array, which is not run), and the bench fails all it can run",
+    w6.length === 22 && w6.filter(function (x) { return !x.said.length; }).map(function (x) { return x.id; }).join() === "X21" &&
+    w6.filter(function (x) { return x.bench && !x.why; }).map(function (x) { return x.id; }).join() === "X21", w6.filter(function (x) { return !x.said.length || (x.bench && !x.why); }));
+  var x22 = p6.filter(function (x) { return x.id === "X22"; })[0];
+  ok("...and a statement over two lines with a // comment in it is given whole on one line without the comment (it hid the rest)", x22 && /Write: running = !stopPressed && \(start \|\| running\);$/.test(x22.said[0] || ""), x22 && x22.said);
+  var esc6 = require("child_process").spawnSync(process.execPath, [path.join(__dirname, "review6_safety_run.js")], { timeout: 240000, encoding: "utf8" }), e6 = null;
+  try { e6 = JSON.parse(String(esc6.stdout).trim().split("\n").pop()); } catch (e) { e6 = null; }
+  ok("review 6's 93 safety sketches (names like __proto__ and constructor, 100,000 brackets, doubling macros, writes to ever-new slots, 2,300 lines naming the Stop): nothing reaches the page, nothing throws out, none takes 5 seconds (six took longer or crashed)",
+    e6 && e6.cases.length === 93 && !e6.navigated && !e6.proto && e6.cases.every(function (c) { return !c.reached.length && !c.err && c.ms < 5000; }),
+    e6 ? e6.cases.filter(function (c) { return c.reached.length || c.err || c.ms >= 5000; }) : [esc6.status, esc6.signal, String(esc6.stderr).slice(0, 300)]);
 
   // --- the small models' run on 1.24.12 (GitHub run 42701646389, tests/fixtures/bench_run_1252_*.json) ---
   var R08 = fixture("bench_run_1252_08b.json"), R2 = fixture("bench_run_1252_2b.json"), R4 = fixture("bench_run_1252_4b.json");

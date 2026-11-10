@@ -45533,10 +45533,14 @@ Lantern.RFB = (function () {
 (function () {
   var L = window.Lantern;
   if (!L) return;
+  // comments and strings in one pass, so that "state: run // stop" stays a string (review 6: the // in it was taken for
+  // a comment, and the line that drove the contactor was lost with the rest)
   function strip(t) {
-    return String(t || "").replace(/\x2F\*[\s\S]*?\*\x2F/g, " ").replace(/\x2F\x2F[^\n]*/g, "").replace(/^[ \t]*#[ \t]*include[^\n]*$/gm, "")
-      .replace(/\x22(?:[^\x22\\\n]|\\.)*\x22/g, "0").replace(/\x27(?:[^\x27\\\n]|\\.)\x27/g, "0");
+    return String(t || "").replace(/\x22(?:[^\x22\\\n]|\\.)*\x22|\x27(?:[^\x27\\\n]|\\.)*\x27|\x2F\x2F[^\n]*|\x2F\*[\s\S]*?\*\x2F/g, function (m) {
+      return m.charAt(0) === "\x2F" ? " " : m.charAt(0) === "\x27" && m.length === 3 ? String(m.charCodeAt(1)) : "0"; })
+      .replace(/^[ \t]*#[ \t]*include[^\n]*$/gm, "");
   }
+
   // (review 5) Not a translation into JavaScript any more, but a small interpreter of its own: a sketch that wrote
   // JavaScript's own forms ({ name } = loop, an object with a method, an arrow made by an empty #define) reached the
   // page through the translation. Here nothing of the sketch is ever run as JavaScript: it is read into a tree of the
@@ -45549,8 +45553,10 @@ Lantern.RFB = (function () {
       re.lastIndex = at; m = re.exec(c);
       if (!m || m.index !== at) return null;
       at = re.lastIndex;
-      if (m[1] !== undefined) out.push({ t: "num", v: /^0[xX]/.test(m[1]) ? parseInt(m[1], 16) : parseFloat(m[1]) });
-      else if (m[2] !== undefined) out.push(/^(true|HIGH)$/.test(m[2]) ? { t: "num", v: 1 } : /^(false|LOW)$/.test(m[2]) ? { t: "num", v: 0 } : { t: "id", v: m[2] });
+      // a number: hex, octal (010 is 8), decimal; one with a point or an f is a float (review 6)
+      if (m[1] !== undefined) out.push({ t: "num", f: /[.]/.test(m[1]) || /[fF]$/.test(m[0]) && !/^0[xX]/.test(m[1]),
+        v: /^0[xX]/.test(m[1]) ? parseInt(m[1], 16) : /^0[0-7]+$/.test(m[1]) ? parseInt(m[1], 8) : parseFloat(m[1]) });
+      else if (m[2] !== undefined) { if (m[2].length > 64) return null; out.push(/^(true|HIGH)$/.test(m[2]) ? { t: "num", v: 1 } : /^(false|LOW)$/.test(m[2]) ? { t: "num", v: 0 } : { t: "id", v: m[2] }); }
       else if (m[3] !== undefined) out.push({ t: "op", v: m[3] });
     }
     return out;
@@ -45561,7 +45567,8 @@ Lantern.RFB = (function () {
     function is(v, k) { var t = peek(k); return !!t && t.t !== "num" && t.v === v; }
     function eat(v) { if (!is(v)) throw 0; i++; }
     function isType(k) { var t = peek(k); return !!t && t.t === "id" && KEYTYPE.test(t.v); }
-    function types() { var n = 0; while (isType()) { i++; n++; } return n; }
+    // the type words, joined ("unsigned long"), or "" when there are none
+    function types() { var w = []; while (isType()) { w.push(peek().v); i++; } return w.join(" "); }
     function name() { var t = peek(); if (!t || t.t !== "id" || KEYTYPE.test(t.v) || /^(if|else|return)$/.test(t.v)) throw 0; i++; return t.v; }
     var BIN = [["||"], ["&&"], ["|"], ["^"], ["&"], ["==", "!="], ["<", ">", "<=", ">="], ["<<", ">>"], ["+", "-"], ["*", "/", "%"]];
     function expr() { return assign(); }
@@ -45582,58 +45589,70 @@ Lantern.RFB = (function () {
       if (t && t.t === "op" && /^(!|~|-|\+)$/.test(t.v)) { i++; return { k: "un", op: t.v, e: unary() }; }
       if (t && t.t === "op" && /^(\+\+|--)$/.test(t.v)) { i++; return { k: "inc", n: name(), d: t.v === "++" ? 1 : -1, pre: true }; }
       // a cast: (bool) x, (int) y
-      if (is("(") && isType(1)) { var j = 1; while (isType(j)) j++; if (is(")", j)) { i += j + 1; return unary(); } }
+      if (is("(") && isType(1)) { var j = 1, tw = []; while (isType(j)) { tw.push(peek(j).v); j++; } if (is(")", j)) { i += j + 1; return { k: "cast", ty: tw.join(" "), e: unary() }; } }
       return post();
     }
     function post() {
       var t = peek();
       if (!t) throw 0;
-      if (t.t === "num") { i++; return { k: "num", v: t.v }; }
+      if (t.t === "num") { i++; return { k: "num", v: t.v, f: t.f }; }
       if (is("(")) { i++; var e = expr(); eat(")"); return e; }
       var n = name();
       if (is("(")) { i++; var args = []; if (!is(")")) { args.push(expr()); while (is(",")) { i++; args.push(expr()); } } eat(")"); return { k: "call", n: n, a: args }; }
       if (is("++") || is("--")) { var d = peek().v === "++" ? 1 : -1; i++; return { k: "inc", n: n, d: d, pre: false }; }
       return { k: "var", n: n };
     }
-    function decls() {   // after the type words: a = 1, b, c = 2;
+    function decls(ty) {   // after the type words: a = 1, b, c = 2;
       var ds = [];
       do { if (ds.length) i++; var n = name(), e = null; if (is("=")) { i++; e = assign(); } ds.push({ n: n, e: e }); } while (is(","));
       eat(";");
-      return { k: "decl", d: ds };
+      return { k: "decl", ty: ty, d: ds };
     }
     function stmt() {
       if (is(";")) { i++; return { k: "nop" }; }
       if (is("{")) { i++; var b = []; while (!is("}")) { if (!peek()) throw 0; b.push(stmt()); } i++; return { k: "blk", b: b }; }
       if (is("if")) { i++; eat("("); var c = expr(); eat(")"); var a = stmt(), e = null; if (is("else")) { i++; e = stmt(); } return { k: "ifs", c: c, a: a, b: e }; }
       if (is("return")) { i++; var r = is(";") ? null : expr(); eat(";"); return { k: "ret", e: r }; }
-      if (isType()) { types(); return decls(); }
+      if (isType()) { var ty = types(); return decls(ty); }
       var x = expr(); eat(";"); return { k: "exp", e: x };
     }
     var globals = [], fns = Object.create(null);
     while (i < toks.length) {
-      if (!types()) throw 0;
+      var gty = types();
+      if (!gty) throw 0;
       if (peek(1) && is("(", 1)) {
         var fname = name(); eat("(");
-        var ps = [];
+        var ps = [], pts = [];
         if (is("void") && is(")", 1)) i++;
-        while (!is(")")) { if (ps.length) eat(","); types(); ps.push(name()); }
+        while (!is(")")) { if (ps.length) eat(","); pts.push(types()); ps.push(name()); }
         eat(")");
+        if (is(";")) { i++; continue; }   // a prototype: void updateMotor(bool s, bool p); (review 6)
         if (!is("{")) throw 0;
-        if (fns[fname] || /^(rd|wr|din|dout|millis)$/.test(fname)) throw 0;
-        fns[fname] = { p: ps, b: stmt() };
-      } else globals.push(decls());
+        if (fns[fname] || /^(rd|wr|din|dout|millis|abs|min|max|constrain)$/.test(fname)) throw 0;
+        fns[fname] = { p: ps, pt: pts, ty: gty, b: stmt() };
+      } else globals.push(decls(gty));
     }
     return { g: globals, f: fns };
   }
   // sketch(text): the sketch read, or null when it is more than this can run
   function sketch(text) {
+    // (review 6) a sketch of a size a program for a start and a stop has: a name of 64 letters at most, a text of 30,000
+    // characters, macros that do not grow it past 40,000
+    if (String(text || "").length > 30000) return null;
     var c = strip(text);
     if (/\bstatic\b/.test(c)) return null;
-    var macros = [];
-    c = c.replace(/^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)([ \t]+[^\n]*)?$/gm, function (m, n, v) { macros.push([n, (v || "").replace(/^\s+|\s+$/g, "")]); return ""; });
-    if (/^[ \t]*#/m.test(c) || macros.some(function (d) { return /^\x28/.test(d[1]) && /^[A-Za-z_]\w*\x28/.test(d[0] + d[1]); })) return null;
-    for (var mi = 0; mi < 3; mi++) macros.forEach(function (d) { c = c.replace(new RegExp("\\b" + d[0] + "\\b", "g"), d[1] === "" ? "" : "(" + d[1] + ")"); });
-    c = c.replace(/\bwhile\s*\x28\s*!\s*P1\s*\.\s*init\s*\x28\s*\x29\s*\x29\s*(?:\x7B[^\x7B\x7D]*\x7D|;)/g, "")
+    // #define NAME value, put in from where it is defined on, as C does: a name defined again takes its new value from
+    // there (review 6); a function-like macro, #define F(x) ..., is left as a # line and refused below
+    var macros = Object.create(null), size = 0;
+    c = c.split("\n").map(function (line) {
+      var dm = /^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)([ \t]+[^\n]*)?$/.exec(line);
+      if (dm) { macros[dm[1]] = (dm[2] || "").replace(/^\s+|\s+$/g, ""); return ""; }
+      for (var mi = 0; mi < 3 && size <= 40000; mi++) for (var n in macros) if (line.length <= 40000) line = line.replace(new RegExp("\\b" + n + "\\b", "g"), function () { return " " + macros[n] + " "; });
+      size += line.length;
+      return line;
+    }).join("\n");
+    if (/^[ \t]*#/m.test(c) || size > 40000) return null;
+    c = c.replace(/\bwhile\s*\x28\s*!\s*P1\s*\.\s*init\s*\x28\s*\x29\s*\x29\s*(?:\x7B[^\x7B\x7D]*\x7D|[^;\x7B\x7D]*;)/g, "")
       .replace(/\bP1\s*\.\s*init\s*\x28\s*\x29\s*;/g, ";")
       // an empty statement, not nothing: "if (running) Serial.println(...);" keeps its if (review 5)
       .replace(/\b(?:Serial\s*\.\s*\w+|pinMode|delay|delayMicroseconds|randomSeed)\s*\x28[^;]*\x29\s*;/g, ";")
@@ -45643,18 +45662,51 @@ Lantern.RFB = (function () {
     if (!toks) return null;
     try { prog = parseC(toks); } catch (e) { return null; }
     if (!prog.f.loop) return null;
-    var ins = {}, outs = {}, clock = 0, read = {}, G = Object.create(null), steps = 0, spent = 0, LIMIT = 50000;
+    var ins = {}, outs = {}, clock = 0, read = {}, G = Object.create(null), GT = Object.create(null), steps = 0, spent = 0, LIMIT = 50000;
     function key(a, b) { return a + ":" + b; }
     var BUILTIN = Object.create(null), B0 = {
-      rd: function (a) { var s = a[0], ch = a[1]; if (!ch) { var bits = 0; for (var c2 = 1; c2 <= 32; c2++) if (ins[key(s, c2)]) bits += Math.pow(2, c2 - 1); read[key(s, 0)] = 1; return bits; } read[key(s, ch)] = 1; return ins[key(s, ch)] ? 1 : 0; },
+      rd: function (a) { var s = a[0], ch = a[1]; if (!(s >= 0 && s <= 15 && Math.floor(s) === s) || !(ch === undefined || (ch >= 0 && ch <= 64))) throw 0; if (!ch) { var bits = 0; for (var c2 = 1; c2 <= 32; c2++) if (ins[key(s, c2)]) bits += Math.pow(2, c2 - 1); read[key(s, 0)] = 1; return bits; } read[key(s, ch)] = 1; return ins[key(s, ch)] ? 1 : 0; },
       // a whole module written at once (P1.writeDiscrete(bits, slot)): each channel its bit (review 5)
-      wr: function (a) { var v = a[0], s = a[1], ch = a[2]; if (!ch) { for (var c2 = 1; c2 <= 32; c2++) outs[key(s, c2)] = !!(Math.floor(v / Math.pow(2, c2 - 1)) % 2); } else outs[key(s, ch)] = !!v; return 0; },
+      // (review 6) a P1AM base has 15 slots, a module at most 64 channels: anything else is no P1AM
+      wr: function (a) { var v = a[0], s = a[1], ch = a[2]; if (!(s >= 0 && s <= 15 && Math.floor(s) === s) || !(ch === undefined || (ch >= 0 && ch <= 64))) throw 0; if (!ch) { for (var c2 = 1; c2 <= 32; c2++) outs[key(s, c2)] = !!(Math.floor(v / Math.pow(2, c2 - 1)) % 2); } else outs[key(s, ch)] = !!v; return 0; },
       din: function (a) { return ins[key("pin", a[0])] ? 1 : 0; },
       dout: function (a) { outs[key("pin", a[0])] = !!a[1]; return 0; },
-      millis: function () { return clock; }
+      millis: function () { return clock; },
+      // (review 6) Arduino's own small functions
+      abs: function (a) { return Math.abs(num(a[0])); }, min: function (a) { return Math.min(num(a[0]), num(a[1])); },
+      max: function (a) { return Math.max(num(a[0]), num(a[1])); }, constrain: function (a) { return Math.min(Math.max(num(a[0]), num(a[1])), num(a[2])); }
     };
     for (var bk in B0) BUILTIN[bk] = B0[bk];
     function RET(v) { this.v = v; }
+    // (review 6) a value takes the shape of its type, as C gives it on the P1AM-100's 32-bit processor: a bool is 0 or 1,
+    // an integer has no fraction and wraps at its size (a byte at 256); float and double keep theirs
+    function shape(ty, v) {
+      v = num(v); ty = String(ty || "");
+      if (/\b(bool|boolean)\b/.test(ty)) return v ? 1 : 0;
+      if (!ty || /\b(float|double|void)\b/.test(ty)) return v;
+      v = v < 0 ? Math.ceil(v) : Math.floor(v);
+      if (/\b(byte|uint8_t)\b|unsigned char/.test(ty)) return ((v % 256) + 256) % 256;
+      if (/\b(int8_t|char)\b/.test(ty)) return ((((v + 128) % 256) + 256) % 256) - 128;
+      if (/\b(uint16_t|word)\b/.test(ty)) return ((v % 65536) + 65536) % 65536;
+      if (/\bint16_t\b|\bshort\b/.test(ty)) return ((((v + 32768) % 65536) + 65536) % 65536) - 32768;
+      if (/\bunsigned\b|uint32_t|size_t/.test(ty)) return v >>> 0;
+      return v | 0;
+    }
+    function typeOf(env, n) { for (var e = env; e; e = e.up) if (Object.prototype.hasOwnProperty.call(e.v, n)) return e.t ? e.t[n] || "" : ""; return ""; }
+    // is this expression a float or a double in C? (then / divides as a real number)
+    var FLOAT = /\b(float|double)\b/;
+    function fl(x, env) {
+      switch (x.k) {
+        case "num": return !!x.f;
+        case "var": case "set": return FLOAT.test(typeOf(env, x.n));
+        case "cast": return FLOAT.test(x.ty);
+        case "un": return fl(x.e, env);
+        case "bin": return /^[+\-*\x2F%]$/.test(x.op) && (fl(x.l, env) || fl(x.r, env));
+        case "if": return fl(x.a, env) || fl(x.b, env);
+        case "call": return !!prog.f[x.n] && FLOAT.test(prog.f[x.n].ty || "");
+      }
+      return false;
+    }
     function look(env, n) { for (var e = env; e; e = e.up) if (Object.prototype.hasOwnProperty.call(e.v, n)) return e; return null; }
     function num(x) { return typeof x === "number" && isFinite(x) ? x : 0; }
     function ev(x, env) {
@@ -45665,33 +45717,34 @@ Lantern.RFB = (function () {
         case "set": {
           var e2 = look(env, x.n); if (!e2) throw 0;
           var v = ev(x.e, env), o = e2.v[x.n];
-          e2.v[x.n] = x.op === "=" ? v : bin(x.op.charAt(0), o, v);
+          e2.v[x.n] = shape(e2.t && e2.t[x.n], x.op === "=" ? v : bin(x.op.charAt(0), o, v));
           return e2.v[x.n];
         }
-        case "inc": { var e3 = look(env, x.n); if (!e3) throw 0; var old = e3.v[x.n]; e3.v[x.n] = old + x.d; return x.pre ? old + x.d : old; }
+        case "inc": { var e3 = look(env, x.n); if (!e3) throw 0; var old = e3.v[x.n]; e3.v[x.n] = shape(e3.t && e3.t[x.n], old + x.d); return x.pre ? e3.v[x.n] : old; }
+        case "cast": return shape(x.ty, ev(x.e, env));
         case "if": return ev(x.c, env) ? ev(x.a, env) : ev(x.b, env);
         case "un": { var u = ev(x.e, env); return x.op === "!" ? (u ? 0 : 1) : x.op === "~" ? ~u : x.op === "-" ? -u : +u; }
         case "bin":
           if (x.op === "&&") return ev(x.l, env) && ev(x.r, env) ? 1 : 0;
           if (x.op === "||") return ev(x.l, env) || ev(x.r, env) ? 1 : 0;
-          return bin(x.op, ev(x.l, env), ev(x.r, env));
+          return bin(x.op, ev(x.l, env), ev(x.r, env), x.op === "\x2F" && (fl(x.l, env) || fl(x.r, env)));
         case "call": {
           var args = x.a.map(function (a) { return ev(a, env); });
           if (BUILTIN[x.n]) return BUILTIN[x.n](args);
           var f = prog.f[x.n]; if (!f || f.p.length !== args.length) throw 0;
-          var local = { v: Object.create(null), up: { v: G, up: null } };
-          f.p.forEach(function (p, k) { local.v[p] = args[k]; });
-          try { run(f.b, local); } catch (r) { if (r instanceof RET) return r.v; throw r; }
+          var local = { v: Object.create(null), t: Object.create(null), up: { v: G, t: GT, up: null } };
+          f.p.forEach(function (p, k) { local.t[p] = f.pt[k]; local.v[p] = shape(f.pt[k], args[k]); });
+          try { run(f.b, local); } catch (r) { if (r instanceof RET) return shape(f.ty, r.v); throw r; }
           return 0;
         }
       }
       throw 0;
     }
-    function bin(op, a, b) {
+    function bin(op, a, b, real) {
       a = num(a); b = num(b);
       switch (op) {
         case "+": return a + b; case "-": return a - b; case "*": return a * b;
-        case "/": if (!b) throw 0; return Math.floor(a) === a && Math.floor(b) === b ? (a / b < 0 ? Math.ceil(a / b) : Math.floor(a / b)) : a / b;
+        case "/": if (!b) throw 0; return real ? a / b : (a / b < 0 ? Math.ceil(a / b) : Math.floor(a / b));
         case "%": if (!b) throw 0; return a % b;
         case "==": return a === b ? 1 : 0; case "!=": return a !== b ? 1 : 0;
         case "<": return a < b ? 1 : 0; case ">": return a > b ? 1 : 0; case "<=": return a <= b ? 1 : 0; case ">=": return a >= b ? 1 : 0;
@@ -45704,18 +45757,18 @@ Lantern.RFB = (function () {
       switch (s.k) {
         case "nop": return;
         // a block is a scope of its own, as in C: a name declared inside it hides an outer one only there
-        case "blk": var inner = { v: Object.create(null), up: env }; s.b.forEach(function (x) { run(x, inner); }); return;
+        case "blk": var inner = { v: Object.create(null), t: Object.create(null), up: env }; s.b.forEach(function (x) { run(x, inner); }); return;
         case "ifs": if (ev(s.c, env)) run(s.a, env); else if (s.b) run(s.b, env); return;
         case "ret": throw new RET(s.e ? ev(s.e, env) : 0);
-        case "decl": s.d.forEach(function (d) { env.v[d.n] = d.e ? ev(d.e, env) : 0; }); return;
+        case "decl": s.d.forEach(function (d) { if (env.t) env.t[d.n] = s.ty; env.v[d.n] = shape(s.ty, d.e ? ev(d.e, env) : 0); }); return;
         case "exp": ev(s.e, env); return;
       }
       throw 0;
     }
-    function call(n) { var f = prog.f[n]; if (!f) return; var local = { v: Object.create(null), up: { v: G, up: null } }; try { run(f.b, local); } catch (r) { if (!(r instanceof RET)) throw r; } }
+    function call(n) { var f = prog.f[n]; if (!f) return; var local = { v: Object.create(null), t: Object.create(null), up: { v: G, t: GT, up: null } }; try { run(f.b, local); } catch (r) { if (!(r instanceof RET)) throw r; } }
     function make() {
-      outs = {}; G = Object.create(null); clock = 0; spent += steps; steps = 0;
-      try { prog.g.forEach(function (d) { run(d, { v: G, up: null }); }); call("setup"); return true; } catch (e) { return false; }
+      outs = {}; G = Object.create(null); GT = Object.create(null); clock = 0; spent += steps; steps = 0;
+      try { prog.g.forEach(function (d) { run(d, { v: G, t: GT, up: null }); }); call("setup"); return true; } catch (e) { return false; }
     }
     if (!make()) return null;
     return {
@@ -45735,7 +45788,7 @@ Lantern.RFB = (function () {
   // wiring(q): what the question says is on which input -- a Start, a Stop that is normally open or
   // closed, an output -- or null when it does not say which way the Stop is wired
   function wiring(q) {
-    q = String(q || "");
+    q = String(q || "").replace(/\bN\.C\.?/g, "NC").replace(/\bN\.O\.?/g, "NO");   // (review 6: "Stop button (N.C.) on input 2")
     var KIND = "(normally[\\s-]+(?:closed|open)|N\\.?C\\.?|N\\.?O\\.?)", BTN = "(?:\\s+(?:push[\\s-]*)?(?:button|pushbutton|switch|contact|pb))?",
       AT = "\\s+(?:is\\s+)?(?:on|at|to|wired\\s+to|connected\\s+to|in)\\s+(?:discrete\\s+)?input\\s*(\\d+)", END = "\\s*(?=\\x29|[.;,]|$)";
     // NC and NO only in capitals: "no overload" is not N.O. (review 5)
@@ -45787,7 +45840,7 @@ Lantern.RFB = (function () {
   // and "pass" is true when one of them works (a healthy overload), "sure" when they all say the same.
   function startStop(text, w) {
     if (!w || !/readDiscrete/.test(String(text))) return null;
-    var s = sketch(text);
+    var began = Date.now(), s = sketch(text);
     if (!s) return null;
     function base(start, stop) {
       var o = {}, sv = start ? 1 : 0, pv = w.stop.nc ? (stop ? 0 : 1) : (stop ? 1 : 0);
@@ -45801,7 +45854,8 @@ Lantern.RFB = (function () {
     function run(seq, extra) {
       if (!s.reset()) return null;
       var o = null, ins;
-      if (s.spent() > 3000000) return null;   // enough: a sketch this costly is not run to the end (review 5)
+      // enough: a sketch this costly is not run to the end -- three million steps, or a third of a second (reviews 5, 6)
+      if (s.spent() > 3000000 || Date.now() - began > 300) return null;
       // each press held for eight scans: a debounce that counts five scans sees it (review 5)
       for (var i = 0; i < seq.length; i++) for (var k = 0; k < 8; k++) {
         ins = base(seq[i][0], seq[i][1]);
@@ -45853,8 +45907,12 @@ Lantern.RFB = (function () {
     });
     if (ways.some(function (r) { for (var k in r) if (r[k] === null) return true; return false; })) return null;
     var verdicts = ways.map(function (r) { return r.verdict; });
+    // (review 6) a way in which the motor never runs, whatever is pressed (an overload left tripped), says nothing about
+    // the Stop: "sure" is read over the other ways, when there are any
+    var live = ways.filter(function (r) { return r.idle || r.started || r.sealed || r.both || r.bothRunning || r.stopFirst; }).map(function (r) { return r.verdict; });
+    var judged = live.length ? live : verdicts;
     return { motor: motor, extras: extras, ways: ways, verdicts: verdicts, traces: traces, pass: verdicts.indexOf("") >= 0,
-      sure: verdicts.every(function (v) { return v === verdicts[0]; }), verdict: verdicts.indexOf("") >= 0 ? "" : verdicts[0] };
+      sure: judged.every(function (v) { return v === judged[0]; }), verdict: verdicts.indexOf("") >= 0 ? "" : judged[0] };
   }
   L.codeScan = { sketch: sketch, wiring: wiring, startStop: startStop };
 })();
@@ -46261,6 +46319,9 @@ Lantern.RFB = (function () {
   function startWins(lang, text, q) {
     q = String(q || "");
     if ((lang !== "arduino" && lang !== "st") || !/\bstop/i.test(q) || !/\b(start|run)/i.test(q) || !MACHINE.test(q)) return [];
+    // (1.24.13, review 6) a program of the size a start and a stop are written in: 100,000 brackets one inside another
+    // took this reading 40 seconds
+    if (String(text || "").length > 20000 || (String(text).match(/\x28/g) || []).length > 1500) return [];
     // (review 2) the words of a string are not code ("if (start)" printed on Serial), and code under #if may never
     // be built: strings are blanked for reading (the corrections are written from the code as it was), #if left alone
     // (review 3) Structured Text comments may nest (CODESYS): (* a (* b *) c *) is all comment
@@ -46272,7 +46333,7 @@ Lantern.RFB = (function () {
     var why = " A stop must override the start it belongs to (NFPA 79, IEC 60204-1).";
     // what a name stands for: every assignment of it, and a #define (bool permissive = !stop && !estop;
     // a global set in another function -- review 2)
-    var defs = {};
+    var defs = Object.create(null);   // (review 6: a global named constructor or toString broke the reading)
     re = /^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)[ \t]+([^\n]+)$/gm;
     while ((m = re.exec(c))) (defs[m[1]] = defs[m[1]] || []).push(m[2]);
     re = st ? /\b([A-Za-z_]\w*)\s*:=\s*([^;]+);/g : /(?:^|[;\x7B\x7D\s])(?:(?:const\s+)?(?:bool|boolean|int|byte|uint8_t)\s+)?([A-Za-z_]\w*)\s*=\s*([^=;][^;]*);/g;
@@ -46438,6 +46499,10 @@ Lantern.RFB = (function () {
   // (review 5: a motor that starts again when Stop is let go is not a Stop read the wrong way round -- the bench says it)
   var SCAN_STOP = /^(Stop turns the motor on|Stop does not stop the motor)/;
   function stopScan(lang, text, q) {
+    // (review 6) whatever a sketch is, this rule does not stop the reading of a reply: an error is nothing to say
+    try { return stopScan1(lang, text, q); } catch (e) { return []; }
+  }
+  function stopScan1(lang, text, q) {
     var S = L.codeScan;
     // (review 5) not where time is part of it -- a run-on after Stop, a delayed start: the run's scans are short. Time
     // said as time ("30 seconds", run-on, a timer), not "keeps running after Start is let go", which is a seal-in
@@ -46480,11 +46545,14 @@ Lantern.RFB = (function () {
       (r.traces || []).forEach(function (o, n) { for (var key in o) if (key !== "$next" && key !== r.motor) mirror[key] = (n === 0 || mirror[key]) && !!o[key] === !!o[r.motor]; });
       var others = function (t) { return (t || []).map(function (o) { var x = {}; for (var key in o) if (key !== r.motor && key !== "$next" && !mirror[key]) x[key] = !!o[key]; return JSON.stringify(x); }).join("|"); };
       var before = others(r.traces), subsets = [];
-      for (var size = 1; size <= Math.min(3, cand.length); size++) (function pick(from, chosen) {
+      // (review 6: 2,300 lines that name the Stop made every set of three before the first was tried) eight lines at most,
+      // and twenty sets
+      if (cand.length <= 8) for (var size = 1; size <= Math.min(3, cand.length) && subsets.length < 20; size++) (function pick(from, chosen) {
+        if (subsets.length >= 20) return;
         if (chosen.length === size) { subsets.push(chosen.slice()); return; }
         for (var u = from; u < cand.length; u++) { chosen.push(cand[u]); pick(u + 1, chosen); chosen.pop(); }
       })(0, []);
-      for (var si = 0; si < subsets.length && si < 20 && Date.now() - t0 < 1500; si++) {
+      for (var si = 0; si < subsets.length && si < 20 && Date.now() - t0 < 1000; si++) {
         var tr = ls.slice();
         subsets[si].forEach(function (x) { tr[x.k] = x.nl; });
         var again = S.startStop(tr.join("\n"), w);
@@ -46494,7 +46562,8 @@ Lantern.RFB = (function () {
             var code = function (k) { return (tr[k] || "").replace(/\x2F\x2F.*$/, "").replace(/\s+$/, ""); }, a = x.k, b = x.k;
             while (a > 0 && code(a - 1) && !/[;\x7B\x7D]$/.test(code(a - 1))) a--;
             while (b < tr.length - 1 && !/[;\x7B\x7D]$/.test(code(b)) && code(b + 1)) b++;
-            var t = tr.slice(a, b + 1).map(function (l, n) { return a + n === x.k ? l : l.replace(/\x2F\x2F.*$/, ""); }).join(" ").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "");
+            // (review 6) a statement over several lines is given on one, without its comments: a // would hide the rest
+            var t = tr.slice(a, b + 1).map(function (l) { return a === b ? l : l.replace(/\x2F\x2F.*$/, ""); }).join(" ").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "");
             return t + (/[;\x7D]$/.test(code(b)) ? "" : " (in place of " + ls.slice(a, b + 1).join(" ").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "") + ")");
           }).join(" ")];
       }
@@ -47151,7 +47220,7 @@ Lantern.RFB = (function () {
       ideal: "MAKE CODE: P1AM start/stop\nlanguage arduino\n#include <P1AM.h>\n\nbool running = false;\n\nvoid setup() {\n  while (!P1.init()) {\n    ;   \x2F\x2F wait for the modules\n  }\n}\n\n" +
         "void loop() {\n  bool start = P1.readDiscrete(1, 1);\n  bool stopOk = P1.readDiscrete(1, 2);   \x2F\x2F NC: on while not pressed\n  running = (start || running) && stopOk;\n  P1.writeDiscrete(running, 2, 1);\n}\nEND",
       check: function (p) {
-        var c = code(p), sv = scanned(c);
+        var c = code(p), sv = scanned(String(p.text || ""));   // the sketch as written: code() cuts "a // b" strings (review 6)
         return lang(p, "arduino") || (!/P1\.init\s*\x28/.test(c) ? "the modules are never started (P1.init)" : !/readDiscrete/.test(c) ? "the inputs are never read" :
           !/writeDiscrete/.test(c) ? "the output is never written" :
           // (1.24.13) the sketch run, press by press, with the question's wiring (Start NO on input 1, Stop NC on

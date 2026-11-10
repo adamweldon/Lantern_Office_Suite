@@ -90,9 +90,38 @@ it -- stopPressed, with a `!` to make the name true -- and kept `&&`.
   its 69 wrong ones get one -- the rest, a motor that starts again when
   Stop is let go with the Stop read right (the bench says it) and a sketch
   timed with millis(); every line to write runs right in its evaluator;
-- REVIEW6_PLACEHOLDER
+- review 6, by another agent (94 safety sketches, each in its own process;
+  77 small sketches run as real C++ with g++ beside Lantern's
+  interpreter; 59 start/stop sketches in other words, each line to write
+  compiled and run): nothing reached the page, but six sketches took over
+  2 s or ran out of memory (2,300 lines naming the Stop built every set of
+  three lines before trying one; writes to ever-new slots; doubling
+  macros; 100,000 nested brackets took the Start-wins reading 40 s); 18
+  of the 77 ran otherwise than C (a bool not made 0 or 1, integer sizes,
+  float division, casts, octal and character literals, a `#define` put in
+  brackets or defined again); the bench failed a right sketch with `//`
+  inside a string and passed four wrong ones it could not run; a line
+  with a `//` comment hid the rest of its statement. Mended: types as C
+  has them on the P1AM's 32-bit processor, macros as C puts them in, a
+  slot of 0 to 15, at most 8 lines and 20 sets tried, the Start-wins
+  reading only for a program under 20,000 characters, strings read before
+  comments. Now all 77 run as C runs them; none of its 37 right sketches
+  gets a message or fails the bench; 21 of its 22 wrong ones get one (the
+  last keeps its inputs in an array, which is not run) and every line to
+  write compiles and runs right; none of the 93 safety sketches reaches
+  the page or takes 5 s (the 94th, a right sketch in 1 MB of blank lines,
+  spends its minute in the bench's older reply parser: `QUEUE.md` 4).
+  These last mends were checked against reviews 5 and 6's inputs and C,
+  not by a seventh reviewer.
 
-**What was run.** RUN_PLACEHOLDER
+**What was run.** `npm test`: ALL CHECKS PASS (83 suites); the browser tests
+of Code Lab, the text reader and the bench (code_lab, text_reader,
+bench_headless, bench_run9). The small models' run of 1.24.12 (GitHub
+42701646389, `tests/fixtures/bench_run_1252_*.json`): the 4B 107 of 114 on
+the same EPYC 7763 as before -- its tank fill passes, which failed four
+versions -- the 2B 73 (its Blink passes), the 0.8B 59. Not run: any model
+on 1.24.13; the small models' run starts with the push. Adam is running
+the 35B on 1.24.12.
 
 ## 1.24.12 — Adam's run of 1.24.11: a stop that does not stop, and programs written without their first line (2026-11-09)
 

@@ -160,6 +160,10 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      with a pull-up (only P1AM inputs are run), and a motor that starts
      again when Stop is let go (the bench says it, Lantern does not).
      Watch the next 35B run: does the example's new name hold?
+     Also left: sketches with arrays or loops are not run (the bench falls
+     back to its name checks: review 6's X21 passes it wrongly); the
+     bench's reply parser (AI_BENCH grade, A.parseReply) takes a minute on
+     a 1 MB reply -- a model cannot write one, but a cap would be cheap.
    - **Start wins, missed:** 28 of review 1's 77 wrong programs, 41 of
      review 2's 94 and 15 of review 3's 62 are left unsaid (a ternary, an
      SR or RS block, a state machine, a timer's .Q, a start behind a
