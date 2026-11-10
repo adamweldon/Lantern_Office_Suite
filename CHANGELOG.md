@@ -22,18 +22,54 @@ the choice -- which sentence -- and let Lantern do the copying.
 
 - *Numbered sentences* (LIBRARY_ENGINE, LIBRARY_CHECKS). The passages go to
   the model with each sentence numbered: `[2.3]` is the third sentence of
-  passage 2 (a break after `.`, `!`, `?` or `...` before a capital or a
-  digit, not after "e.g.", "St." or an initial). The model writes
-  "ANSWER: ... [2.3]" and no QUOTE line; Lantern turns each `[n.m]` into
-  `[n]` and writes "QUOTE [n]: <that sentence>" under the answer itself.
-  `[1.2, 1.4]`, `[1.2][1.4]` and `[1.2-4]` name several; "QUOTE [2.3]"
-  becomes the sentence. What the answer says is still checked against the
-  sentence it names: a pointer to a sentence that does not say the fact
-  goes back with the number of the one that does ("no sentence it cites
-  says discharge, below: [3.3] says it ... -- cite [3.3]"); a pointer to
-  no sentence goes back with the numbers there are. The old form, `[n]`
-  and a QUOTE line copied from the passage, still works. Chat's own
-  instructions and the second try say the same.
+  passage 2. The model writes "ANSWER: ... [2.3]" and no QUOTE line;
+  Lantern turns each `[n.m]` into `[n]` and writes "QUOTE [n]: <that
+  sentence>" under the answer itself. `[1.2, 1.4]`, `[1.2][1.4]`,
+  `[1.2-4]` and `[1.2 to 1.4]` name several; "QUOTE [2.3]" (or "QUOTE
+  [2.3], [2.5]") becomes the sentences. The old form, `[n]` and a QUOTE
+  line copied from the passage, still works and is checked as before.
+  Chat's instructions, both second tries and the pointer turn (a decline
+  with the answer in front of it) say the same.
+- *Sentences as a reader counts them.* A break after `.`, `!`, `?` before
+  a capital or a digit, but not after an abbreviation (Gen., Ft., Mt.,
+  Dr., St., approx.), a number's (No. 5, Op. 67, c. 1900, p. 45), an
+  initial (J. R. R., C. S. Lewis) or an acronym (U.S. Navy) -- unless a
+  sentence plainly starts there ("the U.S. Today they"); "330 m." and
+  "5 p.m." end one; "1." and "Step 1." go with their step.
+- *What the answer says, against the sentences it names* -- not the whole
+  passage, as the first draft did:
+  - its numbers (a number word in the passage counts: "three" says 3; a
+    number the question gives that no sentence states, or a title's, needs
+    none), and their units, the unit itself (4,392 feet against 4,392 m
+    goes back; m and metres, A and amps, km/h and kilometres per hour are
+    one);
+  - its names: in a cited sentence, its title, the sentence a pronoun
+    opening it points back to ("He wrote The Hobbit" is Tolkien's), a short
+    form ("N. Main St.", "U.S.", "Rear Adm."), or the rest of a name the
+    sentence gives in part ("Armstrong" of "Neil Armstrong");
+  - the other words it adds (under half may be missing when no number
+    stated by the sentences carries the answer), any spelling or accent;
+  - a name the sentence rules out ("Canberra, not Sydney"), unless the
+    answer says what the sentence goes on to say of it ("..., which is the
+    largest city"); "yes" against a "not"; "is W" against "is not W"; a
+    question sentence backs nothing;
+  - for a question that asks one fact (who, what, where, when, how tall,
+    how many), a sentence with every word of the question -- and, for
+    "when", a date -- where the ones cited leave something out: the
+    answer goes to it ("Who wrote The Hobbit?" citing C. S. Lewis's
+    sentence; "died in 1892" citing the birth).
+  A value written like a pointer ("about [1.5] bar", "is [2.5]") is a
+  value; a pointer to no passage or no sentence is named, with the numbers
+  there are; every thousands comma comes off (47,564,296).
+- *Messages that name the sentence*, and do not steer a model to a
+  sentence of another fact ("born in Bournemouth" citing the birth is told
+  what the birth says, not sent to the death); when no sentence says it,
+  what the cited one says, or to leave it out. The example pointer in the
+  instructions names no sentence (`[4.2]` with three passages), so a model
+  that copies it is told so.
+- *Chat's detailed answers* are checked sentence by sentence against the
+  sentences each names, with the same checks for numbers, units, names,
+  what a sentence rules out or denies.
 - *What each kind of question costs*, from 1.24.13, now has its "before":
   on Adam's run, a formula 27 tokens a right answer and one round, a
   library answer 169 and 2.17 rounds, a made thing 250 and 1.6, a chat 400
