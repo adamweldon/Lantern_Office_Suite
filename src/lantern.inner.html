@@ -27709,6 +27709,141 @@ Lantern.RFB = (function () {
     }
     return null;
   }
+  // (1.24.14) lineFor(answer, n, question, sources) -> {n, lines: [{n, part, text}]} or null: the lines to write when
+  // the answer cites [n] and has no QUOTE [n] that is in passage n. On 1.24.9, 1.24.11 and 1.24.13 the 35B answered
+  // the iPhone 8's battery rightly from iFixit with "discharge the battery below 25% [3]" and no QUOTE [3] line, was
+  // told "there is no QUOTE [3] line", and wrote the same reply again, three runs running; Nairobi's "ride-hailing
+  // apps [3]" went the same way with a QUOTE [3] in no passage (bench_run_1253_35b_library.json). Rule 3: send back
+  // the line to write. Lantern does not write it (a rule that did was taken out in 1.24.11: words in common do not
+  // say what a sentence means, tests/library_quote_1251.js): it names a sentence only when the part is that
+  // sentence's own words (says1), for every part of the answer that cites [n], and when nothing in the answer is
+  // left uncited; the model writes the line, and its answer is checked as any other.
+  var FRAME = {};
+  ("include includes including like such example examples option options way ways method methods finally lastly next " +
+   "also additionally then step steps yes").split(" ").forEach(function (w) { FRAME[w] = 1; });
+  var NEG = /\b(not|no|never|none|nothing|nor|without|cannot|can['\u2019]t|don['\u2019]t|doesn['\u2019]t|didn['\u2019]t|won['\u2019]t|isn['\u2019]t|aren['\u2019]t|wasn['\u2019]t|weren['\u2019]t|shouldn['\u2019]t|mustn['\u2019]t|avoid|avoiding|minus)\b/i;
+  var OPP = [["over", "under"], ["above", "below"], ["more", "less"], ["more", "fewer"], ["most", "least"], ["before", "after"], ["increase", "decrease"],
+    ["increases", "decreases"], ["high", "low"], ["higher", "lower"], ["hot", "cold"], ["warm", "cool"], ["open", "close"], ["add", "remove"],
+    ["raise", "lower"], ["maximum", "minimum"], ["first", "last"], ["left", "right"], ["wet", "dry"], ["inside", "outside"], ["start", "stop"],
+    ["early", "late"], ["long", "short"], ["large", "small"], ["big", "small"], ["heavy", "light"], ["fast", "slow"], ["always", "never"],
+    ["safe", "unsafe"], ["positive", "negative"], ["north", "south"], ["east", "west"], ["front", "back"], ["top", "bottom"], ["upper", "lower"],
+    ["fahrenheit", "celsius"], ["minutes", "hours"], ["minutes", "seconds"], ["hours", "days"], ["days", "weeks"], ["weeks", "months"],
+    ["months", "years"], ["grams", "kilograms"], ["milligrams", "grams"], ["metres", "kilometres"], ["meters", "kilometers"],
+    ["adult", "child"], ["adults", "children"], ["male", "female"], ["men", "women"], ["daily", "weekly"], ["hydrogen", "helium"],
+    ["oxygen", "nitrogen"], ["acid", "alkali"], ["cathode", "anode"], ["input", "output"], ["mild", "severe"], ["mild", "moderate"], ["moderate", "severe"]];
+  // words a part may leave out of the sentence, or the sentence have that the part leaves out, only when they do not
+  // change what it says: never one of these
+  var HOLD = { only: 1, unless: 1, except: 1, "if": 1, but: 1, until: 1, not: 1, never: 1, no: 1, nor: 1, without: 1, instead: 1, rather: 1,
+    however: 1, although: 1, though: 1, minus: 1, cannot: 1 };
+  var NUMBER = { zero: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10",
+    eleven: "11", twelve: "12", fifteen: "15", twenty: "20", thirty: "30", forty: "40", fifty: "50", hundred: "100", half: "0.5", once: "1", twice: "2" };
+  var SKIP = { the: 1, a: 1, an: 1, your: 1, its: 1, their: 1, his: 1, her: 1, our: 1, my: 1, this: 1, that: 1, these: 1, those: 1, it: 1, they: 1, you: 1, is: 1, are: 1 };
+  function root(w) { return w.length > 4 ? w.replace(/(?:ing|ed|es|e|s|ly)$/, "") : w.length > 3 ? w.replace(/s$/, "") : w; }
+  function alike(a, b) {
+    if (a === b) return true;
+    var s = a.length < b.length ? a : b, l = s === a ? b : a;
+    return root(a) === root(b) || (s.length >= 4 && l.indexOf(s) === 0 && l.length - s.length <= 3);
+  }
+  // words1(t) -> words, numbers (words for numbers as numbers; a minus as the word minus) and "|" where a comma,
+  // a semicolon, a colon, a bracket or a sentence's end falls
+  function words1(t) {
+    t = String(t || "").replace(/(^|[\s(:=])[\u2212\-](?=\d)/g, "$1 minus ").replace(/(\d)\s*%/g, "$1 percent ").replace(/(\d),(\d{3})/g, "$1$2")
+      .replace(/[,;:()\u2013\u2014!?]|\.(?!\d)/g, " | ").replace(/\[\d+\]/g, " ");
+    return (t.toLowerCase().match(/[a-z\u00c0-\u024f]+(?:['\u2019][a-z]+)?|\d+(?:\.\d+)?|\|/g) || []).map(function (w) { return NUMBER[w] || w.replace(/[\u2019]/g, "'"); });
+  }
+  function content(w) { return w !== "|" && (/^\d/.test(w) || (w.length >= 3 && !WEAK[w] && !SKIP[w] && !FRAME[w])); }
+  // says1(part, question, sentence): the part is the sentence's own words, some left out and none added or moved
+  function says1(part, question, sentence) {
+    var qw = words1(question), sw = words1(sentence), pw = words1(String(part).replace(/^\s*(yes|no)\b[\s,.!:;]*/i, ""));
+    // a frame that says what the question asks for again ("To replace the battery, discharge ...") is not the
+    // part's fact; a place or a thing it is about is ("In Kampala, matatus run ...")
+    var cut = pw.indexOf("|");
+    if (cut > 0 && /^(to|for)$/.test(pw[0]) && pw.slice(0, cut).every(function (w) { return !content(w) || qw.some(function (x) { return alike(w, x); }); })) pw = pw.slice(cut + 1);
+    pw = pw.filter(function (w) { return w !== "|"; });
+    var need = pw.filter(function (w) { return !SKIP[w] && !FRAME[w]; });
+    if (!need.some(function (w) { return content(w) && !qw.some(function (x) { return alike(w, x); }); })) return false;
+    var at = -1, first = -1, i, j, k;
+    for (i = 0; i < need.length; i++) {
+      for (j = at + 1; j < sw.length && !(sw[j] !== "|" && (/^\d/.test(need[i]) ? parseFloat(sw[j]) === parseFloat(need[i]) : alike(need[i], sw[j]))); j++) { }
+      if (j >= sw.length) return false;
+      if (at >= 0) {
+        var gap = sw.slice(at + 1, j).filter(function (w) { return w !== "|"; });
+        if (gap.length > 2 || gap.some(function (w) { return HOLD[w] || NEG.test(w); })) return false;
+      } else first = j;
+      at = j;
+    }
+    // what follows the part in its clause of the sentence ("should take aspirin only if a doctor advises it")
+    for (k = at + 1; k < sw.length && sw[k] !== "|"; k++) if (HOLD[sw[k]] || NEG.test(sw[k])) return false;
+    var lowP = " " + pw.join(" ") + " ", lowS = " " + sw.join(" ") + " ";
+    if (NEG.test(pw.join(" ")) !== NEG.test(sw.slice(first, at + 1).join(" "))) return false;
+    // a "not" before the part in its clause ("Don't use a hair dryer on the battery")
+    for (k = first - 1; k >= 0 && sw[k] !== "|"; k--) if (HOLD[sw[k]] || NEG.test(sw[k])) return false;
+    return !OPP.some(function (p) {
+      return [[p[0], p[1]], [p[1], p[0]]].some(function (ab) { return lowP.indexOf(" " + ab[0] + " ") >= 0 && lowP.indexOf(" " + ab[1] + " ") < 0 && lowS.indexOf(" " + ab[1] + " ") >= 0 && lowS.indexOf(" " + ab[0] + " ") < 0; });
+    });
+  }
+  // parts(answer) -> {list: [{n, text}], loose}: the words before each [n], back to the [k] before them or the start
+  // of their sentence; loose when words of the answer that say something are in no part (a sentence with no [n],
+  // words after the last [n])
+  function parts(answer) {
+    var a = String(answer || ""), re = /\[(\d+)\]/g, out = [], m, from = 0, last = "", loose = false;
+    function says(t) { return words1(t).some(function (w) { return content(w); }); }
+    while ((m = re.exec(a))) {
+      var raw = a.slice(from, m.index), t = raw.replace(/^[\s\S]*[.!?]\s+(?=[A-Z0-9])/, "");
+      if (t.length < raw.length && says(raw.slice(0, raw.length - t.length))) loose = true;
+      t = t.replace(/^[\s,;:.\-\u2013\u2014]+/, "").replace(/^(?:and|or|then|but|also|while|so|plus)\s+/i, "").replace(/[\s,;:]+$/, "");
+      from = m.index + m[0].length;
+      if (!t) t = last;
+      if (t) out.push({ n: parseInt(m[1], 10), text: t });
+      last = t;
+    }
+    if (says(a.slice(from))) loose = true;
+    return { list: out, loose: loose };
+  }
+  function sentencesOf(t) {
+    // (a point inside a number, "2.8 percent", or a word, "e.g.x", does not end a sentence)
+    return (String(t || "").match(/(?:[^.!?]|[.!?](?=[^\s.!?]))+(?:[.!?]+|$)/g) || []).map(function (x) { return x.replace(/^\s+|\s+$/g, ""); })
+      .filter(function (x) { return x.length > 12 && x.length <= 300; });
+  }
+  // backs(part, question, passage): the words the part adds to the question, but frame words ("include",
+  // "finally"), are at least half of them in the passage, and its numbers all are -- as Chat reads a sentence
+  function backs(part, question, passage) {
+    var qw = words1(question), pw = words1(part), sw = words1(passage);
+    var add = pw.filter(function (w, i) { return content(w) && !/^\d/.test(w) && pw.indexOf(w) === i && !qw.some(function (x) { return alike(w, x); }); });
+    var miss = add.filter(function (w) { return !sw.some(function (x) { return alike(w, x); }); });
+    var nums = pw.filter(function (w) { return /^\d/.test(w); });
+    return miss.length * 2 <= add.length && nums.every(function (x) { return sw.some(function (y) { return /^\d/.test(y) && parseFloat(y) === parseFloat(x); }); });
+  }
+  function lineFor(answer, n, question, sources) {
+    var ps = parts(answer), mine = ps.list.filter(function (p) { return p.n === n; }), lines = [];
+    if (ps.loose || !mine.length) return null;
+    // every other part of the answer is said by the passage it cites, as Chat's check of a sentence reads it (the
+    // words it adds to the question are there, and its numbers): a line is not handed to an answer whose other
+    // parts would then ride on the quotes of the rest (the review of 1.24.11: "gently overheat the device to soften
+    // the adhesive [2]" beside a right step 1)
+    if (!ps.list.every(function (p) { return p.n === n || (sources[p.n - 1] && backs(p.text, question || "", sources[p.n - 1].text)); })) return null;
+    var order = [n].concat(sources.map(function (s, x) { return x + 1; }).filter(function (x) { return x !== n; }));
+    for (var i = 0; i < mine.length; i++) {
+      var hit = null;
+      for (var k = 0; k < order.length && !hit; k++) {
+        var src = sources[order[k] - 1], ss = src ? sentencesOf(src.text) : [];
+        for (var j = 0; j < ss.length && !hit; j++) if (says1(mine[i].text, question || "", ss[j])) hit = { n: order[k], part: mine[i].text, text: ss[j] };
+      }
+      if (!hit) return null;
+      if (!lines.some(function (l) { return l.n === hit.n && l.text === hit.text; })) lines.push(hit);
+    }
+    return lines.length <= 3 ? { n: n, lines: lines } : null;
+  }
+  function withLine(problem, answer, n, question, sources, more, had) {
+    var lf = more ? null : lineFor(answer, n, question, sources);
+    if (!lf) return problem;
+    // (a QUOTE [n] line left in would cite [n] again)
+    var gone = had && lf.lines.every(function (l) { return l.n !== n; });
+    return problem + ": " + lf.lines.map(function (l) {
+      return l.n === n ? "for \u201c" + l.part + "\u201d write QUOTE [" + n + "]: " + l.text :
+        "\u201c" + l.part + "\u201d is in passage [" + l.n + "], not [" + n + "] \u2014 write [" + l.n + "] after it in place of [" + n + "], and QUOTE [" + l.n + "]: " + l.text;
+    }).join("; ") + (gone ? " \u2014 and leave out your QUOTE [" + n + "] line" : "");
+  }
   function verify(text, sources, question) {
     text = literal(text, sources || []).text; sources = sources || [];
     var out = { ok: false, declined: false, cites: [], quotes: [], problems: [], answer: "" };
@@ -27725,13 +27860,16 @@ Lantern.RFB = (function () {
       out.quotes.push({ n: k, text: qt, ok: good });
       if (!seen[k]) { seen[k] = 1; out.cites.push(k); }
     }
+    // (1.24.14) an answer that goes on past its ANSWER line (bullets on the lines below it) is not handed a line:
+    // verify reads the ANSWER line only
+    var more = !!am && text.slice(am.index + am[0].length).split("\n").some(function (l) { return /\S/.test(l) && !/^\s*QUOTE\b/i.test(l); });
     if (!out.answer) out.problems.push("there is no ANSWER line");
     if (!out.cites.length) out.problems.push("the answer cites no passage: put [n] after the fact and add a line QUOTE [n]: <sentence copied from passage n>");
     out.cites.forEach(function (n) {
       if (!sources[n - 1]) { out.problems.push("there is no passage [" + n + "]"); return; }
       var qs = out.quotes.filter(function (q) { return q.n === n; });
-      if (!qs.length) out.problems.push("there is no QUOTE [" + n + "] line");
-      else if (!qs.some(function (q) { return q.ok; })) out.problems.push("QUOTE [" + n + "] is not in passage " + n + ": copy the sentence exactly");
+      if (!qs.length) out.problems.push(withLine("there is no QUOTE [" + n + "] line", out.answer, n, question, sources, more));
+      else if (!qs.some(function (q) { return q.ok; })) out.problems.push(withLine("QUOTE [" + n + "] is not in passage " + n + ": copy the sentence exactly", out.answer, n, question, sources, more, true));
     });
     var cited = out.cites.map(function (n) { return sources[n - 1] ? sources[n - 1].text : ""; }).join(" ");
     var have = {}; numbers(cited).forEach(function (x) { have[String(parseFloat(x))] = 1; });
@@ -27834,6 +27972,8 @@ Lantern.RFB = (function () {
   }
   window.Lantern.libraryVerify = verify;
   window.Lantern.libraryRenumber = renumber;
+  window.Lantern.libraryLineFor = lineFor;
+  window.Lantern.libraryLineFor.debug = { parts: parts, says1: says1, says: function (a, b, c) { return says(a, b, c); }, sentencesOf: sentencesOf };
   window.Lantern.libraryLiteral = literal;
   window.Lantern.libraryGround = function (text, sources, question) { var g = ground(text, sources, question); g.problems = groundProblems(g); return g; };
   // libraryGroundView(g) -> what Lantern found, sentence by sentence.
@@ -29114,11 +29254,21 @@ Lantern.RFB = (function () {
   var COLORS = { red: "#dc2626", orange: "#f97316", yellow: "#facc15", green: "#16a34a", "dark green": "#166534", lime: "#84cc16",
     blue: "#2563eb", "dark blue": "#1e3a8a", sky: "#7dd3fc", "light blue": "#7dd3fc", cyan: "#06b6d4", purple: "#7c3aed", pink: "#ec4899",
     brown: "#92400e", tan: "#d6b38a", beige: "#e7d7b1", black: "#111827", gray: "#6b7280", grey: "#6b7280", "light gray": "#d1d5db",
-    "light grey": "#d1d5db", white: "#ffffff", gold: "#d4a017", silver: "#c0c0c0", navy: "#1e3a8a", teal: "#0d9488", sand: "#e9d8a6" };
+    "light grey": "#d1d5db", white: "#ffffff", gold: "#d4a017", silver: "#c0c0c0", navy: "#1e3a8a", teal: "#0d9488", sand: "#e9d8a6",
+    "dark gray": "#374151", "dark grey": "#374151" };
+  // (1.24.14) "dark gray", "light green", "pale yellow": a shade of a colour the table has. The 35B's mountains at
+  // sunset, "tri 5 6 12 1 19 6 fill dark gray", went back as an unknown colour "dark" on 1.24.13, and the 35B wrote
+  // the same line again (bench_run_1253_35b_library.json). Dark is the colour mixed 45% toward black, light and pale
+  // 50% toward white, deep as dark, bright the colour itself.
+  var SHADE = { dark: [0, 0.45], deep: [0, 0.45], light: [255, 0.5], pale: [255, 0.5], bright: [0, 0] };
+  function shade(hex, to, k) {
+    return "#" + [1, 3, 5].map(function (i) { var v = parseInt(hex.slice(i, i + 2), 16); return ("0" + Math.round(v + (to - v) * k).toString(16)).slice(-2); }).join("");
+  }
   function colour(words, at) {   // colour name (one or two words) or #hex starting at words[at]
     var a = (words[at] || "").toLowerCase(), b = (words[at + 1] || "").toLowerCase();
     if (/^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(a)) return { c: a, n: 1 };
     if (COLORS[a + " " + b]) return { c: COLORS[a + " " + b], n: 2 };
+    if (SHADE[a] && COLORS[b] && /^#[0-9a-f]{6}$/.test(COLORS[b])) return { c: shade(COLORS[b], SHADE[a][0], SHADE[a][1]), n: 2 };
     if (COLORS[a]) return { c: COLORS[a], n: 1 };
     return null;
   }
@@ -47896,6 +48046,32 @@ Lantern.RFB = (function () {
   // became "swap holder of gold and left of holder of gold" -- one place --
   // and the block ran cleanly to a wrong order.
   var NUMW = { two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+  // chain(ref) -> {n, link, base}: how many places a place written as a chain moves from the thing it is counted
+  // from, as TRACK's runner reads it (Track.prototype.place: "left of left of holder of gold" is the place left of
+  // the place left of the gold's cup -- two places; "2 left of left of X" three). On 1.24.11 and 1.24.13 the 35B
+  // wrote step 2 of the coins under the cups, "the cup two places to its left", as "swap holder of gold and left of
+  // left of holder of gold" -- two places, and the block ran to the right order -- and this check counted one: it
+  // was told to write "2 left of left of holder of gold", three places, which fell off the row, and the 35B worked
+  // the puzzle out itself, wrong, both times (bench_run_1253_35b_library.json, 1.24.14).
+  var LINK = "(?:(\\d+|one|two|three|four|five|six|seven|eight|nine|ten)\\s+(?:places?\\s+|spots?\\s+|positions?\\s+|seats?\\s+|steps?\\s+)?)?" +
+    "(?:immediately\\s+|directly\\s+|just\\s+)?(?:to\\s+(?:the\\s+)?)?(left\\s+of|right\\s+of|behind|in\\s+front\\s+of|ahead\\s+of|before|after)\\s+";
+  function chain(ref) {
+    var s = String(ref || "").replace(/^\s+|\s+$/g, ""), re = new RegExp("^" + LINK, "i"), out = { n: 0, links: 0, link: "", base: s }, m;
+    while ((m = re.exec(s))) {
+      out.n += m[1] ? (/^one$/i.test(m[1]) ? 1 : NUMW[m[1].toLowerCase()] || parseInt(m[1], 10) || 1) : 1;
+      out.links++;
+      if (!out.link) out.link = m[2].toLowerCase().replace(/\s+/g, " ");
+      s = s.slice(m[0].length);
+    }
+    out.base = s;
+    return out;
+  }
+  // moves(line) -> the number of places each chained place in a line moves ("left of left of X": 2)
+  function moves(line) {
+    var re = new RegExp("(?:^|[\\s,(])((?:" + LINK + ")+)", "gi"), out = [], m;
+    while ((m = re.exec(String(line || "")))) out.push(chain(m[1] + "x").n);
+    return out;
+  }
   // pairLine(steps, lines, at) -> {text, ref} or null: the block line that
   // writes the step phrase found at "at". The steps' place phrases ("two
   // places to its left", "directly to the left of") and the block's "left
@@ -47911,7 +48087,7 @@ Lantern.RFB = (function () {
     var refs = [];
     lines.forEach(function (l) {
       var r = /(?:^|\s)((?:left|right)\s+of\s+.+?|(?:behind|in\s+front\s+of|ahead\s+of)\s+.+?)(?:\s+and\s+|$)/i.exec(l);
-      if (r) refs.push({ text: l, ref: r[1], counted: /(?:^|\s)\d+\s+(?:left|right|behind|in\s+front|ahead)\b/i.test(l) });
+      if (r) refs.push({ text: l, ref: r[1], chain: chain(r[1]), counted: /(?:^|\s)\d+\s+(?:left|right|behind|in\s+front|ahead)\b/i.test(l) });
     });
     var k = -1, i;
     for (i = 0; i < ph.length; i++) if (Math.abs(ph[i] - at) <= 3) k = i;
@@ -47934,10 +48110,12 @@ Lantern.RFB = (function () {
       if (seen[key]) continue;
       seen[key] = 1;
       var lr = side === "left" || side === "forward" || side === "ahead" || side === "up" ? "left" : side === "right" || side === "back" || side === "backwards" || side === "behind" || side === "down" ? "right" : side;
-      var ok = new RegExp("\\b" + n + "\\s+(left|right|places?|before|after|ahead|behind)\\b|\\bshift\\s+(left|right)\\s+" + n + "\\b|\\b(left|right)\\s+" + n + "\\b").test(body);
+      var ok = new RegExp("\\b" + n + "\\s+(left|right|places?|before|after|ahead|behind)\\b|\\bshift\\s+(left|right)\\s+" + n + "\\b|\\b(left|right)\\s+" + n + "\\b").test(body) ||
+        block.lines.some(function (l) { return moves(l).indexOf(n) >= 0; });
       if (!ok) {
-        var pl = pairLine(steps, block.lines, m.index);
-        out.push(pl ? "the steps say \u201c" + m[0] + "\u201d, but its line, \u201c" + pl.text + "\u201d, moves 1 place: write \u201c" + n + " " + pl.ref + "\u201d in that line, and leave the other lines as they are" :
+        var pl = pairLine(steps, block.lines, m.index), pn = pl ? pl.chain.n || 1 : 1;
+        out.push(pl ? "the steps say \u201c" + m[0] + "\u201d, but its line, \u201c" + pl.text + "\u201d, moves " + pn + " place" + (pn === 1 ? "" : "s") + ": write \u201c" + n + " " +
+          (pl.chain.links ? pl.chain.link + " " + pl.chain.base : pl.ref) + "\u201d in that line, and leave the other lines as they are" :
           "the steps say \u201c" + m[0] + "\u201d, but no line of the block moves " + n + " places: write it with the number, as in \u201c" + n + " " + lr + " of holder of \u2026\u201d " +
           "(or \u201cshift " + lr + " " + n + "\u201d when every one moves)");
       }
@@ -47946,7 +48124,7 @@ Lantern.RFB = (function () {
   }
   var tr = (window.Lantern.aiSolvers || []).filter(function (s) { return s.kind === "TRACK"; })[0];
   if (tr && !tr.check) tr.check = function (block, q, r) { return named(block, q, r).concat(distances(block, q)); };
-  window.Lantern.aiPuzzleCheck = { named: named, distances: distances };
+  window.Lantern.aiPuzzleCheck = { named: named, distances: distances, chain: chain, moves: moves };
 })();
 // ===========================================================================
 // MODULE: AI_PUZZLE_CHECK - END
@@ -48934,6 +49112,37 @@ Lantern.RFB = (function () {
       }
     }
     if (Object.keys(count).some(function (k) { return count[k] >= 3; })) return { lines: items.map(function (it) { return it.line; }), said: said, problems: problems };
+    // 0b. (1.24.14) a shape drawn before a band across the picture (the ground, a sea, the sky) that covers all of it
+    // is not seen at all: it goes just after the band, and is said. The 0.8B on 1.24.12 and the 4B on 1.24.13 drew
+    // the road to the horizon, "tri 0 12 10 6 20 12 fill gray", and then the ground over it, "rect 0 6 20 6 fill
+    // green"; asked about the hidden tri ("draw the background first"), the 4B wrote the same order again
+    // (bench_run_1253_4b.json). Nothing else changes: what was drawn after the band stays on top of the shape; the
+    // shape shows where only the band showed. Not a band itself, nor of the band's own colour (it would look the
+    // same), nor a shape written again after the band, nor a block cut off.
+    if (!(opts && opts.cut)) {
+      var under = [];
+      items.forEach(function (it, a) {
+        var A = it.o, bA, pts = [], x, y, b, j;
+        if (!A || !solid(A) || wide(A)) return;
+        bA = box(A);
+        for (x = Math.max(0, bA[0]) + 0.125; x < Math.min(GW, bA[2]); x += 0.25) for (y = Math.max(0, bA[1]) + 0.125; y < Math.min(GH, bA[3]); y += 0.25) if (inside(A, x, y)) pts.push([x, y]);
+        if (pts.length < 2) return;
+        for (b = -1, j = items.length - 1; j > a && b < 0; j--) {
+          var B = items[j].o;
+          if (wide(B) && pts.every(function (p) { return inside(B, p[0], p[1]); })) b = j;
+        }
+        if (b < 0 || items[b].o.fill === A.fill) return;
+        for (j = b + 1; j < items.length; j++) if (key(items[j]) === key(it)) return;
+        under.push({ it: it, band: items[b] });
+      });
+      if (under.length) {
+        var keep = items.filter(function (it) { return !under.some(function (u) { return u.it === it; }); });
+        under.forEach(function (u) { keep.splice(keep.indexOf(u.band) + 1 + under.filter(function (v) { return v !== u && v.band === u.band && items.indexOf(v.it) < items.indexOf(u.it); }).length, 0, u.it); });
+        items = keep;
+        said.push("moved \u201c" + under[0].it.line + "\u201d" + (under.length > 1 ? " and " + (under.length - 1) + " more" : "") + " after \u201c" + under[0].band.line + "\u201d: drawn before it, " +
+          (under.length > 1 ? "they were" : "it was") + " hidden under it (shapes drawn later cover earlier ones)");
+      }
+    }
     // a plain landscape, asked for in words Lantern knows, with one sky and a ground it can read: or nothing
     var sc = plain(q) ? scene(items) : { H: null }, H = sc.H;
     if (H === null) return { lines: items.map(function (it) { return it.line; }), said: said, problems: problems };
@@ -49096,8 +49305,18 @@ Lantern.RFB = (function () {
         said.push("drew the " + way + " as it looks going away: wide at the bottom edge, a point on the horizon (" +
           (st.rect ? "it was a strip of one width" : st.idx.length === 1 ? "it was one upright line" : "its " + st.idx.length + " lines were side by side, the same distance apart all the way") + "; what is far looks smaller)");
       } else if (!nar && bare(items, sc)) {
-        problems.push("the question asks for a " + way + " going into the distance, and nothing is drawn on the ground: add tri 7 " + GH + " 13 " + GH + " 10 " + num(H) + " fill " + (wet ? (groundAt(sc, 10, (H + GH) / 2) === "blue" ? "light blue" : "blue") : (groundAt(sc, 10, (H + GH) / 2) === "gray" ? "tan" : "gray")) +
-          " after the ground (a " + way + " going away is wide at the bottom edge and comes to a point on the horizon, y " + num(H) + ")");
+        // (1.24.14) a tri of a road's colour standing on the horizon with its point in the sky, when the question asks
+        // for no mountain or hill, may be the road drawn going up: it is named, with the line to write in its place.
+        // The 35B drew "tri 0 6 20 6 10 0 fill gray" on 1.24.8, 1.24.9 and 1.24.13 -- 37 times on 1.24.13 -- and,
+        // asked only to add the road, wrote its own line again (bench_run_1253_35b_library.json)
+        var roadLine = "tri 7 " + GH + " 13 " + GH + " 10 " + num(H) + " fill " + (wet ? (groundAt(sc, 10, (H + GH) / 2) === "blue" ? "light blue" : "blue") : (groundAt(sc, 10, (H + GH) / 2) === "gray" ? "tan" : "gray"));
+        var upside = MOUNT.test(q) ? null : items.filter(function (it) {
+          var t = stands(it.o);
+          return t && Math.abs(t.B - H) <= 0.5 && t.a[1] < H - 0.5 && t.w >= 1 && (wet ? /^(water|sky)$/.test(it.o.fam) : /^(gray|dark|earth)$/.test(it.o.fam));
+        })[0];
+        problems.push("the question asks for a " + way + " going into the distance, and nothing is drawn on the ground: " + (upside ?
+          "if \u201c" + upside.line + "\u201d is the " + way + ", it goes up from the horizon to a point at y " + num(stands(upside.o).a[1]) + ", in the sky -- write " + roadLine + " in its place, after the ground" :
+          "add " + roadLine + " after the ground") + " (a " + way + " going away is wide at the bottom edge and comes to a point on the horizon, y " + num(H) + ")");
       }
     }
 
@@ -49152,7 +49371,12 @@ Lantern.RFB = (function () {
         // the second review -- and then rect 0 11.5 20 0.5 at 11.5 -- the third. Low down, the lower half of the sea)
         var y = Math.round((H + 0.62 * (GH - H)) * 2) / 2;
         if (y >= GH - 0.05 || y <= H + 0.05) y = Math.round((H + (GH - H) / 2) * 20) / 20;
-        problems.push("the question asks for a shore, but below the horizon (y " + num(H) + ") the picture is all water: add rect 0 " + num(y) + " " + GW + " " + num(GH - y) + " fill sand after the water (the beach, at the front of the picture)");
+        // (1.24.14) a band of water the beach would cover all of is named, the line written in its place: the 35B's
+        // "rect 0 10 20 2 fill sky" at the bottom of its shore, on 1.24.13, was covered by the sand it then added, and
+        // asked about as hidden (bench_run_1253_35b_library.json)
+        var inBeach = items.filter(function (it) { return wide(it.o) && !isSkyO(it.o) && /^(water|sky)$/.test(it.o.fam) && it.o.nums[1] >= y - 0.01 && it.o.nums[1] + it.o.nums[3] <= GH + 0.01; });
+        problems.push("the question asks for a shore, but below the horizon (y " + num(H) + ") the picture is all water: " + (inBeach.length === 1 ? "write" : "add") + " rect 0 " + num(y) + " " + GW + " " + num(GH - y) + " fill sand " +
+          (inBeach.length === 1 ? "in place of \u201c" + inBeach[0].line + "\u201d" : "after the water") + " (the beach, at the front of the picture)");
       }
     }
     return { lines: items.map(function (it) { return it.line; }), said: said, problems: problems };
