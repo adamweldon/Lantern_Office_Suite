@@ -22,27 +22,37 @@ it -- stopPressed, with a `!` to make the name true -- and kept `&&`.
 **What changed.**
 
 - *A sketch run, press by press* (CODE_SCAN, new). A P1AM-100 sketch is
-  turned into a few lines of JavaScript and run scan by scan through the
-  presses a person makes: Start, let go, Stop, let go, both together, Stop
-  first. Only a small part of C is taken -- declarations, if and else,
-  functions, logic and arithmetic, P1.readDiscrete and writeDiscrete --
-  and anything else (a loop, an array, a string, a member) means no run.
-  What runs is that and nothing else: every name is the sketch's own, and
-  recursion is counted, so a sketch cannot call the page's functions,
-  navigate, or hang it. An input the question does not mention (an
-  overload contact) is tried both ways.
+  read by Lantern's own small interpreter of C and run scan by scan
+  through the presses a person makes, each held for eight scans: Start,
+  let go, Stop, let go, both together, Stop first. Only a small part of C
+  is taken -- declarations, functions, if and else, return, the operators
+  of C, casts, `#define`, P1.readDiscrete and writeDiscrete (one channel or
+  the whole module), millis() -- and anything else (a loop, an array, a
+  string, a member) means no run. Nothing of the sketch runs as
+  JavaScript; a block is its own scope, as in C; each scan has a step
+  limit and the run a budget. An input the question does not mention (an
+  overload contact) is tried both ways; a motor that changes from one
+  scan to the next with the buttons held still is said to.
 - *The bench's P1AM question is graded by what the motor does*:
   "Stop turns the motor on: it runs only while Stop is pressed", "Stop does
   not stop the motor", "Start wins over Stop", "no seal-in", "Start does not
-  start the motor"; the name-reading checks stay for a sketch that cannot
-  be run.
+  start the motor", "the motor starts again when Stop is let go", "the
+  contactor is on output 1 of slot 2, and the sketch never drives it", "the
+  motor does not settle"; the name-reading checks stay for a sketch that
+  cannot be run.
 - *Lantern sends it back* (AI_CODE, stopScan). When the question says how
   the Stop is wired (a normally closed or open Stop on input N, a Start on
   input M) and the run shows the Stop wrong every way an open input can
   be, the sketch goes back once with what the question says, what the run
-  showed, and the line with the Stop name used the other way round --
-  only when the sketch, run again with that line, works: "Write:
-  motorRunning = (startPressed || motorRunning) && !stopPressed;". The rule
+  showed, and the line with the Stop name used the other way round, in as
+  few lines as do it -- only when the sketch, run again with that line,
+  works, and every other output (a lamp that shows Stop held) does what it
+  did: "Write: motorRunning = (startPressed || motorRunning) &&
+  !stopPressed;". It reads the wiring only where the question is plain
+  about it: one Stop and one Start, NC or NO in words or in capitals (not
+  "no overload"), an E-stop never taken for the Stop, the contactor's
+  output not a lamp's; and it says nothing where time is part of the
+  question (a run-on, a timer) or the sketch uses millis(). The rule
   taken out in 1.24.12 went by names, and a stop that turns a brake ON is
   right; this one goes by the wiring the question gives, and by the run.
 - *Lantern's P1AM example names its Stop as the model does*: `bool
@@ -59,7 +69,28 @@ it -- stopPressed, with a `!` to make the name true -- and kept `&&`.
   model and Lantern (`agent/briefs/2026-11-09-model-lantern-boundary.txt`,
   `agent/QUEUE.md` 2).
 
-REVIEW_PLACEHOLDER
+**Reviews.** By agents that had not seen the rules written, their inputs in
+`tests/fixtures/review5_1253_*.json` and `review6_1253_*.json`, replayed by
+`tests/bench_1253.js`:
+
+- review 5 (164 sketches, each label checked with its own evaluator; 45
+  sketches that try to get out): the first runner turned the sketch into
+  JavaScript, and 12 sketches reached the page through it -- a function
+  inside another, `({ name } = loop)`, an object with a method, an arrow
+  made by an empty `#define` -- and 11 hung it or took over 30 s; 7 of 101
+  right sketches got a message (a print under an if with no braces, the
+  Start's "normally open" taken for the Stop's, "no overload" read as
+  N.O., a lamp's output named first, a Jog on the same channel of another
+  slot, a fan's run-on), the bench failed right ones (a debounce, a whole
+  module read, `#define` reads) and passed wrong ones (the wrong output,
+  a Start that toggles while held), and a line to write broke a lamp.
+  Mended: the interpreter in place of the translation, and the rest as
+  above. Now none of the 45 reaches the page, navigates or takes 3 s;
+  none of the 95 right sketches gets a message or fails the bench; 45 of
+  its 69 wrong ones get one -- the rest, a motor that starts again when
+  Stop is let go with the Stop read right (the bench says it) and a sketch
+  timed with millis(); every line to write runs right in its evaluator;
+- REVIEW6_PLACEHOLDER
 
 **What was run.** RUN_PLACEHOLDER
 

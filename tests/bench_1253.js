@@ -99,6 +99,23 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     /bool stopPressed = !P1\.readDiscrete\(inSlot, 2\);/.test(ex.text) && /&& !stopPressed && !overloadTripped;/.test(ex.text) && !/stopOk/.test(ex.text) &&
     !AC.stopScan("arduino", ex.text, sq.q).length && !AC.startWins("arduino", ex.text, sq.q).length);
 
+  // --- the fifth review (tests/fixtures/review5_1253_*.json) ---
+  // 164 sketches of the reviewer's own, run through its own evaluator and check (tests/review5_p1am_check.js)
+  var R5 = fixture("review5_1253_p1am.json").items, r5 = require("./review5_p1am_check.js")(L, R5);
+  var rightOut = r5.out.filter(function (x) { return x.right; }), wrongOut = r5.out.filter(function (x) { return !x.right; });
+  ok("review 5: none of its 95 right sketches gets a message, and the bench passes those that answer its question (7 spoken about, 4 failed, on the build it was given)",
+    rightOut.length === 95 && rightOut.every(function (x) { return !x.stopScan.length && !x.bench; }), rightOut.filter(function (x) { return x.stopScan.length || x.bench; }).map(function (x) { return [x.id, x.stopScan, x.bench]; }));
+  ok("review 5: of its 69 wrong ones, every one the bench is asked about fails it, and 45 get a message; the six left are a motor that starts again when Stop is let go (the Stop read right: the bench says it) and a sketch timed with millis()",
+    wrongOut.length === 69 && wrongOut.filter(function (x) { return x.stopScan.length; }).length >= 45 &&
+    r5.misses.map(function (m) { return m[0]; }).join() === "W11-output-gated-restart,W12-ternary-gate-restart,W26-request-latch-restart,W46-latch-gate-right-read,W65-B0-restart-gate-two-uses,W66-millis-beacon-wrong-stop" &&
+    !r5.findings.some(function (f) { return /bench passes a wrong program|wiring read wrong|message on a right|bench fails a right/.test(f[1]); }), [r5.misses.map(function (m) { return m[0]; }), r5.findings]);
+  ok("review 5: every line to write, put in the sketch and run by the reviewer's own evaluator, works (one, a statement over two lines, is given whole on one line: its placing tool cannot set it back, the line is right)",
+    r5.out.filter(function (x) { return x.writeCheck === "works"; }).length >= 33 && r5.findings.every(function (f) { return f[0] === "W38-split-line" && /could not place/.test(f[2]); }), r5.findings);
+  var esc = require("child_process").spawnSync(process.execPath, [path.join(__dirname, "review5_escape_run.js")], { timeout: 120000, encoding: "utf8" }), er = null;
+  try { er = JSON.parse(String(esc.stdout).trim().split("\n").pop()); } catch (e) { er = null; }
+  ok("review 5's 45 sketches that try to get out (12 reached the page and 11 hung or crawled through the first runner, which turned the sketch into JavaScript): nothing reached, no navigation, none over 3 seconds",
+    er && er.cases.length === 45 && !er.navigated && !er.name && er.cases.every(function (c) { return !c.reached.length && c.ms < 3000; }), er ? er.cases.filter(function (c) { return c.reached.length || c.ms >= 3000; }) : [esc.status, esc.signal, String(esc.stderr).slice(0, 300)]);
+
   // --- the small models' run on 1.24.12 (GitHub run 42701646389, tests/fixtures/bench_run_1252_*.json) ---
   var R08 = fixture("bench_run_1252_08b.json"), R2 = fixture("bench_run_1252_2b.json"), R4 = fixture("bench_run_1252_4b.json");
   var P08 = fixture("bench_run_1251_08b.json"), P2 = fixture("bench_run_1251_2b.json"), P4 = fixture("bench_run_1251_4b.json");
