@@ -148,8 +148,10 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     !/moved/.test(said("road-fog-all").all) && !/moved \u201ctri 2 12 6 12 4 6/.test(said("road-moved-said-two-bands").all));
   // (1.24.14 named the road's tri; since 1.24.15 Lantern draws the road itself when nothing is on the ground, and the
   // tri the model drew stays as it is: tests/bench_1255.js)
-  ok("the road is drawn when nothing is on the ground, and the model's tri -- the 35B's, a tall dark pine -- left as drawn",
-    /drew the road the question asks for, tri 7 12 13 12 10 6 fill gray/.test(said("up-35b-bench").all) && /drew the road the question asks for/.test(said("up-dark-tree").all) && !/is the road/.test(said("up-dark-tree").all));
+  // (and a narrow tri of the road's colour standing on the horizon where Lantern's road would end -- the tall dark pine
+  // here -- is asked about as on 1.24.14, not drawn under: a bowtie, the third review of 1.24.15)
+  ok("the road is drawn when nothing is on the ground, and the 35B's tri left as drawn; the tall dark pine asked for as on 1.24.14, not named as the road",
+    /drew the road the question asks for, tri 7 12 13 12 10 6 fill gray/.test(said("up-35b-bench").all) && /add tri 7 12 13 12 10 6 fill gray after the ground/.test(said("up-dark-tree").all) && !/is the road|drew the/.test(said("up-dark-tree").all));
   ok("the sand is asked for in place of a strip of light water that shows, not of one the sea covers", /in place of \u201crect 0 10 20 2 fill sky\u201d/.test(said("shore-strip-sky").all) &&
     !/in place of/.test(said("shore-strip-before-sea").all));
   ok("a sun drawn in a shade of yellow, orange or red is a sun", D.filter(function (c) { return /^col-sun-/.test(c.name); }).every(function (c) { return !/the question asks for a sun/.test(said(c.name).all); }));

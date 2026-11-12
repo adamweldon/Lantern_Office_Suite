@@ -54,35 +54,34 @@ than the model).
   its width, at most two fifths of it (half when a door is asked for),
   taller than wide unless a door is asked for, its top on the wall and its
   foot more than a quarter cell below the wall's (less of it below than on
-  the wall), at least 0.6 wide, is moved up so its foot is the wall's, shortened to four fifths
-  of the wall if taller, with what lies wholly on it (a knob, its window,
-  its outline), and Lantern says so ("moved the door, “rect 8 7 4 2 fill
-  dark green”, up onto its wall: its foot was at y 9, below the wall's (y
-  8), on the ground, and shortened it to 1.5 high: it was 2, and the wall
-  is 2 -- rect 8 6.5 4 1.5 fill dark green"). Not when anything else
-  touches it (legs, a head, wheels, a step, a path's tip: shapes that share
-  an edge touch, and lines do), nor when anything else on the wall or just
-  under it may be the door (1 high or more by the wall's foot, in any
-  colour, in outline, in lines, or drawn before the wall), nor when the
-  grass drawn after the house hides the door's foot.
+  the wall), at least 0.6 wide, is moved up so its foot is the wall's,
+  shortened to four fifths of the wall if taller, with what lies wholly on
+  it (a knob, its window, its outline), and Lantern says so ("moved the
+  door, “rect 8 7 4 2 fill dark green”, up onto its wall: its foot was at y
+  9, below the wall's (y 8), on the ground, and shortened it to 1.5 high: it
+  was 2, and the wall is 2 -- rect 8 6.5 4 1.5 fill dark green"). Not when
+  anything else touches it (legs, a head, wheels, a step, a path's tip:
+  shapes that share an edge touch, and lines do), nor when anything else on
+  the wall or just under it may be the door (1 high or more by the wall's
+  foot, in any colour, in outline, in lines, or drawn before the wall), nor
+  when the grass drawn after the house hides the door's foot.
 - *A tree drawn over the house.* A tree (an upright trunk rect of an earth
   colour, at most 2.5 wide and twice as tall, 2 or more high, with green
   circle or oval crowns on its top, at least 1.5 across and 1.6 times the
   trunk's width; a rect within the wall's ends whose foot is by the wall's
   is its door, whatever is over it) drawn after a house, its foot within a
-  cell of the wall's, and covering at least half a cell of its wall and
-  roof (Adam's: 1.1 cells) is moved sideways, whole, to the nearer side
-  where it stands clear: at most five cells, its foot still on the ground
-  (in a band or on its top edge, as the guide's own tree stands) and on no
-  tri, touching nothing there (lines and all), and covering the sun, the
-  moon or a cloud no more than before. Lantern says so ("moved the tree, “rect 10 5 2 4 fill
-  brown” and “circle 11 4 2 fill dark green”, 2.5 to the right, clear of
-  the house: it stood against the house, in front of it"). Not when the
-  question puts the tree with the house (in front, behind, against, over,
-  shading, a tree house, a swing, apples, by the door or the window), nor
-  when anything touches it but
-  the house, nor when it only touches the house or its crown is just over
-  the eave (the model's "next to it").
+  cell of the wall's, and covering at least half a cell of its wall and roof
+  (Adam's: 1.1 cells) is moved sideways, whole, to the nearer side where it
+  stands clear: at most five cells, its foot still on the ground (in a band
+  or on its top edge, as the guide's own tree stands) and on no tri,
+  touching nothing there (lines and all), and covering the sun, the moon or
+  a cloud no more than before. Lantern says so ("moved the tree, “rect 10 5
+  2 4 fill brown” and “circle 11 4 2 fill dark green”, 2.5 to the right,
+  clear of the house: it stood against the house, in front of it"). Not when
+  the question puts the tree with the house (in front, behind, against,
+  over, shading, a tree house, a swing, apples, by the door or the window),
+  nor when anything touches it but the house, nor when it only touches the
+  house or its crown is just over the eave (the model's "next to it").
 - *No road at all* (the landscape mend, rule 3: "or Lantern adds the thing
   itself and says so"). When the question asks for a road, path, track,
   river or stream going away, and nothing at all is drawn on the ground,
@@ -90,17 +89,18 @@ than the model).
   point on the horizon -- just after the ground, and says so; the model's
   own tri is left as drawn. Gray, or tan on gray, grey, dark gray or black
   ground; a river blue, or light blue on blue; the question's own colour
-  when it names one just before the road ("a brown path"), and a dirt,
-  dusty or gravel road tan (brown on sand). With the sea or a lake behind
-  the land, the point is the shore. At any doubt it is asked for, as on
-  1.24.14: a railway or tracks (rails are lines), two roads, a winding
-  road, "a trail of clouds" or "a path of moonlight", a river and a road
-  in one question, water anywhere under the road but the sea behind the
-  land, a band of the road's colour across the land or a thin stripe (a
-  road seen running across), a narrow tri of its colour standing on the
-  horizon where the road would end (the model's road drawn upright), a
-  shape of its colour lying on a hill or a mountain (a path up a hill, a
-  river between mountains), a line on a hill or near the ground. The 35B's road of four versions is drawn and passes the bench.
+  when it names one just before the road ("a brown path"), and a dirt, dusty
+  or gravel road tan (brown on sand). With the sea or a lake behind the
+  land, the point is the shore. At any doubt it is asked for, as on 1.24.14:
+  a railway or tracks (rails are lines), two roads, a winding road, "a trail
+  of clouds" or "a path of moonlight", a river and a road in one question,
+  water anywhere under the road but the sea behind the land, a band of the
+  road's colour across the land or a thin stripe (a road seen running
+  across), a narrow tri of its colour standing on the horizon where the road
+  would end (the model's road drawn upright), a shape of its colour lying on
+  a hill or a mountain (a path up a hill, a river between mountains), a line
+  on a hill or near the ground. The 35B's road of four versions is drawn and
+  passes the bench.
 - `tools/draw_log.py` takes its port from `DRAW_PORT` (two can run at
   once).
 
@@ -134,15 +134,15 @@ the draft mended after the one before; their pictures are in
   upright on the horizon (a bowtie), and across a highway band.
 - Each mended as above. Now, on the three reviews' pictures: no right
   picture is changed but one review 1 allowed ("drawn as written, or the
-  whole tree moved clear"); five that review 3 called partly right change
-  as their wants allow, and two of review 1's (Adam's tree among them); 37,
-  23 and 45 wrong ones are mended, or asked otherwise than on 1.24.14; 1.24.14's two reviews of the road and the older
-  scene reviews (606 pictures) change only wrong ones; of 205 drawings
-  the models wrote on 1.24.8 to 1.24.14, only the 35B's three change. The
-  mends after review 3 were checked against the three reviews' inputs,
-  not by a fourth reviewer.
+  whole tree moved clear"); five that review 3 called partly right change as
+  their wants allow, and two of review 1's (Adam's tree among them); 37, 23
+  and 45 wrong ones are mended, or asked otherwise than on 1.24.14;
+  1.24.14's two reviews of the road and the older scene reviews (606
+  pictures) change only wrong ones; of 205 drawings the models wrote on
+  1.24.8 to 1.24.14, only the 35B's three change. The mends after review 3
+  were checked against the three reviews' inputs, not by a fourth reviewer.
 
-**What was run.** `npm test`: ALL CHECKS PASS (SUITES suites); the browser
+**What was run.** `npm test`: ALL CHECKS PASS (87 suites); the browser
 tests of the landscape (scene), the bench (bench_run9, bench_headless).
 Replayed only: no model has run 1.24.15; the small models' run starts with
 the push. Adam's three pictures, as the 35B drew them and as Lantern draws
