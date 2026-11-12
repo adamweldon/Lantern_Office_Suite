@@ -9,6 +9,8 @@ the same on any computer where Start Lantern is running.
 
   python3 tools/bench_headless.py [--url http://127.0.0.1:8080/] [--out bench-out]
       [--quick | --ids id,id | --match REGEX]   which questions (default: all)
+      [--set a|b]          set A, the usual questions (default), or set B (1.24.16): the same
+                           kinds of question asking for other things
       [--minutes 330]      stop asking after this long and keep what there is
       [--wait-model 900]   seconds to wait for the model to finish loading
       [--label 4b]         a name for this run in the summary
@@ -120,6 +122,7 @@ def main():
     ap.add_argument("--quick", action="store_true")
     ap.add_argument("--ids", default="")
     ap.add_argument("--match", default="")
+    ap.add_argument("--set", default="a", choices=["a", "b"], help="set A (the usual questions) or set B (the same kinds, other questions)")
     ap.add_argument("--minutes", type=float, default=330)
     ap.add_argument("--wait-model", type=float, default=900)
     ap.add_argument("--label", default="")
@@ -155,6 +158,8 @@ def main():
         opts["ids"] = [s.strip() for s in a.ids.split(",") if s.strip()]
     if a.match:
         opts["match"] = a.match
+    if a.set == "b":
+        opts["set"] = "b"
 
     with sync_playwright() as p:
         browser = p.chromium.launch()

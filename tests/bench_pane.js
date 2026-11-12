@@ -43,6 +43,14 @@ w.eval(js);
   var st2 = B.start({ match: "^(child-dose|bleach-mix)$" });
   for (i = 0; i < 100 && B.status().state === "running"; i++) await sleep(50);
   ok("questions chosen by a pattern", st2.started && st2.questions.length === 2 && B.status().state === "done" && L.aiBenchQuestions.length === n, st2);
+  // (1.24.16) set B: the same kinds of question asking for other things
+  var allB = L.aiBenchQuestionsB, nb = allB.length;
+  var st3 = B.start({ set: "b", ids: ["bleach-vinegar-b", "ibuprofen-child-b"] });
+  for (i = 0; i < 100 && B.status().state === "running"; i++) await sleep(50);
+  var s3 = B.status();
+  ok("set B: chosen questions of set B start and finish, and its report says set b", st3.started && st3.set === "b" && st3.kind === "set B chosen" && st3.questions.join() === "ibuprofen-child-b,bleach-vinegar-b" &&
+    s3.state === "done" && s3.done === 2 && B.report().set === "b" && L.aiBenchQuestionsB === allB && L.aiBenchQuestionsB.length === nb && L.aiBenchQuestions === all, [st3, s3.state, s3.done]);
+  ok("...a set A id is not in set B", JSON.stringify(B.start({ set: "b", ids: ["child-dose"] }).missing) === "[\"child-dose\"]");
   ok("the tool is ES5, like Lantern (no arrow functions, let, const or template literals)", !/=>|\blet\s|\bconst\s|`/.test(tool.replace(/\/\/[^\n]*/g, "")));
   ok("no page errors", errs.length === 0, errs);
   console.log(fails ? fails + " BENCH PANE FAILURES (" + passes + " passed)" : "ALL BENCH PANE TESTS PASS (" + passes + ")");

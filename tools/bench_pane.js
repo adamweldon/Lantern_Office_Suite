@@ -13,6 +13,8 @@
 //   lanternBench.start({ ids: ["doc-fault-code", "code-ladder-start-stop"] })
 //                                            only these questions, in bench order
 //   lanternBench.start({ match: "^make-music" })   ids that match
+//   lanternBench.start({ set: "b" })         set B (1.24.16): the same kinds of question asking for other
+//                                            things; ids and match choose from set B then
 //   lanternBench.status()                    where it is: state, done, total,
 //                                            minutes, the failed ids, the last rows
 //   lanternBench.rows(["id", ...] | "failed" | "all")   rows as the bench keeps them
@@ -33,23 +35,24 @@
   function start(opts) {
     opts = opts || {};
     if (S && S.state === "running") return { busy: true, done: S.done, total: S.total };
-    var all = L.aiBenchQuestions || [], re = opts.match ? new RegExp(opts.match) : null, ids = opts.ids || null;
+    var setB = opts.set === "b" || opts.set === "B", KEY = setB ? "aiBenchQuestionsB" : "aiBenchQuestions";
+    var all = L[KEY] || [], re = opts.match ? new RegExp(opts.match) : null, ids = opts.ids || null;
     var sub = ids || re ? all.filter(function (q) { return (ids && ids.indexOf(q.id) >= 0) || (re && re.test(q.id)); }) : null;
     var missing = ids ? ids.filter(function (id) { return !all.some(function (q) { return q.id === id; }); }) : [];
     if (missing.length) return { error: "no such question", missing: missing };
     if (sub && !sub.length) return { error: "no question matches" };
-    S = { state: "running", kind: sub ? "chosen" : opts.quick ? "quick" : "full", lantern: L.version, t0: Date.now(), done: 0, total: null, rows: [], fails: [], report: null, error: null,
+    S = { state: "running", kind: (setB ? "set B " : "") + (sub ? "chosen" : opts.quick ? "quick" : "full"), set: setB ? "b" : "a", lantern: L.version, t0: Date.now(), done: 0, total: null, rows: [], fails: [], report: null, error: null,
       stopper: typeof w.AbortController === "function" ? new w.AbortController() : null };
     try { w.localStorage.removeItem(KEY_ROWS); w.localStorage.removeItem(KEY_REP); } catch (e) { }
-    if (sub) L.aiBenchQuestions = sub;
-    var done = function () { if (sub) L.aiBenchQuestions = all; };
-    L.aiBench.run({ quick: !sub && !!opts.quick, signal: S.stopper ? S.stopper.signal : undefined, onItem: function (i, total, row) {
+    if (sub) L[KEY] = sub;
+    var done = function () { if (sub) L[KEY] = all; };
+    L.aiBench.run({ quick: !sub && !!opts.quick, set: setB ? "b" : "a", signal: S.stopper ? S.stopper.signal : undefined, onItem: function (i, total, row) {
       S.done = i; S.total = total; S.rows.push(row);
       if (!row.pass) S.fails.push(row.id);
       keep(KEY_ROWS, S.rows);
     } }).then(function (rep) { S.report = rep; S.state = "done"; keep(KEY_REP, rep); done(); },
       function (e) { S.error = String((e && e.message) || e); S.state = "error"; done(); });
-    return { started: true, kind: S.kind, lantern: L.version, model: L.ai && L.ai.describe ? L.ai.describe() : null, questions: sub ? sub.map(function (q) { return q.id; }) : (opts.quick ? "quick" : all.length + " in the bench") };
+    return { started: true, kind: S.kind, set: S.set, lantern: L.version, model: L.ai && L.ai.describe ? L.ai.describe() : null, questions: sub ? sub.map(function (q) { return q.id; }) : (opts.quick ? "quick" : all.length + " in the bench") };
   }
   function status(last) {
     if (!S) {
