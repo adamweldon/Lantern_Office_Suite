@@ -133,7 +133,30 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      variants of each; tool, multi, need, chat and reason do not regress;
      median tokens for fact and make go down. Do not loosen a check to
      raise a score; no second model.
-3. **Read Adam's next run with the library** when he sends it. His 1.24.14
+3. **Read Adam's next run with the library** when he sends it, **and his
+   first run of set B** (1.24.16: `Lantern.aiBenchQuestionsB`, the AI tile's
+   "Set B: the same kinds, other questions"; `CHANGELOG.md` 1.24.16). Set B
+   asks what set A asks about other things, to see whether what Lantern
+   gives the model carries over. Read its score against his set A run on
+   the same version, row by row: a set B row that fails where its set A
+   twin passes is the work. Set B is known to meet these gaps in Lantern,
+   left unmended on purpose so his first run measures them (rule 6): "march"
+   not read as music (`AI_MUSIC`, its WANT); the catalog not finding Farming
+   for "a vegetable garden"; Chat not reading the Health and Food lessons by
+   itself for a burn, a snakebite, rice left out, eating on little money,
+   and handing the goats lesson for raw milk; Amazing Grace not in the
+   songbook handed to the model; "Remind me what I asked you" not seen as
+   about the chat; no recipe card for orbital speed; a follow-up with no
+   pronoun ("How did the early systems work?") searched without its
+   subject; the over/under rule on a full sky drawn first; Lantern adding
+   the right parallel total beside a model's wrong one rather than in its
+   place. Mend each only after his run shows it, for every question of its
+   kind, a reviewer first. Set B's graders were tried by two reviewers
+   (`tests/review_1256_setb.js`); the second's mends wait for a third. His 1.24.15 run (2026-11-12,
+   `tests/fixtures/bench_run_1255_35b_library.json`, `tests/bench_1256.js`):
+   138 of 140, the road passing; the iPhone and Nairobi with their replies
+   of 1.24.13 word for word (they look the answer up and fail on their
+   QUOTE lines, as below). His 1.24.14
    run (2026-11-12, `tests/fixtures/bench_run_1254_35b_library.json`,
    `tests/bench_1255.js`): 137 of 140. The coins and the shore pass: the
    35B wrote the beach line it was handed. The road failed with its gray

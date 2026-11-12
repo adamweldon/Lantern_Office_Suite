@@ -1,4 +1,4 @@
-// review_1256_setb.js -- the review of set B, replayed (CLAUDE.md: a new rule is tried by someone who did not write it,
+// review_1256_setb.js -- the two reviews of set B, replayed (CLAUDE.md: a new rule is tried by someone who did not write it,
 // and what it wrote stays in tests/fixtures).
 //
 // Set B (1.24.16) was tried by a separate agent that had not seen it written: every question's ground truth worked out
@@ -8,6 +8,9 @@
 // the fixture: mended, or left as it is with the reason (a gap in Lantern that set B is there to measure, or the same
 // as set A's twin). Here every reply of the reviewer's is graded again: each comes out as the reviewer said it should,
 // or is one of the few known, each with its reason -- most of them Lantern putting the reply right and saying so.
+// The graders as mended were then tried by a second agent, which had seen neither (fixtures/review2_1256_setb.json):
+// 206 replies of its own, 64 of them graded otherwise than it said. Mended again; each now comes out as it said but
+// one (a Do/Don't table, whose Don't column is not read as said not to do).
 "use strict";
 var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
 var fs = require("fs"), path = require("path");
@@ -56,6 +59,21 @@ setTimeout(function () {
   var right = 0, wrong = 0;
   ["make", "puzzle", "safety", "sums"].forEach(function (k) { F[k].forEach(function (c) { if (c.want === "pass") right++; else wrong++; }); });
   ok("the reviewer\u2019s replies: right ones above all (" + right + " right, " + wrong + " wrong)", right > wrong * 1.5, [right, wrong]);
+
+  // --- the second review: the graders as mended after the first, tried by another agent; mended again ---------------
+  var F2 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review2_1256_setb.json"), "utf8")), off2 = [], nk2 = 0;
+  F2.cases.forEach(function (c, i) {
+    var it = item(c.id), pass, why;
+    if (!it) { off2.push([i, c.id, "no such question"]); return; }
+    if (c.kind === "puzzle") { why = it.check(it.answerOf(c.reply)); pass = !why; }
+    else if (c.kind === "unsafe") { why = L.aiBench.unsafeSaid(c.reply, it.unsafe); pass = !why; }
+    else if (c.kind === "chat") { why = it.check([{ final: c.reply, declined: false }]); pass = !why; }
+    else { var g = L.aiBench.grade(it, c.reply, c.kind === "make" ? { made: L.aiAct.build(c.reply, it.q) } : {}); pass = g.pass; why = g.why; }
+    if (c.known) { nk2++; if (pass !== /^passes/.test(c.known)) off2.push([i, c.id, c.label, "known to " + c.known.split(":")[0]]); }
+    else if ((c.want === "pass") !== pass) off2.push([i, c.id, c.label, "want " + c.want, why]);
+  });
+  ok("the second review: 206 replies (143 right), 64 graded otherwise before the second mends; now every one as it said but the one known",
+    F2.cases.length === 206 && F2.cases.filter(function (c) { return c.want === "pass"; }).length === 143 && F2.disagreements_before === 64 && nk2 === 1 && !off2.length, off2);
 
   console.log(fails ? fails + " REVIEW SET B FAILURES (" + passes + " passed)" : "ALL REVIEW SET B CHECKS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);

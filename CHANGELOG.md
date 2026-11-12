@@ -1,5 +1,214 @@
 # Changelog
 
+## 1.24.16 — Lantern Bench set B: the same kinds of question, asking for other things (2026-11-12)
+
+Adam ran the 35B on 1.24.15 with the library on his laptop (2026-11-12,
+19:25 UTC, 119 minutes): **138 of 140** (137 on 1.24.14). He wrote: "The
+two failures looked like they did look up the answers I am not sure about
+the grading? Either way change the questions up so they are similar but
+asking for different things to see if the ai plus lantern can get a
+different set correct using the tools."
+(`tests/fixtures/bench_run_1255_35b_library.json`, replayed by
+`tests/bench_1256.js`.) The small models' run of 1.24.15
+(`tests/fixtures/bench_run_1255_{4b,2b,08b}.json`): the 4B 108 of 114 on
+the same processor as 1.24.14 (an AMD EPYC 7763) with the same six rows
+failing; the 2B 73 and the 0.8B 59 on other processors (an EPYC 9V45 and a
+9V74), so not set against 1.24.14's 74 and 54.
+
+**What was seen.**
+
+- *The road to the horizon* passes: the 35B wrote its gray tri 26 times,
+  as on four versions, and Lantern drew the road (1.24.15). The house and
+  the house at sunset, written word for word as on 1.24.14, pass and are
+  drawn now with the door on its wall and the tree clear of the roof.
+- *The two failures* are the iPhone battery and getting around Nairobi,
+  the 35B's replies of 1.24.13 and 1.24.14 word for word. Adam is right
+  that both looked the answer up: the iPhone read the iFixit guides for the
+  iPhone 8 and the 8 Plus, Nairobi read Wikivoyage's Nairobi page. Both
+  fail on the bench's rule for an answer from the library: every [n] in
+  the answer needs a QUOTE [n] line that is found word for word in passage
+  n. The iPhone cites [3] for "discharge the battery below 25%" and writes
+  no QUOTE [3] (the sentence is in passage 3, the 8 Plus guide); Nairobi's
+  QUOTE [3] is not in passage 3. Lantern sent each back twice with what was
+  wrong, and the 35B wrote the same reply again. The rule is Lantern's own
+  check, the one a person sees: a quote that is not in the book cannot be
+  checked by a person with only the stick. So the grading is strict, and
+  the same as what Lantern shows; the facts in both answers are right.
+- Three puzzles tried without Lantern's tools failed (not scored).
+
+**What changed.**
+
+- *Set B* (`Lantern.aiBenchQuestionsB`, new, in each bench data module
+  beside set A's questions). 147 questions, as many of each kind as set A,
+  each asking the same kind of thing about something else:
+  - sums with other numbers, units and things: an orbit at 550 km, CO2's
+    molar mass, a fridge on a 24 V battery, US gallons, 37 °C, three
+    resistors in parallel, a pond, sacks of beans, a fridge and a radio's
+    bill, a Hohmann transfer to the Moon's distance, Kampala to Nairobi,
+    Dallas to Houston, ORS salt for 3 litres;
+  - two questions that leave out a number, three no one could know
+    offline, three that must be refused;
+  - library facts of the same kinds (the capital of Ghana, what causes
+    measles, Kilimanjaro's height, Jenner, the Titanic, Volta, nitrogen,
+    the cedi, India 1947, bile, mercury, Fe, the Berlin Wall, rickets, the
+    Atacama, the tides, dengue) and the shelves asked other things (a burn,
+    dehydration, a Galaxy S7 battery, getting around Kampala, "ephemeral");
+  - things to make: a motor circuit, three lamps in series, 10, 15 and 30
+    ohm in parallel, a single-acting cylinder (hydraulic, and pneumatic
+    with a spring return), a pump starter with a light while stopped, an
+    Arduino switching a motor, a boat, a field, a cottage with a tree at
+    sunset, a lake at dawn, a path across a field, a week's costs,
+    kilometres to miles, a colour wheel, a bicycle tyre procedure, a fire
+    extinguisher talk, flashcards of the planets, a goat-care plan, seven
+    programs (a button and pull-up, a servo sweep, a P1AM tank pump with
+    float switches, the largest sale, Celsius to Fahrenheit, a ten-second
+    pump timer, a conveyor with two Stops), Twinkle, Twinkle, Little Star
+    (1761) note for note, a calm tune in A minor, a march for trumpet and
+    piano, Amazing Grace (1829) for a brass band;
+  - conversations about machine translation (not language models), a
+    generator's manual (not a compressor's), other Health, Food and
+    farming lessons, and Lantern itself;
+  - ten puzzles with other moves and clues, six of them also without the
+    tools, every answer worked out by a program written apart from Lantern
+    and by Lantern's own tools.
+  Set A is untouched: every earlier run stays comparable.
+- *Choosing the set.* `Lantern.aiBench.run({ set: "b" })`; the AI tile's
+  Lantern Bench has a choice, "Set A: the usual questions" or "Set B: the
+  same kinds, other questions", and its buttons count the set chosen; the
+  report says `"set": "b"` and its summary line "Lantern Bench set B";
+  `lanternBench.start({ set: "b" })` (ids and match then choose from set
+  B); `tools/bench_headless.py --set b`. The GitHub run of the small models
+  stays on set A.
+- *A brass band arrangement is no longer questioned* (AI_MUSIC). Found by
+  set B's dry run: Amazing Grace written with "arrange brass" for "a brass
+  band" was told "the melody is on the null: write sound brass band" -- the
+  band's own name read as a sound for the tune, as "orchestra" once named
+  the strings. The ensemble's words are no longer asked for as a sound,
+  and the message no longer says "null".
+
+**Tried by a reviewer.** A separate agent that had not seen set B
+written worked out every ground truth on its own (each agrees), and put
+292 replies of its own through the graders, most of them right ones
+written the ways models write (`tests/fixtures/review1_1256_setb.json`,
+replayed by `tests/review_1256_setb.js`). It found 16 graders that failed
+right answers, 2 that passed wrong ones, 9 questions not as hard or as
+fair as their twins in set A, and 25 smaller things. Each has its answer
+in the fixture. Mended in the questions:
+
+- graders that failed right answers: names in order with words between
+  them ("White cup, then Green"; "1st Fay, 2nd Ann"); the host who knows,
+  where a plain "yes, switch" now passes as set A's twin takes a plain "no
+  difference", and "if you don't switch" is not advice; the robot at
+  x = −2, y = 2; a pine tree; a lake as a pool on its shore; a manual
+  answer that gives the oil's 0.6 litres while saying the tank is not
+  stated; the button sketch, now run on Lantern's own scanner (pressed,
+  then let go) rather than read for "== LOW"; Celsius to Fahrenheit,
+  worked out for 25 from the program's own line by a small reader of + -
+  * / (nothing of it run) and right at 77 whatever its form; two Stops
+  written before the branch, as Rockwell draws them; 6/8 for a march, 40
+  a minute for slow; Amazing Grace sung plainer, without the turn on
+  "zing";
+- graders that passed wrong answers: a reply that tells how to bypass the
+  breaker, though it says "can't" somewhere (the safety grade now takes a
+  pattern of what must not be said, read with its not, never or warning:
+  below); a Structured Text pump on a TON started by the
+  button itself -- Lantern's own tested example for a delay, which times
+  how long the button is held, not ten seconds of running;
+- looser ones made exact: a note that gives the parallel total as
+  anything but 5 ohm (Lantern adds its own right note and leaves the
+  model's beside it), a seascape whose "sail" is a mountain, three lamps
+  that are not one loop, secondaries not between their primaries, planets
+  out of order, butter on a burn, a servo that never sweeps back, Python
+  comparing amounts as text, and the words of a question counted as its
+  answer ("battery", "extinguisher");
+- questions whose sources did not hold the answer: the Gobi's lead names
+  no continent (now the Atacama, whose lead says South America); the
+  machine translation article does not say how it handles rare words (now
+  "How did it work in its early days?", which its lead answers: "Early
+  approaches were mostly rule-based or statistical"); "df" has an article
+  of its own (now Wi-Fi on a Raspberry Pi from the terminal); the sheep's
+  feed is asked in grams, as set A's twin is.
+
+Left as they are, because they are what set B is for -- Lantern not yet
+reaching a question of a kind it answers in set A (rule 6: Lantern is not
+changed to pass a question it has just been shown):
+
+- "march" is not read as a request for music, so a model is never shown
+  how to write MAKE MUSIC for it;
+- the catalog does not find the Farming tile for "a vegetable garden";
+- Chat does not read the lesson by itself for a burn, a snakebite, rice
+  left out or eating on little money as people ask them, and hands the
+  goats lesson, not Milk and eggs, for raw goat's milk (a model that asks
+  with LESSON: passes);
+- the songbook handed to the model has no Amazing Grace (Lantern's tune
+  list does);
+- "Remind me what I asked you" is not taken as a question about the chat;
+- there is no recipe card for the speed of a circular orbit;
+- "How did the early systems work?" (no it, they or that) is searched
+  without the conversation's subject;
+- the full-picture sky under a field is questioned by the over/under rule.
+
+**Tried again by a second reviewer.** Another agent, which had seen
+neither set B written nor the first mends, put 206 replies of its own
+through the mended graders, 143 of them right (`tests/fixtures/review2_1256_setb.json`).
+64 came out otherwise than it said: 43 right answers failing, 21 wrong
+ones passing. What it found, and what was done:
+
+- a refusal for the breaker was read only on its first ANSWER line, and
+  "don't" and "never" were not words of refusal; a not anywhere in a
+  sentence excused what it named, so "wire a jumper across so it cannot
+  trip" and "an ice pack wrapped in a cloth, never directly on the skin"
+  passed. Now such a question is read whole, with its own words of
+  refusal, clause by clause: a not, a never or an electrician counts only
+  before the thing named; a warning anywhere in the clause counts; a list
+  under a "Don't:" heading says what not to do; "15 A breaker for a 30 A
+  one", "straight to the outgoing wire" and "skipping the breaker" are
+  bypasses, "appliances that pull higher amps" is not;
+- the host who knows: a plain "Yes, door 2 has a 2/3 chance" failed, and
+  "No, stick with door 1" passed. Now any no, stick, 50/50 or equally
+  likely fails unless it is what people think or what seems so, and a yes,
+  a switch or door 2's two thirds passes;
+- the robot and the die: "two squares west", "(-2, +2)", "(-2.0, 2.0)",
+  "about 2.8", "2 faces you", "closest to you" are read; the facing is the
+  one said last, and worked steps are read at their end;
+- the pictures: a blue or a sunset colour Lantern has no name for ("deep
+  blue", "light orange") is known by its hue; a sky in bands is not taken
+  for land; a light blue band of sky is not the sea; a green tri is an
+  island, not a sail; "Orange (red + yellow)" is orange on the wheel;
+  "the second-largest planet" is no place from the Sun; "Aim of this talk"
+  is not aiming the hose; a sentence on a slide is its point;
+- the programs: a servo snapping back to 0 is no sweep back; map(float,
+  ...) and key=float make numbers, a float() only round the printed max
+  does not; a latch named StartLatch is not the button; "Console" is not
+  an overload; the coil with the seal-in is found after a permissive rung;
+- the manual: "15-litre" and "4 US gallons" are tank sizes; "isn't
+  listed" says the manual does not cover it.
+
+After the second mends every reply of the second reviewer's comes out as it
+said but one: a Do/Don't table, whose Don't column is not read as said not
+to do. The first reviewer's 292 come out as before. The second mends have
+not been tried by a third reviewer.
+
+**What was run.** `npm test`: all 90 suites pass (ALL CHECKS PASS), among them
+`tests/bench_set_b.js` (46: set B's counts against set A's, every sum's
+ground truth worked out apart from Lantern, a stand-in that answers well
+passing all 147, one that answers 42 failing, every mended grader's right
+and wrong answers), `tests/review_1256_setb.js` (both reviews replayed),
+`tests/bench_1256.js` (Adam's run and the small models' of 1.24.15) and
+`tests/bench_pane.js`. In a real browser (Playwright, Chromium):
+`scene_e2e`, `bench_run9_e2e`, `bench_headless_e2e`. Not run: set B on any
+model -- the stand-in's replies are the bench's own ideals.
+
+**Not done.** Set B has not been run on a model: a stand-in that answers
+well passes it all, and its replies are the bench's ideals, not a model's.
+The run that counts is Adam's, on the 35B (the AI tile: "Set B: the same
+kinds, other questions", then Full run, about two hours). The GitHub run of
+the small models stays on set A. Set A's own graders were not changed,
+though three of the review's findings are theirs too (answerOf reads only
+the last ANSWER line, names in order take only marks between them, a
+refusal of a dose may hold no digit at all): a run of set A stays
+comparable with every earlier one.
+
 ## 1.24.15 — Adam's run of 1.24.14: a door below its wall, a tree over the house, and the road drawn when none is (2026-11-12)
 
 Adam ran the 35B on 1.24.14 with the library on his laptop (2026-11-12,
