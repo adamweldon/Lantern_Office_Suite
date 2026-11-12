@@ -49141,63 +49141,105 @@ Lantern.RFB = (function () {
   // high) on a wall 2 high, its foot at y 9, a cell below the wall's -- and "The tree is not separated from the
   // house other than the color" -- the example's tree, "rect 10 5 2 4 fill brown" and "circle 11 4 2 fill dark
   // green", drawn against the wall of a hut made wider, its crown over the roof's corner.
+  //
+  // The first draft was tried by a reviewer (tests/fixtures/review1_1255_draw.json, 196 pictures): it lifted a
+  // child's body off its legs, a car off its wheels, a lamp post, a mailbox post, a porch post, a step, a tree trunk
+  // in front of the wall, and doors that rightly reach through a foundation to the ground; and it moved a bush and a
+  // potted plant away from the door, a tree with its apples, swing or birdhouse left behind, a tree on a hill into the
+  // air, one onto a road, and trees by a lake or a mountain taken for a house. So, now: a door is moved only when
+  // nothing else touches it below the wall (no legs, wheels, posts, crown, foundation) and the wall has no door of its
+  // own on its foot; what lies wholly on it (a knob, a window, its outline) goes with it. A tree is moved only when it
+  // is a tree's size, nothing hangs on it, its foot stands on the ground at both places, it stays within five cells,
+  // and the house is a house: its roof drawn after its wall, over it, and not much wider.
   function house(items, q) {
     var said = [], walls = [], k;
-    // a house: a wall (a solid rect, not a band, not the sky) with a roof on it (a tri whose base is the wall's top)
+    function attached(o, p, pad) {   // a point of o within pad of p
+      var b = box(o), x, y;
+      for (x = b[0] + 0.125; x < b[2]; x += 0.25) for (y = b[1] + 0.125; y < b[3]; y += 0.25) {
+        if (!inside(o, x, y)) continue;
+        if (inside(p, x, y) || inside(p, x + pad, y) || inside(p, x - pad, y) || inside(p, x, y + pad) || inside(p, x, y - pad)) return true;
+      }
+      return false;
+    }
+    function within(o, b) { var c = box(o); return c[0] >= b[0] - 0.01 && c[2] <= b[2] + 0.01 && c[1] >= b[1] - 0.01 && c[3] <= b[3] + 0.01; }
+    // a house: a wall (a solid rect, not a band, not the sky) with a roof drawn after it, whose base is the wall's top,
+    // over the wall's middle and at most three cells wider than it
     items.forEach(function (it, wi) {
       var o = it.o, b;
       if (!o || o.kind !== "rect" || !o.fill || wide(o)) return;
       b = box(o);
       if (b[2] - b[0] < 2 || b[2] - b[0] > 16 || b[3] - b[1] < 1 || b[1] < 1) return;
-      var roof = items.filter(function (r) {
-        if (!r.o || r.o.kind !== "tri" || !r.o.fill) return false;
-        var rb = box(r.o);
-        return Math.abs(rb[3] - b[1]) <= 0.75 && rb[1] < b[1] - 0.5 && rb[0] < b[2] && rb[2] > b[0];
+      var roof = items.filter(function (r, ri) {
+        if (ri <= wi || !r.o || r.o.kind !== "tri" || !r.o.fill) return false;
+        var rb = box(r.o), c = (rb[0] + rb[2]) / 2;
+        return Math.abs(rb[3] - b[1]) <= 0.75 && rb[1] < b[1] - 0.5 && rb[2] - rb[0] <= b[2] - b[0] + 3 && rb[2] - rb[0] >= 0.8 * (b[2] - b[0]) && Math.abs(c - (b[0] + b[2]) / 2) <= (b[2] - b[0]) / 2;
       })[0];
       if (roof) walls.push({ it: it, at: wi, b: b, roof: roof, rb: box(roof.o) });
     });
     if (!walls.length) return { items: items, said: said };
-    // -- the door: a rect drawn after the wall, within the wall's width and narrower, whose top is on the wall and
-    // whose foot is below the wall's, by less than it stands on the wall (more is a path or steps from the door);
-    // one such for the wall. When the question asks for no door, only one shaped like a door: taller than wide.
     var DOORQ = /\bdoors?\b/i.test(q);
     walls.forEach(function (w) {
+      var ww = w.b[2] - w.b[0];
+      function onWall(it, di) { var o = it.o, b; if (di <= w.at || !o || o.kind !== "rect" || !o.fill || o.fill === w.it.o.fill) return null; b = box(o); return b[0] >= w.b[0] - 0.01 && b[2] <= w.b[2] + 0.01 ? b : null; }
+      // (a door of its own on the wall's foot: then what hangs below is something else -- a step, a person)
+      if (items.some(function (it, di) { var b = onWall(it, di); return b && b[1] > w.b[1] && Math.abs(b[3] - w.b[3]) <= 0.1 && b[2] - b[0] <= 0.6 * ww; })) return;
       var cand = items.filter(function (it, di) {
-        var o = it.o, b;
-        if (di <= w.at || !o || o.kind !== "rect" || !o.fill || o.fill === w.it.o.fill) return false;
-        b = box(o);
-        if (b[0] < w.b[0] - 0.01 || b[2] > w.b[2] + 0.01 || b[2] - b[0] > 0.6 * (w.b[2] - w.b[0])) return false;
+        var b = onWall(it, di);
+        if (!b || b[2] - b[0] > (DOORQ ? 0.5 : 0.4) * ww) return false;
         if (!(b[1] >= w.b[1] - 0.01 && b[1] < w.b[3] - 0.2 && b[3] > w.b[3] + 0.05)) return false;
         if (b[3] - w.b[3] > w.b[3] - b[1]) return false;
-        return DOORQ || (b[3] - b[1] >= 1.2 * (b[2] - b[0]) && b[2] - b[0] <= 0.4 * (w.b[2] - w.b[0]));
+        return DOORQ || b[3] - b[1] >= 1.2 * (b[2] - b[0]);
       });
       if (cand.length !== 1) return;
-      var d = cand[0].o, db = box(d), wh = w.b[3] - w.b[1], h = db[3] - db[1];
+      var d = cand[0].o, db = box(d), wh = w.b[3] - w.b[1];
+      // nothing touches it but the wall, the bands and what lies wholly on it (legs, wheels, a post's lamp, a crown, a
+      // foundation strip: then it is not a door hung low)
+      var on = [];
+      if (items.some(function (it) {
+        if (it === cand[0] || it === w.it || it === w.roof || !it.o || wide(it.o)) return false;
+        if (within(it.o, db)) { on.push(it); return false; }
+        return attached(it.o, d, 0.1) || attached(d, it.o, 0.1);
+      })) return;
+      var h = db[3] - db[1];
       if (h > 0.8 * wh) h = Math.max(0.5, Math.floor(0.8 * wh * 2) / 2);
-      var n2 = [db[0], w.b[3] - h, db[2] - db[0], h], line = "rect " + n2.map(num).join(" ") + (d.rest ? " " + d.rest : "");
-      said.push("moved the door, \u201c" + cand[0].line + "\u201d, up onto its wall: its foot was at y " + num(db[3]) + ", below the wall's (y " + num(w.b[3]) +
-        "), on the ground -- " + line);
+      var dy = w.b[3] - h - db[1], sh = h / (db[3] - db[1]);
+      var line = "rect " + [db[0], w.b[3] - h, db[2] - db[0], h].map(num).join(" ") + (d.rest ? " " + d.rest : "");
+      var was = cand[0].line, onWas = on.map(function (it) { return "\u201c" + it.line + "\u201d"; });
       cand[0].line = line; cand[0].o = read1(line);
+      // (what lies on the door goes with it, kept where it was on the door)
+      on.forEach(function (it) {
+        var o = it.o, n2 = o.nums.slice(), j;
+        for (j = 1; j < n2.length; j += 2) {
+          if ((o.kind === "rect" || o.kind === "oval" || o.kind === "square") && j === 3) { n2[3] *= sh; break; }
+          if (o.kind === "circle" && j === 1) { n2[1] = db[1] + dy + (n2[1] - db[1]) * sh; break; }
+          n2[j] = db[1] + dy + (n2[j] - db[1]) * sh;
+        }
+        if (o.kind !== "circle" && o.kind !== "line" && o.kind !== "curve" && o.kind !== "tri") n2[1] = db[1] + dy + (o.nums[1] - db[1]) * sh;
+        var l2 = o.kind + " " + n2.map(num).join(" ") + (o.rest ? " " + o.rest : "");
+        it.line = l2; it.o = read1(l2);
+      });
+      said.push("moved the door, \u201c" + was + "\u201d, up onto its wall: its foot was at y " + num(db[3]) + ", below the wall's (y " + num(w.b[3]) +
+        "), on the ground" + (h < db[3] - db[1] - 0.01 ? ", and shortened it to " + num(h) + " high: it was " + num(db[3] - db[1]) + ", and the wall is " + num(wh) : "") + " -- " + line + (on.length ? "; and what is on the door with it, " + onWas.join(" and ") + " -- " + on.map(function (it) { return it.line; }).join(", ") : ""));
     });
-    // -- a tree: a trunk (a solid rect of an earth colour, upright, narrow) with a crown on it (solid circles or
-    // ovals of a green, their foot on the trunk's top half, over its middle)
+    // -- a tree: a trunk (a solid rect of an earth colour, upright, at least 1.5 high, at most 2.5 wide) with a crown
+    // on it (solid circles or ovals of a green, at least 1 across, their foot on the trunk's top half, over its middle)
     var trees = [];
     items.forEach(function (it, ti) {
       var o = it.o, b;
       if (!o || o.kind !== "rect" || o.fam !== "earth" || wide(o)) return;
       b = box(o);
-      if (b[2] - b[0] > 2.5 || b[3] - b[1] < 1.2 * (b[2] - b[0]) || b[3] - b[1] < 1) return;
+      if (b[2] - b[0] > 2.5 || b[3] - b[1] < 1.5 || b[3] - b[1] < 1.2 * (b[2] - b[0])) return;
       if (walls.some(function (w) { return w.it === it; })) return;
       var mid = (b[0] + b[2]) / 2, crowns = items.filter(function (c) {
         var co = c.o, cb;
         if (!co || !/^(circle|oval)$/.test(co.kind) || co.fam !== "green") return false;
         cb = box(co);
-        return Math.abs((cb[0] + cb[2]) / 2 - mid) <= Math.max(0.6, (b[2] - b[0]) / 2) && cb[3] >= b[1] - 0.25 && cb[3] <= b[1] + (b[3] - b[1]) / 2 && cb[1] < b[1];
+        return cb[2] - cb[0] >= 1 && Math.abs((cb[0] + cb[2]) / 2 - mid) <= Math.max(0.6, (b[2] - b[0]) / 2) && cb[3] >= b[1] - 0.25 && cb[3] <= b[1] + (b[3] - b[1]) / 2 && cb[1] < b[1];
       });
-      if (crowns.length) trees.push({ parts: [it].concat(crowns), at: Math.min.apply(null, [ti].concat(crowns.map(function (c) { return items.indexOf(c); }))) });
+      if (crowns.length) trees.push({ trunk: it, parts: [it].concat(crowns), at: Math.min.apply(null, [ti].concat(crowns.map(function (c) { return items.indexOf(c); }))) });
     });
     // (not when the question puts a tree with the house: a tree house, a tree in front of the house, over it, ...)
-    if (/\b(tree ?houses?|in front|behind|against|under(neath)?|beneath|over(hang\w*)?|shad(e|es|ed|ing|ow\w*)|hid(e|es|den|ing)|cover\w*|lean\w*|touch\w*|through)\b/i.test(q)) trees = [];
+    if (/\b(tree ?houses?|in front|behind|against|under(neath)?|beneath|over(hang\w*)?|shad(e|es|ed|ing|ow\w*)|hid(e|es|den|ing)|cover\w*|lean\w*|touch\w*|through|swing|apples?|fruit|birdhouse|nest)\b/i.test(q)) trees = [];
     function partsBox(ps, dx) {
       var bb = [1e9, 1e9, -1e9, -1e9];
       ps.forEach(function (p) { var b = box(p.o); bb = [Math.min(bb[0], b[0] + dx), Math.min(bb[1], b[1]), Math.max(bb[2], b[2] + dx), Math.max(bb[3], b[3])]; });
@@ -49216,22 +49258,49 @@ Lantern.RFB = (function () {
         });
       });
     }
+    // footOn(tr, dx): the trunk's foot, moved dx, stands on a band of ground and on no tri (a hill, a road)
+    function footOn(tr, dx) {
+      var b = box(tr.trunk.o), x = (b[0] + b[2]) / 2 + dx, y = b[3] - 0.1;
+      return items.some(function (it) { return wide(it.o) && it.o.nums[1] >= 1.5 && inside(it.o, x, y); }) &&
+        !items.some(function (it) { return it.o && it.o.kind === "tri" && it.o.fill && inside(it.o, x, y); });
+    }
     trees.forEach(function (tr) {
-      // in front of a house (drawn after its wall) and against it or over it
-      var hw = walls.filter(function (w) { return tr.at > w.at && near(tr, 0, w); });
-      if (hw.length !== 1) return;
+      // in front of a house (drawn after its wall) and over it: the tree covers at least half a cell of the wall and
+      // the roof (Adam's picture: 1.1 cells, the crown over the roof's corner, the trunk against the wall). A tree a
+      // hair clear of the wall, or touching it, or its crown just over the eave (0.06, 0.25, 0.44 of a cell), is the
+      // model's: "next to it" -- the first review
+      var hw = walls.filter(function (w) {
+        var n = 0;
+        if (tr.at < w.at) return false;
+        tr.parts.forEach(function (p) { pts(p.o, 0).forEach(function (q2) { if (inside(w.it.o, q2[0], q2[1]) || inside(w.roof.o, q2[0], q2[1])) n++; }); });
+        return n >= 8;
+      });
+      if (hw.length !== 1 || !footOn(tr, 0)) return;
+      // (nothing hangs on it or lies on it but the house it stands against, bands and hills behind it)
+      if (items.some(function (it) {
+        if (tr.parts.indexOf(it) >= 0 || !it.o || wide(it.o) || it === hw[0].it || it === hw[0].roof) return false;
+        if (it.o.kind === "tri" && it.o.fill && items.indexOf(it) < tr.at && box(it.o)[3] <= box(tr.trunk.o)[3] - 0.5) return false;
+        if (/^(circle|oval)$/.test(it.o.kind) && box(it.o)[3] <= GH / 3 && items.indexOf(it) < tr.at) return false;
+        return walls.indexOf(it) < 0 && tr.parts.some(function (p) { return attached(p.o, it.o, 0.1); });
+      })) return;
       var w = hw[0], tb = partsBox(tr.parts, 0), hx0 = Math.min(w.b[0], w.rb[0]), hx1 = Math.max(w.b[2], w.rb[2]);
       var cands = [Math.ceil((hx1 + 0.5 - tb[0]) * 2) / 2, -Math.ceil((tb[2] - (hx0 - 0.5)) * 2) / 2].filter(function (dx) {
         var nb = partsBox(tr.parts, dx);
-        if (nb[0] < 0 || nb[2] > GW) return false;
+        if (Math.abs(dx) > 5 || nb[0] < 0 || nb[2] > GW || !footOn(tr, dx)) return false;
         if (walls.some(function (w2) { return near(tr, dx, w2); })) return false;
-        // nothing else solid, but bands, hills and what is high in the sky, under it where it goes
+        // nothing else solid under it where it goes, but bands, hills and mountains behind it, and what is high in the sky
         return !items.some(function (it) {
           var o = it.o, ob;
           if (!o || !solid(o) || wide(o) || tr.parts.indexOf(it) >= 0) return false;
-          if (o.kind === "tri" && stands(o)) return false;
           ob = box(o);
-          if (/^(circle|oval)$/.test(o.kind) && ob[3] <= GH / 3) return false;
+          if (o.kind === "tri" && items.indexOf(it) < tr.at && ob[3] <= box(tr.trunk.o)[3] - 0.5) return false;
+          // (a cloud high in the sky is passed over; the sun or the moon is not covered more than the model covered it:
+          // the tall tree's crown, moved off the roof onto the sun, on the first draft)
+          if (/^(circle|oval)$/.test(o.kind) && ob[3] <= GH / 3) {
+            if (!/^(warm|white)$/.test(o.fam)) return false;
+            var cov = function (d) { var n = 0; tr.parts.forEach(function (p) { pts(p.o, d).forEach(function (q2) { if (inside(o, q2[0], q2[1])) n++; }); }); return n; };
+            return cov(dx) > cov(0);
+          }
           return tr.parts.some(function (p) { return pts(p.o, dx).some(function (q2) { return inside(o, q2[0], q2[1]); }); });
         });
       }).sort(function (a, b) { return Math.abs(a) - Math.abs(b); });
@@ -49239,11 +49308,11 @@ Lantern.RFB = (function () {
       var dx = cands[0], before = tr.parts.map(function (p) { return "\u201c" + p.line + "\u201d"; }).join(" and ");
       tr.parts.forEach(function (p) {
         var o = p.o, n2 = o.nums.slice();
-        for (var j = 0; j < n2.length; j += (o.kind === "tri" ? 2 : n2.length)) n2[j] += dx;
+        n2[0] += dx;
         var line = o.kind + " " + n2.map(num).join(" ") + (o.rest ? " " + o.rest : "");
         p.line = line; p.o = read1(line);
       });
-      said.push("moved the tree, " + before + ", " + num(Math.abs(dx)) + " to the " + (dx > 0 ? "right" : "left") + ", clear of the house: it stood against the house, drawn over it");
+      said.push("moved the tree, " + before + ", " + num(Math.abs(dx)) + " to the " + (dx > 0 ? "right" : "left") + ", clear of the house: it stood against the house, in front of it");
     });
     return { items: items, said: said };
   }
@@ -49564,14 +49633,39 @@ Lantern.RFB = (function () {
         // its own lines again. Adam, of 1.24.14's picture: "There is no road in the mountain picture where the road
         // should be" -- the tri is a mountain to a person, and is left as drawn (bench_run_1254_35b_library.json).
         // Only when nothing at all is on the ground (narrows() and strip() find no road of the model's to keep).
-        var roadLine = "tri 7 " + GH + " 13 " + GH + " 10 " + num(H) + " fill " + (wet ? (groundAt(sc, 10, (H + GH) / 2) === "blue" ? "light blue" : "blue") : (groundAt(sc, 10, (H + GH) / 2) === "gray" ? "tan" : "gray"));
-        var lastG = -1, out2 = [];
-        items.forEach(function (it, ki) { if (wide(it.o) && !isSkyO(it.o) && it.o.nums[1] >= 1.5) lastG = ki; });
-        items.forEach(function (it, ki) { out2.push(it); if (ki === lastG) out2.push({ line: roadLine, o: read1(roadLine) }); });
-        if (lastG < 0) out2.push({ line: roadLine, o: read1(roadLine) });
-        items = out2;
-        said.push("drew the " + way + " the question asks for, " + roadLine + ", after the ground: nothing was drawn on the ground (a " + way +
-          " going away is wide at the bottom edge and comes to a point on the horizon, y " + num(H) + ")");
+        // The point is the horizon, or, when the land ends at water (the sea, a lake behind it), the shore: a road
+        // does not run across the sea (the first review). The colour shows on the ground under it: gray, and tan on
+        // gray or black ground; blue, and light blue on blue. Lantern does not draw it, and asks as 1.24.14 did, for a
+        // railway (rails are lines: a gray tri is a road -- the first review), for a river and a road in one question
+        // (one shape cannot be both), and where the water does not end before the bottom edge.
+        var y0 = H, yy, famAt = function (y) { return famOf(groundAt(sc, 10, y)); };
+        if (famAt(H + 0.05) === "water") {
+          y0 = -1;
+          for (yy = GH - 0.0625; yy > H; yy -= 0.125) if (famAt(yy) === "water") { y0 = yy + 0.0625; break; }
+          if (y0 > 0 && GH - y0 < 1.5) y0 = -1;
+        }
+        var gf = groundAt(sc, 10, y0 > 0 ? (y0 + GH) / 2 : (H + GH) / 2), gfam = famOf(gf);
+        var roadLine = "tri 7 " + GH + " 13 " + GH + " 10 " + num(y0 > 0 ? y0 : H) + " fill " + (wet ? (/^(blue|dark blue|navy)$/.test(gf) || (gfam === "water" && /^#/.test(gf)) ? "light blue" : "blue") : (/^(gray|dark)$/.test(gfam) ? "tan" : "gray"));
+        if (/\brail/i.test(q) || (WATERWAY.test(q) && DRYWAY.test(q)) || y0 < 0) {
+          // (as 1.24.14: a tri of a road's colour standing on the horizon with its point at the top of the picture, when
+          // the question asks for no mountain or hill or other thing a tri can be, is named, with the line to write in
+          // its place)
+          var ups = MOUNT.test(q) || /\b(tree|pine|fir|forest|wood|tent|pyramid|roof|house|hut|barn|sail|boat|spire|tower|church|volcan|dune|desert|cliff|rock|stone|boulder|sand|castle|cone|flag|crag|crystal|spike)\w*/i.test(q) ? [] : items.filter(function (it) {
+            var t = stands(it.o);
+            return t && Math.abs(t.B - H) <= 0.5 && t.a[1] < H - 0.5 && t.w >= 1 && (wet ? /^(water|sky)$/.test(it.o.fam) : /^(gray|dark|earth)$/.test(it.o.fam));
+          }), upside = ups.length === 1 && stands(ups[0].o).a[1] <= 1 ? ups[0] : null;
+          problems.push("the question asks for a " + way + " going into the distance, and nothing is drawn on the ground: " + (upside ?
+            "if \u201c" + upside.line + "\u201d is the " + way + ", it goes up from the horizon to a point at y " + num(stands(upside.o).a[1]) + ", in the sky -- write " + roadLine + " in its place, after the ground" :
+            "add " + roadLine + " after the ground") + " (a " + way + " going away is wide at the bottom edge and comes to a point " + (y0 > H ? "where the land meets the water, y " + num(y0) : "on the horizon, y " + num(H)) + ")");
+        } else {
+          var lastG = -1, out2 = [];
+          items.forEach(function (it, ki) { if (wide(it.o) && !isSkyO(it.o) && it.o.nums[1] >= 1.5) lastG = ki; });
+          items.forEach(function (it, ki) { out2.push(it); if (ki === lastG) out2.push({ line: roadLine, o: read1(roadLine) }); });
+          if (lastG < 0) out2.push({ line: roadLine, o: read1(roadLine) });
+          items = out2;
+          said.push("drew the " + way + " the question asks for, " + roadLine + ", after the ground: nothing was drawn on the ground (a " + way +
+            " going away is wide at the bottom edge and comes to a point " + (y0 > H ? "where the land meets the water, y " + num(y0) : "on the horizon, y " + num(H)) + ")");
+        }
       }
     }
 

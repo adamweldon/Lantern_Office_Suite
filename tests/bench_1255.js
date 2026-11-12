@@ -72,7 +72,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   // --- the door ---
   var hs = row(F, "make-house"), h1 = made("make-house", hs.reply);
   ok("the door: \u201crect 8 7 4 2\u201d on the wall \u201crect 4 6 12 2\u201d hung below its foot (y 9, the wall's at 8): it goes up onto the wall, shortened to fit, and is said",
-    h1.m.ok && h1.g.pass && h1.said.join() === "moved the door, \u201crect 8 7 4 2 fill dark green\u201d, up onto its wall: its foot was at y 9, below the wall's (y 8), on the ground -- rect 8 6.5 4 1.5 fill dark green" &&
+    h1.m.ok && h1.g.pass && h1.said.join() === "moved the door, \u201crect 8 7 4 2 fill dark green\u201d, up onto its wall: its foot was at y 9, below the wall's (y 8), on the ground, and shortened it to 1.5 high: it was 2, and the wall is 2 -- rect 8 6.5 4 1.5 fill dark green" &&
     shapes(h1.m).indexOf("rect 8 6.5 4 1.5") >= 0, [h1.m.problems, h1.said]);
   var HQ = "Draw a simple house with a red roof and a door.", Wall = ["rect 0 0 20 12 fill sky", "rect 0 9 20 3 fill green", "rect 5 5 10 4 fill tan", "tri 4 5 10 1 16 5 fill red"];
   function said(lines, q) { var m = act.fromReply("MAKE DRAWING: x\n" + lines.join("\n") + "\nEND", q || HQ); return (m.plan && m.plan.said) || []; }
@@ -83,7 +83,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   // --- the tree ---
   var ss = row(F, "make-sunset-house"), t1 = made("make-sunset-house", ss.reply);
   ok("the tree: the trunk against the wall and the crown over the roof: the tree goes 2.5 to the right, clear of the house, and is said",
-    t1.m.ok && t1.g.pass && t1.said.join() === "moved the tree, \u201crect 10 5 2 4 fill brown\u201d and \u201ccircle 11 4 2 fill dark green\u201d, 2.5 to the right, clear of the house: it stood against the house, drawn over it" &&
+    t1.m.ok && t1.g.pass && t1.said.join() === "moved the tree, \u201crect 10 5 2 4 fill brown\u201d and \u201ccircle 11 4 2 fill dark green\u201d, 2.5 to the right, clear of the house: it stood against the house, in front of it" &&
     shapes(t1.m).indexOf("rect 12.5 5 2 4") >= 0 && shapes(t1.m).indexOf("circle 13.5 4 2") >= 0, [t1.m.problems, t1.said]);
   var hut = act.fromReply(L.aiActions.filter(function (a) { return a.id === "drawing"; })[0].prompt.join("\n").split("For example:\n")[1], "Draw a hut by a tree.");
   ok("...the guide's own hut by a tree is left as it is", hut && hut.ok && !(hut.plan.said || []).length, hut && [hut.problems, hut.plan && hut.plan.said]);
