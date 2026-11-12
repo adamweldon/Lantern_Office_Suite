@@ -133,8 +133,10 @@ var RIGHT = [
         if (!b) return;
         blocks++;
         var m = S.mend(b.lines, r.q);
-        // (1.24.14: but the 4B's road drawn under the ground, moved after it -- tests/bench_1254.js)
-        if (m.said.some(function (x) { return !/^left out /.test(x) && !(r.id === "make-road-horizon" && /^moved \u201ctri 0 12 10 6 20 12 fill gray\u201d after \u201crect 0 6 20 6 fill green\u201d/.test(x)); }) ||
+        // (1.24.14: but the 4B's road drawn under the ground, moved after it -- tests/bench_1254.js; 1.24.15: and the road
+        // drawn where none was, a house's door put on its wall and a tree moved clear of a house -- tests/bench_1255.js)
+        if (m.said.some(function (x) { return !/^left out /.test(x) && !(r.id === "make-road-horizon" && /^moved \u201ctri 0 12 10 6 20 12 fill gray\u201d after \u201crect 0 6 20 6 fill green\u201d|^drew the road the question asks for/.test(x)) &&
+          !/^moved the (door|tree), /.test(x); }) ||
           (m.problems.length && !/shore|road/.test(r.q))) moved.push([f, r.id, m.said, m.problems]);
       });
     });
@@ -172,7 +174,10 @@ var RIGHT = [
   ok("the one right-looking picture Lantern still changes: the sun drawn in front of a cloud goes behind it (Adam, of the 35B\u2019s picture: \u201cThe sun is in front of the clouds\u201d)",
     RV.sunOverCloud.length === 1 && msc.lines.join("|") === "rect 0 0 20 12 fill sky|circle 5 3 1 fill white|circle 8.5 2.5 1.5 fill yellow|circle 6.2 3 1.3 fill white|circle 7.5 3.2 1 fill white|rect 0 9 20 3 fill green" &&
     msc.said.join() === "put the sun behind the clouds: it was drawn in front" && !msc.problems.length, msc);
-  function nowOf(c) { var m = S.mend(c.lines, c.q); return m.said.length ? "mended" : m.problems.length ? "sent back" : m.lines.join("\n") === c.lines.join("\n") ? "left" : "changed"; }
+  // (1.24.15: a road that was sent back with the line to add is drawn by Lantern now, with that line, and said: it counts
+  // as sent back here)
+  function supplied(m) { return m.said.length > 0 && m.said.every(function (x) { return /^drew the [a-z]+ the question asks for/.test(x); }); }
+  function nowOf(c) { var m = S.mend(c.lines, c.q); return supplied(m) ? "sent back" : m.said.length ? "mended" : m.problems.length ? "sent back" : m.lines.join("\n") === c.lines.join("\n") ? "left" : "changed"; }
   var wrongNow = RV.wrong.filter(function (c) { return nowOf(c) !== c.now; });
   ok("the review\u2019s 19 wrong pictures: 4 are mended, 1 is sent back with the line to add, and 14 are left as they are (a ground in two halves, a sun drawn as an oval, pink mountains behind a tent, a road that stops short: Lantern moves nothing it is not sure of)",
     RV.wrong.length === 19 && wrongNow.length === 0 && RV.wrong.filter(function (c) { return c.now === "mended"; }).length === 4 && RV.wrong.filter(function (c) { return c.now === "sent back"; }).length === 1, wrongNow.map(function (c) { return [c.name, nowOf(c)]; }));
@@ -214,7 +219,7 @@ var RIGHT = [
   ok("...the sun\u2019s rays go behind with it, drawn as lines or as small triangles", rayed.lines.slice(1, 6).join("|") === "circle 12 4 1.3 fill yellow|tri 11.6 2.5 12 1.5 12.4 2.5 fill yellow|tri 13.5 3.6 14.5 4 13.5 4.4 fill yellow|tri 11.6 5.5 12 6.5 12.4 5.5 fill yellow|tri 10.5 3.6 9.5 4 10.5 4.4 fill yellow" &&
     rayed.lines[6] === "tri 2 8 9 2.5 16 8 fill gray" && rayed.said.length === 1, rayed.lines);
   // going away is said of the road itself
-  function sentBack(q, lines) { return S.mend(lines, q).problems.length; }
+  function sentBack(q, lines) { var m = S.mend(lines, q); return m.problems.length + (supplied(m) ? 1 : 0); }
   var FLAT = ["rect 0 0 20 12 fill sky", "rect 0 6 20 6 fill green"];
   ok("a road is asked for only when the question says the road itself goes away: \u201ca road disappearing into the distance\u201d, \u201ca track to the horizon\u201d, \u201ca river flowing off into the distance\u201d -- not \u201ca river with mountains in the distance\u201d, \u201ca path leading to the door\u201d, \u201ca house, and far away a road\u201d",
     sentBack("Draw a road disappearing into the distance.", FLAT) === 1 && sentBack("Draw a dirt track running to the horizon.", FLAT) === 1 && sentBack("Draw a river flowing off into the distance.", FLAT) === 1 &&
@@ -234,8 +239,10 @@ var RIGHT = [
   ok("a railway: the two rails meet on the horizon, and each sleeper drawn across them is as wide as the track is at its distance (short far away, long near)",
     m4.lines.slice(2).join("|") === "tri 7 12 13 12 10 5 fill gray|line 7 12 10 5 color black width 2|line 13 12 10 5 color black width 2|line 9.57 6 10.43 6 color brown width 2|line 8.29 9 11.71 9 color brown width 2|line 7.09 11.8 12.91 11.8 color brown width 2", m4.lines);
   var m5 = mend("Draw a road disappearing into the distance through fields.", ["rect 0 0 20 12 fill sky", "rect 0 6 20 6 fill green", "rect 0 8 20 1 fill yellow", "circle 16 2 1 fill yellow"]);
-  ok("a road asked for and none drawn: nothing is made up; it goes back with the line to add, for this picture\u2019s horizon", m5.said.length === 0 && m5.lines.length === 4 &&
-    m5.problems[0] === "the question asks for a road going into the distance, and nothing is drawn on the ground: add tri 7 12 13 12 10 6 fill gray after the ground (a road going away is wide at the bottom edge and comes to a point on the horizon, y 6)", m5);
+  // (until 1.24.14 it went back with the line to add; the 35B wrote its own lines again on four versions)
+  ok("a road asked for and none drawn: Lantern draws it, for this picture\u2019s horizon, just after the ground, and says so", m5.problems.length === 0 && m5.lines.length === 5 &&
+    m5.lines[3] === "tri 7 12 13 12 10 6 fill gray" &&
+    m5.said[0] === "drew the road the question asks for, tri 7 12 13 12 10 6 fill gray, after the ground: nothing was drawn on the ground (a road going away is wide at the bottom edge and comes to a point on the horizon, y 6)", m5);
   var m6 = mend("Draw the sun setting over the sea.", ["rect 0 0 20 12 fill orange", "rect 0 8 20 4 fill blue", "circle 10 8 2.5 fill yellow"]);
   ok("a setting sun drawn over the sea: it goes behind the water, so half of it shows", m6.lines.join("|") === "rect 0 0 20 12 fill orange|circle 10 8 2.5 fill yellow|rect 0 8 20 4 fill blue" && m6.said[0] === "put the sun behind the water: it was drawn in front", m6);
   var m7 = mend("Draw the moon over the mountains at night.", ["rect 0 0 20 12 fill dark blue", "tri 0 9 5 4 10 9 fill gray", "tri 7 9 13 3 20 9 fill gray", "rect 0 9 20 3 fill dark green", "circle 12 4 1.5 fill white"]);

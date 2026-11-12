@@ -70,7 +70,19 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
   // --- wrong pictures ---
   function w3(name) { return SC.wrong.filter(function (c) { return c.name === name; })[0]; }
-  var wNow = SC.wrong.filter(function (c) { var m = mend(c); return m.lines.join("\n") !== c.after.join("\n") || m.said.join("|") !== c.said.join("|") || m.problems.join("|") !== c.problems.join("|"); });
+  // (1.24.15: a road that went back with the line to add is drawn by Lantern now, with that line, just after the ground,
+  // and said -- here it is put back as the question it was, to compare)
+  function asWas(m) {
+    var lines = m.lines.slice(), said = [], problems = m.problems.slice();
+    m.said.forEach(function (x) {
+      var r = /^drew the ([a-z]+) the question asks for, (.+?), after the ground: nothing was drawn on the ground (\(.+\))$/.exec(x);
+      if (!r) { said.push(x); return; }
+      lines.splice(lines.indexOf(r[2]), 1);
+      problems.push("the question asks for a " + r[1] + " going into the distance, and nothing is drawn on the ground: add " + r[2] + " after the ground " + r[3]);
+    });
+    return { lines: lines, said: said, problems: problems };
+  }
+  var wNow = SC.wrong.filter(function (c) { var m = asWas(mend(c)); return m.lines.join("\n") !== c.after.join("\n") || m.said.join("|") !== c.said.join("|") || m.problems.join("|") !== c.problems.join("|"); });
   var n = {}; SC.wrong.forEach(function (c) { n[c.now] = (n[c.now] || 0) + 1; });
   // (the sixth review of 1.24.7: the moon is left where the model drew it -- a white disc at night is a snow cap or a
   // cloud as often -- so five of these pictures with the moon in front are left as drawn)

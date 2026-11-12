@@ -169,14 +169,12 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var s3 = made("make-shore-sunset", sh.reply);
   ok("(its retry of 1.24.13, the sand written after its own band, is asked about as hidden: the band was not named then)", !s3.m.ok && /rect 0 10 20 2 \(blue\) is hidden/.test(s3.m.problems[0]), s3.m.problems);
   var rd = row(F, "make-road-horizon"), d1 = made("make-road-horizon", rd.reply);
-  ok("the road: the 35B's tri going up from the horizon is named, with the line to write in its place",
-    !d1.m.ok && d1.m.problems[0] === "the question asks for a road going into the distance, and nothing is drawn on the ground: if \u201ctri 0 6 20 6 10 0 fill gray\u201d is the road, it goes up from the horizon to a point at y 0, in the sky -- write tri 7 12 13 12 10 6 fill gray in its place, after the ground (a road going away is wide at the bottom edge and comes to a point on the horizon, y 6)", d1.m.problems);
+  // (1.24.14 named its tri, with the line to write in its place; the 35B wrote its own lines again on 1.24.14, and
+  // since 1.24.15 Lantern draws the road itself, after the ground, and says so -- tests/bench_1255.js)
+  ok("the road: since 1.24.15 Lantern draws it, after the ground, and the 35B's picture passes",
+    d1.m.ok && d1.g.pass && JSON.stringify(d1.m.plan.said).indexOf("drew the road the question asks for, tri 7 12 13 12 10 6 fill gray, after the ground") >= 0, [d1.m.problems, d1.m.plan && d1.m.plan.said]);
   var d2 = made("make-road-horizon", "MAKE DRAWING: Road to the Horizon\nrect 0 0 20 12 fill sky\ncircle 18 2 1.5 fill yellow\nrect 0 6 20 6 fill green\ntri 7 12 13 12 10 6 fill gray\nEND");
-  ok("...written so, it passes the bench", d2.m.ok && d2.g.pass, [d2.m.problems, d2.g.why]);
-  var d3 = made("make-road-horizon", "MAKE DRAWING: Mountain road\nrect 0 0 20 12 fill sky\ntri 0 6 20 6 10 0 fill gray\nrect 0 6 20 6 fill green\nEND".replace("Mountain road", "x"));
-  var mq = "Draw a road disappearing into the distance towards the mountains.", d4 = act.fromReply("MAKE DRAWING: x\nrect 0 0 20 12 fill sky\ntri 0 6 20 6 10 0 fill gray\nrect 0 6 20 6 fill green\nEND", mq);
-  ok("...and not named when the question asks for mountains: then it is asked for as before", !d4.ok && /: add tri 7 12 13 12 10 6 fill gray after the ground/.test(d4.problems.join(" ")) && !/in its place/.test(d4.problems.join(" ")), d4.problems);
-  ok("(a road of its own colour named only when nothing else is on the ground)", d3.m && !d3.m.ok);
+  ok("...a road the model draws itself passes, left as it is", d2.m.ok && d2.g.pass && !(d2.m.plan.said || []).length, [d2.m.problems, d2.g.why]);
   var F4 = fixture("bench_run_1253_4b.json"), r4b = row(F4, "make-road-horizon"), e1 = made("make-road-horizon", r4b.first);
   ok("the 4B's road drawn under the ground: moved just after it and said, and the bench passes it",
     e1.m.ok && e1.g.pass && e1.m.plan && JSON.stringify(e1.m).indexOf("moved \u201ctri 0 12 10 6 20 12 fill gray\u201d after \u201crect 0 6 20 6 fill green\u201d: drawn before it, it was hidden under it") >= 0, [e1.m.problems, e1.g.why]);

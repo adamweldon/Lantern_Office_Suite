@@ -56,9 +56,9 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var mk = ["make-road-horizon", "make-music-waltz", "make-shore-sunset"];
   ok("the made things are 1.24.8\u2019s replies word for word", mk.every(function (id) { return row(F, id).reply === row(G, id).reply; }));
   var pass = mk.map(function (id) { var it = item(id), r = row(F, id), b = act.build(r.reply, it.q); return B.grade(it, r.reply, { made: b, text: r.reply }).pass === true; });
-  ok("...on 1.24.10 the waltz passes and the road is asked for with the line to add; the shore, its sea below the picture, still fails",
-    // (1.24.14: its tri going up from the horizon is named, the line written in its place)
-    pass[1] === true && pass[0] === false && act.build(row(F, "make-road-horizon").reply, item("make-road-horizon").q).problems.join("\n").indexOf("if \u201ctri 0 6 20 6 10 0 fill gray\u201d is the road, it goes up from the horizon to a point at y 0, in the sky -- write tri 7 12 13 12 10 6 fill gray in its place, after the ground") >= 0 && pass[2] === false, pass);
+  // (1.24.14: its tri going up from the horizon was named, the line written in its place; 1.24.15: Lantern draws the road)
+  ok("...on 1.24.10 the waltz passes and the road was asked for with the line to add (since 1.24.15 Lantern draws it, and it passes); the shore, its sea below the picture, still fails",
+    pass[1] === true && pass[0] === true && /drew the road the question asks for/.test(act.build(row(F, "make-road-horizon").reply, item("make-road-horizon").q).summary) && pass[2] === false, pass);
   console.log(fails ? fails + " BENCH 1.24.9 35B FAILURES (" + passes + " passed)" : "ALL BENCH 1.24.9 35B CHECKS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);
 })();

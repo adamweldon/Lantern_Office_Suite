@@ -60,9 +60,10 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     /bar 7: the melody holds A over E/.test(wz.why) && mw.ok && /bar 7: Lantern played A under the tune\u2019s A, where the chords line has E/.test(mw.summary) &&
     B.grade(item("make-music-waltz"), wz.reply, { made: mw, text: wz.reply }).pass === true, [mw.problems, mw.summary]);
   var rd = row(F35, "make-road-horizon"), mr = act.build(rd.reply, item("make-road-horizon").q);
-  // (1.24.14: its tri, going up from the horizon to the top of the picture, is named, the road's line to write in its place)
-  ok("...its road (the triangle 29 times): the road is asked for, with the line to write", /no road that narrows/.test(rd.why) && !mr.ok &&
-    mr.problems.join("\n").indexOf("if \u201ctri 0 6 20 6 10 0 fill gray\u201d is the road, it goes up from the horizon to a point at y 0, in the sky -- write tri 7 12 13 12 10 6 fill gray in its place, after the ground") >= 0, mr.problems);
+  // (1.24.14: its tri, going up from the horizon to the top of the picture, was named, the road's line to write in its
+  // place; since 1.24.15 Lantern draws the road itself, after the ground, and says so -- tests/bench_1255.js)
+  ok("...its road (the triangle 29 times): the road is drawn by Lantern, and said", /no road that narrows/.test(rd.why) && mr.ok &&
+    /drew the road the question asks for, tri 7 12 13 12 10 6 fill gray, after the ground/.test(mr.summary), [mr.problems, mr.summary]);
 
   // --- the shore at sunset, four ways
   var sh = [F08, F2, F4, F35].map(function (F) { var r = row(F, "make-shore-sunset"), b = act.build(r.reply, item("make-shore-sunset").q); return { r: r, b: b }; });
@@ -87,9 +88,10 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     return { pass: pass, left: left };
   }
   var r08 = await replay(F08), r2 = await replay(F2), r4 = await replay(F4), r35 = await replay(F35);
-  ok("of the failed makes and sums, replayed as the models wrote them, only the 35B\u2019s waltz passes (the 0.8B 38 rows, the 2B 26, the 4B 3, the 35B 3)",
+  // (1.24.15: and the 35B's road, drawn by Lantern)
+  ok("of the failed makes and sums, replayed as the models wrote them, only the 35B\u2019s waltz and (since 1.24.15) its road pass (the 0.8B 38 rows, the 2B 26, the 4B 3, the 35B 3)",
     r08.pass.length === 0 && r08.left.length === 38 && r2.pass.length === 0 && r2.left.length === 26 && r4.pass.length === 0 && r4.left.length === 3 &&
-    r35.pass.join() === "make-music-waltz" && r35.left.length === 2, [r08.pass, r08.left.length, r2.pass, r2.left.length, r4.pass, r4.left.length, r35]);
+    r35.pass.slice().sort().join() === "make-music-waltz,make-road-horizon" && r35.left.length === 1, [r08.pass, r08.left.length, r2.pass, r2.left.length, r4.pass, r4.left.length, r35]);
   console.log(fails ? fails + " BENCH 1.24.8 FAILURES (" + passes + " passed)" : "ALL BENCH 1.24.8 CHECKS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);
 })();
