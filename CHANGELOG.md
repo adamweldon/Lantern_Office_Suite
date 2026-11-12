@@ -26,12 +26,14 @@ road passing now (moved from under the ground); the 2B 74; the 0.8B 54.
   says, the tri is a mountain, and there is no road.
 - *The house* (make-house) passed, its door "rect 8 7 4 2" on a wall "rect
   4 6 12 2": the door's top on the wall, its foot at y 9 on the grass, a
-  cell below the wall's (8). The guide's example draws a door 2 high on a
-  wall 4 high; the 35B drew the door, and a wall 2 high.
+  cell below the wall's (8). The guide's example puts its door at y 7, 2
+  high, on a wall from y 6 to 9; the 35B kept the door's y and height, and
+  drew its wall 2 high.
 - *The house on a hill at sunset* passed, its tree "rect 10 5 2 4" and
-  "circle 11 4 2" against the wall's corner and over the roof's: the trunk
-  touches the wall, the crown covers the eave, and the tree and the house
-  are one shape but for the colours.
+  "circle 11 4 2" -- the guide example's tree, 3 cells to the left --
+  against the wall's corner and over the roof's: the trunk touches the
+  wall, the crown covers the eave, and the tree and the house are one shape
+  but for the colours.
 - *The iPhone and Nairobi* fail as on 1.24.9, 1.24.11, 1.24.13 (the line
   to write is not handed to either: `QUEUE.md` 3). Three puzzles tried
   without Lantern's tools failed (not scored).
