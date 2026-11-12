@@ -1,5 +1,154 @@
 # Changelog
 
+## 1.24.15 — Adam's run of 1.24.14: a door below its wall, a tree over the house, and the road drawn when none is (2026-11-12)
+
+Adam ran the 35B on 1.24.14 with the library on his laptop (2026-11-12,
+14:49 UTC, 117 minutes): **137 of 140** (135 on 1.24.13), and sent three
+pictures with it: "The door to the house overlaps the ground. The tree is
+not seperated from the house other than the color. There is no road in
+the mountain picture where the road should be."
+(`tests/fixtures/bench_run_1254_35b_library.json`, replayed by
+`tests/bench_1255.js`; the two houses passed the bench and are kept under
+`seen`.) The small models' run on 1.24.14 (all three on an AMD EPYC 7763,
+`tests/fixtures/bench_run_1254_{4b,2b,08b}.json`): the 4B 108 of 114, its
+road passing now (moved from under the ground); the 2B 74; the 0.8B 54.
+
+**What was seen.**
+
+- *The two coins under the cups* pass: the 35B's TRACK block, the same as
+  on 1.24.11 and 1.24.13, runs with nothing questioned (1.24.14).
+- *The shore at sunset* passes: told "write rect 0 9.5 20 2.5 fill sand in
+  place of “rect 0 10 20 2 fill sky”", the 35B wrote that line (1.24.14).
+- *The road to the horizon* fails as on 1.24.8, 1.24.9, 1.24.13: "tri 0 6
+  20 6 10 0 fill gray", 26 times, and nothing on the ground. Told that if
+  this tri is the road it goes up into the sky, and handed the line to
+  write in its place, it wrote its own lines again. To a person, as Adam
+  says, the tri is a mountain, and there is no road.
+- *The house* (make-house) passed, its door "rect 8 7 4 2" on a wall "rect
+  4 6 12 2": the door's top on the wall, its foot at y 9 on the grass, a
+  cell below the wall's (8). The guide's example draws a door 2 high on a
+  wall 4 high; the 35B drew the door, and a wall 2 high.
+- *The house on a hill at sunset* passed, its tree "rect 10 5 2 4" and
+  "circle 11 4 2" against the wall's corner and over the roof's: the trunk
+  touches the wall, the crown covers the eave, and the tree and the house
+  are one shape but for the colours.
+- *The iPhone and Nairobi* fail as on 1.24.9, 1.24.11, 1.24.13 (the line
+  to write is not handed to either: `QUEUE.md` 3). Three puzzles tried
+  without Lantern's tools failed (not scored).
+
+**What it was traced to, and what changed** (AI_SCENE, rule 2: Lantern
+does what can be worked out, and says so; rule 7: only when it is surer
+than the model).
+
+- *Only a house asked for in plain words* (`house()`, new; rule 7). The
+  door and the tree are mended only when every word of the question is one
+  Lantern knows for a house (HOUSEWORDS: a house, cottage, cabin, hut, barn
+  or farmhouse and its roof, door, windows and chimney; the sky, the sun,
+  the time of day, hills, fields, trees, colours, plain words), and the
+  picture has no line Lantern cannot place (words). A girl, a postbox, a
+  yard, a corner, the left, the foreground: the picture is the model's. A
+  house is a wall the house check counts (a filled rect 2 to 16 wide, 2 or
+  more high) with its roof drawn after it, on its top, over its middle, at
+  most three cells wider.
+- *A door hung below its wall.* The one rect drawn after the wall, within
+  its width, at most two fifths of it (half when a door is asked for),
+  taller than wide unless a door is asked for, its top on the wall and its
+  foot more than a quarter cell below the wall's (less of it below than on
+  the wall), at least 0.6 wide, is moved up so its foot is the wall's, shortened to four fifths
+  of the wall if taller, with what lies wholly on it (a knob, its window,
+  its outline), and Lantern says so ("moved the door, “rect 8 7 4 2 fill
+  dark green”, up onto its wall: its foot was at y 9, below the wall's (y
+  8), on the ground, and shortened it to 1.5 high: it was 2, and the wall
+  is 2 -- rect 8 6.5 4 1.5 fill dark green"). Not when anything else
+  touches it (legs, a head, wheels, a step, a path's tip: shapes that share
+  an edge touch, and lines do), nor when anything else on the wall or just
+  under it may be the door (1 high or more by the wall's foot, in any
+  colour, in outline, in lines, or drawn before the wall), nor when the
+  grass drawn after the house hides the door's foot.
+- *A tree drawn over the house.* A tree (an upright trunk rect of an earth
+  colour, at most 2.5 wide and twice as tall, 2 or more high, with green
+  circle or oval crowns on its top, at least 1.5 across and 1.6 times the
+  trunk's width; a rect within the wall's ends whose foot is by the wall's
+  is its door, whatever is over it) drawn after a house, its foot within a
+  cell of the wall's, and covering at least half a cell of its wall and
+  roof (Adam's: 1.1 cells) is moved sideways, whole, to the nearer side
+  where it stands clear: at most five cells, its foot still on the ground
+  (in a band or on its top edge, as the guide's own tree stands) and on no
+  tri, touching nothing there (lines and all), and covering the sun, the
+  moon or a cloud no more than before. Lantern says so ("moved the tree, “rect 10 5 2 4 fill
+  brown” and “circle 11 4 2 fill dark green”, 2.5 to the right, clear of
+  the house: it stood against the house, in front of it"). Not when the
+  question puts the tree with the house (in front, behind, against, over,
+  shading, a tree house, a swing, apples, by the door or the window), nor
+  when anything touches it but
+  the house, nor when it only touches the house or its crown is just over
+  the eave (the model's "next to it").
+- *No road at all* (the landscape mend, rule 3: "or Lantern adds the thing
+  itself and says so"). When the question asks for a road, path, track,
+  river or stream going away, and nothing at all is drawn on the ground,
+  Lantern draws it -- "tri 7 12 13 12 10 H", wide at the bottom edge, a
+  point on the horizon -- just after the ground, and says so; the model's
+  own tri is left as drawn. Gray, or tan on gray, grey, dark gray or black
+  ground; a river blue, or light blue on blue; the question's own colour
+  when it names one just before the road ("a brown path"), and a dirt,
+  dusty or gravel road tan (brown on sand). With the sea or a lake behind
+  the land, the point is the shore. At any doubt it is asked for, as on
+  1.24.14: a railway or tracks (rails are lines), two roads, a winding
+  road, "a trail of clouds" or "a path of moonlight", a river and a road
+  in one question, water anywhere under the road but the sea behind the
+  land, a band of the road's colour across the land or a thin stripe (a
+  road seen running across), a narrow tri of its colour standing on the
+  horizon where the road would end (the model's road drawn upright), a
+  shape of its colour lying on a hill or a mountain (a path up a hill, a
+  river between mountains), a line on a hill or near the ground. The 35B's road of four versions is drawn and passes the bench.
+- `tools/draw_log.py` takes its port from `DRAW_PORT` (two can run at
+  once).
+
+**Reviews.** By three agents that had not seen the rules written, each on
+the draft mended after the one before; their pictures are in
+`tests/fixtures/review{1,2,3}_1255_draw.json` and replayed by
+`tests/review_1255.js`:
+
+- review 1 (196 pictures): 29 right pictures changed, 24 of them spoiled --
+  a child's body lifted off her legs, a car off its wheels, a lamp post, a
+  porch post, a step, doors that reach through a foundation; a bush and a
+  potted plant moved from the door, trees with their apples, swing or
+  birdhouse left behind, a tree on a hill into the air, one onto a road,
+  trees by a lake taken for a house; the road drawn the colour of grey
+  ground, across the sea, as a gray "river" for a river and a road, as a
+  plain tri for a railway;
+- review 2 (188): 34 right pictures changed -- a girl's body, a trash can,
+  a postbox, a phone box, a cactus, a gnome and a broom moved up as "the
+  door" where the wall had none (or one in outline, in lines, in its own
+  colour); a door's round green window, a lamp post and a mailbox moved as
+  a tree; a hammock, a washing line, a dog's lead left in the air; trees put
+  on a driveway, a bench, a road; shapes that share an edge not seen to
+  touch; a road drawn under a path up a hill and a river between mountains
+  (an hourglass), and rising out of water at the front;
+- review 3 (180): 17 right pictures changed -- a door with a round green
+  window, on a sill, moved as a tree; trees the question put by the door,
+  by the window or at the front, and big trees in the foreground, moved
+  away; a shrub in a pot; a drainpipe moved as the door; a door whose foot
+  the grass drawn last hides; a road drawn for "a trail of clouds"; a tree
+  moved over a gray moon, onto a pine, under a cloud; a road under one drawn
+  upright on the horizon (a bowtie), and across a highway band.
+- Each mended as above. Now, on the three reviews' pictures: no right
+  picture is changed but one review 1 allowed ("drawn as written, or the
+  whole tree moved clear"); five that review 3 called partly right change
+  as their wants allow, and two of review 1's (Adam's tree among them); 37,
+  23 and 45 wrong ones are mended, or asked otherwise than on 1.24.14; 1.24.14's two reviews of the road and the older
+  scene reviews (606 pictures) change only wrong ones; of 205 drawings
+  the models wrote on 1.24.8 to 1.24.14, only the 35B's three change. The
+  mends after review 3 were checked against the three reviews' inputs,
+  not by a fourth reviewer.
+
+**What was run.** `npm test`: ALL CHECKS PASS (SUITES suites); the browser
+tests of the landscape (scene), the bench (bench_run9, bench_headless).
+Replayed only: no model has run 1.24.15; the small models' run starts with
+the push. Adam's three pictures, as the 35B drew them and as Lantern draws
+them now, were drawn in a browser (`tools/draw_log.py`) and sent to him:
+how they look is his to judge.
+
 ## 1.24.14 — Adam's run of 1.24.13: a right puzzle block questioned, and the line to write for a beach, a road and a quote (2026-11-10)
 
 Adam ran the 35B on 1.24.13 with the library on his laptop (2026-11-10,

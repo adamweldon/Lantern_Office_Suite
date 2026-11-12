@@ -5,7 +5,13 @@ file in the same commit as the work. Read `CLAUDE.md` first.
 
 ## Next, in order
 
-1. **The 4B's six rows that fail again, word for word.** **On 1.24.13**
+1. **The 4B's six rows that fail again, word for word.** **On 1.24.14**
+   (`tests/fixtures/bench_run_1254_*.json`, `tests/bench_1255.js`, all
+   three on an AMD EPYC 7763): the 4B 108, its road passing (moved from
+   under the ground), the other six as on 1.24.13; the 2B 74; the 0.8B 54.
+   Their house pictures pass the bench and some look poor (the 4B's wall
+   the width of the picture): look at the sheet of each run's drawings
+   (`tools/draw_log.py`) before writing a rule. **On 1.24.13**
    (run 42740634844, `tests/fixtures/bench_run_1253_*.json`, replayed by
    `tests/bench_1254.js`, all three on an AMD EPYC 7763): the 4B 107, the
    same seven rows as on 1.24.12 -- water-days, the power wheel, the road,
@@ -127,7 +133,18 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      variants of each; tool, multi, need, chat and reason do not regress;
      median tokens for fact and make go down. Do not loosen a check to
      raise a score; no second model.
-3. **Read Adam's next run with the library** when he sends it. His 1.24.13
+3. **Read Adam's next run with the library** when he sends it. His 1.24.14
+   run (2026-11-12, `tests/fixtures/bench_run_1254_35b_library.json`,
+   `tests/bench_1255.js`): 137 of 140. The coins and the shore pass: the
+   35B wrote the beach line it was handed. The road failed with its gray
+   tri on the horizon, 26 copies: handed the line to write in its place, it
+   wrote its own again -- so 1.24.15 draws the road itself when nothing is
+   on the ground, and says so. Adam pointed at the house (its door hung a
+   cell below the wall, on the grass) and the house at sunset (its tree
+   against the wall and over the roof): 1.24.15 moves them, and says so
+   (item 6). Watch on his next run: the three pictures as Lantern draws them
+   (his eye, not the bench's); whether the 35B, told what Lantern changed,
+   leaves them. The iPhone and Nairobi fail as before. His 1.24.13
    run (2026-11-10, `tests/fixtures/bench_run_1253_35b_library.json`,
    `tests/bench_1254.js`): 135 of 140, the P1AM seal-in passing. The iPhone,
    Nairobi and the two coins failed with their replies of 1.24.11 word for
@@ -305,6 +322,26 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      Lantern cannot work out (is each thing the request names in the
      picture? does anything hang in the air?). Try it on the laptop and
      keep it only if it catches more than it breaks;
+   - **houses** (1.24.15, `house()` in AI_SCENE, three reviews:
+     `tests/review_1255.js`): a door hung below its wall goes up onto it; a
+     tree drawn over the house goes to the side, clear of it; both only for a
+     house asked for in plain words (HOUSEWORDS) and when nothing else may
+     be the door or touches the tree. Left by the reviews, as the model drew
+     them: a door with a step, a path, a person, a window low on a 2-high
+     wall, or a garage door beside it; a door the question does not name
+     when it is wider than tall (the 35B's own door, if "door" is not
+     asked); a tree whose trunk stands within the wall's ends; a crown of
+     two or three circles one above the other; a tree whose crown lies over
+     a window or the chimney (they touch it), or whose way out is blocked by
+     the sun on both sides; questions
+     with "under" or "over" anywhere ("under a blue sky"); houses in the
+     plural. Each could be taken further, one at a time, with a reviewer;
+   - **the road drawn when none is** (1.24.15): the 35B's road. Left as
+     1.24.14 had it (asked): a railway, tracks, two roads, a winding road,
+     a river and a road, water under the road, a road of the model's own
+     on a hill or drawn upright on the horizon, a band across the land.
+     Nothing is drawn or asked when the setting sun sits on the horizon or
+     flowers or trees stand on the ground (both reviews: a gap);
    - **things that stand.** A house or a tree whose foot is above the
      ground line has not been seen yet; look for it in each run's drawings
      before writing a rule for it;
