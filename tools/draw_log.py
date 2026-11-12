@@ -23,7 +23,7 @@ import base64, html, json, os, re, subprocess, sys, time
 from playwright.sync_api import sync_playwright
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PORT = 8141
+PORT = int(os.environ.get("DRAW_PORT", "8141"))
 
 def rows_of(path):
     text = open(path, encoding="utf-8", errors="replace").read()
