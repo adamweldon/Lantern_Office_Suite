@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.24.17 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.24.18 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0).
 //
@@ -186,7 +186,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.24.17",
+  version: "1.24.18",
   apps: {},
   order: []
 };
@@ -18612,6 +18612,15 @@ Lantern.RFB = (function () {
     // ("sources" only as sources of facts: a voltage source is a part, 1.12.5)
     return !!need && /\b(encyclop(a)?edia|library|look ?up|wikipedia|factual data|reference (text|data)|(reliable|factual|reference|information|data|outside|external|trusted) sources?|sources? of (information|data|facts))\b/i.test(String(need));
   };
+  // needAsksPerson(need, question) -> true when a NEED asks the person for something the question does not say ("How
+  // many chickens do you have?"), not the question again: it speaks to them and has a word of its own (1.24.18)
+  A.needAsksPerson = function (need, question) {
+    if (!need || !/\b(you|your|yours)\b/i.test(String(need))) return false;
+    var weak = /^(the|and|for|what|which|who|how|many|much|does|did|you|your|yours|are|was|were|this|that|with|from|have|has|can|could|would|should|will|tell|please|about|there|their|they|them|its|not|need|needs|each|per|any|some|give|know|use|used)$/;
+    var qw = String(question || "").toLowerCase().match(/[a-z]{3,}/g) || [];
+    function inQ(w) { return qw.some(function (x) { return x === w || (x.slice(0, 4) === w.slice(0, 4) && Math.abs(x.length - w.length) <= 2); }); }
+    return (String(need).toLowerCase().match(/[a-z]{3,}/g) || []).some(function (w) { return !weak.test(w) && !inQ(w); });
+  };
   A.needEcho = function (need, question) {
     if (!need || /\d/.test(String(question || ""))) return false;
     var weak = /^(the|and|for|what|which|who|whom|whose|how|many|much|does|did|you|your|are|was|were|this|that|with|from|have|has|can|could|would|should|will|tell|please|about|into|there|their|they|them|its|not)$/;
@@ -18678,7 +18687,7 @@ Lantern.RFB = (function () {
     var own = A.aboutSelf(question) || A.noLibrary(question);
     if (look && !guarded && opts.lookup !== false && !p.exprText && !A.noLibrary(question) &&
         (p.lookup || (!own && (A.isDecline(p.answer) || A.needEcho(p.need, question) || A.needLibrary(p.need))))) {
-      var lk = null;
+      var lk = null, need0 = p.need && !p.lookup ? p.need : "";
       try { lk = await look(question, p.lookup || ""); } catch (e) { lk = null; }
       if (lk && lk.sources && lk.sources.length) {
         out.sources = lk.sources; out.lookup = lk.query || "";
@@ -18686,14 +18695,29 @@ Lantern.RFB = (function () {
         msgs.push({ role: "user", content: lk.prompt });
         out.read = text;
         text = relabel(await turn()); p = A.parseReply(text); run = A.run(p.exprText);
+        // Declined, and Lantern read an article whose title is the question's own words (Ghana; Samsung Galaxy S7
+        // Battery Replacement) that ranked below the three it sent: it goes too, once (1.24.18)
+        if (A.isDecline(p.answer) && !p.exprText && lk.more && lk.more.length) {
+          out.more = lk.more.map(function (m) { return m.title; });
+          out.sources = lk.sources.concat(lk.more);
+          msgs.push({ role: "assistant", content: text });
+          msgs.push({ role: "user", content: lk.morePrompt });
+          text = relabel(await turn()); p = A.parseReply(text); run = A.run(p.exprText);
+        }
         // Declined with the passages in front of it: Lantern points at the
         // sentence that looks like the answer, once (1.9.7).
-        var pt = A.isDecline(p.answer) && !p.exprText && window.Lantern.libraryPointer ? window.Lantern.libraryPointer(question, lk.sources) : null;
+        var pt = A.isDecline(p.answer) && !p.exprText && window.Lantern.libraryPointer ? window.Lantern.libraryPointer(question, out.sources) : null;
         if (pt) {
           out.pointed = pt.n;
           msgs.push({ role: "assistant", content: text });
           msgs.push({ role: "user", content: pt.prompt });
           text = relabel(await turn()); p = A.parseReply(text); run = A.run(p.exprText);
+        }
+        // It asked the person for something ("NEED: How many chickens do you have ...?"), Lantern looked in the library
+        // first, and the library had nothing: its question to the person stands (Adam's set B runs on 1.24.16 and
+        // 1.24.17: the question was lost to "Not in my library" both times)
+        if (need0 && A.isDecline(p.answer) && !p.exprText && !p.need && A.needAsksPerson(need0, question)) {
+          out.needKept = need0; text = "NEED: " + need0; p = A.parseReply(text); run = A.run(p.exprText);
         }
       }
     }
@@ -19729,7 +19753,8 @@ Lantern.RFB = (function () {
     var unitNote = !hints.length && /\d/.test(q) && window.Lantern.aiUnitNote && !(window.Lantern.aiAct && window.Lantern.aiAct.relevant(q).length) ? window.Lantern.aiUnitNote(q) : "";
     if (unitNote) content += "\n\n(Lantern: " + unitNote + ")";
     var lastValue = null, questioned = false, stillDoubt = null, looked = false, sources = null, detail = false, nudged = false, showed = false, steered = false, pointed = false, madeShown = null, blockAsked = false,
-      puzzleRuns = 0, pzFixed = false, puzzled = false, helped = false, cmdRuns = 0, canMore = false, pzSelf = false, needHelped = false, lastSteps = null, docAsked = false;
+      puzzleRuns = 0, pzFixed = false, puzzled = false, helped = false, cmdRuns = 0, canMore = false, pzSelf = false, needHelped = false, lastSteps = null, docAsked = false,
+      needLooked = "", moreLk = null;
     prevQ = history ? currentQ : "";
     currentQ = q;
     rec.self = A.aboutSelf(q); rec.noLibrary = A.noLibrary(q); rec.contextual = A.dependsOnContext(q, history);
@@ -20049,6 +20074,7 @@ Lantern.RFB = (function () {
         if (words !== "none") { try { lk = await window.Lantern.assistLookup(q, words, { detail: wantDetail }); } catch (e) { lk = null; } }
         if (lk && lk.sources && lk.sources.length) {
           sources = lk.sources; detail = wantDetail;
+          needLooked = parsed.need && !parsed.lookup ? parsed.need : ""; moreLk = lk.more && lk.more.length ? lk : null;
           seen.push({ sources: sources, detail: wantDetail });
           rec.searches.push({ query: lk.query, how: parsed.lookup ? "lookup" : quotes ? "quotes" : "decline" });
           note((quotes && !parsed.lookup ? "The AI wrote quotes without any passages in front of it. " : "") +
@@ -20062,6 +20088,15 @@ Lantern.RFB = (function () {
           continue;
         }
       }
+      // It declined with the passages in front of it, and Lantern read an article whose title is the question's own words
+      // (Ghana; Samsung Galaxy S7 Battery Replacement) that ranked below the three it sent: it goes too, once (1.24.18)
+      if (moreLk && sources && !parsed.exprText && A.isDecline(parsed.answer)) {
+        var mk = moreLk; moreLk = null; rec.more = mk.more.map(function (m) { return m.title; });
+        sources = sources.concat(mk.more); seen.push({ sources: sources, detail: detail });
+        note("The AI said the library has nothing on this; Lantern also had \u201c" + rec.more.join("\u201d and \u201c") + "\u201d, and sent " + (rec.more.length === 1 ? "it" : "them") + "\u2026");
+        msgs.push({ role: "user", content: mk.morePrompt });
+        continue;
+      }
       // It declined with short passages in front of it, and one sentence
       // there looks like the answer: Lantern points at it, once (1.9.7).
       if (sources && !detail && !pointed && !parsed.exprText && A.isDecline(parsed.answer) && window.Lantern.libraryPointer) {
@@ -20072,6 +20107,14 @@ Lantern.RFB = (function () {
           msgs.push({ role: "user", content: pt.prompt });
           continue;
         }
+      }
+      // It asked the person for something ("NEED: How many chickens do you have ...?"), Lantern looked in the library
+      // first, and the library had nothing: its question to the person stands (1.24.18; Adam's set B runs, twice)
+      if (needLooked && sources && !parsed.exprText && !parsed.need && (A.isDecline(parsed.answer) || /^\s*not in my library\.?\s*$/im.test(shown)) &&
+          A.needAsksPerson(needLooked, q)) {
+        shown = "NEED: " + needLooked; rec.final = shown; parsed = A.parseReply(shown); msgs[msgs.length - 1].content = shown; rec.needKept = needLooked;
+        needLooked = "";
+        note("The library had nothing on it, so the AI\u2019s question to you stands.");
       }
       // It asked to look up what it already has in front of it: once, say so.
       if (sources && detail && parsed.lookup && !parsed.answer && !nudged) {
@@ -27728,6 +27771,19 @@ Lantern.RFB = (function () {
     out.push("QUESTION: " + question);
     return out.join("\n");
   };
+  // morePrompt(question, sources, more, detail): the articles of lookup's more, after a decline, for the AI to read
+  // with the passages it has
+  LIB.morePrompt = function (question, sources, more, detail) {
+    var out = ["The library also has these articles, whose titles are the words of the question:", ""];
+    more.forEach(function (s) { out.push("[" + s.n + "] " + s.title); out.push(s.text); out.push(""); });
+    out.push("Answer the QUESTION from passages [1] to [" + (sources.length + more.length) + "]. Reply with:");
+    out.push("ANSWER: <" + (detail ? "your answer" : "short answer") + ", with [n] after each fact>");
+    out.push("QUOTE [n]: <one sentence copied exactly from passage n>");
+    out.push("If they do not answer it, reply exactly: ANSWER: Not in my library.");
+    out.push("");
+    out.push("QUESTION: " + question);
+    return out.join("\n");
+  };
   // lookup(question, query) -> Promise<{query, sources:[{n, title, book,
   // bookTitle, path, url, text}], prompt}>. query = the model's LOOKUP words.
   // Candidates come from the model's words and from the question; up to 10
@@ -27764,12 +27820,26 @@ Lantern.RFB = (function () {
     read.sort(function (a, b) { return b.h.rank - a.h.rank; });
     var label = {};
     state.books.forEach(function (b) { label[b.id] = LIB.bookLabel(b); });
-    var sources = read.slice(0, 3).map(function (r, k) {
+    function src(r, k) {
       return { n: k + 1, title: r.doc.title || r.h.title, book: r.h.book, bookTitle: label[r.h.book] || r.h.bookTitle, path: r.h.path,
         url: LIB.endpoint() + "content/" + r.h.book + "/" + r.h.path, text: r.text };
+    }
+    var sources = read.slice(0, 3).map(src);
+    // (1.24.18) more: up to two articles read but ranked below those three whose titles are wholly words of the question
+    // ("Ghana" for "the capital of Ghana", below Capital punishment in Ghana and Capital Bank (Ghana); "Samsung Galaxy S7
+    // Battery Replacement" below the S7 Edge's guide): they are sent only if the AI declines with the three in front of
+    // it (Adam's set B runs on 1.24.16 and 1.24.17). The ranking itself is as before. Never for a question about the
+    // person's own things, which no encyclopedia answers.
+    var allStems = LIB.keywords(q + " " + question).map(stem), more = [];
+    if (!PERSONAL.test(String(question || ""))) read.slice(3).forEach(function (r) {
+      var tw = LIB.keywords(r.doc.title || r.h.title).map(stem);
+      if (tw.length && tw.every(function (w) { return allStems.indexOf(w) >= 0; })) more.push(r);
     });
+    more = more.sort(function (a, b) { return titleScore(b.doc.title || b.h.title, allStems) - titleScore(a.doc.title || a.h.title, allStems) || b.h.rank - a.h.rank; })
+      .slice(0, 2).map(function (r, k) { return src(r, sources.length + k); });
     return { query: q, sources: sources, detail: detail, book: sources.length ? label[sources[0].book] || "" : "",
-      prompt: sources.length ? LIB.prompt(question, sources, q, detail) : "" };
+      prompt: sources.length ? LIB.prompt(question, sources, q, detail) : "", more: more,
+      morePrompt: more.length ? LIB.morePrompt(question, sources, more, detail) : "" };
   };
   // pointer(question, sources) -> {n, text, prompt} or null: the sentence
   // (or infobox fact) in passage n that holds every word of the question
@@ -32805,7 +32875,10 @@ Lantern.RFB = (function () {
     if (!p.fill && TRUE[nm]) return [TRUE[nm], mix(TRUE[nm], 0.6)];
     return p.fill || PAL[ORDER[k % ORDER.length]];
   }
-  window.Lantern.aiWheelColours = { pastel: pastel, forPart: forPart, dark: dark, ORDER: ORDER };
+  // (1.24.18) an item named after a colour, the same: a colour wheel written "Primary: Red | Yellow | Blue" showed Red,
+  // Yellow and Blue all on pale yellow (Adam's set B runs on 1.24.16 and 1.24.17) -- now each in its own colour
+  function forItem(t) { var nm = String(t || "").toLowerCase().replace(/^\s+|\s+$/g, ""); return TRUE[nm] || null; }
+  window.Lantern.aiWheelColours = { pastel: pastel, forPart: forPart, forItem: forItem, dark: dark, ORDER: ORDER };
 })();
 // ===========================================================================
 // MODULE: AI_WHEEL_COLOURS - END
@@ -32927,6 +33000,10 @@ Lantern.RFB = (function () {
       sh.push(sector(s, cols[k][0]));
       if (lay.any) sh.push(sector({ a0: s.a0, a1: s.a1, r0: lay.r1, r1: R }, cols[k][1]));
     });
+    lay.items.forEach(function (x) {   // an item named after a colour, in that colour (1.24.18)
+      x.fill = C && C.forItem ? C.forItem(x.t) : null;
+      if (x.fill) sh.push(sector(x.s, x.fill));
+    });
     lay.items.forEach(function (x, j) {   // thin lines between the items of a part
       if (j && lay.items[j - 1].part === x.part) sh.push(ray(x.s.a0, lay.r1, R, SEP, 1.5));
     });
@@ -32952,7 +33029,7 @@ Lantern.RFB = (function () {
       function at(lo) { return function (ls) { var f = fit(measureLines(ls), x.s, fs, lo, MIDS); if (f) use = { ls: ls, f: f }; return !!f; }; }
       if (!sets.some(at(fs))) sets.some(at(Math.min(fs, 10)));
       if (!use) return;
-      var ink = dark(cols[x.part][1]) ? "#ffffff" : INK;
+      var ink = dark(x.fill || cols[x.part][1]) ? "#ffffff" : INK;
       use.ls.forEach(function (l, i) { sh.push({ t: "text", c: ink, x: r1d(use.f.x), y: r1d(use.f.y + (i - (use.ls.length - 1) / 2) * use.f.fs * 1.2), s: l, fs: use.f.fs }); });
     });
     if (title) sh.push({ t: "text", c: INK, x: CX, y: 36, s: String(title).slice(0, 60), fs: 26 });
@@ -49128,6 +49205,17 @@ Lantern.RFB = (function () {
     if (lo / hi >= 0.75 && both / hi >= 0.8) return true;
     return both / lo >= 0.9 && lcs(a, b) / lo >= 0.75;
   }
+  // madeUp(lit, value): a word typed where a result stood, from nowhere: most of its letters are the result's and its
+  // length near it, but it is not the result with slips. Under =REVERSE("photosynthesis"), which gave "sisehtnysotohp",
+  // the 35B typed =REMOVE("noitucisohp","s") -- word for word in Adam's set B runs on 1.24.16 and 1.24.17 (1.24.18).
+  // retyped() asks for it only when the word is not in the question.
+  function madeUp(lit, v) {
+    var a = String(lit).toLowerCase(), b = String(v).toLowerCase(), pool = {}, hit = 0;
+    if (!/^[a-z]{5,}$/.test(a) || !/^[a-z]{5,}$/.test(b) || a === b || a.length < b.length * 0.6 || a.length > b.length * 1.4) return false;
+    b.split("").forEach(function (c) { pool[c] = (pool[c] || 0) + 1; });
+    a.split("").forEach(function (c) { if (pool[c]) { pool[c]--; hit++; } });
+    return hit / a.length >= 0.6 && hit / b.length >= 0.5;
+  }
   // retyped(steps, question, exact) -> [{k, j, lit}]: line k types, as a quoted
   // word not in the question, what line j worked out -- with mistakes (and,
   // with exact, also word for word: once an earlier line is put right, a
@@ -49141,7 +49229,9 @@ Lantern.RFB = (function () {
         if (!lit || ql.indexOf(lit.toLowerCase()) >= 0) return;
         for (var j = k - 1; j >= 0; j--) {
           var v = steps[j];
-          if (v.ok && typeof v.value === "string" && ((exact && lit === v.value) || close(lit, v.value) || sameLetters(lit, v.value))) { out.push({ k: k, j: j, lit: lit, exact: lit === v.value }); return; }
+          // (1.24.18) a word that is exactly a nearer line's result came from that line, not from one further up
+          if (!exact && v.ok && typeof v.value === "string" && v.value.toLowerCase() === lit.toLowerCase()) return;
+          if (v.ok && typeof v.value === "string" && ((exact && lit === v.value) || close(lit, v.value) || sameLetters(lit, v.value) || madeUp(lit, v.value))) { out.push({ k: k, j: j, lit: lit, exact: lit === v.value }); return; }
         }
       });
     });
