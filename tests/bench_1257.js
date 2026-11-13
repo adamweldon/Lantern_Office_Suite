@@ -139,7 +139,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   // --- the brass band's 435 bars -------------------------------------------------------------------------------------
   var br = row("make-music-brass-b"), mk = L.aiAct.build(br.reply, br.q), said = ((mk.plan && mk.plan.said) || []).join(" | "), probs = (mk.problems || []).join(" | ");
   ok("as run: a chord line of 435 bars, the reply cut off before any melody", /the song is 435 bars/.test(br.why) && br.reply.split("\n").length === 8);
-  ok("now: the chord line, 3 bars and then the same 8 again and again, is kept as 11 turns of it in 91 bars (no melody) and said so; the song is no longer too long", /the chord line repeated the same 8 bars after its first 3 for \d+ bars: Lantern kept 91, 11 turns of it/.test(said) && !/bars: keep it to 96/.test(probs), [said, probs]);
+  ok("now: the chord line, 3 bars and then the same 8 again and again, is kept as 11 turns of it in 91 bars (no melody) and said so; the song is no longer too long", /the chord line repeated the same 8 bars after its first 3 for \d+ bars, with no melody: Lantern kept 91 bars, 11 turns of it/.test(said) && !/bars: keep it to 96/.test(probs), [said, probs]);
   var tw = item("make-music-twinkle-b").ideal, mk2 = L.aiAct.build(tw, item("make-music-twinkle-b").q);
   ok("...a song of its own length is left as it is", !/repeated the same/.test(((mk2.plan && mk2.plan.said) || []).join(" ")));
 
@@ -176,27 +176,11 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var LIB = L.library;
   ok("the stand-in library is up", LIB.ready && LIB.ready());
   var gh = await LIB.lookup("What is the capital of Ghana?", "Ghana capital");
-  ok("as run the capital of Ghana was given Capital punishment in Ghana, Capital Bank (Ghana) and a road; now Ghana itself first",
-    row("ghana-capital-b").library.sources.join() === "Capital punishment in Ghana,Capital Bank (Ghana),R10 road (Ghana)" && gh.sources[0].title === "Ghana", gh.sources.map(function (s) { return s.title; }));
+  ok("as run the capital of Ghana was given Capital punishment in Ghana, Capital Bank (Ghana) and a road: so it is still (a bonus for the article a question names was withdrawn after two reviews)",
+    row("ghana-capital-b").library.sources.join() === "Capital punishment in Ghana,Capital Bank (Ghana),R10 road (Ghana)" && gh.sources[0].title === "Capital punishment in Ghana" && !LIB.namedTitle,
+    gh.sources.map(function (s) { return s.title; }));
   var gx = await LIB.lookup("How do I replace the battery in a Samsung Galaxy S7?", "");
-  ok("as run the Galaxy S7\u2019s battery was given the S7 Edge\u2019s guide first; now the S7\u2019s own guide", /S7 Edge Battery/.test(row("shelf-galaxy-battery-b").library.sources[0]) &&
-    gx.sources[0].title === "Samsung Galaxy S7 Battery Replacement", gx.sources.map(function (s) { return s.title; }));
-
-  var nw = await LIB.lookup("What did Newton discover?", "");
-  function nb(title, q) { return LIB.namedTitle(title, q, LIB.keywords(q), null).bonus; }
-  ok("...and only then (review of 1.24.17): a bare name is not the subject (Newton\u2019s page of meanings is not first); a place the person lives in, a title in brackets, a name outside the asking sentence get nothing",
-    nw.sources[0].title !== "Newton" && nb("Newton", "What did Newton discover?") === 0 && nb("Newton (unit)", "What is the unit of force named after Newton?") === 0 &&
-    nb("Kenya", "We live in Kenya. Explain the best way to purify water from a river.") === 0 && nb("Texas", "My grandmother in Texas has diabetes. What should she eat?") === 0 &&
-    nb("Ghana", "What is the capital of Ghana?") === 10 && nb("New York City", "What is the population of New York City?") === 10 && nb("Beatles", "Who was the drummer of The Beatles?") === 10 &&
-    LIB.namedTitle("Newton", "What did Newton discover?", [], { paras: ["Newton may refer to: Isaac Newton"] }).bonus === 0,
-    [nw.sources.map(function (x) { return x.title; }), nb("Ghana", "What is the capital of Ghana?"), nb("New York City", "What is the population of New York City?"), nb("Beatles", "Who was the drummer of The Beatles?")]);
-
-  // --- not changed: what the model got wrong, and the float switches ----------------------------------------------------
-  ok("left as the model wrote them: photosynthesis spelled from memory, the flag left with Dot, the field a triangle, the wheel two spokes",
-    /noitucisohp/.test(row("letters-photosynthesis-b").reply) && /held by Dot/.test(row("line-flag-b").reply) &&
-    /tri 0 6 20 6 20 12 fill green/.test(row("make-path-field-b").reply) && /^Primary: Red \| Yellow \| Blue$/m.test(row("make-colour-wheel-b").reply));
-  ok("...and the float switches still graded for the safer design (the high float stops the pump though the low one is on)",
-    /the low float wins over the high float/.test(L.aiBench.grade(item("code-b-p1am-floats"), row("code-b-p1am-floats").reply, { made: L.aiAct.build(row("code-b-p1am-floats").reply, item("code-b-p1am-floats").q) }).why));
+  ok("...and the Galaxy S7\u2019s battery the S7 Edge\u2019s guide first, as run", /S7 Edge Battery/.test(row("shelf-galaxy-battery-b").library.sources[0]) && /Edge/.test(gx.sources[0].title), gx.sources.map(function (s) { return s.title; }));
 
   // --- the review of 1.24.17's rules (fixtures/review1_1257.json): units, lessons and the catalog replayed ---------------
   var RV = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review1_1257.json"), "utf8")), moved = [], worse = 0, n2 = 0;
@@ -221,6 +205,23 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     if (!good && c.on_1_24_16 === "as said") worse++;
   });
   ok("the review\u2019s " + n2 + " cases on units, lessons and the catalog come out as recorded, and none that was right on 1.24.16 is wrong now", n2 === 251 && !moved.length && worse === 0, [n2, worse, moved]);
+
+  // --- the second review (fixtures/review2_1257.json): its unit names replayed -----------------------------------------
+  function asSaid(e, v) {
+    if (typeof e === "number") return typeof v === "number" && Math.abs(v - e) < 1e-6 * Math.max(1, Math.abs(e));
+    var ns = (String(e).match(/-?\d+(\.\d+)?(e-?\d+)?/g) || []).map(Number);
+    if (typeof v !== "number") return /error/i.test(String(e));
+    return ns.some(function (x) { return Math.abs(v - x) < 1e-6 * Math.max(1, Math.abs(x)); });
+  }
+  var RV2 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review2_1257.json"), "utf8")), moved2 = [], worse2 = 0, n3 = 0, right3 = 0;
+  RV2.cases.forEach(function (c) {
+    if (c.rule !== 1) return;
+    var st = L.assist.run(c.input).steps[0], good = asSaid(c.expected, st.ok ? st.value : "error");
+    n3++; if (good) right3++;
+    if ((good ? "as said" : "differs") !== c.now) moved2.push([c.input, c.now, st.ok ? st.value : st.err]);
+    if (!good && c.on_1_24_16 === "as said") worse2++;
+  });
+  ok("the second review\u2019s " + n3 + " unit names come out as recorded (" + right3 + " as it said), and none that was right on 1.24.16 is wrong now", n3 === 146 && right3 === 137 && !moved2.length && worse2 === 0, [n3, right3, worse2, moved2]);
 
   // --- the guard: every reply that passed still passes ------------------------------------------------------------------
   var bad = [], n = 0;

@@ -136,10 +136,15 @@ file in the same commit as the work. Read `CLAUDE.md` first.
 3. **Read Adam's next runs with the library, set A and set B.** His first
    run of set B (1.24.16, 2026-11-13, `tests/fixtures/bench_run_1256_35b_setb.json`,
    `tests/bench_1257.js`): 122 of 140 against set A's 138. Of the 18 that
-   failed, 11 were Lantern's (mended in 1.24.17: the history cut, CONVERT's
-   US gallon, a manual's page cut from view, a runaway chord line, the
-   library's ranking for a named subject, the lessons and the Farming tile
-   for everyday wordings), 1 a design the bench grades strictly (the float
+   failed, 11 were Lantern's. Mended in 1.24.17: the history cut, CONVERT's
+   US gallon, a manual's page cut from view, a runaway chord line with no
+   melody, the lessons for raw milk and eating on little, and the Farming
+   tile. Not mended: the library's ranking for a named subject (Ghana, the
+   Galaxy S7: a bonus for the named article was tried and withdrawn after
+   two reviews, since ranking by a name needs to know what kind of thing
+   the question asks for), and the scald and the snake bite as his run
+   worded them (what reached them pulled other questions wrong, and was
+   withdrawn). Of the 18, also 1 a design the bench grades strictly (the float
    switches), 6 the model's own (photosynthesis typed from memory, the flag
    puzzle, the field picture, the colour wheel, the minor tune's F#, a NEED
    that became "Not in my library"). Next: his set B run on 1.24.17, row by
