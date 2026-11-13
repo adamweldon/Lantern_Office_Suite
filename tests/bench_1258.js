@@ -43,6 +43,10 @@ var ART = {
   "FEED": "FEED is a project that sells bags to fund school meals.",
   // (the review of 1.24.18) a name that is another place, and a word that names nothing
   "Paris": "Paris is the capital and largest city of France, with a population of about 2.1 million.",
+  // (its second review) a name inside a longer one: Niger and Nigeria, Austria and Australia, India and Indiana
+  "Nigeria": "Nigeria is a country in West Africa. It borders Niger in the north. Abuja is the capital of Nigeria.",
+  "Australia": "Australia is a country in Oceania, not to be confused with Austria in Europe. Canberra is the capital of Australia.",
+  "Indiana": "Indiana is a state in the Midwestern United States. Indianapolis is the capital of Indiana.",
   "Light": "Light is electromagnetic radiation that the human eye can see, with wavelengths of about 400 to 700 nanometres.",
   "Water_purification": "Water purification is the process of removing germs and chemicals from water. The best way to purify river water is to let it settle, filter it, then boil it."
 };
@@ -124,7 +128,17 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   ok("(its review) the question again with a word of its own, or a NEED for the library, is not the person\u2019s; \u201chow many chickens do you have\u201d with only the question\u2019s words is",
     !A.needAsksPerson("How much feed do your hens need for a month?") && !A.needAsksPerson("How much feed do your chickens need for a whole month? Please specify.") &&
     !A.needAsksPerson("Can you look up how much feed chickens need in the library?") && !A.needAsksPerson("Data from your offline library on chicken feed") &&
-    A.needAsksPerson("How many chickens do you have, and how much feed do they need in a month?") && A.needAsksPerson("What is the capacity of your battery in amp-hours?"));
+    A.needAsksPerson("How many chickens do you have, and how much feed do they need in a month?", ch.q) &&
+    A.needAsksPerson("What is the capacity of your battery in amp-hours?", "How many hours will my solar battery run my fridge?"));
+  ok("(its second review) not for a question about no one\u2019s things, the question\u2019s own \u201cyou\u201d, nor what is to come or now",
+    !A.needAsksPerson("How many eggs do you get from a hen in a year?", "How many eggs do you get from a hen in a year?") &&
+    !A.needAsksPerson("How much water do you use to cook rice?", "How much water do you use to cook rice?") &&
+    !A.needAsksPerson("How many hens do you keep?", "How many calories does a hen need a day?") &&
+    !A.needAsksPerson("What is your location?", "Will it rain tomorrow in my town?") &&
+    A.needAsksPerson("How many people are in your family?", "How many eggs does my family need each week?") && A.needAsksPerson("How many watts does your cabin use each day?", "How big a battery does my cabin need?"));
+  ok("(its second review) a decline that goes on with a sentence of its own, or a quote, is not the decline alone; a reason about the passages is",
+    !A.bareDecline("ANSWER: Not in my library. A laying hen eats a quarter pound of feed a day.") && !A.bareDecline("ANSWER: Not in my library. Passage one says \x22a flock forages and is fed grain\x22.") &&
+    A.bareDecline("ANSWER: Not in my library. The passages are about a charity and about chickens in general.") && A.bareDecline("ANSWER: Not in my library."));
   var fo = fake([ch.first, "ANSWER: Not in my library. From my own knowledge: a hen eats about 120 g a day, so about 3.6 kg a month."]), so = await A.solve(ch.q, { call: fo });
   ok("(its review) a decline that goes on with the AI\u2019s own knowledge is left as it is", /3\.6 kg/.test(so.text) && !so.needKept, so.text);
   var fl = fake([ch.first, "=12*0.12*30\nANSWER: About {result} kg for 12 chickens [1]."]), sl = await A.solve(ch.q, { call: fl });
@@ -153,6 +167,13 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var pk = await L.assistLookup("What is the population of Paris, Kentucky?", "Paris Kentucky population"), sl2 = await L.assistLookup("What is the speed of light?", "speed of light");
   ok("(its review) only an article that has every name the question has (not Paris for Paris, Kentucky), and none for a question that names nothing (the speed of light)",
     !pk.more.some(function (s) { return s.title === "Paris"; }) && !sl2.more.length, [pk.more.map(function (s) { return s.title; }), sl2.more.map(function (s) { return s.title; })]);
+  var ln = await L.assistLookup("What is the capital of Niger?", "capital of Niger"), la = await L.assistLookup("What is the capital of Austria?", "capital of Austria"),
+    li = await L.assistLookup("What is the capital of India?", "capital of India");
+  function tl(x) { return x.sources.concat(x.more).map(function (s) { return s.title; }); }
+  ok("(its second review) a name is matched whole: not Nigeria for Niger, Australia for Austria, Indiana for India -- as more",
+    !ln.more.length && !la.more.length && !li.more.some(function (s) { return s.title === "Indiana"; }), [tl(ln), tl(la), tl(li)]);
+  var gc = await L.assistLookup("Ghana's capital?", "Ghana capital");
+  ok("(its second review) a name may be the first word (Ghana\u2019s capital?)", gc.more.some(function (s) { return s.title === "Ghana"; }), gc.more.map(function (s) { return s.title; }));
   var gx = await L.assistLookup("How do I replace the battery in a Samsung Galaxy S7?", "");
   var shown = gx.sources.map(function (s) { return s.title; }), kept = gx.more.map(function (s) { return s.title; });
   ok("the Galaxy S7: its own guide is sent with the three, or kept back as more; never the Edge\u2019s or the Tab\u2019s as more",
