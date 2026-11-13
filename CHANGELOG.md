@@ -1,5 +1,162 @@
 # Changelog
 
+## 1.24.17 — Adam's first run of set B: what was Lantern's, what was the model's (2026-11-13)
+
+Adam ran the 35B on set B of 1.24.16 with the library on his laptop
+(2026-11-13, 13:38 UTC, 92 minutes): **122 of 140**, against 138 for set A
+on 1.24.15. He wrote: "some of these were not necessarily wrong some were
+grossly wrong." (`tests/fixtures/bench_run_1256_35b_setb.json`: the 20 rows
+that did not pass as the model wrote them, and the 126 that passed, kept as
+a guard of right replies; replayed by `tests/bench_1257.js`.)
+
+**What was seen, row by row.** Of the 18 scored rows that failed:
+
+- *Lantern's doing (11 rows).*
+  - "How did it work in its early days?", after a long answer on machine
+    translation: the 35B said it could not tell what "it" was. It had not
+    been shown the first question at all: its passages were more than the
+    room for history, and Lantern dropped the question and the answer with
+    them.
+  - "Convert 5 US gallons to litres": `=CONVERT(5,"US gallon","liter")`
+    was refused as "units not in the same category". "US gallon" was simply
+    not a name Lantern knew, and the message said otherwise; the 35B then
+    asked which name to write.
+  - The generator manual's fuel tank (which it does not give): the 35B read
+    page 3, then pages 1-2, then asked for page 3 again, was told "That is
+    already above", and asked a fourth time. It was not above: once pages
+    1-2 came, page 3's passages had been cut as if from an earlier question.
+  - Amazing Grace for brass: a chord line of 435 bars, "G | D | G | G | C |
+    G | D | D" round and round, the reply cut off before any melody. Lantern
+    asked for 96 bars or fewer, and got a longer one.
+  - "What is the capital of Ghana?": the library gave Capital punishment in
+    Ghana, Capital Bank (Ghana) and a road, and the 35B rightly said "Not in
+    my library". "How do I replace the battery in a Samsung Galaxy S7?": the
+    S7 Edge's guide first, and it declined.
+  - A scald ("My daughter spilled boiling water on her arm"), a snake bite
+    ("A snake bit my uncle on the ankle"), "How can my family eat well on
+    very little money?": Chat did not give the lessons that answer them
+    (Burns, Bites and stings, Eating well on little). Raw goat's milk was
+    given Goats & milk, not Milk and eggs. "Does Lantern have a tool to help
+    me plan a vegetable garden?": the catalog did not name Farming, and the
+    35B said Lantern has no such tool.
+- *Not wrong, but not what the bench asks.* Two of those were right in
+  themselves: the scald answer (cool running water, no ice or butter), given
+  with no lesson, and the raw milk answer from its own knowledge (heat it to
+  pasteurise). And one row more: the float-switch program starts the pump when the low float is on and
+  stops it when the high float is on, with the low one winning if both are
+  on. That works with healthy switches, but a stuck low float would overfill
+  the tank. The bench asks for the stop to win, as a stop does in a motor
+  starter, and keeps asking for it.
+- *Wrong (6 rows).* "Photosynthesis" spelled backwards: it wrote
+  `=REVERSE("photosynthesis")` and then, instead of using what that gave,
+  typed "noitucisohp" from memory into the next line. The line puzzle: the
+  order right, the flag left with Dot (the child at the back gave it to Fin).
+  The path across a field: the field a triangle over half the ground and the
+  path three gray mountains (its first try wrote one line 31 times). The
+  colour wheel: two spokes, "Primary" and "Secondary". The A minor tune: an
+  F# over D minor, questioned and not fixed. "How much feed do my chickens
+  need for a month?": "Not in my library", not a question back for how many
+  chickens.
+
+**What changed.**
+
+- *History.* The question being answered is kept whole with every passage
+  given for it while it is answered (`msgs.turnStart`, set by `C.turn`), so
+  a page read with READ is not cut when the next one comes. An older message
+  that does not fit is no longer dropped whole: it stays as its start (a
+  question without its passages or Lantern's notes to the AI, the first
+  lines of an answer, a block it made named in one line, never half of it,
+  and a picture said not to be sent again), newest first while there is
+  room (`C.trimHistory`).
+- *CONVERT.* "US gallon", "U.S. gallons", "US gal", "US fl oz", "US quart",
+  "US pint", "US cup" are the US measures; "US pound", "US mile" and the
+  like are the same as elsewhere. "Imperial", "UK" or "British" gallon, pint
+  and fluid ounce are the imperial ones (4.54609 L, 568.26125 mL,
+  28.4130625 mL). The US (short) ton of 2000 lb and the UK (long) ton of
+  2240 lb are in the table, by those names; a plain "ton" stays the metric
+  tonne, as before, and a plain "pint" is not taken as either. Periods are
+  set aside ("fl. oz."), "mL" is ml, "cup" is no longer read as "cu(bic) p",
+  and a name that is another unit with capitals ("Gal", the galileo) is
+  tried in small letters when the two are not of one kind. A name Lantern
+  does not know is said to be unknown, with the names of that kind to write.
+- *Music.* A chord line longer than the longest song Lantern plays (96
+  bars) that is, after up to 8 bars, the same bars over and over (four
+  times or more) has run away. Under a melody it is kept as long as the
+  melody; with none, as many whole turns as fit in 96 bars, lead-in once,
+  in its own order; and Lantern says so ("the chord line repeated the same 8
+  bars after its first 3 for 348 bars: Lantern kept 91, 11 turns of it"). It
+  is read after the melody's bars are, so a | that ends a phrase is read as
+  before. A song of 96 bars or fewer is untouched.
+- *The library.* The article the question asks about is ranked up: the name
+  in "the <what> of <name>" in the sentence that asks (the capital of Ghana:
+  Ghana), or a title that is a name of the question and only words of the
+  question after it (Samsung Galaxy S7 Battery Replacement); other titles
+  with that name and words the question does not have come after it
+  (Capital *punishment* in Ghana; the S7 *Edge*). Never for a bare name
+  ("What did Newton discover?"), a title in brackets, a page of meanings, or
+  a name in another sentence ("We live in Kenya. Explain ...").
+- *Lessons and the catalog.* Burns now says a scald (boiling water, a hot
+  drink, steam) is a burn. The words people use, for what the lessons say:
+  Burns (scald, boiling water, steam), Bites and stings (snakebite, stung,
+  scorpion, rabies), Milk and eggs (milk straight from the animal, is milk
+  safe to drink), Eating well on little (cheap food, very little money).
+  "How can my family ...?" and "What can we eat ...?" are how-to questions;
+  "now", "today", "immediately" weigh little in the search. The Farming tile
+  says what it has (the vegetable garden: crop spacing, sowing depth, days
+  to harvest), so the catalog finds it.
+
+**Tried by a reviewer, then by a second.** A separate agent that had not
+seen the rules written tried them with 313 cases of its own
+(`tests/fixtures/review1_1257.json`; its unit, lesson and catalog cases are
+replayed by `tests/bench_1257.js`). It found faults in each:
+
+- the history: the question being answered could itself be cut, and its
+  passages labelled "from an earlier question"; a short version kept "look
+  at the picture" with no picture, and half a MAKE block. Mended as above.
+- CONVERT: "US ton" gave 1000 kg (the tonne) where a US ton is 907.18 kg;
+  "uk gal", "fl. oz.", "quarts", "mL", "cup" (read as cubic) and "Gal" (the
+  galileo) failed. Mended as above.
+- the music: a lead-in replayed every turn under a longer melody, an intro
+  found one bar short, a 12-bar blues backing of nine choruses cut to one,
+  and a melody of phrases read as squashed bars. Mended as above.
+- the library: by its sums by hand, a bare surname (Newton, Curie, Edison,
+  Lincoln) and a place the person lives in (Kenya, Texas) would have put
+  the wrong page first. Narrowed as above.
+- the lessons: to reach the scald and the snake bite as Adam's run asked
+  them, the first version let "daughter", "son", "uncle", "wife" weigh
+  little and took a lesson when it scored far above the next. That pulled
+  others wrong: "My baby son is breathing very fast" to CPR, "My mother is
+  confused" to Basic animal care, "How do I burn brush piles?" and "hot soup
+  spilled on the table" to Burns, "my foot hurts" to Bites and stings.
+  Withdrawn: those two questions are as on 1.24.16 (a model can still ask
+  LESSON:). Body parts and "dog bite" came out of the words too.
+- the catalog: the Farming tile's first words ("far", "deep", "bed", "fit")
+  named it for bed sores, keeping fit and how far a storm is. Now only
+  distinctive words.
+
+Of its cases on units, lessons and the catalog, none that came out right on
+1.24.16 comes out wrong now. REVIEW2_HERE
+
+**Not done.**
+
+- The model's own mistakes were left as the model's (rule 6). Two might be
+  Lantern's to catch next if they come back: a string typed from memory
+  where the line above gave it (photosynthesis), and a quantity question
+  about the person's own animals answered "Not in my library" with no NEED.
+- The scald ("My daughter spilled boiling water on her arm") and the snake
+  bite ("A snake bit my uncle on the ankle in the field") as Adam's run asked
+  them still get no lesson by themselves: what reached them was withdrawn
+  after the review. Reaching them without pulling others wrong needs the
+  lesson search to tell a person's health from an animal's, or a tie between
+  close lessons to go to the one that covers more of the question; that is
+  for another version, with a reviewer.
+- Amazing Grace is still not in the songbook handed to the model; with the
+  chord line kept as 11 turns, the brass reply now fails for having no
+  melody, which is what it lacked.
+- The colour wheel and the field picture are as the model drew them.
+
+RUN_HERE
+
 ## 1.24.16 — Lantern Bench set B: the same kinds of question, asking for other things (2026-11-12)
 
 Adam ran the 35B on 1.24.15 with the library on his laptop (2026-11-12,

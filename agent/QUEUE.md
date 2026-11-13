@@ -133,8 +133,25 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      variants of each; tool, multi, need, chat and reason do not regress;
      median tokens for fact and make go down. Do not loosen a check to
      raise a score; no second model.
-3. **Read Adam's next run with the library** when he sends it, **and his
-   first run of set B** (1.24.16: `Lantern.aiBenchQuestionsB`, the AI tile's
+3. **Read Adam's next runs with the library, set A and set B.** His first
+   run of set B (1.24.16, 2026-11-13, `tests/fixtures/bench_run_1256_35b_setb.json`,
+   `tests/bench_1257.js`): 122 of 140 against set A's 138. Of the 18 that
+   failed, 11 were Lantern's (mended in 1.24.17: the history cut, CONVERT's
+   US gallon, a manual's page cut from view, a runaway chord line, the
+   library's ranking for a named subject, the lessons and the Farming tile
+   for everyday wordings), 1 a design the bench grades strictly (the float
+   switches), 6 the model's own (photosynthesis typed from memory, the flag
+   puzzle, the field picture, the colour wheel, the minor tune's F#, a NEED
+   that became "Not in my library"). Next: his set B run on 1.24.17, row by
+   row against this one; if the photosynthesis kind (a string typed where
+   the line above gave it) or the chickens kind (a quantity about the
+   person's own things declined) comes back, it is Lantern's to catch. Of the gaps
+   listed below for 1.24.16, the march, "Remind me what I asked you" and
+   the orbital speed passed on his run all the same; still open: Amazing
+   Grace not in the songbook handed to the model, and a follow-up with no
+   pronoun searched without its subject. The rest of this item is as it was
+   written for 1.24.16:
+   (1.24.16: `Lantern.aiBenchQuestionsB`, the AI tile's
    "Set B: the same kinds, other questions"; `CHANGELOG.md` 1.24.16). Set B
    asks what set A asks about other things, to see whether what Lantern
    gives the model carries over. Read its score against his set A run on
