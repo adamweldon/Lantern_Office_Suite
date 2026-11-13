@@ -33,7 +33,13 @@ var ART = {
   "Samsung_Galaxy_S7_Edge_Battery_Replacement": "Follow this guide to replace a dead battery in the Samsung Galaxy S7 Edge. Before you begin, discharge the battery below 25%. Step 1: Heat the back cover. Step 12: Disconnect the battery connector and replace the battery.",
   "Samsung_Galaxy_Tab_S7_Plus_Battery_Replacement": "Use this guide to replace the battery in your Samsung Galaxy Tab S7+. Discharge the battery below 25% before you take the tablet apart.",
   "Samsung_Galaxy_S7": "Repair guides and support for the Samsung Galaxy S7, a phone Samsung released in 2016 alongside the S7 Edge.",
-  "Samsung_Galaxy_S7_Battery_Replacement": "Follow this guide to replace the battery in a Samsung Galaxy S7. Discharge the battery below 25% first. Step 1: Heat the back cover to soften the adhesive. Step 10: Disconnect the battery and replace it."
+  "Samsung_Galaxy_S7_Battery_Replacement": "Follow this guide to replace the battery in a Samsung Galaxy S7. Discharge the battery below 25% first. Step 1: Heat the back cover to soften the adhesive. Step 10: Disconnect the battery and replace it.",
+  // (review of 1.24.17) a bare name that is a page of meanings, a unit named after a person, and a place where the person lives
+  "Newton": "Newton may refer to: Isaac Newton, the English scientist; the newton, a unit of force; Newton, a town in Massachusetts.",
+  "Isaac_Newton": "Sir Isaac Newton was an English mathematician and physicist. Newton discovered the laws of motion and universal gravitation, and discovered that white light is a mixture of colours.",
+  "Newton_(unit)": "The newton is the unit of force in the International System of Units. It is named after Isaac Newton, who discovered the laws of motion.",
+  "Kenya": "Kenya is a country in East Africa. Its capital is Nairobi. Water from the Tana river in Kenya is used to farm, and the best way to reach it is by road.",
+  "Water_purification": "Water purification is the process of removing germs and chemicals from water. The best way to purify river water is to let it settle, filter it, then boil it."
 };
 var ARTICLES = {};
 Object.keys(ART).forEach(function (k) {
@@ -133,7 +139,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   // --- the brass band's 435 bars -------------------------------------------------------------------------------------
   var br = row("make-music-brass-b"), mk = L.aiAct.build(br.reply, br.q), said = ((mk.plan && mk.plan.said) || []).join(" | "), probs = (mk.problems || []).join(" | ");
   ok("as run: a chord line of 435 bars, the reply cut off before any melody", /the song is 435 bars/.test(br.why) && br.reply.split("\n").length === 8);
-  ok("now: the chord line, 3 bars and then the same 8 again and again, is kept once and said so; the song is no longer too long", /the chord line repeated the same 8 bars after its first 3 for \d+ bars: Lantern kept them once, 11 bars in all/.test(said) && !/bars: keep it to 96/.test(probs), [said, probs]);
+  ok("now: the chord line, 3 bars and then the same 8 again and again, is kept as 11 turns of it in 91 bars (no melody) and said so; the song is no longer too long", /the chord line repeated the same 8 bars after its first 3 for \d+ bars: Lantern kept 91, 11 turns of it/.test(said) && !/bars: keep it to 96/.test(probs), [said, probs]);
   var tw = item("make-music-twinkle-b").ideal, mk2 = L.aiAct.build(tw, item("make-music-twinkle-b").q);
   ok("...a song of its own length is left as it is", !/repeated the same/.test(((mk2.plan && mk2.plan.said) || []).join(" ")));
 
@@ -141,21 +147,29 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function lessons(q) { return S.chat.howTo(q) ? S.passages(q, q, { detail: true, max: 3, strong: true }).map(function (s) { return s.key; }) : []; }
   ok("as run: no lessons for the scald, the snake bite or eating on little; the goats lesson for raw milk",
     ["health-b-burn", "health-b-snakebite", "food-b-cheap-meals"].every(function (id) { return /did not give the AI Lantern/.test(row(id).why); }) && /food_milk lesson was not among/.test(row("food-b-raw-milk").why));
-  var LQ = [["My daughter spilled boiling water on her arm. What should I do right now?", "health_burns"], ["My son got scalded by hot tea. What do I do?", "health_burns"],
-    ["A snake bit my uncle on the ankle in the field. What should we do?", "health_bites"], ["Our dog was bitten by a snake, what should we do?", "health_bites"],
-    ["Is it safe to drink milk straight from our goat, and how do I make it safe?", "food_milk"], ["How can my family eat well on very little money?", "food_thrift"],
+  var LQ = [["Is it safe to drink milk straight from our goat, and how do I make it safe?", "food_milk"], ["How can my family eat well on very little money?", "food_thrift"],
     ["How can my wife and I eat healthily without much money?", "food_thrift"], ["My hand got burned on the stove, what should I do?", "health_burns"],
-    ["My brother was bitten by a dog. What should we do now?", "health_bites"]];
-  ok("now: each is given its lesson first, and other wordings of the same", LQ.every(function (x) { return lessons(x[0])[0] === x[1]; }), LQ.map(function (x) { return x[0].slice(0, 30) + " -> " + lessons(x[0]).join(","); }));
-  ok("...and the words added do not pull other questions there: boiling water to drink, keeping bees, milking a goat, a sick goat", lessons("How do I boil water to make it safe to drink?")[0] === "health_water" &&
-    !lessons("How do I keep bees?").length && lessons("How do I milk a goat?").join() === "hus_goats" &&
-    lessons("What should I do for a scorpion sting?")[0] === "health_bites" && lessons("My goat is coughing. What could be wrong?").indexOf("health_burns") < 0,
-    [lessons("How do I boil water to make it safe to drink?"), lessons("What should I do for a scorpion sting?"), lessons("My goat is coughing. What could be wrong?")]);
+    ["My brother was bitten by a dog. What should we do now?", "health_bites"], ["Steam burned my wrist when I opened the pot. What should I do?", "health_burns"],
+    ["How might our village get clean water to drink?", "health_water"]];
+  ok("now: raw milk is given Milk and eggs, eating on little Eating well on little, and other wordings their lessons", LQ.every(function (x) { return lessons(x[0])[0] === x[1]; }),
+    LQ.map(function (x) { return x[0].slice(0, 30) + " -> " + lessons(x[0]).join(","); }));
+  // (review of 1.24.17) the scald and the snake bite as Adam's run asked them are not reached: the reviewer showed that
+  // what reached them (the daughter and the uncle weighing little, a lesson taken when it scores far above the next)
+  // pulled other questions to the wrong lesson -- "My baby son is breathing very fast" to CPR, "My mother is confused"
+  // to Basic animal care, "How do I burn brush piles?" to Burns. They are left as on 1.24.16; a model can ask LESSON:.
+  ok("...the scald and the snake bite as asked in the run are not reached, as on 1.24.16 (withdrawn after the review)",
+    !lessons("My daughter spilled boiling water on her arm. What should I do right now?").length && !lessons("A snake bit my uncle on the ankle in the field. What should we do?").length);
+  ok("...and the words added do not pull other questions there: boiling water to drink, keeping bees, milking a goat, frying in hot oil, a dog that bites, a sick goat",
+    lessons("How do I boil water to make it safe to drink?")[0] === "health_water" && !lessons("How do I keep bees?").length && lessons("How do I milk a goat?").join() === "hus_goats" &&
+    lessons("How do I deep fry fish in hot oil?")[0] !== "health_burns" && lessons("How do I stop my dog from biting?")[0] !== "health_bites" &&
+    lessons("My goat is coughing. What could be wrong?").indexOf("health_burns") < 0 && lessons("My baby son is breathing very fast, what should I do?")[0] !== "health_cpr" &&
+    lessons("My mother is confused and forgetful, how can I care for her at home?")[0] !== "hus_basics",
+    [lessons("How do I deep fry fish in hot oil?"), lessons("How do I stop my dog from biting?"), lessons("My baby son is breathing very fast, what should I do?"), lessons("My mother is confused and forgetful, how can I care for her at home?")]);
   ok("...\u201chow do my lungs work\u201d is not a how-to", !S.chat.howTo("How do my lungs work?") && S.chat.howTo("How could our village keep its well clean?"));
   var cg = S.catalog("Does Lantern have a tool to help me plan a vegetable garden?");
   ok("as run the 35B said Lantern has no tool for a vegetable garden; now the catalog names the Farming tile",
     /does not have a dedicated/.test(row("suite-b-garden-tools").reply) && (cg.groups.tile || []).some(function (e) { return e.title === "Farming"; }), Object.keys(cg.groups).map(function (k) { return k + ": " + cg.groups[k].map(function (e) { return e.title; }).join(" / "); }));
-  ok("...with what the tile has, in the catalog\u2019s line for it", /vegetable garden: what to plant, how far apart/.test(S.entries().filter(function (e) { return e.kind === "tile" && e.title === "Farming"; })[0].desc));
+  ok("...with what the tile has, in the catalog\u2019s line for it", /vegetable garden: crop spacing, sowing depth, days to harvest/.test(S.entries().filter(function (e) { return e.kind === "tile" && e.title === "Farming"; })[0].desc));
 
   // --- the library: the article the question names ------------------------------------------------------------------
   await sleep(50);
@@ -168,12 +182,45 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   ok("as run the Galaxy S7\u2019s battery was given the S7 Edge\u2019s guide first; now the S7\u2019s own guide", /S7 Edge Battery/.test(row("shelf-galaxy-battery-b").library.sources[0]) &&
     gx.sources[0].title === "Samsung Galaxy S7 Battery Replacement", gx.sources.map(function (s) { return s.title; }));
 
+  var nw = await LIB.lookup("What did Newton discover?", "");
+  function nb(title, q) { return LIB.namedTitle(title, q, LIB.keywords(q), null).bonus; }
+  ok("...and only then (review of 1.24.17): a bare name is not the subject (Newton\u2019s page of meanings is not first); a place the person lives in, a title in brackets, a name outside the asking sentence get nothing",
+    nw.sources[0].title !== "Newton" && nb("Newton", "What did Newton discover?") === 0 && nb("Newton (unit)", "What is the unit of force named after Newton?") === 0 &&
+    nb("Kenya", "We live in Kenya. Explain the best way to purify water from a river.") === 0 && nb("Texas", "My grandmother in Texas has diabetes. What should she eat?") === 0 &&
+    nb("Ghana", "What is the capital of Ghana?") === 10 && nb("New York City", "What is the population of New York City?") === 10 && nb("Beatles", "Who was the drummer of The Beatles?") === 10 &&
+    LIB.namedTitle("Newton", "What did Newton discover?", [], { paras: ["Newton may refer to: Isaac Newton"] }).bonus === 0,
+    [nw.sources.map(function (x) { return x.title; }), nb("Ghana", "What is the capital of Ghana?"), nb("New York City", "What is the population of New York City?"), nb("Beatles", "Who was the drummer of The Beatles?")]);
+
   // --- not changed: what the model got wrong, and the float switches ----------------------------------------------------
   ok("left as the model wrote them: photosynthesis spelled from memory, the flag left with Dot, the field a triangle, the wheel two spokes",
     /noitucisohp/.test(row("letters-photosynthesis-b").reply) && /held by Dot/.test(row("line-flag-b").reply) &&
     /tri 0 6 20 6 20 12 fill green/.test(row("make-path-field-b").reply) && /^Primary: Red \| Yellow \| Blue$/m.test(row("make-colour-wheel-b").reply));
   ok("...and the float switches still graded for the safer design (the high float stops the pump though the low one is on)",
     /the low float wins over the high float/.test(L.aiBench.grade(item("code-b-p1am-floats"), row("code-b-p1am-floats").reply, { made: L.aiAct.build(row("code-b-p1am-floats").reply, item("code-b-p1am-floats").q) }).why));
+
+  // --- the review of 1.24.17's rules (fixtures/review1_1257.json): units, lessons and the catalog replayed ---------------
+  var RV = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review1_1257.json"), "utf8")), moved = [], worse = 0, n2 = 0;
+  RV.cases.forEach(function (c) {
+    if (!c.now || typeof c.input !== "string") return;
+    var good;
+    if (c.rule === 5) {
+      var ls = lessons(c.input), e = String(c.expected), m;
+      if ((m = /first lesson one of ([\w \/]+)/.exec(e))) good = !!ls.length && m[1].split(/\s*\/\s*/).indexOf(ls[0]) >= 0;
+      else if ((m = /^not ([\w \/]+?) first/.exec(e))) good = !ls.length || m[1].split(/\s*\/\s*/).indexOf(ls[0]) < 0;
+      else good = true;
+      if (/^how-to/.test(e) && !S.chat.howTo(c.input)) good = false;
+    } else if (c.rule === 6) {
+      var tl = (S.catalog(c.input).groups.tile || []).map(function (x) { return x.app || x.id; });
+      good = /not listed/.test(c.expected) ? tl.indexOf("farming") < 0 : tl.indexOf("farming") >= 0;
+    } else if (c.rule === 2) {
+      var st = L.assist.run(c.input).steps[0], v = st.ok ? st.value : "error";
+      good = typeof c.expected === "number" ? typeof v === "number" && Math.abs(v - c.expected) < 1e-6 * Math.max(1, Math.abs(c.expected)) : typeof v === "string";
+    } else return;
+    n2++;
+    if ((good ? "as said" : "differs") !== c.now) moved.push([c.rule, c.input, c.now]);
+    if (!good && c.on_1_24_16 === "as said") worse++;
+  });
+  ok("the review\u2019s " + n2 + " cases on units, lessons and the catalog come out as recorded, and none that was right on 1.24.16 is wrong now", n2 === 251 && !moved.length && worse === 0, [n2, worse, moved]);
 
   // --- the guard: every reply that passed still passes ------------------------------------------------------------------
   var bad = [], n = 0;
