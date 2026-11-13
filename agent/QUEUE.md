@@ -147,10 +147,16 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    withdrawn). Of the 18, also 1 a design the bench grades strictly (the float
    switches), 6 the model's own (photosynthesis typed from memory, the flag
    puzzle, the field picture, the colour wheel, the minor tune's F#, a NEED
-   that became "Not in my library"). Next: his set B run on 1.24.17, row by
-   row against this one; if the photosynthesis kind (a string typed where
-   the line above gave it) or the chickens kind (a quantity about the
-   person's own things declined) comes back, it is Lantern's to catch. Of the gaps
+   that became "Not in my library"). His second run of set B (1.24.17,
+   `tests/fixtures/bench_run_1257_35b_setb.json`, `tests/bench_1258.js`):
+   129 of 140; the seven mended rows passed, none regressed, and every row
+   that failed failed on 1.24.16 with the same reply word for word. Read
+   again: the chickens NEED was Lantern's (it took the NEED to the library
+   and the decline that followed replaced it), and photosynthesis, Ghana,
+   the Galaxy S7 and the colour wheel had a part Lantern could do. 1.24.18
+   mends those four (a NEED to the person stands; the named article after a
+   decline; a word from nowhere questioned; a wheel of colours painted).
+   Next: his set B run on 1.24.18, row by row against these two. Of the gaps
    listed below for 1.24.16, the march, "Remind me what I asked you" and
    the orbital speed passed on his run all the same; still open: Amazing
    Grace not in the songbook handed to the model, and a follow-up with no
