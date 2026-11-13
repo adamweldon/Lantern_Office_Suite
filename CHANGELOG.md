@@ -1,5 +1,158 @@
 # Changelog
 
+## 1.24.18 — Adam's second run of set B: the rows that failed twice (2026-11-13)
+
+Adam ran the 35B on set B of 1.24.17 with the library on his laptop
+(2026-11-13, 18:33 UTC, 101 minutes): **129 of 140**, against 122 on
+1.24.16. Seven rows that failed there pass here: the follow-up that had lost
+its subject, US gallons, the manual's page 3, the vegetable-garden tool, the
+burn, raw milk and cheap meals. None that passed there fails here.
+(`tests/fixtures/bench_run_1257_35b_setb.json`: the 13 rows that did not
+pass as the model wrote them, and the 133 that passed, kept as a guard;
+replayed by `tests/bench_1258.js`.) He sent screenshots of six of them.
+
+**What was seen.** Every row that failed failed on 1.24.16 too, with the same
+reply word for word, so each is about the question, not chance.
+
+- *Lantern's doing.*
+  - "How much feed do my chickens need for a month?": the 35B did what the
+    bench asks, and asked "NEED: How many chickens do you have, and how many
+    grams of feed does each chicken need per day?" Lantern took that NEED
+    for one the library could answer (it says the question's words again),
+    sent passages on Dwarfism in chickens, FEED and Chicken, and the 35B's
+    next reply, "Not in my library", was what the person got: their
+    question was lost.
+  - "Spell photosynthesis backwards, then remove every letter s": the 35B
+    wrote `=REVERSE("photosynthesis")` and then typed `=REMOVE("noitucisohp","s")`
+    from nowhere. Lantern questions a result typed out with slips ("write
+    ANS1"), but this word was too far from "sisehtnysotohp" to count as one.
+  - The capital of Ghana and the Galaxy S7's battery: the library sent
+    Capital punishment in Ghana, Capital Bank (Ghana) and a road, and the
+    S7 Edge's guide, the Tab S7+'s and the S7's page, and the 35B declined.
+    A ranking by the subject the question names was tried in 1.24.17 and
+    withdrawn after two reviews.
+  - The colour wheel: the 35B wrote two parts, "Primary: Red | Yellow |
+    Blue" and "Secondary: Orange | Green | Violet", and Lantern painted all
+    six on pale yellow and pale blue. Lantern already paints a part named
+    after a colour in that colour ("a colour wheel with Red on yellow would
+    teach the wrong thing"), but not an item.
+- *As before.* The scald and the snake bite as worded; Amazing Grace with a
+  chord line and no melody; the float switches graded as the bench asks.
+- *The model's.* The line puzzle answered without Lantern's TRACK block,
+  the flag left with Dot; the path drawn as three gray mountains on the
+  horizon and the field as a triangle (questioned once, not mended); the
+  F# over D minor (questioned, not fixed). The colour wheel's order (all
+  three primaries together, not each secondary between its two) is the
+  model's too.
+
+**What changed.**
+
+- *A NEED to the person stands.* When a question is about the person's own
+  things ("my chickens", "my battery") and not about now or what is to
+  come, and the AI asks them for a thing of theirs (how many chickens they
+  have, the capacity of their battery, how big their garden is, how many
+  people are in their family: `assist.needAsksPerson`), Lantern may still
+  look in its library first; but when the library has nothing and the AI's
+  next reply is the decline alone, or with a short reason about the
+  passages (`assist.bareDecline`), the AI's question to the person is what
+  they get. A NEED that says the question again ("How much feed do your
+  chickens need?"), or asks for the library's data, is not brought back;
+  nor is a decline that goes on with a sentence of the AI's own. In Assist
+  and the bench (`assist.solve`) and in Chat (`C.turn`).
+- *The article the question names, after a decline.* The library ranks as
+  before. But of the articles it read and ranked below the three it sends,
+  up to two whose titles are wholly words of the question and hold every
+  name it has, whole (a word with a capital: "Ghana", "Ghana's capital?";
+  "Samsung Galaxy S7 Battery Replacement"; Niger is not Nigeria) are kept
+  back (`lookup().more`), and sent,
+  numbered [4] and [5], once, if the AI's reply is the decline alone. Then
+  the older pointer, which shows the AI a sentence that looks like the
+  answer, looks in them first. Never for a question about the person's own
+  things, nor one that names nothing ("the speed of light"), nor a title
+  missing one of its names ("Paris" for Paris, Kentucky); the AI's own
+  search words do not count.
+- *A word typed from nowhere.* After a line that reverses a word of the
+  question, a quoted word in a later line with another function, not in
+  the question, that shares most of its letters with the reversal and ends
+  as it does, is questioned as a result typed out ("line 2 types
+  “noitucisohp”, but line 1 gave “sisehtnysotohp”: write ANS1 instead of
+  typing a result out") when nothing else uses the reversal: no later line,
+  and not the ANSWER. Lantern asks; it never puts the result in place of
+  such a word itself. A word that is exactly an earlier line's result is
+  never questioned as a slip.
+- *A wheel of colours* — every item named after one — has each item
+  painted its colour, with white or dark words, whichever stands out more,
+  and on a wheel of many items, whose words are small, the colour a little
+  lighter or darker so they read ("Red-Orange" too, and Amber, Gold, Navy
+  and a few more). A tea wheel's Black and Green, a "Blue" among feelings,
+  or a wiring wheel's striped Green-Yellow stay as they were.
+
+**Tried by two reviewers.** Each was a separate agent that had seen
+neither the rules written nor the run, nor the review before it, and made
+cases of its own, right ones above all, with a stand-in model and library on
+the paths of Assist and Chat.
+
+*The first* (215 cases, `tests/fixtures/review1_1258.json`; its NEED cases
+and chains replayed by `tests/bench_1258.js`) found:
+
+- the NEED: the question again with one word of its own ("your hens"), a
+  NEED for the library's data, and a decline that went on with the model's
+  own knowledge, all brought back as the NEED;
+- the library: Paris (France) offered for Paris, Kentucky, Mercury (planet)
+  through the model's own search words, Light for the speed of light;
+- the typed word: right chains of two related words questioned (fluorine
+  and chlorine reversed: 396 of 4,300 such chains, against 38 on 1.24.17),
+  and in Chat, Lantern putting a result in their place itself, wrongly;
+- the wheel: a tea wheel's Black and Green, a feelings wheel's Blue
+  painted.
+
+All mended or narrowed.
+
+*The second* (206 cases, `tests/fixtures/review2_1258.json`) found:
+
+- the NEED: kept where the question itself says "you" ("How many eggs do
+  you get from a hen?"), for a question about no one's things or about
+  tomorrow's rain, and after a decline that went on in words with no digit
+  ("A laying hen eats a quarter pound a day");
+- the library: names matched by their first letters, so "the capital of
+  Niger" was offered Nigeria and Lantern's own pointer then showed "Abuja
+  is the capital of Nigeria" -- an honest decline turned into a wrong
+  capital; Austria and Australia, India and Indiana the same;
+- the typed word: a right word after an unused helper line ("fromage" then
+  "formaggio" reversed) questioned, and made wrong when the model did as
+  Lantern said;
+- the wheel: small words under 4.5 to 1 on red, purple and blue, a striped
+  Green-Yellow painted lime, olive and brown off.
+
+All mended or narrowed as above. Their cases now come out right but for the
+misses each fixture lists under `known` (a NEED in other words, "Can you
+tell me the capital of Ghana?", colour names Lantern does not know) and, as
+on 1.24.17, the older checks of slips. A sweep of 32,760 made chains of
+related words (planets, days, months, elements, numbers, capitals, animals,
+under five functions) has none questioned as a word from nowhere. The
+second review's mends were tried on both reviews' cases and the sweep, not
+by a third reviewer.
+
+**What was run.** `npm test`: all suites pass (ALL CHECKS PASS), among them
+`tests/bench_1258.js` (37 checks: the run's 13 rows and its 133 passed
+replies as a guard, 75 graded again; 87 passed chains of both runs, none
+questioned; both reviews replayed). In a real browser (Playwright,
+Chromium): `scene_e2e`, `bench_run9_e2e`, `bench_headless_e2e`,
+`music_e2e`. Not run: set B on any model. The changes were tried with a
+stand-in model and library and the reviewers' cases, not on the 35B.
+
+**Not done.**
+
+- The line puzzle: the bench keeps only the last reply, so whether the 35B
+  was asked for its TRACK block, and what it wrote, is not in the run.
+  Lantern asks for the block once when a puzzle is answered without one.
+- The path across the field: three gray triangles on the horizon where the
+  path should narrow towards it. Lantern questioned the picture once, and
+  the 35B kept it. How a picture looks is Adam's to judge.
+- The scald and the snake bite as worded, Ghana and the Galaxy S7 if the
+  named article was not among the ten read, and Amazing Grace, as listed
+  for 1.24.17.
+
 ## 1.24.17 — Adam's first run of set B: what was Lantern's, what was the model's (2026-11-13)
 
 Adam ran the 35B on set B of 1.24.16 with the library on his laptop
