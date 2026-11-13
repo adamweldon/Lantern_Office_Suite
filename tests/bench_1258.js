@@ -41,6 +41,9 @@ var ART = {
   "Chicken": "The chicken is a domesticated bird. Chickens are kept for eggs and meat; a flock forages and is fed grain.",
   "Dwarfism_in_chickens": "Dwarfism in chickens is an inherited condition found in chickens, giving adults a small size.",
   "FEED": "FEED is a project that sells bags to fund school meals.",
+  // (the review of 1.24.18) a name that is another place, and a word that names nothing
+  "Paris": "Paris is the capital and largest city of France, with a population of about 2.1 million.",
+  "Light": "Light is electromagnetic radiation that the human eye can see, with wavelengths of about 400 to 700 nanometres.",
   "Water_purification": "Water purification is the process of removing germs and chemicals from water. The best way to purify river water is to let it settle, filter it, then boil it."
 };
 var ARTICLES = {};
@@ -118,6 +121,12 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   ok("a NEED that only says the question again is not brought back: the decline stands", se.text === ch.reply && !se.needKept, se.text);
   ok("...nor the other way: what the needs of the person are, and what is the question again",
     A.needAsksPerson(ch.first, ch.q) && !A.needAsksPerson("NEED: How much feed do your chickens need for a month?", ch.q) && !A.needAsksPerson("the feed per chicken per day", ch.q));
+  ok("(its review) the question again with a word of its own, or a NEED for the library, is not the person\u2019s; \u201chow many chickens do you have\u201d with only the question\u2019s words is",
+    !A.needAsksPerson("How much feed do your hens need for a month?") && !A.needAsksPerson("How much feed do your chickens need for a whole month? Please specify.") &&
+    !A.needAsksPerson("Can you look up how much feed chickens need in the library?") && !A.needAsksPerson("Data from your offline library on chicken feed") &&
+    A.needAsksPerson("How many chickens do you have, and how much feed do they need in a month?") && A.needAsksPerson("What is the capacity of your battery in amp-hours?"));
+  var fo = fake([ch.first, "ANSWER: Not in my library. From my own knowledge: a hen eats about 120 g a day, so about 3.6 kg a month."]), so = await A.solve(ch.q, { call: fo });
+  ok("(its review) a decline that goes on with the AI\u2019s own knowledge is left as it is", /3\.6 kg/.test(so.text) && !so.needKept, so.text);
   var fl = fake([ch.first, "=12*0.12*30\nANSWER: About {result} kg for 12 chickens [1]."]), sl = await A.solve(ch.q, { call: fl });
   ok("a reply after the library that is not a decline is left as it is", /^=12\*0\.12\*30/.test(sl.text) && !sl.needKept, sl.text);
 
@@ -138,9 +147,12 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   ok("an answer from the three sent is left: nothing more is sent", sa.rounds === 2 && !sa.more, [sa.rounds, sa.more]);
   var fgc = fake(["LOOKUP: Ghana capital", "ANSWER: Not in my library.", "ANSWER: The capital of Ghana is Accra [4].\nQUOTE [4]: The capital and largest city is Accra."]);
   var cg = await C.converse(["What is the capital of Ghana?"], { call: fgc }), cgt = (cg.turns || cg)[0] || {};
-  ok("...and in Chat", /Accra/.test(cgt.final) && (cgt.more || []).join() === "Ghana" && /also has these articles/.test(said(fgc.seen[2][fgc.seen[2].length - 1])), [cgt.final, cgt.more]);
+  ok("...and in Chat", /Accra/.test(cgt.final) && (cgt.more || []).join() === "Ghana" && /Lantern also read these articles/.test(said(fgc.seen[2][fgc.seen[2].length - 1])), [cgt.final, cgt.more]);
   var lp = await L.assistLookup("What is the capital of my country, Ghana?", "Ghana capital");
   ok("never for a question about the person\u2019s own things", !lp.more.length, lp.more.map(function (s) { return s.title; }));
+  var pk = await L.assistLookup("What is the population of Paris, Kentucky?", "Paris Kentucky population"), sl2 = await L.assistLookup("What is the speed of light?", "speed of light");
+  ok("(its review) only an article that has every name the question has (not Paris for Paris, Kentucky), and none for a question that names nothing (the speed of light)",
+    !pk.more.some(function (s) { return s.title === "Paris"; }) && !sl2.more.length, [pk.more.map(function (s) { return s.title; }), sl2.more.map(function (s) { return s.title; })]);
   var gx = await L.assistLookup("How do I replace the battery in a Samsung Galaxy S7?", "");
   var shown = gx.sources.map(function (s) { return s.title; }), kept = gx.more.map(function (s) { return s.title; });
   ok("the Galaxy S7: its own guide is sent with the three, or kept back as more; never the Edge\u2019s or the Tab\u2019s as more",
@@ -150,7 +162,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var ph = row("letters-photosynthesis-b"), pq = ph.q;
   ok("as run (twice): =REVERSE(\u201cphotosynthesis\u201d), then =REMOVE(\u201cnoitucisohp\u201d,\u201cs\u201d) typed from nowhere, 10 letters",
     /=REMOVE\(\x22noitucisohp\x22,\x22s\x22\)/.test(ph.reply) && row1("letters-photosynthesis-b").reply === ph.reply);
-  var pp = A.parseReply(ph.reply), pr = A.run(pp.exprText), rt = L.aiResultChecks.retyped(pr.steps, pq);
+  var pp = A.parseReply(ph.reply), pr = A.run(pp.exprText), rt = L.aiResultChecks.retyped(pr.steps, pq, false, pp.answer);
   ok("now: line 2 is questioned as a result typed out (line 1 gave \u201csisehtnysotohp\u201d), and line 3, a copy of line 2\u2019s, is not put on line 1",
     rt.length === 1 && rt[0].k === 1 && rt[0].j === 0 && rt[0].lit === "noitucisohp", rt);
   var fp = fake([ph.reply, "=REVERSE(\x22photosynthesis\x22)\n=REMOVE(ANS1,\x22s\x22)\n=LEN(ANS2)\nANSWER: What is left is {ANS2}, which has {ANS3} letters."]);
@@ -167,6 +179,15 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     if (rr.length) guardQ.push([r.id, rr]);
   });
   ok("no passed chain of either run is questioned as typing a result out (" + guardN + ")", guardN === 87 && !guardQ.length, guardQ);
+  function qd(q0, t) { var p0 = A.parseReply(t); return L.aiResultChecks.check(q0, p0.exprText, A.run(p0.exprText), { parsed: p0 }); }
+  ok("(its review) two words worked out side by side are not questioned (fluorine and chlorine reversed; nitrogen and oxygen in capitals)",
+    !qd("Spell the first two halogens backwards.", "=REVERSE(\x22fluorine\x22)\n=REVERSE(\x22chlorine\x22)\nANSWER: {ANS1} and {ANS2}") &&
+    !qd("Spell the first two halogens backwards.", "=REVERSE(\x22fluorine\x22)\n=REVERSE(\x22chlorine\x22)\nANSWER: eniroulf and enirolhc") &&
+    !qd("Write the two main gases in air in capitals.", "=UPPER(\x22nitrogen\x22)\n=UPPER(\x22oxygen\x22)\nANSWER: NITROGEN and OXYGEN"));
+  ok("(its review) a word that is exactly an earlier line\u2019s result is no slip (=UPPER(\u201cdesserts\u201d) under =REVERSE(\u201cstressed\u201d))",
+    !qd("Reverse stressed, swap its s for z, and write the reversed word in capitals.", "=REVERSE(\x22stressed\x22)\n=SUBSTITUTE(ANS1,\x22s\x22,\x22z\x22)\n=UPPER(\x22desserts\x22)\nANSWER: {ANS2} and {ANS3}"));
+  var rcP = L.aiResultChecks.rechain(pp.exprText, pr.steps, pq);
+  ok("(its review) Lantern never puts a result in place of such a word itself: it asks", !rcP || !rcP.changes.some(function (c) { return /noitucisohp/.test(c.from); }), rcP && rcP.changes);
 
   // --- the colour wheel -----------------------------------------------------------------------------------------------
   var cw = row("make-colour-wheel-b"), mw = L.aiAct.build(cw.reply, cw.q), sj = JSON.stringify(mw.shapes);
@@ -175,6 +196,28 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     ["#ef4444", "#facc15", "#3b82f6", "#f97316", "#22c55e", "#8b5cf6"].every(function (c) { return sj.indexOf(c) >= 0; }) && mw.ok, mw.problems);
   var tw = JSON.stringify(L.aiAct.build("MAKE WHEEL: Fruit\nApples: Red apples | Green apples\nPears: Conference | Williams\nEND", "Draw a wheel of fruit").shapes);
   ok("...but not an item that only begins with a colour (Red apples)", tw.indexOf("#ef4444") < 0 && tw.indexOf("#22c55e") < 0);
+  var tea = JSON.stringify(L.aiAct.build("MAKE WHEEL: Teas\nDark: Black | Oolong\nLight: Green | White\nEND", "Draw a wheel of teas").shapes);
+  var tert = JSON.stringify(L.aiAct.build("MAKE WHEEL: Twelve colours\nWarm: Red | Red-Orange | Orange | Yellow-Orange | Yellow | Yellow-Green\nCool: Green | Blue-Green | Blue | Blue-Violet | Violet | Red-Violet\nEND", "Draw a twelve-colour wheel").shapes);
+  ok("(its review) only a wheel whose every item is a colour: a tea wheel\u2019s Black and Green stay; Red-Orange and Blue-Violet are painted",
+    tea.indexOf("#22c55e") < 0 && tea.indexOf("#111827") < 0 && tert.indexOf("#f4511e") >= 0 && tert.indexOf("#7c3aed") >= 0);
+
+  // --- the review of 1.24.18's rules (fixtures/review1_1258.json): its NEED cases and its chains, replayed ---------------
+  var RV = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review1_1258.json"), "utf8")), mv1 = [], mv3 = [], worse3 = 0, n1 = 0, n3 = 0;
+  function fk(replies) { var i = 0; return function () { return Promise.resolve(replies[Math.min(i++, replies.length - 1)]); }; }
+  for (var ci = 0; ci < RV.cases.length; ci++) {
+    var c = RV.cases[ci];
+    if (c.rule === 1) {
+      var fin = c.path === "assist" ? (await A.solve(c.input.q, { call: fk(c.input.replies) })).text : (((await C.converse([c.input.q], { call: fk(c.input.replies) })).turns || [])[0] || {}).final;
+      n1++; if (String(fin || "") !== c.final_now) mv1.push([c.id, fin]);
+    } else if (c.rule === 3 && c.input.chain) {
+      var p3 = A.parseReply(c.input.chain), st3 = L.aiResultChecks.check(c.input.q, p3.exprText, A.run(p3.exprText), { parsed: p3 }) ? "questioned" : "not questioned";
+      n3++; if (st3 !== c.questioned_now) mv3.push([c.id, st3]);
+      if (st3 === "questioned" && c.questioned_1_24_17 === "not questioned" && !/^questioned/.test(c.expected)) worse3++;
+    }
+  }
+  ok("the review\u2019s " + n1 + " NEED cases (both paths) end as recorded, every one as it said", n1 === 58 && !mv1.length &&
+    RV.cases.filter(function (c) { return c.rule === 1; }).every(function (c) { return c.ok_now; }), mv1);
+  ok("the review\u2019s " + n3 + " chains are questioned as recorded, and none that 1.24.17 left alone and should be left alone is questioned now", n3 === 64 && !mv3.length && worse3 === 0, [mv3, worse3]);
 
   // --- the guard: every reply that passed still passes ------------------------------------------------------------------
   var bad = [], n = 0;
