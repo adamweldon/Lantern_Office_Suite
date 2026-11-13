@@ -101,7 +101,8 @@ ok("...kept by the lesson (about), returned by get(), and indexed as its descrip
   S.entries().filter(function (e) { return e.kind === "lesson" && e.id === "rep_flat"; })[0].desc === W.rep_flat);
 function plain(k) { return String(ML.get(k).html).replace(/<[^>]*>/g, " ").replace(/&[a-z0-9#]+;/g, " ").toLowerCase(); }
 // every word of a lesson's "about" line is for something the lesson says: its stem is in the lesson, or it is one of the other names listed here
-var OTHER = { purify: 1, purifying: 1, jerky: 1, pasteurise: 1, puncture: 1, inner: 1, compass: 1, weaning: 1, deficiency: 1, pickled: 1, sourdough: 1, firewood: 1, granary: 1, temperature: 1, sodis: 1 };
+var OTHER = { purify: 1, purifying: 1, jerky: 1, pasteurise: 1, puncture: 1, inner: 1, compass: 1, weaning: 1, deficiency: 1, pickled: 1, sourdough: 1, firewood: 1, granary: 1, temperature: 1, sodis: 1,
+  scald: 1, scalded: 1, bit: 1, snakebite: 1 };   // (1.24.17) a scald is a burn; "bit" and "snakebite" are bite
 var FRUIT = { apples: 1, mangoes: 1, bananas: 1, apricots: 1, figs: 1, grapes: 1 };   // kinds of fruit, for the lessons on drying fruit
 var PLAIN = { find: 1, without: 1, making: 1, left: 1, out: 1 };   // words of a phrase (“find north without a compass”), not topics
 var loose = [];

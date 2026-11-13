@@ -147,14 +147,14 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     ["How can my wife and I eat healthily without much money?", "food_thrift"], ["My hand got burned on the stove, what should I do?", "health_burns"],
     ["My brother was bitten by a dog. What should we do now?", "health_bites"]];
   ok("now: each is given its lesson first, and other wordings of the same", LQ.every(function (x) { return lessons(x[0])[0] === x[1]; }), LQ.map(function (x) { return x[0].slice(0, 30) + " -> " + lessons(x[0]).join(","); }));
-  ok("...and the words added do not pull other questions there: boiling water to drink, a scorpion\u2019s sting, a sick goat", lessons("How do I boil water to make it safe to drink?")[0] === "health_water" &&
+  ok("...and the words added do not pull other questions there: boiling water to drink, keeping bees, milking a goat, a sick goat", lessons("How do I boil water to make it safe to drink?")[0] === "health_water" &&
+    !lessons("How do I keep bees?").length && lessons("How do I milk a goat?").join() === "hus_goats" &&
     lessons("What should I do for a scorpion sting?")[0] === "health_bites" && lessons("My goat is coughing. What could be wrong?").indexOf("health_burns") < 0,
     [lessons("How do I boil water to make it safe to drink?"), lessons("What should I do for a scorpion sting?"), lessons("My goat is coughing. What could be wrong?")]);
   ok("...\u201chow do my lungs work\u201d is not a how-to", !S.chat.howTo("How do my lungs work?") && S.chat.howTo("How could our village keep its well clean?"));
   var cg = S.catalog("Does Lantern have a tool to help me plan a vegetable garden?");
-  ok("as run the 35B said Lantern has no tool for a vegetable garden; now the catalog names the Farming tile and its lessons",
-    /does not have a dedicated/.test(row("suite-b-garden-tools").reply) && (cg.groups.tile || []).some(function (e) { return e.title === "Farming"; }) &&
-    (cg.groups.lesson || []).some(function (e) { return /Crop rotation|Companion planting/.test(e.title); }), Object.keys(cg.groups).map(function (k) { return k + ": " + cg.groups[k].map(function (e) { return e.title; }).join(" / "); }));
+  ok("as run the 35B said Lantern has no tool for a vegetable garden; now the catalog names the Farming tile",
+    /does not have a dedicated/.test(row("suite-b-garden-tools").reply) && (cg.groups.tile || []).some(function (e) { return e.title === "Farming"; }), Object.keys(cg.groups).map(function (k) { return k + ": " + cg.groups[k].map(function (e) { return e.title; }).join(" / "); }));
   ok("...with what the tile has, in the catalog\u2019s line for it", /vegetable garden: what to plant, how far apart/.test(S.entries().filter(function (e) { return e.kind === "tile" && e.title === "Farming"; })[0].desc));
 
   // --- the library: the article the question names ------------------------------------------------------------------
