@@ -42,11 +42,11 @@ a guard of right replies; replayed by `tests/bench_1257.js`.)
 - *Not wrong, but not what the bench asks.* Two of those were right in
   themselves: the scald answer (cool running water, no ice or butter), given
   with no lesson, and the raw milk answer from its own knowledge (heat it to
-  pasteurise). And one row more: the float-switch program starts the pump when the low float is on and
-  stops it when the high float is on, with the low one winning if both are
-  on. That works with healthy switches, but a stuck low float would overfill
-  the tank. The bench asks for the stop to win, as a stop does in a motor
-  starter, and keeps asking for it.
+  pasteurise). And one row more: the float-switch program starts the pump
+  when the low float is on and stops it when the high float is on, with the
+  low one winning if both are on. That works with healthy switches, but a
+  stuck low float would overfill the tank. The bench asks for the stop to
+  win, as a stop does in a motor starter, and keeps asking for it.
 - *Wrong (6 rows).* "Photosynthesis" spelled backwards: it wrote
   `=REVERSE("photosynthesis")` and then, instead of using what that gave,
   typed "noitucisohp" from memory into the next line. The line puzzle: the
@@ -63,38 +63,59 @@ a guard of right replies; replayed by `tests/bench_1257.js`.)
 - *History.* The question being answered is kept whole with every passage
   given for it while it is answered (`msgs.turnStart`, set by `C.turn`), so
   a page read with READ is not cut when the next one comes. An older message
-  that does not fit is no longer dropped whole: it stays as its start (a
-  question without its passages or Lantern's notes to the AI, the first
-  lines of an answer, a block it made named in one line, never half of it,
-  and a picture said not to be sent again), newest first while there is
-  room (`C.trimHistory`).
+  that does not fit is no longer dropped whole: it stays as a short version,
+  newest first while there is room (`C.trimHistory`). `C.turn` marks the
+  person's questions and keeps their words as asked (`msgs.asked`,
+  `msgs.askedText`): a question's short version is those words, without the
+  passages, recipe hints or song (THE SONG SO FAR) Lantern added to them,
+  and never taken for a block ("Make music: that is my goal this year" is
+  what they said). A message that is not one of the person's questions is
+  Lantern's own to the AI (a picture it drew, tool results, "That is already
+  above ... QUESTION: <the old question>") and is one line; with no marks,
+  Lantern's messages are known by how they begin. In an answer, a block is
+  named in one line exactly as Lantern's own reader takes it
+  (`Lantern.aiAct.find`, which now says where each block starts and ends,
+  a note after its END included), with the code fence around it, never cut
+  in half; a line that only begins with "Make" ("Make sure the soil stays
+  moist") stays as written. What is still long is cut at 700 characters,
+  never inside a block's line; when the room is short an answer kept leaves
+  room for the start of its question; a message that had a picture says it
+  is not sent again, and a picture not sent no longer says "look at it".
+  Old messages that fit are sent whole, as before.
 - *CONVERT.* "US gallon", "U.S. gallons", "US gal", "US fl oz", "US quart",
   "US pint", "US cup" are the US measures; "US pound", "US mile" and the
-  like are the same as elsewhere. "Imperial", "UK" or "British" gallon, pint
-  and fluid ounce are the imperial ones (4.54609 L, 568.26125 mL,
-  28.4130625 mL). The US (short) ton of 2000 lb and the UK (long) ton of
-  2240 lb are in the table, by those names; a plain "ton" stays the metric
-  tonne, as before, and a plain "pint" is not taken as either. Periods are
-  set aside ("fl. oz."), "mL" is ml, "cup" is no longer read as "cu(bic) p",
-  and a name that is another unit with capitals ("Gal", the galileo) is
-  tried in small letters when the two are not of one kind. A name Lantern
+  like are the same as elsewhere. "Imperial", "imp", "UK" or "British"
+  gallon, quart, pint and fluid ounce are the imperial ones (4.54609 L,
+  1.1365225 L, 568.26125 mL, 28.4130625 mL). The US (short) ton of 2000 lb
+  and the UK (long) ton of 2240 lb are in the table, by those names; a plain
+  "ton" stays the metric tonne and a plain gallon the US gallon, as before.
+  Beside a measure named imperial, a plain gallon, quart, pint or fluid
+  ounce is the imperial one ("8 imperial pints" in "gallon" is 1, not 1.2),
+  but not beside its own imperial measure ("gallons" in "imperial gallons"
+  is 0.8327, the US one in imperial ones); Lantern's own names (`pint_us`,
+  `gallon_imp`) are never taken as plain. A plain pint beside a gallon or a
+  quart, or a measure named US, is the US pint (8 to the gallon either way);
+  beside litres, a plain fluid ounce or a pint named US or imperial it is
+  not taken as either, and Lantern says "a pint is the US pint (pint_us,
+  473 ml) or the imperial pint (pint_imp, 568 ml): write which". Periods are
+  set aside ("fl. oz."), "mL" is ml, "cup" is no longer read as "cu(bic) p"
+  while "sq ft", "sqft", "sqmeters" and "cubicmetres" are square and cubic
+  measures as on 1.24.16, "KG", "OZ",
+  "LB" are the units they are, but other capitals are not folded ("ML" is a
+  megalitre, "Cal" the food Calorie). "gals", "qt", "millilitres",
+  "millimeters", "metric tonnes" are known. The ounce is exactly 28.349523125
+  g (it was 28.349523, so a pound was 16.0000000705 ounces). A name Lantern
   does not know is said to be unknown, with the names of that kind to write.
-- *Music.* A chord line longer than the longest song Lantern plays (96
-  bars) that is, after up to 8 bars, the same bars over and over (four
-  times or more) has run away. Under a melody it is kept as long as the
-  melody; with none, as many whole turns as fit in 96 bars, lead-in once,
-  in its own order; and Lantern says so ("the chord line repeated the same 8
-  bars after its first 3 for 348 bars: Lantern kept 91, 11 turns of it"). It
-  is read after the melody's bars are, so a | that ends a phrase is read as
-  before. A song of 96 bars or fewer is untouched.
-- *The library.* The article the question asks about is ranked up: the name
-  in "the <what> of <name>" in the sentence that asks (the capital of Ghana:
-  Ghana), or a title that is a name of the question and only words of the
-  question after it (Samsung Galaxy S7 Battery Replacement); other titles
-  with that name and words the question does not have come after it
-  (Capital *punishment* in Ghana; the S7 *Edge*). Never for a bare name
-  ("What did Newton discover?"), a title in brackets, a page of meanings, or
-  a name in another sentence ("We live in Kenya. Explain ...").
+- *Music.* In a song of one part, played once, with no melody and no notes
+  on any other line (an instrument's part, "Voice: E D C D", a bass line), a
+  chord line longer than the longest song Lantern plays (96 bars) that is
+  after up to 8 bars the same bars over and over (four times or more),
+  has run away: the model did not stop writing it and never reached the
+  tune. Lantern keeps as many whole turns as fit in 96 bars, lead-in once,
+  in its own order, and says so ("the chord line repeated the same 8 bars
+  after its first 3 for 348 bars, with no melody: Lantern kept 91 bars, 11
+  turns of it"). Any other long song is left as before, and asked to keep
+  to 96 bars. A song of 96 bars or fewer is untouched.
 - *Lessons and the catalog.* Burns now says a scald (boiling water, a hot
   drink, steam) is a burn. The words people use, for what the lessons say:
   Burns (scald, boiling water, steam), Bites and stings (snakebite, stung,
@@ -104,24 +125,33 @@ a guard of right replies; replayed by `tests/bench_1257.js`.)
   "now", "today", "immediately" weigh little in the search. The Farming tile
   says what it has (the vegetable garden: crop spacing, sowing depth, days
   to harvest), so the catalog finds it.
+- *The library: tried, and taken out.* A bonus for the article the question
+  names ("the capital of Ghana": Ghana; "Samsung Galaxy S7 Battery
+  Replacement") was written, narrowed after the first review, and withdrawn
+  after the second (below). The library ranks as on 1.24.16, and the Ghana
+  and Galaxy S7 questions get what they got in Adam's run.
 
-**Tried by a reviewer, then by a second.** A separate agent that had not
-seen the rules written tried them with 313 cases of its own
-(`tests/fixtures/review1_1257.json`; its unit, lesson and catalog cases are
-replayed by `tests/bench_1257.js`). It found faults in each:
+**Tried by four reviewers.** Each was a separate agent that had seen
+neither the rules written nor the reviews before it, and made cases of its
+own, right ones above all.
+
+*The first* (313 cases, `tests/fixtures/review1_1257.json`; its unit, lesson
+and catalog cases replayed by `tests/bench_1257.js`) found faults in each
+rule:
 
 - the history: the question being answered could itself be cut, and its
   passages labelled "from an earlier question"; a short version kept "look
-  at the picture" with no picture, and half a MAKE block. Mended as above.
+  at the picture" with no picture, and half a MAKE block. Mended.
 - CONVERT: "US ton" gave 1000 kg (the tonne) where a US ton is 907.18 kg;
   "uk gal", "fl. oz.", "quarts", "mL", "cup" (read as cubic) and "Gal" (the
-  galileo) failed. Mended as above.
+  galileo) failed. Mended, but for "Gal" (below).
 - the music: a lead-in replayed every turn under a longer melody, an intro
   found one bar short, a 12-bar blues backing of nine choruses cut to one,
-  and a melody of phrases read as squashed bars. Mended as above.
+  and a melody of phrases read as squashed bars. Mended, then narrowed
+  (below).
 - the library: by its sums by hand, a bare surname (Newton, Curie, Edison,
   Lincoln) and a place the person lives in (Kenya, Texas) would have put
-  the wrong page first. Narrowed as above.
+  the wrong page first. Narrowed.
 - the lessons: to reach the scald and the snake bite as Adam's run asked
   them, the first version let "daughter", "son", "uncle", "wife" weigh
   little and took a lesson when it scored far above the next. That pulled
@@ -134,8 +164,92 @@ replayed by `tests/bench_1257.js`). It found faults in each:
   named it for bed sores, keeping fit and how far a storm is. Now only
   distinctive words.
 
-Of its cases on units, lessons and the catalog, none that came out right on
-1.24.16 comes out wrong now. REVIEW2_HERE
+*The second* (305 cases, `tests/fixtures/review2_1257.json`; its unit names
+replayed):
+
+- the library: of 95 cases run on the narrowed rule's own function, 45
+  wrong: "the capital of Georgia" would have put the page of meanings
+  first, "the population of Paris, Texas" Paris in France, "the president
+  of the United States" the country, "the speed of light" Light, and a
+  repair question the phone's encyclopedia article over its guide. Ranking
+  by a name needs to know what kind of thing the question asks for.
+  Withdrawn.
+- the music: under a melody, cutting the chords to its length read a melody
+  of phrases wrongly. The cut now happens only with no melody.
+- CONVERT: the small-letter retry that mended "Gal" read "ML" (a megalitre)
+  and "MM" as ml and mm. Withdrawn: "Gal" is the galileo, as on 1.24.16. A
+  plain fluid ounce, quart or gallon beside an imperial one was read as the
+  US one (an imperial pint was 19.2 fl oz, not 20). Mended as above.
+- the history: an old block with END IF inside, an unended block, Lantern's
+  own picture message kept as "Look at it closely". Mended as above.
+
+*The third* (309 cases, `tests/fixtures/review3_1257.json`; its unit names
+replayed, and its history findings as checks of `tests/bench_1257.js`) tried
+what the second's findings had brought:
+
+- CONVERT gave wrong numbers where 1.24.16 gave an error. Lantern's own
+  names were taken as plain beside an imperial one (`pint_us` beside an
+  imperial gallon: 8, not 9.61), names Lantern's own messages tell the model
+  to write; and a measure beside its own imperial one became it ("gallons"
+  to "imperial gallons": 1). "sqft", "sqm" and "sqkm", read on 1.24.16, were
+  unknown. Mended as above.
+- The history named prose as a block ("Make sure the soil stays moist", "Make
+  the mix: 1 part cement ..."), took the person's "This is not what I asked
+  for" for Lantern's, and kept Lantern's own "That is already above ...
+  QUESTION: <the old question>", which then reads as current. An old picture
+  question with passages lost its picture note. Mended as above: the
+  person's questions are now marked, not guessed.
+- The music cut the chords under a tune written on an instrument's line
+  ("flute: ...", "Violins I: ..."). Mended: any tune leaves it.
+
+Its own cases asked for both readings of a plain pint beside a pint named US
+("pint" to "US pint" 1.2, "US pint" to "pints" 1), so that is asked about.
+
+*The fourth* (320 cases, `tests/fixtures/review4_1257.json`, and 60,516 pairs
+of unit names compared with 1.24.16; its unit names replayed, and its
+findings as checks) found no wrong number: the only value that moved from
+1.24.16 is the ounce, by 4 parts in a billion. It found:
+
+- one-word square and cubic names ("sqmeters", "squarefeet", "cubicmetres")
+  read on 1.24.16 and lost by the mend for "cup". Mended: a square or cubic
+  name is tried, and if Lantern has no such measure the name is read as it
+  is.
+- in the history, THE SONG SO FAR kept in a person's old question, the
+  person's "Make music: that is my goal this year" named as a block, a note
+  after a schematic's END left behind, a cut splitting a block's line, an
+  empty fence pair, an empty old answer ending the older ones. Mended as
+  above.
+- in the music, a verse and a runaway chorus: Lantern said 96 bars kept for
+  a song of 112, and still asked for 96; a tune on a "Voice:" line (a sound
+  word) dropped, the chords cut and nothing sent back. Mended by narrowing:
+  only a song of one part, played once, with no notes on any other line.
+
+Its own cases come out as it said but for what is listed as known; the
+earlier reviews' cases come out as before. The fourth review's mends were
+tried against its own 320 cases and the 927 of the three before it, not by
+a fifth reviewer.
+
+Of the four reviews' unit, lesson and catalog cases, none that came out
+right on 1.24.16 comes out wrong now. What still differs is listed in each
+fixture under `known`. As on 1.24.16: a plain ton is the tonne and a plain
+gallon the US one (the second reviewer asked for an error naming the
+choices); "Gal", "Ml", "Cal", "degrees F", "MPH", "kwh", cubic feet (Lantern
+has no cubic foot), "cc" are not read; a picture kept in view is not sent
+again once it is older than the room. As Lantern's block reader takes them:
+a Lua program's bare "end" and a QBasic END statement end a code block, and
+a prose line "Make plan: ..." is a block. Kept on purpose: a plain measure
+beside a different imperial one is the imperial one ("gallons" in "imperial
+pints" is 8).
+
+**What was run.** `npm test`: all 91 suites pass (ALL CHECKS PASS), among
+them `tests/bench_1257.js` (36 checks: Adam's run's 20 rows and its 126
+passed replies as a guard; the first review's 251 unit, lesson and catalog
+cases and the 146, 229 and 225 unit names of the next three, each against
+1.24.16; the history, music and library as the reviews left them) and
+`tests/lesson_search.js`. In a real browser (Playwright, Chromium):
+`scene_e2e`, `bench_run9_e2e`, `bench_headless_e2e`, `music_e2e`. Not run:
+set B on any model. Every change was tried with a stand-in and the
+reviewers' own cases, not on the 35B.
 
 **Not done.**
 
@@ -143,19 +257,20 @@ Of its cases on units, lessons and the catalog, none that came out right on
   Lantern's to catch next if they come back: a string typed from memory
   where the line above gave it (photosynthesis), and a quantity question
   about the person's own animals answered "Not in my library" with no NEED.
+- Ghana and the Galaxy S7: the library ranks as on 1.24.16, so these two
+  rows will likely fail again. A ranking that knows what kind of thing a
+  question asks for (a city, a guide) is for another version, with a
+  reviewer.
 - The scald ("My daughter spilled boiling water on her arm") and the snake
   bite ("A snake bit my uncle on the ankle in the field") as Adam's run asked
   them still get no lesson by themselves: what reached them was withdrawn
-  after the review. Reaching them without pulling others wrong needs the
-  lesson search to tell a person's health from an animal's, or a tie between
-  close lessons to go to the one that covers more of the question; that is
-  for another version, with a reviewer.
+  after the first review. Reaching them without pulling others wrong needs
+  the lesson search to tell a person's health from an animal's, or a tie
+  between close lessons to go to the one that covers more of the question.
 - Amazing Grace is still not in the songbook handed to the model; with the
   chord line kept as 11 turns, the brass reply now fails for having no
   melody, which is what it lacked.
 - The colour wheel and the field picture are as the model drew them.
-
-RUN_HERE
 
 ## 1.24.16 — Lantern Bench set B: the same kinds of question, asking for other things (2026-11-12)
 
