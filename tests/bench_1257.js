@@ -210,7 +210,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function asSaid(e, v) {
     if (typeof e === "number") return typeof v === "number" && Math.abs(v - e) < 1e-6 * Math.max(1, Math.abs(e));
     var ns = (String(e).match(/-?\d+(\.\d+)?(e-?\d+)?/g) || []).map(Number);
-    if (typeof v !== "number") return /error/i.test(String(e));
+    if (typeof v !== "number") return /error|\bERR\b/i.test(String(e));
     return ns.some(function (x) { return Math.abs(v - x) < 1e-6 * Math.max(1, Math.abs(x)); });
   }
   var RV2 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review2_1257.json"), "utf8")), moved2 = [], worse2 = 0, n3 = 0, right3 = 0;
@@ -233,6 +233,15 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     if (!good && c.on_1_24_16 === "as said") worse3++;
   });
   ok("the third review\u2019s " + n4 + " unit names come out as recorded (" + right4 + " as it said), and none that was right on 1.24.16 is wrong now", n4 === 229 && right4 === 219 && !moved3.length && worse3 === 0, [n4, right4, worse3, moved3]);
+  var RV4 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review4_1257.json"), "utf8")), moved4 = [], worse4 = 0, n5 = 0, right5 = 0;
+  RV4.cases.forEach(function (c) {
+    if (c.rule !== "units") return;
+    var st = L.assist.run(c.input).steps[0], good = asSaid(c.expected, st.ok ? st.value : "error");
+    n5++; if (good) right5++;
+    if ((good ? "as said" : "differs") !== c.now) moved4.push([c.input, c.now, st.ok ? st.value : st.err]);
+    if (!good && c.on_1_24_16 === "as said") worse4++;
+  });
+  ok("the fourth review\u2019s " + n5 + " unit names come out as recorded (" + right5 + " as it said), and none that was right on 1.24.16 is wrong now", n5 === 225 && right5 === 214 && !moved4.length && worse4 === 0, [n5, right5, worse4, moved4]);
   function cv(e) { var st = L.assist.run(e).steps[0]; return st.ok ? Math.round(st.value * 1e6) / 1e6 : "error"; }
   ok("Lantern\u2019s own names are not plain: pint_us beside an imperial gallon is the US pint (9.6076), gallon_imp to gallon_us 1.20095",
     cv("=CONVERT(1,\x22imperial gallon\x22,\x22pint_us\x22)") === 9.607599 && cv("=CONVERT(1,\x22gallon_imp\x22,\x22gallon_us\x22)") === 1.200950, [cv("=CONVERT(1,\x22imperial gallon\x22,\x22pint_us\x22)"), cv("=CONVERT(1,\x22gallon_imp\x22,\x22gallon_us\x22)")]);
@@ -240,6 +249,9 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     cv("=CONVERT(1,\x22gallon\x22,\x22imperial gallon\x22)") === 0.832674 && cv("=CONVERT(8,\x22imperial pints\x22,\x22gallon\x22)") === 1 &&
     cv("=CONVERT(1,\x22pint\x22,\x22US pint\x22)") === "error" && cv("=CONVERT(1,\x22sqft\x22,\x22m2\x22)") === 0.092903 && cv("=CONVERT(2,\x22pints\x22,\x22gallon\x22)") === 0.25,
     [cv("=CONVERT(1,\x22gallon\x22,\x22imperial gallon\x22)"), cv("=CONVERT(8,\x22imperial pints\x22,\x22gallon\x22)"), cv("=CONVERT(1,\x22pint\x22,\x22US pint\x22)"), cv("=CONVERT(1,\x22sqft\x22,\x22m2\x22)")]);
+  ok("one-word square and cubic names are read as on 1.24.16 (sqmeters, cubicmetres), and a cup is still a cup",
+    cv("=CONVERT(1,\x22sqmeters\x22,\x22sqft\x22)") === 10.76391 && cv("=CONVERT(1,\x22cubicmetres\x22,\x22liter\x22)") === 1000 && cv("=CONVERT(1,\x22cup\x22,\x22ml\x22)") === 236.588237,
+    [cv("=CONVERT(1,\x22sqmeters\x22,\x22sqft\x22)"), cv("=CONVERT(1,\x22cubicmetres\x22,\x22liter\x22)"), cv("=CONVERT(1,\x22cup\x22,\x22ml\x22)")]);
   // the history: the person's words are theirs, Lantern's own are one line, prose beginning "Make" is prose
   var big = "Who built it?\n\nLIBRARY: passages from the offline encyclopedia (searched for: engines)\n\n" + new Array(150).join("Coal was burned to raise steam. ");
   var hl = [{ role: "user", content: "This is not what I asked for: the roof should be red" }, { role: "assistant", content: "MAKE PICTURE: House\nrect 0 0 10 10 red\nEND\nHere it is." },
@@ -250,6 +262,19 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   ok("the person\u2019s \u201cThis is not what I asked for\u201d is kept, Lantern\u2019s \u201cThat is already above\u201d is one line, \u201cMake sure the soil stays moist\u201d stays prose, the block is one line",
     /This is not what I asked for: the roof should be red/.test(ho) && !/That is already above/.test(ho) && /Make sure the soil stays moist/.test(ho) &&
     /a block was made here \(\u201cPICTURE: House\u201d\)/.test(ho) && !/rect 0 0/.test(ho) && /Here it is/.test(ho), ho.slice(0, 900));
+  // the person's own words for a marked question (not THE SONG SO FAR Lantern added, nor a block)
+  var h2 = [{ role: "user", content: "Make music: that is my goal this year.\nWhere do I start?\n\nTHE SONG SO FAR: Lantern made this song earlier -- tempo 70" },
+    { role: "assistant", content: "Start with scales. " + new Array(200).join("Practise daily. ") }, { role: "user", content: "And then?" }, { role: "assistant", content: "" },
+    { role: "user", content: "Thanks" }, { role: "assistant", content: new Array(300).join("Engines pumped water. ") }, { role: "user", content: big }];
+  h2.asked = [h2[0], h2[2], h2[4], h2[6]]; h2.askedText = ["Make music: that is my goal this year.\nWhere do I start?", "And then?", "Thanks", "Who built it?"]; h2.askedFrom = 0; h2.turnStart = 6;
+  var ho2 = L.CHAT.trimHistory(h2, 9000).map(function (m) { return typeof m.content === "string" ? m.content : ""; }).join("\n---\n");
+  ok("a marked question\u2019s short version is the person\u2019s own words: no THE SONG SO FAR, no block line for \u201cMake music: that is my goal\u201d; an empty old answer does not stop the older ones",
+    /^Make music: that is my goal this year\.\nWhere do I start\?/.test(ho2) && !/THE SONG SO FAR|a block was made/.test(ho2) && /And then\?/.test(ho2), ho2.slice(0, 600));
+  var vs = L.aiAct.build("MAKE MUSIC: V\nkey C major\ntempo 100\ntime 4/4\nchords " + new Array(31).join("C | F | G | C | ").replace(/ \| $/, "") + "\nVoice: E D C D | E E E - | D D D - | E G G -\nEND", "Write a song in C");
+  var vc = L.aiAct.build("MAKE MUSIC: W\nkey C major\ntempo 100\ntime 4/4\nverse:\nchords " + new Array(5).join("Am | F | C | G | ").replace(/ \| $/, "") + "\nchorus:\nchords " + new Array(26).join("C | F | G | C | ").replace(/ \| $/, "") + "\nEND", "Write a song in C");
+  ok("the chords are left as on 1.24.16 under a tune on a \u201cVoice:\u201d line, and in a song of a verse and a runaway chorus (asked to keep to 96 bars, not said to be cut)",
+    !vs.plan.said.some(function (x) { return /repeated the same/.test(x); }) && !vc.plan.said.some(function (x) { return /repeated the same/.test(x); }) && vc.problems.some(function (x) { return /keep it to 96/.test(x); }),
+    [vs.plan.said, vc.plan.said, vc.problems]);
 
   // --- the guard: every reply that passed still passes ------------------------------------------------------------------
   var bad = [], n = 0;
