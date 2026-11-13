@@ -223,6 +223,34 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   });
   ok("the second review\u2019s " + n3 + " unit names come out as recorded (" + right3 + " as it said), and none that was right on 1.24.16 is wrong now", n3 === 146 && right3 === 137 && !moved2.length && worse2 === 0, [n3, right3, worse2, moved2]);
 
+  // --- the third review (fixtures/review3_1257.json): its unit names replayed, and the history it found wrong -----------
+  var RV3 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review3_1257.json"), "utf8")), moved3 = [], worse3 = 0, n4 = 0, right4 = 0;
+  RV3.cases.forEach(function (c) {
+    if (c.rule !== 1) return;
+    var st = L.assist.run(c.input).steps[0], good = asSaid(c.expected, st.ok ? st.value : "error");
+    n4++; if (good) right4++;
+    if ((good ? "as said" : "differs") !== c.now) moved3.push([c.input, c.now, st.ok ? st.value : st.err]);
+    if (!good && c.on_1_24_16 === "as said") worse3++;
+  });
+  ok("the third review\u2019s " + n4 + " unit names come out as recorded (" + right4 + " as it said), and none that was right on 1.24.16 is wrong now", n4 === 229 && right4 === 219 && !moved3.length && worse3 === 0, [n4, right4, worse3, moved3]);
+  function cv(e) { var st = L.assist.run(e).steps[0]; return st.ok ? Math.round(st.value * 1e6) / 1e6 : "error"; }
+  ok("Lantern\u2019s own names are not plain: pint_us beside an imperial gallon is the US pint (9.6076), gallon_imp to gallon_us 1.20095",
+    cv("=CONVERT(1,\x22imperial gallon\x22,\x22pint_us\x22)") === 9.607599 && cv("=CONVERT(1,\x22gallon_imp\x22,\x22gallon_us\x22)") === 1.200950, [cv("=CONVERT(1,\x22imperial gallon\x22,\x22pint_us\x22)"), cv("=CONVERT(1,\x22gallon_imp\x22,\x22gallon_us\x22)")]);
+  ok("...a measure beside its own imperial one stays the US one (gallons to imperial gallons 0.83267), 8 imperial pints are 1 gallon, a plain pint beside a pint named US is asked about, sqft is read again",
+    cv("=CONVERT(1,\x22gallon\x22,\x22imperial gallon\x22)") === 0.832674 && cv("=CONVERT(8,\x22imperial pints\x22,\x22gallon\x22)") === 1 &&
+    cv("=CONVERT(1,\x22pint\x22,\x22US pint\x22)") === "error" && cv("=CONVERT(1,\x22sqft\x22,\x22m2\x22)") === 0.092903 && cv("=CONVERT(2,\x22pints\x22,\x22gallon\x22)") === 0.25,
+    [cv("=CONVERT(1,\x22gallon\x22,\x22imperial gallon\x22)"), cv("=CONVERT(8,\x22imperial pints\x22,\x22gallon\x22)"), cv("=CONVERT(1,\x22pint\x22,\x22US pint\x22)"), cv("=CONVERT(1,\x22sqft\x22,\x22m2\x22)")]);
+  // the history: the person's words are theirs, Lantern's own are one line, prose beginning "Make" is prose
+  var big = "Who built it?\n\nLIBRARY: passages from the offline encyclopedia (searched for: engines)\n\n" + new Array(150).join("Coal was burned to raise steam. ");
+  var hl = [{ role: "user", content: "This is not what I asked for: the roof should be red" }, { role: "assistant", content: "MAKE PICTURE: House\nrect 0 0 10 10 red\nEND\nHere it is." },
+    { role: "user", content: "That is already above. Answer the QUESTION now.\n\nQUESTION: What colour is the roof?" }, { role: "assistant", content: "Sow the seeds in rows.\nMake sure the soil stays moist.\nKeep them warm." },
+    { role: "user", content: "Thanks" }, { role: "assistant", content: new Array(300).join("Engines pumped water. ") }, { role: "user", content: big }];
+  hl.asked = [hl[0], hl[4], hl[6]]; hl.askedFrom = 0; hl.turnStart = 6;
+  var ho = L.CHAT.trimHistory(hl, 9000).map(function (m) { return typeof m.content === "string" ? m.content : ""; }).join("\n---\n");
+  ok("the person\u2019s \u201cThis is not what I asked for\u201d is kept, Lantern\u2019s \u201cThat is already above\u201d is one line, \u201cMake sure the soil stays moist\u201d stays prose, the block is one line",
+    /This is not what I asked for: the roof should be red/.test(ho) && !/That is already above/.test(ho) && /Make sure the soil stays moist/.test(ho) &&
+    /a block was made here \(\u201cPICTURE: House\u201d\)/.test(ho) && !/rect 0 0/.test(ho) && /Here it is/.test(ho), ho.slice(0, 900));
+
   // --- the guard: every reply that passed still passes ------------------------------------------------------------------
   var bad = [], n = 0;
   F.passed.forEach(function (r) {
