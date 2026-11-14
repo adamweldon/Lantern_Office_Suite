@@ -56,8 +56,10 @@ def get(path, timeout=10):
         return 0, str(e)
 
 
-def post(path, body, timeout=10):
-    req = urllib.request.Request(BASE + path, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
+def post(path, body, timeout=10, headers=None):
+    h = {"Content-Type": "application/json"}
+    h.update(headers or {})
+    req = urllib.request.Request(BASE + path, data=json.dumps(body).encode(), headers=h, method="POST")
     try:
         with NET.open(req, timeout=timeout) as r:
             return r.status, r.read().decode("utf-8", "replace")
@@ -201,6 +203,9 @@ def main():
         ok("the offers are there (the encyclopedia, the shelves)", {"library", "shelves"} <= {f.get("id") for f in st.get("offers", [])}, st.get("offers"))
         c, b = post("/lantern-setup/choose", {"id": "nothing-of-the-sort"})
         ok("an unknown choice is refused", c == 400, (c, b[:200]))
+        c, b = post("/lantern-setup/stop", {}, headers={"Origin": "https://example.com"})
+        time.sleep(1)
+        ok("another site's page may not stop Lantern", c == 403 and proc.poll() is None, (c, proc.poll()))
     stop(proc)
 
     # 2. the second double-click, on the copy it left: everything is there, no downloads

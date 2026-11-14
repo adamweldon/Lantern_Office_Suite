@@ -833,7 +833,9 @@ func (s *Starter) startEngine() {
 	s.stopEngine()
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.Command("cmd", "/c", filepath.Join(s.kit, "start-lantern.bat"), "nodownload")
+		// by its name in the kit folder (cmd.Dir): cmd's own rules for quotes go
+		// wrong on a path with "&" or "()" in it, as a user folder can have
+		cmd = exec.Command("cmd", "/d", "/c", "start-lantern.bat", "nodownload")
 	} else {
 		cmd = exec.Command("sh", filepath.Join(s.kit, "start-lantern.sh"), "nodownload")
 	}
@@ -981,7 +983,28 @@ func (s *Starter) idleWatch() {
 var apiPrefixes = []string{"/v1/", "/health", "/props", "/completion", "/completions", "/chat/completions", "/tokenize", "/detokenize",
 	"/embedding", "/embeddings", "/slots", "/infill", "/apply-template", "/models", "/metrics", "/rerank", "/reranking"}
 
+// ownHost: Lantern is asked for by this computer's own names for itself (a
+// web address made to point at 127.0.0.1 brings its own name, and is refused)
+func ownHost(h string) bool {
+	port := strconv.Itoa(*flagPort)
+	return h == "127.0.0.1:"+port || h == "localhost:"+port || h == "[::1]:"+port
+}
+
+// ownOrigin: a change (Add, Stop) comes from Lantern's own page, or from no page
+// at all; another site's page open in the browser may not stop Lantern or start
+// a 12 GB download (a browser names the page a POST comes from)
+func ownOrigin(o string) bool {
+	if o == "" {
+		return true
+	}
+	return o == "http://"+"127.0.0.1:"+strconv.Itoa(*flagPort) || o == "http://localhost:"+strconv.Itoa(*flagPort) || o == "http://[::1]:"+strconv.Itoa(*flagPort)
+}
+
 func (s *Starter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !ownHost(r.Host) || (strings.HasPrefix(r.URL.Path, "/lantern-setup/") && r.Method != "GET" && !ownOrigin(r.Header.Get("Origin"))) {
+		http.Error(w, "Lantern answers only its own pages", http.StatusForbidden)
+		return
+	}
 	s.mu.Lock()
 	s.lastSeen = time.Now()
 	s.mu.Unlock()

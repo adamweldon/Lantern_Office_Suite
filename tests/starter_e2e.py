@@ -193,6 +193,22 @@ while time.time() - t < 30:
 ok("...with no library server to reach it waits, and says Lantern tries again", lj and lj[0]["state"] == "waiting" and "tries again" in st.get("message", ""), [lj, st.get("message")])
 c, b = get("/lantern-setup/choose", json.dumps({"id": "nonsense"}).encode())
 ok("an offer that is not one is refused", c == 400, c)
+# another site's page in the browser may not stop Lantern, start a download, or reach it by another name
+import http.client
+def raw(method, path, headers, body=None):
+    cn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        cn.request(method, path, body=body, headers=headers); rr = cn.getresponse(); return rr.status, rr.read()
+    finally:
+        cn.close()
+jobs0 = [j["id"] for j in (status() or {}).get("jobs", [])]
+c1, _ = raw("POST", "/lantern-setup/stop", {"Origin": "https://example.com", "Content-Type": "text/plain"}, b"{}")
+c2, _ = raw("POST", "/lantern-setup/choose", {"Origin": "https://example.com", "Content-Type": "text/plain"}, b'{"id":"library"}')
+c3, _ = raw("GET", "/v1/models", {"Host": "lantern.example.com:%d" % port})
+c4, _ = raw("POST", "/lantern-setup/choose", {"Origin": "http://localhost:%d" % port, "Host": "localhost:%d" % port, "Content-Type": "application/json"}, b'{"id":"nothing"}')
+time.sleep(0.8)   # a stop would come 0.3 s after its answer
+ok("another site's page may not stop Lantern or start a download; another name for 127.0.0.1 is refused; Lantern's own page by localhost is heard",
+   c1 == 403 and c2 == 403 and c3 == 403 and c4 == 400 and proc.poll() is None and [j["id"] for j in (status() or {}).get("jobs", [])] == jobs0, [c1, c2, c3, c4, proc.poll(), jobs0])
 # a second starter: opens the first one's page and stops
 t0 = time.time()
 r = subprocess.run(args, env=env, capture_output=True, text=True, timeout=30)
