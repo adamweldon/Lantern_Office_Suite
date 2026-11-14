@@ -24085,6 +24085,9 @@ Lantern.RFB = (function () {
         estimated: false, tps: null, guard: g.id };
       return Promise.resolve(g.reply);
     }
+    // (1.24.19) Lantern's starter still fetching the AI: its sentence, not the in-page AI's "no model" (LANTERN_SETUP)
+    var wn = AI.server.state !== "ready" && typeof window.Lantern.aiWaitNote === "function" ? window.Lantern.aiWaitNote() : "";
+    if (wn && !(r === "device" && dev && dev.ready && dev.ready())) return Promise.reject(new Error(wn));
     var p = r === "device" ? dev.complete(messages, opts) : AI.callServer(messages, opts);
     return Promise.resolve(p).then(function (text) {
       var out = clean(text), ms = Date.now() - t0, u = AI.lastUsage || {};
@@ -24451,7 +24454,9 @@ Lantern.RFB = (function () {
     if (first ? ui.what.previousSibling !== ui.advice : ui.what.nextSibling !== ui.advice) ui.box.insertBefore(ui.advice, first ? ui.what : ui.what.nextSibling);
     ui.fill.style.width = pct + "%"; ui.bar.setAttribute("aria-valuenow", String(pct));
     ui.away.textContent = loading ? "Use the other apps while it loads" : "Use the apps without the AI";
-    var big = !hidden && (loading || snap.kit || asked);
+    // (1.24.19) under Lantern's starter the person is using the apps: the loading shows in the corner only
+    var quiet = !!(window.Lantern.lanternSetup && window.Lantern.lanternSetup.active());
+    var big = !hidden && !quiet && (loading || snap.kit || asked);
     veil.style.display = big ? "" : "none";
     pill.style.display = big ? "none" : "";
     pill.textContent = loading ? "AI loading " + pct + "% \u2014 " + (heavy ? "low memory, please wait" : "details") : "AI server not answering";
@@ -24471,6 +24476,192 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: AI_SERVER_WAIT_VIEW - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: LANTERN_SETUP - START
+// Depends: AI_ENGINE (Lantern.ai.detect, feature-detected), Lantern.store
+// Exports: Lantern.lanternSetup {active(), status(), aiNote(), open(), refresh()},
+//          Lantern.aiWaitNote() (AI_ENGINE asks it before using the in-page AI)
+// ===========================================================================
+// The Lantern starter (1.24.19, tools/starter): one program, from one link,
+// that installs Lantern, serves it at once and fetches the AI, the
+// encyclopedia and the other books in the background. Adam (2026-11-13): the
+// person can use Lantern -- which works without an AI -- while it shows "a
+// progress of ai downloading and wikipedia downloading etc. in the background
+// if the user tries to use those features".
+// When this page is served by the starter (it answers /lantern-setup/status
+// on Lantern's own address), this module:
+//  - shows a small button in the corner with what is happening ("Getting a
+//    small AI model: 34%, about 2 min left") that opens the whole list: each
+//    download with its bar, the encyclopedia and the other books offered with
+//    their sizes (fetched when chosen), the free space, and Stop Lantern;
+//  - opens that list once by itself, when the first AI model is in, so the
+//    offers are seen;
+//  - tells the AI module when the AI has started (Lantern.ai.detect), so Chat
+//    connects with no reload, and again when a stronger model takes over;
+//  - gives Chat a plain sentence while the AI is still coming
+//    (Lantern.aiWaitNote), in place of "No AI model on this device";
+//  - asks every 2 seconds while something is happening, else every 30: the
+//    starter stops itself (and gives the AI's memory back) when no Lantern
+//    page has asked for a while.
+// Anywhere else (GitHub Pages, a file, the kit's start-lantern) it does nothing.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var S = { on: false, last: null, timer: null, ui: null, open: false, aiWas: "", modelWas: "", stopAsk: false, gone: false };
+  function local() { return /^https?:$/.test(location.protocol) && /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname); }
+  function get(k, d) { try { var v = L.store.get(k, d); return v == null ? d : v; } catch (e) { return d; } }
+  function put(k, v) { try { L.store.set(k, v); } catch (e) { /* storage blocked: only the once-only list shows again */ } }
+  function url(p) { return location.protocol + "//" + location.host + "/lantern-setup/" + p; }
+  function gb(n) { return (Math.round(n / 1e8) / 10) + " GB"; }
+  function left(ms) {
+    if (!(ms >= 0)) return "";
+    var m = Math.round(ms / 60000);
+    return m < 1 ? "less than a minute left" : m < 90 ? "about " + m + " min left" : "about " + (Math.round(m / 6) / 10) + " hours left";
+  }
+  function pct(j) { return j.total > 0 ? Math.min(100, Math.floor(j.bytes * 100 / j.total)) : (j.state === "done" ? 100 : 0); }
+  // jobLine(j) -> the words under a download's name
+  function jobLine(j) {
+    if (j.state === "done") return "done \u2713";
+    if (j.state === "queued") return "next" + (j.gb ? " (" + j.gb + " GB)" : "");
+    if (j.state === "waiting") return "waiting for the internet: Lantern tries again every minute";
+    if (j.state === "failed") return "stopped: " + String(j.error || "").split(" | ").slice(-1)[0];
+    var bits = [];
+    if (j.total > 0) bits.push(pct(j) + "% of " + gb(j.total));
+    if (j.rate > 0) bits.push(Math.round(j.rate / 1e5) / 10 + " MB/s");
+    if (j.leftMs >= 0) bits.push(left(j.leftMs));
+    return bits.length ? bits.join(" \u00b7 ") : "starting\u2026";
+  }
+  var CSS = ".ls-pill{position:fixed;left:12px;bottom:12px;z-index:9997;max-width:min(92vw,520px);background:var(--paper,#fff);color:var(--ink,#1b2430);border:1px solid var(--line,#d7d7cf);" +
+    "border-radius:999px;padding:7px 14px;font:14px/1.3 system-ui,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,.15);cursor:pointer;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
+    ".ls-veil{position:fixed;inset:0;z-index:9999;background:rgba(15,23,42,.5);display:flex;align-items:center;justify-content:center;padding:16px}" +
+    ".ls-box{background:var(--paper,#fafaf7);color:var(--ink,#1b2430);border-radius:14px;max-width:560px;width:100%;max-height:90vh;overflow:auto;padding:20px 20px 16px;box-shadow:0 10px 40px rgba(0,0,0,.35);font:15px/1.45 system-ui,sans-serif}" +
+    ".ls-box h2{margin:0 0 6px;font-size:1.25em}.ls-box h3{margin:16px 0 6px;font-size:1.02em}.ls-box p{margin:6px 0}" +
+    ".ls-job{margin:10px 0}.ls-job b{font-weight:600}.ls-sub{font-size:.9em;opacity:.8}" +
+    ".ls-bar{height:10px;border-radius:5px;background:var(--soft,#efefe9);border:1px solid var(--line,#d7d7cf);overflow:hidden;margin:4px 0}" +
+    ".ls-fill{height:100%;width:0;background:var(--accent,#2563eb);transition:width .8s linear}" +
+    ".ls-offer{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;margin:10px 0;padding:10px;border:1px solid var(--line,#d7d7cf);border-radius:10px}" +
+    ".ls-box button{font:inherit;padding:7px 13px;border-radius:8px;border:1px solid var(--line,#d7d7cf);background:var(--soft,#efefe9);color:inherit;cursor:pointer}" +
+    ".ls-box button.ls-go{background:var(--accent,#2563eb);color:#fff;border-color:transparent;white-space:nowrap}" +
+    ".ls-btns{display:flex;gap:8px;flex-wrap:wrap;justify-content:space-between;margin-top:14px}.ls-stop{color:#991b1b}";
+  function mk(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function build() {
+    if (S.ui || !document.body) return;
+    if (!document.getElementById("ls-style")) { var st = mk("style"); st.id = "ls-style"; st.textContent = CSS; (document.head || document.body).appendChild(st); }
+    var u = S.ui = {};
+    u.pill = mk("button", "ls-pill"); u.pill.type = "button"; u.pill.setAttribute("aria-live", "polite");
+    u.pill.onclick = function () { S.open = true; paint(); };
+    u.veil = mk("div", "ls-veil"); u.veil.setAttribute("role", "dialog"); u.veil.setAttribute("aria-modal", "true"); u.veil.setAttribute("aria-labelledby", "ls-title");
+    u.veil.style.display = "none";
+    u.veil.onclick = function (e) { if (e.target === u.veil) { S.open = false; paint(); } };
+    u.box = mk("div", "ls-box"); u.veil.appendChild(u.box);
+    document.body.appendChild(u.pill); document.body.appendChild(u.veil);
+  }
+  // pillText(st) -> the one line in the corner
+  function pillText(st) {
+    var run = (st.jobs || []).filter(function (j) { return j.state === "running"; })[0];
+    if (st.message && (run || st.busy)) return st.message;
+    if (st.ai && st.ai.state === "starting") return "Lantern\u2019s AI is starting\u2026";
+    if ((st.offers || []).length) return "Lantern on this computer \u2014 more to add";
+    return "Lantern on this computer \u2713";
+  }
+  function paint() {
+    var st = S.last;
+    if (!st || S.gone) return;
+    build();
+    var u = S.ui;
+    u.pill.textContent = pillText(st);
+    u.pill.title = "What Lantern is fetching, what you can add, and Stop Lantern";
+    u.veil.style.display = S.open ? "" : "none";
+    if (!S.open) return;
+    var b = u.box;
+    while (b.firstChild) b.removeChild(b.firstChild);
+    var h = mk("h2", "", st.busy ? "Getting Lantern ready" : "Lantern on this computer"); h.id = "ls-title"; b.appendChild(h);
+    if (st.busy) b.appendChild(mk("p", "", "You can use everything else in Lantern now. Leave this computer on: Lantern keeps it awake while it downloads, and carries on where it stopped if the internet drops."));
+    var ai = st.ai || {};
+    b.appendChild(mk("p", "ls-sub", ai.state === "ready" ? "The AI works now" + (ai.model ? " (" + ai.model.replace(/-Q\d.*$|-UD-.*$/, "") + ")" : "") + (ai.next ? "; " + ai.next.charAt(0).toLowerCase() + ai.next.slice(1) + " is coming, and takes over when it is in." : ".") :
+      ai.state === "starting" ? "The AI is starting." : "The AI comes as soon as its first model is in; Chat says so meanwhile."));
+    (st.jobs || []).forEach(function (j) {
+      var row = mk("div", "ls-job");
+      row.appendChild(mk("b", "", j.name));
+      if (j.why) row.appendChild(mk("span", "ls-sub", " \u2014 " + j.why));
+      if (j.state === "running" || j.state === "done") {
+        var bar = mk("div", "ls-bar"), fill = mk("div", "ls-fill"); fill.style.width = pct(j) + "%"; bar.appendChild(fill);
+        bar.setAttribute("role", "progressbar"); bar.setAttribute("aria-valuemin", "0"); bar.setAttribute("aria-valuemax", "100"); bar.setAttribute("aria-valuenow", String(pct(j)));
+        bar.setAttribute("aria-label", j.name); row.appendChild(bar);
+      }
+      row.appendChild(mk("div", "ls-sub", jobLine(j)));
+      b.appendChild(row);
+    });
+    if ((st.offers || []).length) {
+      b.appendChild(mk("h3", "", "Add to Lantern"));
+      b.appendChild(mk("p", "ls-sub", "Each is downloaded once and then works without the internet." + (st.freeGB > 0 ? " Free on this drive: " + Math.floor(st.freeGB) + " GB." : "")));
+      st.offers.forEach(function (o) {
+        var row = mk("div", "ls-offer"), txt = mk("div");
+        txt.appendChild(mk("b", "", o.name)); txt.appendChild(mk("div", "ls-sub", o.what));
+        var go = mk("button", "ls-go", "Add (" + o.gb + " GB)"); go.type = "button";
+        if (st.freeGB > 0 && st.freeGB < o.gb + 1) { go.disabled = true; go.textContent = "Not enough room (" + o.gb + " GB)"; }
+        go.onclick = function () { go.disabled = true; go.textContent = "Added"; choose(o.id); };
+        row.appendChild(txt); row.appendChild(go); b.appendChild(row);
+      });
+    }
+    var btns = mk("div", "ls-btns"), stop = mk("button", "ls-stop", S.stopAsk ? "Yes, stop Lantern and its AI" : "Stop Lantern");
+    stop.type = "button";
+    stop.onclick = function () { if (!S.stopAsk) { S.stopAsk = true; paint(); return; } stopNow(); };
+    var close = mk("button", "", "Close"); close.type = "button"; close.onclick = function () { S.open = false; S.stopAsk = false; paint(); };
+    btns.appendChild(stop); btns.appendChild(close); b.appendChild(btns);
+    if (S.stopAsk) b.appendChild(mk("p", "ls-sub", "Lantern stops on this computer" + (st.busy ? ", and the downloads pause (they carry on next time)" : "") + ". To start it again, double-click Lantern on the desktop."));
+  }
+  function post(p, body) {
+    return window.fetch(url(p), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })
+      .then(function (r) { return r.ok ? r.json() : null; }, function () { return null; });
+  }
+  function choose(id) { post("choose", { id: id }).then(function (st) { if (st && st.v === 1) { S.last = st; paint(); } schedule(500); }); }
+  function stopNow() {
+    S.gone = true;
+    post("stop").then(function () {
+      var u = S.ui;
+      if (u) { u.veil.style.display = "none"; u.pill.textContent = "Lantern has stopped on this computer. Double-click Lantern to start it again."; u.pill.onclick = null; }
+    });
+  }
+  // seen(st): what changed -- the AI started or changed model: tell the AI
+  // module; the first model in: the list opens once, for the offers
+  function seen(st) {
+    var ai = st.ai || {}, A = L.ai;
+    if ((ai.state !== S.aiWas || (ai.model || "") !== S.modelWas) && (ai.state === "starting" || ai.state === "ready") && A && A.detect) {
+      try { A.detect(); } catch (e) { /* the AI module checks again by itself on its next use */ }
+    }
+    if (ai.state === "ready" && S.aiWas !== "ready" && (st.offers || []).length && !get("setup.offersShown", false)) { put("setup.offersShown", true); S.open = true; }
+    S.aiWas = ai.state; S.modelWas = ai.model || "";
+  }
+  function schedule(ms) { if (S.timer) clearTimeout(S.timer); if (!S.gone) S.timer = setTimeout(ask, ms); }
+  function ask() {
+    if (S.gone || !window.fetch) return;
+    window.fetch(url("status"), { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : null; }).then(function (st) {
+      if (!st || st.v !== 1 || !st.starter) { if (!S.on) S.gone = true; else schedule(10000); return; }
+      S.on = true; S.last = st; seen(st); paint();
+      schedule(st.busy || !st.ai || st.ai.state !== "ready" ? 2000 : 30000);
+    }, function () { if (S.on) schedule(5000); else S.gone = true; });
+  }
+  // aiNote() -> while the AI is still coming, the sentence Chat shows instead
+  // of an error about the in-page AI; "" when the AI is there or this is no
+  // starter
+  function aiNote() {
+    var st = S.last;
+    if (!S.on || !st || (st.ai && st.ai.state === "ready")) return "";
+    var run = (st.jobs || []).filter(function (j) { return j.state === "running" && (j.id === "engine" || j.id === "0.8b"); })[0];
+    var bits = st.ai && st.ai.state === "starting" ? "it is starting now (a minute or two)" :
+      run ? (run.total > 0 ? pct(run) + "% downloaded" + (run.leftMs >= 0 ? ", " + left(run.leftMs) : "") : "downloading") :
+      (st.jobs || []).some(function (j) { return j.state === "waiting"; }) ? "it is waiting for the internet" : "it is on its way";
+    return "Lantern\u2019s AI is still arriving: " + bits + ". Everything else in Lantern works now; the button in the bottom corner shows the downloads.";
+  }
+  L.lanternSetup = { active: function () { return S.on && !S.gone; }, status: function () { return S.last; }, aiNote: aiNote,
+    open: function () { S.open = true; paint(); }, refresh: ask };
+  L.aiWaitNote = aiNote;
+  if (local()) setTimeout(ask, 0);
+})();
+// ===========================================================================
+// MODULE: LANTERN_SETUP - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: AI_DEVICE - START
