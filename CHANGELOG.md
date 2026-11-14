@@ -1,5 +1,133 @@
 # Changelog
 
+## 1.24.19 — One link: Get Lantern sets Lantern up and fetches its AI in the background (2026-11-13)
+
+Adam asked how many steps it takes a person to get Lantern running, and
+whether it could be one (2026-11-13): "I share a link to someone and when
+they click it it downloads an executable that checks what system it is on
+and downloads runs everything else automatically from our github site (and
+then from wikipedia etc.) for whatever it is on in a way that allows the
+user to use lantern (which works without an ai but could give a progress of
+ai downloading and wikipedia downloading etc. in the background if the user
+tries to use those features)".
+
+**What it took before.** Download Lantern.zip; extract it (on a Mac with
+care: it does not merge folders); find the Install for this computer among
+the files and double-click it; get past Windows' or the Mac's warning;
+answer its popups; wait with its window open; then double-click Start
+Lantern and keep that window open while using Lantern. Eight steps or more,
+two windows that must not be closed, and no Lantern until the model was in.
+
+**What a person does now.** Opens the link
+(`https://adamweldon.github.io/Lantern_Office_Suite/get.html`). The page
+sees what they are on and the download starts by itself.
+
+- Windows: open Get-Lantern.exe; the first time "More info", "Run anyway".
+  Lantern is open in the browser, and usable, within seconds.
+- A Mac: open Lantern from Downloads; the first time "Open Anyway" in
+  System Settings, Privacy & Security.
+- Linux and the Raspberry Pi: allow it to run (one line, shown), run it.
+- Android, iPhone, iPad, Chromebook: no download; the page gives the two or
+  three taps that put the website on the home screen, as before.
+
+**What was built.**
+
+- `tools/starter` (Go; one program of 7 MB, nothing else to install). It
+  finds Lantern beside itself or in a folder called Lantern in the person's
+  home folder, or downloads the newest Lantern.zip from the release and sets
+  it up there, with a copy of itself and a Lantern icon on the desktop and in
+  the Start menu (Windows) or the applications menu (Linux). It serves
+  Lantern at `http://127.0.0.1:8080` and opens the browser at once. Behind
+  it, with no window, the kit's own installer fetches the engine and the
+  small model (Qwen3.5 0.8B, so Chat works within minutes), then the model
+  the computer's memory suits (2B, 4B or 9B); the kit's start script runs the
+  engine on port 8090, and the starter passes the AI's requests to it and
+  restarts it when the stronger model is in. It keeps the computer awake
+  while it downloads, tries again a minute after a failed download (the
+  kit's downloads carry on where they stopped), answers only Lantern's own
+  pages (another site's page in the browser may not stop it or start a
+  download), and stops when no Lantern page has been open for 20 minutes
+  and nothing is downloading. Opened again, it finds everything and starts
+  the AI with no download.
+- The page (`LANTERN_SETUP`, shown only under the starter): a button in the
+  bottom corner says what is coming ("Getting a small AI model (Qwen3.5
+  0.8B): 36%, about 2 min left"); it opens a list of each download with its
+  bar and time left, the free space, and Stop Lantern (asked once). Once the
+  first model is in, the list opens by itself, once, offering the
+  encyclopedia (12 GB) and the shelves of books (5 GB) with their sizes and
+  an Add button, greyed when the drive has no room. Asked for the AI before
+  it is in, Chat says "Lantern's AI is still arriving: 36% downloaded, about
+  2 min left. Everything else in Lantern works now" instead of "No AI model
+  on this device". The AI module is told when the AI starts and when the
+  stronger model takes over, and the kit's model-loading screen stays in the
+  corner.
+- The kit: `setup-kit.ps1` and `setup-kit.sh` say each file, its address and
+  its `.part` file in their `@@` lines, so the starter can measure the
+  download; `start-lantern.bat` waits for no key press and opens no browser
+  when the starter asks (`LANTERN_NO_PAUSE`, `NO_BROWSER`). Run by hand,
+  they behave as before.
+- `tools/pack_starter.py` builds it for Windows, a Mac (Lantern.app, for
+  Apple chips and Intel, in a zip that keeps its run permission) and Linux
+  (x64 and ARM). `.github/workflows/lantern-zip.yml` now puts these on the
+  release with Lantern.zip when `main` is pushed, and makes the website
+  (the `gh-pages` branch, which stood at 1.13.0, copied by hand) the same
+  version, so the link works for everyone.
+- `site/get.html`, the page to share: the steps for the visitor's own
+  computer or phone, honest about the warnings, and every download listed.
+
+**What was tested.**
+
+- `tests/starter_e2e.py` (31 checks, Linux, stand-in downloads and engine):
+  set up from the zip, the page at once, the AI's "still being downloaded",
+  the plan (engine, 0.8B, then the 4B for 8 GB), the progress and time left,
+  the AI ready and answering through 8080, the 4B taking over with its
+  vision file, an offer chosen and waiting its turn, a refused offer, other
+  sites refused, a second start, Stop, the log, started again from its
+  folder. Built for Windows, both Macs and ARM Linux too.
+- `tests/lantern_setup.js` (22 checks, jsdom): the page's side as above.
+  `npm test` found its first question to the starter throwing into the
+  page where a test's own stand-in fetch throws at once (seven suites'
+  "boot clean"); it now never throws.
+- `tests/get_page.js` (18 checks): each computer and phone shown its own
+  steps; a computer's download started (not on a phone, not with `?nodl`);
+  an ARM Linux given the ARM program; the files it names are the ones made
+  and published.
+- On GitHub's computers, for real (`.github/workflows/lantern-starter.yml`,
+  `tests/starter_live.py`; it runs on every push to a `lantern-` or `wip-`
+  branch): the packed program for each computer set Lantern up from this
+  version's Lantern.zip, served the page, fetched the real engine and the
+  real 0.8B with the kit, showed the download's progress, and the 0.8B
+  answered "4" to "What is 2 + 2?" through Lantern's address; then Stop,
+  nothing left running, and a second start with no download. Windows
+  (AMD EPYC, 16 GB): 49 s; Linux: 25 s; a Mac (Apple M1, 7 GB, run as
+  Lantern.app runs it): 94 s. The first Windows run found the page not
+  served: the address "/" read as a file path is "\" on Windows, so
+  Lantern's page was a folder and 404; mended (the address's own slashes).
+  Then all three again in a folder named "O'Brien Lantern", as a user
+  folder can be named, with another site's page refused: all passed.
+- `npm test`: all suites pass (ALL CHECKS PASS). In a real browser
+  (Playwright, Chromium): `scene_e2e`, `bench_run9_e2e`,
+  `bench_headless_e2e`, `music_e2e`; and get.html as Windows, a Mac and an
+  iPhone sees it (light and dark, phone width): no errors, nothing wider
+  than the screen. How it looks is Adam's to judge.
+
+**What was not.**
+
+- Nobody has double-clicked it. What Windows SmartScreen and the Mac's
+  Gatekeeper show to a person who downloads it is not seen on GitHub's
+  computers (the files are not marked as downloaded). The steps on the page
+  are written from how Windows 11 and macOS 15 behave.
+- The page under the starter in a real browser: only in jsdom.
+- The stronger model's download and the engine's restart with it, and an
+  offer's download: only with stand-ins (the runs on GitHub fetch the small
+  model only, to stay short).
+- Windows on ARM and an Intel Mac: built, not run.
+- Phones: unchanged.
+- The programs are not signed, so the warnings stay. A certificate is
+  Adam's decision (agent/QUESTIONS.md).
+- The link works for everyone only after `main` is merged: that publishes
+  the programs and puts get.html on the website.
+
 ## 1.24.18 — Adam's second run of set B: the rows that failed twice (2026-11-13)
 
 Adam ran the 35B on set B of 1.24.17 with the library on his laptop

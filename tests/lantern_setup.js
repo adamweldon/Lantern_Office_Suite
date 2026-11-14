@@ -26,10 +26,12 @@ function boot(url, starter) {
   var vc = new VirtualConsole(), errs = [];
   vc.on("jsdomError", function (e) { if (!/Not implemented/.test(String(e.message))) errs.push(String(e.message).slice(0, 200)); });
   var dom = new JSDOM("<!DOCTYPE html><html><head></head><body></body></html>", { url: url, runScripts: "outside-only", pretendToBeVisual: true, virtualConsole: vc });
-  var w = dom.window, posts = [], asked = [];
+  var w = dom.window, posts = [], asked = [], throwing = starter === "throw";
+  if (throwing) starter = null;
   w.fetch = function (u, o) {
     var x = new w.URL(String(u), url);
     asked.push(x.pathname);
+    if (throwing && /^\/lantern-setup\//.test(x.pathname)) return JSON.parse(o && o.body).messages;
     if (starter && x.pathname === "/lantern-setup/status") return resp(200, JSON.stringify(starter.st));
     if (starter && x.pathname === "/lantern-setup/choose") { posts.push(["choose", JSON.parse(o.body).id]); starter.st.offers = starter.st.offers.filter(function (f) { return f.id !== JSON.parse(o.body).id; }); return resp(200, JSON.stringify(starter.st)); }
     if (starter && x.pathname === "/lantern-setup/stop") { posts.push(["stop"]); return resp(200, "{\"ok\":true}"); }
@@ -108,6 +110,10 @@ function boot(url, starter) {
   var veil = B2.w.document.querySelector(".lw-veil");
   ok("the kit's loading screen stays in the corner under the starter", !veil || veil.style.display === "none", veil && veil.style.display);
 
+  // a page's own stand-in fetch that throws at once (as the bench tests' do): no error in the page (found in npm test, 1.24.19)
+  var B5 = boot("http://127.0.0.1:8080/", "throw");
+  await sleep(300);
+  ok("a fetch that throws at once: no error, nothing shown", B5.errs.length === 0 && !B5.w.Lantern.lanternSetup.active(), B5.errs);
   // anywhere else: nothing
   var B3 = boot("http://127.0.0.1:8080/", null);
   await sleep(300);
