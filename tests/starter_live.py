@@ -190,6 +190,9 @@ def main():
     if st.get("ai", {}).get("state") in ("downloading", "none", None):
         ok("the AI, asked before it is here, says it is still being downloaded", c == 404 and "still being downloaded" in b, (c, b[:200]))
     ok("the plan: the engine and the small model", [j.get("id") for j in st.get("jobs", [])] == ["engine", "0.8b"], st.get("jobs"))
+    want = json.load(open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "package.json")))["version"]
+    say("  starter %s, Lantern %s (this checkout: %s)" % (st.get("starter"), st.get("lantern"), want))
+    ok("the Lantern it set up is this version", st.get("lantern") == want, (st.get("lantern"), want))
     st, progress = wait_ready(A.minutes * 60, True)
     ok("the downloads said how far they had got (bytes of a known size)", progress)
     ready = ok("the AI is ready", st and st.get("ai", {}).get("state") == "ready", st)
