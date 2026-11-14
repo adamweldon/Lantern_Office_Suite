@@ -448,6 +448,20 @@ func (s *Starter) haveModel(pat string) bool {
 	return false
 }
 
+// haveAtLeast: this model or a bigger one is here already (a stick with the
+// 35B on it is not sent the 9B as well)
+func (s *Starter) haveAtLeast(want tier) bool {
+	for _, t := range tiers {
+		if s.haveModel(t.pat) {
+			return true
+		}
+		if t.id == want.id {
+			return false
+		}
+	}
+	return false
+}
+
 func (s *Starter) anyModel() string {
 	for _, t := range tiers {
 		if s.haveModel(t.pat) {
@@ -501,7 +515,7 @@ func (s *Starter) plan() {
 		s.jobs = append(s.jobs, &Job{ID: "0.8b", Name: "A small AI model (Qwen3.5 0.8B)", GB: 0.55, State: "queued", args: []string{"0.8b"}, restart: true, LeftMs: -1, Why: "Chat and the AI start working"})
 	}
 	if *flagPlan != "small" {
-		if t, ok := autoTier(s.memMB); ok && !s.haveModel(t.pat) {
+		if t, ok := autoTier(s.memMB); ok && !s.haveAtLeast(t) {
 			s.jobs = append(s.jobs, &Job{ID: t.id, Name: "A stronger AI model (" + t.name + ")", GB: t.gb + visionGB(t.id), State: "queued", args: []string{t.id}, restart: true, LeftMs: -1,
 				Why: "the one this computer's memory suits"})
 		}

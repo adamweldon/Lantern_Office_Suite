@@ -241,6 +241,22 @@ get("/lantern-setup/stop", b"{}")
 try: p2.wait(timeout=20)
 except subprocess.TimeoutExpired: p2.kill()
 
+# a Lantern folder (a USB stick) with a bigger model than this memory's choice: nothing more is fetched
+open(os.path.join(inst, "kit", "models", "Qwen3.5-35B-A3B-Q4_K_M.gguf"), "wb").write(b"GGUF" + b"0" * 1000)
+for f in os.listdir(os.path.join(inst, "kit", "models")):
+    if "-4B-" in f: os.remove(os.path.join(inst, "kit", "models", f))
+port3 = free_port()
+U = "http://127.0.0.1:%d" % port3
+p3 = subprocess.Popen([os.path.join(inst, "Lantern"), "--no-browser", "--port", str(port3), "--engine-port", str(free_port()), "--watch-port", str(free_port())],
+                      env=dict(env, LANTERN_MEM_MB="16000"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+t = time.time(); st = None
+while time.time() - t < 15 and not st:
+    st = status(); time.sleep(0.3)
+ok("a folder with the 35B on a 16 GB computer: the 9B is not fetched as well", st is not None and st["jobs"] == [], st and st["jobs"])
+get("/lantern-setup/stop", b"{}")
+try: p3.wait(timeout=20)
+except subprocess.TimeoutExpired: p3.kill()
+
 srv.shutdown()
 shutil.rmtree(tmp, ignore_errors=True)
 print(("%d STARTER FAILURES" % len(fails)) if fails else "ALL STARTER CHECKS PASS (%d)" % passes[0])

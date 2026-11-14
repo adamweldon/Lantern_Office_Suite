@@ -42,7 +42,8 @@ sees what they are on and the download starts by itself.
   small model (Qwen3.5 0.8B, so Chat works within minutes), then the model
   the computer's memory suits (2B, 4B or 9B); the kit's start script runs the
   engine on port 8090, and the starter passes the AI's requests to it and
-  restarts it when the stronger model is in. It keeps the computer awake
+  restarts it when the stronger model is in (none is fetched when the folder
+  has that model or a bigger one already). It keeps the computer awake
   while it downloads, tries again a minute after a failed download (the
   kit's downloads carry on where they stopped), answers only Lantern's own
   pages (another site's page in the browser may not stop it or start a
@@ -77,13 +78,14 @@ sees what they are on and the download starts by itself.
 
 **What was tested.**
 
-- `tests/starter_e2e.py` (31 checks, Linux, stand-in downloads and engine):
+- `tests/starter_e2e.py` (32 checks, Linux, stand-in downloads and engine):
   set up from the zip, the page at once, the AI's "still being downloaded",
   the plan (engine, 0.8B, then the 4B for 8 GB), the progress and time left,
   the AI ready and answering through 8080, the 4B taking over with its
   vision file, an offer chosen and waiting its turn, a refused offer, other
   sites refused, a second start, Stop, the log, started again from its
-  folder. Built for Windows, both Macs and ARM Linux too.
+  folder, and a folder that has the 35B (a USB stick like Adam's) sent no
+  smaller model as well. Built for Windows, both Macs and ARM Linux too.
 - `tests/lantern_setup.js` (22 checks, jsdom): the page's side as above.
   `npm test` found its first question to the starter throwing into the
   page where a test's own stand-in fetch throws at once (seven suites'
