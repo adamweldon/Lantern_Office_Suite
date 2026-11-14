@@ -20210,15 +20210,15 @@ Lantern.RFB = (function () {
         // the corrected lines still type a result out (with mistakes) instead
         // of ANSj: Lantern runs them again with its own results in place, and
         // says so (bench run 12: "rortegifer" for line 1's "rotaregirfer")
-        var RCX = window.Lantern.aiResultChecks, rch = stillDoubt && RCX && RCX.rechain ? RCX.rechain(parsed.exprText, run.steps, said) : null;
+        var RCX = window.Lantern.aiResultChecks, rch = stillDoubt && RCX && RCX.rechain ? RCX.rechain(parsed.exprText, run.steps, said, parsed.answer || "") : null;
         if (rch) {
           var run2 = A.run(rch.expr);
           if (run2.value != null && run2.steps.every(function (x) { return x.ok; })) {
             run = run2; lastSteps = run2.steps; lastValue = run2.value; rec.value = run2.value; parsed.exprText = rch.expr;
             rec.rechained = rch.changes.map(function (c) { return c.from + " -> " + c.to; });
             if (ui.tool) ui.tool(run2);
-            note("The AI typed results out instead of using them; Lantern ran its lines again with its own results in place: " +
-              rch.changes.map(function (c) { return c.from + " \u2192 " + c.to; }).join(", ") + ".");
+            note(rch.why || ("The AI typed results out instead of using them; Lantern ran its lines again with its own results in place: " +
+              rch.changes.map(function (c) { return c.from + " \u2192 " + c.to; }).join(", ") + "."));
             var d2 = [];
             (window.Lantern.assistChecks || []).forEach(function (c) {
               var r = null; try { r = c(said, rch.expr, run2, { text: shown, parsed: parsed, sources: null }); } catch (e) { r = null; }
@@ -33107,8 +33107,8 @@ Lantern.RFB = (function () {
     return null;
   }
   function forPart(p, k) {
-    var nm = String(p.name || "").toLowerCase().replace(/^\s+|\s+$/g, "");
-    if (!p.fill && TRUE[nm]) return [TRUE[nm], mix(TRUE[nm], 0.6)];
+    var nm = String(p.name || "").toLowerCase().replace(/^\s+|\s+$/g, ""), own = TRUE[nm] || forItem(nm);   // "Red-Orange" too (1.24.20)
+    if (!p.fill && own) return [own, mix(own, 0.6)];
     return p.fill || PAL[ORDER[k % ORDER.length]];
   }
   // (1.24.18) an item named after a colour, the same: a colour wheel written "Primary: Red | Yellow | Blue" showed Red,
@@ -33118,6 +33118,19 @@ Lantern.RFB = (function () {
   function forItem(t) {
     var nm = String(t || "").toLowerCase().replace(/[.!]+$/, "").replace(/[\s\-\u2010-\u2013]+/g, " ").replace(/^\s+|\s+$/g, "");
     return TRUE[nm] || null;
+  }
+  // (1.24.20) hue(name) -> where a colour sits round a colour wheel, in degrees from red, or null for a colour that has
+  // no place on one (brown, pink, black, white, gray). The angles are the colour's own hue, so the same order serves the
+  // painter's wheel (red, orange, yellow, green, blue, violet: each secondary between the two primaries it is mixed from)
+  // and the wheel of light (red, yellow, green, cyan, blue, magenta). Tertiaries ("red-orange", "orange red") between
+  // their two.
+  var HUE = { red: 0, "red orange": 15, "orange red": 15, orange: 30, "yellow orange": 45, "orange yellow": 45, amber: 45, yellow: 60,
+    "yellow green": 90, "green yellow": 90, lime: 90, green: 120, "blue green": 180, "green blue": 180, teal: 180, cyan: 180, turquoise: 180,
+    blue: 240, "blue violet": 255, "violet blue": 255, indigo: 260, violet: 270, purple: 270, "blue purple": 255, "red violet": 315, "violet red": 315,
+    "red purple": 315, "purple red": 315, magenta: 300 };
+  function hue(t) {
+    var nm = String(t || "").toLowerCase().replace(/[.!]+$/, "").replace(/[\s\-\u2010-\u2013]+/g, " ").replace(/^\s+|\s+$/g, "");
+    return Object.prototype.hasOwnProperty.call(HUE, nm) ? HUE[nm] : null;
   }
   // inkOn(hex, ink) -> the words' colour on it: white or the ink, whichever stands out more
   function lum(hex) {
@@ -33140,7 +33153,7 @@ Lantern.RFB = (function () {
     for (k = 1; k <= 4 && contrast(f, w) < 4.5; k++) f = w === "#ffffff" ? shade(hex, k * 0.08) : mix(hex, k * 0.1);
     return { fill: f, ink: w };
   }
-  window.Lantern.aiWheelColours = { pastel: pastel, forPart: forPart, forItem: forItem, inkOn: inkOn, readable: readable, dark: dark, ORDER: ORDER };
+  window.Lantern.aiWheelColours = { pastel: pastel, forPart: forPart, forItem: forItem, hue: hue, inkOn: inkOn, readable: readable, dark: dark, ORDER: ORDER };
 })();
 // ===========================================================================
 // MODULE: AI_WHEEL_COLOURS - END
@@ -33398,10 +33411,42 @@ Lantern.RFB = (function () {
       parts.push({ name: name, items: pcs.map(unq).filter(function (x) { return x; }), fill: fill });
     });
     if (grouped.length) said.push("put each formula written on a line of its own into the part for the letter it gives (" + grouped.join(", ") + ")");
+    var byHue = colourGroups(parts);
+    if (byHue) { parts = byHue.parts; said.push(byHue.said); }
     if (parts.length < 2) problems.push("a wheel needs 2 or more parts, one line each: <name>: <item> | <item>");
     if (parts.length > 12) problems.push("keep it to 12 parts or fewer");
     parts.forEach(function (p) { if (p.items.length > 8) problems.push("part " + p.name + " has " + p.items.length + " items: keep it to 8 or fewer"); });
     return { parts: parts, hub: hub, notes: notes, problems: problems, said: said };
+  }
+  // (1.24.20) colourGroups(parts) -> {parts, said} or null. A colour wheel written as its groups:
+  //     Primary: Red | Yellow | Blue
+  //     Secondary: Orange | Green | Violet
+  // (the 35B, Adam's set B, three runs on three versions, word for word) is two wedges with three colours in each ring,
+  // the primaries side by side. A colour wheel is the colours round the circle, each a wedge of its own, each secondary
+  // between the two primaries it is mixed from. So when every part is named for a group of colours (primary, secondary,
+  // tertiary, warm, cool) and every item is a colour that has a place on the wheel (AI_WHEEL_COLOURS hue), each colour
+  // becomes a part of its own, in the order of its hue, with its group in its ring; Lantern says so. A part named
+  // anything else, an item that is not a colour (or is brown, pink, white...), a colour twice, or more than 12: left
+  // as written.
+  var GROUP = /^(primary|secondary|tertiary|intermediate|warm|cool|cold)(\s+(colou?rs?|hues?|tones?|shades?))?$/i;
+  function colourGroups(parts) {
+    if (!C || !C.hue || !parts.length) return null;
+    var out = [], seen = {}, i, j;
+    for (i = 0; i < parts.length; i++) {
+      var g = GROUP.exec(String(parts[i].name || "").replace(/\x28[^\x29]*\x29/g, " ").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, ""));
+      if (!g || !parts[i].items.length || parts[i].fill) return null;
+      for (j = 0; j < parts[i].items.length; j++) {
+        var it = parts[i].items[j], h = C.hue(it), key = String(it).toLowerCase().replace(/[^a-z]+/g, " ").replace(/^\s+|\s+$/g, "");
+        if (h == null || seen[key]) return null;
+        seen[key] = 1;
+        out.push({ name: it.replace(/[.!]+$/, ""), items: [g[1].toLowerCase()], fill: null, hue: h, at: out.length });
+      }
+    }
+    if (out.length < 3 || out.length > 12) return null;
+    out.sort(function (a, b) { return a.hue - b.hue || a.at - b.at; });
+    return { parts: out.map(function (p) { return { name: p.name, items: p.items, fill: null, group: true }; }),
+      said: "drew each colour as a part of its own, in their order round the colour wheel (" + out.map(function (p) { return p.name; }).join(", ") +
+        "), each with its group (" + parts.map(function (p) { return String(p.name).toLowerCase(); }).join(", ") + ") in its ring" };
   }
   // wheel(block, ctx) -> the result every MAKE action returns (preview, PNG,
   // Open in Draw)
@@ -33410,6 +33455,7 @@ Lantern.RFB = (function () {
     if (w.parts.length < 2 || w.parts.length > 12) return { problems: problems, plan: null };
     var seen = {};
     w.parts.forEach(function (p) {
+      if (p.group) return;   // a colour's group ("primary") in each ring is meant to repeat
       p.items.forEach(function (it) {
         var k = it.replace(/\s+/g, "").toLowerCase();
         if (seen[k] === 1) problems.push("\u201c" + it + "\u201d is on the wheel twice: write each item once");
@@ -34638,6 +34684,31 @@ Lantern.RFB = (function () {
   function kinds() { return SOLVERS.map(function (s) { return s.kind; }); }
   // find(text) -> [{kind, title, lines, closed}]: blocks that start with
   // "TRACK:", "TURN:" or "SOLVE:" (any solver's kind) and end at END.
+  // (1.24.20) A block without its first line: the 35B on Adam's set B wrote
+  //     walker at 0 0 facing east / forward 4 / turn left / ... / back 1 / END
+  // with no "TURN: <title>" above it, was told "Lantern found no TURN block",
+  // and wrote the same lines again. When the reply has no headed block, and
+  // it BEGINS with the line a solver's block begins with (its starts: walker
+  // at ..., cube top ..., row A B C) and those lines end at END, they are that
+  // solver's block, and Lantern says it read them so (said). Not the same
+  // words in the middle of a reply, and not without END: that is prose.
+  function headless(text) {
+    var lines = String(text || "").replace(/\r/g, "").split("\n").map(function (x) { return x.replace(/^\s+|\s+$/g, ""); })
+      .filter(function (x) { return x && !/^\x60\x60\x60/.test(x); });
+    if (!lines.length) return null;
+    var first = lines[0].replace(/^[-*\u2022]\s+/, "").replace(/^\d+[.\x29]\s+/, ""), s = null, i, end = -1;
+    for (i = 0; i < SOLVERS.length && !s; i++) if (SOLVERS[i].starts && SOLVERS[i].starts.test(first)) s = SOLVERS[i];
+    if (!s) return null;
+    for (i = 1; i < lines.length; i++) {
+      if (/^END\b/i.test(lines[i])) { end = i; break; }
+      if (/^(ANSWER|NEED|LOOKUP|LESSON|MAKE)\b/i.test(lines[i])) return null;
+    }
+    if (end < 2) return null;
+    var body = lines.slice(0, end).map(function (x) { return x.replace(/^[-*\u2022]\s+/, "").replace(/^\d+[.\x29]\s+/, "").replace(/\s*(\/\/|--)\s.*$/, ""); })
+      .filter(function (x) { return x; });
+    return { kind: s.kind, title: "", lines: body, closed: true, headless: true,
+      said: "read the lines from \u201c" + first + "\u201d to END as a " + s.kind + " block (its first line, " + s.kind + ": <title>, was not there)" };
+  }
   function find(text) {
     var out = [], cur = null, ks = [];
     SOLVERS.forEach(function (s) { ks = ks.concat([s.kind], s.kinds || []); });
@@ -34653,6 +34724,7 @@ Lantern.RFB = (function () {
       line = line.replace(/^[-*\u2022]\s+/, "").replace(/^\d+[.\x29]\s+/, "").replace(/\s*(\/\/|--)\s.*$/, "");
       if (line) cur.lines.push(line);
     });
+    if (!out.length) { var hb = headless(text); if (hb) out.push(hb); }
     return out;
   }
   // run(text, question) -> the first block's result, or null when there is
@@ -34696,14 +34768,14 @@ Lantern.RFB = (function () {
   }
   function help() { return syntax(SOLVERS); }
   function resultText(r) {
-    return "PUZZLE RESULTS (Lantern ran your " + r.block.kind + " block exactly)\n" + r.text;
+    return "PUZZLE RESULTS (Lantern ran your " + r.block.kind + " block exactly" + (r.block.said ? "; it " + r.block.said : "") + ")\n" + r.text;
   }
   // view(r) -> what Chat shows: each line with the state after it, then the
   // results (or what Lantern could not run).
   function view(r) {
     var el = L.el, box = el("div", { "class": "la-puzzle", style: "margin:8px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff" });
     box.appendChild(el("div", { "class": "muted", text: (r.ok ? "Lantern ran the " : "Lantern could not run the ") + r.block.kind + " block" +
-      (r.block.title ? ": " + r.block.title : "") + (r.summary ? " \u2014 " + r.summary : "") }));
+      (r.block.title ? ": " + r.block.title : "") + (r.summary ? " \u2014 " + r.summary : "") + (r.block.said ? " (Lantern " + r.block.said + ")" : "") }));
     if (r.steps.length) {
       var rows = r.steps.map(function (st, i) { return (i + 1) + ". " + st.line + "\n     \u2192 " + st.state; });
       box.appendChild(el("div", { style: "font-family:ui-monospace,Consolas,monospace;font-size:12px;white-space:pre-wrap;margin-top:6px", text: rows.join("\n") }));
@@ -34739,7 +34811,10 @@ Lantern.RFB = (function () {
 //   take silver from White           out of its holder (put it somewhere again)
 // Places: a name, position 3, first, last, middle, left of X, right of X,
 // 2 left of X, behind X / in front of X (a queue), holder of gold (also "the
-// cup holding gold").
+// cup holding gold"); from 1.24.20 also front of X, second to last, next to
+// last, last but one, third from the end, second from the front. "give flag
+// from last to ..." gives the flag from its holder (Lantern checks it is
+// there), never a new thing called "flag from last".
 (function () {
   var L = window.Lantern;
   if (!L) return;
@@ -34779,9 +34854,9 @@ Lantern.RFB = (function () {
     return t + (h.length ? " | " + h.join(", ") : "");
   };
   // place(text) -> index in the row (throws with a reason)
-  var REL = /^(?:immediately|directly|just|to|left|right|behind|ahead|before|after|in front|\d+|one|two|three|four|five|holder|holding|with|containing|that|which|having|at|in)\b/i;
+  var REL = /^(?:immediately|directly|just|to|left|right|behind|ahead|before|after|in front|front of|\d+|one|two|three|four|five|holder|holding|with|containing|that|which|having|at|in)\b/i;
   // a direction: toward the first (left, front) is -1, toward the last +1
-  function dirOf(w) { return /^(left|before|in\s+front|ahead)/i.test(w) ? -1 : 1; }
+  function dirOf(w) { return /^(left|before|in\s+front|front|ahead)/i.test(w) ? -1 : 1; }
   Track.prototype.place = function (text) {
     var s = clean(text), low = s.toLowerCase(), n = this.row.length, m, k;
     if (!s) throw new Error("a place is missing");
@@ -34793,7 +34868,7 @@ Lantern.RFB = (function () {
       if ((fixed = this.fixed(s)) != null) return fixed;
     }
     // "two places to its left": counted from the other thing in the line
-    if ((m = /^(?:(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:places?\s+|spots?\s+)?)?(?:immediately\s+|directly\s+|just\s+)?(?:to\s+|on\s+)?(?:(?:its|their|his|her)\s+(left|right)|(behind|in\s+front\s+of|ahead\s+of|before|after)\s+(?:it|them|him|her))$/i.exec(s))) {
+    if ((m = /^(?:(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:places?\s+|spots?\s+)?)?(?:immediately\s+|directly\s+|just\s+)?(?:to\s+|on\s+)?(?:(?:its|their|his|her)\s+(left|right)|(behind|in\s+front\s+of|front\s+of|ahead\s+of|before|after)\s+(?:it|them|him|her))$/i.exec(s))) {
       if (this.it == null) throw new Error("\u201c" + s + "\u201d: say from which thing, like 2 left of Green");
       k = m[1] ? count(m[1]) : 1;
       var from = this.it, dest = from + dirOf(m[2] || m[3]) * k;
@@ -34802,7 +34877,7 @@ Lantern.RFB = (function () {
     }
     // "left of X", "2 right of X"; in a queue (front to back) "behind X",
     // "in front of X", "ahead of X" (a 35B's queue puzzle, 1.13.1)
-    if ((m = /^(?:(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:places?\s+|spots?\s+)?)?(?:immediately\s+|directly\s+|just\s+)?(?:to\s+)?(left\s+of|right\s+of|behind|in\s+front\s+of|ahead\s+of|before|after)\s+(.+)$/i.exec(s))) {
+    if ((m = /^(?:(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:places?\s+|spots?\s+)?)?(?:immediately\s+|directly\s+|just\s+)?(?:to\s+)?(left\s+of|right\s+of|behind|in\s+front\s+of|front\s+of|ahead\s+of|before|after)\s+(.+)$/i.exec(s))) {
       k = m[1] ? count(m[1]) : 1;
       var at = this.place(m[3]), to = at + dirOf(m[2]) * k;
       if (to < 0 || to >= n) throw new Error(s + " is off the row (" + this.row[at] + " is at position " + (at + 1) + " of " + n + ")");
@@ -34830,6 +34905,14 @@ Lantern.RFB = (function () {
     if (/^(first|leftmost|left end|far left|front|start|beginning|head)$/.test(low)) return 0;
     if (/^(last|rightmost|right end|far right|back|end|tail)$/.test(low)) return n - 1;
     if (/^(middle|center|centre)$/.test(low)) { if (n % 2 === 0) throw new Error("a row of " + n + " has no single middle"); return (n - 1) / 2; }
+    // (1.24.20) "second to last", "next to last", "last but one", "third from the end", "second from the front"
+    if (/^(next[\s-]+to[\s-]+last|last\s+but\s+one|penultimate|one\s+before\s+last)$/.test(low)) { if (n < 2) throw new Error("the row has one thing"); return n - 2; }
+    if ((m = /^(\w+)[\s-]+(?:to|from)[\s-]+(?:the\s+)?(last|end|back|right|right end|first|front|start|left|left end)$/.exec(low))) {
+      k = ORD[m[1]] || count(m[1]) || (/^(\d+)(st|nd|rd|th)$/.test(m[1]) ? parseInt(m[1], 10) : null);
+      if (!k) return null;
+      if (k > n) throw new Error("there is no " + m[1] + " " + m[2] + " in a row of " + n);
+      return /^(last|end|back|right)/.test(m[2]) ? n - k : k - 1;
+    }
     return null;
   };
   // pair(text, ok) -> [a, b]: two places (or held things) joined by "and",
@@ -34859,9 +34942,9 @@ Lantern.RFB = (function () {
       if (k < 1 || k > n + 1) throw new Error("there is no position " + k);
       return k - 1;
     }
-    if ((m = /^(?:just\s+|right\s+|directly\s+|immediately\s+)?(before|in front of|left of|after|behind|right of)\s+(.+)$/i.exec(s))) {
+    if ((m = /^(?:just\s+|right\s+|directly\s+|immediately\s+)?(before|in front of|front of|left of|after|behind|right of)\s+(.+)$/i.exec(s))) {
       var other = this.place(m[2]);
-      return { rel: /^(before|in front of|left of)$/i.test(m[1]) ? "before" : "after", name: this.row[other] };
+      return { rel: /^(before|in front of|front of|left of)$/i.test(m[1]) ? "before" : "after", name: this.row[other] };
     }
     throw new Error("\u201c" + s + "\u201d: say where -- first, last, position 3, before X or after X");
   };
@@ -34914,10 +34997,23 @@ Lantern.RFB = (function () {
     // put/place/hide/give/move a held thing to a holder
     if ((m = /^(?:put|place|hide|give|move|drop|slip|pass|hand)\s+(.+?)\s+(?:in|into|under|on|onto|to|with|inside|beneath|below|at)\s+(.+)$/i.exec(s)) &&
         (!/^move/i.test(low) || this.exact(m[1]))) {
-      var name = clean(m[1]).replace(/\s+(coin|ball|key|token|marble|pea|ring)s?$/i, "");
-      if (this.thing(name)) throw new Error(name + " is in the row; to move it, write: move " + name + " to <first, last, position 3, before X, after X>");
-      var holder = this.row[this.place(m[2])];
+      var name = clean(m[1]).replace(/\s+(coin|ball|key|token|marble|pea|ring)s?$/i, ""), fromAt = null, fm;
+      // (1.24.20) "give flag from last to front of last" (the 35B, Adam's set B, three runs): the flag, from the one who
+      // holds it. Read as a thing called "flag from last", it was put with the child in front and the flag itself
+      // stayed with the last child -- Lantern reported both, and the answer was wrong.
+      if (!this.exact(name) && (fm = /^(.+?)\s+(?:from|out\s+of|off|away\s+from|of)\s+(.+)$/i.exec(name)) && this.exact(fm[1])) { name = fm[1]; fromAt = fm[2]; }
       t = this.exact(name);
+      // a new thing whose name is a held thing's and more ("flag with Dot") is not a new thing: say which is meant
+      if (!t && this.tokens.length) {
+        var lowN = " " + name.toLowerCase() + " ", inside = this.tokens.filter(function (k) { return lowN.indexOf(" " + k.toLowerCase() + " ") >= 0; });
+        if (inside.length) throw new Error("\u201c" + name + "\u201d is not held by anything: to move " + inside[0] + ", write " + m[0].split(/\s+/)[0].toLowerCase() + " " + inside[0] + " to <who>");
+      }
+      if (!t && this.thing(name)) throw new Error(name + " is in the row; to move it, write: move " + name + " to <first, last, position 3, before X, after X>");
+      if (t && fromAt != null) {
+        var src0 = this.row[this.place(fromAt)];
+        if (this.held[t] !== src0) throw new Error(t + " is " + (this.held[t] ? "with " + this.held[t] + ", not " + src0 : "not held by anything now"));
+      }
+      var holder = this.row[this.place(m[2])];
       if (!t) { t = name; this.tokens.push(t); }
       this.held[t] = holder;
       return true;
@@ -34982,6 +35078,8 @@ Lantern.RFB = (function () {
   window.Lantern.aiTrack = { run: run };
   if (!SOLVERS.some(function (s) { return s.kind === "TRACK"; })) SOLVERS.push({
     kind: "TRACK", title: "things in a row and what they hold",
+    // the first line of a TRACK block written without its TRACK: line (AI_PUZZLE reads it as one, 1.24.20)
+    starts: /^row\s*:?\s+\S+[\s,]+\S+/i,
     match: function (q) { return /\b(swap(s|ped)?|switch(es|ed)? (places|positions)|shuffle[sd]?|change places|trade places|far (left|right)|queue|moves? (one|two|\d+) places?)\b/i.test(q); },
     prompt: [
       "TRACK: <title>   -- things in a row and what they hold (cups and coins, a queue, cars and passengers)",
@@ -34994,7 +35092,7 @@ Lantern.RFB = (function () {
       "take silver from White           silver comes out of its holder (then: put silver in ...)",
       "swap first and last              the two end ones swap",
       "reverse | add Dee at last | remove Bo | take gold",
-      "Places: a name, position 3, first, last, middle, left of Bo, 2 right of Bo, behind Bo / in front of Bo (a queue), holder of gold",
+      "Places: a name, position 3, first, last, second to last, middle, left of Bo, 2 right of Bo, behind Bo / in front of Bo (a queue), holder of gold",
       "Write each place the way the puzzle says it at that step (the end cups: first and last; the middle cup: middle; the cup",
       "holding gold: holder of gold), never the name you think is there by then: Lantern works out who is there.",
       "END",
@@ -35162,6 +35260,8 @@ Lantern.RFB = (function () {
   window.Lantern.aiTurn = { run: run, MOVES: MOVES };
   if (!SOLVERS.some(function (s) { return s.kind === "TURN"; })) SOLVERS.push({
     kind: "TURN", title: "a cube or a walker that turns",
+    // the first line of a TURN block written without its TURN: line (AI_PUZZLE reads it as one, 1.24.20)
+    starts: /^(?:(?:walker|robot|car|person|ant|player)\s+(?:at|starts?\s+at|from)\s+\x28?\s*-?\d|(?:cube|die|dice)\s+top\s+\S+\s+front\s)/i,
     match: function (q) { return /\b(dice|(a|the|standard) die|cube|tip(s|ped)? (it|the)|roll(s|ed)? (it|the) (die|cube|dice|over)|clockwise|turns? (left|right|around)|facing (north|south|east|west)|robot)\b/i.test(q); },
     prompt: [
       "TURN: <title>   -- a cube with six faces (a die, a box) tipped and turned, or a walker that moves and turns",
@@ -44133,7 +44233,7 @@ Lantern.RFB = (function () {
     "chok(e|es|ed|ing)", "(not|stopped|isn\x27?t|can\x27?t|cannot|trouble|difficulty|hard to|struggling to) breath\\w*", "breathing (very |too |so )?(fast|hard|slow|quick\\w*|\\d+)",
     "unconscious", "passed out", "collaps(e|ed|ing)", "faint(ed|ing)", "(won\x27?t|cannot|can\x27?t|not|doesn\x27?t|does not) wak(e|ing)( up)?",
     "bleed(s|ing)?", "blood (is |was )?(coming|pouring|spurting|everywhere)", "(a|bad|the) burn", "burn(ed|t) (my|his|her|their|him|your|its|the|a)", "burn(ed|t) (him|her|my|your)self", "scald(s|ed)?",
-    "broken (arm|leg|bone|wrist|ankle|rib|finger|toe|nose|collarbone|hip|foot|hand|jaw)", "fractur\\w*", "sprain\\w*", "snake ?bite", "bitten", "(dog|snake|spider|scorpion|bat|cat|rat|monkey) bit",
+    "broken (arm|leg|bone|wrist|ankle|rib|finger|toe|nose|collarbone|hip|foot|hand|jaw)", "fractur\\w*", "sprain\\w*", "snake ?bite", "bitten", "(dog|snake|spider|scorpion|bat|cat|rat|monkey) bit", "(dog|snake|spider|scorpion|bat|cat|rat|monkey|insect|bee|wasp|ant|centipede|horse|donkey|pig|fox|jackal|lizard|crocodile|shark|jellyfish|tick|mosquito|animal)e?s? bites?",
     "stung", "(bee|wasp|scorpion|insect) stings?", "drown(s|ed|ing)?", "(a|having|had|has|in a) (fit|seizure)", "seizures?", "convuls\\w*", "fitting",
     "(a|had a|having a|of a|of) stroke", "heart attack", "chest pain", "poison\\w*", "swallow(ed|s)", "electric shock", "electrocut\\w*", "struck by lightning",
     "heat ?stroke", "sunstroke", "hypotherm\\w*", "frostbite", "fever(ish)?", "diarrh(o)?ea", "vomit\\w*", "throwing up", "dehydrat\\w*", "cough(s|ing)?", "pneumonia", "malaria",
@@ -44156,8 +44256,13 @@ Lantern.RFB = (function () {
   // its own order -- a procedure with a step left out is worse than none
   // (the usual cut gave the recovery position as steps 1, 2 and 6).
   // any: a health need (true), or a how-to that a Health lesson answers best.
+  // (1.24.20) "A snake bit my uncle": the lesson is Bites and stings, but "bit" is not "bite", and the search found only
+  // "snake" (strong 0.5, cover 0.2) -- below the bar, so Chat sent no lesson (Adam's set B, three runs). An animal that
+  // bit someone is a bite: the search is asked with the word the lesson uses.
+  var BIT = /\b(dogs?|snakes?|spiders?|scorpions?|bats?|cats?|rats?|monkeys?|insects?|bees?|wasps?|ants?|centipedes?|horses?|donkeys?|pigs?|foxe?s?|jackals?|lizards?|crocodiles?|sharks?|jellyfish|ticks?|mosquito(?:e?s)?|animals?)\s+(?:(?:has|had|just|also)\s+)?bit\b/gi;
   function lessons(q, any) {
     var S = L.suite;
+    q = String(q || "").replace(BIT, function (m0, a) { return a + " bite"; });
     var all = S.search(q, { kinds: { lesson: 1 }, max: 20 }).filter(function (h) { return h.d && h.d.units.length; });
     var hits = all.filter(function (h) { return h.e.app === "health"; });
     if (!hits.length || (hits[0].strong < 1 && hits[0].cover < 0.5)) return [];
@@ -44172,6 +44277,7 @@ Lantern.RFB = (function () {
   // healthLessons(question) -> the passages Chat would be given ([] when it is not a health question)
   window.Lantern.healthLessons = function (q) {
     if (!ready()) return [];
+    q = String(q || "").replace(BIT, function (m0, a) { return a + " bite"; });
     return need(q) ? lessons(q, true) : (L.suite.chat.howTo && L.suite.chat.howTo(q) ? lessons(q, false) : []);
   };
   // first in the list, so a health need is not answered from another tile's
@@ -49422,6 +49528,11 @@ Lantern.RFB = (function () {
         probs.push("the ANSWER puts " + x.ph + " (\u201c" + x.value + "\u201d, a word) before \u201c" + x.noun + "\u201d: " +
           (x.num >= 0 ? "the count is line " + (x.num + 1) + "\u2019s, so put {ANS" + (x.num + 1) + "} there" : "add a line that counts them (=LEN(ANS" + (x.word + 1) + ")) and put its {ANSn} there"));
       });
+      // 3. (1.24.20) a count of the word as it was before a line changed it
+      countsOld(steps, ans).slice(0, 1).forEach(function (x) {
+        probs.push("line " + (x.k + 1) + " counts line " + (x.j + 1) + "\u2019s word (\u201c" + steps[x.j].value + "\u201d), but line " + (x.i + 1) + " changed it to \u201c" +
+          steps[x.i].value + "\u201d: to count that, write =" + x.fn + "(ANS" + (x.i + 1) + ")");
+      });
       if (!/\x7B(result|ANS\d*)\x7D/i.test(ans)) {
         var qn = numbers(q), vals = steps.filter(function (st) { return st.ok && typeof st.value === "number"; }).map(function (st) { return st.value; });
         var own = numbers(ans).filter(function (x) { return !qn.some(function (y) { return Math.abs(x - y) < 1e-9; }); });
@@ -49430,6 +49541,43 @@ Lantern.RFB = (function () {
       }
     }
     return probs.length ? probs.slice(0, 3).join("; ") : null;
+  }
+  // countsOld(steps, answer) -> [{k, j, i, fn}] (1.24.20). Asked to spell "photosynthesis" backwards, remove every s,
+  // and say how many letters are left, the 35B wrote (Adam's set B on 1.24.18)
+  //     =REVERSE("photosynthesis")   =REMOVE(ANS,"s")   =LEN(ANS1)
+  // and said the word line 2 gave has the length of line 1's: 14 letters for "iehtnyotohp", which has 11. Line 3 counts
+  // a word that line 2 had already changed. So line k is questioned, once, when it counts (LEN) ANSj, a line i between
+  // them made a new word out of ANSj, the two words' counts differ, and the ANSWER is about line i's word, not line j's
+  // (it names line i's word, its {ANSi}, or a slip of it, and nothing of line j's) -- or line i's word is used by
+  // nothing at all. The line to write goes with it. A count of the first word that the ANSWER is about stands.
+  var COUNTFN = /^(LEN|LENGTH|LETTERS|COUNTLETTERS|VOWELS|CONSONANTS)$/;
+  function countsOld(steps, ans) {
+    var out = [], a = String(ans || "");
+    function fn(i) { var m = /^\s*=?\s*([A-Z][A-Z0-9.]*)\s*\x28/i.exec(String(steps[i].expr || "")); return m ? m[1].toUpperCase() : ""; }
+    function uses(i, j) { var e = String(steps[i].expr || ""); return new RegExp("\\bANS" + (j + 1) + "\\b", "i").test(e) || (i === j + 1 && /\bANS\b(?!\d)/i.test(e)); }
+    function names(k) {   // the ANSWER names line k's word: {ANSk+1}, {result} for the last line, the word, or a slip of it
+      var st = steps[k], v = String(st.value).toLowerCase();
+      if (new RegExp("\\x7BANS" + (k + 1) + "\\x7D", "i").test(a) || (k === steps.length - 1 && /\x7Bresult\x7D/i.test(a))) return true;
+      return (plain(a).match(/[A-Za-z\u00c0-\u024f]{4,}/g) || []).some(function (w) {
+        return w.toLowerCase() === v || best(w, steps.map(function (s2, z) { return z === k || (s2.ok && typeof s2.value === "string") ? s2.value : null; })) === k; });
+    }
+    steps.forEach(function (st, k) {
+      var f = fn(k), m = /\x28\s*ANS(\d+)\s*\x29\s*$/i.exec(String(st.expr || ""));
+      if (!st.ok || !COUNTFN.test(f) || !m) return;
+      var j = parseInt(m[1], 10) - 1;
+      if (j < 0 || j >= k - 1 || !steps[j].ok || typeof steps[j].value !== "string") return;
+      for (var i = k - 1; i > j; i--) {
+        var si = steps[i];
+        if (!si.ok || typeof si.value !== "string" || !uses(i, j) || si.value === steps[j].value || si.value.length === steps[j].value.length) continue;
+        var later = false;
+        for (var z = i + 1; z < steps.length; z++) if (uses(z, i)) later = true;
+        if (names(j)) return;
+        if (!names(i) && (later || !a)) return;
+        out.push({ k: k, j: j, i: i, fn: f });
+        return;
+      }
+    });
+    return out;
   }
   // best(word, values) -> the index of the one worked-out word it is a slip
   // of, or -1: a near spelling (close) first, the nearest if several; else
@@ -49535,10 +49683,12 @@ Lantern.RFB = (function () {
   // rechain(expr, steps, question) -> {expr, changes} or null: the lines with
   // each retyped word replaced by the ANSj it came from, for Lantern to run
   // again when the AI's one correction still typed its results out
-  function rechain(expr, steps, q) {
-    var rs = retyped(steps, q, true);
-    if (!rs.some(function (x) { return !x.exact; })) return null;
-    var lines = String(expr || "").split("\n"), idx = [], changes = [];
+  // (1.24.20) answer, when given: a line that still counts a word another line had changed (countsOld), after the
+  // question went back once, counts the changed word instead -- the line the question asked for -- and why says so.
+  function rechain(expr, steps, q, answer) {
+    var rs = retyped(steps, q, true), co = answer != null ? countsOld(steps, answer) : [];
+    if (!rs.some(function (x) { return !x.exact; }) && !co.length) return null;
+    var lines = String(expr || "").split("\n"), idx = [], changes = [], counted = [];
     lines.forEach(function (l, i) { if (/^\s*=/.test(l)) idx.push(i); });
     if (idx.length !== steps.length) return null;
     rs.forEach(function (x) {
@@ -49547,7 +49697,19 @@ Lantern.RFB = (function () {
       lines[i] = lines[i].split(from).join("ANS" + (x.j + 1));
       changes.push({ from: "line " + (x.k + 1) + ": \u201c" + x.lit + "\u201d", to: "ANS" + (x.j + 1) + (x.exact ? "" : " (\u201c" + steps[x.j].value + "\u201d)") });
     });
-    return changes.length ? { expr: lines.join("\n"), changes: changes } : null;
+    co.forEach(function (x) {
+      var i = idx[x.k], re = new RegExp("\\x28(\\s*)ANS" + (x.j + 1) + "(\\s*)\\x29(\\s*)$", "i");
+      if (!re.test(lines[i])) return;
+      lines[i] = lines[i].replace(re, "\x28$1ANS" + (x.i + 1) + "$2\x29$3");
+      var ch = { from: "line " + (x.k + 1) + ": ANS" + (x.j + 1), to: "ANS" + (x.i + 1) + " (\u201c" + steps[x.i].value + "\u201d)" };
+      changes.push(ch); counted.push(ch);
+    });
+    if (!changes.length) return null;
+    var out = { expr: lines.join("\n"), changes: changes };
+    if (counted.length) out.why = "The AI counted a word that one of its lines had already changed; Lantern ran its lines again counting the changed word: " +
+      counted.map(function (c) { return c.from + " \u2192 " + c.to; }).join(", ") + (counted.length < changes.length ? "; and with its own results in place of the ones typed out: " +
+      changes.filter(function (c) { return counted.indexOf(c) < 0; }).map(function (c) { return c.from + " \u2192 " + c.to; }).join(", ") : "") + ".";
+    return out;
   }
   // wordCounts(answer, steps) -> [{ph, value, noun, num, word}]: {ANSn} or
   // {result} filled with a word, right before a word that counts ("letters")
@@ -49661,7 +49823,7 @@ Lantern.RFB = (function () {
     return changes.length ? { text: t, changes: changes } : null;
   }
   window.Lantern.aiResultChecks = { close: close, sameLetters: sameLetters, check: check, repair: repair, rechain: rechain, retyped: retyped,
-    rechainNumbers: rechainNumbers, carry: carry };
+    rechainNumbers: rechainNumbers, carry: carry, countsOld: countsOld };
 })();
 // ===========================================================================
 // MODULE: AI_RESULT_CHECKS - END
@@ -56383,6 +56545,17 @@ Lantern.RFB = (function () {
       melody: ["G - - A G - | E - - - - - | G - - A G - | E - - - - -", "D5 - - - D - | B - - - - - | C5 - - - C - | G - - - - -",
         "A - - - A - | C5 - - B A - | G - - A G - | E - - - - -", "A - - - A - | C5 - - B A - | G - - A G - | E - - - - -",
         "D5 - - - D - | F5 - - D B - | C5 - - - - - | E5 - - - - -", "C5 - - G4 E - | G4 - - F D - | C4 - - - - - | - - - - - -"] },
+    // (1.24.20) Amazing Grace, asked for by a brass band in Adam's set B (three runs: the 35B wrote a tune of its own
+    // each time). The tune New Britain, first printed in Columbian Harmony (1829); with these words in Southern Harmony
+    // (1835). The notes are the transcription by Frank Nordberg (Musica Viva), as folktunefinder.com gives it (tune
+    // 112231, read 2026-11-14): D|G2B/G/|B2A|G2E|D2D|G2B/G/|B2A|d3-|dzB|d>Bd/B/|G2D|E>GG/E/|D2D|G2B/G/|B2A|G3-|Gz|]
+    // in G, here in C; its first half is also the 1831 printing's (Carrell and Clayton, folktunefinder tune 51109).
+    // The chords are the usual ones, Lantern's own.
+    { id: "amazing-grace", title: "Amazing Grace", by: "the tune New Britain", year: "1829", ask: /\bamazing grace\b|\bnew britain\b/i,
+      key: "C major", time: "3/4", tempo: 76, style: "ballad",
+      chords: "C | C | C | F | C | C | C | G | G | C | C7 | F | C | C | C | C | C",
+      melody: ["- - G4 | C5 - - - E C | E - D | C - A4 | G - G", "C5 - - - E C | E - D | G5 - - | - r E5",
+        "G5 - - E G E | C - G4 | A4 - - C5 C A4 | G4 - G", "C5 - - - E C | E - D | C - - | - r r"] },
     { id: "hot-cross-buns", title: "Hot Cross Buns", by: "traditional", year: "", ask: /\bhot cross buns\b/i,
       key: "C major", time: "4/4", tempo: 100, style: "folk",
       chords: "C | C | C G | C",
