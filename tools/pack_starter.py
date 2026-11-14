@@ -61,6 +61,7 @@ def version():
 
 
 def main(out):
+    out = os.path.abspath(out)   # go build runs in tools/starter
     os.makedirs(out, exist_ok=True)
     build("windows", "amd64", os.path.join(out, "Get-Lantern.exe"), gui=True)
     build("linux", "amd64", os.path.join(out, "Get-Lantern-Linux-x64"))
