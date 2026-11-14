@@ -81,6 +81,7 @@ fetch() {  # url dest -- resumes an interrupted download. Fails, keeping the .pa
   if [ -s "$2.part" ]; then echo "  downloading $(basename "$2") (resuming where it stopped)"
   else echo "  downloading $(basename "$2")"; fi
   ui "GET $(basename "$2")"
+  ui "FROM $1 $2.part"   # for the Lantern starter (1.24.19): where from, and the file that grows
   tries=0
   while :; do
     if [ -n "${LANTERN_UI:-}" ]; then   # curl's own meter: the window shows size, speed and time left

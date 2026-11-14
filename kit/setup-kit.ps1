@@ -74,9 +74,14 @@ function Tier($id) {
   $Tiers | Where-Object { $_.id -eq $id } | Select-Object -First 1
 }
 
+# UI(line): a line for a program that runs setup and shows its progress (the
+# Lantern starter, 1.24.19): "@@GET <file>", "@@FROM <url> <path>", on the error
+# stream, only when LANTERN_UI is set -- the same lines setup-kit.sh writes
+function UI([string]$line) { if ($env:LANTERN_UI) { [Console]::Error.WriteLine("@@" + $line) } }
 function Fetch($url, $dest) {
   if ((Test-Path $dest) -and ((Get-Item $dest).Length -gt 0)) { Write-Host "  have $(Split-Path -Leaf $dest)"; return }
   Write-Host "  downloading $(Split-Path -Leaf $dest) (large files take a while)"
+  UI "GET $(Split-Path -Leaf $dest)"; UI "FROM $url $dest.part"
   $part = "$dest.part"
   if ($Curl) {
     # curl shows progress and resumes a download that was interrupted.

@@ -8,6 +8,8 @@ rem   start-lantern nodownload   do not offer a bigger model
 rem   start-lantern novision     do not load the model's vision part (loaded
 rem                              when models\ has it: the AI can then look at
 rem                              the drawings it makes)
+rem Set by the Lantern starter (1.24.19), which serves the page itself: NO_BROWSER=1
+rem (open no browser), LANTERN_NO_PAUSE=1 (end without waiting for a key).
 rem It uses the best model in models\ that this computer's memory can run.
 rem When the computer could run a better one than the kit has (and there is
 rem internet and room on the drive), it asks once and downloads it in a
@@ -48,12 +50,12 @@ if defined FORCE set "AUTO="
 if not exist "%SITE%\index.html" (
   echo Lantern itself is not in this folder ^(no site\index.html^).
   echo Double-click the Install Lantern file for Windows first, or run setup-kit.bat: it downloads it.
-  pause & exit /b 1
+  (if not defined LANTERN_NO_PAUSE pause) & exit /b 1
 )
 set "BIN=%DIR%engine\windows\llama-server.exe"
 if not exist "%BIN%" (
   echo llama-server.exe not found. Run setup-kit.bat first ^(needs internet once^).
-  pause & exit /b 1
+  (if not defined LANTERN_NO_PAUSE pause) & exit /b 1
 )
 for /f %%m in ('powershell -NoProfile -Command "[math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory/1MB)"') do set MEM=%%m
 if "!MEM!"=="" set MEM=8000
@@ -76,7 +78,7 @@ if "!M!"=="" for %%f in ("%MODELS%\*.gguf") do (
 )
 if "!M!"=="" (
   echo No model in %MODELS%. Run setup-kit.bat, or copy a .gguf file there.
-  pause & exit /b 1
+  (if not defined LANTERN_NO_PAUSE pause) & exit /b 1
 )
 rem Lantern Watch (kit\lantern-watch.ps1): is there room in FREE memory for
 rem this model right now, not just in total? If not, it asks whether to use a
@@ -99,7 +101,7 @@ for /f "usebackq tokens=1,* delims==" %%a in (`powershell -NoProfile -ExecutionP
 )
 if defined LWSTOP (
   echo Stopped so other programs can be closed first. Start Lantern again when ready.
-  pause
+  if not defined LANTERN_NO_PAUSE pause
   exit /b 0
 )
 if defined LWPICK if exist "%MODELS%\!LWPICK!" set "M=%MODELS%\!LWPICK!"
@@ -173,7 +175,7 @@ if exist "%LW%" (
   set "LWQ=&watch=%LWPORT%"
   start "" /b powershell -NoProfile -ExecutionPolicy Bypass -File "%LW%" watch -Model "!M!" !LWMM! -Port %PORT% -StatusPort %LWPORT%
 )
-start "" /b powershell -NoProfile -Command "$t=[DateTimeOffset]::Now.ToUnixTimeMilliseconds(); for($i=0;$i -lt 60;$i++){ try { $c=New-Object Net.Sockets.TcpClient('127.0.0.1',%PORT%); $c.Close(); break } catch { Start-Sleep -Milliseconds 500 } }; Start-Process ('http://127.0.0.1:%PORT%/?kit=1&model=!MNAME!&bytes=!MBYTES!&vbytes=!VBYTES!!LWQ!&t=' + $t)"
+if not defined NO_BROWSER start "" /b powershell -NoProfile -Command "$t=[DateTimeOffset]::Now.ToUnixTimeMilliseconds(); for($i=0;$i -lt 60;$i++){ try { $c=New-Object Net.Sockets.TcpClient('127.0.0.1',%PORT%); $c.Close(); break } catch { Start-Sleep -Milliseconds 500 } }; Start-Process ('http://127.0.0.1:%PORT%/?kit=1&model=!MNAME!&bytes=!MBYTES!&vbytes=!VBYTES!!LWQ!&t=' + $t)"
 echo.
 echo The AI model is loading now. That takes a minute or two, longer from a USB
 echo stick; Lantern's page shows a progress bar until it is ready.
@@ -182,7 +184,7 @@ echo.
 pushd "%DIR%engine\windows"
 "%BIN%" -m "!M!" !MMARG! --path "%SITE%" --host %HOST% --port %PORT% -c 8192 %NGL% !LWARGS!
 popd
-pause
+if not defined LANTERN_NO_PAUSE pause
 exit /b 0
 
 :pick
