@@ -17,6 +17,19 @@ What is in this folder
   docs/                                     guides (PDF)
   CHANGELOG.md                              what changed in each version
 
+Set up by Get Lantern (the one link)
+  When Lantern was set up by Get-Lantern (from
+  https://adamweldon.github.io/Lantern_Office_Suite/get.html), this folder
+  also holds the Lantern program: Lantern.exe on Windows, Lantern on Linux;
+  on a Mac, Lantern.app wherever you put it. Double-click it (or the
+  Lantern icon on the desktop) and Lantern opens in the browser, with its AI
+  started and no window to keep open. Anything missing is downloaded in the
+  background: the button in the bottom corner of Lantern shows how far it
+  has got, offers the encyclopedia and the books, and has Stop Lantern.
+  It stops by itself when no Lantern page has been open for 20 minutes.
+  The Install and Start Lantern below work the same as ever, with or
+  without it.
+
 First time
   1. Double-click Install Lantern for your computer.
        Windows: if it asks, choose More info, then Run anyway.

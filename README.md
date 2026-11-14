@@ -134,6 +134,34 @@ each -- and a note tied to the next is held, not struck again. Since v1.24.0
 its 📂 Load opens it, a track for each player on the GMS instrument nearest
 its own, and GMS makes the sounds.
 
+## Get Lantern with one link (1.24.19)
+
+Share **https://adamweldon.github.io/Lantern_Office_Suite/get.html** (`site/get.html`).
+It sees what the person is on and starts the right download:
+
+| Computer | The download | Then |
+|---|---|---|
+| Windows | `Get-Lantern.exe` (7 MB) | Open it. If Windows says "Windows protected your PC": **More info -> Run anyway** |
+| Mac | `Get-Lantern-Mac.zip` (Lantern.app, Apple chips and Intel) | Open Lantern; the first time **System Settings -> Privacy & Security -> Open Anyway** |
+| Linux, Raspberry Pi | `Get-Lantern-Linux-x64` / `-arm64` | `chmod +x` it (a download may not run until allowed), then run it |
+| Android, iPhone, iPad, Chromebook | none | The website, then Install app / Add to Home Screen (two or three taps, shown on the page) |
+
+The program (`tools/starter`, Go, no other files) sets Lantern up in a folder
+called `Lantern` in the person's home folder, opens it in the browser at once,
+and fetches its AI in the background with the kit's own installer: the engine
+and a small model first (Chat works within minutes), then the model the
+computer's memory suits. A button in the corner of Lantern shows each download
+with its progress and time left; once the AI is in, it offers the encyclopedia
+(12 GB) and the shelves of books (5 GB) with their sizes. It keeps the computer
+awake while it downloads, carries on where it stopped when the internet drops,
+makes a Lantern icon on the desktop and in the Start menu (Windows) or the
+applications menu (Linux), and stops when no Lantern page has been open for 20
+minutes and nothing is downloading. Double-clicking Lantern again opens it.
+The programs are built for every computer by `tools/pack_starter.py` and put on
+the release with Lantern.zip when `main` is pushed; that push also makes the
+website (the `gh-pages` branch) the same version. They are not signed: the
+Windows and Mac warnings above stay until a signing certificate is bought.
+
 ## Install on a computer (with its AI) -- two double-clicks
 
 1. Download **[Lantern.zip](https://github.com/adamweldon/Lantern_Office_Suite/releases/latest/download/Lantern.zip)**

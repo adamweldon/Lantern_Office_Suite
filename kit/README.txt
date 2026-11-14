@@ -23,6 +23,15 @@ Double-click (the easy way)
   A stick used by computers with different CPUs (a laptop and a Raspberry
   Pi) keeps one engine each: engine/linux and engine/linux-<cpu>.
 
+The one-link starter (Get-Lantern, 1.24.19)
+  The Lantern program beside this kit (tools/starter in the source) runs
+  the same scripts with no window: setup-kit with LANTERN_UI=1 (the @@ lines
+  on stderr say each file, its address and its .part file, so the program
+  measures the progress), LANTERN_NO_PAUSE=1 (no "press a key" at the end)
+  and LANTERN_AUTO_DOWNLOAD=0; then start-lantern with NO_BROWSER=1, its
+  engine on port 8090 behind the program's own 8080. Run by hand, they
+  behave as before.
+
 Folder layout
   start-lantern.bat / .command / .sh   start Lantern (Windows / Mac / Linux)
   setup-kit.bat / .sh                   fetch the engine and models (once)

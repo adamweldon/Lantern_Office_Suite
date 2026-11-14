@@ -43,6 +43,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -1040,7 +1041,7 @@ func (s *Starter) proxy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Starter) serveFile(w http.ResponseWriter, r *http.Request) {
-	p := filepath.Clean("/" + r.URL.Path)
+	p := path.Clean("/" + r.URL.Path) // the address's own slashes (filepath.Clean gives "\\" on Windows: found 1.24.19 on GitHub's Windows)
 	if p == "/" {
 		p = "/index.html"
 	}
