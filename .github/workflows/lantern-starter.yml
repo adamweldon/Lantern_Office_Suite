@@ -1,0 +1,98 @@
+# The Lantern starter for real (1.24.19) -- on every push to a lantern-x.y.z
+# branch, the one-link starter (tools/starter) is built for every computer
+# (tools/pack_starter.py) and run on GitHub's Windows, Mac and Linux computers
+# the way a person's double-click runs it: it sets Lantern up from a Lantern.zip
+# made from this checkout, serves the page at once, fetches the real engine and
+# the real small model with the kit's own installer, starts the AI, and answers
+# through Lantern's own address; then Stop, and a second start from the copy it
+# left, with no downloads (tests/starter_live.py). The job's log has every
+# check, the corner button's sentences as they changed, and the starter's log.
+#
+# Why: the starter is what a person gets from one link, and on Windows and a
+# Mac nobody here can double-click it. This is the nearest thing: the same
+# program, the same kit scripts, the same downloads, on those computers.
+# It does not see what a person sees of Windows' or the Mac's own warnings
+# for a program from the internet (SmartScreen, Gatekeeper): GitHub's
+# computers do not mark the files as downloaded.
+#
+# The packed programs are kept as the artifact get-lantern (14 days), for
+# trying by hand. Nothing here publishes anything or writes to the repository.
+# It runs on wip- branches too, so a session can see it on Windows and a Mac
+# before the version is published (a run cannot be started by hand from one).
+name: Lantern Starter
+
+on:
+  push:
+    branches: ['lantern-*', 'wip-*']
+    paths-ignore: ['agent/**', 'docs/**', 'README.md', 'CLAUDE.md']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lantern-starter-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  starter:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: The computer this run is on
+        shell: bash
+        run: |
+          echo "$RUNNER_OS $RUNNER_ARCH"
+          case "$RUNNER_OS" in
+            Linux) grep -m1 'model name' /proc/cpuinfo; free -m | awk '/^Mem:/ {print "memory: " $2 " MB"}' ;;
+            macOS) sysctl -n machdep.cpu.brand_string; echo "memory: $(( $(sysctl -n hw.memsize) / 1048576 )) MB" ;;
+            Windows) powershell -NoProfile -Command "(Get-CimInstance Win32_Processor).Name; 'memory: ' + [int]((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1MB) + ' MB'" ;;
+          esac
+
+      - name: Build the starter for every computer
+        run: python tools/pack_starter.py dist
+
+      - name: Lantern.zip from this checkout
+        run: python tools/make_lantern_zip.py dist
+
+      - name: Run it as a double-click does, with the real downloads
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows) EXE=dist/Get-Lantern.exe ;;
+            macOS)   ditto -x -k dist/Get-Lantern-Mac.zip dist/mac; EXE=dist/mac/Lantern.app/Contents/MacOS/Lantern ;;
+            *)       EXE=dist/Get-Lantern-Linux-x64 ;;
+          esac
+          python tests/starter_live.py --exe "$EXE" --zip dist/Lantern.zip --home "$RUNNER_TEMP/LanternHome" --minutes 50
+
+      - name: What the starter left (if a check failed)
+        if: failure()
+        shell: bash
+        run: |
+          ls -la "$RUNNER_TEMP/LanternHome" "$RUNNER_TEMP/LanternHome/kit" "$RUNNER_TEMP/LanternHome/kit/models" "$RUNNER_TEMP/LanternHome/kit/logs" 2>&1 || true
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          name: get-lantern
+          path: |
+            dist/Get-Lantern.exe
+            dist/Get-Lantern-Mac.zip
+            dist/Get-Lantern-Linux-x64
+            dist/Get-Lantern-Linux-arm64
+          retention-days: 14
