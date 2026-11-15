@@ -305,7 +305,8 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
       if (!mq || /\(\d+\)$/.test(mq[2])) return;   // the reviewer's shorthand for a generated case, not a block
       var lines = mq[2].split(" / "), bw = L.aiAct.build("MAKE WHEEL: Colour wheel\n" + lines.join("\n") + "\nEND", mq[1]);
       var nm = (bw.plan ? bw.plan.parts : []).map(function (p) { return p.name; }), asWritten = nm.join("|") === lines.map(function (l) { return l.split(/[:|]/)[0].trim(); }).join("|");
-      bad = /left as written|split kept/.test(e) ? (asWritten ? null : "split") : asWritten ? "as written" : /too long/.test(bw.problems.join()) ? "too long" : null;
+      // (as written where the question says more than a colour wheel and its colours: as 1.24.19 drew it, its sixth review)
+      bad = /left as written|split kept/.test(e) ? (asWritten ? null : "split") : asWritten ? (L.aiWheel.plainAsk(mq[1]) ? "as written" : null) : /too long/.test(bw.problems.join()) ? "too long" : null;
       if (!bad && /Green-Yellow/.test(c.input) && !asWritten && JSON.stringify(bw.shapes).indexOf("#a3e635") < 0) bad = "Green-Yellow not painted";
     } else if (c.rule === 4) {
       var m4 = /^Q: (.*?) \|\| (.*)$/.exec(c.input), p4 = m4 && A.parseReply(m4[2].split(" / ").join("\n"));
@@ -332,14 +333,20 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     W48: "\u201cWhat colours go well together?\u201d: the question says more than a colour wheel and its colours -- the groups as written (its fifth review)"
   };
   // replay(file, LEFT) -> {n, k, off}: each case of a review, against what it found then
+  // objs(text) -> every {...} written in an expected answer ("{...}; also right: {...}")
+  function objs(t) {
+    var out = [], d = 0, a = -1, i;
+    for (i = 0; i < t.length; i++) { if (t[i] === "{") { if (!d) a = i; d++; } else if (t[i] === "}" && d) { d--; if (!d) { try { out.push(JSON.parse(t.slice(a, i + 1))); } catch (e0) { } } } }
+    return out;
+  }
   function replay(file, LEFT) {
   var RR = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", file), "utf8")).cases, off4 = [], n4b = 0, k4 = { right: 0, back: 0, missed: 0 };
   RR.forEach(function (c) {
     var e = String(c.expected), was = c.verdict, bad = null, back = false;
     if (c.rule === 1) {
-      var o = track(c.input.split(" | ")), js = /(\{.*\})/.exec(e), x = js ? JSON.parse(js[1]) : null;
+      var o = track(c.input.split(" | ")), xs = objs(e), x = xs[0] || null;
       var askOK = /^a problem|a problem is also right|a problem would be/.test(e);   // "a problem (Lantern asks); also right: {...}"
-      var same = !!x && !o.problems.length && Object.keys(x.held || {}).every(function (k) { return o.held[k] === x.held[k]; }) && (!x.row || o.row.join() === x.row.join());
+      var same = !o.problems.length && xs.some(function (x1) { return Object.keys(x1.held || {}).every(function (k) { return o.held[k] === x1.held[k]; }) && (!x1.row || o.row.join() === x1.row.join()); });
       if (o.problems.length) { if (!askOK) back = true; }
       else if (!same) bad = /^a problem/.test(e) && !x ? "answered: " + JSON.stringify(o.held) : "held " + JSON.stringify(o.held) + " row " + o.row.join(" ");
     } else if (c.rule === 2) {
@@ -353,8 +360,9 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
       var lines = mq[2].split(" / "), bw = L.aiAct.build("MAKE WHEEL: Colour wheel\n" + lines.join("\n") + "\nEND", mq[1]);
       var nm = (bw.plan ? bw.plan.parts : []).map(function (p) { return p.name; });
       var groups = lines.filter(function (l) { return !/^(fill|colou?r|note|centre|center)\b/i.test(l); }).map(function (l) { return l.split(/[:|]/)[0].trim(); });
-      var asWritten = nm.join("|") === groups.join("|"), want = /^one part per colou?r[^:]*:\s*([^(]*?)\s*(?:\(|$)/.exec(e);
-      if (/left as written|split kept/.test(e)) bad = asWritten ? null : "split";
+      var asWritten = nm.join("|") === groups.join("|"), want = /^one part per colou?r[^:]*:\s*([^(;]*?)\s*(?:\(|;|$)/.exec(e);
+      if (/left as written is also right/.test(e) && asWritten) bad = null;
+      else if (/left as written|split kept/.test(e) && !/left as written is also right/.test(e)) bad = asWritten ? null : "split";
       else if (asWritten) { if (!/or the groups as written/.test(e)) { back = true; if (was === "right" && !L.aiWheel.plainAsk(mq[1])) { k4.back++; back = false; n4b++; return; } } }
       else if (want && want[1] && nm.join(", ") !== want[1].replace(/[,.]\s*$/, "")) bad = "parts " + nm.join(", ");
       if (/too long/.test(bw.problems.join())) bad = "too long";
@@ -387,6 +395,10 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var t5 = Date.now(), r5 = replay("review5_1260.json", LEFT5);
   ok("(its fifth review) " + r5.n + " cases: " + r5.k.right + " as it worked them out, " + r5.k.missed + " sent back as when it tried them, " + r5.k.back + " more sent back (wrong before, or with their reasons); none spoiled; all in " + (Date.now() - t5) + " ms",
     r5.n >= 400 && !r5.off.length && Date.now() - t5 < 20000, r5.off);
+  var LEFT6 = {};
+  var t6 = Date.now(), r6 = replay("review6_1260.json", LEFT6);
+  ok("(its sixth review) " + r6.n + " cases: " + r6.k.right + " as it worked them out, " + r6.k.missed + " sent back as when it tried them, " + r6.k.back + " more sent back (wrong before, or with their reasons); none spoiled; all in " + (Date.now() - t6) + " ms",
+    r6.n >= 400 && !r6.off.length && Date.now() - t6 < 20000, r6.off);
   var t0 = Date.now(), slow = track(["row Ann Bo Cy Di", "give the ball to " + new Array(121).join("the person to the left of ") + "Di"]);
   var t1 = Date.now(), deep = track(["row A B C D E F G H I J", "put coin in J", "move the coin to " + new Array(8).join("the cup to the left of ") + "J"]);
   ok("(its fourth review) a place nested 120 times goes back at once (it took seconds); nested 7 times it is read", slow.problems.length && t1 - t0 < 1000 && deep.held.coin === "C", [t1 - t0, deep.held, deep.problems]);
