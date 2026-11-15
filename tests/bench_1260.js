@@ -360,7 +360,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
       var lines = mq[2].split(" / "), bw = L.aiAct.build("MAKE WHEEL: Colour wheel\n" + lines.join("\n") + "\nEND", mq[1]);
       var nm = (bw.plan ? bw.plan.parts : []).map(function (p) { return p.name; });
       var groups = lines.filter(function (l) { return !/^(fill|colou?r|note|centre|center)\b/i.test(l); }).map(function (l) { return l.split(/[:|]/)[0].trim(); });
-      var asWritten = nm.join("|") === groups.join("|"), want = /^one part per colou?r[^:]*:\s*([^(;]*?)\s*(?:\(|;|$)/.exec(e);
+      var asWritten = !bw.plan || nm.join("|") === groups.join("|"), want = /^one part per colou?r[^:]*:\s*([^(;]*?)\s*(?:\(|;|$)/.exec(e);
       if (/left as written is also right/.test(e) && asWritten) bad = null;
       else if (/left as written|split kept/.test(e) && !/left as written is also right/.test(e)) bad = asWritten ? null : "split";
       else if (asWritten) { if (!/or the groups as written/.test(e)) { back = true; if (was === "right" && !L.aiWheel.plainAsk(mq[1])) { k4.back++; back = false; n4b++; return; } } }
@@ -411,6 +411,24 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     if (o0.row.join() === g0.row.join() && JSON.stringify(hh) === JSON.stringify(gh)) gr0++; else gw0 = gw0 || sd;
   }
   ok("(its sixth review) 3,000 generated TRACK scripts: " + gr0 + " right, " + gb0 + " sent back, none answered wrong (" + (Date.now() - tg) + " ms)", !gw0 && gr0 > 2500, gw0 && GEN(gw0).lines);
+  var LEFT7 = {};
+  var t7 = Date.now(), r7 = replay("review7_1260.json", LEFT7);
+  ok("(its seventh review) " + r7.n + " cases: " + r7.k.right + " as it worked them out, " + r7.k.missed + " sent back as when it tried them, " + r7.k.back + " more sent back (wrong before, or with their reasons); none spoiled; all in " + (Date.now() - t7) + " ms",
+    r7.n >= 350 && !r7.off.length && Date.now() - t7 < 20000, r7.off);
+  // the seventh reviewer's generator (plain and hard phrasings; its own simulator the answer): 19,000 hard scripts after
+  // its mends, all right (1.24.19: 6%); here 1,500 of each
+  var GEN7 = require(path.join(__dirname, "fixtures", "track_gen_review7_1260.js")), bad7 = [], right7 = 0, tg7 = Date.now();
+  [false, true].forEach(function (hard) {
+    for (var sd7 = 7001; sd7 < 8501; sd7++) {
+      var g7 = GEN7(sd7, { hard: hard }), o7 = track(g7.lines);
+      if (o7.problems.length) continue;
+      var h7 = {}; Object.keys(o7.held).forEach(function (k) { if (o7.held[k]) h7[k] = o7.held[k]; });
+      var e7 = {}; Object.keys(g7.exp.held).forEach(function (k) { if (g7.exp.held[k]) e7[k] = g7.exp.held[k]; });
+      if (o7.row.join() === g7.exp.row.join() && JSON.stringify(Object.keys(h7).sort().map(function (k) { return [k, h7[k]]; })) === JSON.stringify(Object.keys(e7).sort().map(function (k) { return [k, e7[k]]; }))) right7++;
+      else if (bad7.length < 3) bad7.push(g7.lines);
+    }
+  });
+  ok("(its seventh review) 3,000 of its generated TRACK scripts: " + right7 + " right, none answered wrong (" + (Date.now() - tg7) + " ms)", !bad7.length && right7 > 2600, bad7);
   var t0 = Date.now(), slow = track(["row Ann Bo Cy Di", "give the ball to " + new Array(121).join("the person to the left of ") + "Di"]);
   var t1 = Date.now(), deep = track(["row A B C D E F G H I J", "put coin in J", "move the coin to " + new Array(8).join("the cup to the left of ") + "J"]);
   ok("(its fourth review) a place nested 120 times goes back at once (it took seconds); nested 7 times it is read", slow.problems.length && t1 - t0 < 1000 && deep.held.coin === "C", [t1 - t0, deep.held, deep.problems]);
