@@ -10,12 +10,13 @@
 //    from last", gave it to Fin and left the flag with Dot -- Lantern reported both, the 35B said Dot (three runs);
 //    a snake that "bit" found no lesson ("bit" is not "bite"; three runs); a colour wheel written as its groups,
 //    Primary: Red | Yellow | Blue and Secondary: Orange | Green | Violet, drawn as two wedges (three runs, word for word);
-//    a count of the reversed word, LEN(ANS1), after REMOVE had changed it, put into the sentence as 14 letters for an
-//    11-letter word; a robot's TURN block written without its first line, answered "Lantern found no TURN block".
+//    a robot's TURN block written without its first line, answered "Lantern found no TURN block".
 //  - a tune Lantern did not know: Amazing Grace (the 35B wrote its own, three runs).
-//  - left as they are: the Galaxy S7 (its guide was sent and the 35B still declined: what the guide's passage holds
-//    needs the iFixit book itself), the path across a field (the model's picture), the motor circuit and the amp-hours
-//    (once each: one row moving is not a finding).
+//  - left as they are: photosynthesis (a count of the reversed word, LEN(ANS1), after REMOVE had changed it, filled
+//    into the sentence as 14 letters for an 11-letter word: a check of it was tried by three reviewers and withdrawn --
+//    each found right replies it questioned, and made false when the model kept them); the Galaxy S7 (its guide was
+//    sent and the 35B still declined: what the guide's passage holds needs the iFixit book itself), the path across a
+//    field (the model's picture), the motor circuit and the amp-hours (once each: one row moving is not a finding).
 "use strict";
 var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
 var fs = require("fs"), path = require("path");
@@ -74,6 +75,14 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var ends = track(["row A B C D E F", "put ball in A", "give ball to second to last", "pass ball to third from the end", "hand ball to last but one", "give ball to second from the front"]);
   ok("places counted from the end, and from the front", !ends.problems.length && ends.held.ball === "B" &&
     track(["row A B C D E F", "put ball in A", "give ball to third from the end"]).held.ball === "D" && track(["row A B C D E F", "put ball in A", "give ball to next to last"]).held.ball === "E", ends.problems);
+  var one = track(["row One Two Three", "put coin in Two", "move One to last"]), r2 = track(["row Ann Bo Cy Di Eve", "put the coin in the cup two places to the right of Ann"]);
+  var nx = track(["row Red Blue Green Yellow", "put the coin in the cup next to Red"]), mid = track(["row Red Blue Green Yellow", "put the coin in the cup next to Blue"]);
+  ok("(its third review) a cup called One is a cup; \u201ctwo places to the right of Ann\u201d is Cy; next to the end cup is its one neighbour, next to a middle one goes back",
+    one.row.join() === "Two,Three,One" && one.held.coin === "Two" && r2.held.coin === "Cy" && nx.held.coin === "Blue" && /which side/.test(mid.problems.join()), [one.row, one.held, r2.held, nx.held, mid.problems]);
+  var inf = track(["row Ann Bo Cy Di", "give ball to Di", "give the ball to the person in front"]), inthe = track(["row Ann Bo Cy Di", "give ball to Di", "give the ball to the person in the front"]);
+  var two = track(["row Ann Bo Cy", "give red ball to Ann", "give blue ball to Ann", "give a ball from Ann to Bo"]), nw2 = track(["row Ann Bo Cy", "give hat to Ann", "give a ball from Ann to Bo"]);
+  ok("(its third review) \u201cin front\u201d (of whom?) goes back, \u201cin the front\u201d is the front; \u201ca ball from Ann\u201d with two balls there asks which, with none there is a new ball",
+    inf.problems.length && inthe.held.ball === "Ann" && /say which/.test(two.problems.join()) && nw2.held.ball === "Bo" && nw2.held.hat === "Ann", [inf.held, inthe.held, two.problems, nw2.held]);
   var fl = fake([["TRACK: Line"].concat(blocks[0].lines, ["END"]).join("\n"), "ANSWER: Bo, Ada, Fin, Eli, Cy, Dot; Fin holds the flag."]);
   var cl = await C.converse([lf.q], { call: fl, max_tokens: 1536 }), clt = (cl.turns || cl)[0] || {};
   ok("in Chat the results the AI is sent say Fin has the flag, and the answer passes", /flag is with Fin/.test(lastSaid(fl, 1)) && L.aiBench.grade(item("line-flag-b"), cl.text, cl).pass, [lastSaid(fl, 1).slice(0, 300)]);
@@ -115,19 +124,23 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   ok("...not a wheel of teams, of seasons, nor groups with a colour that has no place on the wheel",
     parts(["Team A: Red | Blue", "Team B: Green | Yellow"]) === "Team A,Team B" && parts(["Primary: Red | Yellow | Blue", "Neutral: Black | White | Gray"]) === "Primary,Neutral" &&
     parts(["Spring: March | April | May", "Summer: June | July | August"]) === "Spring,Summer" && parts(["Primary: Red | Yellow | Brown", "Secondary: Orange | Green | Violet"]) === "Primary,Secondary");
+  var eight = L.aiAct.build("MAKE WHEEL: Colour wheel\nWarm: Red | Red-Orange | Orange | Yellow-Orange\nCool: Blue-Green | Blue | Blue-Violet | Violet\nEND", "Draw a colour wheel");
+  var tert = L.aiAct.build("MAKE WHEEL: Colour wheel\nPrimary: Red | Yellow | Blue\nTertiary: Orange-Red | Green-Yellow\nEND", "Draw a colour wheel");
+  var plug = L.aiAct.build("MAKE WHEEL: UK plug\nLive: Brown\nNeutral: Blue\nEarth: Green-Yellow\nEND", "Draw a colour wheel for the wires in a UK plug");
+  ok("(its third review) eight wedges too narrow for \u201cYellow-Orange\u201d: the groups as written, not Lantern\u2019s layout sent back; two groups both named Primary: as written; \u201ccolour-wheel\u201d asks too",
+    eight.plan.parts.map(function (p) { return p.name; }).join() === "Warm,Cool" && !eight.problems.length &&
+    parts(["Primary (light): Red | Green | Blue", "Primary (paint): Red | Yellow | Blue"]) === "Primary (light),Primary (paint)" &&
+    parts(["Primary: Red | Yellow | Blue", "Secondary: Orange | Green | Violet"], "Make a colour-wheel diagram") === "Red,Orange,Yellow,Green,Blue,Violet", [eight.plan.parts, eight.problems]);
+  ok("(its third review) Green-Yellow among a colour wheel\u2019s tertiaries is painted yellow-green (not pink); a plug\u2019s striped earth is not",
+    JSON.stringify(tert.shapes).indexOf("#a3e635") >= 0 && JSON.stringify(tert.shapes).indexOf("#fbcfe8") < 0 && JSON.stringify(plug.shapes).indexOf("#a3e635") < 0);
 
-  // --- photosynthesis: the count of the word before REMOVE changed it ----------------------------------------------
+  // --- photosynthesis: the count of the word before REMOVE changed it -- left as the model writes it ---------------
   var ph = row("letters-photosynthesis-b"), pq = ph.q, pp = A.parseReply(ph.reply), pr = A.run(pp.exprText);
   ok("as run: =REVERSE, =REMOVE(ANS,“s”), =LEN(ANS1) -- and the sentence was filled in with 14 letters for iehtnyotohp",
     /=LEN\(ANS1\)/.test(ph.reply) && ph.chat[0].repaired.join() === "noitohpyto -> iehtnyotohp,10 -> 14" && pr.steps[2].value === 14);
   var chk = L.aiResultChecks.check(pq, pp.exprText, pr, { parsed: pp });
-  ok("now line 3 is questioned, with the line to write", /line 3 counts line 1’s word \(“sisehtnysotohp”\), but line 2 changed it to “iehtnyotohp”: to count that, write =LEN\(ANS2\)/.test(chk), chk);
-  var first = rowIn(F2, "letters-photosynthesis-b").reply, fp = fake([first, ph.reply, ph.reply]);
-  var cp = await C.converse([pq], { call: fp, max_tokens: 1536 }), cpt = (cp.turns || cp)[0] || {};
-  ok("...and when the AI keeps it, Chat counts line 2’s word, says so, and the sentence says 11 letters",
-    (cpt.rechained || []).join() === "line 3: ANS1 -> ANS2 (“iehtnyotohp”)" && /iehtnyotohp\W+, which has 11 letters/.test(cpt.answerText || "") && cpt.value === 11, [cpt.rechained, cpt.answerText]);
-  var keep = A.parseReply("=REVERSE(\x22photosynthesis\x22)\n=REMOVE(ANS,\x22s\x22)\n=LEN(ANS1)\nANSWER: The reversed word {ANS1} has {ANS3} letters; without its s it is {ANS2}.");
-  ok("a count of the first word that the ANSWER is about stands", L.aiResultChecks.countsOld(A.run(keep.exprText).steps, keep.answer).length === 0);
+  ok("left (tried and withdrawn after three reviews): no check of which word a count counts; the retyped results are questioned as in 1.24.19",
+    !("countsOld" in L.aiResultChecks) && !/counts line 1/.test(chk || "") && /Lantern worked out “iehtnyotohp” \(line 2\)/.test(chk || ""), chk);
 
   // --- the snake bite ----------------------------------------------------------------------------------------------
   var sb = item("health-b-snakebite");
@@ -135,6 +148,14 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   ok("now “a snake bit my uncle” gets the lesson Bites and stings; so do a dog that bit, a scorpion that just bit, a spider that has bit",
     L.healthLessons(sb.turns[0]).map(function (x) { return x.key; })[0] === "health_bites" &&
     ["A dog bit my daughter on the leg", "a scorpion just bit him", "A spider has bit my son"].every(function (q) { return (L.healthLessons(q)[0] || {}).key === "health_bites"; }));
+  function bites(q) { return L.healthLessons(q).some(function (x) { return x.key === "health_bites"; }); }
+  var yes3 = ["A raccoon bit me", "Something bit me in the night and my leg is swollen", "A dog suddenly bit my son", "The snake that bit my uncle was brown with stripes",
+    "My son got bit on the hand by a dog", "I was bit by a spider last night", "The dogs bit at my son\x27s legs", "A wolf bit my brother"];
+  var no3 = ["My dog bit meat off the bone", "Rats bit USB cables in my attic", "My dog bit the leg of the table, how do I fix the wood?", "The puppy bit her baby doll",
+    "The cat bit my 2 year old rabbit", "The snake bit the frog\x27s leg", "My car\x27s wires got bit by a rat, how do I fix them?", "The kittens bit them to pieces, the new toys I bought",
+    "My dogs bit themselves raw from fleas", "The fox bit young chickens in the coop"];
+  ok("(its third review) who was bitten is read whole: a person, or a person\u2019s own body, with nothing of theirs after it",
+    yes3.every(bites) && no3.every(function (q) { return !bites(q); }), [yes3.filter(function (q) { return !bites(q); }), no3.filter(bites)]);
   var fs2 = fake(["ANSWER: Keep him still and calm and carry him to help; do not let him walk [1].\nQUOTE [1]: keep the person still and calm"]);
   var cs = await C.converse(sb.turns, { call: fs2 }), cst = (cs.turns || cs)[0] || {};
   ok("...and Chat sends it", (cst.searches || []).some(function (s) { return s.how === "lessons"; }) && (cst.sources || []).some(function (s) { return s.key === "health_bites"; }), cst.searches);
@@ -183,14 +204,16 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     if (/^read as a (TURN|TRACK) block/.test(e) && !bs.length) t2.push([c.id, "not read"]);
   });
   ok("(its review) no knitting row, theatre row, car at 60 km/h or End position: read as a block; every headless block it wrote read", !t2.length, t2);
-  // 4: no right chain questioned; the wrong ones it wrote caught (one missed, as with the first draft)
-  var t4 = [], caught = 0;
+  // 4: the count rule was withdrawn; none of its 41 right chains is questioned by the checks that stay (15 were, by the
+  // rule's first draft)
+  var t4 = [], n4 = 0;
   of(4).forEach(function (c) {
-    var p0 = A.parseReply(String(c.input).replace(/^Q: [^\n]*\n/, "")), co = p0.exprText ? L.aiResultChecks.countsOld(A.run(p0.exprText).steps, p0.answer) : [];
-    if (/^right chain/.test(c.expected) && co.length) t4.push(c.id);
-    if (/^wrong count/.test(c.expected) && co.length) caught++;
+    var q4 = (/^Q: ([^\n]*)/.exec(c.input) || [])[1] || "", p0 = A.parseReply(String(c.input).replace(/^Q: [^\n]*\n/, ""));
+    if (!p0.exprText || !/^right chain/.test(c.expected)) return;
+    n4++;
+    if (L.aiResultChecks.check(q4, p0.exprText, A.run(p0.exprText), { parsed: p0 })) t4.push(c.id);
   });
-  ok("(its review) none of its 41 right chains questioned (15 were, by the first draft), and 10 of its 11 wrong counts caught", !t4.length && caught === 10, [t4, caught]);
+  ok("(its review) none of its " + n4 + " right chains questioned", n4 === 41 && !t4.length, t4);
   // 5: the bite rewrite adds the bites lesson only for a bite to a person
   var t5 = [];
   of(5).forEach(function (c) {
@@ -211,8 +234,6 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     H27: "\u201cdrive north 5\u201d as a second line: the same", H45: "every line in bold: the same",
     W04: "a wheel of warm and cool colours, not asked for as a colour wheel: left in its two parts (either is right, the reviewer says)",
     W30: "\u201cmy art group\u201d: \u201cgroup\u201d keeps the groups (as 1.24.19 drew it)", W41: "not asked for as a colour wheel: as 1.24.19 drew it",
-    C26: "a count in the next sentence: not asked about (the rule asks only of a count put on the word)", C27: "a count before the word: the same",
-    C31: "a dash between word and count: the same", C32: "a colon: the same", C33: "two changes later: the same", C35: "a second line on ANS1: the same",
     B09: "\u201csomething bit me\u201d: no animal named", B19: "\u201cgot bit by a big dog\u201d: a need, but the search ranks bleeding first",
     B22: "\u201cbit Tom\u201d: a name", B25: "mosquitoes: the malaria lesson comes first", B26: "the same", B30: "a general question about rabies"
   };
@@ -236,9 +257,10 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
       var b = L.aiAct.build(c.input.block, c.input.question), ps = (b.plan && b.plan.parts || []).map(function (p) { return p.name; });
       bad = e === "groups" ? (ps.length === L.aiWheel.parse({ title: "t", lines: c.input.block.split("\n").slice(1, -1) }).parts.length ? null : "split") : (ps.join() === e.split.join() ? null : "not split");
       if (/Green-Yellow/.test(c.input.block) && L.aiWheelColours.forItem("Green-Yellow")) bad = "a striped earth painted";
-    } else if (c.rule === 4) {
-      var p2 = A.parseReply(c.input.reply), co2 = L.aiResultChecks.countsOld(A.run(p2.exprText).steps, p2.answer);
-      bad = e === "kept" && co2.length ? "questioned" : e === "questioned" && !co2.length ? "missed" : null;
+    } else if (c.rule === 4) {   // the rule withdrawn: a reply it should keep is not questioned (what it should question is left)
+      var p2 = A.parseReply(c.input.reply);
+      if (e !== "kept" || !p2.exprText) return;
+      bad = L.aiResultChecks.check(c.input.question, p2.exprText, A.run(p2.exprText), { parsed: p2 }) ? "questioned" : null;
     } else if (c.rule === 5) {
       var ks = L.healthLessons(c.input).map(function (x) { return x.key; }), nd = L.healthNeed(c.input), was = c.lantern_1_24_19 || {};
       if (/^not a bite/.test(e) && ks.indexOf("health_bites") >= 0 && (was.lessons || []).indexOf("health_bites") < 0) bad = "the bites lesson";
@@ -248,19 +270,66 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     n2++;
     if (bad && !LEFT2[c.id]) off2.push([c.id, bad]);
   });
-  ok("(its second review) " + n2 + " cases: each as the reviewer worked it out, or one of the " + Object.keys(LEFT2).length + " left with their reasons (most as 1.24.19 did them)", n2 >= 250 && !off2.length, off2);
+  ok("(its second review) " + n2 + " cases: each as the reviewer worked it out, or one of the " + Object.keys(LEFT2).length + " left with their reasons (most as 1.24.19 did them)", n2 >= 240 && !off2.length, off2);
+
+  // --- the third review (fixtures/review3_1260.json, 361 cases of its own), replayed ---------------------------------
+  // Its count-rule cases (rule 4) now ask only that a reply it would leave alone is not questioned by the checks that
+  // stay (C40 is questioned by the check of retyped results, as in 1.24.19). What goes back, or is drawn as written,
+  // where the reviewer worked out an answer:
+  var LEFT3 = {
+    T45: "\u201cthe person in front\u201d: in front of whom? goes back (it may be the front of the line)", T110: "\u201cthe person behind\u201d: the same", T111: "\u201cthe cup in front\u201d: the same",
+    T61: "\u201cthe cup on the left\u201d: the leftmost, or the one to its left? goes back, as in 1.24.19", T151: "\u201cthe one on the left\u201d: the same",
+    T81: "\u201csitting to her left\u201d: goes back, as in 1.24.19", T122: "\u201cthe coins\u201d, two things at once: goes back, as in 1.24.19",
+    T125: "\u201ctwo to the left\u201d with no \u201cplaces\u201d: goes back (it could be two things)", T134: "\u201cto the left twice\u201d: goes back, as in 1.24.19",
+    T135: "\u201cforward\u201d: goes back, as in 1.24.19", T140: "\u201cthe far end\u201d: which end? goes back",
+    H36: "a Chat case (a block, then the same block with ANSWER: after END): written out in words, not replayable here",
+    W19: "eight colours too narrow for the layout: the groups as written, as 1.24.19 drew them", W35: "the same", W40: "the same",
+    B09: "mosquitoes: the malaria lesson comes first (a fitting one, the reviewer says)"
+  };
+  var R3 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review3_1260.json"), "utf8")).cases, off3 = [], n3 = 0, asked3 = 0;
+  R3.forEach(function (c) {
+    var e = String(c.expected), bad = null;
+    if (c.rule === 1) {
+      var o = track(c.input.split(" | "));
+      if (/^a problem/.test(e)) bad = o.problems.length ? null : "no problem: " + JSON.stringify(o.held);
+      else if (o.problems.length) { bad = "goes back"; asked3++; }
+      else { var x = JSON.parse(e);
+        Object.keys(x.held || {}).forEach(function (k) { if (o.held[k] !== x.held[k]) bad = "held " + JSON.stringify(o.held); });
+        if (x.row && o.row.join() !== x.row.join()) bad = "row " + o.row.join(" "); }
+    } else if (c.rule === 2) {
+      if (/^Chat/.test(c.input)) { bad = LEFT3[c.id] ? "chat" : null; if (!bad) return; }
+      else { var bs = P.find(c.input);
+        bad = /^no block/.test(e) ? (bs.some(function (b) { return b.headless; }) ? "read" : null) : /TURN|TRACK/.test(e) ? (bs.length && bs[0].kind === /TURN|TRACK/.exec(e)[0] ? null : "not read") : (bs.length ? null : "not read"); }
+    } else if (c.rule === 3) {
+      var mq = /^Q: (.*?) \|\| MAKE WHEEL: (.*)$/.exec(c.input);
+      if (!mq || /\(\d+\)$/.test(mq[2])) return;   // the reviewer's shorthand for a generated case, not a block
+      var lines = mq[2].split(" / "), bw = L.aiAct.build("MAKE WHEEL: Colour wheel\n" + lines.join("\n") + "\nEND", mq[1]);
+      var nm = (bw.plan ? bw.plan.parts : []).map(function (p) { return p.name; }), asWritten = nm.join("|") === lines.map(function (l) { return l.split(/[:|]/)[0].trim(); }).join("|");
+      bad = /left as written|split kept/.test(e) ? (asWritten ? null : "split") : asWritten ? "as written" : /too long/.test(bw.problems.join()) ? "too long" : null;
+      if (!bad && /Green-Yellow/.test(c.input) && !asWritten && JSON.stringify(bw.shapes).indexOf("#a3e635") < 0) bad = "Green-Yellow not painted";
+    } else if (c.rule === 4) {
+      var m4 = /^Q: (.*?) \|\| (.*)$/.exec(c.input), p4 = m4 && A.parseReply(m4[2].split(" / ").join("\n"));
+      if (!p4 || !p4.exprText || !/^left alone/.test(e)) return;
+      bad = L.aiResultChecks.check(m4[1], p4.exprText, A.run(p4.exprText), { parsed: p4 }) && !/^check:/.test(c.did_1_24_19) ? "questioned" : null;
+    } else if (c.rule === 5) {
+      var k5 = L.healthLessons(c.input).map(function (x) { return x.key; }), b5 = k5.indexOf("health_bites") >= 0;
+      bad = /^not a bite/.test(e) ? (b5 && !/health_bites/.test(c.did_1_24_19) ? "the bites lesson" : null) : (b5 ? null : "no bites lesson (" + k5 + ")");
+    }
+    n3++;
+    if (bad && !LEFT3[c.id]) off3.push([c.id, bad]);
+  });
+  ok("(its third review) " + n3 + " cases: each as the reviewer worked it out, or one of the " + Object.keys(LEFT3).length + " left with their reasons -- none a silent wrong answer",
+    n3 >= 340 && !off3.length, off3);
 
   // --- a guard of right replies: every passed row of the three runs ------------------------------------------------
-  var guard = F.passed.concat(F2.passed, F1.passed), counted = [], headless = [];
+  var guard = F.passed.concat(F2.passed, F1.passed), headless = [];
   guard.forEach(function (r) {
-    var t = String(r.reply || ""), p0 = A.parseReply(t);
-    if (p0.exprText) { var co = L.aiResultChecks.countsOld(A.run(p0.exprText).steps, p0.answer); if (co.length) counted.push(r.id); }
+    var t = String(r.reply || "");
     var bs = P.find(t);
     if (bs.some(function (b) { return b.headless; })) headless.push(r.id);
     (r.chat || []).forEach(function (tn) { (tn.blocks || []).forEach(function (b) { if (b.kind === "TRACK" && b.ok) { var again = track(b.lines); if (again.problems.length) headless.push(r.id + " (TRACK)"); } }); });
   });
-  ok("the passed rows of all three runs (" + guard.length + "): no count questioned, no block read that was not there, every TRACK block still runs",
-    !counted.length && !headless.length, [counted, headless]);
+  ok("the passed rows of all three runs (" + guard.length + "): no block read that was not there, every TRACK block still runs", !headless.length, headless);
 
   console.log(fails ? fails + " BENCH 1.24.20 FAILURES (" + passes + " passed)" : "ALL BENCH 1.24.20 CHECKS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);

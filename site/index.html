@@ -20217,15 +20217,15 @@ Lantern.RFB = (function () {
         // the corrected lines still type a result out (with mistakes) instead
         // of ANSj: Lantern runs them again with its own results in place, and
         // says so (bench run 12: "rortegifer" for line 1's "rotaregirfer")
-        var RCX = window.Lantern.aiResultChecks, rch = stillDoubt && RCX && RCX.rechain ? RCX.rechain(parsed.exprText, run.steps, said, parsed.answer || "") : null;
+        var RCX = window.Lantern.aiResultChecks, rch = stillDoubt && RCX && RCX.rechain ? RCX.rechain(parsed.exprText, run.steps, said) : null;
         if (rch) {
           var run2 = A.run(rch.expr);
           if (run2.value != null && run2.steps.every(function (x) { return x.ok; })) {
             run = run2; lastSteps = run2.steps; lastValue = run2.value; rec.value = run2.value; parsed.exprText = rch.expr;
             rec.rechained = rch.changes.map(function (c) { return c.from + " -> " + c.to; });
             if (ui.tool) ui.tool(run2);
-            note(rch.why || ("The AI typed results out instead of using them; Lantern ran its lines again with its own results in place: " +
-              rch.changes.map(function (c) { return c.from + " \u2192 " + c.to; }).join(", ") + "."));
+            note("The AI typed results out instead of using them; Lantern ran its lines again with its own results in place: " +
+              rch.changes.map(function (c) { return c.from + " \u2192 " + c.to; }).join(", ") + ".");
             var d2 = [];
             (window.Lantern.assistChecks || []).forEach(function (c) {
               var r = null; try { r = c(said, rch.expr, run2, { text: shown, parsed: parsed, sources: null }); } catch (e) { r = null; }
@@ -33447,21 +33447,28 @@ Lantern.RFB = (function () {
   // colour wheel, and say nothing of how it is cut.
   var HALVES = /\b(hal(f|ves)|sides?|separate(ly)?|split|apart|sections?|segments?|groups?|grouped|divid\w*|parts?|slices?|wedges?|types?|kinds?|sort\w*|categor\w*|classes|sets?)\b/i;
   function colourGroups(parts, question) {
-    if (!C || !C.hue || !parts.length || !/\bcolou?r\s+wheels?\b/i.test(question || "") || HALVES.test(question)) return null;
-    var out = [], seen = {}, i, j;
+    if (!C || !C.hue || !C.forItem || !parts.length || !/\bcolou?r[\s-]+wheels?\b/i.test(question || "") || HALVES.test(question)) return null;
+    var out = [], seen = {}, groups = {}, i, j;
     for (i = 0; i < parts.length; i++) {
       var g = GROUP.exec(String(parts[i].name || "").replace(/\x28[^\x29]*\x29/g, " ").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, ""));
       if (!g || !parts[i].items.length || parts[i].fill) return null;
+      // (its third review) "Primary (light)" and "Primary (paint)": two groups the ring could not tell apart -- as written
+      if (groups[g[1].toLowerCase()]) return null;
+      groups[g[1].toLowerCase()] = 1;
       for (j = 0; j < parts[i].items.length; j++) {
         var it = parts[i].items[j], h = C.hue(it), key = String(it).toLowerCase().replace(/[^a-z]+/g, " ").replace(/^\s+|\s+$/g, "");
-        if (h == null || seen[key]) return null;
+        // (its third review) a colour Lantern can place but not paint: as written. "Green-Yellow" is not yellow-green
+        // everywhere (a wiring wheel's earth is striped), but among the tertiaries of a colour wheel it is: painted so here.
+        var two = String(it).replace(/[.!]+$/, "").split(/[\s\-‐-–]+/), paint = null;
+        if (!C.forItem(it) && two.length === 2 && C.forItem(two[1] + "-" + two[0])) paint = C.forPart({ name: two[1] + "-" + two[0] }, 0);
+        if (h == null || seen[key] || !C.forItem(it) && !paint) return null;
         seen[key] = 1;
-        out.push({ name: it.replace(/[.!]+$/, ""), items: [g[1].toLowerCase()], fill: null, hue: h, at: out.length });
+        out.push({ name: it.replace(/[.!]+$/, ""), items: [g[1].toLowerCase()], fill: paint, hue: h, at: out.length });
       }
     }
     if (out.length < 3 || out.length > 8) return null;
     out.sort(function (a, b) { return a.hue - b.hue || a.at - b.at; });
-    return { parts: out.map(function (p) { return { name: p.name, items: p.items, fill: null, group: true }; }),
+    return { parts: out.map(function (p) { return { name: p.name, items: p.items, fill: p.fill || null, group: true }; }),
       said: "drew each colour as a part of its own, in their order round the colour wheel (" + out.map(function (p) { return p.name; }).join(", ") +
         "), each with its group (" + parts.map(function (p) { return String(p.name).toLowerCase(); }).join(", ") + ") in its ring" };
   }
@@ -33469,6 +33476,12 @@ Lantern.RFB = (function () {
   // Open in Draw)
   function wheel(block, ctx) {
     var w = parse(block, ctx && ctx.question), problems = w.problems.slice();
+    // (its third review) eight colours, each a wedge, can be too narrow for "Yellow-Orange": then the groups, as written,
+    // rather than Lantern's own layout sent back as the model's fault
+    if (w.parts.length && w.parts[0].group) {
+      var trial = W.draw({ parts: w.parts.map(function (p) { return { name: p.name, fill: p.fill, items: p.items.map(pretty) }; }), hub: w.hub }, block.title);
+      if (trial.tooLong.length) { w = parse(block, null); problems = w.problems.slice(); }
+    }
     if (w.parts.length < 2 || w.parts.length > 12) return { problems: problems, plan: null };
     var seen = {};
     w.parts.forEach(function (p) {
@@ -34879,12 +34892,12 @@ Lantern.RFB = (function () {
     return t + (h.length ? " | " + h.join(", ") : "");
   };
   // place(text) -> index in the row (throws with a reason)
-  var REL = /^(?:immediately|directly|just|to|left|right|behind|ahead|before|after|in front|front of|\d+|one|two|three|four|five|holder|holding|with|containing|that|which|having|at|in|on)\b/i;
+  var REL = /^(?:immediately|directly|just|to|left|right|behind|ahead|before|after|in front|front of|\d+|one|two|three|four|five|holder|holding|with|containing|that|which|having|at|in|on|next|beside|first|second|third|fourth|fifth)\b/i;
   // (1.24.20) fromEnd(text) -> {k, end} or null: a place counted from one end -- "second to last", "next to last",
   // "last but one", "penultimate", "third from the end", "2nd from the left". Only with an ordinal: "one to the right"
   // is the neighbour (place reads it with the thing it is next to), never the first from the right (its review).
   var ORDW = "first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth";
-  var END2 = /^(?:next[\s-]+to[\s-]+(?:the\s+)?last|last\s+but\s+one|penultimate|one\s+before\s+(?:the\s+)?last)$/;
+  var END2 = /^(?:next[\s-]+to[\s-]+(?:the\s+)?last|last\s+but\s+one|penultimate|one\s+before\s+(?:the\s+)?last|second[\s-]+last)$/;
   var TOEND = new RegExp("^(" + ORDW + "|\\d+(?:st|nd|rd|th))[\\s-]+to[\\s-]+(?:the\\s+)?(?:last|end)$");
   var FROMEND = new RegExp("^(" + ORDW + "|\\d+(?:st|nd|rd|th)?)[\\s-]+from[\\s-]+(?:the\\s+)?(last|end|back|right|right end|first|front|start|left|left end)$");
   function fromEnd(low) {
@@ -34898,9 +34911,9 @@ Lantern.RFB = (function () {
     return null;
   }
   function bareOf(low) {
-    return low.replace(/([a-z])-(?=[a-z])/g, "$1 ")
-      .replace(new RegExp("^(first|last|middle|" + ORDW + ")\\s+(?:cup|cups|one|person|child|kid|boy|girl|man|woman|car|seat|chair|place|spot|book|box|card|glass|jar|door|house|horse|runner|player)$"), "$1")
-      .replace(/^(penultimate|last\s+but\s+one|next\s+to\s+last|second\s+to\s+last)\s+[a-z]+$/, "$1")
+    return low.replace(/([a-z])-(?=[a-z])/g, "$1 ").replace(/\s+(?:in|of)\s+(?:the\s+)?(?:line|queue|row)$/, "")   // "the last person in line"
+      .replace(new RegExp("^(first|last|middle|leftmost|rightmost|" + ORDW + "|\\d+(?:st|nd|rd|th))\\s+(?:cup|cups|one|person|child|kid|boy|girl|man|woman|car|seat|chair|place|spot|position|book|box|card|glass|jar|door|house|horse|runner|player)$"), "$1")
+      .replace(/^(penultimate|last\s+but\s+one|next\s+to\s+last|second\s+to\s+last|second\s+last)\s+[a-z]+$/, "$1")
       .replace(new RegExp("^(" + ORDW + "|\\d+(?:st|nd|rd|th))\\s+[a-z]+\\s+(from|to)\\s+"), "$1 $2 ")
       .replace(new RegExp("^[a-z]+\\s+((?:" + ORDW + "|\\d+(?:st|nd|rd|th))\\s+(?:from|to)\\s+)"), "$1")
       .replace(/^(front|back|end|start|head|tail)\s+of\s+(?:the\s+)?(?:queue|line|row|train|shelf)$/, "$1");
@@ -34916,18 +34929,19 @@ Lantern.RFB = (function () {
     if (fixed != null) return fixed;
     // "cup directly left of ..." / "cup holding gold": the leading noun is not a name
     // (1.24.20, its second review: "the cup to the right of Green" was read as Green, the one row name in it)
-    if ((m = /^(\S+)\s+(.+)$/.exec(s)) && !count(m[1]) && !this.thing(m[1]) && this.row.indexOf(s) < 0 && REL.test(m[2])) {
+    if ((m = /^(\S+)\s+(.+)$/.exec(s)) && (!count(m[1]) || /^one$/i.test(m[1]) && /^(?:at|in|next|beside)\b/i.test(m[2])) && !this.thing(m[1]) && this.row.indexOf(s) < 0 && REL.test(m[2])) {
       s = m[2]; low = s.toLowerCase();
       if ((fixed = this.fixed(s)) != null) return fixed;
       // "the person at the front", "the woman in the middle", "the cup at the far left"
       var at0 = /^(?:at|in|on)\s+(.+)$/i.exec(s);
-      if (at0 && (fixed = this.fixed(at0[1])) != null) return fixed;
+      if (at0 && !(/^in\s+front$/i.test(s) && /\bin\s+front\b/i.test(String(text))) && (fixed = this.fixed(at0[1])) != null) return fixed;
     }
     // "two places to its left": counted from the other thing in the line
     // (1.24.20) "the one to the left", said with another thing (swap C and the one to the left): its neighbour -- one
     // only, or counted in places ("the two to the left" could be two things: it goes back)
     // ("the one on the right" is the right-hand one in a row of cups: not read here -- its second review)
-    if ((m = /^(?:(one)\s+|(\d+|two|three|four|five)\s+(?:places?|spots?)\s+)?(?:to\s+)?(left|right)$/i.exec(s)) && (m[1] || m[2] || /^to\s/i.test(s) || this.it != null && /^(left|right)$/i.test(s))) {
+    if ((m = /^(?:(\d+|one|two|three|four|five)\s+(?:places?|spots?|seats?)\s+|(one)\s+)?(?:to\s+)?(left|right)$/i.exec(s)) && (m[1] || m[2] || /^to\s/i.test(s) || this.it != null && /^(left|right)$/i.test(s))) {
+      var mm = m; m = [mm[0], mm[2], mm[1], mm[3]];   // [, "one" alone, a count of places, left|right]
       if (this.it == null) throw new Error("\u201c" + s + "\u201d: say from which thing, like 2 left of Green");
       k = m[2] ? count(m[2]) : 1;
       var from0 = this.it, dest0 = from0 + dirOf(m[3]) * k;
@@ -34943,14 +34957,23 @@ Lantern.RFB = (function () {
     }
     // "left of X", "2 right of X"; in a queue (front to back) "behind X",
     // "in front of X", "ahead of X" (a 35B's queue puzzle, 1.13.1)
-    if ((m = /^(?:(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:places?\s+|spots?\s+)?)?(?:immediately\s+|directly\s+|just\s+)?(?:to\s+|on\s+)?(left\s+of|right\s+of|behind|in\s+front\s+of|front\s+of|ahead\s+of|before|after)\s+(.+)$/i.exec(s))) {
+    // (its third review) "the second cup to the left of Yellow": two to the left
+    if ((m = /^(?:(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:places?\s+|spots?\s+|seats?\s+)?|(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th)\s+(?:(?:cup|one|person|seat|place|spot|car|chair|box|child|kid)s?\s+)?)?(?:immediately\s+|directly\s+|just\s+)?(?:to\s+|on\s+)?(left\s+of|right\s+of|behind|in\s+front\s+of|front\s+of|ahead\s+of|before|after)\s+(.+)$/i.exec(s))) {
+      m = [m[0], m[1] || (m[2] ? String(ORD[m[2].toLowerCase()] || parseInt(m[2], 10)) : null), m[3], m[4]];
       k = m[1] ? count(m[1]) : 1;
       var at = this.place(m[3]), to = at + dirOf(m[2]) * k;
       if (to < 0 || to >= n) throw new Error(s + " is off the row (" + this.row[at] + " is at position " + (at + 1) + " of " + n + ")");
       return to;
     }
+    if ((m = /^(?:immediately\s+|directly\s+|right\s+|just\s+)?(?:next\s+to|beside|alongside)\s+(.+)$/i.exec(s))) {
+      var nx = this.place(m[1]);
+      if (n > 1 && nx === 0) return 1;
+      if (n > 1 && nx === n - 1) return n - 2;
+      throw new Error("“" + s + "”: which side -- write left of " + this.row[nx] + " or right of " + this.row[nx]);
+    }
     if ((m = /^(?:holder of|holding|with|containing|that holds|which holds|that has|which has|having)\s+(.+)$/i.exec(s)) && !this.thing(s)) {
       var tk = this.token(m[1]);
+      if (!tk && /^(it|this|that)$/i.test(clean(m[1])) && this.cur) tk = this.cur;
       // "holder of middle", "holder of Blue": a place or a thing in the row
       // is meant as itself (a slip seen from a 35B, 1.12.3)
       if (!tk) { var asPlace = this.fixed(clean(m[1])); if (asPlace == null && this.thing(clean(m[1]))) asPlace = this.row.indexOf(this.thing(clean(m[1]))); if (asPlace != null) return asPlace; }
@@ -34958,7 +34981,14 @@ Lantern.RFB = (function () {
       if (!this.held[tk]) throw new Error(tk + " is not held by anything now");
       return this.row.indexOf(this.held[tk]);
     }
+    // (1.24.20, its third review) "the cup next to Red", "the second cup to the left of Yellow": a place said from a name
+    // Lantern cannot read goes back -- it is not that name
     var t = this.thing(s);
+    if (t && this.row.indexOf(s) < 0) {
+      var others = (" " + s.toLowerCase() + " ").split(" " + t.toLowerCase() + " ").join(" ");   // the words beside the name
+      if (/\b(next|beside|near|nearest|nearby|left|right|front|behind|ahead|before|after|between|opposite|of|to|beyond|past|across)\b/i.test(others))
+        throw new Error("\u201c" + s + "\u201d: say it as a place Lantern reads (left of " + t + ", 2 right of " + t + ", first, last, position 3)");
+    }
     if (t) return this.row.indexOf(t);
     throw new Error(s + " is not in the row (" + this.row.join(", ") + ")");
   };
@@ -34968,6 +34998,7 @@ Lantern.RFB = (function () {
     // "position 2", "at position 2" -- "person at position 2" (bench run 15, the 4B)
     if ((m = /^(?:at\s+|in\s+)?(?:the\s+)?(?:position|pos|place|spot|seat|#)\s*(\d+)$/i.exec(s))) { k = +m[1]; if (k < 1 || k > n) throw new Error("there is no position " + k + " (the row has " + n + ")"); return k - 1; }
     if (ORD[low] && ORD[low] <= n && low !== "first") return ORD[low] - 1;
+    if ((m = /^(\d+)(?:st|nd|rd|th)$/.exec(low))) { k = +m[1]; if (k < 1 || k > n) throw new Error("there is no " + low + " in a row of " + n); return k - 1; }
     if (/^(first|leftmost|left end|far left|front|start|beginning|head)$/.test(low)) return 0;
     if (/^(last|rightmost|right end|far right|back|end|tail)$/.test(low)) return n - 1;
     if (/^(middle|center|centre)$/.test(low)) { if (n % 2 === 0) throw new Error("a row of " + n + " has no single middle"); return (n - 1) / 2; }
@@ -35002,8 +35033,8 @@ Lantern.RFB = (function () {
     if (!this.thing(s)) low = bareOf(low);   // "the front of the queue", "the penultimate seat" (1.24.20)
     if (/^(first|front|start|beginning|head|left end|far left|leftmost)$/.test(low)) return 0;
     if (/^(last|end|back|tail|right end|far right|rightmost)$/.test(low)) return n;
-    if ((m = /^(?:position|pos|place|spot|#)\s*(\d+)$/i.exec(s))) {
-      var k = +m[1];
+    if ((m = /^(?:position|pos|place|spot|#)\s*(\d+)$/i.exec(s)) || (m = new RegExp("^(" + ORDW + "|\\d+(?:st|nd|rd|th))\\s+(?:place|position|spot|seat)$", "i").exec(s))) {
+      var k = ORD[m[1].toLowerCase()] || parseInt(m[1], 10);
       if (k < 1 || k > n + 1) throw new Error("there is no position " + k);
       return k - 1;
     }
@@ -35040,8 +35071,9 @@ Lantern.RFB = (function () {
     if ((m = /^(?:swap|exchange|switch|trade)\s+(?:places\s+)?(.+?)(?:\s+(?:swap|change|trade) places)?$/i.exec(s))) {
       var both = m[1];
       try {
-        p = this.pair(both, function (x) { if (!self.exact(x) || self.thing(clean(x))) throw new Error("not held"); });
-        var ta = this.exact(p[0]), tb = this.exact(p[1]);
+        var tokOf = function (x) { var h = self.heldAt(x); return h ? h.t : self.exact(x) && !self.thing(clean(x)) ? self.exact(x) : null; };
+        p = this.pair(both, function (x) { if (!tokOf(x)) throw new Error("not held"); });
+        var ta = tokOf(p[0]), tb = tokOf(p[1]);
         if (ta === tb) throw new Error("the same");
         t = this.held[ta]; this.held[ta] = this.held[tb]; this.held[tb] = t;
         return true;
@@ -35092,8 +35124,21 @@ Lantern.RFB = (function () {
       if (!nw) throw new Error("add what?");
       if (this.thing(nw)) throw new Error(nw + " is already in the row");
       // (its second review: "add Eve second from the front" put Eve at the end) -- words after the name are where
-      var where = m[2] || (nws.length > 1 ? m[1].slice(m[1].indexOf(nw) + nw.length) : "");
-      this.insert(nw, where ? this.spot(where, false) : this.row.length);
+      var where = m[2] || (nws.length > 1 && !/\s(and|,)\s/i.test(" " + m[1] + " ") ? m[1].slice(m[1].indexOf(nw) + nw.length) : "");
+      var many = m[2] && nws.length > 1 ? nws : [nw], at1 = where ? this.spot(where, false) : this.row.length;   // "add Eve and Fay at the end": both
+      for (var q2 = 0; q2 < many.length; q2++) {
+        if (q2 && this.thing(many[q2])) throw new Error(many[q2] + " is already in the row");
+        this.insert(many[q2], typeof at1 === "number" ? at1 + q2 : at1);
+        if (typeof at1 === "object") at1 = { rel: "after", name: many[q2] };
+      }
+      return true;
+    }
+    // "move Blue two places to the right": the rest close up (its third review)
+    if ((m = /^(?:move)\s+(.+?)\s+(\d+|one|two|three|four|five|six)\s+(?:places?|spots?|seats?)\s+(?:to\s+)?(?:the\s+)?(left|right)$/i.exec(s))) {
+      var w0 = this.place(m[1]), w1 = w0 + dirOf(m[3]) * count(m[2]);
+      if (w1 < 0 || w1 >= this.row.length) throw new Error(this.row[w0] + " " + m[2] + " places to the " + m[3] + " is off the row");
+      var mover = this.row.splice(w0, 1)[0];
+      this.row.splice(w1, 0, mover);
       return true;
     }
     if ((m = /^(?:move)\s+(.+?)\s+(?:to|in|at|into)\s+(.+)$/i.exec(s)) || (m = /^(?:move)\s+(.+?)\s+((?:just\s+)?(?:before|after|behind|in front of)\s+.+)$/i.exec(s))) {
@@ -35116,11 +35161,13 @@ Lantern.RFB = (function () {
     var full = clean(left).replace(/\s+(?:back|along|over|across|away|on|up|down|around|round)$/i, "");   // "give the flag back to Ann"
     var nm = full.replace(/\s+(coin|ball|key|token|marble|pea|ring)s?$/i, ""), t = this.exact(nm), m, self = this;
     if (t) return { t: t };
-    if (/^(it|them|this|that|one)$/i.test(nm)) {   // "give it to Bo": the one thing held, or say which
+    if (/^(it|them|this|that)$/i.test(nm) && !this.thing(nm)) {   // "give it to Bo": the one thing held, or say which (a cup called That is a cup)
       var live = this.tokens.filter(function (k) { return self.held[k]; });
       if (live.length === 1) return { t: live[0] };
       throw new Error("\u201c" + nm + "\u201d: say which (held: " + (this.tokens.join(", ") || "nothing yet") + ")");
     }
+    var hat = this.heldAt(nm);   // "the coin in Red" (its third review)
+    if (hat) return hat;
     var cut = [];
     OUTOF.lastIndex = 0;
     while ((m = OUTOF.exec(nm))) cut.push([nm.slice(0, m.index), nm.slice(m.index + m[0].length)]);
@@ -35131,10 +35178,15 @@ Lantern.RFB = (function () {
       if (at < 0 || this.thing(a)) continue;
       // "the coin from Green" when Green holds one thing put as a coin: that thing (its review: a gold coin, put as "gold";
       // its second review: not "the ring" for a key)
-      var there = this.tokens.filter(function (k) { return self.held[k] === self.row[at]; });
-      var put0 = String((this.named || {})[there[0]] || there[0]).toLowerCase(), a0 = a.toLowerCase().replace(/s$/, "");
-      if (there.length === 1 && (new RegExp("(^|\\s)" + a0 + "s?$").test(put0) || a0 === "coin" && /^(gold|silver|copper|bronze|brass|penny|dime|nickel|quarter)$/.test(put0))) return { t: there[0], from: b };
-      if (/^(a|an|some|another)\s/i.test(String(left).replace(/^\s+/, ""))) break;   // "give a ball from Ann to Bo": a ball, new (its second review)
+      var there = this.tokens.filter(function (k) { return self.held[k] === self.row[at]; }), a0 = a.toLowerCase().replace(/s$/, "");
+      var like = there.filter(function (k) { var put0 = String((self.named || {})[k] || k).toLowerCase();
+        return new RegExp("(^|\\s)" + a0.replace(/[^a-z0-9 ]/g, "") + "s?$").test(put0) || a0 === "coin" && /^(gold|silver|copper|bronze|brass|penny|dime|nickel|quarter)$/.test(put0); });
+      if (like.length === 1) return { t: like[0], from: b };
+      // (its third review: "a ball from Ann" when Ann has a red ball and a blue one -- which?)
+      if (like.length > 1) throw new Error("“" + a + "”: say which (" + this.row[at] + " has " + like.join(", ") + ")");
+      // "give a ball from Ann to Bo", Ann holding none: a ball, new ("some sweets": sweets)
+      var art = /^(a|an|some|another)\s+(.+)$/i.exec(String(left).replace(/^\s+/, "").replace(/\s+(?:from|out\s+of|off|away\s+from|of)\s+.*$/i, ""));
+      if (art && !like.length) { var nm1 = clean(art[2]); return { name: nm1, full: nm1 }; }
       throw new Error("nothing called " + a + " is held (held: " + (this.tokens.join(", ") || "nothing yet") + "): put " + a + " in <who> first");
     }
     if (verb === "move") return null;
@@ -35148,12 +35200,21 @@ Lantern.RFB = (function () {
     if (/\s(?:to|in|into|on|onto|at|with|under|inside|beneath|below)\s/i.test(" " + nw + " ")) throw new Error("\u201c" + nw + "\u201d is not a thing: write put <thing> in <place>");
     return { name: nw, full: full.replace(/\s+(?:from|out\s+of|away\s+from)\s+.*$/i, "") || full };
   };
+  // heldAt(text) -> {t, from} for "the coin in Red", "the ring under Green": a held thing and its holder, or null
+  Track.prototype.heldAt = function (text) {
+    var m = /^(.+?)\s+(?:in|under|inside|at|with|beneath)\s+(.+)$/i.exec(clean(text)), t, at;
+    if (!m || !(t = this.exact(m[1])) || this.thing(m[1])) return null;
+    try { at = this.place(m[2]); } catch (e) { return null; }
+    return this.held[t] === this.row[at] ? { t: t, from: m[2] } : null;
+  };
   Track.prototype.giving = function (verb, rest) {
     var splits = [], m, err = null, i;
     // "pass the ball two places to the right": the count goes with the place (its second review)
-    rest = String(rest).replace(/^(.+?)\s+((?:one|two|three|four|five|six|\d+)\s+(?:places?|spots?|seats?))\s+(?:to|towards)\s+(?:the\s+)?(left|right)\b/i, "$1 to $2 to $3");
+    // (its third review: "put the coin in the cup two places to the right of Ann" -- the place is already said, after "in")
+    var rw = /^(.+?)\s+((?:one|two|three|four|five|six|\d+)\s+(?:places?|spots?|seats?))\s+(?:to|towards)\s+(?:the\s+)?(left|right)\b/i.exec(String(rest));
+    if (rw && !/\s(?:in|into|under|on|onto|to|with|inside|beneath|below|at)\s/i.test(" " + rw[1] + " ")) rest = rw[1] + " to " + rw[2] + " to " + rw[3] + String(rest).slice(rw[0].length);
     INTO.lastIndex = 0;
-    while ((m = INTO.exec(rest))) splits.push([rest.slice(0, m.index), rest.slice(m.index + m[0].length)]);
+    while ((m = INTO.exec(rest))) { splits.push([rest.slice(0, m.index), rest.slice(m.index + m[0].length)]); INTO.lastIndex = m.index + 1; }
     if (!splits.length) return null;
     for (i = 0; i < splits.length; i++) {
       try {
@@ -35163,7 +35224,8 @@ Lantern.RFB = (function () {
         if (it.t && it.from == null && fm) { try { this.place(dest); } catch (e0) { dest = fm[1]; it.from = fm[2]; } }   // "give flag to Bo from Ann"
         // "the one to the left": of the one who has it now (its review)
         this.it = it.t ? (it.from != null ? this.place(it.from) : this.held[it.t] ? this.row.indexOf(this.held[it.t]) : null) : null;
-        try { holder = this.row[this.place(dest)]; } finally { this.it = null; }
+        this.cur = it.t || null;   // "the cup to the left of the cup holding it" (its third review)
+        try { holder = this.row[this.place(dest)]; } finally { this.it = null; this.cur = null; }
         if (it.t && it.from != null) {
           var src = this.row[this.place(it.from)];
           if (this.held[it.t] !== src) throw new Error(it.t + " is " + (this.held[it.t] ? "with " + this.held[it.t] + ", not " + src : "not held by anything now"));
@@ -44372,30 +44434,70 @@ Lantern.RFB = (function () {
     "(my|his|her|our|their|your) (arm|leg|hand|foot|feet|head|eyes?|nose|ears?|chest|stomach|belly|back|neck|tooth|teeth|skin|fingers?|toes?|knee|ankle|wrist|throat|mouth|face|body|lips?|tongue))\\b", "i");
   // (1.24.20) "A snake bit my uncle": an animal that bit a person (not the furniture, a cable, a goat, the apple, a
   // horse's bit) is a bite, for the need and for the lesson's search. Its review: the first draft took "the horse bit
-  // the apple", "rats bit through the cable" and "my dog bites the furniture" for bites to a person.
-  var ANIMAL = "dogs?|puppy|puppies|stray|strays|pit ?bull|snakes?|vipers?|cobras?|adders?|spiders?|scorpions?|bats?|cats?|kittens?|rats?|mice|mouse|monkeys?|insects?|bees?|wasps?|ants?|centipedes?|horses?|donkeys?|pigs?|foxe?s?|jackals?|lizards?|crocodiles?|sharks?|jellyfish|ticks?|mosquito(?:e?s)?|animals?|hyenas?|baboons?";
-  // (its second review: "the pig bit her piglets", "my dog bit her lead" -- "her" is a person only with nothing of hers
-  // after it; "the baby's blanket" is not the baby)
-  var WHOSE = "(?:my|his|her|our|their|your|a|the|this|that)\\s+(?:(?:little|young|old|baby|elderly)\\s+)?";
-  var PART = "arms?|legs?|hands?|foot|feet|head|eyes?|nose|ears?|chest|stomach|belly|back|neck|tooth|teeth|skin|fingers?|toes?|knees?|ankles?|wrists?|throat|mouth|face|body|lips?|tongue|thumbs?|calf|calves|thighs?|heels?|shoulders?|elbows?";
-  var PERSON = "(?:me|him|them|us|you|someone|somebody|her(?=\\s*(?:[,.!?;]|$|\\s+(?:on|in|at|while|when|and|as|yesterday|today|last|this|again|twice|badly|hard)\\b))|" +
-    WHOSE + "\\d+[\\s-]*(?:year|month|week)s?[\\s-]*old\\b(?!\\s+(?:dog|cat|horse|cow|goat|pig|sheep|chicken|hen|puppy|kitten|calf|foal)\\b)|" +
-    WHOSE + "(?:\\d+[\\s-]*(?:year|month|week)s?[\\s-]*old\\s+)?(?:" +
-    "man|woman|men|women|boy|girl|child|children|kid|kids|baby|babies|infant|toddler|son|daughter|wife|husband|mother|father|mum|mom|mam|dad|brother|sister|" +
-    "friend|neighbou?r|grand\\w+|uncle|aunt|cousin|teacher|worker|nephew|niece|patient|person|student|guest|partner|boyfriend|girlfriend|postman|mailman|farmer|visitor|stranger|" +
-    PART + ")\\b(?![\\u2019\x27]s\\b)|" +
-    // "my son's arm": a person's own body (not "my son's shoe" -- its second review)
-    WHOSE + "[a-z]+[\\u2019\x27]s\\s+(?:" + PART + ")\\b)";
-  var BIT = new RegExp("\\b(" + ANIMAL + ")\\s+(?:(?:has|had|just|also|then)\\s+){0,2}bit(?=\\s+(?:on\\s+)?" + PERSON + ")", "gi");
-  var BITBY = new RegExp("\\b(got|was|were|been|get|gets|getting)\\s+bit(?=\\s+by\\s+(?:a|an|the|my|our|some|this|that|his|her)?\\s*(?:[a-z]+(?:[\\u2019\x27]s)?\\s+){0,2}(?:" + ANIMAL + ")\\b)", "gi");
+  // the apple", "rats bit through the cable" and "my dog bites the furniture" for bites to a person. Its third review:
+  // "bit meat", "bit USB cables", "bit the leg of the table", "bit her baby doll", "bit my 2 year old rabbit", "bit the
+  // frog's leg", "my car's wires got bit". So who was bitten is read whole: a person (me, my son, a farmer, my 5 year
+  // old), a person's own body (my leg, my son's arm, the back of my hand), with nothing of theirs after it -- the end of
+  // the sentence or a word like on, and, while, yesterday. Anything else is not read as a bite.
+  var ANIMAL = "dogs?|puppy|puppies|stray|strays|pit ?bull|snakes?|vipers?|cobras?|adders?|rattlesnakes?|spiders?|scorpions?|bats?|cats?|kittens?|rats?|mice|mouse|" +
+    "monkeys?|insects?|bees?|wasps?|hornets?|ants?|centipedes?|horses?|donkeys?|pigs?|hogs?|foxe?s?|jackals?|wol(?:f|ves)|coyotes?|bears?|lions?|tigers?|leopards?|hyenas?|" +
+    "baboons?|lizards?|crocodiles?|alligators?|sharks?|eels?|jellyfish|ticks?|fleas?|bed ?bugs?|mites?|midges?|leech(?:es)?|mosquito(?:e?s)?|raccoons?|squirrels?|" +
+    "hamsters?|gerbils?|guinea pigs?|rabbits?|ferrets?|parrots?|birds?|geese|goose|camels?|animals?|something";
+  var POSS = "(?:my|his|her|our|their|your)";
+  var ADJ = "(?:(?:little|young|old|older|younger|eldest|youngest|baby|elderly|small|poor|newborn|teenage|sick|pregnant)\\s+)?";
+  var WHOSE = "(?:(?:my|his|her|our|their|your|a|an|the|this|that)\\s+|one\\s+of\\s+(?:my|our|his|her|their|the)\\s+)" + ADJ;
+  var AGE = "(?:\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)[\\s-]*(?:year|month|week|day)s?[\\s-]*old";
+  var PNOUN = "man|woman|men|women|boys?|girls?|child|children|kids?|baby|babies|infants?|toddlers?|sons?|daughters?|wife|husband|mother|father|mum|mom|mam|dad|" +
+    "brothers?|sisters?|friends?|neighbou?rs?|grand\\w+|uncle|aunt|cousins?|teachers?|workers?|nephew|niece|patients?|person|people|students?|guests?|partner|" +
+    "boyfriend|girlfriend|postman|mailman|farmers?|visitors?|strangers?|hikers?|campers?";
+  var PART = "arms?|legs?|hands?|foot|feet|head|eyes?|nose|ears?|chest|stomach|belly|back|neck|tooth|teeth|skin|fingers?|toes?|knees?|ankles?|wrists?|throat|mouth|" +
+    "face|body|lips?|tongue|thumbs?|calf|calves|thighs?|heels?|shoulders?|elbows?|cheeks?|chin|forearms?|shins?|bottom|bum|buttocks?";
+  var OWN = "(?![\\u2019\x27]s)";
+  // after the one bitten: the end, a stop, or a word that is not a thing of theirs ("her baby doll", "them to pieces")
+  var AFTER = "(?=\\s*(?:[,.!?;:)]|$)|\\s+(?:on|in|at|while|when|and|as|but|so|then|yesterday|today|tonight|last|this|earlier|again|twice|badly|hard|just|right|" +
+    "near|outside|inside|during|after|before|who|whose|which|what|how|should|is|are|was|were|has|have|had|did|does|will|would|can|could|may|might|must|now|" +
+    "please|help|through|with|from|or|both|all|off|too|also|once|until|till|by)\\b)";
+  var WHOM = [
+    new RegExp("^(?:me|him|her|us|them|you|someone|somebody|everyone)\\b" + OWN + AFTER, "i"),
+    new RegExp("^(?:the\\s+(?:back|side|top|tip|palm|heel|ball|sole|base|bottom|front)\\s+of\\s+)?" + POSS + "\\s+(?:(?:left|right|little|big|upper|lower|index|middle|ring)\\s+)?(?:" +
+      PART + ")\\b" + OWN + AFTER, "i"),
+    new RegExp("^" + WHOSE + "(?:" + AGE + "\\s+)?(?:" + PNOUN + ")\\b" + OWN + AFTER, "i"),
+    new RegExp("^" + WHOSE + AGE + "\\b" + OWN + AFTER, "i"),
+    // "my son's arm", "my wife's hand", "someone's leg": a person's own body (not "my son's shoe", "the frog's leg")
+    new RegExp("^(?:" + WHOSE + ")?(?:" + PNOUN + "|someone|somebody)[\\u2019\x27]s\\s+(?:(?:left|right|little|big|upper|lower)\\s+)?(?:" + PART + "|" + PNOUN + ")\\b" + OWN + AFTER, "i")
+  ];
+  function whom(rest) { for (var i = 0; i < WHOM.length; i++) if (WHOM[i].test(rest)) return true; return false; }
+  // "a dog bit my son", "the snake that bit my uncle", "a dog suddenly bit ...", "the dogs bit at my son's legs"
+  var BIT = new RegExp("\\b(?:" + ANIMAL + ")\\s+(?:(?:that|which|who)\\s+)?(?:(?:has|had|have|just|also|then|suddenly|once|again|nearly|almost|accidentally|really|" +
+    "actually|apparently|badly|finally|already|repeatedly)\\s+){0,2}(bit)\\b(?:\\s+at)?(?:\\s+on)?\\s+", "gi");
   // "dog bites on his arm": bites a person has
-  var BITES = new RegExp("\\b(?:" + ANIMAL + ")\\s+bites?\\s+(?:on|in|to)\\s+" + PERSON, "i");
-  function bitten(q) { return String(q || "").replace(BIT, function (m0, a) { return a + " bite"; }).replace(BITBY, function (m0, g) { return g + " bitten"; }); }
+  var BITES = new RegExp("\\b(?:" + ANIMAL + ")\\s+bites?\\s+(?:on|in|to)\\s+", "gi");
+  // "my son got bit by a dog", "I was bit on the hand by a spider" -- said of a person (not "my car's wires got bit")
+  var BYPASS = new RegExp("\\b(got|get|gets|getting|was|were|been|being|is|are)\\s+(bit|bitten)\\b(?=(?:\\s+(?:on|in)\\s+(?:the|my|his|her|their|our|your)\\s+" +
+    "(?:(?:left|right)\\s+)?(?:" + PART + "))?\\s+by\\s+(?:(?:a|an|the|my|our|some|this|that|his|her|their|your|two|three|several|one\\s+of\\s+(?:the|my|our|his|her|their))\\s+)?" +
+    "(?:[a-z]+(?:[\\u2019\x27]s)?\\s+){0,2}(?:" + ANIMAL + ")\\b)", "gi");
+  var SUBJ = new RegExp("(?:^|[^a-z\\u2019\x27])(?:i|he|she|we|they|you|i[\\u2019\x27](?:ve|m|d)|(?:we|they|you)[\\u2019\x27](?:ve|re)|(?:he|she)[\\u2019\x27]s|" +
+    "someone|somebody|anyone|anybody|" + PNOUN + "|" + POSS + "\\s+(?:" + PART + ")|(?:" + PNOUN + ")[\\u2019\x27]s\\s+(?:" + PART + "))\\s+" +
+    "(?:(?:has|have|had|just|also|nearly|almost|once|accidentally|recently|ever|never|been|was|were|is|are|got|get|gets|getting|being)\\s+){0,3}$", "i");
+  // bites(q) -> { text: q with each bite to a person said "bite" (for the lesson's search), n: how many }
+  function bites(q) {
+    q = String(q || ""); var spots = [], m, k;
+    BIT.lastIndex = 0;
+    while ((m = BIT.exec(q))) if (whom(q.slice(m.index + m[0].length))) { k = m.index + m[0].search(/\bbit\b/i); spots.push([k, 3]); }
+    BITES.lastIndex = 0;
+    while ((m = BITES.exec(q))) if (whom(q.slice(m.index + m[0].length))) spots.push([m.index, 0]);
+    BYPASS.lastIndex = 0;
+    while ((m = BYPASS.exec(q))) if (SUBJ.test(q.slice(0, m.index))) { k = m.index + m[0].length - m[2].length; spots.push([k, m[2].length]); }
+    spots.sort(function (a, b) { return b[0] - a[0]; });
+    var t = q;
+    spots.forEach(function (sp) { if (sp[1]) t = t.slice(0, sp[0]) + "bite" + t.slice(sp[0] + sp[1]); });
+    return { text: t, n: spots.length };
+  }
+  function bitten(q) { return bites(q).text; }
   function need(q) {
-    q = String(q || ""); BIT.lastIndex = 0;
+    q = String(q || "");
     if (NEED.test(q) && WHO.test(q)) return true;
-    var b = bitten(q); BIT.lastIndex = 0;
-    return b !== q && NEED.test(b) && WHO.test(b) || new RegExp(BIT.source, "i").test(q) || BITES.test(q);
+    return bites(q).n > 0;
   }
   window.Lantern.healthNeed = need;
   // The Health lessons for a question: the one that names it (a rare word of
@@ -49625,6 +49727,13 @@ Lantern.RFB = (function () {
 (function () {
   var L = window.Lantern;
   if (!L) return;
+  // (1.24.20, tried and withdrawn) A check of a count of the word before a line changed it -- =REVERSE("photosynthesis"),
+  // =REMOVE(ANS,"s"), =LEN(ANS1), and the sentence "noitohpyto, which has 10 letters" filled with 14 (Adam's set B on
+  // 1.24.18) -- was tried by three reviewers (tests/fixtures/review1_1260.json, review2_1260.json, review3_1260.json).
+  // Each found right replies it questioned, and, when the model kept its reply, made false: a count of the first word
+  // put beside the second ("{ANS1} ({ANS3} letters)"), a count without the spaces, a difference ("3 letters shorter").
+  // Whether a count is of the word before or after a change is what the question means, and a check of the words
+  // around the number is not surer than the model. Left as the model writes it.
   var CHK = window.Lantern.assistChecks = window.Lantern.assistChecks || [];
   // edits between two words; two letters swapped count as one slip
   // ("otageifer" for "otaegife" is a swap and an extra r: bench run 11)
@@ -49675,11 +49784,6 @@ Lantern.RFB = (function () {
         probs.push("the ANSWER puts " + x.ph + " (\u201c" + x.value + "\u201d, a word) before \u201c" + x.noun + "\u201d: " +
           (x.num >= 0 ? "the count is line " + (x.num + 1) + "\u2019s, so put {ANS" + (x.num + 1) + "} there" : "add a line that counts them (=LEN(ANS" + (x.word + 1) + ")) and put its {ANSn} there"));
       });
-      // 3. (1.24.20) a count of the word as it was before a line changed it
-      countsOld(steps, ans).slice(0, 1).forEach(function (x) {
-        probs.push("line " + (x.k + 1) + " counts line " + (x.j + 1) + "\u2019s word (\u201c" + steps[x.j].value + "\u201d), but line " + (x.i + 1) + " changed it to \u201c" +
-          steps[x.i].value + "\u201d: to count that, write =" + x.fn + "(ANS" + (x.i + 1) + ")");
-      });
       if (!/\x7B(result|ANS\d*)\x7D/i.test(ans)) {
         var qn = numbers(q), vals = steps.filter(function (st) { return st.ok && typeof st.value === "number"; }).map(function (st) { return st.value; });
         var own = numbers(ans).filter(function (x) { return !qn.some(function (y) { return Math.abs(x - y) < 1e-9; }); });
@@ -49688,62 +49792,6 @@ Lantern.RFB = (function () {
       }
     }
     return probs.length ? probs.slice(0, 3).join("; ") : null;
-  }
-  // countsOld(steps, answer) -> [{k, j, i, fn}] (1.24.20). Asked to spell "photosynthesis" backwards, remove every s,
-  // and say how many letters are left, the 35B wrote (Adam's set B on 1.24.18)
-  //     =REVERSE("photosynthesis")   =REMOVE(ANS,"s")   =LEN(ANS1)
-  //     ANSWER: The word spelled backwards with every 's' removed is "noitohpyto", which has 10 letters.
-  // Line 3 counts the word line 2 had already changed, and Lantern filled in 14 letters for an 11-letter word. A count
-  // of an earlier word is often what the question wants (its review: the length of "education" beside it without its
-  // vowels, the reversed word's length beside its first three letters -- 15 of 41 such right chains were questioned by
-  // the first draft, and turned wrong when the model kept them). So line k is questioned only when the ANSWER itself
-  // puts its count on line i's word: line i's word (as written, a slip of it, or {ANSi}), then "which has" / "has" /
-  // "(" and the count with "letters" or "characters" -- the count being {ANSk}, or a number typed. And line k is
-  // exactly =LEN(ANSj) (or another count of letters), a line i between them made line i's word from ANSj, and the two
-  // words' counts differ. A count the ANSWER puts on anything else stands.
-  var COUNTFN = /^(LEN|LENGTH|LETTERS|COUNTLETTERS)$/;
-  function countsOld(steps, ans) {
-    var out = [], a = String(ans || "");
-    function fn(i) { var m = /^\s*=?\s*([A-Z][A-Z0-9.]*)\s*\x28/i.exec(String(steps[i].expr || "")); return m ? m[1].toUpperCase() : ""; }
-    function uses(i, j) { var e = String(steps[i].expr || ""); return new RegExp("\\bANS" + (j + 1) + "\\b", "i").test(e) || (i === j + 1 && /\bANS\b(?!\d)/i.test(e)); }
-    // put(i, k): the ANSWER puts line k's count (or a typed number) on line i's word
-    function put(i, k) {
-      var v = String(steps[i].value), words = [], m, re = /\x7BANS(\d+)\x7D|\x7Bresult\x7D|[A-Za-z\u00c0-\u024f]{4,}/gi;
-      while ((m = re.exec(a))) {
-        var w = m[0], hit = false;
-        if (m[1]) hit = parseInt(m[1], 10) === i + 1;
-        else if (/^\x7Bresult\x7D$/i.test(w)) hit = i === steps.length - 1;
-        else hit = w.toLowerCase() === v.toLowerCase() || best(w, steps.map(function (s2, z) { return z === i || (s2.ok && typeof s2.value === "string") ? s2.value : null; })) === i;
-        if (!hit) continue;
-        var after = a.slice(m.index + w.length, m.index + w.length + 90);
-        // "<word>, which has N letters" or "<word> (N letters)" -- not "and N letters were in ...", "with N letters in the
-        // original", "(N letters before ...)": its second review found each of those a count of the other word
-        var c = /^[\s\x22\x27\u201c\u201d\u2018\u2019*]*(?:,\s*)?(?:(?:which|that|it|and)\s+)?(?:has|have|contains?|is|are|makes?)\s+(?:only\s+|just\s+|exactly\s+)?(\x7BANS(\d+)\x7D|\x7Bresult\x7D|\d+)\s+(?:letters?|characters?|chars?)\b(?!\s+[a-z]\b|\s+\S+[\x27\u2019]s\b)([^,;.\x29]*)/i.exec(after) ||
-          /^[\s\x22\x27\u201c\u201d\u2018\u2019*]*\x28\s*(\x7BANS(\d+)\x7D|\x7Bresult\x7D|\d+)\s+(?:letters?|characters?|chars?)\s*\x29()/i.exec(after) ||
-          // "<word>, N letters." at the end of the sentence
-          /^[\s\x22\x27\u201c\u201d\u2018\u2019*]*,\s*(\x7BANS(\d+)\x7D|\x7Bresult\x7D|\d+)\s+(?:letters?|characters?|chars?)\s*(?=[.;!]|$)()/i.exec(after);
-        if (!c || /\b(before|original\w*|at first|to (start|begin) with|out of|from|backwards|reversed)\b|\x7B/i.test(c[3])) continue;
-        var ph = /^\x7B/.test(c[1]);
-        if (ph && !(c[2] ? parseInt(c[2], 10) === k + 1 : k === steps.length - 1)) continue;
-        // a number typed that is the changed word's own count: the sentence is right as it stands
-        if (!ph && parseInt(c[1], 10) === v.length) continue;
-        return true;
-      }
-      return false;
-    }
-    steps.forEach(function (st, k) {
-      var m = /^\s*=?\s*([A-Z][A-Z0-9.]*)\s*\x28\s*ANS(\d+)\s*\x29\s*$/i.exec(String(st.expr || ""));
-      if (!st.ok || !m || !COUNTFN.test(m[1].toUpperCase())) return;
-      var j = parseInt(m[2], 10) - 1;
-      if (j < 0 || j >= k - 1 || !steps[j].ok || typeof steps[j].value !== "string") return;
-      for (var i = k - 1; i > j; i--) {
-        var si = steps[i];
-        if (!si.ok || typeof si.value !== "string" || !uses(i, j) || si.value.length === steps[j].value.length) continue;
-        if (put(i, k)) out.push({ k: k, j: j, i: i, fn: m[1].toUpperCase() });
-        return;
-      }
-    });
-    return out;
   }
   // best(word, values) -> the index of the one worked-out word it is a slip
   // of, or -1: a near spelling (close) first, the nearest if several; else
@@ -49849,12 +49897,10 @@ Lantern.RFB = (function () {
   // rechain(expr, steps, question) -> {expr, changes} or null: the lines with
   // each retyped word replaced by the ANSj it came from, for Lantern to run
   // again when the AI's one correction still typed its results out
-  // (1.24.20) answer, when given: a line that still counts a word another line had changed (countsOld), after the
-  // question went back once, counts the changed word instead -- the line the question asked for -- and why says so.
-  function rechain(expr, steps, q, answer) {
-    var rs = retyped(steps, q, true), co = answer != null ? countsOld(steps, answer) : [];
-    if (!rs.some(function (x) { return !x.exact; }) && !co.length) return null;
-    var lines = String(expr || "").split("\n"), idx = [], changes = [], counted = [];
+  function rechain(expr, steps, q) {
+    var rs = retyped(steps, q, true);
+    if (!rs.some(function (x) { return !x.exact; })) return null;
+    var lines = String(expr || "").split("\n"), idx = [], changes = [];
     lines.forEach(function (l, i) { if (/^\s*=/.test(l)) idx.push(i); });
     if (idx.length !== steps.length) return null;
     rs.forEach(function (x) {
@@ -49863,23 +49909,7 @@ Lantern.RFB = (function () {
       lines[i] = lines[i].split(from).join("ANS" + (x.j + 1));
       changes.push({ from: "line " + (x.k + 1) + ": \u201c" + x.lit + "\u201d", to: "ANS" + (x.j + 1) + (x.exact ? "" : " (\u201c" + steps[x.j].value + "\u201d)") });
     });
-    co.forEach(function (x) {
-      var i = idx[x.k], re = new RegExp("\\x28(\\s*)ANS" + (x.j + 1) + "(\\s*)\\x29(\\s*)$", "i");
-      if (!re.test(lines[i])) return;
-      // (its second review) only a count that goes nowhere else: no later line uses it, and the ANSWER holds it once at most
-      var used = (String(answer).match(new RegExp("\\x7BANS" + (x.k + 1) + "\\x7D", "gi")) || []).length + (x.k === steps.length - 1 ? (String(answer).match(/\x7Bresult\x7D/gi) || []).length : 0);
-      for (var z = x.k + 1; z < steps.length; z++) if (new RegExp("\\bANS" + (x.k + 1) + "\\b|^\\s*=?[^\\n]*\\bANS\\b(?!\\d)", "i").test(String(steps[z].expr || "")) && (z === x.k + 1 || new RegExp("\\bANS" + (x.k + 1) + "\\b", "i").test(String(steps[z].expr || "")))) used += 2;
-      if (used > 1) return;
-      lines[i] = lines[i].replace(re, "\x28$1ANS" + (x.i + 1) + "$2\x29$3");
-      var ch = { from: "line " + (x.k + 1) + ": ANS" + (x.j + 1), to: "ANS" + (x.i + 1) + " (\u201c" + steps[x.i].value + "\u201d)" };
-      changes.push(ch); counted.push(ch);
-    });
-    if (!changes.length) return null;
-    var out = { expr: lines.join("\n"), changes: changes };
-    if (counted.length) out.why = "The AI counted a word that one of its lines had already changed; Lantern ran its lines again counting the changed word: " +
-      counted.map(function (c) { return c.from + " \u2192 " + c.to; }).join(", ") + (counted.length < changes.length ? "; and with its own results in place of the ones typed out: " +
-      changes.filter(function (c) { return counted.indexOf(c) < 0; }).map(function (c) { return c.from + " \u2192 " + c.to; }).join(", ") : "") + ".";
-    return out;
+    return changes.length ? { expr: lines.join("\n"), changes: changes } : null;
   }
   // wordCounts(answer, steps) -> [{ph, value, noun, num, word}]: {ANSn} or
   // {result} filled with a word, right before a word that counts ("letters")
@@ -49993,7 +50023,7 @@ Lantern.RFB = (function () {
     return changes.length ? { text: t, changes: changes } : null;
   }
   window.Lantern.aiResultChecks = { close: close, sameLetters: sameLetters, check: check, repair: repair, rechain: rechain, retyped: retyped,
-    rechainNumbers: rechainNumbers, carry: carry, countsOld: countsOld };
+    rechainNumbers: rechainNumbers, carry: carry };
 })();
 // ===========================================================================
 // MODULE: AI_RESULT_CHECKS - END
