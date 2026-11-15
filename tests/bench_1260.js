@@ -189,6 +189,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   of(1).forEach(function (c) {
     var w0 = want(String(c.expected)); if (w0 == null || /^r1-(40|65)$/.test(c.id)) return;   // gold coin / key ring beside gold / key: as in 1.24.19
     n1++;
+    if (c.id === "r1-46") w0 = "ERR";   // a row of three place words, scrambled: goes back (its fourth review: such a row is asked about)
     var got = state(track(c.input.split(" / ")));
     var same = got === w0 || (w0 !== "ERR" && got !== "ERR" && got.split("|")[0] === w0.split("|")[0] && JSON.stringify(JSON.parse(got.split("|")[1])) === JSON.stringify(JSON.parse(w0.split("|")[1])));
     if (!same) { var a = got.split("|"), b = w0.split("|"); if (!(a[0] === b[0] && a[1] && b[1] && JSON.stringify(sortObj(JSON.parse(a[1]))) === JSON.stringify(sortObj(JSON.parse(b[1]))))) t1.push([c.id, c.input, w0, got]); }
@@ -320,6 +321,69 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   });
   ok("(its third review) " + n3 + " cases: each as the reviewer worked it out, or one of the " + Object.keys(LEFT3).length + " left with their reasons -- none a silent wrong answer",
     n3 >= 340 && !off3.length, off3);
+
+  // --- the fourth review (fixtures/review4_1260.json, 514 cases of its own), replayed --------------------------------
+  // What it found right is still right, or one of these; what it found spoiled or answered wrong is now right or goes
+  // back; what it found sent back (missed) is no worse. Nothing is a silent wrong answer.
+  var LEFT4 = {
+    T056: "a row of place words (Last First Middle): goes back where the name and the place differ -- its own T065 and T131 read such a row two ways",
+    T057: "the same (Front Back Left Right)", T065: "the same (Left Centre Right)",
+    T114: "\u201ccar keys\u201d kept as car: as in 1.24.19 (the word key is dropped from a held thing\u2019s name, as coin from gold coin)",
+    T149: "\u201cmove the coin to left\u201d: the left cup, or the cup to its left? goes back (its own T150 and T162 ask for this)"
+  };
+  var R4 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review4_1260.json"), "utf8")).cases, off4 = [], n4b = 0, k4 = { right: 0, back: 0, missed: 0 };
+  R4.forEach(function (c) {
+    var e = String(c.expected), was = c.verdict, bad = null, back = false;
+    if (c.rule === 1) {
+      var o = track(c.input.split(" | "));
+      if (/^a problem/.test(e)) bad = o.problems.length ? null : "answered: " + JSON.stringify(o.held);
+      else if (o.problems.length) back = true;
+      else { var x = JSON.parse(e);
+        Object.keys(x.held || {}).forEach(function (k) { if (o.held[k] !== x.held[k]) bad = "held " + JSON.stringify(o.held); });
+        if (x.row && o.row.join() !== x.row.join()) bad = "row " + o.row.join(" "); }
+    } else if (c.rule === 2) {
+      var bs = P.find(c.input), kind = /TURN|TRACK/.exec(e);
+      if (/^no block/.test(e)) bad = bs.some(function (b) { return b.headless; }) ? "read as a block" : null;
+      else if (!bs.length) back = true;
+      else if (kind && bs[0].kind !== kind[0]) bad = "read as " + bs[0].kind;
+    } else if (c.rule === 3) {
+      var mq = /^Q: (.*?) \|\| MAKE WHEEL: (.*)$/.exec(c.input);
+      if (!mq) return;
+      var lines = mq[2].split(" / "), bw = L.aiAct.build("MAKE WHEEL: Colour wheel\n" + lines.join("\n") + "\nEND", mq[1]);
+      var nm = (bw.plan ? bw.plan.parts : []).map(function (p) { return p.name; });
+      var groups = lines.filter(function (l) { return !/^(fill|colou?r|note|centre|center)\b/i.test(l); }).map(function (l) { return l.split(/[:|]/)[0].trim(); });
+      var asWritten = nm.join("|") === groups.join("|"), want = /^one part per colou?r[^:]*:\s*([^(]*?)\s*(?:\(|$)/.exec(e);
+      if (/left as written|split kept/.test(e)) bad = asWritten ? null : "split";
+      else if (asWritten) { if (!/or the groups as written/.test(e)) back = true; }
+      else if (want && want[1] && nm.join(", ") !== want[1].replace(/[,.]\s*$/, "")) bad = "parts " + nm.join(", ");
+      if (/too long/.test(bw.problems.join())) bad = "too long";
+      if (!bad && !asWritten && /Green-Yellow/.test(c.input) && JSON.stringify(bw.shapes).indexOf("#fbcfe8") >= 0) bad = "pink";
+    } else if (c.rule === 4) {
+      var m4 = /^Q: (.*?) \|\| (.*)$/.exec(c.input), p4 = m4 && A.parseReply(m4[2].split(" / ").join("\n"));
+      if (!p4 || !p4.exprText) return;
+      bad = L.aiResultChecks.check(m4[1], p4.exprText, A.run(p4.exprText), { parsed: p4 }) && !/check:/.test(c.did_1_24_19) ? "questioned" : null;
+    } else if (c.rule === 5) {
+      var b5 = L.healthLessons(c.input).some(function (x) { return x.key === "health_bites"; });
+      if (/^not a bite/.test(e)) bad = b5 && !/health_bites/.test(c.did_1_24_19) ? "the bites lesson" : null;
+      else if (!b5) back = true;
+    }
+    n4b++;
+    if (back && !bad) { if (was === "missed") k4.missed++; else if (was === "right" && !LEFT4[c.id]) bad = "goes back (it was right)"; else k4.back++; }
+    else if (!bad) k4.right++;
+    if (bad && !LEFT4[c.id]) off4.push([c.id, was, bad]);
+  });
+  ok("(its fourth review) " + n4b + " cases: " + k4.right + " as it worked them out, " + k4.missed + " sent back as when it tried them, " + k4.back + " more sent back (wrong before, or with their reasons); none spoiled",
+    n4b >= 500 && !off4.length, off4);
+  var t0 = Date.now(), slow = track(["row Ann Bo Cy Di", "give the ball to " + new Array(121).join("the person to the left of ") + "Di"]);
+  var t1 = Date.now(), deep = track(["row A B C D E F G H I J", "put coin in J", "move the coin to " + new Array(8).join("the cup to the left of ") + "J"]);
+  ok("(its fourth review) a place nested 120 times goes back at once (it took seconds); nested 7 times it is read", slow.problems.length && t1 - t0 < 1000 && deep.held.coin === "C", [t1 - t0, deep.held, deep.problems]);
+  ok("(its fourth review) \u201cswap Red and Blue twice\u201d, \u201cinsert Di between Ann and Bo\u201d, \u201cadd a girl called Eve at the end\u201d; prose with a condition is not a block",
+    track(["row Red Blue Green", "swap Red and Blue twice"]).row.join() === "Red,Blue,Green" && track(["row Ann Bo Cy", "insert Di between Ann and Bo"]).row.join() === "Ann,Di,Bo,Cy" &&
+    track(["row Ann Bo Cy", "add a girl called Eve at the end"]).row.join() === "Ann,Bo,Cy,Eve" && !P.find("Row Alice Bob Carol\nSwap Alice and Carol if Carol is shorter\nEND").length);
+  ok("(its fourth review) not a person: the cat, the puppy, the kitten said as him, her, his brother; a chest in the attic; a grandstand",
+    ["My cat is hiding because the neighbour\x27s dog bit him", "My puppy bit his brother and now he is limping", "My kitten bit her sister\x27s ear", "Our puppy\x27s brother got bit by a snake",
+     "Rats bit my chest in the attic", "Rats bit the grandstand", "I took my cat to the vet because a rat bit her", "My dog bit his leg"].every(function (q) { return !bites(q); }) &&
+    ["A dog bit him", "The cat bit her finger and it is red", "My son was hiking and a snake bit his leg", "A spider bit me 3 days ago", "A dog bit both my kids", "A snake bit Grandma"].every(bites));
 
   // --- a guard of right replies: every passed row of the three runs ------------------------------------------------
   var guard = F.passed.concat(F2.passed, F1.passed), headless = [];
