@@ -189,7 +189,6 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   of(1).forEach(function (c) {
     var w0 = want(String(c.expected)); if (w0 == null || /^r1-(40|65)$/.test(c.id)) return;   // gold coin / key ring beside gold / key: as in 1.24.19
     n1++;
-    if (c.id === "r1-46") w0 = "ERR";   // a row of three place words, scrambled: goes back (its fourth review: such a row is asked about)
     var got = state(track(c.input.split(" / ")));
     var same = got === w0 || (w0 !== "ERR" && got !== "ERR" && got.split("|")[0] === w0.split("|")[0] && JSON.stringify(JSON.parse(got.split("|")[1])) === JSON.stringify(JSON.parse(w0.split("|")[1])));
     if (!same) { var a = got.split("|"), b = w0.split("|"); if (!(a[0] === b[0] && a[1] && b[1] && JSON.stringify(sortObj(JSON.parse(a[1]))) === JSON.stringify(sortObj(JSON.parse(b[1]))))) t1.push([c.id, c.input, w0, got]); }
@@ -329,18 +328,20 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     T056: "a row of place words (Last First Middle): goes back where the name and the place differ -- its own T065 and T131 read such a row two ways",
     T057: "the same (Front Back Left Right)", T065: "the same (Left Centre Right)",
     T114: "\u201ccar keys\u201d kept as car: as in 1.24.19 (the word key is dropped from a held thing\u2019s name, as coin from gold coin)",
-    T149: "\u201cmove the coin to left\u201d: the left cup, or the cup to its left? goes back (its own T150 and T162 ask for this)"
+    T149: "\u201cmove the coin to left\u201d: the left cup, or the cup to its left? goes back (its own T150 and T162 ask for this)",
+    W48: "\u201cWhat colours go well together?\u201d: the question says more than a colour wheel and its colours -- the groups as written (its fifth review)"
   };
-  var R4 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review4_1260.json"), "utf8")).cases, off4 = [], n4b = 0, k4 = { right: 0, back: 0, missed: 0 };
-  R4.forEach(function (c) {
+  // replay(file, LEFT) -> {n, k, off}: each case of a review, against what it found then
+  function replay(file, LEFT) {
+  var RR = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", file), "utf8")).cases, off4 = [], n4b = 0, k4 = { right: 0, back: 0, missed: 0 };
+  RR.forEach(function (c) {
     var e = String(c.expected), was = c.verdict, bad = null, back = false;
     if (c.rule === 1) {
-      var o = track(c.input.split(" | "));
-      if (/^a problem/.test(e)) bad = o.problems.length ? null : "answered: " + JSON.stringify(o.held);
-      else if (o.problems.length) back = true;
-      else { var x = JSON.parse(e);
-        Object.keys(x.held || {}).forEach(function (k) { if (o.held[k] !== x.held[k]) bad = "held " + JSON.stringify(o.held); });
-        if (x.row && o.row.join() !== x.row.join()) bad = "row " + o.row.join(" "); }
+      var o = track(c.input.split(" | ")), js = /(\{.*\})/.exec(e), x = js ? JSON.parse(js[1]) : null;
+      var askOK = /^a problem|a problem is also right|a problem would be/.test(e);   // "a problem (Lantern asks); also right: {...}"
+      var same = !!x && !o.problems.length && Object.keys(x.held || {}).every(function (k) { return o.held[k] === x.held[k]; }) && (!x.row || o.row.join() === x.row.join());
+      if (o.problems.length) { if (!askOK) back = true; }
+      else if (!same) bad = /^a problem/.test(e) && !x ? "answered: " + JSON.stringify(o.held) : "held " + JSON.stringify(o.held) + " row " + o.row.join(" ");
     } else if (c.rule === 2) {
       var bs = P.find(c.input), kind = /TURN|TRACK/.exec(e);
       if (/^no block/.test(e)) bad = bs.some(function (b) { return b.headless; }) ? "read as a block" : null;
@@ -354,7 +355,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
       var groups = lines.filter(function (l) { return !/^(fill|colou?r|note|centre|center)\b/i.test(l); }).map(function (l) { return l.split(/[:|]/)[0].trim(); });
       var asWritten = nm.join("|") === groups.join("|"), want = /^one part per colou?r[^:]*:\s*([^(]*?)\s*(?:\(|$)/.exec(e);
       if (/left as written|split kept/.test(e)) bad = asWritten ? null : "split";
-      else if (asWritten) { if (!/or the groups as written/.test(e)) back = true; }
+      else if (asWritten) { if (!/or the groups as written/.test(e)) { back = true; if (was === "right" && !L.aiWheel.plainAsk(mq[1])) { k4.back++; back = false; n4b++; return; } } }
       else if (want && want[1] && nm.join(", ") !== want[1].replace(/[,.]\s*$/, "")) bad = "parts " + nm.join(", ");
       if (/too long/.test(bw.problems.join())) bad = "too long";
       if (!bad && !asWritten && /Green-Yellow/.test(c.input) && JSON.stringify(bw.shapes).indexOf("#fbcfe8") >= 0) bad = "pink";
@@ -368,12 +369,24 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
       else if (!b5) back = true;
     }
     n4b++;
-    if (back && !bad) { if (was === "missed") k4.missed++; else if (was === "right" && !LEFT4[c.id]) bad = "goes back (it was right)"; else k4.back++; }
+    if (back && !bad) { if (was === "missed") k4.missed++; else if (was === "right" && !LEFT[c.id]) bad = "goes back (it was right)"; else k4.back++; }
     else if (!bad) k4.right++;
-    if (bad && !LEFT4[c.id]) off4.push([c.id, was, bad]);
+    if (bad && !LEFT[c.id]) off4.push([c.id, was, bad]);
   });
+  return { n: n4b, k: k4, off: off4 };
+  }
+  var r4 = replay("review4_1260.json", LEFT4), n4b = r4.n, k4 = r4.k, off4 = r4.off;
   ok("(its fourth review) " + n4b + " cases: " + k4.right + " as it worked them out, " + k4.missed + " sent back as when it tried them, " + k4.back + " more sent back (wrong before, or with their reasons); none spoiled",
     n4b >= 500 && !off4.length, off4);
+  // (a colour wheel asked for with words beyond a colour wheel and its colours -- "to help me pick paint for my bedroom",
+  // "and put a key below it" -- is drawn in its groups, as 1.24.19 drew it: counted with those sent back)
+  var LEFT5 = {
+    T116: "a place nested nine deep is read (the limit is ten): R3, the right answer",
+    B26: "mosquitoes: the malaria lesson comes first (a fitting one, the reviewer says)"
+  };
+  var t5 = Date.now(), r5 = replay("review5_1260.json", LEFT5);
+  ok("(its fifth review) " + r5.n + " cases: " + r5.k.right + " as it worked them out, " + r5.k.missed + " sent back as when it tried them, " + r5.k.back + " more sent back (wrong before, or with their reasons); none spoiled; all in " + (Date.now() - t5) + " ms",
+    r5.n >= 400 && !r5.off.length && Date.now() - t5 < 20000, r5.off);
   var t0 = Date.now(), slow = track(["row Ann Bo Cy Di", "give the ball to " + new Array(121).join("the person to the left of ") + "Di"]);
   var t1 = Date.now(), deep = track(["row A B C D E F G H I J", "put coin in J", "move the coin to " + new Array(8).join("the cup to the left of ") + "J"]);
   ok("(its fourth review) a place nested 120 times goes back at once (it took seconds); nested 7 times it is read", slow.problems.length && t1 - t0 < 1000 && deep.held.coin === "C", [t1 - t0, deep.held, deep.problems]);
