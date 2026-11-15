@@ -97,7 +97,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var cw = row("make-colour-wheel-b"), mw = L.aiAct.build(cw.reply, cw.q);
   ok("as run (three times, word for word): Primary: Red | Yellow | Blue and Secondary: Orange | Green | Violet",
     /^MAKE WHEEL: Primary and Secondary Colours\nPrimary: Red \| Yellow \| Blue\nSecondary: Orange \| Green \| Violet/.test(cw.reply) && rowIn(F2, "make-colour-wheel-b").reply === cw.reply && rowIn(F1, "make-colour-wheel-b").reply === cw.reply);
-  var pw = L.aiWheel.parse({ title: "t", lines: cw.reply.split("\n").slice(1, -1) });
+  var pw = L.aiWheel.parse({ title: "t", lines: cw.reply.split("\n").slice(1, -1) }, cw.q);
   ok("now each colour is a part of its own, round the wheel: Red, Orange, Yellow, Green, Blue, Violet, each with its group in its ring, and Lantern says so",
     pw.parts.map(function (p) { return p.name + ":" + p.items.join(); }).join(" ") === "Red:primary Orange:secondary Yellow:primary Green:secondary Blue:primary Violet:secondary" &&
     /drew each colour as a part of its own/.test(pw.said.join()) && mw.ok, [pw.parts, mw.problems]);
@@ -105,7 +105,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   ok("...painted the colours they are named", ["#ef4444", "#f97316", "#facc15", "#22c55e", "#3b82f6", "#8b5cf6"].every(function (c) { return sj.indexOf(c) >= 0; }));
   var gw = await L.aiAct.solve(cw.q, fake([cw.reply]));
   ok("...and the row passes", L.aiBench.grade(item("make-colour-wheel-b"), gw.text, gw).pass, L.aiBench.grade(item("make-colour-wheel-b"), gw.text, gw).why);
-  function parts(lines) { return L.aiWheel.parse({ title: "t", lines: lines }).parts.map(function (p) { return p.name; }).join(","); }
+  function parts(lines, q) { return L.aiWheel.parse({ title: "t", lines: lines }, q || "Draw a colour wheel").parts.map(function (p) { return p.name; }).join(","); }
   ok("light's wheel too (yellow between red and green); twelve, too narrow for \u201cRed-Orange\u201d, stay in their groups (its review)",
     parts(["Primary: Red | Green | Blue", "Secondary: Cyan | Magenta | Yellow"]) === "Red,Yellow,Green,Cyan,Blue,Magenta" &&
     parts(["Primary: Red | Yellow | Blue", "Secondary: Orange | Green | Violet", "Tertiary: Red-Orange | Yellow-Orange | Yellow-Green | Blue-Green | Blue-Violet | Red-Violet"]) === "Primary,Secondary,Tertiary");
@@ -199,6 +199,56 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     if (/^the bites lesson$|^the bites lesson --/.test(c.expected) && keys.indexOf("health_bites") < 0 && was.indexOf("health_bites") >= 0) t5.push([c.id, "lost", c.input]);
   });
   ok("(its review) no horse's bit, cable, goat, apple or furniture given the bites lesson that 1.24.19 did not give it; no bite that had it lost it", !t5.length, t5);
+
+  // --- the second review (fixtures/review2_1260.json, 265 cases of its own), replayed --------------------------------
+  // Each case comes out as the reviewer worked it out, or is one of these, each with its reason
+  var LEFT2 = {
+    T32: "\u201cthe one on the right\u201d: goes back, as in 1.24.19 (in a row of cups it may be the right-hand one)", T74: "the same",
+    T35: "\u201cgive a ball from Ann to Bo\u201d with no ball put: goes back (the reviewer: a problem is acceptable)",
+    T71: "gold coin and gold ring: as in 1.24.19 (a coin's word is dropped from its name)",
+    T75: "\u201cthe person next in line\u201d: goes back, as in 1.24.19", T77: "throw is not a TRACK word: goes back, as in 1.24.19",
+    H14: "\u201cStart at 0 0\u201d: not read without its first line, as in 1.24.19", H15: "\u201cAnn and Bo swap\u201d as a second line: the same",
+    H27: "\u201cdrive north 5\u201d as a second line: the same", H45: "every line in bold: the same",
+    W04: "a wheel of warm and cool colours, not asked for as a colour wheel: left in its two parts (either is right, the reviewer says)",
+    W30: "\u201cmy art group\u201d: \u201cgroup\u201d keeps the groups (as 1.24.19 drew it)", W41: "not asked for as a colour wheel: as 1.24.19 drew it",
+    C26: "a count in the next sentence: not asked about (the rule asks only of a count put on the word)", C27: "a count before the word: the same",
+    C31: "a dash between word and count: the same", C32: "a colon: the same", C33: "two changes later: the same", C35: "a second line on ANS1: the same",
+    B09: "\u201csomething bit me\u201d: no animal named", B19: "\u201cgot bit by a big dog\u201d: a need, but the search ranks bleeding first",
+    B22: "\u201cbit Tom\u201d: a name", B25: "mosquitoes: the malaria lesson comes first", B26: "the same", B30: "a general question about rabies"
+  };
+  var R2 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review2_1260.json"), "utf8")).cases, off2 = [], n2 = 0;
+  R2.forEach(function (c) {
+    var e = c.expected, bad = null;
+    if (c.rule === 1) {
+      var o = track(c.input.split(" / "));
+      if (e === "problem") bad = o.problems.length ? null : "no problem";
+      else if (o.problems.length) bad = "problem";
+      else {
+        if (e.held) Object.keys(e.held).forEach(function (k) { if (o.held[k] !== e.held[k]) bad = "held " + JSON.stringify(o.held); });
+        if (e.held && Object.keys(o.held).some(function (k) { return o.held[k] && !(k in e.held); })) bad = "extra " + JSON.stringify(o.held);
+        if (e.row && o.row.join() !== e.row.join()) bad = "row " + o.row.join(" ");
+      }
+    } else if (c.rule === 2) {
+      if (typeof e === "string") return;
+      var bs = P.find(c.input);
+      bad = e === null ? (bs.some(function (b) { return b.headless; }) ? "read" : null) : (bs.length ? null : "not read");
+    } else if (c.rule === 3) {
+      var b = L.aiAct.build(c.input.block, c.input.question), ps = (b.plan && b.plan.parts || []).map(function (p) { return p.name; });
+      bad = e === "groups" ? (ps.length === L.aiWheel.parse({ title: "t", lines: c.input.block.split("\n").slice(1, -1) }).parts.length ? null : "split") : (ps.join() === e.split.join() ? null : "not split");
+      if (/Green-Yellow/.test(c.input.block) && L.aiWheelColours.forItem("Green-Yellow")) bad = "a striped earth painted";
+    } else if (c.rule === 4) {
+      var p2 = A.parseReply(c.input.reply), co2 = L.aiResultChecks.countsOld(A.run(p2.exprText).steps, p2.answer);
+      bad = e === "kept" && co2.length ? "questioned" : e === "questioned" && !co2.length ? "missed" : null;
+    } else if (c.rule === 5) {
+      var ks = L.healthLessons(c.input).map(function (x) { return x.key; }), nd = L.healthNeed(c.input), was = c.lantern_1_24_19 || {};
+      if (/^not a bite/.test(e) && ks.indexOf("health_bites") >= 0 && (was.lessons || []).indexOf("health_bites") < 0) bad = "the bites lesson";
+      if (/^not a bite/.test(e) && nd && !was.need) bad = "a need";
+      if (/^a bite/.test(e) && ks.indexOf("health_bites") < 0) bad = "no bites lesson";
+    }
+    n2++;
+    if (bad && !LEFT2[c.id]) off2.push([c.id, bad]);
+  });
+  ok("(its second review) " + n2 + " cases: each as the reviewer worked it out, or one of the " + Object.keys(LEFT2).length + " left with their reasons (most as 1.24.19 did them)", n2 >= 250 && !off2.length, off2);
 
   // --- a guard of right replies: every passed row of the three runs ------------------------------------------------
   var guard = F.passed.concat(F2.passed, F1.passed), counted = [], headless = [];
