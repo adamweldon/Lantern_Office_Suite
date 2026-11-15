@@ -179,9 +179,13 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    His third run of set B (1.24.18, `tests/fixtures/bench_run_1258_35b_setb.json`,
    `tests/bench_1260.js`): 130 of 140. 1.24.20 mends the line puzzle (a
    "give flag from last" read as a new thing), a TURN block written without
-   its first line, the colour wheel written as groups, the count of a word
-   already changed, the snake that bit, and Amazing Grace (now in the
-   songbook). Still open: the Galaxy S7 -- its own guide is sent after the
+   its first line, the colour wheel written as groups, the snake that bit,
+   and Amazing Grace (now in the songbook). Photosynthesis is left as the
+   model's: a check of which word a count counts (LEN(ANS1) after REMOVE
+   changed the word) was tried by three reviewers and withdrawn -- each found
+   right replies it questioned, and made false when the model kept them; a
+   count is often meant for the first word, and only the question says which.
+   Still open: the Galaxy S7 -- its own guide is sent after the
    decline, but the passage is the guide's introduction, not its steps; a
    how-to question about a guide should get its steps, and that needs the
    iFixit book to test (a session linked to the laptop can read
