@@ -17,6 +17,11 @@
 //    each found right replies it questioned, and made false when the model kept them); the Galaxy S7 (its guide was
 //    sent and the 35B still declined: what the guide's passage holds needs the iFixit book itself), the path across a
 //    field (the model's picture), the motor circuit and the amp-hours (once each: one row moving is not a finding).
+//
+// Then seven reviewers' cases (fixtures/review1_1260.json to review7_1260.json, 2,666 in all) and two reviewers' TRACK
+// script generators (fixtures/track_gen_review6_1260.js, track_gen_review7_1260.js): on the released 1.24.20, none of
+// the cases is answered wrong, and of 50,000 generated scripts none is wrong and 48,687 are right (1.24.19: 3,444 wrong,
+// 7,025 right).
 "use strict";
 var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
 var fs = require("fs"), path = require("path");
