@@ -43,7 +43,7 @@ setTimeout(function () {
   ok("...and the sixteen that failed right ones", F.findings.filter(function (f) { return f.severity === "grader fails right"; }).length === 16 &&
     F.findings.filter(function (f) { return f.severity === "grader fails right"; }).every(function (f) { return /^mended/.test(F.responses[f.id]); }));
 
-  var nk = 0, off = [];
+  var nk = 0, off = [], LATER = { "make|make-colour-wheel-b|?: two parts primary/secondary": "passes: 1.24.20 draws a wheel of colour groups a colour to a wedge" };
   ["make", "puzzle", "safety", "sums"].forEach(function (k) {
     F[k].forEach(function (c) {
       var it = item(c.id), pass, why;
@@ -51,11 +51,14 @@ setTimeout(function () {
       if (k === "puzzle") { why = it.check(it.answerOf(c.reply)); pass = !why; }
       else { var g = L.aiBench.grade(it, c.reply, k === "make" ? { made: L.aiAct.build(c.reply, it.q) } : {}); pass = g.pass; why = g.why; }
       var key = k + "|" + c.id + "|" + c.label;
+      // (1.24.20) a colour wheel written as its groups is now drawn one colour to a wedge, in hue order (Adam's third set B
+      // run): the reviewer was unsure ("?") and wanted it to fail; it passes, as the set B row now does
+      if (LATER[key]) c = { id: c.id, label: c.label, reply: c.reply, want: c.want, known: LATER[key] };
       if (c.known) { nk++; if (pass !== /^passes/.test(c.known)) off.push([key, "known to " + c.known.split(":")[0] + ", now " + (pass ? "passes" : "fails: " + why)]); }
       else if ((c.want === "pass") !== pass) off.push([key, "want " + c.want, why]);
     });
   });
-  ok("every reply of the reviewer\u2019s comes out as it said, or as the known ones do (16, each with its reason)", !off.length && nk === 16, [nk, off]);
+  ok("every reply of the reviewer\u2019s comes out as it said, or as the known ones do (17, each with its reason)", !off.length && nk === 17, [nk, off]);
   var right = 0, wrong = 0;
   ["make", "puzzle", "safety", "sums"].forEach(function (k) { F[k].forEach(function (c) { if (c.want === "pass") right++; else wrong++; }); });
   ok("the reviewer\u2019s replies: right ones above all (" + right + " right, " + wrong + " wrong)", right > wrong * 1.5, [right, wrong]);

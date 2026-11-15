@@ -755,7 +755,7 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   go("music"); await sleep(120);
   var ta = d.querySelector("textarea[aria-label=Song]");
   ok("the Make a song card: the song in its box, written out, with Save MIDI, Save WAV and examples", ta && /title Twinkle/.test(ta.value) && d.querySelector(".la-song canvas") &&
-    btn(d, "Save MIDI") && btn(d, "Save WAV") && btn(d, "Save parts") && btn(d, "Save GMS project") && d.querySelectorAll("select[aria-label='Start from'] option").length === 17 &&
+    btn(d, "Save MIDI") && btn(d, "Save WAV") && btn(d, "Save parts") && btn(d, "Save GMS project") && d.querySelectorAll("select[aria-label='Start from'] option").length === 18 &&
     /^Songbook: Silent Night \(Franz Xaver Gruber, 1818\)$/.test(d.querySelectorAll("select[aria-label='Start from'] option")[15].textContent), ta && ta.value);
   var sel = d.querySelector("select[aria-label='Start from']");
   sel.value = "2"; fire(sel, "change"); await sleep(30);
@@ -825,7 +825,7 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
     var whole = 0; r.plan.melody.forEach(function (n) { whole = Math.max(whole, n.at + n.len); });
     return o.some(function (d, i) { return g[i] !== d; }) || Math.abs(whole - r.plan.bars * r.plan.barLen) > 1e-6 || SB.named("please play " + t.title) !== t;
   }).map(function (t) { return t.id; });
-  ok("the songbook: nine old tunes, each made with nothing questioned, its bars full, its opening the one MUSIC_TUNES knows it by", SB.LIST.length === 9 && !sbBad.length, sbBad);
+  ok("the songbook: ten old tunes (Amazing Grace from 1.24.20), each made with nothing questioned, its bars full, its opening the one MUSIC_TUNES knows it by", SB.LIST.length === 10 && !sbBad.length, sbBad);
   ok("...the leaps where they belong: the Ode's low G, Row Your Boat's top C and the way down, Silent Night's last line",
     steps(pitches("ode-to-joy")).slice(44, 47).join() === "2,-7,9" && steps(pitches("row-your-boat")).slice(9, 26).join() === "5,0,0,-5,0,0,-3,0,0,-4,0,0,7,-2,-1,-2,-2" &&
     steps(pitches("silent-night")).slice(-7).join() === "-4,-5,-3,3,-2,-3,-2" && pitches("silent-night").length === 46 && SB.plan(tune("silent-night")).bars === 24,

@@ -350,7 +350,7 @@ function goodB(last) {
   var MI = item("make-music-minor-b").ideal, MA = item("make-music-march-b").ideal, BR = item("make-music-brass-b").ideal;
   ok("music: 45 a minute is slow; a march in 6/8 is a march; Amazing Grace with or without the turn on \u201czing\u201d, and not with other notes",
     made("make-music-minor-b", MI.replace("tempo 72", "tempo 45")).pass && made("make-music-march-b", MA.replace("time 2/4", "time 6/8")).why.indexOf("march time") < 0 &&
-    made("make-music-brass-b", BR.replace("C4 - E4 | C4 E4 D4", "C4 - E4 | E4 - D4")).pass && /note 3 of the tune is wrong/.test(made("make-music-brass-b", BR.replace("C4 - E4 | C4 E4 D4", "C4 - F4 | C4 E4 D4")).why),
+    made("make-music-brass-b", BR.replace("C4 - E4 | C4 E4 D4", "C4 - E4 | E4 - D4")).pass && /note 3 of the tune is wrong|not Amazing Grace as Lantern knows it -- from bar \d+ \(note 3,/.test(made("make-music-brass-b", BR.replace("C4 - E4 | C4 E4 D4", "C4 - F4 | C4 E4 D4")).why),
     [made("make-music-march-b", MA.replace("time 2/4", "time 6/8")).why, made("make-music-brass-b", BR.replace("C4 - E4 | C4 E4 D4", "C4 - E4 | E4 - D4")).why]);
   ok("puzzles: names with words between them, the host's odds said any way, the robot in x = \u22122, the die\u2019s face toward you",
     pzOk("cups-five-b", "ANSWER: White cup, then Green, then Yellow, then Blue and finally Red; the coin is under Green.") && pzOk("race-six-b", "ANSWER: 1st Fay, 2nd Ann, 3rd Eve, 4th Cat, 5th Bob, 6th Dan.") &&
