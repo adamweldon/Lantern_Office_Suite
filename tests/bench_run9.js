@@ -119,7 +119,10 @@ var OIL = "MAKE DOC: Changing the Oil in a Lawn Mower Engine\n## Safety First\nP
   var qr = L.aiTrack.run({ lines: QUEUE_BLOCK.split("\n").slice(1, -1) });
   ok("queue: the run's own block now runs: Eve, Ben, Cal, Ann, Dee, the ball with Eve", !qr.problems.length && qr.row.join(",") === "Eve,Ben,Cal,Ann,Dee" && qr.held.ball === "Eve", qr.problems.length ? qr.problems : qr.row);
   var tq = L.aiTrack.run({ lines: ["row Ann Ben Cal", "put key in Ann", "swap Ann and person in front of Cal", "swap Cal and the one ahead of Ann"] });
-  ok("in front of / ahead of count toward the front", !tq.problems.length && tq.row.join(",") === "Ben,Cal,Ann", tq.problems.length ? tq.problems : tq.row);
+  // (1.24.20) "person in front of Cal" is Ben, so Ann and Ben swap (Ben Ann Cal), then Cal and the one ahead of Ann (Ben)
+  // swap: Cal Ann Ben. Until 1.24.20 the phrase was read as Cal, the one row name in it (found by 1.24.20's second
+  // review), and this check had Ben Cal Ann.
+  ok("in front of / ahead of count toward the front", !tq.problems.length && tq.row.join(",") === "Cal,Ann,Ben", tq.problems.length ? tq.problems : tq.row);
   script = function (last) {
     if (/Work the puzzle out yourself/.test(last)) return "Step by step ... ANSWER: Eve, Ben, Cal, Ann, Dee; Eve holds the ball.";
     return "TRACK: Queue\nrow Ann Ben Cal Dee Eve\nfrobnicate the queue\nEND";
