@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.24.20 — Adam's third set B run: the flag from the last child, a robot's block without its first line, a colour wheel written as groups, a count of a word already changed, a snake that bit, Amazing Grace (2026-11-15)
+## 1.24.20 — Adam's third set B run: the flag from the last child, a robot's block without its first line, a colour wheel written as groups, a snake that bit, Amazing Grace (2026-11-15)
 
 Adam ran set B again on the 35B, on 1.24.18, with the library on his laptop
 (2026-11-14, 00:06 UTC, 96 minutes): 130 of 140 (129 on 1.24.17, 122 on
@@ -20,11 +20,20 @@ the same reply word for word. Read row by row:
   the flag. Now a give line is split at each "to", "in", "with" in turn and
   the first split whose two sides both read is taken; "<held thing> from
   <place>" is that thing, from its holder, and Lantern checks it is there;
-  a thing never put, given from someone, is said, not made. New places:
-  front of X, second to last, next to last, last but one, penultimate,
-  third from the end, second from the front (also with a noun: "the
-  penultimate cup"), in move and add lines too; "the one to the left" is
-  the neighbour of the thing it is said with.
+  a thing never put, given from someone, is said, not made. Places it now
+  reads: front of X, second to last, second last, next to last, last but
+  one, penultimate, third from the end, second from the front, 2nd, the
+  last person in line, the second cup to the left of X, X's left, next to X
+  when X is at an end, between X and Y, the cup holding it, the coin in Red,
+  the one 3 places to the left of X; in move and add lines too (second
+  place, the third position, after the second to last, "add Eve, Fay and
+  Gus at the end", "add a girl called Eve"); "move Blue two places to the
+  right"; a line said twice or 3 times; two steps joined by "then". What it
+  cannot be sure of goes back with the line to write: "the person in
+  front" (of whom?), "next to Blue" in the middle (which side?), "swap Blue
+  and left", a row of cups called Left, Middle and Right once one has moved
+  from where its name says, "Mr and Mrs Smith", a place inside a place more
+  than ten deep, a line over 300 characters, a name with "if" after it.
 - **The robot (once): Lantern's.** The 35B wrote its TURN block without the
   line "TURN: <title>" ("walker at 0 0 facing east ... END") and was told
   "Lantern found no TURN block". A reply that begins with the whole first
@@ -33,32 +42,49 @@ the same reply word for word. Read row by row:
   and Lantern says it read it so.
 - **The colour wheel (three runs, word for word): Lantern's to read.**
   "Primary: Red | Yellow | Blue" and "Secondary: Orange | Green | Violet"
-  drew two wedges with the primaries side by side. When every part is a
-  group of colours (primary, secondary, tertiary, warm, cool) and every
-  item a colour with a place on the wheel, each colour is now a wedge of
-  its own in the order of its hue: each secondary between the two primaries
-  it is mixed from (red, orange, yellow, green, blue, violet; and red,
-  yellow, green, cyan, blue, magenta for light), its group in its ring, and
-  Lantern says so. Not for a wheel asked for in halves, nor for more than 8
-  colours (twelve wedges are too narrow for "Red-Orange").
-- **Photosynthesis (three runs): the model's slip, Lantern's sentence.**
-  =REVERSE("photosynthesis"), =REMOVE(ANS,"s"), =LEN(ANS1): line 3 counted
-  the word before line 2 changed it, and Lantern filled the sentence with
-  14 letters for "iehtnyotohp", which has 11. Line 3 is now questioned once
-  with the line to write (=LEN(ANS2)), and if the AI keeps it, Chat counts
-  line 2's word and says so -- only when the ANSWER itself puts its count on
-  the changed word ("..., which has 10 letters"): a count of the first word
-  is often what a question wants.
+  drew two wedges with the primaries side by side. Now, when the question
+  asks for a colour wheel and says nothing else (every word of it about a
+  colour wheel and its colours: no halves, sides, rings, "in two", "one ...
+  the other", nor two wheels), every part is a group of colours (primary,
+  secondary, tertiary, warm, cool), each named once, and every item a
+  colour Lantern can place and paint, each colour is a wedge of its own in
+  the order of its hue: each secondary between the two primaries it is
+  mixed from (red, orange, yellow, green, blue, violet; red, yellow, green,
+  cyan, blue, magenta for light), its group in its ring, and Lantern says
+  so. Up to 8 colours, and only while every name fits its wedge; anything
+  else is drawn as written. A tertiary named the other way round
+  ("Orange-Red") is painted its colour; "Green-Yellow" only among a colour
+  wheel's groups (a wiring wheel's earth is striped).
 - **The snake bite (three runs): Lantern's.** "A snake bit my uncle" found
   no lesson: the search had "snake" but not "bite", below the bar. An
-  animal that bit a person (not the furniture, a cable, a goat, the apple,
-  a horse's bit) is now a bite for the lesson search and a health need.
+  animal that bit a person is now a bite for the lesson search and a health
+  need. Who was bitten is read whole: a person (me, my son, a farmer, the
+  vet, Grandma, my 5 year old), or a person's own body (my leg, my son's
+  arm, the back of my hand, the leg of my son), with nothing of theirs
+  after it ("on the arm", "yesterday", "3 days ago", the end); "my son got
+  bit by a dog", said of a person. Not the furniture, meat, cables, the leg
+  of the table, her baby doll, my 2 year old rabbit, the frog's leg, a
+  car's wires, a horse's bit; not "him", "her" or "them" when another
+  animal is named ("my cat is hiding because the neighbour's dog bit
+  him"), nor "his brother" with no person named before; not a dream, a
+  story, a game, a poster, a song, a joke, or a sentence to translate.
 - **Amazing Grace (three runs): a tune Lantern did not have.** The songbook
   now has it, so the AI is given its lines to copy: the tune New Britain
   (Columbian Harmony, 1829), its notes as Frank Nordberg's transcription for
   Musica Viva gives them (folktunefinder.com, tune 112231, read 2026-11-14),
   whose first half is also the 1831 printing's (Carrell and Clayton,
-  folktunefinder tune 51109); the chords are Lantern's own.
+  folktunefinder tune 51109); the chords are Lantern's own. It is checked by
+  its opening only, since it is sung two ways after that.
+- **Photosynthesis (three runs): left as the model writes it.**
+  =REVERSE("photosynthesis"), =REMOVE(ANS,"s"), =LEN(ANS1): line 3 counted
+  the word before line 2 changed it, and Lantern filled the sentence with
+  14 letters for "iehtnyotohp", which has 11. A check that questioned such
+  a count, and re-counted line 2's word when the AI kept it, was tried and
+  withdrawn: three reviewers each found right replies it questioned (a
+  count of the first word on purpose, a count with its spaces, a
+  difference "3 letters shorter"), and made false when the model kept
+  them. Only the question says which word a count is for. The retyped
+  results are questioned as before.
 - **Left as they are.** The Galaxy S7 (three runs): its own guide was sent
   after the decline and the 35B declined again; the passage it was given
   is the guide's introduction, not its steps, and which part of a guide a
@@ -67,6 +93,37 @@ the same reply word for word. Read row by row:
   the field. The motor circuit and the amp-hours follow-up (once each: one
   row moving is not a finding). The three puzzles tried without Lantern's
   tools measure the model alone.
+
+**The reviews.** Seven reviewers, none of whom saw the rules written or an
+earlier review, made 2,666 cases of their own (333, 265, 361, 514, 405,
+420 and 368: `tests/fixtures/review1_1260.json` to `review7_1260.json`), each
+worked out by hand, and `tests/bench_1260.js` replays them all. Each review
+found right inputs the rules spoiled, and each was mended before the next:
+the first, "the one to the right" read as the first from the right and
+knitting rows read as puzzles; the second, "the cup to the right of Green"
+read as Green and "her piglets" as a person; the third, a cup called One
+read as "it", "bit meat" and "bit USB cables" as bites to a person, and the
+count rule still spoiling right answers (so it was withdrawn); the fourth,
+cups called Left/Middle/Right and a line nested 200 times taking 48
+seconds; the fifth, "twice twice twice ..." freezing the page; the sixth,
+"the person behind the second from the front" read as the second from the
+front; the seventh, "Bo's left" read from whoever held the ball. Now none
+of the 2,666 is answered wrong: each is as its reviewer worked it out, or
+goes back with the line to write (listed in the test with its reason where
+a reviewer had worked out an answer). Two reviewers also wrote TRACK script
+generators with simulators of their own: of 50,000 generated scripts, none
+is answered wrong, 48,687 are answered right and the rest go back (1.24.19:
+3,444 wrong, 7,025 right); the generators are kept as tests (`tests/fixtures/track_gen_review6_1260.js`,
+`track_gen_review7_1260.js`). The seventh review's mends were checked
+against all of this, not by an eighth reviewer.
+
+**Tested.** `npm test` (ALL CHECKS PASS); the browser tests `scene_e2e`,
+`bench_run9_e2e`, `bench_headless_e2e`, `music_e2e`; the run's 13 failed
+rows and 133 passed rows replayed with a stand-in model giving the 35B's own
+replies. **Not tested:** the 35B itself on 1.24.20 (Adam's next set B run),
+and the small models (the GitHub runs of this branch). How a colour wheel
+split into wedges looks (each wedge's ring is a pale tint of its colour,
+the group's name in it: red's is pink) is Adam's to judge.
 
 ## 1.24.19 — One link: Get Lantern sets Lantern up and fetches its AI in the background (2026-11-13)
 
