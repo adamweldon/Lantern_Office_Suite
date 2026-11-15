@@ -399,6 +399,18 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var t6 = Date.now(), r6 = replay("review6_1260.json", LEFT6);
   ok("(its sixth review) " + r6.n + " cases: " + r6.k.right + " as it worked them out, " + r6.k.missed + " sent back as when it tried them, " + r6.k.back + " more sent back (wrong before, or with their reasons); none spoiled; all in " + (Date.now() - t6) + " ms",
     r6.n >= 400 && !r6.off.length && Date.now() - t6 < 20000, r6.off);
+  // The sixth reviewer's generator of TRACK scripts, with its own simulator as the answer (written from the puzzle's
+  // meaning, not from Lantern's code): fixtures/track_gen_review6_1260.js. 40,000 of them after its mends: no silent
+  // wrong answer (1.24.19: 3,100); here 3,000.
+  var GEN = require(path.join(__dirname, "fixtures", "track_gen_review6_1260.js")), gw0 = 0, gr0 = 0, gb0 = 0, tg = Date.now();
+  for (var sd = 1; sd <= 3000; sd++) {
+    var g0 = GEN(sd), o0 = track(g0.lines);
+    if (o0.problems.length) { gb0++; continue; }
+    var hh = {}; Object.keys(o0.held).sort().forEach(function (k) { if (o0.held[k]) hh[k] = o0.held[k]; });
+    var gh = {}; Object.keys(g0.held).sort().forEach(function (k) { gh[k] = g0.held[k]; });
+    if (o0.row.join() === g0.row.join() && JSON.stringify(hh) === JSON.stringify(gh)) gr0++; else gw0 = gw0 || sd;
+  }
+  ok("(its sixth review) 3,000 generated TRACK scripts: " + gr0 + " right, " + gb0 + " sent back, none answered wrong (" + (Date.now() - tg) + " ms)", !gw0 && gr0 > 2500, gw0 && GEN(gw0).lines);
   var t0 = Date.now(), slow = track(["row Ann Bo Cy Di", "give the ball to " + new Array(121).join("the person to the left of ") + "Di"]);
   var t1 = Date.now(), deep = track(["row A B C D E F G H I J", "put coin in J", "move the coin to " + new Array(8).join("the cup to the left of ") + "J"]);
   ok("(its fourth review) a place nested 120 times goes back at once (it took seconds); nested 7 times it is read", slow.problems.length && t1 - t0 < 1000 && deep.held.coin === "C", [t1 - t0, deep.held, deep.problems]);
