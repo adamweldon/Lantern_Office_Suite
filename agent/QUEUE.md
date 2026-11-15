@@ -176,7 +176,19 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    the Galaxy S7 and the colour wheel had a part Lantern could do. 1.24.18
    mends those four (a NEED to the person stands; the named article after a
    decline; a word from nowhere questioned; a wheel of colours painted).
-   Next: his set B run on 1.24.18, row by row against these two. Of the gaps
+   His third run of set B (1.24.18, `tests/fixtures/bench_run_1258_35b_setb.json`,
+   `tests/bench_1260.js`): 130 of 140. 1.24.20 mends the line puzzle (a
+   "give flag from last" read as a new thing), a TURN block written without
+   its first line, the colour wheel written as groups, the count of a word
+   already changed, the snake that bit, and Amazing Grace (now in the
+   songbook). Still open: the Galaxy S7 -- its own guide is sent after the
+   decline, but the passage is the guide's introduction, not its steps; a
+   how-to question about a guide should get its steps, and that needs the
+   iFixit book to test (a session linked to the laptop can read
+   http://127.0.0.1:8081 there, or Adam can send the guide's page); the path
+   across a field (the model's picture); the motor circuit and the
+   amp-hours follow-up (once each). Next: his set B run on 1.24.20.
+   Before 1.24.20: Of the gaps
    listed below for 1.24.16, the march, "Remind me what I asked you" and
    the orbital speed passed on his run all the same; still open: Amazing
    Grace not in the songbook handed to the model, and a follow-up with no

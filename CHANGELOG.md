@@ -1,5 +1,73 @@
 # Changelog
 
+## 1.24.20 — Adam's third set B run: the flag from the last child, a robot's block without its first line, a colour wheel written as groups, a count of a word already changed, a snake that bit, Amazing Grace (2026-11-15)
+
+Adam ran set B again on the 35B, on 1.24.18, with the library on his laptop
+(2026-11-14, 00:06 UTC, 96 minutes): 130 of 140 (129 on 1.24.17, 122 on
+1.24.16). The 13 rows that did not pass, as the model wrote them, and the 133
+that passed, are in `tests/fixtures/bench_run_1258_35b_setb.json`;
+`tests/bench_1260.js` replays them. Four rows that failed on both earlier
+runs pass here: the chickens and Ghana (1.24.18's mends), the D minor tune
+and the float switches. Nine of the 13 failed on all three runs, most with
+the same reply word for word. Read row by row:
+
+- **The line puzzle (three runs): Lantern's.** The 35B wrote a right TRACK
+  block. Its third line, "give flag from last to front of last", stopped on
+  "front of", which was not a place. Written again as "give flag from last
+  to position before last", it was read as a NEW held thing called "flag
+  from last", given to the child in front, while the flag itself stayed
+  with the last child. Lantern reported both, and the 35B said Dot holds
+  the flag. Now a give line is split at each "to", "in", "with" in turn and
+  the first split whose two sides both read is taken; "<held thing> from
+  <place>" is that thing, from its holder, and Lantern checks it is there;
+  a thing never put, given from someone, is said, not made. New places:
+  front of X, second to last, next to last, last but one, penultimate,
+  third from the end, second from the front (also with a noun: "the
+  penultimate cup"), in move and add lines too; "the one to the left" is
+  the neighbour of the thing it is said with.
+- **The robot (once): Lantern's.** The 35B wrote its TURN block without the
+  line "TURN: <title>" ("walker at 0 0 facing east ... END") and was told
+  "Lantern found no TURN block". A reply that begins with the whole first
+  line of a block, goes on with one of its steps, ends at a line END and
+  runs through the solver with nothing it cannot read is now that block,
+  and Lantern says it read it so.
+- **The colour wheel (three runs, word for word): Lantern's to read.**
+  "Primary: Red | Yellow | Blue" and "Secondary: Orange | Green | Violet"
+  drew two wedges with the primaries side by side. When every part is a
+  group of colours (primary, secondary, tertiary, warm, cool) and every
+  item a colour with a place on the wheel, each colour is now a wedge of
+  its own in the order of its hue: each secondary between the two primaries
+  it is mixed from (red, orange, yellow, green, blue, violet; and red,
+  yellow, green, cyan, blue, magenta for light), its group in its ring, and
+  Lantern says so. Not for a wheel asked for in halves, nor for more than 8
+  colours (twelve wedges are too narrow for "Red-Orange").
+- **Photosynthesis (three runs): the model's slip, Lantern's sentence.**
+  =REVERSE("photosynthesis"), =REMOVE(ANS,"s"), =LEN(ANS1): line 3 counted
+  the word before line 2 changed it, and Lantern filled the sentence with
+  14 letters for "iehtnyotohp", which has 11. Line 3 is now questioned once
+  with the line to write (=LEN(ANS2)), and if the AI keeps it, Chat counts
+  line 2's word and says so -- only when the ANSWER itself puts its count on
+  the changed word ("..., which has 10 letters"): a count of the first word
+  is often what a question wants.
+- **The snake bite (three runs): Lantern's.** "A snake bit my uncle" found
+  no lesson: the search had "snake" but not "bite", below the bar. An
+  animal that bit a person (not the furniture, a cable, a goat, the apple,
+  a horse's bit) is now a bite for the lesson search and a health need.
+- **Amazing Grace (three runs): a tune Lantern did not have.** The songbook
+  now has it, so the AI is given its lines to copy: the tune New Britain
+  (Columbian Harmony, 1829), its notes as Frank Nordberg's transcription for
+  Musica Viva gives them (folktunefinder.com, tune 112231, read 2026-11-14),
+  whose first half is also the 1831 printing's (Carrell and Clayton,
+  folktunefinder tune 51109); the chords are Lantern's own.
+- **Left as they are.** The Galaxy S7 (three runs): its own guide was sent
+  after the decline and the 35B declined again; the passage it was given
+  is the guide's introduction, not its steps, and which part of a guide a
+  how-to question should get needs the iFixit book itself to test (queued).
+  The path across a field (three runs): the model's picture, a triangle for
+  the field. The motor circuit and the amp-hours follow-up (once each: one
+  row moving is not a finding). The three puzzles tried without Lantern's
+  tools measure the model alone.
+
 ## 1.24.19 — One link: Get Lantern sets Lantern up and fetches its AI in the background (2026-11-13)
 
 Adam asked how many steps it takes a person to get Lantern running, and
