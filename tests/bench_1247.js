@@ -189,8 +189,11 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   ok("left for the next version: the 4B\u2019s tank of water (=5*40, =2000/800) goes back with two findings, the last \u201cask with NEED\u201d, and the 4B asked a NEED, as on 1.24.5 (the line to write is not given)",
     wd.reply === "NEED: total daily water consumption in litres" && said.length === 2 && /^=5\*40 \(200\) is worked out but never used afterwards/.test(said[0]) && /ask with NEED$/.test(said[1]), said);
   var lr = row(F4, "letters-refrigerator"), pl = A.parseReply(lr.reply), rl = A.run(pl.exprText), RC = L.assistChecks.filter(function (c) { return c.id === "results"; })[0];
-  ok("...and the 4B\u2019s backwards letters: Lantern works out \u201cotaegife\u201d, the sentence types \u201cefrgefao\u201d, and nothing asks about it (too unlike the word for the check of a word retyped with slips)",
-    rl.steps[1].value === "otaegife" && rl.value === 8 && /efrgefao/.test(pl.answer) && RC(item("letters-refrigerator").q, pl.exprText, rl, { parsed: pl }) === null);
+  // (1.24.21: the word typed from memory in quotes, where the chain's last word belongs, is asked about now -- Adam's
+  // "noituciohp" for "iehtnyotohp" on 1.24.20, tests/bench_1261.js)
+  var said47 = RC(item("letters-refrigerator").q, pl.exprText, rl, { parsed: pl });
+  ok("...and the 4B\u2019s backwards letters: Lantern works out \u201cotaegife\u201d, the sentence types \u201cefrgefao\u201d -- too unlike the word for the check of a word retyped with slips, and asked about since 1.24.21 as a word typed from memory",
+    rl.steps[1].value === "otaegife" && rl.value === 8 && /efrgefao/.test(pl.answer) && /the ANSWER spells \u201cefrgefao\u201d, but Lantern worked out \u201cotaegife\u201d/.test(said47 || ""), said47);
 
   console.log(fails ? fails + " BENCH 1.24.7 FAILURES (" + passes + " passed)" : "ALL BENCH 1.24.7 CHECKS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);
