@@ -44,7 +44,11 @@ var UA = {
 var REL = "https://github.com/adamweldon/Lantern_Office_Suite/releases/latest/download/";
 var r;
 r = load(UA.win);
-ok("Windows: its box only, the .exe, the download started", r.shown.join() === "p-windows" && r.btn === "Get-Lantern.exe" && r.href === REL + "Get-Lantern.exe" && r.started && r.errs.length === 0, r);
+// (1.24.21, Adam: Windows Defender quarantined Get-Lantern.exe as a Trojan on his laptop -- until the starter is mended
+// and cleared, Windows is given Lantern.zip and the kit's Install Lantern, as before 1.24.19; the .exe stays on the
+// release, and the page does not offer it)
+ok("Windows: its box only, Lantern.zip and Install Lantern, the download started", r.shown.join() === "p-windows" && r.btn === "Lantern.zip" && r.href === REL + "Lantern.zip" && r.started && r.errs.length === 0 &&
+  /Install Lantern \(Windows\)/.test(r.d.getElementById("p-windows").textContent) && !/Get-Lantern\.exe/.test(html), r);
 r = load(UA.win, { q: "?nodl" });
 ok("...not started with ?nodl", r.shown.join() === "p-windows" && !r.started, r);
 r = load(UA.mac);
@@ -75,7 +79,7 @@ Object.keys(names).forEach(function (n) {
   ok("the page's " + n + " is made by pack_starter.py", pack.indexOf('"' + n + '"') >= 0 || pack.indexOf(n) >= 0, n);
 });
 ok("...and the release publishes them all", /dist\/get\/Get-Lantern\*/.test(wf));
-ok("the page names five files", Object.keys(names).sort().join() === "Get-Lantern-Linux-arm64,Get-Lantern-Linux-x64,Get-Lantern-Mac.zip,Get-Lantern.exe,Lantern.zip", Object.keys(names));
+ok("the page names four files (not the Windows program, for now)", Object.keys(names).sort().join() === "Get-Lantern-Linux-arm64,Get-Lantern-Linux-x64,Get-Lantern-Mac.zip,Lantern.zip", Object.keys(names));
 ok("ES5 only in its script", !/=>|\blet |\bconst |`/.test(html.split("<script>")[1]));
 
 console.log(fails ? fails + " GET PAGE FAILURES (" + passes + " passed)" : "ALL GET PAGE CHECKS PASS (" + passes + ")");

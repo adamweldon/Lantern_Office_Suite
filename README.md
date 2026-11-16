@@ -141,7 +141,7 @@ It sees what the person is on and starts the right download:
 
 | Computer | The download | Then |
 |---|---|---|
-| Windows | `Get-Lantern.exe` (7 MB) | Open it. If Windows says "Windows protected your PC": **More info -> Run anyway** |
+| Windows | `Lantern.zip` (13 MB) | Extract it, then double-click **Install Lantern (Windows)**. (`Get-Lantern.exe` is on the release but not offered: Windows Defender quarantined it as a Trojan on 2026-11-16, and it is being mended.) |
 | Mac | `Get-Lantern-Mac.zip` (Lantern.app, Apple chips and Intel) | Open Lantern; the first time **System Settings -> Privacy & Security -> Open Anyway** |
 | Linux, Raspberry Pi | `Get-Lantern-Linux-x64` / `-arm64` | `chmod +x` it (a download may not run until allowed), then run it |
 | Android, iPhone, iPad, Chromebook | none | The website, then Install app / Add to Home Screen (two or three taps, shown on the page) |

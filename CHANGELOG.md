@@ -154,6 +154,18 @@ replies, and the passed rows of the last four runs through the new rules
 **Not tested:** the 35B itself on 1.24.21 (Adam's next set B run), and the
 small models (this branch's GitHub runs).
 
+**Published** on `main` (Adam, 2026-11-16: "the current version is much
+better than 1.14.3"); the one link's page loads and starts the download. On
+Adam's laptop, Windows Defender then quarantined Get-Lantern.exe as a Trojan
+("executes commands from an attacker"): an unsigned program from the
+internet that copies itself into the user folder, runs PowerShell hidden
+with its execution policy bypassed to make its icons, and downloads and
+starts other programs does what a dropper does. And with Lantern already
+running from his stick, it stopped on "127.0.0.1:8080 (another program has
+it)". Until the starter is mended and cleared, the page gives Windows
+Lantern.zip and Install Lantern (Windows), as before 1.24.19; the .exe stays
+on the release, and the page does not offer it.
+
 ## 1.24.20 — Adam's third set B run: the flag from the last child, a robot's block without its first line, a colour wheel written as groups, a snake that bit, Amazing Grace (2026-11-15)
 
 Adam ran set B again on the 35B, on 1.24.18, with the library on his laptop
