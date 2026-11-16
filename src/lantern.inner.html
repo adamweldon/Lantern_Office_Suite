@@ -48736,20 +48736,57 @@ Lantern.RFB = (function () {
     re = /\b([A-Za-z_]\w*)\s*=\s*P1\s*\.\s*readDiscrete\s*\x28\s*([A-Za-z_]\w*|\d+)\s*,\s*([A-Za-z_]\w*|\d+)\s*\x29\s*;/g;
     while ((m = re.exec(c))) if (num(m[3]) === w.stop.ch && (w.inSlot == null || num(m[2]) === w.inSlot)) { if (names.indexOf(m[1]) < 0) names.push(m[1]); readAt = m[2] + ", " + m[3]; }
     var stopIs = names.length === 1 ? names[0] : readAt ? "P1.readDiscrete(" + readAt + ")" : null;
-    // the line that drives the motor: P1.writeDiscrete(v, slot, ch) with v a plain name
-    var ls = String(text).split("\n"), at = -1, v = null, mk = r.motor.split(":");
+    // the line that drives the motor: P1.writeDiscrete(v, slot, ch) with v a plain name, inside loop() (its first review:
+    // a helper's parameter is not a name loop() can clear)
+    var ls = String(text).split("\n"), at = -1, v = null, mk = r.motor.split(":"), inLoop = false, loopAt = -1;
     ls.forEach(function (l, k) {
-      var mm = /P1\s*\.\s*writeDiscrete\s*\x28\s*([A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*|\d+)\s*,\s*([A-Za-z_]\w*|\d+)\s*\x29/.exec(l.replace(/\x2F\x2F.*$/, ""));
-      if (mm && String(num(mm[2])) === mk[0] && String(num(mm[3])) === mk[1] && at < 0) { at = k; v = mm[1]; }
+      var cl = l.replace(/\x2F\x2F.*$/, "");
+      if (/^\s*void\s+loop\s*\x28/.test(cl)) { inLoop = true; loopAt = k; }
+      else if (/^\s*(?:void|bool|boolean|int|long|float|double|byte|char|unsigned\s+\w+|static\s+\w+)\s+[A-Za-z_]\w*\s*\x28[^\x29]*\x29\s*\x7B?\s*$/.test(cl)) inLoop = false;
+      var mm = /P1\s*\.\s*writeDiscrete\s*\x28\s*([A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*|\d+)\s*,\s*([A-Za-z_]\w*|\d+)\s*\x29/.exec(cl);
+      if (mm && inLoop && String(num(mm[2])) === mk[0] && String(num(mm[3])) === mk[1] && at < 0) { at = k; v = mm[1]; }
     });
+    // (its first review: "bool pumpCmd = latch;" then the write -- clearing the copy left the latch set, and the pump ran
+    // again when both floats went off; a lamp written from the same name before the pump showed it running) -- the latch
+    // the written name copies, and the line put before the first line after loop() begins that reads any of the names
+    var chain = v ? [v] : [], first = at;
+    for (var hop = 0; hop < 4 && v; hop++) {
+      var cpy = null;
+      ls.forEach(function (l, k) {
+        var mm2 = new RegExp("^\\s*(?:bool\\s+|boolean\\s+)?" + chain[chain.length - 1] + "\\s*=\\s*([A-Za-z_]\\w*)\\s*;").exec(l.replace(/\x2F\x2F.*$/, ""));
+        if (mm2 && k > loopAt && k < at && !/^(true|false|HIGH|LOW)$/.test(mm2[1])) cpy = { k: k, from: mm2[1] };
+      });
+      if (!cpy) break;
+      chain.push(cpy.from); first = Math.min(first, cpy.k);
+    }
+    ls.forEach(function (l, k) {
+      var cl = l.replace(/\x2F\x2F.*$/, ""), mm3 = /P1\s*\.\s*writeDiscrete\s*\x28\s*([A-Za-z_]\w*)\s*,/.exec(cl);
+      if (k > loopAt && k < first && mm3 && chain.indexOf(mm3[1]) >= 0) first = k;
+    });
+    if (v) { at = first; v = chain[chain.length - 1]; }
     var who = "the " + w.machine, msg = "Start wins over Stop: the question says to stop " + who + " when the " + w.stopName + " comes on, and Lantern ran the sketch: with the " +
       w.startName + " and the " + w.stopName + " both on, " + who + " keeps running -- while the " + w.startName + " is on, the " + w.stopName + " cannot stop it. " +
       "Both on at once is a float stuck, or a tank whose floats are both made when it is full; the stop has to win.";
     if (stopIs && v && at >= 0 && !/^(true|false|HIGH|LOW)$/.test(v)) {
       var line = (/^\s*/.exec(ls[at])[0]) + "if (" + stopIs + ") " + v + " = false;   \x2F\x2F the stop wins", tr = ls.slice(0, at).concat([line], ls.slice(at));
       var again = Date.now() - t0 < 1000 ? S.startStop(tr.join("\n"), w) : null;
-      if (again && again.pass && again.motor === r.motor && !again.verdicts.some(function (x) { return /^Start wins over Stop/.test(x); }))
-        return [msg + " Write: if (" + stopIs + ") " + v + " = false; on the line before " + ls[at].replace(/^\s+|\s+$/g, "").replace(/\s*\x2F\x2F.*$/, "")];
+      // and, run again: both on and then both off leaves it off, and every output that went with the motor still does
+      var follows = function () {
+        var mir = {};
+        (r.traces || []).forEach(function (o, n2) { for (var key in o) if (key !== "$next" && key !== r.motor) mir[key] = (n2 === 0 || mir[key]) && !!o[key] === !!o[r.motor]; });
+        if ((again.traces || []).some(function (o) { for (var key in mir) if (mir[key] && !!o[key] !== !!o[r.motor]) return true; return false; })) return false;
+        var sk = S.sketch(tr.join("\n")), o2 = null, q2;
+        if (!sk || !sk.reset()) return false;
+        var ins2 = function (a2, b2) { var x = {}; for (var sl = 0; sl <= 15; sl++) if (w.inSlot == null || sl === w.inSlot) { x[sl + ":" + w.start.ch] = a2; x[sl + ":" + w.stop.ch] = b2; } return x; };
+        for (q2 = 0; q2 < 8; q2++) o2 = sk.scan(ins2(1, 1));
+        for (q2 = 0; q2 < 8; q2++) o2 = sk.scan(ins2(0, 0));
+        return !!o2 && !o2[r.motor];
+      };
+      if (again && again.pass && again.motor === r.motor && !again.verdicts.some(function (x) { return /^Start wins over Stop/.test(x); }) && follows())
+        // (its first review: the same write also in setup() -- the line goes in loop())
+        var anchor = ls[at].replace(/^\s+|\s+$/g, "").replace(/\s*\x2F\x2F.*$/, ""), twice = ls.filter(function (l) { return l.replace(/^\s+|\s+$/g, "").replace(/\s*\x2F\x2F.*$/, "") === anchor; }).length > 1;
+        return [msg + " Write: if (" + stopIs + ") " + v + " = false; " + (twice ? "in loop(), " : "") + "on the line before " + anchor];
+      return [msg + " Check the " + w.stopName + " last, so that it turns " + who + " off whatever the " + w.startName + " says."];
     }
     return [msg + " Check the " + w.stopName + " after the " + w.startName + ", so that it turns " + who + " off whatever the " + w.startName + " says."];
   }
@@ -50028,19 +50065,38 @@ Lantern.RFB = (function () {
   // mostly the letters of the chain's last word (madeUp) -- while that last word, worked out by the lines, is nowhere in
   // the sentence (not as itself, nor as its {ANSn} or {result}). Exactly one such word, or nothing is said.
   var QW = /[\x22\u201c\u201d\x27\u2018\u2019]([A-Za-z]{5,})[\x22\u201c\u201d\x27\u2018\u2019]/g;
+  // (its first review) the word given AS the result -- "... removed is \u201cnoituciohp\u201d", "it reads \u2018x\u2019",
+  // "what is left: \u201cx\u201d" -- not a word the sentence brings in beside it ("you can make \u201cdress\u201d", "like
+  // \u201cmyrrh\u201d", "\u201csympathy\u201d would ..."); and not where the question asks for a word to be made or named
+  // from the letters (an anagram, "which word", "what food")
+  var COPULA = /\b(?:is|are|was|were|reads?|gives?|gave|becomes?|became|leaves|leaving|left|remains?|spells|get)\s*:?\s*$|:\s*$/i;
+  var ASKWORD = /\b(make|made|form|formed|anagrams?|unscrambl\w*|rearrang\w*|real\s+word|english\s+word|another\s+word|other\s+words?|which\s+word|what\s+word|longer\s+word|shorter\s+word|hidden\s+word|what\s+food|what\s+animal|what\s+thing)\b/i;
+  // share(a, b): the letters they share, as a part of the longer
+  function share(a, b) {
+    var pool = {}, hit = 0;
+    String(b).toLowerCase().split("").forEach(function (c) { pool[c] = (pool[c] || 0) + 1; });
+    String(a).toLowerCase().split("").forEach(function (c) { if (pool[c]) { pool[c]--; hit++; } });
+    return hit / Math.max(a.length, b.length, 1);
+  }
   function madeWord(ans, steps, ql, inputs) {
     var a = String(ans || ""), j = -1, i;
+    if (ASKWORD.test(ql)) return null;
     for (i = steps.length - 1; i >= 0; i--) if (steps[i].ok && typeof steps[i].value === "string") { j = i; break; }
     if (j < 0 || !/^[A-Za-z]{5,}$/.test(steps[j].value)) return null;
     var v = steps[j].value, lv = v.toLowerCase();
     if (plain(a).toLowerCase().indexOf(lv) >= 0 || new RegExp("\\x7BANS" + (j + 1) + "\\x7D", "i").test(a) || (j === steps.length - 1 && /\x7Bresult\x7D/i.test(a))) return null;
-    var found = {}, m;
+    var found = {}, m, pa = plain(a);
     QW.lastIndex = 0;
-    while ((m = QW.exec(plain(a)))) {
+    while ((m = QW.exec(pa))) {
       var w = m[1], lw = w.toLowerCase();
+      if (!COPULA.test(pa.slice(Math.max(0, m.index - 40), m.index))) continue;
       if (ql.indexOf(lw) >= 0 || inputs.indexOf("\x22" + lw + "\x22") >= 0) continue;
       if (steps.some(function (st) { return st.ok && typeof st.value === "string" && st.value.toLowerCase() === lw; })) continue;
-      if (madeUp(w, v)) found[lw] = w;
+      // (its first review: "Backwards it is \u201cnoitucisohp\u201d" is line 1's word typed wrong, not the last one's) --
+      // nearer the last word than any other word the lines gave, by a tenth of its letters
+      var near = share(w, v);
+      if (!madeUp(w, v) || steps.some(function (st, k) { return k !== j && st.ok && typeof st.value === "string" && share(w, st.value) > near - 0.1; })) continue;
+      found[lw] = w;
     }
     var ks = Object.keys(found);
     return ks.length === 1 ? { lit: found[ks[0]], value: v, j: j } : null;
@@ -50208,7 +50264,9 @@ Lantern.RFB = (function () {
     // (1.24.21) the chain's last word typed from memory, in quotes (madeWord): Lantern's word in its place
     var mw = madeWord(out, steps, ql, inputs);
     if (mw) {
-      out = out.split(/(\x7B[^\x7D]*\x7D)/).map(function (part) { return /^\x7B[^\x7D]*\x7D$/.test(part) ? part : part.split(mw.lit).join(mw.value); }).join("");
+      // the quoted word only, never inside a longer one (its first review: "noituciohpic")
+      var qre = new RegExp("([\\x22\\u201c\\u201d\\x27\\u2018\\u2019])" + mw.lit + "(?=[\\x22\\u201c\\u201d\\x27\\u2018\\u2019])", "g");
+      out = out.split(/(\x7B[^\x7D]*\x7D)/).map(function (part) { return /^\x7B[^\x7D]*\x7D$/.test(part) ? part : part.replace(qre, "$1" + mw.value); }).join("");
       changes.push({ from: mw.lit, to: mw.value });
     }
     wordCounts(out, steps).forEach(function (x) {
@@ -51770,7 +51828,21 @@ Lantern.RFB = (function () {
         it.lvl = Math.round(Math.max(v[0][1], v[1][1]) * 4) / 4;
         return true;
       });
-      if (tops0.length === 1 && !/^(green|earth)$/.test(tops0[0].o.fam) && tops0[0].o.nums[3] >= GH - 0.5 && halves.length === 1 &&
+      // (its first review: a lake, the sea, a second field, a shadow or the other half of the ground drawn beside it were
+      // questioned, and the rect written in its place would paint over what was drawn before it) -- the sky has to
+      // show below the horizon, at the bottom edge and over a quarter of the land at least, and nothing but the sky
+      // may be drawn before the tri where the rect would go
+      var showsSky = function (hv0) {
+        var sky0 = tops0[0], k0 = items.indexOf(hv0), pts = 0, skyPts = 0, bottom = false, under = false, x0, y0;
+        for (y0 = hv0.lvl + 0.25; y0 < GH; y0 += 0.5) for (x0 = 0.25; x0 < GW; x0 += 0.5) {
+          var top = null;
+          items.forEach(function (it, k) { if (it.o && it.o.fill && inside(it.o, x0, y0)) { top = it; if (k < k0 && it !== sky0) under = true; } });
+          pts++;
+          if (top === sky0) { skyPts++; if (y0 > GH - 0.5) bottom = true; }
+        }
+        return !under && bottom && skyPts >= pts / 4;
+      };
+      if (tops0.length === 1 && !/^(green|earth)$/.test(tops0[0].o.fam) && tops0[0].o.nums[3] >= GH - 0.5 && halves.length === 1 && showsSky(halves[0]) &&
           !items.some(function (it) { return wide(it.o) && it.o.nums[1] > 0.5 && it.o.nums[1] + it.o.nums[3] >= GH - 0.5; })) {
         var hv = halves[0], gl = "rect 0 " + num(hv.lvl) + " " + GW + " " + num(GH - hv.lvl) + " fill " + hv.o.fill;
         // what Lantern would then ask of the picture, with the ground in place, is asked now too (one question, not two
@@ -57503,7 +57575,8 @@ Lantern.RFB = (function () {
       return null;
     }
     parts.forEach(function (p) {
-      p.mb = p.melody.length ? R.bars(join(p.melody), per).bars : [];
+      var asW = p.melody.length ? R.bars(join(p.melody), per) : null;
+      p.asW = asW; p.mb = asW ? asW.bars : [];
       p.cb = p.chords.length ? R.bars(join(p.chords), 0).bars : [];
       if (!p.melody.length || !R.toks) return;
       var barred = p.melody.some(function (l) { return l.indexOf("|") >= 0; }), i;
@@ -57568,7 +57641,8 @@ Lantern.RFB = (function () {
         var n = Math.max(mb.length, cb.length);
         notesIn(mb, k, barLen, r.bars * barLen, r.bars, prev, r.mel, r.badN);
         chordsIn(full, k, barLen, r.bars * barLen, r.bars, r.chs, r.badC);
-        r.info.push({ from: r.bars, n: n, mel: mb.length, ch: cb.length, mb: mb, cb: cb });
+        // (w: the melody's bars are the bars as the model wrote them -- barred, played once, not re-cut by Lantern)
+        r.info.push({ from: r.bars, n: n, mel: mb.length, ch: cb.length, mb: mb, cb: cb, w: !!p.asW && p.asW.times === 1 && p.asW.barred && p.mb === p.asW.bars });
         r.bars += n;
       });
       return r;
@@ -57852,15 +57926,41 @@ Lantern.RFB = (function () {
         // line, was taken word for word: the bar written with the chord's own note a half step from it (F for F#), when
         // the note is the one the bar's line writes there and the chord's note is of the key's own scale
         var lineN = "", toN = "", natural = T.scale(key);
-        if (!lineM && !fit.length && mbar) {
+        // (its first review) not a note meant as it is: a style whose notes bend (blues, rock, jazz, swing ...), a tune
+        // its title or notes call modal or blue or meant, a chord with a seventh or more, or a note that steps a half
+        // step to a note of the same chord (C# - D over D, Bb - A over Dm: a lean into the chord's note)
+        var meant = /^(blues|rock|jazz|swing|funk|soul|shuffle|boogie|r&b|rnb|bebop|latin|bossa)/i.test(String(style || "")) ||
+          /\b(lydian|dorian|mixolydian|phrygian|locrian|modal|blues|blue\s+notes?|jazz\w*|chromatic\w*|on\s+purpose|meant|intended|deliberate\w*)\b/i.test(String(s.title || "") + " " + String(s.notes || "")) ||
+          c.pcs.length > 3 || (nx && c0pcs.indexOf(T.mod(nx.midi, 12)) >= 0 && Math.abs(nx.midi - n.midi) === 1);
+        // (one melody line, its bars as written: in a song of parts, or with a bar played again (x2), "bar 6 of the melody"
+        // is not a bar the model wrote -- its first review)
+        var oneLine = P.info.length === 1 && inf && inf.w && inf.mb.length === P.bars;
+        if (!lineM && !fit.length && mbar && !meant && oneLine) {
           var jn = Math.round((n.at - (n.bar - 1) * barLen) / (barLen / mbar.length)), tokN = jn >= 0 && jn < mbar.length ? String(mbar[jn]) : "";
           var rubN = c0pcs.filter(function (p2) { var d2 = T.mod(pc - p2, 12); return (d2 === 1 || d2 === 11) && natural.indexOf(p2) >= 0; });
           var tokNote = T.noteOf(tokN);
           if (rubN.length === 1 && tokNote && T.mod(tokNote.midi, 12) === pc) {
-            var octN = (/(\d+)$/.exec(tokN) || [])[1], spN = T.spell(rubN[0], key), n4 = T.noteOf(spN, key, n.midi - sh);
+            var octN = /(\d+)$/.test(tokN), spN = T.spell(rubN[0], key), n4 = T.noteOf(spN, key, n.midi - sh);
             if (n4 && Math.abs(n4.midi - (n.midi - sh)) === 1) {
-              toN = spN; mbar[jn] = spN + (octN ? n4.oct : "");
-              lineN = mbar.join(" ");
+              // (its first review: after a leap, F written bare played an octave away and moved the notes after it) --
+              // the octave number where the bare note would not play where it should, and only a line with which the
+              // whole tune plays as before but for that note
+              // (the tune read again as the reader will read it, the bar written with the new note: its notes' first
+              // octaves come from the tokens, and place() weighs them, so a copy of the placed tune is not enough -- its
+              // first review's C - - - | F - - - played a whole octave lower)
+              var playsN = function (tokNew) {
+                var keepB = inf.mb[bi], nb = keepB.slice(), r2;
+                nb[jn] = tokNew; inf.mb[bi] = nb;
+                try { r2 = pass(key); } finally { inf.mb[bi] = keepB; }
+                place(r2.mel);
+                var want = P.mel.map(function (x) { return x === n ? n4.midi : x.midi - sh; });
+                return r2.mel.length === want.length && r2.mel.every(function (x, i2) { return x.midi === want[i2]; });
+              };
+              var useOct = octN || !playsN(spN);
+              // (and the tune is not moved to another octave for the instrument by the change: its first review's C - - - |
+              // F# - - - went down an octave whole)
+              var stays = shiftOf(P.mel.map(function (x) { return x === n ? n4.midi : x.midi - sh; })) === sh;
+              if (stays && (!useOct || playsN(spN + n4.oct))) { toN = spN; mbar[jn] = spN + (useOct ? n4.oct : ""); lineN = mbar.join(" "); }
             }
           }
         }
