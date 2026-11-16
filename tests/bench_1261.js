@@ -14,6 +14,9 @@
 //    the same, where bar 2's question, which gave the chords line, was taken word for word.
 //  - the path across a field (four runs, word for word): the field drawn as half a band, "tri 0 6 20 6 20 12 fill
 //    green", so Lantern found no ground, and none of what it does for a landscape (the path) could be done.
+// Then the four reviews of the four new rules (tests/fixtures/review1_1261.json to review4_1261.json: 318, 511, 653 and
+// 248 cases, each reviewer's own, made without seeing the rules written): no right input gets a new question, and every
+// line handed back, written in as it says, does what it says.
 "use strict";
 var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
 var fs = require("fs"), path = require("path");
