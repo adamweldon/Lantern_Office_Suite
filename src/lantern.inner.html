@@ -48031,7 +48031,36 @@ Lantern.RFB = (function () {
     return { motor: motor, extras: extras, ways: ways, verdicts: verdicts, traces: traces, pass: verdicts.indexOf("") >= 0,
       sure: judged.every(function (v) { return v === judged[0]; }), verdict: verdicts.indexOf("") >= 0 ? "" : judged[0] };
   }
-  L.codeScan = { sketch: sketch, wiring: wiring, startStop: startStop };
+  // (1.24.21) floatWiring(q): a start and a stop that are level switches -- "Start the pump when the low float switch
+  // comes on and stop it when the high float switch comes on", each switch named "on input N" -- read as a Start and a
+  // Stop that are ON when they act (Adam's set B, on 1.24.16, 1.24.17 and 1.24.20: the 35B's sketch checked the low
+  // float first, so while it was on the high float could not stop the pump). Null unless both are said that way and
+  // each name is on exactly one input; null when anything in it is said to be normally closed.
+  function floatWiring(q) {
+    q = String(q || "");
+    if (/\bnormally[\s-]+closed\b|\bN\.?C\b/.test(q)) return null;
+    var ON = "(?:comes?\\s+on|turns?\\s+on|switches\\s+on|closes|is\\s+on|goes\\s+on|is\\s+made|activates)";
+    var MACH = "(?:the\\s+)?(pump|motor|fan|compressor|blower|heater|conveyor|mixer|it)";
+    var WHEN = "\\s+(?:when|once|as\\s+soon\\s+as)\\s+(?:the\\s+)?([a-z][a-z0-9 -]{0,30}?)\\s+" + ON + "\\b";
+    var sm = new RegExp("\\bstart\\s+" + MACH + WHEN, "i").exec(q), pm = new RegExp("\\bstop\\s+" + MACH + WHEN, "i").exec(q);
+    if (!sm || !pm) return null;
+    function chOf(name) {
+      var nm = " " + name.toLowerCase().replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "") + " ", hits = {}, x;
+      var re = /([a-z][a-z0-9 -]{0,40}?)\s+(?:is\s+)?(?:on|at|to|wired\s+to|connected\s+to)\s+(?:discrete\s+)?input\s*(\d+)/gi;
+      while ((x = re.exec(q))) if ((" " + x[1].toLowerCase().replace(/\s+/g, " ") + " ").indexOf(nm) >= 0) hits[x[2]] = 1;
+      var ks = Object.keys(hits);
+      return ks.length === 1 ? +ks[0] : null;
+    }
+    var a = chOf(sm[2]), b = chOf(pm[2]);
+    if (a == null || b == null || a === b) return null;
+    var sl = {}, sr = /\binputs?\b([^.;]{0,60}?)\bslot\s*(\d+)/gi, sm2;
+    while ((sm2 = sr.exec(q))) if (!/\boutputs?\b/i.test(sm2[1])) sl[sm2[2]] = 1;
+    var out = null, mo = /\b(?:contactor|starter|motor|pump|fan|compressor|blower|heater|conveyor|mixer)\b([^.;,]{0,40}?)\boutput\s*(\d+)/i.exec(q);
+    if (mo && !/lamp|light|\bled\b|horn|beacon|buzzer|siren|alarm|indicator/i.test(mo[1])) out = +mo[2];
+    return { start: { ch: a, nc: false }, stop: { ch: b, nc: false }, out: out !== null ? { ch: out } : null,
+      inSlot: Object.keys(sl).length === 1 ? +Object.keys(sl)[0] : null, floats: true, startName: sm[2], stopName: pm[2], machine: sm[1] === "it" ? (pm[1] === "it" ? "motor" : pm[1]) : sm[1] };
+  }
+  L.codeScan = { sketch: sketch, wiring: wiring, startStop: startStop, floatWiring: floatWiring };
 })();
 // ===========================================================================
 // MODULE: CODE_SCAN - END
@@ -48687,13 +48716,51 @@ Lantern.RFB = (function () {
     }
     return [msg + " Read the Stop input so that pressing Stop turns the motor off."];
   }
+  // (1.24.21) A tank's start and stop on level switches (Lantern.codeScan.floatWiring), run scan by scan: when the
+  // start switch wins -- with both on, the motor runs -- the stop is put last, the line Lantern gives is tried in the
+  // sketch first, and it is given only when the sketch then works. Both on at once is a float stuck, or a tank whose
+  // floats are both made when it is full: either way the stop must win, or a full tank goes on being filled. Only that
+  // verdict, every way an input the question leaves open can be, and only when no other rule has spoken.
+  function floatScan(lang, text, q) { try { return floatScan1(lang, text, q); } catch (e) { return []; } }
+  function floatScan1(lang, text, q) {
+    var S = L.codeScan;
+    if (lang !== "arduino" || !S || !S.floatWiring || !q || !/readDiscrete/.test(text) || /\bmillis\s*\x28/.test(text) ||
+      /\b(\d+(\.\d+)?\s*(ms|s|secs?|seconds?|minutes?|mins?|hours?)\b|run[\s-]?on|timers?|time[\s-]?out|delay(ed)?)\b/i.test(q)) return [];
+    var t0 = Date.now(), w = S.floatWiring(q), r = w ? S.startStop(text, w) : null;
+    if (!r || r.pass || !r.sure || !/^Start wins over Stop/.test(r.verdict) || !r.motor) return [];
+    var c = plainCode(text), consts = {}, m, re = /\b(?:const\s+)?(?:int|byte|uint8_t|long)\s+([A-Za-z_]\w*)\s*=\s*(\d+)\s*;|^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)[ \t]+(\d+)/gm;
+    while ((m = re.exec(c))) consts[m[1] || m[3]] = +(m[2] || m[4]);
+    function num(x) { return /^\d+$/.test(x) ? +x : consts[x]; }
+    // the name the stop switch is read into, when there is exactly one: x = P1.readDiscrete(slot, ch)
+    var names = [], readAt = null;
+    re = /\b([A-Za-z_]\w*)\s*=\s*P1\s*\.\s*readDiscrete\s*\x28\s*([A-Za-z_]\w*|\d+)\s*,\s*([A-Za-z_]\w*|\d+)\s*\x29\s*;/g;
+    while ((m = re.exec(c))) if (num(m[3]) === w.stop.ch && (w.inSlot == null || num(m[2]) === w.inSlot)) { if (names.indexOf(m[1]) < 0) names.push(m[1]); readAt = m[2] + ", " + m[3]; }
+    var stopIs = names.length === 1 ? names[0] : readAt ? "P1.readDiscrete(" + readAt + ")" : null;
+    // the line that drives the motor: P1.writeDiscrete(v, slot, ch) with v a plain name
+    var ls = String(text).split("\n"), at = -1, v = null, mk = r.motor.split(":");
+    ls.forEach(function (l, k) {
+      var mm = /P1\s*\.\s*writeDiscrete\s*\x28\s*([A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*|\d+)\s*,\s*([A-Za-z_]\w*|\d+)\s*\x29/.exec(l.replace(/\x2F\x2F.*$/, ""));
+      if (mm && String(num(mm[2])) === mk[0] && String(num(mm[3])) === mk[1] && at < 0) { at = k; v = mm[1]; }
+    });
+    var who = "the " + w.machine, msg = "Start wins over Stop: the question says to stop " + who + " when the " + w.stopName + " comes on, and Lantern ran the sketch: with the " +
+      w.startName + " and the " + w.stopName + " both on, " + who + " keeps running -- while the " + w.startName + " is on, the " + w.stopName + " cannot stop it. " +
+      "Both on at once is a float stuck, or a tank whose floats are both made when it is full; the stop has to win.";
+    if (stopIs && v && at >= 0 && !/^(true|false|HIGH|LOW)$/.test(v)) {
+      var line = (/^\s*/.exec(ls[at])[0]) + "if (" + stopIs + ") " + v + " = false;   \x2F\x2F the stop wins", tr = ls.slice(0, at).concat([line], ls.slice(at));
+      var again = Date.now() - t0 < 1000 ? S.startStop(tr.join("\n"), w) : null;
+      if (again && again.pass && again.motor === r.motor && !again.verdicts.some(function (x) { return /^Start wins over Stop/.test(x); }))
+        return [msg + " Write: if (" + stopIs + ") " + v + " = false; on the line before " + ls[at].replace(/^\s+|\s+$/g, "").replace(/\s*\x2F\x2F.*$/, "")];
+    }
+    return [msg + " Check the " + w.stopName + " after the " + w.startName + ", so that it turns " + who + " off whatever the " + w.startName + " says."];
+  }
   function build(block, ctx) {
     var p = parse(block), lg = L.codeLangs.get(p.lang), problems = p.problems.slice();
     var found = p.text.trim() ? L.codeCheck.run(p.lang, p.text) : [];
     found.forEach(function (x) { problems.push((x.line ? "line " + x.line + ": " : "") + x.msg); });
     var q = ctx && ctx.question;
-    ncProblems(p.lang, p.text, q).concat(stProblems(p.lang, p.text, q), sealProblems(p.lang, p.text, q), stopProblems(p.lang, p.text, q), delayProblems(p.lang, p.text, q), startWins(p.lang, p.text, q), stopScan(p.lang, p.text, q))
-      .forEach(function (x) { problems.push(x); found.push({ line: 0, msg: x }); });
+    var said0 = ncProblems(p.lang, p.text, q).concat(stProblems(p.lang, p.text, q), sealProblems(p.lang, p.text, q), stopProblems(p.lang, p.text, q), delayProblems(p.lang, p.text, q), startWins(p.lang, p.text, q), stopScan(p.lang, p.text, q));
+    if (!said0.length) said0 = floatScan(p.lang, p.text, q);
+    said0.forEach(function (x) { problems.push(x); found.push({ line: 0, msg: x }); });
     // (1.24.12) code read from a fence the reply never closed (Lantern.chatCode.blocks):
     // the reply ran out before the end of the program, so what is missing is the
     // problem, not the brackets it left open
@@ -49935,6 +50002,10 @@ Lantern.RFB = (function () {
         said[w.toLowerCase()] = 1;
         probs.push("the ANSWER spells \u201c" + w + "\u201d, but Lantern worked out \u201c" + steps[k].value + "\u201d (line " + (k + 1) + "): put {ANS" + (k + 1) + "} where it goes; Lantern fills it in");
       });
+      // 2b. (1.24.21) the chain's last word typed into the sentence from memory
+      var mw = madeWord(ans, steps, ql, inputs);
+      if (mw && !said[mw.lit.toLowerCase()])
+        probs.push("the ANSWER spells \u201c" + mw.lit + "\u201d, but Lantern worked out \u201c" + mw.value + "\u201d (line " + (mw.j + 1) + "): put {ANS" + (mw.j + 1) + "} where it goes; Lantern fills it in");
       // a placeholder that holds a word where a count goes ("{ANS2} letters")
       wordCounts(ans, steps).forEach(function (x) {
         probs.push("the ANSWER puts " + x.ph + " (\u201c" + x.value + "\u201d, a word) before \u201c" + x.noun + "\u201d: " +
@@ -49948,6 +50019,31 @@ Lantern.RFB = (function () {
       }
     }
     return probs.length ? probs.slice(0, 3).join("; ") : null;
+  }
+  // madeWord(answer, steps, question, inputs) -> {lit, value, j} or null (1.24.21). Adam's fourth set B run, on 1.24.20:
+  // =REVERSE("photosynthesis"), =REMOVE(ANS1,"s"), =LEN(ANS2) -- right -- and the sentence "... removed is
+  // \u201cnoituciohp\u201d, which has 10 letters": the word typed from memory, nothing like "iehtnyotohp" letter by
+  // letter, so best() did not see it, and Lantern put in its 11 beside the wrong word. A word in quotes is the AI saying
+  // "this is the word", so: a quoted word, not in the question nor given to a line, not any line's result, made of
+  // mostly the letters of the chain's last word (madeUp) -- while that last word, worked out by the lines, is nowhere in
+  // the sentence (not as itself, nor as its {ANSn} or {result}). Exactly one such word, or nothing is said.
+  var QW = /[\x22\u201c\u201d\x27\u2018\u2019]([A-Za-z]{5,})[\x22\u201c\u201d\x27\u2018\u2019]/g;
+  function madeWord(ans, steps, ql, inputs) {
+    var a = String(ans || ""), j = -1, i;
+    for (i = steps.length - 1; i >= 0; i--) if (steps[i].ok && typeof steps[i].value === "string") { j = i; break; }
+    if (j < 0 || !/^[A-Za-z]{5,}$/.test(steps[j].value)) return null;
+    var v = steps[j].value, lv = v.toLowerCase();
+    if (plain(a).toLowerCase().indexOf(lv) >= 0 || new RegExp("\\x7BANS" + (j + 1) + "\\x7D", "i").test(a) || (j === steps.length - 1 && /\x7Bresult\x7D/i.test(a))) return null;
+    var found = {}, m;
+    QW.lastIndex = 0;
+    while ((m = QW.exec(plain(a)))) {
+      var w = m[1], lw = w.toLowerCase();
+      if (ql.indexOf(lw) >= 0 || inputs.indexOf("\x22" + lw + "\x22") >= 0) continue;
+      if (steps.some(function (st) { return st.ok && typeof st.value === "string" && st.value.toLowerCase() === lw; })) continue;
+      if (madeUp(w, v)) found[lw] = w;
+    }
+    var ks = Object.keys(found);
+    return ks.length === 1 ? { lit: found[ks[0]], value: v, j: j } : null;
   }
   // best(word, values) -> the index of the one worked-out word it is a slip
   // of, or -1: a near spelling (close) first, the nearest if several; else
@@ -50109,6 +50205,12 @@ Lantern.RFB = (function () {
         return texts[k];
       });
     }).join("");
+    // (1.24.21) the chain's last word typed from memory, in quotes (madeWord): Lantern's word in its place
+    var mw = madeWord(out, steps, ql, inputs);
+    if (mw) {
+      out = out.split(/(\x7B[^\x7D]*\x7D)/).map(function (part) { return /^\x7B[^\x7D]*\x7D$/.test(part) ? part : part.split(mw.lit).join(mw.value); }).join("");
+      changes.push({ from: mw.lit, to: mw.value });
+    }
     wordCounts(out, steps).forEach(function (x) {
       if (x.num < 0) return;
       var to = "{ANS" + (x.num + 1) + "}";
@@ -50178,7 +50280,7 @@ Lantern.RFB = (function () {
     });
     return changes.length ? { text: t, changes: changes } : null;
   }
-  window.Lantern.aiResultChecks = { close: close, sameLetters: sameLetters, check: check, repair: repair, rechain: rechain, retyped: retyped,
+  window.Lantern.aiResultChecks = { close: close, sameLetters: sameLetters, check: check, repair: repair, rechain: rechain, retyped: retyped, madeWord: madeWord,
     rechainNumbers: rechainNumbers, carry: carry };
 })();
 // ===========================================================================
@@ -51648,6 +51750,37 @@ Lantern.RFB = (function () {
     }
     // a plain landscape, asked for in words Lantern knows, with one sky and a ground it can read: or nothing
     var sc = plain(q) ? scene(items) : { H: null }, H = sc.H;
+    // (1.24.21) The ground drawn as half a band. Adam's set B, four runs word for word (1.24.16, 1.24.17, 1.24.18,
+    // 1.24.20): "a path going away across a field towards the horizon" came back with "tri 0 6 20 6 20 12 fill green"
+    // for the field -- its top along the horizon from edge to edge, its third corner at the bottom right -- so the
+    // sky showed below the horizon down to the bottom left, Lantern found no ground, and none of what it does for a
+    // landscape (the path drawn wide at the bottom edge and to a point on the horizon) could be done. Asked, with the
+    // line to write, only when: the question names a field or the ground; there is one sky and no ground band; and
+    // one filled tri of the ground's colours has its top on one level from the left edge to the right edge and its
+    // third corner in a bottom corner. What else is that shape? A slope would not run level along its top.
+    if (H === null && plain(q) && !(opts && opts.cut) && /\b(fields?|meadows?|grass|grassland|ground|land|prairie|pastures?|farmland|plains?|countryside)\b/i.test(q)) {
+      var tops0 = items.filter(function (it) { return wide(it.o) && it.o.nums[1] <= 0.5; });
+      var halves = items.filter(function (it) {
+        var o = it.o;
+        if (!o || o.kind !== "tri" || !o.fill || !/^(green|earth)$/.test(o.fam) || o.nums.length < 6) return false;
+        var v = [[o.nums[0], o.nums[1]], [o.nums[2], o.nums[3]], [o.nums[4], o.nums[5]]].sort(function (a, b) { return a[1] - b[1]; });
+        var lvl = Math.abs(v[0][1] - v[1][1]) <= 0.3, span = Math.min(v[0][0], v[1][0]) <= 0.5 && Math.max(v[0][0], v[1][0]) >= GW - 0.5;
+        var corner = v[2][1] >= GH - 0.3 && (v[2][0] <= 0.5 || v[2][0] >= GW - 0.5);
+        if (!(lvl && span && corner && v[0][1] >= 2 && v[0][1] <= GH - 2)) return false;
+        it.lvl = Math.round(Math.max(v[0][1], v[1][1]) * 4) / 4;
+        return true;
+      });
+      if (tops0.length === 1 && !/^(green|earth)$/.test(tops0[0].o.fam) && tops0[0].o.nums[3] >= GH - 0.5 && halves.length === 1 &&
+          !items.some(function (it) { return wide(it.o) && it.o.nums[1] > 0.5 && it.o.nums[1] + it.o.nums[3] >= GH - 0.5; })) {
+        var hv = halves[0], gl = "rect 0 " + num(hv.lvl) + " " + GW + " " + num(GH - hv.lvl) + " fill " + hv.o.fill;
+        // what Lantern would then ask of the picture, with the ground in place, is asked now too (one question, not two
+        // turns: the path the question asks for, wide at the bottom edge and to a point on the horizon)
+        var then = [];
+        try { then = mend(items.map(function (it) { return it === hv ? gl : it.line; }), q, opts).problems.filter(function (x) { return /^the question asks for /.test(x); }); } catch (e9) { then = []; }
+        problems.push("the ground is drawn as a triangle: \u201c" + hv.line + "\u201d leaves the sky showing below the horizon, down to the bottom edge. " +
+          "The ground is ONE wide rect that reaches the bottom edge, its top the horizon: write " + gl + " in its place" + (then.length ? ". Then " + then[0] : ""));
+      }
+    }
     if (H === null) return { lines: items.map(function (it) { return it.line; }), said: said, problems: problems };
     function isSkyO(o) { return sc.skyO.indexOf(o) >= 0; }
 
@@ -51987,8 +52120,23 @@ Lantern.RFB = (function () {
       // review found every drawing built twice)
       var away0 = false, b0r = null, cnt0 = {}, thrice0 = (block.lines || []).some(function (l) { var k0 = String(l).replace(/\s+/g, " ").replace(/^\s+|\s+$/g, ""); cnt0[k0] = (cnt0[k0] || 0) + 1; return cnt0[k0] >= 3; });
       try { b0r = ra || !thrice0 ? null : build0.call(act, block, ctx); away0 = !!b0r && (b0r.problems || []).some(function (p) { return /^the reply ran away/.test(p); }); } catch (e1) { away0 = false; b0r = null; }
+      // (1.24.21) a reply that ran away is asked about once, and the next reply is what was left (the 35B's path across a
+      // field, four runs): the ground drawn as half a band, in what is left, is asked about in the same question --
+      // the lines written three times or more, and a last line cut short, left out, as the run-away question says
+      function awayToo(res) {
+        if (!res || !res.problems || !res.problems.some(function (p) { return /^the reply ran away/.test(p); })) return res;
+        try {
+          var c1 = {}, nrm = function (l) { return String(l).replace(/\s+/g, " ").replace(/^\s+|\s+$/g, ""); };
+          (block.lines || []).forEach(function (l) { c1[nrm(l)] = (c1[nrm(l)] || 0) + 1; });
+          var kept = (block.lines || []).filter(function (l) { return c1[nrm(l)] < 3; });
+          if (!block.closed && kept.length) kept.pop();
+          var gq = mend(kept, ctx && ctx.question, { cut: false }).problems.filter(function (x) { return /^the ground is drawn as a triangle/.test(x); });
+          if (gq.length) res.problems = res.problems.map(function (p) { return /^the reply ran away/.test(p) ? p.replace(/[.\s]*$/, "") + ". In what is left, " + gq[0] : p; });
+        } catch (e2) { /* the run-away question as it was */ }
+        return res;
+      }
       try { m = ra ? null : mend(block.lines, ctx && ctx.question, { cut: !block.closed || away0 }); } catch (e) { m = null; }
-      if (!m || (!m.said.length && !m.problems.length)) return b0r || build0.call(act, block, ctx);
+      if (!m || (!m.said.length && !m.problems.length)) return awayToo(b0r || build0.call(act, block, ctx));
       for (k in block) b2[k] = block[k];
       b2.lines = m.lines;
       var r = build0.call(act, b2, ctx);
@@ -57699,10 +57847,28 @@ Lantern.RFB = (function () {
           if (near && jj >= 0 && jj < mbar.length && T.noteOf(mbar[jj])) { mbar[jj] = T.spell(near.pc, key); lineM = mbar.join(" "); }
         }
         if (cbar >= 0 && fit.length) lineC = "chords " + inf.cb.map(function (b2, x) { return x === cbar ? fit[0] : b2.join(" "); }).join(" | ");
+        // (1.24.21) a note that no chord of the key holds -- the 35B's F# over Dm in A minor, on 1.24.20, asked with
+        // "change the chord, or change the note" and sent back unchanged, where bar 2's question, which gave the chords
+        // line, was taken word for word: the bar written with the chord's own note a half step from it (F for F#), when
+        // the note is the one the bar's line writes there and the chord's note is of the key's own scale
+        var lineN = "", toN = "", natural = T.scale(key);
+        if (!lineM && !fit.length && mbar) {
+          var jn = Math.round((n.at - (n.bar - 1) * barLen) / (barLen / mbar.length)), tokN = jn >= 0 && jn < mbar.length ? String(mbar[jn]) : "";
+          var rubN = c0pcs.filter(function (p2) { var d2 = T.mod(pc - p2, 12); return (d2 === 1 || d2 === 11) && natural.indexOf(p2) >= 0; });
+          var tokNote = T.noteOf(tokN);
+          if (rubN.length === 1 && tokNote && T.mod(tokNote.midi, 12) === pc) {
+            var octN = (/(\d+)$/.exec(tokN) || [])[1], spN = T.spell(rubN[0], key), n4 = T.noteOf(spN, key, n.midi - sh);
+            if (n4 && Math.abs(n4.midi - (n.midi - sh)) === 1) {
+              toN = spN; mbar[jn] = spN + (octN ? n4.oct : "");
+              lineN = mbar.join(" ");
+            }
+          }
+        }
         clash++; c.asked = true;
         if (dry) { asks++; return; }
         probs.push("bar " + n.bar + ": the melody " + (lineM ? "ends on " : "holds ") + wrote + " over " + c.name + " (" + c.pcs.map(function (p) { return T.spell(p, key); }).join(" ") + "), a half step from a note of the chord: " +
           (lineM ? "end the tune on a note of " + c.name + " -- write bar " + n.bar + " of the melody as " + lineM + (fit.length ? " -- or write " + fit.join(" or ") + " as its chord" : "") :
+            lineN ? "write " + toN + " there (" + c.name + " has " + toN + ") -- bar " + n.bar + " of the melody as " + lineN + " -- or change the chord" :
             (fit.length ? "write " + fit.join(" or ") + " there (" + wrote + " is in " + (fit.length > 1 ? "them" : "it") + ")" + (lineC ? ", that is " + lineC : "") : "change the chord") + ", or change the note") + again(n.bar));
       });
     });
