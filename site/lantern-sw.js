@@ -1,10 +1,10 @@
 // Lantern offline worker (site build). Keeps Lantern and the AI engine files
 // on the device after the first visit so the app opens with no connection.
 // Models are NOT cached here: the engine keeps them in the browser's private
-// file store. Requests to a model server's API (/v1/...) are never cached.
+// file store. Requests to a model server's API (/v1/...) and to Lantern's starter (/lantern-setup/) are never cached.
 // With ?coi=1 it also adds cross-origin isolation headers, which lets the
 // engine use several CPU threads on hosts that cannot send them (GitHub Pages).
-var VERSION = "1.24.21-20ed285d";
+var VERSION = "1.24.21-8acdabf1";
 var CACHE = "lantern-" + VERSION;
 var COI = new URL(self.location.href).searchParams.get("coi") === "1";
 var CORE = ["./", "index.html", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png",
@@ -32,7 +32,8 @@ function isolate(res) {
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
 }
 function keep(req, res) {
-  if (res && res.ok && res.type === "basic") {
+  // (1.24.22) not what its server says must not be kept: Lantern's starter's status (Cache-Control: no-store)
+  if (res && res.ok && res.type === "basic" && !/no-store/i.test(res.headers.get("Cache-Control") || "")) {
     var copy = res.clone();
     caches.open(CACHE).then(function (c) { c.put(req, copy); });
   }
@@ -60,6 +61,9 @@ self.addEventListener("fetch", function (e) {
   var req = e.request, url = new URL(req.url);
   if (req.method !== "GET" || url.origin !== self.location.origin) return;
   if (/\/v1\//.test(url.pathname) || /\/(health|props|slots|metrics)$/.test(url.pathname)) return;
+  // (1.24.22, Adam's laptop: the starter's first status, "downloading", was kept and given back for good, so Lantern
+  // never heard that its AI had come, and asked a model file instead) -- Lantern's starter is always asked itself
+  if (/\/lantern-setup\//.test(url.pathname)) return;
   var p = req.mode === "navigate" ? page(req) :
     caches.match(req).then(function (hit) { return hit || fetch(req).then(function (res) { return keep(req, res); }); });
   e.respondWith(p.then(isolate));
