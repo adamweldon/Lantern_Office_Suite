@@ -18,6 +18,7 @@ var steps = [
   ["Compose app end to end", "node", ["tests/compose_app.js"], /ALL COMPOSE APP TESTS PASS/],
   ["Compose modules isolated (rule 11)", "node", ["tests/compose_isolation.js"], /COMPOSE MODULES ISOLATED/],
   ["AI layer (routing, app, bench)", "node", ["tests/ai_layer.js"], /ALL AI LAYER TESTS PASS/],
+  ["A model\u2019s vision part is not a model (1.24.22): one remembered as the on-device model is forgotten, and On this device with it; one chosen is refused, with the file to choose", "node", ["tests/ai_device_proj.js"], /ALL AI DEVICE PROJ CHECKS PASS/],
   ["Offline library (search, read, citations)", "node", ["tests/library.js"], /ALL LIBRARY TESTS PASS/],
   ["The part of an article that answers (1.24.8): a repair guide\u2019s steps without its readers\u2019 comments, a travel guide\u2019s own section, what a thing is made of", "node", ["tests/library_sections.js"], /ALL LIBRARY SECTION CHECKS PASS/],
   ["The five reviews of 1.24.8\u2019s library change, replayed: 261 pages and 2,704 questions, no answer 1.24.7 found lost but those written with why", "node", ["tests/library_review_1248.js"], /ALL LIBRARY REVIEW CHECKS PASS/],
