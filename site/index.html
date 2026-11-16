@@ -24084,10 +24084,11 @@ Lantern.RFB = (function () {
   AI.complete = function (messages, opts) {
     opts = opts || {};
     // (1.24.22, Adam's laptop: the page was opened before its starter had an AI, and never asked again, so Automatic
-    // chose the in-page AI with the AI ready behind its own address) -- Lantern served from this computer, no server
-    // known: its own address is asked again first (at most every 10 seconds)
+    // chose the in-page AI with the AI ready behind its own address) -- Lantern served by its starter, no server known:
+    // its own address is asked again first (at most every 10 seconds)
+    var LS = window.Lantern.lanternSetup;
     if (AI.choice() === "auto" && !AI.server.sameOrigin && !opts.redetected && /^https?:$/.test(location.protocol) &&
-        /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname) && Date.now() - (AI.lastDetect || 0) > 10000) {
+        LS && LS.active && LS.active() && Date.now() - (AI.lastDetect || 0) > 10000) {
       AI.lastDetect = Date.now();
       var again = {}; for (var k in opts) again[k] = opts[k]; again.redetected = true;
       return Promise.resolve(AI.detect()).then(function () { return AI.complete(messages, again); }, function () { return AI.complete(messages, again); });
@@ -26338,8 +26339,8 @@ Lantern.RFB = (function () {
   // km to an altitude", the wrong mend for Mars, and the 9B wrote the same again; given Jupiter's they would run, and
   // be Earth's number for that radius.) -- another body's radius and no GM: the call with that body's GM, the line to
   // write, tried first. Not a body's distance (the Moon's orbit round Earth is Earth's GM, rightly).
-  function otherBodyCall(expr) {
-    var ls = String(expr || "").split("\n").filter(function (l) { return /^\s*=/.test(l); }), k;
+  function otherBodyCall(expr, question) {
+    var ls = String(expr || "").split("\n").filter(function (l) { return /^\s*=/.test(l); }), k, qn = questionNumbers(question || "");
     for (k = 0; k < ls.length; k++) {
       var line = ls[k].replace(/^\s*=\s*/, "").replace(/\s+$/, ""), re = /\b(ORBITV|ESCV|ORBITT)\s*\x28/gi, m;
       if (/\bANS\d*\b/i.test(line)) continue;
@@ -26358,20 +26359,25 @@ Lantern.RFB = (function () {
         while ((pm = pre.exec(args[0]))) bodies.push({ b: pm[1], p: pm[2].toLowerCase().replace(/[^a-z]/g, "") });
         if (!bodies.length || !bodies.every(function (x) { return x.b.toLowerCase() === bodies[0].b.toLowerCase(); })) continue;
         if (/^\s*(the\s+)?earth\s*$/i.test(bodies[0].b) || !bodies.some(function (x) { return /radius$/.test(x.p); })) continue;
-        var call = line.slice(m.index, j + 1), fixed = call.slice(0, -1) + ",PLANET(\x22" + bodies[0].b + "\x22,\x22gm\x22))", whole = line.replace(call, fixed), v = null;
+        // (set B, the Moon: told to add 6371 km, the 9B wrote =ESCV(PLANET("Moon","radius")+6371000), which ran) -- Earth's
+        // radius added to another body's is the refusal's own mend, and goes; any other number must be the question's
+        var arg = args[0].replace(/\s*\+\s*(6\.?37[18]\d*(e6)?|637[18](000|137)?(\s*\*\s*1000)?|CONVERT\x28\s*637[18](\.\d+)?\s*,\s*\x22km\x22\s*,\s*\x22m\x22\s*\x29|PLANET\x28\s*\x22earth\x22\s*,\s*\x22radius\x22\s*\x29)(?![\d.])/gi, "");
+        if (numbersIn(arg).some(function (x) { return x !== 1000 && !qn.some(function (y) { return same(x, y) || same(x, y * 1000); }); })) continue;
+        var call = line.slice(m.index, j + 1), fixed = call.slice(0, i - m.index) + arg + ",PLANET(\x22" + bodies[0].b + "\x22,\x22gm\x22))", whole = line.replace(call, fixed), v = null;
         try { v = L.formula.evaluate(whole, { deg: false, ans: 0 }); } catch (e) { v = null; }
         if (typeof v !== "number" || !isFinite(v)) continue;
-        return { fn: m[1].toUpperCase(), body: bodies[0].b, line: whole, was: line };
+        return { fn: m[1].toUpperCase(), body: bodies[0].b, line: whole, was: line, dropped: arg !== args[0] };
       }
     }
     return null;
   }
   function otherBodySay(o) {
     return o.fn + " given one value works out Earth\u2019s (it uses Earth\u2019s GM), and PLANET(\x22" + o.body + "\x22,\x22radius\x22) is " + o.body +
-      "\u2019s radius, not a height above Earth: give it " + o.body + "\u2019s GM as its second value. Write =" + o.line;
+      "\u2019s radius, not a height above Earth: give it " + o.body + "\u2019s GM as its second value" +
+      (o.dropped ? ", and leave Earth\u2019s radius out (it is not " + o.body + "\u2019s)" : "") + ". Write =" + o.line;
   }
-  add("other-body-gm", function (question, expr) { var o = otherBodyCall(expr); return o ? otherBodySay(o) : null; });
-  (L.assistRejectHints = L.assistRejectHints || []).push(function (question, expr) { var o = otherBodyCall(expr); return o ? otherBodySay(o) : null; });
+  add("other-body-gm", function (question, expr) { var o = otherBodyCall(expr, question); return o ? otherBodySay(o) : null; });
+  (L.assistRejectHints = L.assistRejectHints || []).push(function (question, expr) { var o = otherBodyCall(expr, question); return o ? otherBodySay(o) : null; });
   L.aiChecks.otherBodyCall = otherBodyCall;
   L.aiChecks.precedence = precedence; L.aiChecks.ampHoursOff = ampHoursOff;
   L.aiChecks.calls = calls; L.aiChecks.inputs = inputs; L.aiChecks.ampHours = ampHours;
@@ -48186,6 +48192,12 @@ Lantern.RFB = (function () {
     if (m) {
       lang = ALIAS[m[1].toLowerCase()] || "";
       if (!lang) problems.push("language " + m[1] + " is not one Lantern knows: use arduino, python, javascript, st or ladder");
+      raw.shift();
+    } else if (raw.length > 1 && /^\s*(arduino|python|micropython|javascript|c\+\+|cpp|p1am|esp32|ladder|st|structured text)\s*:?\s*$/i.test(raw[0])) {
+      // (1.24.22, the 9B on Adam's laptop, set B: "MAKE CODE: Button LED Toggle" then "arduino" on a line of its own was
+      // read as line 1 of the sketch -- "this line may be missing a ;" -- and the sketch questioned for good) -- the
+      // language's name alone, on the first line, is the language line written without its word
+      lang = ALIAS[raw[0].replace(/[\s:]+$/, "").replace(/^\s+/, "").toLowerCase()] || "";
       raw.shift();
     }
     while (raw.length && !raw[raw.length - 1].trim()) raw.pop();

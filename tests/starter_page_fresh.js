@@ -50,12 +50,16 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
       { ok: false, status: 404, json: function () { return Promise.resolve(null); } });
     if (/\/props$/.test(u)) return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ modalities: { vision: true } }); } });
     if (/chat\/completions$/.test(u)) return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ choices: [{ message: { content: "ANSWER: hello" } }], usage: { completion_tokens: 3 } }); } });
+    // the starter's status, as the offline worker of 1.24.21 kept it: the engine still downloading
+    if (/\/lantern-setup\/status$/.test(u)) return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ v: 1, starter: "1.24.21", lantern: "1.24.21", ai: { state: "none" },
+      jobs: [{ id: "engine", state: "running", total: 0, done: 0 }], offers: [] }); } });
     return Promise.reject(new Error("no network"));
   };
   w.eval(js);
   await sleep(60);
   var AI = w.Lantern.ai;
-  ok("boot clean; opened before the AI came: no server known", errs.length === 0 && !AI.server.sameOrigin, [errs, AI.server]);
+  ok("boot clean; opened before the AI came: no server known, and the starter's status (as kept) says it is downloading", errs.length === 0 && !AI.server.sameOrigin &&
+     w.Lantern.lanternSetup.active() && /still arriving: downloading/.test(w.Lantern.aiWaitNote()), [errs, AI.server, w.Lantern.aiWaitNote()]);
   engine = true; calls = [];
   var out = await AI.complete([{ role: "user", content: "hi" }], { noGuard: true });
   ok("a question then asks Lantern's own address again, finds the AI, and asks it there", out === "ANSWER: hello" && AI.server.sameOrigin &&

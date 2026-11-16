@@ -37,8 +37,12 @@ setTimeout(async function () {
     ["=ESCV(6371000)", null],
     ["=ORBITT(PLANET(\"Earth\",\"radius\")+CONVERT(420,\"km\",\"m\"))/60", null],
     ["=PLANET(\"Mars\",\"radius\")\n=ESCV(ANS)", null],
-    ["=ESCV(PLANET(\"Mars\",\"radius\")+PLANET(\"Earth\",\"radius\"))", null]];
-  cases.forEach(function (c) { var o = C.otherBodyCall(c[0]); ok("line for " + c[0].replace(/\n/g, " / ") + ": " + (c[1] || "none"), (o ? o.line : null) === c[1], o); });
+    ["=ESCV(PLANET(\"Mars\",\"radius\")+PLANET(\"Earth\",\"radius\"))", null],
+    // (set B, the Moon: told to add 6371 km, the 9B added it -- the line leaves it out; a number from nowhere: no line)
+    ["=ESCV(PLANET(\"Moon\",\"radius\")+6371000)", "ESCV(PLANET(\"Moon\",\"radius\"),PLANET(\"Moon\",\"gm\"))"],
+    ["=ESCV(PLANET(\"Moon\",\"radius\")+CONVERT(6371,\"km\",\"m\"))", "ESCV(PLANET(\"Moon\",\"radius\"),PLANET(\"Moon\",\"gm\"))"],
+    ["=ESCV(PLANET(\"Moon\",\"radius\")+250000)", null]];
+  cases.forEach(function (c) { var o = C.otherBodyCall(c[0], "What is the escape velocity, or the orbit, at 400 km or 100 km?"); ok("line for " + c[0].replace(/\n/g, " / ") + ": " + (c[1] || "none"), (o ? o.line : null) === c[1], o); });
   var run = A.run("=ESCV(PLANET(\"Jupiter\",\"radius\"))");
   var said = (L.assistChecks || []).map(function (f) { try { return f("What is the escape velocity from Jupiter?", "=ESCV(PLANET(\"Jupiter\",\"radius\"))", run, {}); } catch (e) { return null; } }).filter(Boolean);
   ok("Jupiter's radius, which runs as Earth's, is questioned with its line", said.some(function (x) { return /Write =ESCV\(PLANET\("Jupiter","radius"\),PLANET\("Jupiter","gm"\)\)/.test(x); }), said);
