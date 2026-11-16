@@ -59,7 +59,7 @@ def cp(rel):
     s = os.path.join(ROOT, rel); d = os.path.join(plain, rel)
     os.makedirs(os.path.dirname(d), exist_ok=True)
     (shutil.copytree if os.path.isdir(s) else shutil.copy2)(s, d)
-for rel in ("site", "kit", "docs", "src", "tools", "Lantern_Office_Suite.html", "README.txt", "CHANGELOG.md", "package.json",
+for rel in ("site", "kit", "docs", "src", "tools", "Lantern_Office_Suite.html", "README.txt", "CHANGELOG.md", "LICENSE", "package.json",
             "Install Lantern (Windows).bat", "Start Lantern (Windows).bat", "Install Lantern (Mac).command", "Start Lantern (Mac).command",
             "Install Lantern (Linux).desktop", "Start Lantern (Linux).desktop"):
     cp(rel)
