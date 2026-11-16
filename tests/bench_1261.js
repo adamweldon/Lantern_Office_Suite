@@ -121,6 +121,83 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   });
   ok("the rows that passed in the four runs (" + [F, F3, F2, F1].reduce(function (n, G) { return n + G.passed.length; }, 0) + "): none of the new questions asked of any", !bad.length, bad);
 
+  // --- the reviews: each reviewer's own cases, made without seeing the rules written (tests/fixtures/review*_1261.json) --
+  // A right input gets none of the new questions; a line handed back, written in as it says, does what it says; a wrong
+  // input left as the model wrote it is a miss, listed (rule 7: a picture Lantern leaves wrong is as the model drew it).
+  // ALLOW: the cases that go otherwise than their reviewer expected, each with the reason.
+  function acts(c) {
+    var t = String(c.input), q = c.question;
+    if (c.rule === "W") {
+      var p = A.parseReply(t), run = A.run(p.exprText);
+      var mw = p.answer && run && run.steps ? RC.madeWord(p.answer, run.steps, String(q).toLowerCase(), String(p.exprText).toLowerCase()) : null;
+      var chk = run.value != null ? RC.check(q, p.exprText, run, { parsed: p }) || "" : "";
+      if (!mw) return null;   // (the older check of a word retyped with slips also says "the ANSWER spells")
+      var rep = RC.repair(p.answer, run.steps, q, p.exprText), want = run.steps[mw ? mw.j : 0];
+      // (the word in its quotes is gone; a longer quoted word with it inside is the model's, and left)
+      var fixed = rep ? rep.text : p.answer, ok2 = fixed.indexOf(String(want && want.value)) >= 0 &&
+        !new RegExp("[\x22\u201c\u201d\x27\u2018\u2019]" + mw.lit + "[\x22\u201c\u201d\x27\u2018\u2019]").test(fixed);
+      if (ok2) { var p2 = A.parseReply(t.replace(p.answer, fixed)); ok2 = !RC.madeWord(p2.answer, A.run(p2.exprText).steps, String(q).toLowerCase(), String(p2.exprText).toLowerCase()); }
+      return { said: chk || "repair: " + fixed, lineOk: ok2 };
+    }
+    if (c.rule === "F") {
+      var raw = ["language arduino"].concat(t.split("\n")), b = L.aiCode.build({ title: "T", raw: raw }, { question: q });
+      var f = b.problems.filter(function (x) { return /^Start wins over Stop: the question says to stop/.test(x); })[0];
+      if (!f) return null;
+      var m = /Write: if \x28(.+?)\x29 (\w+) = false; (in loop\x28\x29, )?on the line before (.+)$/.exec(f);
+      if (!m) return { said: f, lineOk: /Check the .* (last|after the)/.test(f) };
+      var ls = t.split("\n"), out = [], done = false, inLoop = !m[3];
+      ls.forEach(function (l) {
+        if (/^\s*void\s+loop\s*\x28/.test(l)) inLoop = true;
+        if (!done && inLoop && l.replace(/\s*\x2F\x2F.*$/, "").trim() === m[4].trim()) { out.push("  if (" + m[1] + ") " + m[2] + " = false;"); done = true; }
+        out.push(l);
+      });
+      var w2 = L.codeScan.floatWiring(q), ss = done && w2 ? L.codeScan.startStop(out.join("\n"), w2) : null;
+      var b2 = done ? L.aiCode.build({ title: "T", raw: ["language arduino"].concat(out) }, { question: q }) : null;
+      return { said: f, lineOk: !!ss && ss.pass && !b2.problems.some(function (x) { return /^Start wins over Stop/.test(x); }) };
+    }
+    if (c.rule === "M") {
+      var r1 = L.aiAct.build(t, q), mm = (r1.problems || []).map(function (x) { return /^bar (\d+): .* -- bar \1 of the melody as (.+?) -- or change the chord/.exec(x); }).filter(Boolean)[0];
+      if (!mm) return null;
+      var lines = t.split("\n"), mi = lines.map(function (l) { return /^melody /.test(l); }).indexOf(true), bars = lines[mi].replace(/^melody\s+/, "").split("|");
+      bars[+mm[1] - 1] = " " + mm[2] + " "; lines[mi] = "melody " + bars.join("|").replace(/^\s+|\s+$/g, "");
+      // (the note moves a half step; no other note of its bar moves, and none anywhere by an octave -- a note Lantern
+      // mends once the question is answered, the tune's last over its home chord, moves by a step)
+      var r2 = L.aiAct.build(lines.join("\n"), q), a = r1.plan.melody, z = r2.plan ? r2.plan.melody : [];
+      var inBar = a.map(function (x, i) { return z[i] ? z[i].midi - x.midi : 99; }).filter(function (d, i) { return a[i].bar === +mm[1] && d; });
+      var far = a.some(function (x, i) { return !z[i] || Math.abs(z[i].midi - x.midi) > 2; });
+      return { said: mm[0], lineOk: a.length === z.length && inBar.length === 1 && Math.abs(inBar[0]) === 1 && !far && !(r2.problems || []).some(function (x) { return new RegExp("^bar " + mm[1] + ": the melody holds").test(x); }) };
+    }
+    if (c.rule === "G") {
+      var cut = /\n\(no END: cut off\)$/.test(t), body = t.replace(/\n\(no END: cut off\)$/, "");
+      var g1 = L.aiAct.build("MAKE DRAWING: T\n" + body + (cut ? "\n" : "\nEND"), q), gp = (g1.problems || []).filter(function (x) { return /the ground is drawn as a triangle/.test(x); })[0];
+      if (!gp) return null;
+      var gm = /the ground is drawn as a triangle: \u201c(.+?)\u201d .*?write (rect [\d.]+ [\d.]+ [\d.]+ [\d.]+ fill .+?) in its place/.exec(gp);
+      if (!gm) return { said: gp, lineOk: false };
+      var body2 = body.split("\n").map(function (l) { return l.trim() === gm[1] ? gm[2] : l; }).join("\n"), g2 = L.aiAct.build("MAKE DRAWING: T\n" + body2 + "\nEND", q);
+      return { said: gp, lineOk: body2 !== body && !(g2.problems || []).some(function (x) { return /the ground is drawn as a triangle/.test(x); }) };
+    }
+    return null;
+  }
+  // (a sentence the older checks already ask about -- a word retyped with slips, a count -- is not a miss)
+  function oldAsk(c) { var p = A.parseReply(String(c.input)), run = A.run(p.exprText); return run.value != null && !!RC.check(c.question, p.exprText, run, { parsed: p }); }
+  var ALLOW = {
+  };
+  ["review1_1261.json"].concat(fs.existsSync(path.join(__dirname, "fixtures", "review2_1261.json")) ? ["review2_1261.json"] : []).forEach(function (fn) {
+    var R = fx(fn), spoiled = [], wrongLine = [], missed = [], n = 0;
+    R.cases.forEach(function (c) {
+      var r = null, key = fn.replace(/_1261\.json$/, "") + ":" + c.id;
+      try { r = acts(c); } catch (e) { r = { said: "crash " + e.message, lineOk: false }; }
+      n++;
+      if (ALLOW[key]) return;
+      if (c.rightInput && r) spoiled.push([c.id, r.said]);
+      else if (!c.rightInput && r && !r.lineOk) wrongLine.push([c.id, r.said]);
+      else if (!c.rightInput && !r && /^asked/.test(String(c.expected)) && !(c.rule === "W" && oldAsk(c))) missed.push(c.id);
+    });
+    ok(fn + ": " + n + " cases of " + R.reviewer + " -- no right input given a new question", !spoiled.length, spoiled);
+    ok(fn + ": every line given, written in, does what it says", !wrongLine.length, wrongLine);
+    console.log("  " + fn + ": left as the model wrote them (misses): " + (missed.join(" ") || "none"));
+  });
+
   console.log(fails ? fails + " BENCH 1.24.21 FAILURES (" + passes + " passed)" : "ALL BENCH 1.24.21 CHECKS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);
 })().catch(function (e) { console.log("FAIL crashed", e && e.stack); process.exit(1); });
