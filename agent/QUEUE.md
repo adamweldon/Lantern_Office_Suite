@@ -10,8 +10,11 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    one link that sets Lantern up and fetches its AI and books in the
    background while Lantern is already usable. Done: the starter for
    Windows, a Mac and Linux, run for real on GitHub's three computers on
-   every push (`.github/workflows/lantern-starter.yml`). Left:
-   - Adam's first real double-click (QUESTIONS 1): what SmartScreen and
+   every push (`.github/workflows/lantern-starter.yml`). Published: `main`
+   is 1.24.21 since 2026-11-16 (Adam: "proceed ... the current version is
+   much better than 1.14.3"), so the release carries the starter and the
+   website is that version. Left:
+   - Adam's first real double-click (QUESTIONS 2): what SmartScreen and
      Gatekeeper show, how the corner button looks to him;
    - the page under the starter in a real browser (Playwright on the Linux
      job: the corner button, the list, Add, Stop), not only jsdom;
@@ -19,7 +22,7 @@ file in the same commit as the work. Read `CLAUDE.md` first.
      run without `--plan small`, perhaps by hand: 3 GB more);
    - an offer's download for real (the library's 12 GB is too big for a
      run; the shelves' 5 GB perhaps);
-   - signing (QUESTIONS 2); a Mac icon in the Dock/Applications after the
+   - signing (QUESTIONS 3); a Mac icon in the Dock/Applications after the
      first run; Windows on ARM and an Intel Mac, built but not run;
    - an update: the starter could offer a newer Lantern.zip when the release
      has one (today it sets up the newest once, and Lantern.zip is laid over

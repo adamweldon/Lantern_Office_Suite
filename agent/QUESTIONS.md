@@ -11,15 +11,15 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    whether that reads right; it is yours to judge. Make one in the Draw
    tile, or ask Chat "Draw a colour wheel of the primary and secondary
    colours". (Asked 2026-11-15.)
-2. **The one link: merge 1.24.19 to `main`, then try it** (1.24.19). Merging
-   publishes Get-Lantern.exe, the Mac zip and the Linux programs on the
-   release, and makes the website 1.24.19 (the `gh-pages` branch stood at
-   1.13.0), so https://adamweldon.github.io/Lantern_Office_Suite/get.html
-   works for anyone. Is GitHub Pages turned on (Settings, Pages, "Deploy
-   from a branch", gh-pages)? It could not be checked from a session. Then
+2. **The one link: try it** (1.24.19; `main` is 1.24.21 since 2026-11-16,
+   on your word "proceed"). Merging published Get-Lantern.exe, the Mac zip
+   and the Linux programs on the release, and made the website the same
+   version, so https://adamweldon.github.io/Lantern_Office_Suite/get.html
+   works for anyone once GitHub Pages is turned on (Settings, Pages, "Deploy
+   from a branch", gh-pages): it could not be checked from a session. Then
    the first real double-click is yours: on the laptop, open the link, run
    it, and say what Windows showed and how the corner button looked.
-   (Asked 2026-11-13.)
+   (Asked 2026-11-13; updated 2026-11-16.)
 3. **Signing the programs, so Windows and the Mac stop warning** (1.24.19).
    Unsigned, Windows says "Windows protected your PC" (More info, Run
    anyway) and a Mac "Apple could not verify" (Open Anyway in Privacy &
@@ -100,7 +100,8 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    text (each night, about 01:20 your time, new session each run). Until
    then the work moves only when a chat is open.
    (Asked 2026-11-05.)
-11. **Somebody trained should read the Health lessons before `main`.** They
+11. **Somebody trained should read the Health lessons** (they are public
+   since 2026-11-16, with `main` at 1.24.21). They
    were checked line by line against WHO, CDC, NHS and the 2025
    resuscitation guidelines, by checkers that had not seen the drafting, and
    corrected. That is not the same as a nurse, a midwife or a first-aid
@@ -129,19 +130,7 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    emergency cannot wait for scrolling; but how a page looks is yours. Say if
    you want the old order.
    (Asked 2026-11-05.)
-15. **Publishing.** `main` is at 1.14.3; the work is on branches up to
-   1.24.9. The download on GitHub (`Lantern.zip`) is what `main` has, and
-   it still carries what the two audits found wrong: in Health, meat and
-   fish dried in the sun as they are; in Food, "oil covering" for cooked
-   vegetables and herbs (how botulism is made) and a sum that tells a baby
-   how much water to drink. Say "merge" when a version should become the
-   public one. The 35B scored 103 of 103 on 1.24.2, 107 of 109 on
-   1.24.4, and 111 of 112 on 1.24.5 and on 1.24.6 (the one miss both times
-   a tune of its own, 8 bars long; it passed when asked again on the build
-   that was pushed); with the encyclopedia, in your own run on 1.24.6,
-   134 of 138.
-   (Asked 2026-11-05; updated 2026-11-07.)
-16. **How the songs sound.** The songbook's nine tunes and the new bar
+15. **How the songs sound.** The songbook's nine tunes and the new bar
    readings are checked by their notes, lengths and bars, not by ear. If one
    sounds wrong, say which.
    (Asked 2026-11-05.)
