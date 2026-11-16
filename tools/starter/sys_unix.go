@@ -58,6 +58,9 @@ func openBrowser(u string) {
 	go func() { _ = c.Wait() }()
 }
 
+// shortcutTest: Windows's test of its icon; nothing here
+func shortcutTest(dir string) error { return nil }
+
 // makeShortcuts: Linux, a menu entry and a desktop icon; a Mac, none yet
 func makeShortcuts(root, exe string) error {
 	if runtime.GOOS != "linux" {
@@ -115,6 +118,15 @@ func setAwake(on bool) {
 	}
 	go func() { _ = c.Wait() }()
 	awakeCmd = c
+}
+
+func showInfo(title, msg string) {
+	fmt.Fprintln(os.Stderr, title+": "+msg)
+	if runtime.GOOS == "darwin" {
+		_ = exec.Command("osascript", "-e", fmt.Sprintf("display dialog %q with title %q buttons {\"OK\"} with icon note", msg, title)).Run()
+	} else if p, err := exec.LookPath("zenity"); err == nil && os.Getenv("DISPLAY")+os.Getenv("WAYLAND_DISPLAY") != "" {
+		_ = exec.Command(p, "--info", "--title="+title, "--text="+msg).Run()
+	}
 }
 
 func showError(title, msg string) {

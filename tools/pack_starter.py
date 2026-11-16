@@ -23,7 +23,11 @@ def go():
 
 def build(goos, goarch, out, gui=False):
     env = dict(os.environ, GOOS=goos, GOARCH=goarch, CGO_ENABLED="0", GOFLAGS="-mod=mod", GOTOOLCHAIN="local")
-    ld = "-s -w" + (" -H=windowsgui" if gui else "")
+    # (1.24.21) Windows keeps its symbol tables: Defender quarantined the stripped starter as a Trojan on Adam's
+    # laptop, and stripped Go programs are among those its learned rules mistake (the larger cause, PowerShell run
+    # hidden for the icons, is gone too)
+    ld = ("" if goos == "windows" else "-s -w") + (" -H=windowsgui" if gui else "")
+    ld = ld.strip()
     subprocess.run([go(), "build", "-trimpath", "-ldflags", ld, "-o", out, "."], cwd=SRC, env=env, check=True)
 
 

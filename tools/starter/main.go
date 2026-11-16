@@ -55,7 +55,7 @@ import (
 )
 
 const (
-	starterVersion = "1.24.19"
+	starterVersion = "1.24.21"
 	defaultZip     = "https://github.com/adamweldon/Lantern_Office_Suite/releases/latest/download/Lantern.zip"
 )
 
@@ -71,6 +71,7 @@ var (
 	flagIdle      = flag.Duration("idle", 20*time.Minute, "stop when no Lantern page has been open this long and nothing is downloading")
 	flagReady     = flag.Bool("exit-when-ready", false, "for tests: stop once the AI answers, after the downloads of the plan")
 	flagLog       = flag.String("log", "", "log file (default: kit/logs/starter.log)")
+	flagLnkTest   = flag.String("shortcut-test", "", "for tests: make the Lantern icon in this folder (Windows), and stop")
 )
 
 // ---------------------------------------------------------------------------
@@ -210,10 +211,37 @@ func main() {
 	if *flagZip == "" {
 		*flagZip = os.Getenv("LANTERN_ZIP")
 	}
+	if *flagLnkTest != "" {
+		if err := shortcutTest(*flagLnkTest); err != nil {
+			fmt.Fprintln(os.Stderr, "no icon:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	s := &Starter{chosen: map[string]bool{}, lastSeen: time.Now(), wake: make(chan struct{}, 1), quit: make(chan struct{}), aiState: "none"}
 
-	// another starter already serving Lantern: open it and stop
-	if alreadyRunning(*flagPort) {
+	// another starter already serving Lantern (on its address, or on one it moved to): open it and stop
+	portSet := false
+	flag.Visit(func(f *flag.Flag) { portSet = portSet || f.Name == "port" })
+	ports := []int{*flagPort}
+	if !portSet {
+		ports = append(ports, spare...)
+	}
+	for _, p := range ports {
+		if alreadyRunning(p) {
+			if !*flagNoBrowser {
+				openBrowser(fmt.Sprintf("http://127.0.0.1:%d/", p))
+			}
+			return
+		}
+	}
+	// (Adam, 2026-11-16: with Lantern running from his USB stick, the starter stopped on "Lantern could not use
+	// 127.0.0.1:8080 (another program has it)") -- another Lantern on this computer, started some other way: say
+	// so, open that one, and set nothing up beside it (two AIs at once would share the memory)
+	if otherLantern(*flagPort) {
+		showInfo("Lantern", fmt.Sprintf("Lantern is already running on this computer (at http://127.0.0.1:%d, from another Lantern folder, "+
+			"such as a USB stick). Lantern opens that one now.\n\nTo set up this one instead, close the other first "+
+			"(its Start Lantern window), then open this again.", *flagPort))
 		if !*flagNoBrowser {
 			openBrowser(fmt.Sprintf("http://127.0.0.1:%d/", *flagPort))
 		}
@@ -230,6 +258,14 @@ func main() {
 	s.memMB = memMB()
 
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", *flagPort))
+	// another program (not a Lantern) has the address: the next spare one, unless one was asked for
+	for i := 0; err != nil && !portSet && i < len(spare); i++ {
+		var e2 error
+		if ln, e2 = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", spare[i])); e2 == nil {
+			log.Printf("127.0.0.1:%d is taken by another program: Lantern is at 127.0.0.1:%d", *flagPort, spare[i])
+			*flagPort, err = spare[i], nil
+		}
+	}
 	if err != nil {
 		fatal(fmt.Sprintf("Lantern could not use 127.0.0.1:%d (another program has it)", *flagPort), err)
 	}
@@ -1187,6 +1223,23 @@ func (s *Starter) messageLocked(st Status) string {
 
 // ---------------------------------------------------------------------------
 // small things
+
+// spare: the addresses Lantern moves to when another program has 8080 (not 8081, the library's; 8082, Lantern
+// Watch's; 8090, the AI engine's)
+var spare = []int{8083, 8084, 8085, 8086, 8087, 8088, 8089, 8091, 8092, 8093}
+
+// otherLantern: the address answers with Lantern's page, served by something other than a starter (the kit's own
+// start script on a USB stick, say)
+func otherLantern(port int) bool {
+	cl := &http.Client{Timeout: 3 * time.Second}
+	resp, err := cl.Get(fmt.Sprintf("http://127.0.0.1:%d/", port))
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return resp.StatusCode == 200 && strings.Contains(string(b), "<title>Lantern")
+}
 
 func alreadyRunning(port int) bool {
 	cl := &http.Client{Timeout: 2 * time.Second}

@@ -224,7 +224,7 @@ def up(p):
     except Exception: return False
 ok("...and the AI with it", not up(eport) and not up(port), [up(eport), up(port)])
 logtxt = open(os.path.join(inst, "kit", "logs", "starter.log")).read() if os.path.exists(os.path.join(inst, "kit", "logs", "starter.log")) else ""
-ok("its log is in the kit", "Lantern starter 1.24.19" in logtxt and "AI ready" in logtxt, logtxt[-600:])
+ok("its log is in the kit", "Lantern starter 1.24.2" in logtxt and "AI ready" in logtxt, logtxt[-600:])
 
 # started again from the copy in the Lantern folder: nothing to download, the AI starts at once
 port2 = free_port()
@@ -256,6 +256,47 @@ ok("a folder with the 35B on a 16 GB computer: the 9B is not fetched as well", s
 get("/lantern-setup/stop", b"{}")
 try: p3.wait(timeout=20)
 except subprocess.TimeoutExpired: p3.kill()
+
+# (1.24.21, Adam's laptop: Lantern running from his USB stick held 8080, and the starter stopped on "another program
+# has it") -- another Lantern on 8080: said so, opened, nothing set up beside it; another program: Lantern moves to
+# 8083; started again, it finds itself there
+def port_free(pt):
+    sk = socket.socket()
+    try:
+        sk.bind(("127.0.0.1", pt)); return True
+    except OSError:
+        return False
+    finally:
+        sk.close()
+if port_free(8080) and port_free(8083):
+    class Page(http.server.BaseHTTPRequestHandler):
+        body = b"<!doctype html><html><head><title>Lantern Office</title></head><body></body></html>"
+        def do_GET(self):
+            self.send_response(200); self.send_header("Content-Type", "text/html"); self.end_headers(); self.wfile.write(Page.body)
+        def log_message(self, *a): pass
+    other = http.server.ThreadingHTTPServer(("127.0.0.1", 8080), Page)
+    threading.Thread(target=other.serve_forever, daemon=True).start()
+    homeA = os.path.join(tmp, "homeA")
+    ra = subprocess.run([binp, "--zip", BASE + "/Lantern.zip", "--home", homeA, "--no-browser", "--no-shortcuts", "--engine-port", str(free_port()),
+                         "--watch-port", str(free_port())], env=env, capture_output=True, text=True, timeout=60)
+    ok("another Lantern on 8080 (a USB stick's): said so, and nothing set up beside it", ra.returncode == 0 and "already running" in ra.stderr and
+       not os.path.exists(homeA), [ra.returncode, ra.stderr[-300:]])
+    Page.body = b"something else"
+    homeB = os.path.join(tmp, "homeB")
+    pb = subprocess.Popen([binp, "--zip", BASE + "/Lantern.zip", "--home", homeB, "--no-browser", "--no-shortcuts", "--plan", "small",
+                           "--engine-port", str(free_port()), "--watch-port", str(free_port())], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    U = "http://127.0.0.1:8083"; t = time.time(); st = None
+    while time.time() - t < 30 and not st:
+        st = status(); time.sleep(0.3)
+    ok("another program on 8080: Lantern is served at 127.0.0.1:8083", st is not None and bool(st.get("starter")), st)
+    rc = subprocess.run([binp, "--home", homeB, "--no-browser"], env=env, capture_output=True, text=True, timeout=30)
+    ok("...and started again, it finds itself there and stops", rc.returncode == 0 and not os.path.exists(os.path.join(tmp, "homeC")), rc.stderr[-300:])
+    get("/lantern-setup/stop", b"{}")
+    try: pb.wait(timeout=20)
+    except subprocess.TimeoutExpired: pb.kill()
+    other.shutdown()
+else:
+    print("(the checks of a taken 8080 are skipped: 8080 or 8083 is in use here)")
 
 srv.shutdown()
 shutil.rmtree(tmp, ignore_errors=True)
