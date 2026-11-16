@@ -48,10 +48,23 @@ reload, the 9B ran set A quick 16 of 17 and set B quick 15 of 17
 
 `npm test`: ALL CHECKS PASS. Not run: the browser tests on this branch.
 
+## Later the same day
+
+- Adam's home laptop, Windows's own protection on: the fixed starter, from
+  the workflow's artifact through his browser, was quarantined too
+  (Trojan:Win32/Bearfoos.A!ml, 15:34): the copy of itself in ~\Lantern and
+  its two icons ("startup"). It went on and set up the 9B regardless. So
+  PowerShell was not all of it: an unsigned program that copies itself and
+  makes icons is what the learned rules flag.
+- Adam: no signing for now (his name before every user, and liability); the
+  zip stays Windows's download. Lantern is now CC0 or 0BSD (`LICENSE`, the
+  About page, the Charter, Sources & licences, the READMEs, package.json;
+  the zip carries LICENSE).
+
 ## Open (Adam's)
 
-- The next release's Get-Lantern.exe, downloaded through the browser, with
-  "potentially unwanted apps" blocking on: if quiet, the page offers it
-  again; if not, signing (QUESTIONS 3: Artifact Signing $9.99 a month).
+- The one-click starter for Windows: not offered until signed or no longer
+  flagged; a starter that does not copy itself (its icons to the kit's
+  Start Lantern) is the free thing left to try (QUESTIONS 3).
 - The starter fetched the CPU engine; the kit can fetch the Vulkan build
   (graphics card): the 9B ran about 2 tokens a second on the CPU.

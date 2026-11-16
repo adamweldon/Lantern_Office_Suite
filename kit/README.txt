@@ -213,7 +213,7 @@ Notes
    crash llama.cpp; add "gpu" to try the graphics card. Macs use Metal.
  - Copy models/Qwen3.5-*.gguf onto a phone and load it in Lantern's AI app
    (On this device > Load file) to give a phone the AI without downloading.
- - Licences: Lantern CC0, and everything inside Lantern_Office_Suite.html
+ - Licences: Lantern CC0 (or 0BSD, as you prefer: LICENSE), and everything inside Lantern_Office_Suite.html
    is CC0 or public domain (its towns are Natural Earth's, public domain).
    Beside it: site/places.txt GeoNames, CC BY 4.0 (keep its credit line);
    site/ai wllama and llama.cpp MIT; llama.cpp MIT; Qwen3.5 Apache 2.0;

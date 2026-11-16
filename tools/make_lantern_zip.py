@@ -13,7 +13,7 @@ are never in the zip, so an update never touches them.
 In the zip, under Lantern/:
   Install Lantern (...) / Start Lantern (...)   the double-click launchers
   Lantern_Office_Suite.html                     the single file (no AI needed)
-  README.txt  CHANGELOG.md                      what it is; what changed
+  README.txt  CHANGELOG.md  LICENSE             what it is; what changed; CC0 or 0BSD
   site/                                          Lantern itself (what the kit shows)
   kit/                                           the scripts that set up and start the AI
   docs/                                          the PDF guides
@@ -27,7 +27,7 @@ Python 3 standard library only, so the GitHub workflow needs nothing installed.
 import json, os, re, subprocess, sys, time, zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TOP_FILES = ("Lantern_Office_Suite.html", "README.txt", "CHANGELOG.md")
+TOP_FILES = ("Lantern_Office_Suite.html", "README.txt", "CHANGELOG.md", "LICENSE")
 TOP_DIRS = ("site", "kit", "docs")
 NEVER = ("kit/engine/", "kit/models/", "kit/library/",   # what setup downloads
          "kit/logs/",                                     # Lantern Watch's load logs (this computer's own)

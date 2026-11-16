@@ -20,20 +20,18 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    double-click is yours: on the laptop, open the link, run
    it, and say what Windows showed and how the corner button looked.
    (Asked 2026-11-13; updated 2026-11-16.)
-3. **Signing the programs, so Windows and the Mac stop warning** (1.24.19;
-   pressing since 2026-11-16: on Adam's laptop Windows Defender quarantined
-   Get-Lantern.exe as a Trojan, "executes commands from an attacker", and
-   the page now gives Windows Lantern.zip instead). Unsigned, Windows says
-   "Windows protected your PC" and a Mac "Apple could not verify". Ways:
-   Microsoft's Artifact Signing (Windows; $9.99 a month for up to 5,000
-   signatures; open to individuals in the USA and Canada, with an identity
-   check -- devclass.com, 2026-01-14, read 2026-11-16); SignPath's free
-   signing for open-source projects (Windows; an application and a review);
-   Apple's Developer Program ($99 a year: signing and notarizing for the
-   Mac; price as known on 2026-11-13). Meanwhile, a mended build can be
-   sent to Microsoft as wrongly detected (microsoft.com/wdsi/filesubmission,
-   "Software developer", a Microsoft account), which clears that one file.
-   Which, if any? (Asked 2026-11-13; updated 2026-11-16.)
+3. **Signing the programs** -- answered for now (Adam, 2026-11-16): not
+   signed. The fixed starter was quarantined too on his home laptop with
+   Windows's own protection on (Trojan:Win32/Bearfoos.A!ml: it copied itself
+   into the user folder and made Start-menu and desktop icons), so Windows
+   keeps Lantern.zip and Install Lantern; signing in his own name puts his
+   name before every user, and liability is his to weigh. Lantern is now
+   CC0 or 0BSD (0BSD is OSI-approved, with a no-liability clause), which
+   also opens SignPath's free signing (the certificate in SignPath
+   Foundation's name) if he wants it later. Open: a lawyer's hour (the
+   licences, an LLC or nonprofit as publisher, insurance), a trained reader
+   for the Health lessons (11), and whether to try a starter that does not
+   copy itself.
 4. **Set B on GitHub too?** (1.24.16) The small models' run on GitHub
    asks set A only. Asking set B as well would show whether they carry
    over too, and would about double the run's time (the 4B took 147

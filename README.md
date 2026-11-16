@@ -1,7 +1,8 @@
 # Lantern Office Suite
 
 Single-file, offline-first, zero-dependency office and education suite for
-low-end hardware. Public domain (CC0).
+low-end hardware. Public domain (CC0, or the Zero-Clause BSD licence, 0BSD, if
+you prefer: see `LICENSE`).
 
 Since v1.7 it includes **Compose**, a complete offline writing suite: guided
 letters, CVs, essays and reports; a writing checker and live reading level in

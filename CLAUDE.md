@@ -122,7 +122,8 @@ People will act on what Lantern says with nobody to ask. So:
   give the cautious version, say when to get a trained person, and never
   invent a dose, a time or a temperature. A new dose or drug instruction is
   Adam's to approve: put it in `agent/QUESTIONS.md`, not in the tile.
-- **Licences.** Lantern is CC0. Take text only from the public domain or CC0;
+- **Licences.** Lantern is CC0, or 0BSD as the user prefers (`LICENSE`; Adam,
+  2026-11-16). Take text only from the public domain or CC0;
   facts and figures from anywhere, in your own words. No song lyrics, and no
   melody first published after 1928.
 - **Numbers the AI can use.** A table or formula a person needs is better as a

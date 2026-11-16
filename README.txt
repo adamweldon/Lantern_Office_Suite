@@ -2,7 +2,8 @@ LANTERN
 =======
 
 Lantern is an offline office and learning suite with its own AI. Nothing
-here needs the internet after setup. Free to use, copy and share (CC0).
+here needs the internet after setup. Free to use, copy and share (CC0, or
+0BSD if you prefer: see LICENSE).
 
 What is in this folder
   Install Lantern (Windows / Mac / Linux)   set up Lantern's AI on this
@@ -69,7 +70,9 @@ Updating to a newer Lantern
     https://github.com/adamweldon/Lantern_Office_Suite/releases/latest/download/Lantern.zip
 
 Licences
-  Everything inside Lantern_Office_Suite.html is CC0 or public domain.
+  Lantern is CC0, or 0BSD if you prefer (LICENSE): either way it comes as
+  it is, with no warranty. Everything inside Lantern_Office_Suite.html is
+  CC0 or public domain.
   What sits beside it keeps its own licence: site/places.txt (GeoNames,
   CC BY 4.0: keep its credit line), site/ai (MIT), and the models,
   engine and library books the kit downloads (see kit/README.txt; the
