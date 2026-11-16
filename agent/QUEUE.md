@@ -13,7 +13,15 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    every push (`.github/workflows/lantern-starter.yml`). Published: `main`
    is 1.24.21 since 2026-11-16 (Adam: "proceed ... the current version is
    much better than 1.14.3"), so the release carries the starter and the
-   website is that version. Left:
+   website is that version. **Windows Defender quarantined Get-Lantern.exe
+   as a Trojan on Adam's laptop (2026-11-16)**; the page gives Windows
+   Lantern.zip and Install Lantern until it is cleared. Mended on
+   `wip-2026-11-16-starter`: the icons made without PowerShell, the Windows
+   build not stripped, another Lantern or program on 8080 handled. Still
+   like a dropper: the kit's setup run hidden through PowerShell with its
+   policy bypassed -- if Defender still flags the mended starter on Adam's
+   laptop, do the kit's downloads in the starter itself (Go), and sign it
+   (QUESTIONS 3). Left:
    - Adam's first real double-click (QUESTIONS 2): what SmartScreen and
      Gatekeeper show, how the corner button looks to him;
    - the page under the starter in a real browser (Playwright on the Linux
