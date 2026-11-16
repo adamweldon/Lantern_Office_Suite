@@ -191,7 +191,15 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    iFixit book to test (a session linked to the laptop can read
    http://127.0.0.1:8081 there, or Adam can send the guide's page); the path
    across a field (the model's picture); the motor circuit and the
-   amp-hours follow-up (once each). Next: his set B run on 1.24.20.
+   amp-hours follow-up (once each). His fourth run of set B (1.24.20,
+   `tests/fixtures/bench_run_1261_35b_setb.json`, `tests/bench_1261.js`): 136
+   of 140. 1.24.21 asks about the four rows that were Lantern's to say:
+   photosynthesis (the lines right, the sentence's word typed from memory:
+   asked, and put right when sent back), the float switches (Adam's reading:
+   the low float is always made while the high one is, so the stop must win;
+   the line to write, tried in the sketch first), the A minor tune's F# over
+   Dm (the bar to write, tried by reading the tune again), and the field
+   drawn as a triangle (the rect to write). Next: his set B run on 1.24.21.
    Before 1.24.20: Of the gaps
    listed below for 1.24.16, the march, "Remind me what I asked you" and
    the orbital speed passed on his run all the same; still open: Amazing
