@@ -159,8 +159,8 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
       var r1 = L.aiAct.build(t, q), mm = (r1.problems || []).map(function (x) { return /^bar (\d+): .* -- bar \1 of the melody as (.+?) -- or change the chord/.exec(x); }).filter(Boolean)[0];
       if (!mm) return null;
       // (bar lines at the ends, and repeat signs, are read as bar lines: |: ... :| is played once)
-      var lines = t.split("\n"), mi = lines.map(function (l) { return /^melody /.test(l); }).indexOf(true),
-        bars = lines[mi].replace(/^melody\s+/, "").replace(/\x7C\s*:|:\s*\x7C|\x7C\x7C/g, "|").replace(/^\s*\x7C+|\x7C+\s*$/g, "").split("|");
+      var lines = t.split("\n"), mi = lines.map(function (l) { return /^melody\b\s*:?\s*/.test(l); }).indexOf(true),
+        bars = lines[mi].replace(/^melody\b\s*:?\s*/, "").replace(/\x7C\s*:|:\s*\x7C|\x7C\x7C/g, "|").replace(/^\s*\x7C+|\x7C+\s*$/g, "").split("|");
       bars[+mm[1] - 1] = " " + mm[2] + " "; lines[mi] = "melody " + bars.join("|").replace(/^\s+|\s+$/g, "");
       // (the note moves a half step; no other note of its bar moves, and none anywhere by an octave -- a note Lantern
       // mends once the question is answered, the tune's last over its home chord, moves by a step)
@@ -170,12 +170,14 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
       return { said: mm[0], lineOk: a.length === z.length && inBar.length === 1 && Math.abs(inBar[0]) === 1 && !far && !(r2.problems || []).some(function (x) { return new RegExp("^bar " + mm[1] + ": the melody holds").test(x); }) };
     }
     if (c.rule === "G") {
-      var cut = /\n\(no END: cut off\)$/.test(t), body = t.replace(/\n\(no END: cut off\)$/, "");
-      var g1 = L.aiAct.build("MAKE DRAWING: T\n" + body + (cut ? "\n" : "\nEND"), q), gp = (g1.problems || []).filter(function (x) { return /the ground is drawn as a triangle/.test(x); })[0];
+      // (the lines alone, or the whole block as the model wrote it: the third review's)
+      var cut = /\n\(no END: cut off\)$/.test(t), body = t.replace(/\n\(no END: cut off\)$/, ""), whole = /^MAKE DRAWING:/.test(body);
+      var wrap = function (b) { return whole ? b : "MAKE DRAWING: T\n" + b + (cut ? "\n" : "\nEND"); };
+      var g1 = L.aiAct.build(wrap(body), q), gp = (g1.problems || []).filter(function (x) { return /the ground is drawn as a triangle/.test(x); })[0];
       if (!gp) return null;
       var gm = /the ground is drawn as a triangle: \u201c(.+?)\u201d .*?write (rect [\d.]+ [\d.]+ [\d.]+ [\d.]+ fill .+?) in its place/.exec(gp);
       if (!gm) return { said: gp, lineOk: false };
-      var body2 = body.split("\n").map(function (l) { return l.trim() === gm[1] ? gm[2] : l; }).join("\n"), g2 = L.aiAct.build("MAKE DRAWING: T\n" + body2 + "\nEND", q);
+      var body2 = body.split("\n").map(function (l) { return l.trim() === gm[1] ? gm[2] : l; }).join("\n"), g2 = L.aiAct.build(wrap(body2), q);
       return { said: gp, lineOk: body2 !== body && !(g2.problems || []).some(function (x) { return /the ground is drawn as a triangle/.test(x); }) };
     }
     return null;
@@ -184,7 +186,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function oldAsk(c) { var p = A.parseReply(String(c.input)), run = A.run(p.exprText); return run.value != null && !!RC.check(c.question, p.exprText, run, { parsed: p }); }
   var ALLOW = {
   };
-  ["review1_1261.json"].concat(fs.existsSync(path.join(__dirname, "fixtures", "review2_1261.json")) ? ["review2_1261.json"] : []).forEach(function (fn) {
+  fs.readdirSync(path.join(__dirname, "fixtures")).filter(function (f) { return /^review\d+_1261\.json$/.test(f); }).sort().forEach(function (fn) {
     var R = fx(fn), spoiled = [], wrongLine = [], missed = [], n = 0;
     R.cases.forEach(function (c) {
       var r = null, key = fn.replace(/_1261\.json$/, "") + ":" + c.id;

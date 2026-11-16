@@ -48749,7 +48749,11 @@ Lantern.RFB = (function () {
     var S = L.codeScan;
     if (lang !== "arduino" || !S || !S.floatWiring || !q || !/readDiscrete/.test(text) || /\bmillis\s*\x28/.test(text) ||
       /\b(\d+(\.\d+)?\s*(ms|s|secs?|seconds?|minutes?|mins?|hours?)\b|run[\s-]?on|timers?|time[\s-]?out|delay(ed)?)\b/i.test(q)) return [];
-    var t0 = Date.now(), w = S.floatWiring(q), r = w ? S.startStop(text, w) : null;
+    // (its third review: 300 functions each calling the one before took half a second to run three times) -- a sketch
+    // of more than 40 functions is left as written, and the line is tried only when the first run was quick
+    var nFn = (String(text).match(/^[ \t]*(?:void|bool|boolean|int|long|float|double|byte|char|unsigned[ \t]+\w+|static[ \t]+\w+)[ \t]+[A-Za-z_]\w*[ \t]*\x28[^\x29\n]*\x29[ \t]*\x7B/gm) || []).length;
+    if (nFn > 40) return [];
+    var t0 = Date.now(), w = S.floatWiring(q), r = w ? S.startStop(text, w) : null, quick = Date.now() - t0 < 150;
     if (!r || r.pass || !r.sure || !/^Start wins over Stop/.test(r.verdict) || !r.motor) return [];
     var c = plainCode(text), consts = {}, m, re = /\b(?:const\s+)?(?:int|byte|uint8_t|long)\s+([A-Za-z_]\w*)\s*=\s*(\d+)\s*;|^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)[ \t]+(\d+)/gm;
     while ((m = re.exec(c))) consts[m[1] || m[3]] = +(m[2] || m[4]);
@@ -48792,7 +48796,7 @@ Lantern.RFB = (function () {
       "Both on at once is a float stuck, or a tank whose floats are both made when it is full; the stop has to win.";
     if (stopIs && v && at >= 0 && !/^(true|false|HIGH|LOW)$/.test(v)) {
       var line = (/^\s*/.exec(ls[at])[0]) + "if (" + stopIs + ") " + v + " = false;   \x2F\x2F the stop wins", tr = ls.slice(0, at).concat([line], ls.slice(at));
-      var again = Date.now() - t0 < 1000 ? S.startStop(tr.join("\n"), w) : null;
+      var again = quick ? S.startStop(tr.join("\n"), w) : null;
       // and, run again: both on and then both off leaves it off, and every output that went with the motor still does
       var follows = function () {
         var mir = {};
@@ -50123,6 +50127,12 @@ Lantern.RFB = (function () {
       if (inputs.indexOf("\x22" + rv + "\x22") >= 0 || steps.some(function (st) { return st.ok && typeof st.value === "string" && st.value.toLowerCase() === rv; })) continue;
       while ((mr = rm.exec(inputs))) if (lw.split(mr[1]).join("") === lv) before = true;
       if (before) continue;
+      // (its third review: the question asked for more than the lines did -- "remove every s and every vowel" over
+      // lines that remove only the s; "the last seven letters" -- and the model did the rest in its head, rightly) -- a
+      // word whose letters are the last word's in order with some left out, or the last word's with some put in, or
+      // the last word backwards, is a step further on, not a slip
+      var subOf = function (x, y) { var i2 = 0; for (var k2 = 0; k2 < y.length && i2 < x.length; k2++) if (y.charAt(k2) === x.charAt(i2)) i2++; return i2 === x.length; };
+      if (subOf(lw, lv) || subOf(lv, lw) || rv === lv) continue;
       // (its first review: "Backwards it is \u201cnoitucisohp\u201d" is line 1's word typed wrong, not the last one's) --
       // nearer the last word than any other word the lines gave, by a tenth of its letters
       var near = share(w, v);
@@ -50144,8 +50154,13 @@ Lantern.RFB = (function () {
     if (vals.some(function (v) { return v != null && String(v).toLowerCase() === lw; })) return -1;
     // (1.24.21, the second review of madeWord: "enirolfu" is as near "enirolhc" (line 1) as "eniroulf" (line 2) by
     // letters changed, and line 1 was named, so {ANS1} and the repair made fluorine backwards "enirolhc") -- of two as
-    // near, the one with more of its letters
-    if (c.length) return c.sort(function (a, b) { return lev(lw, String(vals[a]).toLowerCase()) - lev(lw, String(vals[b]).toLowerCase()) || share(w, vals[b]) - share(w, vals[a]); })[0];
+    // near, the one with clearly more of its letters
+    // (its third review: "aidpolcycne" is one letter from both "aidpolcycn" and "aidepolcycne", 0.91 and 0.92 of its
+    // letters: the first was meant) -- by a tenth of its letters, or the first as before
+    if (c.length) return c.sort(function (a, b) {
+      var d = lev(lw, String(vals[a]).toLowerCase()) - lev(lw, String(vals[b]).toLowerCase()), sa = share(w, vals[a]), sb = share(w, vals[b]);
+      return d || (Math.abs(sa - sb) >= 0.1 ? sb - sa : a - b);
+    })[0];
     return sl.length === 1 ? sl[0] : -1;
   }
   // the answer without its {placeholders}
@@ -50299,7 +50314,9 @@ Lantern.RFB = (function () {
     var mw = madeWord(out, steps, ql, inputs);
     if (mw) {
       // the quoted word only, never inside a longer one (its first review: "noituciohpic")
-      var qre = new RegExp("([\\x22\\u201c\\u201d\\x27\\u2018\\u2019])" + mw.lit + "(?=[\\x22\\u201c\\u201d\\x27\\u2018\\u2019])", "g");
+      // (its third review: "It is \u201cnoituciohp\u201d, i.e. noituciohp" kept the second) -- the word wherever it stands
+      // as a word of its own, quoted or not
+      var qre = new RegExp("(^|[^A-Za-z])" + mw.lit + "(?![A-Za-z])", "gi");
       out = out.split(/(\x7B[^\x7D]*\x7D)/).map(function (part) { return /^\x7B[^\x7D]*\x7D$/.test(part) ? part : part.replace(qre, "$1" + mw.value); }).join("");
       changes.push({ from: mw.lit, to: mw.value });
     }
