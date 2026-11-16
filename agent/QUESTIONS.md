@@ -109,7 +109,13 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    resuscitation guidelines, by checkers that had not seen the drafting, and
    corrected. That is not the same as a nurse, a midwife or a first-aid
    instructor reading them. The birth lessons most of all. Is there someone?
-   (Asked 2026-11-05.)
+   (Asked 2026-11-05.) Adam, 2026-11-16: the published guidelines should be
+   the authority, not someone he happens to know. Offered: each lesson to
+   show its source and the date it was checked (now only in the code's
+   comments), public-domain US government wording (CDC, FEMA) where it
+   fits, and a reader who teaches first aid to lay people (anywhere, not a
+   local licence) only to flag what is missing or misleading, every change
+   still from a published guideline.
 12. **Medicines in the Health tile: none, unless you say.** The tile's rule is
    no medicine and no dose, and a test now holds it. The sources the lessons
    come from also give these, each of which saves lives where there is no
