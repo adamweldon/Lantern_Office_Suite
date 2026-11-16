@@ -14,10 +14,10 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
 2. **The one link: try it** (1.24.19; `main` is 1.24.21 since 2026-11-16,
    on your word "proceed"). Merging published Get-Lantern.exe, the Mac zip
    and the Linux programs on the release, and made the website the same
-   version, so https://adamweldon.github.io/Lantern_Office_Suite/get.html
-   works for anyone once GitHub Pages is turned on (Settings, Pages, "Deploy
-   from a branch", gh-pages): it could not be checked from a session. Then
-   the first real double-click is yours: on the laptop, open the link, run
+   version: https://adamweldon.github.io/Lantern_Office_Suite/get.html works
+   for anyone (Adam's screenshot, 2026-11-16 12:08: the page loads, finds
+   Windows, and starts the 7 MB download by itself). Now the first real
+   double-click is yours: on the laptop, open the link, run
    it, and say what Windows showed and how the corner button looked.
    (Asked 2026-11-13; updated 2026-11-16.)
 3. **Signing the programs, so Windows and the Mac stop warning** (1.24.19).
