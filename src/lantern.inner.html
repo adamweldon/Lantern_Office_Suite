@@ -50052,10 +50052,10 @@ Lantern.RFB = (function () {
     // the words the lines were given (REVERSE("stressed")) are inputs, not results
     var inputs = String(expr || "").toLowerCase();
     if (ans) {
-      var said = {};
+      var said = {}, wr = writtenIn(ans, steps);
       (plain(ans).match(/[A-Za-z\u00c0-\u024f]{4,}/g) || []).forEach(function (w) {
         if (said[w.toLowerCase()] || ql.indexOf(w.toLowerCase()) >= 0 || inputs.indexOf("\x22" + w.toLowerCase() + "\x22") >= 0) return;
-        var k = best(w, steps.map(function (st) { return st.ok && typeof st.value === "string" ? st.value : null; }));
+        var k = best(w, steps.map(function (st) { return st.ok && typeof st.value === "string" ? st.value : null; }), wr);
         if (k < 0) return;
         said[w.toLowerCase()] = 1;
         probs.push("the ANSWER spells \u201c" + w + "\u201d, but Lantern worked out \u201c" + steps[k].value + "\u201d (line " + (k + 1) + "): put {ANS" + (k + 1) + "} where it goes; Lantern fills it in");
@@ -50092,6 +50092,9 @@ Lantern.RFB = (function () {
   // from the letters (an anagram, "which word", "what food")
   var COPULA = /\b(?:is|are|was|were|reads?|gives?|gave|becomes?|became|leaves|leaving|left|remains?|spells|get)\s*:?\s*$|:\s*$/i;
   var ASKWORD = /\b(make|made|form|formed|anagrams?|unscrambl\w*|rearrang\w*|real\s+word|english\s+word|another\s+word|other\s+words?|which\s+word|what\s+word|longer\s+word|shorter\s+word|hidden\s+word|what\s+food|what\s+animal|what\s+thing)\b/i;
+  // (its fourth review: "change every s to z" over a line that only reverses -- the model changed the letters in its
+  // head, rightly) -- nor where the question has letters changed into others
+  var CHANGEWORD = /\b(chang\w*|replac\w*|swap\w*|switch\w*|substitut\w*|turn\w*|convert\w*|shift\w*|rotat\w*|encod\w*|encrypt\w*|ciphers?|caesar|rot13|instead|becomes?|into|doubl\w*|repeat\w*|insert\w*|add\w*|append\w*|prefix\w*|suffix\w*)\b/i;
   // share(a, b): the letters they share, as a part of the longer
   function share(a, b) {
     var pool = {}, hit = 0;
@@ -50101,16 +50104,18 @@ Lantern.RFB = (function () {
   }
   function madeWord(ans, steps, ql, inputs) {
     var a = String(ans || ""), j = -1, i;
-    if (ASKWORD.test(ql)) return null;
+    if (ASKWORD.test(ql) || CHANGEWORD.test(ql)) return null;
     for (i = steps.length - 1; i >= 0; i--) if (steps[i].ok && typeof steps[i].value === "string") { j = i; break; }
     if (j < 0 || !/^[A-Za-z]{5,}$/.test(steps[j].value)) return null;
     var v = steps[j].value, lv = v.toLowerCase();
     if (plain(a).toLowerCase().indexOf(lv) >= 0 || new RegExp("\\x7BANS" + (j + 1) + "\\x7D", "i").test(a) || (j === steps.length - 1 && /\x7Bresult\x7D/i.test(a))) return null;
-    var found = {}, m, pa = plain(a);
+    var found = {}, m, pa = plain(a), wr = writtenIn(a, steps), sv = steps.map(function (st) { return st.ok && typeof st.value === "string" ? st.value : null; });
     QW.lastIndex = 0;
     while ((m = QW.exec(pa))) {
       var w = m[1], lw = w.toLowerCase();
       if (!COPULA.test(pa.slice(Math.max(0, m.index - 40), m.index))) continue;
+      // (a word the older check of words retyped with slips names is its business: asked and mended there, as before)
+      if (best(w, sv, wr) >= 0) continue;
       if (ql.indexOf(lw) >= 0 || inputs.indexOf("\x22" + lw + "\x22") >= 0) continue;
       if (steps.some(function (st) { return st.ok && typeof st.value === "string" && st.value.toLowerCase() === lw; })) continue;
       // (its first review: "Backwards it is \u201csisehtnysotohp\u201d" where one line reverses and removes) -- a word of the
@@ -50138,7 +50143,14 @@ Lantern.RFB = (function () {
   // best(word, values) -> the index of the one worked-out word it is a slip
   // of, or -1: a near spelling (close) first, the nearest if several; else
   // mostly the same letters, when only one is
-  function best(w, vals) {
+  // writtenIn(answer, steps) -> v -> whether the sentence already gives the word v: as a word of its own, or as the
+  // {ANSn} or {result} that stands for it
+  function writtenIn(ans, steps) {
+    var a = " " + plain(ans).toLowerCase().replace(/[^a-z\u00c0-\u024f]+/g, " ") + " ", ph = [], m, re = /\x7B(result|ANS(\d*))\x7D/gi;
+    while ((m = re.exec(String(ans || "")))) { var st = /^result$/i.test(m[1]) ? steps[steps.length - 1] : steps[(+m[2] || 1) - 1]; if (st && st.ok && typeof st.value === "string") ph.push(st.value.toLowerCase()); }
+    return function (v) { v = String(v).toLowerCase(); return ph.indexOf(v) >= 0 || a.indexOf(" " + v + " ") >= 0; };
+  }
+  function best(w, vals, wr) {
     var c = [], sl = [], lw = String(w).toLowerCase();
     vals.forEach(function (v, i) {
       if (v == null || String(v).toLowerCase() === lw) return;
@@ -50150,9 +50162,13 @@ Lantern.RFB = (function () {
     // near, the one with clearly more of its letters
     // (its third review: "aidpolcycne" is one letter from both "aidpolcycn" and "aidepolcycne", 0.91 and 0.92 of its
     // letters: the first was meant) -- by a tenth of its letters, or the first as before
+    // (its fourth review: "\u201cstressed\u201d backwards is \u201cdeserst\u201d, and \u201cdessert\u201d in capitals is
+    // \u201cDESSERT\u201d" -- the word already written is not the one mistyped) -- first, of two as near, the one the
+    // sentence does not already give (wr)
     if (c.length) return c.sort(function (a, b) {
       var d = lev(lw, String(vals[a]).toLowerCase()) - lev(lw, String(vals[b]).toLowerCase()), sa = share(w, vals[a]), sb = share(w, vals[b]);
-      return d || (Math.abs(sa - sb) >= 0.1 ? sb - sa : a - b);
+      var wa = wr && wr(vals[a]) ? 1 : 0, wb = wr && wr(vals[b]) ? 1 : 0;
+      return d || (wa - wb) || (Math.abs(sa - sb) >= 0.1 ? sb - sa : a - b);
     })[0];
     return sl.length === 1 ? sl[0] : -1;
   }
@@ -50292,12 +50308,13 @@ Lantern.RFB = (function () {
     if (!ans || !steps || !steps.length) return null;
     var hasPh = /\x7B(result|ANS\d*)\x7D/i.test(ans);
     var texts = steps.filter(function (st) { return st.ok && typeof st.value === "string" && st.value.length >= 4; }).map(function (st) { return st.value; });
+    var wr0 = writtenIn(ans, steps);
     var out = ans.split(/(\x7B[^\x7D]*\x7D)/).map(function (part) {
       if (/^\x7B[^\x7D]*\x7D$/.test(part)) return part;
       return part.replace(/[A-Za-z\u00c0-\u024f]{4,}/g, function (w) {
         var lw = w.toLowerCase();
         if (ql.indexOf(lw) >= 0 || inputs.indexOf("\x22" + lw + "\x22") >= 0) return w;
-        var k = best(w, texts);
+        var k = best(w, texts, wr0);
         if (k < 0) return w;
         changes.push({ from: w, to: texts[k] });
         return texts[k];

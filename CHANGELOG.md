@@ -1,5 +1,159 @@
 # Changelog
 
+## 1.24.21 — Adam's fourth set B run: the float switches, a word typed from memory, a note no chord holds, a field drawn as a triangle (2026-11-16)
+
+Adam ran set B again on the 35B, on 1.24.20, with the library on his laptop
+(2026-11-16, 13:58 UTC, 92 minutes): 136 of 140 (130 on 1.24.18, 129 on
+1.24.17, 122 on 1.24.16). The 6 rows that did not pass, as the model wrote
+them, and the 140 that passed, are in
+`tests/fixtures/bench_run_1261_35b_setb.json`; `tests/bench_1261.js` replays
+them. Adam's notes on the run: "The PHOTOSYNTHESIS spelled in reverse with
+every letter removed appears to be correct but is marked as failed. The PLC
+example would take the first true statement which is the low float calling
+for the motor to run. The low float would always be in this condition before
+the high float due to the physics of the water level and float placement is
+the reason this keeps failing. I am unsure about the song failure". Read row
+by row:
+
+- **Photosynthesis (four runs): the model's slip, now asked about.** The
+  35B's lines were right this time: =REVERSE("photosynthesis"),
+  =REMOVE(ANS1,"s"), =LEN(ANS2) work out "iehtnyotohp", 11 letters. Its
+  sentence said the word is "noituciohp", which has 10: a word typed from
+  memory, not the one its lines made (it has a c and a u that photosynthesis
+  does not). Lantern put in only its 11, beside the wrong word, so the bench
+  was right to fail it. Now a word in quotes given as the result ("... is
+  “noituciohp”"), made mostly of the letters of the chain's last word, while
+  that word is nowhere in the sentence, is asked about: "the ANSWER spells
+  “noituciohp”, but Lantern worked out “iehtnyotohp” (line 2): put {ANS2}
+  where it goes; Lantern fills it in". When the AI sends the sentence back
+  the same, Lantern puts its own word in place of the made-up one, wherever
+  that stands as a word, and says so. Not asked: a word the question or a
+  line was given, any line's result, the reverse of one, the word before a
+  REMOVE took its letters out, the last word with letters left out or put in
+  (a step the question asked for and the model did in its head: "remove
+  every s and every vowel" over lines that remove only the s), a word the
+  sentence brings in beside the result ("you can make “dress”"), a question
+  that asks for a word to be made or named (an anagram, "which word") or for
+  letters to be changed ("change every s to z"), or more than one such word.
+  The 4B's row of 1.24.7 ("efrgefao" for "otaegife", left then as too unlike
+  the word) is now asked too. And where the older check of a word retyped
+  with slips found it as near two lines' words, it named the first:
+  "fluorine" backwards typed "enirolfu" was put right as chlorine's
+  "enirolhc". Of two as near, it now names the one the sentence does not
+  already give (as a word, or as its {ANSn}), then the one with clearly more
+  of its letters (by a tenth), else the first as before.
+- **The float switches (three runs): Lantern's to say, and Adam's reading is
+  the reason.** "Start the pump when the low float switch comes on and stop
+  it when the high float switch comes on." In a filling tank the low float
+  is made before the high one and stays made while the high one is; both are
+  on whenever the tank is full. The 35B's sketch tested the low float first,
+  with the high float only in its else ("if (lowFloat) pumpRunning = true;
+  else if (highFloat) pumpRunning = false;"): with both on, the first true
+  test started the pump and the stop was never read, so it ran on into a
+  full tank. The bench's check is right; Lantern had no rule for it, since
+  its start/stop rules are for push buttons. Now, when the question fills a
+  tank -- a start on the low float or level switch and a stop on the high
+  one, each on its own input -- Lantern runs the sketch scan by scan, and
+  when the start wins with both on it says so, why, and the line to write:
+  "Write: if (highFloat) pumpRunning = false; on the line before
+  P1.writeDiscrete(pumpRunning, outSlot, pumpPin);". The line is written
+  into the sketch and run first; it is given only when the sketch then stops
+  the pump with both on, leaves it off when both go off, and every lamp that
+  followed the pump still does; otherwise Lantern says to check the stop
+  last. Where the pump is written from a copy of the latch (bool cmd =
+  latch;), the line clears the latch. Left alone: a tank pumped out (start
+  on the high float, stop on the low: there both made means full, and the
+  pump must run), a question that says which wins ("the low float has
+  priority"), normally closed switches, push buttons, a thermostat, a timer.
+- **The A minor tune (three runs): now the line to write.** Bar 5 held F#
+  over Dm (D F A). F# is not a note of A natural minor nor of Dm, and it
+  rubs a half step against the chord's F; the bench asks for a tune with no
+  such clash. Lantern asked "change the chord, or change the note", and the
+  35B sent the song back unchanged (a question that gives the line to write
+  is taken word for word). Now, when the chord has one note a half step from
+  the melody's, of the key's own scale, Lantern gives the bar written with
+  it: "write F there (Dm has F) -- bar 5 of the melody as F - G A -- or
+  change the chord". The line is tried first: the tune is read again as the
+  bar will be written, and the line is given only when every other note
+  plays where it did (an octave number is written on the note when the bare
+  note would land elsewhere, as after a leap). Not given where a note is
+  meant: a style, title or notes that say blues, jazz, swing, rock, soul,
+  funk, gospel, ragtime, a shuffle, a mode, or that the clash is intended; a
+  chord with a seventh; a note that leans a half step into the chord (C# - D
+  over D); nor where "bar 5 of the melody" is not a bar the model wrote
+  (parts of its own, an arrangement, a form, a line played twice, a melody
+  re-cut), nor where its bar holds a second such note.
+- **The path across a field (four runs): now asked about.** The 35B drew the
+  field as "tri 0 6 20 6 20 12 fill green": a triangle whose top is the
+  horizon, leaving the sky showing below it down to the bottom left. It was
+  not asked about (on this run the reply ran away with 31 grey triangles
+  first). Now a picture of a field, ground or meadow whose ground is one
+  triangle with a level top from edge to edge and its third corner in a
+  bottom corner, with the sky showing through below the horizon and nothing
+  drawn below the horizon before it, is asked about with the line: "write
+  rect 0 6 20 6 fill green in its place", and then the path, as before. Not
+  where the question asks for a hill, a hillside, a valley or a bank. A
+  reply that ran away is asked the same of what is left.
+- **The two puzzles without Lantern's tools** (the die, photosynthesis)
+  measure the model alone.
+
+**The reviews.** Each reviewer made its own cases without seeing the rules
+written or an earlier review; each set is in `tests/fixtures/` and
+`tests/bench_1261.js` replays them: no right input may get a new question,
+and every line handed back, written in as it says, must do what it says. The
+first (318 cases, `review1_1261.json`) found, in the first drafts: 19 of 41
+right landscapes questioned (the ground as two triangles, a lake or a second
+field as the other half) and the rect painting over them; the bar written
+with a bare note playing an octave away after a leap (215 of the 2,259 lines
+given for 3,000 random tunes); the float line clearing a copy of the latch,
+which stayed set (208 of 208 random sketches), and a lamp written before the
+pump left lying; 31 right sentences questioned (real words made from the
+letters, an example word) and a word inside a longer word changed. Its
+generators, run again on the mends, found the float line given without
+having been tried in 64 of 287 sketches ("on the line before undefined": an
+if without braces); mended, none of the 223 lines given is wrong, and none
+of 1,564 song lines. The second (511 cases, `review2_1261.json`): the style
+as written ("style jazz", "style blues") and titles such as "Swing Low" and
+"Kitchen Shuffle" not read, so 43 meant notes were given lines; a song with
+a viola part given a line that left the part clashing; two lines for one
+bar; a pumped-out sump given a line that stopped its pump for good, and
+questions that said the low float has priority asked to make the stop win; a
+hillside meadow flattened; a fence line drawn before the triangle painted
+over. Its W cases were clean. The third (653 cases and three generators,
+`review3_1261.json`) found F, M and G clean -- every line it was handed,
+written in, did what it said (510 song lines among 1,200 random tunes) --
+and the word rule still questioning right sentences where the question asked
+for more than the lines did and the model did the rest in its head ("remove
+every s and every vowel" over lines that remove only the s; "the last seven
+letters"), the repair leaving a second, unquoted copy of the made-up word,
+the new tie-break naming the wrong one of two words a letter apart, and 300
+functions each calling the one before taking half a second. Mended: a word
+that is the last word with letters left out or put in, or backwards, is a
+step further on, not a slip; the made-up word is replaced wherever it stands
+as a word; the tie-break only by a tenth of the letters; a sketch of more
+than 40 functions is left as written. The fourth (248 cases and two
+generators of 1,600 and 1,200 replies, `review4_1261.json`), on the word
+rule alone: no ordinary right sentence questioned; questioned still where
+the question had letters changed into others ("change every s to z") and the
+model did it in its head; and the new tie-break naming a line whose word the
+sentence already gave ("“stressed” backwards is “deserst”, and “dessert” in
+capitals is “DESSERT”" was mended to DESSERT twice). Mended: not where
+letters are changed; of two as near, never the word already written. Its
+generators, run again: no right sentence questioned, no new line wrong; of
+1,200 near slips in two-word sentences, 18 now name another line, all of
+them the right one. The fourth review's mends were checked against all four
+reviews' cases and their generators, not by a fifth reviewer.
+
+**Tested.** `npm test` (ALL CHECKS PASS); the browser tests `scene_e2e`,
+`bench_run9_e2e`, `bench_headless_e2e`, `music_e2e`; the run's 6 failed rows
+and 140 passed rows replayed with a stand-in model giving the 35B's own
+replies, and the passed rows of the last four runs through the new rules
+(none questioned); the four reviews' 1,730 cases replayed
+(`tests/bench_1261.js`).
+
+**Not tested:** the 35B itself on 1.24.21 (Adam's next set B run), and the
+small models (this branch's GitHub runs).
+
 ## 1.24.20 — Adam's third set B run: the flag from the last child, a robot's block without its first line, a colour wheel written as groups, a snake that bit, Amazing Grace (2026-11-15)
 
 Adam ran set B again on the 35B, on 1.24.18, with the library on his laptop
