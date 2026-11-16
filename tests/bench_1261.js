@@ -158,7 +158,9 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     if (c.rule === "M") {
       var r1 = L.aiAct.build(t, q), mm = (r1.problems || []).map(function (x) { return /^bar (\d+): .* -- bar \1 of the melody as (.+?) -- or change the chord/.exec(x); }).filter(Boolean)[0];
       if (!mm) return null;
-      var lines = t.split("\n"), mi = lines.map(function (l) { return /^melody /.test(l); }).indexOf(true), bars = lines[mi].replace(/^melody\s+/, "").split("|");
+      // (bar lines at the ends, and repeat signs, are read as bar lines: |: ... :| is played once)
+      var lines = t.split("\n"), mi = lines.map(function (l) { return /^melody /.test(l); }).indexOf(true),
+        bars = lines[mi].replace(/^melody\s+/, "").replace(/\x7C\s*:|:\s*\x7C|\x7C\x7C/g, "|").replace(/^\s*\x7C+|\x7C+\s*$/g, "").split("|");
       bars[+mm[1] - 1] = " " + mm[2] + " "; lines[mi] = "melody " + bars.join("|").replace(/^\s+|\s+$/g, "");
       // (the note moves a half step; no other note of its bar moves, and none anywhere by an octave -- a note Lantern
       // mends once the question is answered, the tune's last over its home chord, moves by a step)
