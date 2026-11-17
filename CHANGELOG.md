@@ -1,5 +1,214 @@
 # Changelog
 
+## 1.24.22 — Every Health lesson names its sources, and says what they say; the starter Windows flagged; the 9B on sets A and B (2026-11-17)
+
+**Every Health lesson now says where it comes from.** Adam (2026-11-16):
+"there should be published data for the health lessons that we can rely on for
+the data lantern presents"; offered a line under each lesson naming its
+guidelines (2026-11-17): "let's go ahead and add it as it is only positive. I
+see no negatives to stating the source". The sources were named only in the
+modules' comments. Now each of the 42 lessons ends with a line such as
+"Sources: Resuscitation Council UK, Adult Basic Life Support and Paediatric
+Life Support Guidelines (2025); American Heart Association, Guidelines for CPR
+and ECC (2025). Checked against these in November 2026.", shown under the
+lesson and printed with it. Where a lesson carries practical steps its sources
+do not cover (keeping water, stopping illness spreading, a first-aid kit, care
+at home, moving an injured person, a wound gone bad, the arm measurement,
+malaria), the line says so: "Some practical steps here are not in these
+sources." The ORS mixer, the breath and pulse counter, bleach for water and
+the printed survival cards name theirs too. The line is a lesson's own
+`sources` (MATH_LESSONS), kept apart from its text: not searched, so a
+guideline's name ("Heart", "Burn") does not pull a lesson into an answer, and
+not sent to the AI with the lesson (rule 5). Any tile's lesson can carry one
+the same way.
+
+**Checking the lines found what the lessons got wrong.** A line that names a
+guideline is only true if the lesson says what the guideline says. Four
+checkers, none of which had seen the lessons drafted, opened the guidelines
+for every lesson (219 pages) and read 658 of the lessons' statements against
+them: 530 held, 117 were in no source they opened, 11 were contradicted. The
+session opened eleven more pages for what they could not settle (WHO's own
+home ORS recipe, WEDC on latrines, WHO on a healthy diet, CDC on lightning and
+seizures, the NHS on head injury, Healthdirect and nidirect on wounds, Allergy
+UK on anaphylaxis). Where a source said otherwise, the lesson now says what it
+says; where two disagree, the more cautious, and the lesson says which is
+which. A fifth checker then re-checked the 71 changed statements, and its
+findings were mended too (the newborn's breaths, which the first change had
+made too slow, are back to about every two seconds). What changed, that a
+person would act on:
+
+- **First things first:** blood pouring or spurting is pressed on before the
+  breathing check, after Response and Help (St John Ambulance, Resuscitation
+  Council UK 2025).
+- **Bleeding:** a cloth soaked through is taken off and pressure put back,
+  harder, on the spot, with a fresh one (St John Ambulance, 2026: not pads
+  piled up); a ready-made tourniquet before a home-made one (AHA and Red Cross
+  2024).
+- **Choking:** a baby's chest thrusts on the lower half of the breastbone
+  (RCUK 2025; it said the middle).
+- **CPR:** a baby's breath blown steadily for about a second until the chest
+  rises (not "small puffs"); a child one hand or two; the five breaths first
+  said to be the UK and European way, with the American.
+- **Shock:** shock from diarrhoea needs fluid into a vein at once, with ORS
+  sips on the way if awake (WHO; it said ORS in sips); "wet the lips" and
+  "thirst" gone.
+- **Blows to the head:** a fall from more than 1 metre or 5 stairs, a blow at
+  speed, and a baby under 1 with a bruise, swelling or cut on the head are now
+  "get help at once", as on the NHS's 999 list (they were "get them seen");
+  trouble hearing, walking or balance added.
+- **Electric shock:** 11 metres (35 feet) from a fallen line (it said 10);
+  everyone who has had a shock sees a health worker (Healthdirect); stand on
+  dry wood or a mat, not paper.
+- **Burns:** dry lime or cement brushed off completely first; a baby, an old
+  person or a large burn watched for cold while cooling.
+- **Fits:** "it can hurt their teeth or jaw" for putting nothing in the mouth
+  (the CDC; "cannot swallow the tongue" is in no source it names).
+- **Bites and stings:** severe allergy: lay them flat, legs raised, propped up
+  with the legs out straight if breathing is hard, and not to stand or walk
+  even if better (Allergy UK).
+- **Wounds gone bad:** a red wound seen by a health worker, and one not
+  healing after 5 days; tetanus vaccine within a day after a deep or dirty
+  wound if the last was over 5 years ago, never, or not known (Healthdirect).
+- **Water:** 3 minutes' boiling above about 1,000 m (the EPA's own figure;
+  1,500 m before); bleach doubled for cloudy, coloured or very cold water, the
+  1% strength too (CDC, EPA; the bleach tool says so).
+- **Latrine:** the pit's bottom 2 metres above the groundwater at its highest
+  (WHO 1992; WEDC and Sphere say 1.5: the safer); not more than 50 metres from
+  the house.
+- **Keeping food:** smoked fish still moist does not keep without cold
+  (University of Alaska: it said "eaten within a day or two"); salt with
+  drying, lightly salted fish not alone; sauerkraut keeps months only cold.
+- **Teeth:** a knocked-out tooth rinsed in milk, saline or spit (IADT 2020:
+  not water); no salt-water rinse for children (NHS).
+- **Diarrhoea:** an extra meal a day for a week after (WHO and UNICEF-endorsed
+  guidelines: it said two weeks); little or no urine as a sign; cholera
+  described as the sources do.
+- **Sick children:** in a baby under 2 months strong chest indrawing is very
+  severe illness; in an older child it is pneumonia (IMCI 2014); a thin child
+  three or four meals a day and one or two snacks, seen again within a month
+  (IMCI).
+- **Pulse and temperature:** 38 °C a fever (NHS), and in a child 37.5 °C in
+  the mouth or 37.2 °C under the arm may already be one (MedlinePlus).
+- **Pregnancy and birth:** bleeding after a birth also "more than 2 or 3 pads
+  in 20 to 30 minutes", pain in the calf or chest, and deep sadness or
+  thoughts of harm added to the danger signs (WHO 2015); the cord tied 2 cm
+  and 5 cm from the belly (WHO: it said two and five finger-widths, about
+  twice as far); a newborn helped to breathe and still not breathing after 20
+  minutes will most likely never breathe (Hesperian).
+- **Care at home:** a small child with no wee or wet nappy for 12 hours needs
+  help at once (NHS; it said 8 hours and 3, from no source).
+- **Eating well:** a mix of staple, beans or lentils, vegetables and fruit,
+  and animal foods when you can (WHO).
+
+Still in no source opened, and kept because they only send a person to help or
+say what not to do: a few warning signs (red streaks from a wound, a scorpion
+sting that makes the whole body ill) and don'ts (no salt water after a poison,
+no ice on a snake bite). The rest of what no source covered was taken out or
+reworded to what the sources say. Still Adam's: medicines (aspirin, zinc,
+chlorhexidine; and now helping someone use their own adrenaline pen, which
+Allergy UK puts first), and a trained reader (`agent/QUESTIONS.md` 11, 12).
+
+**The one-click starter, and Windows.** After 1.24.21 went to `main`, Adam
+opened the page's one link on his laptop: Windows Defender quarantined
+Get-Lantern.exe as a Trojan (Trojan:Win32/Bearfoos.A!ml), and with his stick's
+Lantern on port 8080 the starter stopped on "another program has it". Adam
+chose to give Windows the zip on the page (pushed to `main` the same day). On
+this version the icons are made by Windows's own shell-link object, not
+PowerShell; the Windows build is not stripped; another Lantern already on 8080
+is said and opened, and nothing set up; another program there, and Lantern
+moves to a free port of 8083 to 8093 and finds itself there; the starter
+workflow makes an icon on a Windows computer and reads it back. Put in his
+Downloads over the link to his laptop, it set Lantern up with no alert;
+fetched through his browser on his home laptop with Windows's own protection
+on, it was quarantined again (the copy of itself in `~\Lantern` and its two
+icons) and set the 9B up regardless. So PowerShell was not all of it: an
+unsigned program that copies itself and makes icons is what the learned rules
+flag. Adam: no code signing for now (his name before every user, and the
+liability); the zip stays Windows's download.
+
+**The page never heard the AI come.** The offline worker kept the starter's
+first status ("downloading") and gave it back for good: Automatic chose the
+in-page AI, and the starter, never asked, stopped itself after 20 minutes. The
+worker no longer keeps `/lantern-setup/` nor any answer marked no-store, and a
+question under the starter with no server known asks the own address again, at
+most every 10 seconds (`tests/starter_page_fresh.js`).
+
+**A model's vision part is not a model.** Adam's browser remembered an mmproj
+file chosen as the model on this device. Choosing one is refused with the file
+to choose instead ("the one without mmproj in its name"); one remembered is
+forgotten, and On this device goes back to Automatic
+(`tests/ai_device_proj.js`).
+
+**The 9B on the laptop.** After a reload the 9B (Qwen3.5-9B, on the CPU, about
+2 tokens a second) ran set A quick 16 of 17 and set B quick 15 of 17
+(`tests/fixtures/bench_run_1261_9b_seta_quick.json`, `..._setb_quick.json`).
+The misses were Lantern's:
+
+- **Mars's escape velocity** came back as =ESCV(PLANET("Mars","radius")):
+  Earth's GM at Mars's radius. Lantern refused it as "inside the Earth ... add
+  6371 km to an altitude", the wrong mend for Mars, and the 9B wrote the same
+  again; on set B, for the Moon, it added Earth's radius as told, and the
+  wrong number ran. Now that refusal also says "for another planet or moon,
+  give that body's GM as the second value", and Lantern adds what is true of
+  the function whatever the question: "ESCV given one value works out Earth's
+  (it uses Earth's GM). For an orbit round Mars, or to escape from Mars, give
+  Mars's GM, PLANET("Mars","gm"), as its second value." To the plainest
+  question -- the escape velocity from a body's surface, asked in those words
+  and nothing more, as on both runs -- it gives the line to write, with
+  Earth's radius left out when it was added: "Write
+  =ESCV(PLANET("Mars","radius"),PLANET("Mars","gm"))". The older "add 6371 km
+  to every height" stays quiet when the question is about another body.
+- **"arduino" alone** on the line after MAKE CODE was read as line 1 of the
+  sketch ("this line may be missing a ;"). A language's name alone on the
+  first line ("arduino", "Python:", "Arduino (C++)") is now the language line;
+  "language python3" reads as python; "lang = 5" in a program is code.
+
+**The reviews.** Three reviewers, none of which had seen the rule written,
+tried the orbit line, and each found it wrong in ways the one before had not.
+The first (152 cases and three generators,
+`tests/fixtures/review1_1262.json`): the line given to 17 right formulas
+("Earth's GM at Jupiter's radius", a height above Earth equal to the Moon's
+radius) and 24 lines wrong ("6371*1000" stripped to "*1000"; a height typed in
+the wrong unit kept). Mended by giving it only when the question named that
+body alone and its own height. The second (3,127 cases, `review2_1262.json`):
+72 right formulas given a line and 479 lines wrong -- the model's unit step
+and function copied, "our planet" for Earth, a height in words read as none --
+and "Arduino (C++):" threw. Mended by building the line from what the question
+asks. The third (28,133 cases, a share kept in `review3_1262.json`): 10,276
+lines wrong, from what a reader's own words can say -- "km per second", "half
+the escape velocity", "How fast does the Moon orbit" (its own orbit round
+Earth), "Phobos, one of Mars's moons", "the globe" for Earth, an equator. A
+line read from the question is not surer than the model. So the line now goes
+only to the plainest escape question, and what goes back otherwise is only
+what is true of the function. On the three reviews' cases and generators now:
+no line wrong, and no right formula that runs given one or questioned; the
+third review's 28,133 cases get 880 lines, all right. Orbit speeds and periods
+round another body get no line: the model writes them from what the refusal
+says. The code-language reader (the second review's 202 blocks): none throws,
+every program kept whole, every lone name read; "language python3" reads as
+python, and "lang = 5" in a program is code.
+
+**Licence.** Lantern is CC0, or the Zero-Clause BSD licence (0BSD) if the user
+prefers (Adam, 2026-11-16: "that changes nothing"): `LICENSE`, the About page,
+the Charter, Sources & licences, the READMEs, package.json; the zip carries
+`LICENSE`.
+
+**Tested.** `npm test` (ALL CHECKS PASS); the browser tests `health_e2e`,
+`code_lab_e2e`, `bench_headless_e2e` and `bench_run9_e2e`; a lesson looked at
+in Chromium at a phone's width, its sources under the advice to get help. The
+checkers' records (`tests/fixtures/health_sources_1262.json`: 219 pages, 658
+statements, the re-check of 71); the three reviews' cases replayed
+(`tests/other_body_gm.js`, `tests/bench_1262.js`); the 9B's two orbit rows and
+its sketch replayed with a stand-in model giving its own replies. The starter
+workflow on GitHub's three computers (an icon made on Windows and read back).
+The starter on Adam's two laptops (above).
+
+**Not tested.** The 35B and the small models on 1.24.22 (Adam's next run; this
+branch's GitHub runs). The Health lessons were checked against published
+guidelines by checkers, not read by a nurse, a midwife or a first-aid
+instructor. The one-click starter on a Windows computer with its protection
+on: still flagged.
+
 ## 1.24.21 — Adam's fourth set B run: the float switches, a word typed from memory, a note no chord holds, a field drawn as a triangle (2026-11-16)
 
 Adam ran set B again on the 35B, on 1.24.20, with the library on his laptop

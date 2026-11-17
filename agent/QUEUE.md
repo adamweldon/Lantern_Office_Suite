@@ -5,6 +5,18 @@ file in the same commit as the work. Read `CLAUDE.md` first.
 
 ## Next, in order
 
+0. **The Health lessons' sources (1.24.22, Adam).** Every lesson names the
+   guidelines it was checked against in November 2026; where they said
+   otherwise the lesson says what they say (CHANGELOG 1.24.22,
+   `tests/fixtures/health_sources_1262.json`). Left: the statements no
+   source opened covers (each lesson's record lists them; the line says
+   "Some practical steps here are not in these sources" where they are
+   many); WHO's 2005 diarrhoea manual and the Sphere 2018 PDF, which no
+   checker could open; the same for the Food tile's lessons and the other
+   tiles' (a lesson's `sources`, any tile); a trained reader (QUESTIONS 11);
+   the medicines (QUESTIONS 12). Check again when a named guideline is
+   replaced (the NHS hypothermia page was past its review date).
+
 1. **The one-link starter: what 1.24.19 leaves** (`tools/starter`,
    `site/get.html`, `CHANGELOG.md` 1.24.19). Adam's direction (2026-11-13):
    one link that sets Lantern up and fetches its AI and books in the
@@ -15,13 +27,14 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    much better than 1.14.3"), so the release carries the starter and the
    website is that version. **Windows Defender quarantined Get-Lantern.exe
    as a Trojan on Adam's laptop (2026-11-16)**; the page gives Windows
-   Lantern.zip and Install Lantern until it is cleared. Mended on
-   `wip-2026-11-16-starter`: the icons made without PowerShell, the Windows
-   build not stripped, another Lantern or program on 8080 handled. Still
-   like a dropper: the kit's setup run hidden through PowerShell with its
-   policy bypassed -- if Defender still flags the mended starter on Adam's
-   laptop, do the kit's downloads in the starter itself (Go), and sign it
-   (QUESTIONS 3). Left:
+   Lantern.zip and Install Lantern until it is cleared. Mended in 1.24.22:
+   the icons made without PowerShell, the Windows build not stripped,
+   another Lantern or program on 8080 handled. **Still flagged** on Adam's
+   home laptop with Windows's own protection (Bearfoos.A!ml: the copy of
+   itself and its icons). Adam: no signing for now (QUESTIONS 3). The free
+   thing left to try: a starter that does not copy itself (its icons to the
+   kit's Start Lantern), and the kit's downloads in the starter itself (Go),
+   not the setup run hidden through PowerShell. Left:
    - Adam's first real double-click (QUESTIONS 2): what SmartScreen and
      Gatekeeper show, how the corner button looks to him;
    - the page under the starter in a real browser (Playwright on the Linux
