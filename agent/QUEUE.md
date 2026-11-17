@@ -10,17 +10,18 @@ file in the same commit as the work. Read `CLAUDE.md` first.
 available on Lantern as much as possible plus more while being easier to use
 where possible." The plan sent to him, one version each, each tested and
 tried by a reviewer:
-- Sheets' functions: **done in 1.24.24** (about 200 of Excel's, the fx
-  button; `tests/sheet_functions.js`, the review in
-  `tests/fixtures/review_sheetfn_1264.json`). Left: spilling functions
-  (UNIQUE, SORT, FILTER, SEQUENCE), TRUE/FALSE shown as words, a typed date
-  held as a date (it stays text, counted as a date in formulas), Excel's
-  POWER (QUESTIONS 16).
+- Sheets' functions: **done in 1.24.24** (about 220 of Excel's, the fx
+  button; `tests/sheet_functions.js`; two reviews,
+  `tests/fixtures/review_sheetfn_1264.json` and `review2_sheetfn_1264.json`,
+  replayed). Left: array arithmetic and spilling functions (SUMPRODUCT((A=x)*B),
+  UNIQUE, SORT, FILTER, SEQUENCE), TRUE/FALSE as words (ISLOGICAL), T.TEST,
+  Excel's POWER (QUESTIONS 16); a third reviewer on the second review's mends.
 - Sheets' editing, next (1.24.25): select a range; copy and paste to and from
   Excel and Google Sheets; fill down and right (references moving as in
-  Excel); insert and delete rows and columns; sort; undo and redo; bold and
-  number formats (money, %, dates, decimals); freeze the top row; more than
-  100 rows.
+  Excel, $ kept); insert and delete rows and columns; sort; undo and redo;
+  bold and number formats (money, %, dates, decimals; a formula carrying its
+  first cell's look, as =A1*2 of $1,200 in Excel); freeze the top row; more
+  than 100 rows and 26 columns.
 - Then opening and saving .docx, .xlsx and .pptx (a ZIP reader and writer
   are needed; PDF_PARSE has DecompressionStream).
 

@@ -1,5 +1,194 @@
 # Changelog
 
+## 1.24.24 — Sheets works out Excel's functions, and an fx button finds them (2026-11-17)
+
+Adam (2026-11-17, while rerunning set B on 1.24.23): "Can we work on improving
+and expanding the functionality of the lantern modules in the meantime?
+Anything that is available on commercial software should be available on
+Lantern as much as possible plus more while being easier to use where
+possible". Sheets knew about thirty functions (SUM, AVERAGE, IF, ROUND, the
+trigonometry, and Lantern's own science and unit functions). A person used to
+Excel, or a model writing a formula from habit, met "#NAME?" for SUMIF,
+VLOOKUP or PMT.
+
+- **About 220 of Excel's functions, worked as Excel works them.** Totals and
+  counts with a test (SUMIF, SUMIFS, COUNTIF, COUNTIFS, AVERAGEIF(S), MINIFS,
+  MAXIFS, SUMPRODUCT, SUBTOTAL; a test is written as Excel's: 5, ">=18",
+  "<>done", "", "ap*"); looking things up (VLOOKUP, HLOOKUP, XLOOKUP, INDEX,
+  MATCH, XMATCH, LOOKUP; not found is #N/A, as in Excel); logic (IFS, SWITCH,
+  CHOOSE, IFNA, AND, OR, XOR, NOT, the IS functions: ISNUMBER(MATCH(...)) is 0
+  when nothing is found); text (TEXT with Excel's format codes, PROPER, TRIM,
+  CONCAT, TEXTJOIN, SEARCH, FIND and SUBSTITUTE with their last values,
+  REPLACE, VALUE, TEXTBEFORE, TEXTAFTER, DOLLAR, FIXED ...); dates (TODAY,
+  DATE, EDATE, EOMONTH, DATEDIF, NETWORKDAYS, WORKDAY and their .INTL forms,
+  WEEKDAY, WEEKNUM, YEARFRAC ...); money (PMT, IPMT, PPMT, CUMIPMT, CUMPRINC,
+  PV, FV, NPER, RATE, NPV, IRR, XNPV, XIRR, SLN, DDB, EFFECT, NOMINAL);
+  statistics (MEDIAN, MODE, STDEV and VAR in both forms, LARGE, SMALL, RANK,
+  PERCENTILE, QUARTILE, CORREL, SLOPE, INTERCEPT, FORECAST, RSQ, STEYX,
+  NORM.DIST and NORM.INV, CONFIDENCE.NORM ...); rounding as Excel rounds
+  (ROUNDUP, ROUNDDOWN, MROUND, CEILING, FLOOR and their .MATH forms, INT,
+  TRUNC). Excel's newer names (STDEV.S, RANK.EQ, PERCENTILE.INC ...) work too.
+- **& joins text** (="Total: "&SUM(B2:B9)); a number joins as it shows (0.3,
+  not 0.30000000000000004). **An empty cell is "" beside text** (=A1="" asks
+  whether A1 is empty), and 0 beside a number, as before.
+- **Dates as Excel counts them.** A date typed 2026-11-17 counts as its day's
+  number (46343, as in Excel) in every function and range: =A2+30 is 30 days
+  on, =B2-A2 the days between, =MAX(A2:A9) the latest. A formula that gives a
+  date shows one (=TODAY(), =EDATE(A1,6), =A1+30, =MAX of dates); the days
+  between stay a number.
+- **The fx button**, beside the formula bar: every function, found by a word
+  in a person's own words ("count if", "loan", "age", "look up") or by kind,
+  with what to put in the brackets and an example. Choosing one puts NAME( in
+  the formula where the cursor is. Lantern's own science and unit functions
+  are listed under Science and units. The Sheets help says so, and #N/A is in
+  its list of errors.
+- **Not sent to the AI.** The list is the person's; the AI's prompts and its
+  catalog of Lantern are as they were (rule 5). A model that writes =SUMIF or
+  =PMT out of habit now gets the right number instead of #NAME?.
+- **What Sheets does not do that Excel does.** Nothing spills: a function that
+  would fill several cells (INDEX with a 0, XLOOKUP of a whole row, UNIQUE,
+  SORT, FILTER) says so and gives #VALUE!. TRUE and FALSE show as 1 and 0. A
+  date typed in a cell stays the text typed (it counts as a date in formulas).
+  **POWER is still Lantern's physics function** (energy over time,
+  POWER(100,4) is 25 watts); Excel's POWER(2,10) is POW(2,10) or 2^10 here.
+  Which POWER Sheets should have is Adam's question (QUESTIONS).
+
+**The first review.** A reviewer that had not seen the functions written made
+908 cases of its own -- a budget, a grade book, a stock list, dates, a
+mortgage, a calibration line, then the edges -- and worked each out in
+LibreOffice Calc 24.2 from the same cells written as an .xlsx (Excel's
+documented value where Calc lacks a function or differs). 141 disagreed. What
+a person would hit first, all mended:
+
+- **$A$1 was an error** (the usual way to write a VLOOKUP's table, and what is
+  pasted from Excel). $ references are read; A:A is a whole column.
+- **An empty cell joined as "0"** (="Name: "&A2 gave "Name: 0"; LEN of an
+  empty cell was 1). An empty cell is nothing in text and 0 in a sum; a
+  formula that gives "" is not empty (ISBLANK is FALSE, COUNTA counts it).
+- **One error anywhere in a range broke the whole function**: a #N/A two rows
+  away made VLOOKUP, COUNT and SUMIF give #N/A. The functions that look at
+  each cell (COUNT, COUNTIF, SUMIF, the lookups) pass it over unless they take
+  it; SUM still gives the error, so a total is never quietly short.
+- **Text in a sum was read by its first digits**: "17:00"-"09:00" was 8 days,
+  "11/17/2026"+30 was 41, "50%"*2 was 100, "12abc"+1 was 13. Text typed in a
+  cell that Excel reads as a number -- a date in any common way, a time,
+  1,500, $12.50, 50%, (100), TRUE -- is that number to formulas, and shows as
+  typed; in a sheet "12abc" is #VALUE!. (The calculator and the AI's sums
+  still read "5 kg" as 5.) 11/17/2026 is read month first where the computer's
+  language is US English, day first elsewhere; a day over 12 settles it.
+- **Typed dates were skipped** by MAXIFS, SLOPE, CORREL and lookups by DATE().
+  A typed date is now a date to every function.
+- **=0.1+0.2=0.3 was FALSE.** Numbers equal to 15 digits are equal, as in
+  Excel (also COUNTIF and MATCH).
+- **An argument left empty** (=VLOOKUP(1003,A2:E8,3,), =SUM(1,,2)) and **a
+  doubled quote inside text** (=TEXT(25,"0 ""kg""")) were errors.
+- **TEXT**: the digits now spread round text in the format ("(000) 000-0000"
+  gives (555) 123-4567), with fractions (# ?/?), elapsed time ([h]:mm gives
+  36:00), and commas after the decimals dividing by 1,000 ("#,##0.0,,\M" gives
+  1.2M).
+- **What the grid shows**: =TODAY()-A1 showed a date in January 1900; now days
+  between are a number and a date plus days a date (=A1+A2,
+  =IF(A1="","",A1+30), =INDEX of a date column, =DATE(...)+0.5 with its time);
+  =TIME(14,30,0) shows 14:30.
+- **Smaller**: MAX and MIN of no numbers are 0; AVERAGE of none #DIV/0!;
+  SUBTOTAL leaves out the SUBTOTALs inside its range; SUMIF(A1:A3,"x",B1) adds
+  B1:B3; months, places and k given with a fraction are cut as in Excel; a
+  number joins as Excel writes it (0.0000001, 1.23456789012346E+18); ="10">5
+  is TRUE (text is above numbers); COUNT("5",1,"a") is 2.
+- **The fx search** found the function a person meant first for 69 of its 119
+  plain-word searches; nothing at all for "uppercase", "maximum", "mortgage",
+  "celsius". Each function now carries the words people look for it by
+  ("total", "mortgage", "age", "combine text", "first name"), a word matches
+  by its stem, and LOWER, RIGHT, MONTH, DAY, MINUTE, NOW, CODE, COS and TAN
+  have lines of their own: 118 of 119 first (the one: "power" gives Lantern's
+  POWER, then POW).
+
+Kept on purpose, and said: no array arithmetic (=SUMPRODUCT((B2:B12="Food")*
+C2:C12) is an error, never a wrong number); -2^2 is -4, as in mathematics
+(Excel gives 4), because the calculator and the AI's sums share the engine.
+`tests/review_sheetfn_1264.js` replays all 908 cases and the 119 searches.
+
+**The second review.** Another reviewer, that had seen neither the work nor
+the first review, made 1,248 cases of its own (a household budget with
+IF(...,"",...) cells, an invoice with $ references, a timesheet with typed
+times, a class register, a loan table, error cells under COUNT, SUMIF and
+VLOOKUP, TEXT formats), 77 checks of what the grid shows, 109 sums for the
+calculator and the AI run on 1.24.23 too, and 91 plain-word searches. 135
+disagreed, and two had been right on 1.24.23: LEFT, RIGHT and MID with an
+empty cell for the count gave an error (they give nothing again), and
+="TRUE"+0 gave 1 (it is #VALUE!; TRUE typed in a cell is still 1). Mended:
+
+- **Text in a cell named alone in a sum** (=AVERAGE(B1,C1,D1) with "absent" in
+  C1, a dash for nothing) was #VALUE!; Excel passes it over, and so does
+  Sheets now. Text typed in the formula itself is still read (=SUM("5",1)).
+- **An empty cell found by a lookup** was 0 even in text (=VLOOKUP(...)&""
+  gave "0"): it is empty, 0 only in a sum.
+- **A formula's "" passed to a function** was taken as empty (=TEXT(C1,
+  "$#,##0.00") gave $0.00; =YEAR(C1) 1899): it is text, as in Excel (#VALUE!
+  where a number belongs; TEXT of it is "").
+- **COUNTIF with "<>", "*" and an error**: "<>" counts a formula's "" too, "*"
+  counts text and not errors, "#N/A" counts the #N/A cells and "<>#N/A" the
+  rest (SUMIF(D2:D6,"<>#N/A") adds up round a missing price). An empty cell as
+  the test is 0.
+- **More typed dates and times**: 12/31/26, 17-Nov, Sep 8, Nov 2026, 5 PM,
+  40:00 (a length of time), 1 1/2 (one and a half). 1/2 alone stays text:
+  Excel's 2 January is not what a person writing a half means.
+- **What the grid shows**: times added or taken (=C1-B1 of 9:00 and 17:30
+  shows 08:30, =B1+TIME(0,30,0) 09:30, hours past a day 40:00); a function
+  shows what its first value is (=SUM(A1,30) of a date is a date,
+  =MOD(B2-B1,1) a time); INDEX and LOOKUP the column they give from; =A1 of a
+  cell typed 1,500 shows 1,500; numbers past 11 digits as 1.15292E+18; days
+  before March 1900 as Excel counts them; '00123 shows 00123 and is text.
+- **Smaller**: LOG10(1000) is 3 (it was 2.9999999999999996, so INT gave 2);
+  AND and OR pass over empty cells; IF of a text that is not TRUE or FALSE is
+  #VALUE!; an error written in a formula (#N/A) is read; 2:2 is a whole row;
+  an empty argument to SUM, AVERAGE, COUNT or MAX is 0; FACT(3.5) is 6 in a
+  sheet (still an error on the calculator); MID from 0 and LEFT of -1 are
+  #VALUE!; YEAR, MONTH and DAY of an empty cell are Excel's day 0.
+- **Functions it reached for**: OFFSET, INDIRECT, ADDRESS, ISFORMULA,
+  AGGREGATE, NUMBERVALUE, RANK.AVG, PERCENTRANK, PERCENTILE.EXC, QUARTILE.EXC,
+  AVERAGEA, MAXA, MINA, FREQUENCY (one cell), BINOM.DIST, ROMAN, ARABIC,
+  DEC2BIN, DEC2HEX, DEC2OCT and back, HYPERLINK (the words), MIRR, SYD, DB.
+- **The fx search**: 87 of its 88 searches with a function to find give it
+  first ("net present value", "minimum with a condition", "is empty",
+  "logarithm", "tax bracket" ...; still "power" first gives Lantern's POWER).
+
+Kept, and said: 2^3^2 is 512 (worked from the right, as in mathematics; Excel
+gives 64); ISLOGICAL and T.TEST are not in Sheets (TRUE is the number 1 here);
+TEXT(-0.4,"0") is 0, not Excel's -0; Excel carrying a money or per cent look
+into =A1*2 waits for Sheets' number formats (next). On the calculator and the
+AI's sums nothing got worse than 1.24.23: the 19 that changed all moved to
+Excel's answer ("1,500"+1 is 1501, "50%"*10 is 5).
+`tests/review2_sheetfn_1264.js` replays it all.
+
+**Tested.** `tests/sheet_functions.js`: 220 formulas against the values Excel
+gives (its help pages' examples for PMT, PV, FV, NPER, RATE, NPV, CUMIPMT,
+CUMPRINC, DDB, EFFECT, NORM.DIST, NORM.INV, CONFIDENCE.NORM; the rest worked
+by hand or in Python); the dates shown in the grid; the fx button (found by
+"add up if", "round"; Enter; Escape); every registered function described. The
+two reviews replayed (`tests/review_sheetfn_1264.js`,
+`tests/review2_sheetfn_1264.js`: 2,156 formulas, 98 of the grid, 109
+calculator sums, 210 searches). The older replays that met the new functions:
+review 3 of 1.24.7 (=CONCAT now joins the words it was asked to) and review 5
+(a model's test CONVERT(6,"ft","cm") = 182.88 is now true, and still
+questioned for the 182.88 the question does not give). `npm test` (ALL CHECKS
+PASS). The fx list looked at in Chromium at a phone's width and a laptop's.
+
+**Adam's set B run on 1.24.23** (the 35B, his laptop, library on, 2026-11-17
+19:48 UTC, 97 minutes): **140 of 140** (139 on 1.24.22, 136 on 1.24.20). The
+Hohmann question to the Moon's distance went as 1.24.23 meant: the 35B wrote
+the 200 km height as a radius, was told radii are from Earth's centre, wrote
+6571 and passed; all 8 questions Lantern sent back were right the second time.
+The two puzzles without Lantern's tools (the die, photosynthesis) are the
+model alone and were wrong. The run is
+`tests/fixtures/bench_run_1263_35b_setb.json`.
+
+**Not tested.** In Excel itself (the reviewers compared with LibreOffice Calc,
+which follows Excel, and with Excel's documentation). On a phone's own
+browser. The second review's mends were not tried by a third reviewer. The 35B
+and the small models on 1.24.24: the AI's sums now reach Excel's functions
+(=SUMIF, =PMT from habit work instead of #NAME?).
+
 ## 1.24.23 — Adam's set B run on 1.24.22: 139 of 140; the one miss was 1.24.22's (2026-11-17)
 
 Adam ran set B on the 35B, on 1.24.22, with the library on his laptop
