@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.24.23 — Adam's set B run on 1.24.22: 139 of 140; the one miss was 1.24.22's (2026-11-17)
+
+Adam ran set B on the 35B, on 1.24.22, with the library on his laptop
+(2026-11-17, 16:12 UTC, 96 minutes): 139 of 140 (136 on 1.24.20, 130 on
+1.24.18, 129 on 1.24.17). The run is
+`tests/fixtures/bench_run_1262_35b_setb.json`; `tests/bench_1263.js` replays
+it. Lantern's questions on the float switches (the stop must win), the A minor
+tune (a note a half step from its chord) and the path across a field (a reply
+that ran away) were each taken on the second try; the photosynthesis row
+passed with the tools.
+
+- **The Hohmann transfer to the Moon's distance: 1.24.22's doing.** "How many
+  hours does a Hohmann transfer take from a 200 km orbit to the Moon's
+  distance, 384400 km from Earth's centre?" The 35B wrote
+  =HOHMANNT(CONVERT(200,"km","m"),CONVERT(384400,"km","m"))/3600 first, as on
+  all four runs before. Told "radius 200 km is inside the Earth: radii are
+  from Earth's centre, so add 6371 km to an altitude", it had written
+  CONVERT(6571,...) every time. 1.24.22 rewrote that refusal for ESCV, ORBITV
+  and ORBITT given one value ("given one value it works out Earth's ... for
+  another planet or moon, give that body's GM as the second value"), and the
+  same words went into the copy the two-radius functions use (HOHMANN,
+  HOHMANNT, VISVIVA and the rest), where the second value is a radius, not a
+  GM. Told that, the 35B wrote the same line again. Those functions have their
+  own words back. The one-value functions keep 1.24.22's, which the 9B's Mars
+  and Moon rows needed.
+- **The two puzzles without Lantern's tools** (the die, photosynthesis)
+  measure the model alone.
+
+**Tested.** `npm test` (ALL CHECKS PASS); the run's failed row replayed with a
+stand-in model giving the 35B's own replies (the refusal now as before
+1.24.22; the 35B's line of the runs before gives the answer); its 139 passed
+rows: each sum still runs to its answer (but the place rows, whose figures
+come from a file the test page does not fetch). **Not tested:** the 35B itself
+on 1.24.23.
+
 ## 1.24.22 — Every Health lesson names its sources, and says what they say; the starter Windows flagged; the 9B on sets A and B (2026-11-17)
 
 **Every Health lesson now says where it comes from.** Adam (2026-11-16):

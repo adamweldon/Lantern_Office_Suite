@@ -55,7 +55,7 @@ import (
 )
 
 const (
-	starterVersion = "1.24.22"
+	starterVersion = "1.24.23"
 	defaultZip     = "https://github.com/adamweldon/Lantern_Office_Suite/releases/latest/download/Lantern.zip"
 )
 

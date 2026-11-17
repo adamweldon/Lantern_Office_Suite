@@ -223,7 +223,11 @@ file in the same commit as the work. Read `CLAUDE.md` first.
    the low float is always made while the high one is, so the stop must win;
    the line to write, tried in the sketch first), the A minor tune's F# over
    Dm (the bar to write, tried by reading the tune again), and the field
-   drawn as a triangle (the rect to write). Next: his set B run on 1.24.21.
+   drawn as a triangle (the rect to write). His fifth (1.24.22,
+   `tests/fixtures/bench_run_1262_35b_setb.json`, `tests/bench_1263.js`): 139
+   of 140, all four taken; the one miss was 1.24.22's (a Hohmann refusal given
+   the one-value functions' words), mended in 1.24.23. Next: set A and set B
+   on 1.24.23.
    Before 1.24.20: Of the gaps
    listed below for 1.24.16, the march, "Remind me what I asked you" and
    the orbital speed passed on his run all the same; still open: Amazing
