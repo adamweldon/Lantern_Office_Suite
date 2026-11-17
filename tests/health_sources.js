@@ -48,7 +48,7 @@ var TAIL = ". Checked against these in November 2026.";
   ok("every line rests on at least one page a checker opened", !noPage.length, noPage.map(function (f) { return f.id; }));
 
   // --- each lesson's line ---------------------------------------------------------------------
-  var wrong = KEYS.filter(function (k) { return ML.get(k).sources !== "Sources: " + byId[k].source_line + TAIL; });
+  var wrong = KEYS.filter(function (k) { return ML.get(k).sources !== "Sources: " + byId[k].source_line + TAIL + (byId[k].note ? " " + byId[k].note : ""); });
   ok("each lesson's sources are the checked line, word for word", !wrong.length, wrong.map(function (k) { return [k, ML.get(k).sources]; }));
   ok("plain words: ASCII, no web addresses in the line", KEYS.every(function (k) { var s = ML.get(k).sources; return /^[\x20-\x7e]+$/.test(s) && !/https?:|www\./.test(s); }));
   ok("the line is kept apart from the lesson's own text", KEYS.every(function (k) { return ML.get(k).html.indexOf("Sources:") < 0; }));
@@ -80,7 +80,7 @@ var TAIL = ". Checked against these in November 2026.";
   // --- not searched, not sent ---------------------------------------------------------------------
   var S = L.suite;
   if (S && S.search) {
-    var hits = S.search("Resuscitation Council guidelines", { kinds: { lesson: 1 }, max: 10 }) || [];
+    var hits = S.search("Resuscitation Council", { kinds: { lesson: 1 }, max: 10 }) || [];
     ok("a source's name finds no Health lesson (the line is not searched)", !hits.some(function (h) { return /^health_/.test(h.e && h.e.id || ""); }), hits.map(function (h) { return h.e && h.e.id; }));
     var e = (S.entries ? S.entries() : []).filter(function (x) { return x.id === "health_cpr"; })[0];
     if (e) ok("the lesson the AI is given has no sources line", S.text(e).indexOf("Checked against these") < 0);
@@ -97,7 +97,7 @@ var TAIL = ". Checked against these in November 2026.";
   var ws = d.createElement("div"); d.body.appendChild(ws); L.apps.health.mount(ws);
   var tool = function (id) { var b = ws.querySelector(".health-tool[data-tool='" + id + "']"); return b ? b.textContent : ""; };
   var ors = all(ws, "p.health-sources").map(function (p) { return p.textContent; });
-  ok("the ORS mixer says where its recipe comes from", ors.some(function (t) { return /ORS/.test(t) && /WHO/.test(t); }), ors);
+  ok("the ORS mixer says where its recipe comes from", ors.some(function (t) { return /oral rehydration/i.test(t) && /WHO/.test(t); }), ors);
   ok("the breath and pulse counter names WHO's chart booklet and MedlinePlus", /Sources: .*Integrated Management of Childhood Illness.*MedlinePlus/.test(tool("count")), tool("count").slice(-300));
   ok("bleach for water names the CDC's table", /Sources: .*CDC/.test(tool("bleach")), tool("bleach").slice(-300));
   var cardBtn = all(ws, "button").filter(function (b) { return b.textContent === "Print survival cards"; })[0];

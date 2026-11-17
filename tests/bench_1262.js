@@ -35,6 +35,17 @@ setTimeout(async function () {
   var b = L.aiCode.build({ title: "T", raw: body.split("\n") }, { question: cb.q });
   ok("the button LED sketch: \"arduino\" alone is its language line, and nothing is questioned", b.problems.length === 0 && /^\/\/ Button LED Toggle/.test(L.aiCode.parse({ raw: body.split("\n") }).text), b.problems);
   ok("...as it was on 1.24.21", /missing a ; at the end/.test(cb.why || ""), cb.why);
+  // (the review, tests/fixtures/review1_1262.json) which first lines are a language line, and which are code
+  function lang(lines) { var q = L.aiCode.parse({ raw: lines }); return [q.lang, q.text.split("\n")[0]]; }
+  var LC = [
+    [["Arduino (C++)", "void setup() {", "}"], "arduino", "void setup() {"], [["Python3", "import time"], "python", "import time"],
+    [["Structured-Text", "PROGRAM Main", "END_PROGRAM"], "st", "PROGRAM Main"], [["JavaScript:", "function add(a, b) { return a + b; }"], "javascript", "function add(a, b) { return a + b; }"],
+    [["ST:", "PROGRAM Main", "END_PROGRAM"], "st", "PROGRAM Main"], [["ino", "void setup() {", "}"], "arduino", "void setup() {"],
+    [["javascript:", "for (var i = 0; i < 3; i++) {", "  if (i === 1) break javascript;", "}"], "", "javascript:"],
+    [["st = 5", "print(st)"], "", "st = 5"], [["LD", "X0"], "", "LD"], [["arduino"], "", "arduino"], [["python print(1)", "x = 2"], "", "python print(1)"]];
+  LC.forEach(function (c) { var g = lang(c[0]); ok("first line " + JSON.stringify(c[0][0]) + ": " + (c[1] ? "the language line, " + c[1] : "code, kept"), (!c[1] || g[0] === c[1]) && g[1] === c[2], g); });
+  var RV = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review1_1262.json"), "utf8"));
+  ok("the review's rule 2 cases are kept with the fixture", (RV.rule2 || []).length > 100, (RV.rule2 || []).length);
   // the rows that passed, in both runs: none questioned now
   var bad = [];
   [FA, FB].forEach(function (F) {
