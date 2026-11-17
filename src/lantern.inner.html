@@ -1139,7 +1139,8 @@ Lantern.formula = (function () {
   // ROW(A5)) -- the same as A1:A1
   var LAZY = { IF: 1, IFERROR: 1, IFNA: 1, IFS: 1, SWITCH: 1, CHOOSE: 1, ISERROR: 1, ISERR: 1, ISNA: 1,
     ISBLANK: 1, ISNUMBER: 1, ISTEXT: 1, ISNONTEXT: 1, ISEVEN: 1, ISODD: 1 };
-  var RAWREF = { ISBLANK: 1, ISNUMBER: 1, ISTEXT: 1, ISNONTEXT: 1, COUNTA: 1, COUNTBLANK: 1, ROW: 1, COLUMN: 1, ROWS: 1, COLUMNS: 1 };
+  var RAWREF = { ISBLANK: 1, ISNUMBER: 1, ISTEXT: 1, ISNONTEXT: 1, COUNTA: 1, COUNTBLANK: 1, ROW: 1, COLUMN: 1, ROWS: 1, COLUMNS: 1,
+    SUMIF: 1, AVERAGEIF: 1 };   // SUMIF(A1:A3,"x",B1): B1 is where the sum range starts
   // (1.24.24) a date written as text, 2026-11-17, is the day's number as a
   // spreadsheet counts it (1 January 1900 = 1; 1970-01-01 = 25569), so
   // ="2026-11-17"+30 is a date 30 days on and not 2026+30
@@ -1150,11 +1151,82 @@ Lantern.formula = (function () {
     if (d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[3]) return null;
     return t / 86400000 + 25569;
   }
+  // (1.24.24, the review) text as Excel reads it when a number is needed: 1,500, $12.50, 50%, (100), 2026-11-17,
+  // 17 Nov 2026, November 17, 2026, 11/17/2026 (month first where this computer's language puts it first, as in
+  // the US; a day over 12 settles it), 14:30, 2:30 pm, TRUE, FALSE -- else null. "12abc" is not a number.
+  var MON = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+  var MONTHS = "january february march april may june july august september october november december".split(" ");
+  function serialOf(y, m, d) {
+    var t = new Date(Date.UTC(y, m - 1, d));
+    if (y < 1900 || y > 9999 || t.getUTCMonth() !== m - 1 || t.getUTCDate() !== d) return null;
+    var n = t.getTime() / 86400000 + 25569;
+    return n < 61 ? n - 1 : n;   // Excel counts a 29 February 1900 that never was
+  }
+  function monthOf(w) { var i = MON.indexOf(w.slice(0, 3)); return i >= 0 && MONTHS[i].indexOf(w) === 0 && w.length >= 3 ? i + 1 : 0; }
+  function monthFirst() {
+    var lang = String((typeof navigator !== "undefined" && (navigator.language || navigator.userLanguage)) || "en-US");
+    return /^en-(US|PH|CA)$|^en$/i.test(lang);
+  }
+  // dayOf(text) -> the day (and time) a text names, or null
+  function dayOf(text) {
+    var s = String(text).replace(/^\s+|\s+$/g, "").toLowerCase(), m, d = null, rest = s, y, mo, dd;
+    if ((m = /^(\d{4})[-\x2F](\d{1,2})[-\x2F](\d{1,2})(?:[t ]+|$)/.exec(s))) { y = +m[1]; mo = +m[2]; dd = +m[3]; }
+    else if ((m = /^(\d{1,2})[\x2F.-](\d{1,2})[\x2F.-](\d{4})(?:[ ,]+|$)/.exec(s))) {
+      var a = +m[1], b = +m[2], mf = a > 12 ? false : b > 12 ? true : monthFirst();
+      y = +m[3]; mo = mf ? a : b; dd = mf ? b : a;
+    }
+    else if ((m = /^(\d{1,2})[ -]([a-z]{3,9})\.?,?[ -](\d{4})(?:[ ,]+|$)/.exec(s))) { y = +m[3]; mo = monthOf(m[2]); dd = +m[1]; }
+    else if ((m = /^([a-z]{3,9})\.? (\d{1,2})(?:st|nd|rd|th)?,? (\d{4})(?:[ ,]+|$)/.exec(s))) { y = +m[3]; mo = monthOf(m[1]); dd = +m[2]; }
+    if (m) { d = mo ? serialOf(y, mo, dd) : null; if (d === null) return null; rest = s.slice(m[0].length); }
+    if (!rest) return d;
+    var t = /^(\d{1,2}):(\d{2})(?::(\d{2}(?:\.\d+)?))?\s*(am|pm|a\.m\.|p\.m\.)?$/.exec(rest);
+    if (!t) return null;
+    var h = +t[1], mi = +t[2], se = +(t[3] || 0), ap = t[4] ? t[4].charAt(0) : "";
+    if (ap) { if (h < 1 || h > 12) return null; if (ap === "p" && h < 12) h += 12; if (ap === "a" && h === 12) h = 0; }
+    if (h > 23 || mi > 59 || se >= 60) return null;
+    return (d || 0) + (h * 3600 + mi * 60 + se) / 86400;
+  }
+  var NUMTXT = /^([+-]?)\s*([\$\u20ac\u00a3]?)\s*([+-]?)(\d{1,3}(?:,\d{3})+(?:\.\d*)?|\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?)\s*(%?)$/;
+  function textNum(x) {
+    if (typeof x === "number") return x;
+    var s = String(x == null ? "" : x).replace(/^\s+|\s+$/g, ""), neg = false, m;
+    if (!s) return null;
+    if (/^true$/i.test(s)) return 1;
+    if (/^false$/i.test(s)) return 0;
+    if ((m = /^\(([^()]+)\)$/.exec(s))) { s = m[1]; neg = true; }
+    if ((m = NUMTXT.exec(s)) && !(m[1] && m[3])) {
+      var n = parseFloat(m[4].replace(/,/g, "")) * (m[1] === "-" || m[3] === "-" ? -1 : 1) / (m[5] ? 100 : 1);
+      return isFinite(n) ? (neg ? -n : n) : null;
+    }
+    return neg ? null : dayOf(s);
+  }
+  // general(x): a number as text, as a cell with no format shows it -- 15 digits, 0.0000001 written out,
+  // 1.23456789012346E+18 for the very large and 1E-10 for the very small
+  function general(x) {
+    var y = Number(x.toPrecision(15)), a = Math.abs(y);
+    if (y === 0) return "0";
+    if (a < 1e15 && a >= 1e-9) {
+      var t = String(y);
+      if (!/e/.test(t)) return t;
+      return y.toFixed(Math.min(20, 15 - Math.floor(Math.log(a) / Math.LN10) - 1)).replace(/\.?0+$/, "");
+    }
+    var m = /^(-?[0-9.]+)e([+-])([0-9]+)$/.exec(y.toExponential());
+    return m[1] + "E" + m[2] + (m[3].length < 2 ? "0" : "") + m[3];
+  }
   // Extension boundary: other modules (Convert, Physics) register cell
   // functions here without FORMULA depending on them. evaluate() consults
   // EXT after its own built-ins, so =CONVERT(...) or =FORCE(...) just work.
-  var EXT = {};
-  function register(name, fn) { EXT[String(name).toUpperCase()] = fn; }
+  // (1.24.24) register(name, fn, {blank: true}) -- an empty cell named alone
+  // is given as null, not 0 (LEN(A2) of an empty A2 is 0, not 1); {errors:
+  // true} -- a range with an error cell in it is given, the error kept in the
+  // cell, for the function to look at (COUNT, VLOOKUP, SUMIF), not thrown
+  var EXT = {}, BLANKOK = {}, ERRSAFE = { COUNT: 1 };
+  function register(name, fn, opts) {
+    var n = String(name).toUpperCase();
+    EXT[n] = fn;
+    if (opts && opts.blank) BLANKOK[n] = 1;
+    if (opts && opts.errors) ERRSAFE[n] = 1;
+  }
 
   function tokenize(src) {
     var toks = [], i = 0, s = src;
@@ -1165,13 +1237,17 @@ Lantern.formula = (function () {
         var m = /^[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?/.exec(s.slice(i));
         toks.push({ t: "num", v: parseFloat(m[0]) }); i += m[0].length; continue;
       }
+      // (1.24.24) $A$1, A$1, $A1: a cell kept from moving when copied -- here the same cell
+      var dr = /^\$?[A-Za-z]{1,2}\$?[0-9]{1,3}(?![A-Za-z0-9_.\x28])|^\$[A-Za-z]{1,2}(?![A-Za-z0-9_.\x28$])/.exec(s.slice(i));
+      if (dr && /\$/.test(dr[0])) { toks.push({ t: "id", v: dr[0].replace(/\$/g, "").toUpperCase() }); i += dr[0].length; continue; }
       if (/[A-Za-z_]/.test(ch)) {
         var w = /^[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*/.exec(s.slice(i))[0];
         toks.push({ t: "id", v: w.toUpperCase() }); i += w.length; continue;
       }
       if (ch === '"' || ch === "'") {
         var q = ch, j = i + 1, str = "";
-        while (j < s.length && s[j] !== q) { str += s[j]; j++; }
+        // (1.24.24) a quote doubled inside the text is one quote: ="say ""hi"""
+        while (j < s.length && (s[j] !== q || s[j + 1] === q)) { if (s[j] === q) j++; str += s[j]; j++; }
         if (j >= s.length) throw new Error("Unclosed text");
         toks.push({ t: "str", v: str }); i = j + 1; continue;
       }
@@ -1197,10 +1273,12 @@ Lantern.formula = (function () {
       if (x == null) return 0;
       if (typeof x === "number") { if (!isFinite(x)) throw new Error("Overflow"); return x; }
       if (Array.isArray(x)) throw new Error("Range used as a single value");
-      var day = isoDay(x);
-      if (day !== null) return day;
-      var n = parseFloat(x);
-      if (isNaN(n)) throw new Error("Not a number");
+      var tn = textNum(x);
+      if (tn !== null) return tn;
+      // in a sheet, text that is not a number is #VALUE!, as in Excel ("12abc"+1); the calculator and the AI's
+      // sums still take the number a text starts with
+      var n = ctx.resolve ? NaN : parseFloat(x);
+      if (isNaN(n)) throw new Error("Not a number: \u201c" + String(x).slice(0, 40) + "\u201d");
       return n;
     }
     // picked(x): an argument IF chose -- its error, if it had one, now counts
@@ -1210,6 +1288,7 @@ Lantern.formula = (function () {
       for (var i = 0; i < args.length; i++) {
         var a = args[i];
         if (Array.isArray(a)) {
+          if (a.err) { var ae = new Error(a.err); ae.code = a.err; throw ae; }
           for (var j = 0; j < a.length; j++) {
             if (typeof a[j] === "number" && isFinite(a[j])) out.push(a[j]);
           }
@@ -1236,16 +1315,24 @@ Lantern.formula = (function () {
     function trigOut(x) { return ctx.deg ? x * 180 / Math.PI : x; }
     var FN = {
       SUM: function (a) { var n = flatNums(a), s = 0; for (var i = 0; i < n.length; i++) s += n[i]; return s; },
-      AVERAGE: function (a) { var n = flatNums(a); if (!n.length) throw new Error("AVERAGE of nothing"); return FN.SUM(a) / n.length; },
-      MIN: function (a) { var n = flatNums(a); if (!n.length) throw new Error("MIN of nothing"); return Math.min.apply(null, n); },
-      MAX: function (a) { var n = flatNums(a); if (!n.length) throw new Error("MAX of nothing"); return Math.max.apply(null, n); },
-      COUNT: function (a) { return flatNums(a).length; },
+      AVERAGE: function (a) { var n = flatNums(a); if (!n.length) { var de = new Error("AVERAGE of nothing: no numbers"); de.code = "#DIV/0!"; throw de; } return FN.SUM(a) / n.length; },
+      // (1.24.24) MIN and MAX of a range with no numbers are 0, as in Excel
+      MIN: function (a) { var n = flatNums(a); if (!n.length) { if (a.some(Array.isArray)) return 0; throw new Error("MIN of nothing"); } return Math.min.apply(null, n); },
+      MAX: function (a) { var n = flatNums(a); if (!n.length) { if (a.some(Array.isArray)) return 0; throw new Error("MAX of nothing"); } return Math.max.apply(null, n); },
+      // COUNT counts the numbers: a range's (its errors and text left out), and a value given that is or reads as one
+      COUNT: function (a) {
+        var c = 0;
+        a.forEach(function (x) { if (Array.isArray(x)) { for (var j = 0; j < x.length; j++) if (typeof x[j] === "number" && isFinite(x[j])) c++; } else if (x != null && (typeof x === "number" || textNum(x) !== null)) c++; });
+        return c;
+      },
       ABS: function (a) { return Math.abs(num(a[0])); },
       // ROUND as Excel does: halves away from zero (ROUND(-2.5) = -3), and
       // 1.005 to 2 places is 1.01 (worked at 15 digits, so the 1.00499... a
       // float stores does not round down)
       ROUND: function (a) {
-        var x = num(a[0]), d = a.length > 1 ? num(a[1]) : 0, f = Math.pow(10, d);
+        var x = num(a[0]), d = a.length > 1 ? num(a[1]) : 0, f;
+        d = d < 0 ? Math.ceil(d) : Math.floor(d);   // places given as 2.9 are 2, as in Excel
+        f = Math.pow(10, d);
         var y = Number((Math.abs(x) * f).toPrecision(15));
         return (x < 0 ? -1 : 1) * Math.round(y) / f;
       },
@@ -1307,12 +1394,21 @@ Lantern.formula = (function () {
         var name = t.v;
         if (peek() && peek().t === "op" && peek().v === "(") {
           next(); // (
-          var args = [], lazy = LAZY[name] === 1, raw = RAWREF[name] === 1;
-          var one = function () { return lazy ? lazyArg(raw) : raw && ctx.range && rawRef() || argExpr(); };
-          if (!(peek() && peek().v === ")")) {
-            args.push(one());
-            while (peek() && peek().v === ",") { next(); args.push(one()); }
-          }
+          var args = [], lazy = LAZY[name] === 1, raw = RAWREF[name] === 1, blankOk = !!(FN[name] || BLANKOK[name]);
+          var errWas = ctx.errOk;
+          ctx.errOk = ERRSAFE[name] === 1;
+          var one = function () {
+            // (1.24.24) an argument left empty, as =VLOOKUP(5,A1:C9,3,) or =SUM(1,,2): nothing, which counts as 0 or FALSE
+            if (peek() && peek().t === "op" && (peek().v === "," || peek().v === ")")) return undefined;
+            if (blankOk && !raw && blankRef()) return null;
+            return lazy ? lazyArg(raw) : raw && ctx.range && rawRef() || argExpr();
+          };
+          try {
+            if (!(peek() && peek().v === ")")) {
+              args.push(one());
+              while (peek() && peek().v === ",") { next(); args.push(one()); }
+            }
+          } finally { ctx.errOk = errWas; }
           expect(")");
           var fn = FN[name] || EXT[name];
           if (!fn && name in CONST && !args.length) return CONST[name];   // =PI()
@@ -1330,8 +1426,9 @@ Lantern.formula = (function () {
           var cv = ctx.resolve(name);
           if (typeof cv === "string" && ERRCODE.test(cv)) { var re = new Error(cv); re.code = cv; throw re; }
           // a text cell is text (=A1, =LEN(A1), =A1="hello"); arithmetic
-          // still turns it into a number or fails
-          return cv == null || cv === "" ? 0 : typeof cv === "string" ? cv : num(cv);
+          // still turns it into a number or fails. An empty cell is 0; a formula
+          // that gives "" is "" (=C1+1 is #VALUE!, as in Excel)
+          return cv == null ? 0 : typeof cv === "string" ? cv : num(cv);
         }
         if (name in CONST) return CONST[name];
         // ANS1, ANS2 ... = the result of the 1st, 2nd ... line of a worked
@@ -1347,6 +1444,15 @@ Lantern.formula = (function () {
         throw new Error("Unknown name " + name);
       }
       throw new Error("Unexpected " + t.v);
+    }
+    // blankRef(): an empty cell (or one whose formula gives "") named alone as a whole argument: true, and it is
+    // passed over -- the function is given null (LEN, &, CONCAT see nothing; SUM and IF see 0)
+    function blankRef() {
+      var t = toks[p], t2 = toks[p + 1];
+      if (!t || t.t !== "id" || !REF.test(t.v) || !ctx.resolve || !t2 || t2.t !== "op" || (t2.v !== "," && t2.v !== ")")) return false;
+      var cv = ctx.resolve(t.v);
+      if (cv == null || cv === "") { next(); return true; }
+      return false;
     }
     // rawRef(): a cell named alone as a whole argument, given as that one cell
     // (A1:A1), blank or not; null when the argument is anything else
@@ -1374,6 +1480,12 @@ Lantern.formula = (function () {
       }
     }
     function argExpr() {
+      // (1.24.24) a whole column, A:A or B:D, is rows 1 to the sheet's last
+      var c1 = peek(), c2 = toks[p + 1], c3 = toks[p + 2];
+      if (c1 && c1.t === "id" && /^[A-Z]{1,2}$/.test(c1.v) && c2 && c2.t === "op" && c2.v === ":" && c3 && c3.t === "id" && /^[A-Z]{1,2}$/.test(c3.v) && ctx.range) {
+        p += 3;
+        return ctx.range(c1.v + "1", c3.v + (ctx.rows || 100));
+      }
       // Ranges are only legal as function arguments; compare() handles rest.
       if (peek() && peek().t === "id" && REF.test(peek().v) &&
           toks[p + 1] && toks[p + 1].v === ":") {
@@ -1429,19 +1541,24 @@ Lantern.formula = (function () {
     // joins as it would show (0.1+0.2 joins as 0.3), a blank cell as nothing
     function asText(x) {
       if (x == null) return "";
-      if (typeof x === "number") return String(Number(num(x).toPrecision(15)));
+      if (typeof x === "number") return general(num(x));
       return String(x);
     }
     function join() {
-      var v = addSub();
-      while (peek() && peek().t === "op" && peek().v === "&") { next(); v = asText(v) + asText(addSub()); }
+      var lb = blankAt(), v = addSub();
+      while (peek() && peek().t === "op" && peek().v === "&") {
+        next();
+        var rb = blankAt(), r = addSub();
+        v = (lb ? "" : asText(v)) + (rb ? "" : asText(r));
+        lb = false;
+      }
       return v;
     }
     // (1.24.24) blankAt(): the argument here is an empty cell named alone,
     // which is "" beside text (=A1="" asks if A1 is empty) and 0 beside a number
     function blankAt() {
       var t = toks[p], t2 = toks[p + 1];
-      if (!t || t.t !== "id" || !REF.test(t.v) || !ctx.resolve || (t2 && !(t2.t === "op" && /^(?:=|<>|<|>|<=|>=|,|\x29)$/.test(t2.v)))) return false;
+      if (!t || t.t !== "id" || !REF.test(t.v) || !ctx.resolve || (t2 && !(t2.t === "op" && /^(?:=|<>|<|>|<=|>=|,|\x29|&)$/.test(t2.v)))) return false;
       var cv = ctx.resolve(t.v);
       return cv == null || cv === "";
     }
@@ -1450,10 +1567,19 @@ Lantern.formula = (function () {
       while (peek() && peek().t === "op" &&
              ["=", "<", ">", "<=", ">=", "<>"].indexOf(peek().v) >= 0) {
         var op = next().v, rb = blankAt(), r = join(), l = v;
-        // text against text (or a number) compares as text, ignoring case
-        if (typeof l === "string" || typeof r === "string") {
-          l = lb ? "" : String(l == null ? "" : l).toLowerCase(); r = rb ? "" : String(r == null ? "" : r).toLowerCase();
-        } else { l = num(l); r = num(r); }
+        // text against text compares as text, ignoring case; (1.24.24) text against a number: text is
+        // above every number, as in Excel (="10">5 is TRUE, =A1="5" is FALSE when A1 holds 5); numbers
+        // equal to 15 digits are equal (=0.1+0.2=0.3 is TRUE)
+        var lt = typeof l === "string", rt = typeof r === "string";
+        if (lb && rt) l = "";
+        if (rb && lt) r = "";
+        var ls = typeof l === "string", rs = typeof r === "string";
+        if (ls && rs) { l = l.toLowerCase(); r = r.toLowerCase(); }
+        else if (ls || rs) {
+          if (ctx.resolve) { l = ls ? 1 : 0; r = rs ? 1 : 0; }
+          else { l = String(l == null ? "" : l).toLowerCase(); r = String(r == null ? "" : r).toLowerCase(); }
+        }
+        else { l = Number(num(l).toPrecision(15)); r = Number(num(r).toPrecision(15)); }
         lb = false;
         v = (op === "=" ? l === r : op === "<" ? l < r : op === ">" ? l > r :
              op === "<=" ? l <= r : op === ">=" ? l >= r : l !== r) ? 1 : 0;
@@ -1465,7 +1591,7 @@ Lantern.formula = (function () {
     // a text result (="abc", =REVERSE("abc") -- TEXT_FUNCS) stays text
     return typeof result === "string" ? result : num(result);
   }
-  return { evaluate: evaluate, register: register, REF: REF, isoDay: isoDay,
+  return { evaluate: evaluate, register: register, REF: REF, isoDay: isoDay, textNum: textNum, dayOf: dayOf, general: general,
     names: function () { return Object.keys(EXT).sort(); } };
 })();
 // ===========================================================================
@@ -1890,41 +2016,59 @@ Lantern.formula = (function () {
       if (raw == null || raw === "") { out[ref] = null; return null; }
       if (typeof raw === "string" && raw.charAt(0) === "=") {
         visiting[ref] = 1;
-        var v;
-        try {
-          v = Lantern.formula.evaluate(raw.slice(1), {
-            resolve: val,
+        var v, cx = {
+            resolve: fval,
             cell: ref,   // (1.24.24) the cell itself: ROW() and COLUMN() with nothing in the brackets
+            rows: ROWS,  // (1.24.24) A:A is A1 to the last row
             // a range is its numbers (what SUM and AVERAGE take), and (1.24.24)
-            // .cells, its rows of values as they are -- text, and null for a
-            // blank -- with .r0/.c0 its top-left (VLOOKUP, COUNTIF, ROW)
+            // .cells, its rows of values as they are -- text, null for an empty
+            // cell, "" for a formula that gives "" -- with .r0/.c0 its top-left
+            // (VLOOKUP, COUNTIF, ROW) and .subtotals the cells that are SUBTOTALs
             range: function (a, b) {
-              var A = parseRef(a), B = parseRef(b), arr = [], rows = [];
+              var A = parseRef(a), B = parseRef(b), arr = [], rows = [], subs = [];
+              B = { r: Math.min(B.r, ROWS - 1), c: Math.min(B.c, COLS - 1) };
               for (var r = Math.min(A.r, B.r); r <= Math.max(A.r, B.r); r++) {
                 var row = [];
                 for (var c = Math.min(A.c, B.c); c <= Math.max(A.c, B.c); c++) {
-                  var x = val(refOf(c, r));
+                  var k = refOf(c, r), x = fval(k);
                   // an error (or a loop) in the range is the range's error:
-                  // SUM used to skip it and show a total that looked right
-                  if (typeof x === "string" && ERRCODE.test(x)) { var re = new Error(x); re.code = x; throw re; }
-                  if (typeof x === "number") arr.push(x);
-                  // (1.24.24) a date written 2026-11-17 counts as its day's
-                  // number, as in Excel: =MAX(A2:A9) is the latest date
-                  else if (typeof x === "string" && Lantern.formula.isoDay) { var dn = Lantern.formula.isoDay(x); if (dn !== null) arr.push(dn); }
-                  row.push(x == null || x === "" ? null : x);
+                  // SUM used to skip it and show a total that looked right.
+                  // (1.24.24) A function that looks at each cell (COUNT,
+                  // VLOOKUP, SUMIF) is given it, the error in its cell
+                  if (typeof x === "string" && ERRCODE.test(x)) {
+                    if (!cx.errOk) { var re = new Error(x); re.code = x; throw re; }
+                    if (!arr.err) arr.err = x;
+                  }
+                  else if (typeof x === "number") arr.push(x);
+                  if (typeof cells[k] === "string" && /^=\s*SUBTOTAL\s*\x28/i.test(cells[k])) subs.push([rows.length, row.length]);
+                  row.push(x == null ? null : x);
                 }
                 rows.push(row);
               }
-              arr.cells = rows; arr.r0 = Math.min(A.r, B.r); arr.c0 = Math.min(A.c, B.c);
+              arr.cells = rows; arr.r0 = Math.min(A.r, B.r); arr.c0 = Math.min(A.c, B.c); arr.subtotals = subs;
               return arr;
             }
-          });
+          };
+        try {
+          v = Lantern.formula.evaluate(raw.slice(1), cx);
         } catch (e) { v = out[ref] === "#CYCLE" ? "#CYCLE" : errCode(e); }
         delete visiting[ref];
         out[ref] = v; return v;
       }
       var n = typed(raw);
       out[ref] = n === null ? raw : n; return out[ref];
+    }
+    // fval(ref): a cell as a formula sees it -- (1.24.24) text typed in it
+    // that Excel reads as a number is that number: a date (2026-11-17,
+    // 17 Nov 2026), a time (17:00), TRUE and FALSE, (100). The cell still
+    // shows what was typed. A formula's own text result stays text.
+    function fval(ref) {
+      var v = val(ref), raw = cells[ref];
+      if (typeof v === "string" && typeof raw === "string" && raw.charAt(0) !== "=" && !ERRCODE.test(v) && Lantern.formula.textNum) {
+        var n = Lantern.formula.textNum(v);
+        if (n !== null) return n;
+      }
+      return v;
     }
     for (var k in cells) val(k);
     return out;
@@ -1949,33 +2093,102 @@ Lantern.formula = (function () {
   // DATEVALUE; NOW with the time), or a date cell with days added or taken
   // (=A1+30, where A1 holds 2026-11-17 or such a formula) -- but not two dates
   // taken one from the other, which is a count of days
-  var DATEFN = /^=\s*(TODAY|DATE|EDATE|EOMONTH|WORKDAY|WORKDAY\.INTL|DATEVALUE|NOW)\s*\x28/i;
+  // (1.24.24, the review) read as a sum of terms: a date plus or minus days
+  // is a date (=A1+30, =A1+A2 where A2 holds a number of days, =TODAY()+7);
+  // a date minus a date is days (=TODAY()-A1); a comparison is not a date;
+  // =IF(test,"",A1+30) is a date. TIME() is a time of day.
+  var DATEFN = { TODAY: "date", DATE: "date", EDATE: "date", EOMONTH: "date", WORKDAY: "date", "WORKDAY.INTL": "date",
+    DATEVALUE: "date", NOW: "time", TIME: "clock", TIMEVALUE: "clock" };
+  function shut(src, at) {   // the index of the bracket that closes the one at src[at], or -1
+    for (var i = at, depth = 0, q = null; i < src.length; i++) {
+      var ch = src.charAt(i);
+      if (q) { if (ch === q) q = null; continue; }
+      if (ch === "\x22") q = ch;
+      else if (ch === "\x28") depth++;
+      else if (ch === "\x29" && --depth === 0) return i;
+    }
+    return -1;
+  }
+  // tops(src, ops): src cut at the operators in ops outside brackets and quotes, [{op, s}]
+  function tops(src, ops) {
+    var out = [{ op: "", s: "" }], depth = 0, q = null;
+    for (var i = 0; i < src.length; i++) {
+      var ch = src.charAt(i), last = out[out.length - 1];
+      if (q) { if (ch === q) q = null; last.s += ch; continue; }
+      if (ch === "\x22") q = ch;
+      else if (ch === "\x28") depth++;
+      else if (ch === "\x29") depth--;
+      else if (!depth && ops.indexOf(ch) >= 0) {
+        // + and - only between two values, not as a sign (=-A1, 1E-5, 2*-3)
+        var sign = (ch === "+" || ch === "-") && (!/[^\s*\x2F^\x28<>=&,+-]\s*$/.test(last.s) || /\d[eE]$/.test(last.s));
+        if (!sign) { out.push({ op: ch, s: "" }); continue; }
+      }
+      last.s += ch;
+    }
+    return out;
+  }
+  function exprKind(src, seen) {
+    src = src.replace(/\$/g, "").replace(/^\s+|\s+$/g, "");
+    while (src.charAt(0) === "\x28" && shut(src, 0) === src.length - 1) src = src.slice(1, -1).replace(/^\s+|\s+$/g, "");
+    if (/^\x22\x22$/.test(src)) return "blank";
+    if (tops(src, "<>=&").length > 1) return null;
+    var m = /^([A-Z][A-Z0-9.]*)\s*\x28/i.exec(src), fn = m && m[1].toUpperCase();
+    if (m && shut(src, m[0].length - 1) === src.length - 1) {
+      if (DATEFN[fn]) return DATEFN[fn];
+      var args = tops(src.slice(m[0].length, -1), ",");
+      if (fn === "IF" && args.length === 3) {
+        var ks = [exprKind(args[1].s, seen), exprKind(args[2].s, seen)].filter(function (x) { return x !== "blank"; });
+        return ks.length && ks.every(function (x) { return x === ks[0]; }) ? ks[0] : null;
+      }
+      // what a lookup gives is what its column holds: INDEX(B1:B9,..), XLOOKUP(..,..,B1:B9), VLOOKUP(..,A1:C9,3,..)
+      var at = { MAX: 0, MIN: 0, LARGE: 0, SMALL: 0, MEDIAN: 0, INDEX: 0, XLOOKUP: 2, LOOKUP: args.length - 1, VLOOKUP: 1 }[fn];
+      var g = at == null || !args[at] ? null : /^\s*([A-Z])([0-9]{1,3})(?::([A-Z])([0-9]{1,3}))?\s*$/i.exec(args[at].s.replace(/\$/g, ""));
+      if (g && fn === "VLOOKUP") {
+        var vc = /^\s*(\d+)\s*$/.exec(args[2] ? args[2].s : "");
+        if (!vc) return null;
+        g = [g[0], String.fromCharCode(g[1].toUpperCase().charCodeAt(0) + +vc[1] - 1), g[2], String.fromCharCode(g[1].toUpperCase().charCodeAt(0) + +vc[1] - 1), g[4] || g[2]];
+      }
+      if (g) {
+        var c0 = g[1].toUpperCase().charCodeAt(0), r0 = +g[2], c1 = g[3] ? g[3].toUpperCase().charCodeAt(0) : c0, r1 = g[4] ? +g[4] : r0;
+        for (var rr = Math.min(r0, r1); rr <= Math.max(r0, r1); rr++)
+          for (var cc = Math.min(c0, c1); cc <= Math.max(c0, c1); cc++) {
+            var k = String.fromCharCode(cc) + rr;
+            if (doc.cells[k] != null && doc.cells[k] !== "") return dateKind(k, seen);
+          }
+      }
+      return null;
+    }
+    if (/^[A-Z]{1,2}[0-9]{1,3}$/i.test(src)) return dateKind(src.toUpperCase(), seen);
+    var ts = tops(src, "+-");
+    if (ts.length < 2) return null;
+    var sum = 0, kind = null;
+    for (var i = 0; i < ts.length; i++) {
+      var t = ts[i].s.replace(/^\s+|\s+$/g, "");
+      if (!t) continue;
+      var tk = tops(t, "*\x2F^").length > 1 ? null : exprKind(t, seen);
+      if (tk === "date" || tk === "time") { sum += ts[i].op === "-" ? -1 : 1; kind = kind === "time" ? kind : tk; }
+    }
+    // a date and time less its day (=NOW()-TODAY()) is a time of day
+    return sum === 1 ? kind : sum === 0 && kind === "time" ? "clock" : null;
+  }
   function dateKind(ref, seen) {
     var raw = doc.cells[ref];
     if (typeof raw !== "string") return null;
-    if (/^\s*\d{4}-\d{1,2}-\d{1,2}\s*$/.test(raw)) return "date";
-    var m = DATEFN.exec(raw);
-    if (m) return /^now$/i.test(m[1]) ? "time" : "date";
+    if (raw.charAt(0) !== "=") {
+      var n = Lantern.formula.textNum ? Lantern.formula.textNum(raw) : null;
+      return n !== null && Lantern.formula.dayOf && Lantern.formula.dayOf(raw) !== null ? (n < 1 ? "clock" : n % 1 ? "time" : "date") : null;
+    }
     seen = seen || {};
     if (seen[ref]) return null;
     seen[ref] = 1;
-    // =A1, =A1+30, and the latest or earliest of dates (=MAX(A2:A9))
-    var r = /^=\s*([A-Z]{1,2}[0-9]{1,3})\s*(?:[+-]([^A-Za-z]*))?$/i.exec(raw);
-    if (r) return (r[2] == null || /\d/.test(r[2])) && dateKind(r[1].toUpperCase(), seen) === "date" ? "date" : null;
-    var g = /^=\s*(?:MAX|MIN|LARGE|SMALL|MEDIAN)\s*\x28\s*([A-Z])([0-9]{1,3})(?::([A-Z])([0-9]{1,3}))?\s*[,\x29]/i.exec(raw);
-    if (!g) return null;
-    var c0 = g[1].toUpperCase().charCodeAt(0), r0 = +g[2], c1 = g[3] ? g[3].toUpperCase().charCodeAt(0) : c0, r1 = g[4] ? +g[4] : r0;
-    for (var rr = Math.min(r0, r1); rr <= Math.max(r0, r1); rr++)
-      for (var cc = Math.min(c0, c1); cc <= Math.max(c0, c1); cc++) {
-        var k = String.fromCharCode(cc) + rr;
-        if (doc.cells[k] != null && doc.cells[k] !== "") return dateKind(k, seen) === "date" ? "date" : null;
-      }
-    return null;
+    return exprKind(raw.slice(1), seen);
   }
-  function dayText(v, withTime) {
+  // dayText(v, kind): a date as 2026-11-17, with the time when it has one (or is NOW's); a time of day as 14:30
+  function dayText(v, kind) {
     var t = new Date(Math.round((v - 25569) * 86400000)), p2 = function (x) { return (x < 10 ? "0" : "") + x; };
-    var d = t.getUTCFullYear() + "-" + p2(t.getUTCMonth() + 1) + "-" + p2(t.getUTCDate());
-    return withTime ? d + " " + p2(t.getUTCHours()) + ":" + p2(t.getUTCMinutes()) : d;
+    var d = t.getUTCFullYear() + "-" + p2(t.getUTCMonth() + 1) + "-" + p2(t.getUTCDate()), hm = p2(t.getUTCHours()) + ":" + p2(t.getUTCMinutes());
+    if (kind === "clock" && v >= 0 && v < 1) return hm;
+    return kind === "time" || Math.abs(v - Math.round(v)) * 1440 >= 1 ? d + " " + hm : d;
   }
 
   function repaint() {
@@ -1993,7 +2206,7 @@ Lantern.formula = (function () {
         // a number typed with its format ($12.50, 1,500, 10%) shows as typed
         var raw = doc.cells[k], dk = dateKind(k);
         td.textContent = typeof raw === "string" && raw.charAt(0) !== "=" && /[,%\$\u20ac\u00a3]/.test(raw) ? raw.replace(/^\s+|\s+$/g, "") :
-          dk && v >= 1 && v < 2958466 ? dayText(v, dk === "time") : Lantern.fmtNum(v);
+          dk && (dk === "clock" ? v >= 0 && v < 1 : v >= 1 && v < 2958466) ? dayText(v, dk) : Lantern.fmtNum(v);
         td.className = "num";
       }
       else { td.textContent = String(v); td.className = /^#/.test(String(v)) ? "num" : ""; }
@@ -35037,7 +35250,7 @@ Lantern.RFB = (function () {
   var L = window.Lantern;
   if (!L || !L.formula || !L.formula.register) return;
   // a number as a cell shows it, 15 digits (LEFT(0.1+0.2,4) is "0.3")
-  function str(v) { return v == null ? "" : typeof v === "number" ? String(Number(v.toPrecision(15))) : String(v); }
+  function str(v) { return v == null ? "" : typeof v === "number" ? (L.formula.general ? L.formula.general(v) : String(Number(v.toPrecision(15)))) : String(v); }
   function n(v, name) {
     var x = typeof v === "number" ? v : parseFloat(v);
     if (!isFinite(x)) throw new Error(name + " needs a number");
@@ -35059,7 +35272,7 @@ Lantern.RFB = (function () {
     SORTLETTERS: function (a) { return str(a[0]).toLowerCase().replace(/[^a-z0-9\u00c0-\u024f]/g, "").split("").sort().join(""); },
     WORDS: function (a) { var t = str(a[0]).replace(/^\s+|\s+$/g, ""); return t ? t.split(/\s+/).length : 0; }
   };
-  Object.keys(F).forEach(function (k) { L.formula.register(k, F[k]); });
+  Object.keys(F).forEach(function (k) { L.formula.register(k, F[k], { blank: true }); });   // LEN of an empty cell is 0
   window.Lantern.textFuncs = F;
   // (1.24.6) about(question): it asks about the letters of a word it gives
   // ("Spell \x22refrigerator\x22 backwards, then remove every letter r").
@@ -35105,7 +35318,7 @@ Lantern.RFB = (function () {
 // nothing to average, #NUM! out of range).
 (function () {
   var L = window.Lantern;
-  if (!(L && L.formula && L.formula.register)) return;
+  if (!(L && L.formula && L.formula.register && L.formula.textNum && L.formula.dayOf && L.formula.general)) return;
   var reg = L.formula.register;
   function err(code, msg) { var e = new Error(msg || code); e.code = code; return e; }
   // lz(x): an argument worked out one by one (IFS, CHOOSE...): its error now counts
@@ -35131,53 +35344,25 @@ Lantern.RFB = (function () {
     var t = new Date(Math.round(((s < 60 ? s + 1 : s) - EPOCH) * DAY));
     return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate(), w: t.getUTCDay() };
   }
-  function valid(y, m, d) { var t = new Date(Date.UTC(y, m - 1, d)); return t.getUTCMonth() === m - 1 && t.getUTCDate() === d; }
-  function clock(h, mi, se, ap) {
-    h = +h; mi = +mi; se = +(se || 0);
-    if (ap) { ap = ap.toLowerCase(); if (h < 1 || h > 12) return null; if (ap === "pm" && h < 12) h += 12; if (ap === "am" && h === 12) h = 0; }
-    if (h > 23 || mi > 59 || se > 59) return null;
-    return (h * 3600 + mi * 60 + se) / 86400;
-  }
-  // dayOf(text) -> the day (and time) a text names, or null: 2026-11-17, 2026/11/17, 17 Nov 2026, November 17, 2026,
-  // with a time 14:30 or 2:30 pm after it, or a time alone. Not 11/12/2026: day and month can be either way round.
-  function dayOf(text) {
-    var s = String(text).replace(/^\s+|\s+$/g, "").toLowerCase(), m, d = null, rest = s, y, mo, dd;
-    if ((m = /^(\d{4})[-\x2F](\d{1,2})[-\x2F](\d{1,2})(?:[t ]+|$)/.exec(s))) { y = +m[1]; mo = +m[2]; dd = +m[3]; }
-    else if ((m = /^(\d{1,2})[ -]([a-z]{3,9})\.?,?[ -](\d{4})(?:[ ,]+|$)/.exec(s))) { y = +m[3]; mo = month(m[2]); dd = +m[1]; }
-    else if ((m = /^([a-z]{3,9})\.? (\d{1,2})(?:st|nd|rd|th)?,? (\d{4})(?:[ ,]+|$)/.exec(s))) { y = +m[3]; mo = month(m[1]); dd = +m[2]; }
-    if (m) { if (!mo || y < 1900 || y > 9999 || !valid(y, mo, dd)) return null; d = serial(y, mo, dd); rest = s.slice(m[0].length); }
-    if (!rest) return d;
-    var t = /^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?$/.exec(rest), f = t ? clock(t[1], t[2], t[3], t[4]) : null;
-    if (f === null) return null;
-    return (d || 0) + f;
-  }
-  function month(w) { var i = MON.indexOf(w.slice(0, 3)); return i < 0 || (w.length > 3 && "january february march april may june july august september october november december".split(" ")[i].indexOf(w) !== 0) ? 0 : i + 1; }
-  // ---- numbers and text, as Excel turns one into the other
-  var NUMTXT = /^([+-]?)\s*([\$\u20ac\u00a3]?)\s*(\d{1,3}(?:,\d{3})+(?:\.\d*)?|\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?)\s*(%?)$/;
-  function numText(v) {
-    var s = String(v).replace(/^\s+|\s+$/g, ""), m = NUMTXT.exec(s);
-    if (m) { var x = parseFloat(m[3].replace(/,/g, "")) * (m[1] === "-" ? -1 : 1) / (m[4] ? 100 : 1); return isFinite(x) ? x : null; }
-    var dd = s ? dayOf(s) : null;
-    return dd;
-  }
+  // dayOf(text): the day and time a text names (2026-11-17, 17 Nov 2026, 11/17/2026, 14:30), else null; numText(text):
+  // the number a text reads as in Excel ($1,200, 50%, (100), a date, a time, TRUE), else null -- FORMULA's own
+  var dayOf = L.formula.dayOf, numText = L.formula.textNum;
+  var ERRV = /^#(?:ERR|CYCLE|DIV\x2F0!|VALUE!|NAME\?|NUM!|REF!|N\x2FA)$/;
+  // isErr(v): a cell holding an error, as a range given to COUNT or VLOOKUP keeps it
+  function isErr(v) { return typeof v === "string" && ERRV.test(v); }
+  function round15(x) { return Number(x.toPrecision(15)); }
   function N(x) {
     x = lz(x);
     if (x == null || x === "") return 0;
     if (typeof x === "number") { if (!isFinite(x)) throw err("#NUM!"); return x; }
     if (isRange(x)) { if (x.cells && x.cells.length === 1 && x.cells[0].length === 1) return N(x.cells[0][0]); throw err("#VALUE!", "a range where one value belongs"); }
+    if (isErr(x)) throw err(x, x);
     var v = numText(x);
     if (v !== null) return v;
-    if (/^\s*true\s*$/i.test(x)) return 1;
-    if (/^\s*false\s*$/i.test(x)) return 0;
     throw err("#VALUE!", "\u201c" + x + "\u201d is not a number");
   }
   // a number as text, as a cell shows it unformatted: 15 digits; 1E+21 and 1E-10 for the very large and small
-  function fmtGeneral(x) {
-    var y = Number(x.toPrecision(15));
-    if (y === 0 || (Math.abs(y) < 1e15 && Math.abs(y) >= 1e-9)) return String(y);
-    var m = /^(-?[0-9.]+)e([+-])([0-9]+)$/.exec(y.toExponential());
-    return m[1] + "E" + m[2] + (m[3].length < 2 ? "0" : "") + m[3];
-  }
+  var fmtGeneral = L.formula.general;
   function T(x) {
     x = lz(x);
     if (isRange(x)) x = x.cells && x.cells.length === 1 && x.cells[0].length === 1 ? x.cells[0][0] : flat(x)[0];
@@ -35217,14 +35402,14 @@ Lantern.RFB = (function () {
   function crit(c) {
     c = lz(c);
     if (isRange(c)) c = flat(c)[0];
-    if (typeof c === "number") return function (v) { return typeof v === "number" ? v === c : !blank(v) && numText(v) === c; };
+    if (typeof c === "number") { c = round15(c); return function (v) { var x = typeof v === "number" ? v : blank(v) || isErr(v) ? null : numText(v); return x !== null && round15(x) === c; }; }
     var s = c == null ? "" : String(c), m = /^(<=|>=|<>|=|<|>)?([\s\S]*)$/.exec(s), op = m[1] || "", rest = m[2];
     if (rest === "") return op === "<>" ? function (v) { return !blank(v); } : op === "" || op === "=" ? blank : function () { return false; };
     var rn = numText(rest);
-    if (rn !== null) return function (v) {
-      var x = typeof v === "number" ? v : blank(v) ? null : numText(v);
-      return x === null ? op === "<>" : cmp(op || "=", x, rn);
-    };
+    if (rn !== null) { rn = round15(rn); return function (v) {
+      var x = typeof v === "number" ? v : blank(v) || isErr(v) ? null : numText(v);
+      return x === null ? op === "<>" : cmp(op || "=", round15(x), rn);
+    }; }
     if (op === "" || op === "=" || op === "<>") {
       var re = wild(rest);
       return function (v) { var hit = !blank(v) && typeof v !== "number" && re.test(String(v)); return op === "<>" ? !hit : hit; };
@@ -35235,7 +35420,8 @@ Lantern.RFB = (function () {
   // eqv(a, b): the = of a lookup -- numbers by value, text ignoring case
   function eqv(a, b) {
     if (blank(a) || blank(b)) return blank(a) && blank(b);
-    if (typeof a === "number" || typeof b === "number") return typeof a === typeof b && a === b;
+    if (isErr(a) || isErr(b)) return false;
+    if (typeof a === "number" || typeof b === "number") return typeof a === typeof b && round15(a) === round15(b);
     return String(a).toLowerCase() === String(b).toLowerCase();
   }
   // ---- the criteria functions
@@ -35261,14 +35447,23 @@ Lantern.RFB = (function () {
   function picked(g, at, sameSize) {
     if (sameSize && g !== null && (g.length !== sameSize[0] || g[0].length !== sameSize[1])) throw err("#VALUE!", "the ranges are not the same size");
     var out = [];
-    at.forEach(function (p) { var v = g[p[0]] && g[p[0]][p[1]]; if (typeof v === "number") out.push(v); });
+    at.forEach(function (p) { var v = g[p[0]] && g[p[0]][p[1]]; if (isErr(v)) throw err(v, v); if (typeof v === "number") out.push(v); });
     return out;
   }
   function sum(a) { var s = 0; for (var i = 0; i < a.length; i++) s += a[i]; return s; }
-  function ifOne(args, kind) {
-    var g = grid(args[0]), sp = { ps: [{ g: g, f: crit(args[1]) }], rows: g.length, cols: g[0].length };
-    var vals = picked(args.length > 2 ? grid(args[2]) : g, hits(sp));
-    return kind(vals);
+  // SUMIF(range, test, sum range): a sum range of another size is read from its top-left cell in the range's
+  // shape, as in Excel (SUMIF(A1:A3,"x",B1) adds B1:B3)
+  function ifOne(args, kind, ctx) {
+    var g = grid(args[0]), sp = { ps: [{ g: g, f: crit(args[1]) }], rows: g.length, cols: g[0].length }, sg = g;
+    if (args.length > 2 && args[2] !== undefined) {
+      var s2 = lz(args[2]);
+      sg = grid(s2);
+      if ((sg.length !== g.length || sg[0].length !== g[0].length) && isRange(s2) && typeof s2.r0 === "number" && ctx && ctx.range) {
+        var col = function (c) { return String.fromCharCode(65 + c); };
+        sg = grid(ctx.range(col(s2.c0) + (s2.r0 + 1), col(s2.c0 + g[0].length - 1) + (s2.r0 + g.length)));
+      }
+    }
+    return kind(picked(sg, hits(sp)));
   }
   function ifMany(args, kind) {
     var tg = grid(args[0]), sp = pairs(args, 1);
@@ -35278,11 +35473,11 @@ Lantern.RFB = (function () {
   function mn(v) { return v.length ? Math.min.apply(null, v) : 0; }
   function mx(v) { return v.length ? Math.max.apply(null, v) : 0; }
   var F = {
-    SUMIF: function (a) { return ifOne(a, sum); },
+    SUMIF: function (a, ctx) { return ifOne(a, sum, ctx); },
     SUMIFS: function (a) { return ifMany(a, sum); },
     COUNTIF: function (a) { var g = grid(a[0]); return hits({ ps: [{ g: g, f: crit(a[1]) }], rows: g.length, cols: g[0].length }).length; },
     COUNTIFS: function (a) { return hits(pairs(a, 0)).length; },
-    AVERAGEIF: function (a) { return ifOne(a, avg); },
+    AVERAGEIF: function (a, ctx) { return ifOne(a, avg, ctx); },
     AVERAGEIFS: function (a) { return ifMany(a, avg); },
     MINIFS: function (a) { return ifMany(a, mn); },
     MAXIFS: function (a) { return ifMany(a, mx); },
@@ -35298,7 +35493,8 @@ Lantern.RFB = (function () {
     },
     SUMSQ: function (a) { return sum(nums(a).map(function (x) { return x * x; })); },
     PRODUCT: function (a) { var v = nums(a), p = 1; for (var i = 0; i < v.length; i++) p *= v[i]; return v.length ? p : 0; },
-    COUNTA: function (a) { var n = 0; a.forEach(function (x) { x = lz(x); if (isRange(x)) flat(x).forEach(function (v) { if (!blank(v)) n++; }); else if (x != null) n++; }); return n; },
+    // COUNTA: every cell not empty -- text, numbers, errors, and a formula that gives ""
+    COUNTA: function (a) { var n = 0; a.forEach(function (x) { if (x && x.lazyErr) { n++; return; } if (isRange(x)) flat(x).forEach(function (v) { if (v != null) n++; }); else if (x !== undefined && x !== null) n++; }); return n; },
     COUNTBLANK: function (a) { var n = 0; flat(a[0]).forEach(function (v) { if (blank(v)) n++; }); return n; },
     MEDIAN: function (a) {
       var v = nums(a).sort(function (x, y) { return x - y; }), h = v.length >> 1;
@@ -35369,8 +35565,11 @@ Lantern.RFB = (function () {
     for (var i = 0; i < v.length; i++) s += (v[i] - m) * (v[i] - m);
     return s / (v.length - ddof);
   }
+  // LARGE(k) is SMALL(n + 1 - k), k with a fraction cut down: LARGE(r,1.5) of two numbers is the smaller, as in Excel
   function kth(a, dir) {
-    var v = nums([a[0]]).sort(function (x, y) { return dir * (x - y); }), k = Math.ceil(N(a[1]));
+    var v = nums([a[0]]).sort(function (x, y) { return x - y; }), k = N(a[1]);
+    if (dir < 0) k = v.length + 1 - k;
+    k = Math.floor(k);
     if (k < 1 || k > v.length) throw err("#NUM!", "there is no number " + k + " in the list");
     return v[k - 1];
   }
@@ -35395,7 +35594,14 @@ Lantern.RFB = (function () {
   // SUBTOTAL(how, range...): 1 AVERAGE, 2 COUNT, 3 COUNTA, 4 MAX, 5 MIN, 6 PRODUCT, 7 STDEV, 8 STDEVP, 9 SUM,
   // 10 VAR, 11 VARP (101 to 111 the same: Sheets has no hidden rows)
   F.SUBTOTAL = function (a, ctx) {
-    var k = Math.floor(N(a[0])), rest = a.slice(1), v = nums(rest);
+    // the cells in its ranges that are themselves SUBTOTALs are left out, as in Excel (a grand total over subtotals)
+    var k = Math.floor(N(a[0])), rest = a.slice(1).map(function (x) {
+      if (!isRange(x) || !x.subtotals || !x.subtotals.length) return x;
+      var cells = x.cells.map(function (r) { return r.slice(); }), y = [];
+      x.subtotals.forEach(function (q) { cells[q[0]][q[1]] = null; });
+      cells.forEach(function (r) { r.forEach(function (c) { if (typeof c === "number") y.push(c); }); });
+      y.cells = cells; return y;
+    }), v = nums(rest);
     var how = { 1: avg, 2: function (x) { return x.length; }, 4: mx, 5: mn, 9: sum,
       3: function () { return F.COUNTA(rest); }, 6: function () { return F.PRODUCT(rest); },
       7: function () { return F.STDEV(rest); }, 8: function () { return F.STDEVP(rest); },
@@ -35408,18 +35614,19 @@ Lantern.RFB = (function () {
   F["RANK.EQ"] = F.RANK; F["PERCENTILE.INC"] = F.PERCENTILE; F["QUARTILE.INC"] = F.QUARTILE; F["CEILING.PRECISE"] = F["CEILING.MATH"]; F["FLOOR.PRECISE"] = F["FLOOR.MATH"];
   // registerAll(F, "NAME min max, ..."): each function refuses a wrong number of values, as Excel refuses the
   // formula -- COUNTIF({5,6,5},"=5") read as COUNTIF(5,6,5,"=5") is not counted wrong; it says what COUNTIF takes
-  function registerAll(fns, spec) {
-    var ar = {};
+  function registerAll(fns, spec, errsafe) {
+    var ar = {}, safe = {};
+    String(errsafe || "").split(/\s+/).forEach(function (n) { if (n) safe[n] = 1; });
     spec.split(/\s*,\s*/).forEach(function (t) { var m = /^(\S+) (\d+) (\d+|\*)$/.exec(t); if (m) ar[m[1]] = [+m[2], m[3] === "*" ? Infinity : +m[3]]; });
     Object.keys(fns).forEach(function (k) {
       var fn = fns[k], r = ar[k];
-      reg(k, !r ? fn : function (a, ctx) {
+      L.formula.register(k, !r ? fn : function (a, ctx) {
         if (a.length < r[0] || a.length > r[1]) {
           var h = (L.formulaHelp || []).filter(function (x) { return x.n === k; })[0];
           throw err("#VALUE!", k + (h && h.s ? h.s : "") + " takes " + (r[0] === r[1] ? r[0] + " value" + (r[0] === 1 ? "" : "s") : r[1] === Infinity ? r[0] + " or more values" : r[0] + " to " + r[1] + " values") + ", not " + a.length);
         }
         return fn(a, ctx);
-      });
+      }, { blank: true, errors: !!safe[k] });
     });
   }
   registerAll(F, "SUMIF 2 3, SUMIFS 3 *, COUNTIF 2 2, COUNTIFS 2 *, AVERAGEIF 2 3, AVERAGEIFS 3 *, MINIFS 3 *, MAXIFS 3 *, SUMPRODUCT 1 *, " +
@@ -35427,8 +35634,9 @@ Lantern.RFB = (function () {
     "VAR 1 *, VARP 1 *, VAR.S 1 *, VAR.P 1 *, LARGE 2 2, SMALL 2 2, RANK 2 3, RANK.EQ 2 3, PERCENTILE 2 2, PERCENTILE.INC 2 2, QUARTILE 2 2, " +
     "QUARTILE.INC 2 2, ROUNDUP 1 2, ROUNDDOWN 1 2, TRUNC 1 2, INT 1 1, CEILING 1 2, CEILING.MATH 1 3, CEILING.PRECISE 1 3, FLOOR.MATH 1 3, " +
     "FLOOR.PRECISE 1 3, MROUND 2 2, SIGN 1 1, QUOTIENT 2 2, GCD 1 *, LCM 1 *, RAND 0 0, RANDBETWEEN 2 2, LOG10 1 1, COMBIN 2 2, PERMUT 2 2, " +
-    "DEGREES 1 1, RADIANS 1 1, ATAN2 2 2, EVEN 1 1, ODD 1 1, SQRTPI 1 1, SUBTOTAL 2 *");
-  L.sheetFn = { registerAll: registerAll, err: err, lz: lz, isRange: isRange, grid: grid, flat: flat, nums: nums, N: N, T: T, truthy: truthy,
+    "DEGREES 1 1, RADIANS 1 1, ATAN2 2 2, EVEN 1 1, ODD 1 1, SQRTPI 1 1, SUBTOTAL 2 *",
+    "SUMIF SUMIFS COUNTIF COUNTIFS AVERAGEIF AVERAGEIFS MINIFS MAXIFS COUNTA COUNTBLANK");
+  L.sheetFn = { registerAll: registerAll, isErr: isErr, round15: round15, err: err, lz: lz, isRange: isRange, grid: grid, flat: flat, nums: nums, N: N, T: T, truthy: truthy,
     crit: crit, wild: wild, eqv: eqv, blank: blank, serial: serial, ymd: ymd, dayOf: dayOf, numText: numText, fmtGeneral: fmtGeneral, F: F };
 })();
 // ===========================================================================
@@ -35450,7 +35658,7 @@ Lantern.RFB = (function () {
 (function () {
   var L = window.Lantern;
   if (!(L && L.formula && L.formula.register && L.sheetFn)) return;
-  var H = L.sheetFn, err = H.err, lz = H.lz, grid = H.grid, flat = H.flat, N = H.N, truthy = H.truthy, isRange = H.isRange;
+  var H = L.sheetFn, err = H.err, lz = H.lz, grid = H.grid, flat = H.flat, N = H.N, truthy = H.truthy, isRange = H.isRange, isErr = H.isErr;
   // the error an argument was kept with, named as a cell shows it
   function codeOf(e) {
     if (e.code) return e.code;
@@ -35461,6 +35669,8 @@ Lantern.RFB = (function () {
   function bad(x) { return !!(x && x.lazyErr); }
   // the one value of an IS... function's argument: a cell named alone is that cell as it is (null when blank)
   function one(x) { return isRange(x) ? (x.cells && x.cells.length === 1 && x.cells[0].length === 1 ? x.cells[0][0] : flat(x)[0]) : x; }
+  // want(x): the value a lookup looks for (an error cell is its error)
+  function want(x) { var v = one(x); if (isErr(v)) throw err(v, v); return v; }
   function notFound(what) { return err("#N/A", what || "not found"); }
   // logic: ranges give their numbers (text and blanks left out), as in Excel
   function logicals(args) {
@@ -35493,7 +35703,7 @@ Lantern.RFB = (function () {
     if (mode === "sorted") {
       for (i = 0; i < n; i++) {
         var v = list[i];
-        if (v == null || v === "" || !sameKind(v, want)) continue;
+        if (v == null || v === "" || isErr(v) || !sameKind(v, want)) continue;
         if (order(v, want) <= 0) best = i; else break;
       }
       return best;
@@ -35503,13 +35713,14 @@ Lantern.RFB = (function () {
     if (mode === 0 || mode === 2 || mode === "exact") return -1;
     for (i = 0; i < n; i++) {
       var x = list[i];
-      if (x == null || x === "" || !sameKind(x, want)) continue;
+      if (x == null || x === "" || isErr(x) || !sameKind(x, want)) continue;
       var o = order(x, want);
       if ((mode < 0 && o < 0 && (best < 0 || order(x, list[best]) > 0)) || (mode > 0 && o > 0 && (best < 0 || order(x, list[best]) < 0))) best = i;
     }
     return best;
   }
-  function value(v) { return v == null ? 0 : v; }
+  // value(v): what a lookup gives -- an empty cell is 0, an error cell its error
+  function value(v) { if (isErr(v)) throw err(v, v); return v == null ? 0 : v; }
   function vector(x, what) {
     var g = grid(x);
     if (g.length === 1) return g[0];
@@ -35544,8 +35755,8 @@ Lantern.RFB = (function () {
     ISNA: function (a) { return bad(a[0]) && codeOf(a[0].lazyErr) === "#N/A" ? 1 : 0; },
     ISBLANK: function (a) { if (bad(a[0])) return 0; var v = one(a[0]); return isRange(a[0]) && v == null ? 1 : 0; },
     ISNUMBER: function (a) { return !bad(a[0]) && typeof one(a[0]) === "number" ? 1 : 0; },
-    ISTEXT: function (a) { if (bad(a[0])) return 0; var v = one(a[0]); return typeof v === "string" ? 1 : 0; },
-    ISNONTEXT: function (a) { if (bad(a[0])) return 1; return typeof one(a[0]) === "string" ? 0 : 1; },
+    ISTEXT: function (a) { if (bad(a[0])) return 0; var v = one(a[0]); return typeof v === "string" && !isErr(v) ? 1 : 0; },
+    ISNONTEXT: function (a) { if (bad(a[0])) return 1; var v = one(a[0]); return typeof v === "string" && !isErr(v) ? 0 : 1; },
     ISEVEN: function (a) { var v = one(lz(a[0])); return Math.floor(Math.abs(N(v))) % 2 ? 0 : 1; },
     ISODD: function (a) { var v = one(lz(a[0])); return Math.floor(Math.abs(N(v))) % 2 ? 1 : 0; },
     NA: function () { throw notFound("#N/A"); },
@@ -35555,11 +35766,11 @@ Lantern.RFB = (function () {
     HLOOKUP: function (a) { return look(a, true); },
     // XLOOKUP(value, look in, give from, [if not found], [0 exact, -1 or next smaller, 1 or next larger, 2 wildcards], [1 first, -1 last])
     XLOOKUP: function (a) {
-      var want = one(a[0]), lk = vector(a[1], "XLOOKUP"), rg = grid(a[2]), col = grid(a[1]).length > 1;
+      var want0 = want(a[0]), lk = vector(a[1], "XLOOKUP"), rg = grid(a[2]), col = grid(a[1]).length > 1;
       var mode = a.length > 4 ? Math.floor(N(a[4])) : 0, back = a.length > 5 && N(a[5]) < 0;
       if (mode === 0) mode = "exact";
-      var i = find(lk, want, mode, back);
-      if (i < 0) { if (a.length > 3 && a[3] !== undefined) return a[3]; throw notFound("XLOOKUP found nothing equal to " + H.T(want)); }
+      var i = find(lk, want0, mode, back);
+      if (i < 0) { if (a.length > 3 && a[3] !== undefined) return a[3]; throw notFound("XLOOKUP found nothing equal to " + H.T(want0)); }
       var out = col ? rg[i] : rg.map(function (r) { return r[i]; });
       if (!out || out.length !== 1) throw err("#VALUE!", "XLOOKUP here gives one cell: give a return range one column (or one row) wide");
       return value(out[0]);
@@ -35578,16 +35789,16 @@ Lantern.RFB = (function () {
     },
     // MATCH(value, range, [1 sorted up: the last at or below; 0 equal; -1 sorted down: the last at or above])
     MATCH: function (a) {
-      var list = vector(a[1], "MATCH"), want = one(a[0]), t = a.length > 2 ? N(a[2]) : 1, i;
-      if (t === 0) i = find(list, want, 0);
-      else if (t > 0) i = find(list, want, "sorted");
-      else { i = -1; for (var k = 0; k < list.length; k++) { var v = list[k]; if (v == null || !sameKind(v, want)) continue; if (order(v, want) >= 0) i = k; else break; } }
-      if (i < 0) throw notFound("MATCH found no " + H.T(want));
+      var list = vector(a[1], "MATCH"), w = want(a[0]), t = a.length > 2 && a[2] !== undefined ? N(a[2]) : 1, i;
+      if (t === 0) i = find(list, w, 0);
+      else if (t > 0) i = find(list, w, "sorted");
+      else { i = -1; for (var k = 0; k < list.length; k++) { var v = list[k]; if (v == null || isErr(v) || !sameKind(v, w)) continue; if (order(v, w) >= 0) i = k; else break; } }
+      if (i < 0) throw notFound("MATCH found no " + H.T(w));
       return i + 1;
     },
     XMATCH: function (a) {
       var mode = a.length > 2 ? Math.floor(N(a[2])) : 0;
-      var i = find(vector(a[1], "XMATCH"), one(a[0]), mode === 0 ? "exact" : mode, a.length > 3 && N(a[3]) < 0);
+      var i = find(vector(a[1], "XMATCH"), want(a[0]), mode === 0 ? "exact" : mode, a.length > 3 && N(a[3]) < 0);
       if (i < 0) throw notFound("XMATCH found no " + H.T(one(a[0])));
       return i + 1;
     },
@@ -35597,7 +35808,7 @@ Lantern.RFB = (function () {
       if (a.length > 2) { lk = vector(a[1], "LOOKUP"); res = vector(a[2], "LOOKUP"); }
       else if (wide) { lk = g[0]; res = g[g.length - 1]; }
       else { lk = g.map(function (r) { return r[0]; }); res = g.map(function (r) { return r[r.length - 1]; }); }
-      var i = find(lk, one(a[0]), "sorted");
+      var i = find(lk, want(a[0]), "sorted");
       if (i < 0 || i >= res.length) throw notFound("LOOKUP: nothing at or below " + H.T(one(a[0])));
       return value(res[i]);
     },
@@ -35612,16 +35823,17 @@ Lantern.RFB = (function () {
     throw err("#VALUE!", (isRow ? "ROW" : "COLUMN") + " needs a cell (ROW(A5) is 5)");
   }
   function look(a, across) {
-    var g = grid(a[1]), k = whole(a[2], across ? "HLOOKUP's row" : "VLOOKUP's column"), sorted = a.length < 4 || truthy(a[3]);
+    var g = grid(a[1]), k = whole(a[2], across ? "HLOOKUP's row" : "VLOOKUP's column"), sorted = a.length < 4 ? true : truthy(a[3]);
     if (across) g = g[0].map(function (_, c) { return g.map(function (r) { return r[c]; }); });
     if (k > g[0].length) throw err("#REF!", (across ? "the table has " + g[0].length + " rows" : "the table has " + g[0].length + " columns") + ", not " + k);
-    var want = one(a[0]), i = find(g.map(function (r) { return r[0]; }), want, sorted ? "sorted" : 0);
-    if (i < 0) throw notFound((across ? "HLOOKUP" : "VLOOKUP") + " found no " + H.T(want) + (sorted ? " (without FALSE at the end it looks for the nearest below in a sorted table)" : ""));
+    var w = want(a[0]), i = find(g.map(function (r) { return r[0]; }), w, sorted ? "sorted" : 0);
+    if (i < 0) throw notFound((across ? "HLOOKUP" : "VLOOKUP") + " found no " + H.T(w) + (sorted ? " (without FALSE at the end it looks for the nearest below in a sorted table)" : ""));
     return value(g[i][k - 1]);
   }
   H.registerAll(F, "AND 1 *, OR 1 *, XOR 1 *, NOT 1 1, IFS 2 *, IFNA 2 2, SWITCH 3 *, CHOOSE 2 *, ISERROR 1 1, ISERR 1 1, ISNA 1 1, " +
     "ISBLANK 1 1, ISNUMBER 1 1, ISTEXT 1 1, ISNONTEXT 1 1, ISEVEN 1 1, ISODD 1 1, NA 0 0, VLOOKUP 3 4, HLOOKUP 3 4, XLOOKUP 3 6, INDEX 2 3, " +
-    "MATCH 2 3, XMATCH 2 4, LOOKUP 2 3, ROW 0 1, COLUMN 0 1, ROWS 1 1, COLUMNS 1 1");
+    "MATCH 2 3, XMATCH 2 4, LOOKUP 2 3, ROW 0 1, COLUMN 0 1, ROWS 1 1, COLUMNS 1 1",
+    "VLOOKUP HLOOKUP XLOOKUP INDEX MATCH XMATCH LOOKUP ROW COLUMN ROWS COLUMNS ISBLANK ISNUMBER ISTEXT ISNONTEXT");
   H.find = find;
 })();
 // ===========================================================================
@@ -35662,7 +35874,7 @@ Lantern.RFB = (function () {
     }
     return out;
   }
-  // tokens(section) -> [{lit: text} | {code: text}]
+  // tokens(section) -> [{lit: text} | {code: text}]; [h], [m], [s] are hours, minutes, seconds in all
   function tokens(f) {
     var out = [], i = 0, c, m;
     while (i < f.length) {
@@ -35671,36 +35883,43 @@ Lantern.RFB = (function () {
       if (c === "\\") { out.push({ lit: f.charAt(i + 1) }); i += 2; continue; }
       if (c === "_") { out.push({ lit: " " }); i += 2; continue; }
       if (c === "*") { i += 2; continue; }
-      if (c === "[") { var k = f.indexOf("]", i); i = k < 0 ? f.length : k + 1; continue; }
+      if ((m = /^\x5b(h+|m+|s+)\x5d/i.exec(f.slice(i)))) { out.push({ code: m[0].toLowerCase() }); i += m[0].length; continue; }
+      if (c === "\x5b") { var k = f.indexOf("]", i); i = k < 0 ? f.length : k + 1; continue; }
       if ((m = /^(AM\x2FPM|am\x2Fpm|A\x2FP|a\x2Fp)/.exec(f.slice(i)))) { out.push({ code: m[1] }); i += m[1].length; continue; }
-      if ((m = /^(y+|m+|d+|h+|s+|[0#?.,%]+(?:[eE][+-][0#]+)?)/i.exec(f.slice(i)))) { out.push({ code: m[1] }); i += m[1].length; continue; }
+      if ((m = /^(y+|m+|d+|h+|s+|[0#?.,%\x2F]+(?:[eE][+-][0#]+)?)/i.exec(f.slice(i)))) { out.push({ code: m[1] }); i += m[1].length; continue; }
       out.push({ lit: c }); i++;
     }
     return out;
   }
-  function isDate(ts) { return ts.some(function (t) { return t.code && /^[ymdhs]|^a/i.test(t.code); }); }
+  function isDate(ts) { return ts.some(function (t) { return t.code && /^[ymdhs\x5b]|^a/i.test(t.code); }); }
+  function p2(n) { return (n < 10 ? "0" : "") + n; }
   // a date and time format
   function fmtDate(x, ts) {
-    if (x < 0 || x >= 2958466) throw err("#VALUE!", "a date out of range");
-    var day = Math.floor(x), sec = Math.round((x - day) * 86400);
-    if (sec >= 86400) { day++; sec -= 86400; }
-    var d = H.ymd(day), hh = Math.floor(sec / 3600), mi = Math.floor(sec / 60) % 60, ss = sec % 60;
+    var elapsed = ts.some(function (t) { return t.code && t.code.charAt(0) === "\x5b"; });
+    if (x < 0 || (!elapsed && x >= 2958466)) throw err("#VALUE!", "a date out of range");
+    var all = Math.round(x * 86400), day = Math.floor(all / 86400), sec = all - day * 86400;
+    var d = elapsed ? null : H.ymd(day), hh = Math.floor(sec / 3600), mi = Math.floor(sec / 60) % 60, ss = sec % 60;
     var ampm = ts.some(function (t) { return t.code && /^a/i.test(t.code); });
-    function p2(n) { return (n < 10 ? "0" : "") + n; }
     var out = "";
     ts.forEach(function (t, i) {
       if (t.lit != null) { out += t.lit; return; }
-      var c = t.code, lc = c.toLowerCase();
+      var c = t.code, lc = c.toLowerCase(), n = lc.replace(/[\x5b\x5d]/g, "").length;
+      if (lc.charAt(0) === "\x5b") {
+        var v = /h/.test(lc) ? Math.floor(all / 3600) : /m/.test(lc) ? Math.floor(all / 60) : all;
+        out += n > 1 && v < 10 ? "0" + v : v;
+        return;
+      }
       if (/^y/.test(lc)) out += lc.length <= 2 ? p2(d.y % 100) : d.y;
       else if (/^m/.test(lc)) {
         // m right after an hour, or just before seconds, is minutes
         var prev = null, next = null, k;
         for (k = i - 1; k >= 0; k--) if (ts[k].code) { prev = ts[k].code.toLowerCase(); break; }
         for (k = i + 1; k < ts.length; k++) if (ts[k].code) { next = ts[k].code.toLowerCase(); break; }
-        if (lc.length <= 2 && ((prev && /^h/.test(prev)) || (next && /^s/.test(next)))) out += lc.length === 2 ? p2(mi) : mi;
+        if (lc.length <= 2 && ((prev && /^\x5b?h/.test(prev)) || (next && /^\x5b?s/.test(next)))) out += lc.length === 2 ? p2(mi) : mi;
+        else if (!d) out += c;
         else out += lc.length === 1 ? d.m : lc.length === 2 ? p2(d.m) : lc.length === 3 ? MONTHS[d.m - 1].slice(0, 3) : lc.length === 5 ? MONTHS[d.m - 1].charAt(0) : MONTHS[d.m - 1];
       }
-      else if (/^d/.test(lc)) out += lc.length === 1 ? d.d : lc.length === 2 ? p2(d.d) : lc.length === 3 ? DAYS[d.w].slice(0, 3) : DAYS[d.w];
+      else if (/^d/.test(lc)) out += !d ? c : lc.length === 1 ? d.d : lc.length === 2 ? p2(d.d) : lc.length === 3 ? DAYS[d.w].slice(0, 3) : DAYS[d.w];
       else if (/^h/.test(lc)) { var h = ampm ? (hh % 12 || 12) : hh; out += lc.length > 1 ? p2(h) : h; }
       else if (/^s/.test(lc)) out += lc.length > 1 ? p2(ss) : ss;
       else if (/^a/.test(lc)) { var pm = hh >= 12; out += c.length > 3 ? (c.charAt(0) === "a" ? (pm ? "pm" : "am") : (pm ? "PM" : "AM")) : (c.charAt(0) === "a" ? (pm ? "p" : "a") : (pm ? "P" : "A")); }
@@ -35708,49 +35927,99 @@ Lantern.RFB = (function () {
     });
     return out;
   }
-  // a number format: 0 # ? for digits, . , % E+00 and text around them
+  function pad(s, n, right) { while (s.length < n) s = right ? s + " " : (right === false ? " " : "0") + s; return s; }
+  // a number format, character by character: 0 # ? are digits (0 always shown, # only when needed, ? as a space),
+  // a comma between digits is thousands and after the last digit divides by 1000, % is per cent, E+00 a power of
+  // ten, # ?/? a fraction; anything else is text where it stands -- (000) 000-0000 spreads the digits round it
   function fmtNumber(x, ts, signed) {
-    var code = ts.filter(function (t) { return t.code; }).map(function (t) { return t.code; }).join("");
-    var pct = (code.match(/%/g) || []).length, e = /[eE]([+-])([0#]+)/.exec(code);
-    var num = code.replace(/[eE][+-][0#]+/, "").replace(/%/g, ""), dot = num.indexOf(".");
-    var ip = dot < 0 ? num : num.slice(0, dot), dp = dot < 0 ? "" : num.slice(dot + 1).replace(/,/g, "");
-    var scale = /,+$/.exec(ip.replace(/[^0#?,]/g, "")), sep = /[0#?],[0#?]/.test(ip);
-    var y = Math.abs(x) * Math.pow(100, pct), body;
-    if (scale && !sep) y /= Math.pow(1000, scale[0].length);
-    else if (scale) { var tail = /,+$/.exec(ip); if (tail) y /= Math.pow(1000, tail[0].length); }
-    var minD = (dp.match(/0/g) || []).length, maxD = (dp.match(/[0#?]/g) || []).length, minI = (ip.match(/0/g) || []).length;
-    if (e) {
-      var ex = y === 0 ? 0 : Math.floor(Math.log(y) / Math.LN10), mant = y / Math.pow(10, ex);
-      mant = roundTo(mant, maxD); if (mant >= 10) { mant /= 10; ex++; }
-      body = digits(mant, minD, maxD, Math.max(minI, 1), false, dot >= 0) + "E" + (ex < 0 ? "-" : e[1] === "+" ? "+" : "") + pad(String(Math.abs(ex)), e[2].length);
-    } else body = digits(roundTo(y, maxD), minD, maxD, minI, sep, dot >= 0);
-    if (signed && x < 0 && /[1-9]/.test(body)) body = "-" + body;
-    // the text around the digits goes where it stood
-    var out = "", put = false;
+    var items = [], dot = false, pct = 0, sci = null, frac = null, i, j;
     ts.forEach(function (t) {
-      if (t.lit != null) { out += t.lit; return; }
-      if (/^[0#?.,]/.test(t.code) || /^[eE]/.test(t.code)) { if (!put) { out += body; put = true; } }
-      if (/%/.test(t.code)) { if (!put) { out += body; put = true; } out += t.code.replace(/[^%]/g, ""); }
+      if (t.lit != null) { items.push({ lit: t.lit }); return; }
+      for (j = 0; j < t.code.length; j++) {
+        var c = t.code.charAt(j), em;
+        if (c === "0" || c === "#" || c === "?") items.push({ ph: c, dec: dot });
+        else if (c === ".") { if (!dot) { dot = true; items.push({ dot: 1 }); } else items.push({ lit: "." }); }
+        else if (c === "%") { pct++; items.push({ lit: "%" }); }
+        else if (c === ",") items.push({ comma: 1 });
+        else if (c === "\x2F") items.push({ slash: 1 });
+        else if ((em = /^[eE]([+-])([0#]+)/.exec(t.code.slice(j)))) { sci = { sign: em[1], n: em[2].length }; items.push({ exp: 1 }); j += em[0].length - 1; }
+        else items.push({ lit: c });
+      }
     });
-    if (!put) out += body;
+    if (items.some(function (t) { return t.slash; })) return fraction(x, items, signed);
+    // commas: thousands when a digit stands on both sides; at the end of the digits, each divides by 1000
+    var sep = false, scale = 0;
+    items.forEach(function (t, k) {
+      if (!t.comma) return;
+      var before = false, after = false;
+      for (i = k - 1; i >= 0; i--) { if (items[i].ph) { before = true; break; } if (!items[i].comma) break; }
+      for (i = k + 1; i < items.length; i++) { if (items[i].ph && !items[i].dec) { after = true; break; } if (!items[i].comma && !items[i].lit) break; if (items[i].lit) break; }
+      if (before && after) sep = true; else if (before) scale++;
+    });
+    var ints = items.filter(function (t) { return t.ph && !t.dec && !t.exp; }), decs = items.filter(function (t) { return t.ph && t.dec; });
+    var y = Math.abs(x) * Math.pow(100, pct) / Math.pow(1000, scale), ex = 0;
+    if (sci) {
+      var lead = Math.max(1, ints.length);
+      ex = y === 0 ? 0 : Math.floor(Math.log(y) / Math.LN10) - (lead - 1);
+      y = y / Math.pow(10, ex);
+      y = roundTo(y, decs.length);
+      if (y >= Math.pow(10, lead)) { y /= 10; ex++; }
+    } else y = roundTo(y, decs.length);
+    var s = y.toFixed(decs.length), parts = s.split("."), ip = parts[0], dp = parts[1] || "";
+    if (ip === "0" && !ints.some(function (t) { return t.ph === "0"; })) ip = "";
+    // the whole part: digits from the right into the places from the right; more digits than places go in the first
+    var zeros = ints.filter(function (t) { return t.ph === "0"; }).length;
+    ip = pad(ip, Math.min(zeros, ints.length));
+    if (sep) ip = commas(ip);
+    var fill = [], rest = ip;
+    for (i = ints.length - 1; i >= 0; i--) {
+      if (sep) { fill[i] = i === 0 ? rest : ""; continue; }
+      if (i === 0) fill[i] = rest;
+      else if (rest.length) { fill[i] = rest.slice(-1); rest = rest.slice(0, -1); }
+      else fill[i] = ints[i].ph === "?" ? " " : "";
+    }
+    // decimals: # drops a trailing 0, ? shows a space
+    var dd = dp.split("");
+    for (i = dd.length - 1; i >= 0 && dd[i] === "0" && decs[i].ph !== "0"; i--) dd[i] = decs[i].ph === "?" ? " " : "";
+    var out = "", ii = 0, di = 0;
+    items.forEach(function (t) {
+      if (t.lit != null) out += t.lit;
+      else if (t.ph && !t.dec) out += fill[ii++] || "";
+      else if (t.ph) out += dd[di++] || "";
+      else if (t.dot) out += ".";
+      else if (t.exp) out += "E" + (ex < 0 ? "-" : sci.sign === "+" ? "+" : "") + pad(String(Math.abs(ex)), sci.n);
+    });
+    if (signed && x < 0 && /[1-9]/.test(out)) out = "-" + out;
     return out;
   }
-  function pad(s, n) { while (s.length < n) s = "0" + s; return s; }
-  // digits(y, fewest decimals, most decimals, fewest whole digits, thousands, a point in the format)
-  function digits(y, minD, maxD, minI, sep, point) {
-    var s = Math.abs(y).toFixed(maxD), parts = s.split("."), ip = parts[0], dp = parts[1] || "";
-    while (dp.length > minD && dp.charAt(dp.length - 1) === "0") dp = dp.slice(0, -1);
-    if (ip === "0" && minI === 0) ip = "";
-    ip = pad(ip, minI);
-    if (sep) ip = commas(ip);
-    return ip + (point ? "." + dp : "");
+  // # ?/? : a whole number and a fraction whose bottom has as many digits as the places after the slash (or the
+  // number written there: # ?/8)
+  function fraction(x, items, signed) {
+    var k = 0, slash = 0;
+    items.forEach(function (t, i) { if (t.slash) slash = i; });
+    var top = [], bot = [], whole = [], fixed = "", seenGap = false;
+    for (k = slash - 1; k >= 0; k--) { var t = items[k]; if (t.ph && !seenGap) top.unshift(t); else if (top.length) { seenGap = true; if (t.ph) whole.unshift(t); } }
+    for (k = slash + 1; k < items.length; k++) { var u = items[k]; if (u.ph) bot.push(u); else if (u.lit && /^\d$/.test(u.lit) && !bot.length) fixed += u.lit; else if (bot.length || fixed) break; }
+    var y = Math.abs(x), w = whole.length ? Math.floor(y) : 0, f = y - w, best = [0, 1], beste = 2;
+    if (fixed) best = [Math.round(f * +fixed), +fixed];
+    else {
+      var most = Math.pow(10, Math.max(1, bot.length)) - 1;
+      for (var dn = 1; dn <= most; dn++) { var nn = Math.round(f * dn), e = Math.abs(f - nn / dn); if (e < beste - 1e-12) { beste = e; best = [nn, dn]; } }
+    }
+    if (best[0] === best[1] && whole.length) { w++; best[0] = 0; }
+    var ws = whole.length ? (w ? String(w) : whole.some(function (t) { return t.ph === "0"; }) ? "0" : whole.some(function (t) { return t.ph === "?"; }) ? " " : "") : "";
+    var out = "", n = best[0] === 0 && whole.length ? "" : String(best[0]), d = best[0] === 0 && whole.length ? "" : String(best[1]);
+    var pre = items.slice(0, items.indexOf(whole[0] || top[0])).map(function (t) { return t.lit || ""; }).join("");
+    var mid = whole.length ? items.slice(items.indexOf(whole[whole.length - 1]) + 1, items.indexOf(top[0])).map(function (t) { return t.lit || ""; }).join("") : "";
+    out = pre + ws + mid + pad(n, top.length, false) + (n ? "\x2F" : " ") + pad(d, fixed ? fixed.length : bot.length, true);
+    return (signed && x < 0 ? "-" : "") + out;
   }
   // format(value, "format") -> text, as Excel's TEXT
   function format(v, f) {
     f = String(f);
     var x = typeof v === "number" ? v : H.numText(v);
     var secs = sections(f);
-    if (x === null) { var tsec = secs.length > 3 ? secs[3] : null; return tsec == null ? String(v) : tsec.replace(/@/g, String(v)).replace(/\x22/g, ""); }
+    if (x === null) { var tsec = secs.length > 3 ? secs[3] : null; return tsec == null ? String(v) : tokens(tsec.replace(/@/g, "\x22" + String(v).replace(/\x22/g, "") + "\x22")).map(function (t) { return t.lit != null ? t.lit : t.code; }).join(""); }
     var s = secs[0], signed = true;
     if (x < 0 && secs.length > 1 && secs[1] !== "") { s = secs[1]; signed = false; }
     else if (x === 0 && secs.length > 2) s = secs[2];
@@ -35794,6 +36063,7 @@ Lantern.RFB = (function () {
     },
     VALUE: function (a) {
       var v = isRange(a[0]) ? flat(a[0])[0] : a[0];
+      if (v == null) return 0;
       if (typeof v === "number") return v;
       var x = H.numText(v == null ? "" : v);
       if (x === null) throw err("#VALUE!", "\u201c" + str(v) + "\u201d is not a number");
@@ -35885,6 +36155,7 @@ Lantern.RFB = (function () {
     var t = new Date(), d = serial(t.getFullYear(), t.getMonth() + 1, t.getDate());
     return withTime ? d + (t.getHours() * 3600 + t.getMinutes() * 60 + t.getSeconds()) / 86400 : d;
   }
+  function whole(x) { var v = N(x); return v < 0 ? Math.ceil(v) : Math.floor(v); }   // -1.5 months is -1, as in Excel
   function lastDay(y, m) { return new Date(Date.UTC(y, m, 0)).getUTCDate(); }
   // months on from a date, the day kept or the month's last if it has fewer
   function addMonths(s, k) {
@@ -35980,8 +36251,8 @@ Lantern.RFB = (function () {
       return Math.floor((s - j1 + off) / 7) + 1;
     },
     ISOWEEKNUM: function (a) { return isoWeek(day(a[0])); },
-    EDATE: function (a) { return addMonths(day(a[0]), Math.floor(N(a[1]))); },
-    EOMONTH: function (a) { var s = addMonths(serial(ymd(day(a[0])).y, ymd(day(a[0])).m, 1), Math.floor(N(a[1]))), d = ymd(s); return serial(d.y, d.m, lastDay(d.y, d.m)); },
+    EDATE: function (a) { return addMonths(day(a[0]), whole(a[1])); },
+    EOMONTH: function (a) { var s = addMonths(serial(ymd(day(a[0])).y, ymd(day(a[0])).m, 1), whole(a[1])), d = ymd(s); return serial(d.y, d.m, lastDay(d.y, d.m)); },
     // DATEDIF(start, end, "Y" years, "M" months, "D" days, "YM" months over the years, "YD" days over the years, "MD" days over the months)
     DATEDIF: function (a) {
       var s = day(a[0]), e = day(a[1]), u = String(a[2] == null ? "" : a[2]).toUpperCase().replace(/^\s+|\s+$/g, "");
@@ -36026,7 +36297,7 @@ Lantern.RFB = (function () {
     "WORKDAY.INTL": function (a) { return workday(a, weekend(a[2]), a[3]); },
     DATEVALUE: function (a) {
       var v = isRange(a[0]) ? flat(a[0])[0] : a[0], d = typeof v === "number" ? v : H.dayOf(v == null ? "" : v);
-      if (d === null || d < 1) throw err("#VALUE!", "\u201c" + H.T(v) + "\u201d is not a date Sheets reads (2026-11-17, 17 Nov 2026 or November 17, 2026)");
+      if (d === null || d < 1) throw err("#VALUE!", "\u201c" + H.T(v) + "\u201d is not a date Sheets reads (2026-11-17, 17 Nov 2026, November 17, 2026 or 11/17/2026)");
       return Math.floor(d);
     },
     TIMEVALUE: function (a) {
@@ -36330,8 +36601,10 @@ Lantern.RFB = (function () {
       ["RAND", "()", "a random number from 0 up to 1, new each time the sheet works out"],
       ["RANDBETWEEN", "(bottom, top)", "a random whole number between them"],
       ["PI", "()", "3.14159..."],
-      ["SIN", "(angle)", "the sine (angles in radians; in degrees on a calculator set to DEG); also COS, TAN"],
-      ["ASIN", "(number)", "the angle with that sine; also ACOS, ATAN"],
+      ["SIN", "(angle)", "the sine (angles in radians; in degrees on a calculator set to DEG)"],
+      ["COS", "(angle)", "the cosine"],
+      ["TAN", "(angle)", "the tangent"],
+      ["ASIN", "(number)", "the angle with that sine; ACOS the cosine's, ATAN the tangent's"],
       ["ATAN2", "(x, y)", "the angle of the point x, y from the x axis (Excel's order)"],
       ["DEGREES", "(radians)", "radians to degrees"],
       ["RADIANS", "(degrees)", "degrees to radians"],
@@ -36416,12 +36689,14 @@ Lantern.RFB = (function () {
       ["TEXT", "(value, \x22format\x22)", "a number or date as text: TEXT(B2,\x22#,##0.00\x22), TEXT(A2,\x22d mmm yyyy\x22), TEXT(0.25,\x220%\x22)"],
       ["LEN", "(text)", "how many characters"],
       ["LEFT", "(text, n)", "the first n characters; RIGHT the last; MID(text, start, n) from the middle"],
+      ["RIGHT", "(text, n)", "the last n characters"],
       ["MID", "(text, start, n)", "n characters from position start (1 is the first)"],
       ["FIND", "(part, text, [start])", "where the part starts, matching capitals exactly"],
       ["SEARCH", "(part, text, [start])", "where the part starts, any case, * and ? allowed"],
       ["SUBSTITUTE", "(text, old, new, [which])", "puts new for old, every time or only the one numbered"],
       ["REPLACE", "(text, start, n, new)", "puts new for the n characters from start"],
       ["UPPER", "(text)", "in capitals; LOWER in small letters; PROPER Each Word Capitalised"],
+      ["LOWER", "(text)", "in small letters"],
       ["PROPER", "(text)", "Each Word With A Capital"],
       ["TRIM", "(text)", "without spaces at the ends, and single spaces between words"],
       ["CLEAN", "(text)", "without the characters that do not print"],
@@ -36433,6 +36708,7 @@ Lantern.RFB = (function () {
       ["FIXED", "(number, places)", "a number as text with commas: 1,234.50"],
       ["DOLLAR", "(number, places)", "a number as money text: $1,234.50"],
       ["CHAR", "(code)", "the character with that code; CODE(text) the code of the first; UNICHAR and UNICODE for any"],
+      ["CODE", "(text)", "the code of its first character"],
       ["REVERSE", "(text)", "spelled backwards (Lantern's)"],
       ["REMOVE", "(text, letters)", "without the letters listed, any case (Lantern's)"],
       ["COUNTCHARS", "(text, letters)", "how many of those letters (Lantern's)"],
@@ -36443,11 +36719,15 @@ Lantern.RFB = (function () {
     ]),
     e("Date and time", [
       ["TODAY", "()", "today's date; NOW() with the time"],
+      ["NOW", "()", "the date and time now"],
       ["DATE", "(year, month, day)", "a date: DATE(2026,11,17)"],
       ["TIME", "(hour, minute, second)", "a time of day, as part of a day: noon is 0.5"],
       ["YEAR", "(date)", "the year; MONTH the month, DAY the day of the month"],
+      ["MONTH", "(date)", "the month, 1 to 12"],
+      ["DAY", "(date)", "the day of the month, 1 to 31"],
       ["WEEKDAY", "(date, [2])", "the day of the week, 1 Sunday to 7 Saturday; with 2, 1 Monday to 7 Sunday"],
       ["HOUR", "(time)", "the hour; MINUTE and SECOND the same"],
+      ["MINUTE", "(time)", "the minutes, 0 to 59"],
       ["DATEDIF", "(start, end, \x22Y\x22)", "whole years between (an age); \x22M\x22 months, \x22D\x22 days, \x22YM\x22 months over the years"],
       ["DAYS", "(end, start)", "days between; also end - start"],
       ["EDATE", "(date, months)", "the same day so many months on: EDATE(A2,6)"],
@@ -36478,28 +36758,61 @@ Lantern.RFB = (function () {
       ["EFFECT", "(rate, times a year)", "the yearly rate after compounding; NOMINAL back"]
     ])
   );
+  // the words people look for a function by, beyond its own description
+  var KEYS = {
+    SUM: "total add up plus sum", SUMIF: "total if add if", SUMIFS: "total several conditions", SUMPRODUCT: "weighted average weighted sum",
+    PRODUCT: "multiply times multiplication", NPER: "how many payments number of payments pay off", QUOTIENT: "divide division", MOD: "remainder", ABS: "absolute value positive", ROUND: "decimals",
+    TRUNC: "truncate cut off decimals", INT: "integer whole number", POW: "power exponent raise squared cubed", EXP: "exponent exponential",
+    SQRT: "square root", COMBIN: "combinations choose", PERMUT: "permutations arrangements", RAND: "random", AVERAGE: "mean",
+    MEDIAN: "middle value", MODE: "most common most often", MIN: "minimum smallest lowest least", MAX: "maximum largest highest biggest",
+    LARGE: "second largest top", SMALL: "second smallest bottom", COUNT: "count numbers how many", COUNTA: "count cells not empty",
+    COUNTBLANK: "count empty blank", COUNTIF: "count if how many", STDEV: "standard deviation spread", STANDARDIZE: "z score",
+    CORREL: "correlation relationship", SLOPE: "line of best fit gradient", FORECAST: "trend predict line of best fit",
+    "NORM.DIST": "probability normal bell curve", CONCAT: "combine join text", TEXTJOIN: "combine join text list", "&": "combine join text",
+    TEXT: "format number format date percentage", FIXED: "format number", LEN: "length number of characters letters",
+    UPPER: "uppercase capital letters capitals", LOWER: "lowercase small letters", PROPER: "capitalise capitalize title case",
+    TRIM: "remove spaces extra spaces", SEARCH: "contains find in text", FIND: "contains find position", TEXTBEFORE: "split text first name",
+    TEXTAFTER: "split text last name", LEFT: "first characters first name", RIGHT: "last characters", REPT: "repeat", VALUE: "convert text to number",
+    SUBSTITUTE: "replace text", TODAY: "current date todays date", NOW: "current time date and time", EDATE: "add months months later",
+    EOMONTH: "end of month last day of month", DATEDIF: "age years between birthday months between", DAYS: "days between",
+    NETWORKDAYS: "working days business days", WORKDAY: "business days working days due date", WEEKNUM: "week number", WEEKDAY: "day of week",
+    YEARFRAC: "years between", HOUR: "hours worked time", TIME: "hours worked time of day", PMT: "mortgage loan payment monthly payment",
+    FV: "future value savings compound interest", PV: "present value", RATE: "interest rate", IPMT: "interest", EFFECT: "compound interest yearly rate",
+    SLN: "depreciation", DDB: "depreciation", VLOOKUP: "look up find value in table price", XLOOKUP: "look up find value in table price",
+    MATCH: "position", ISNUMBER: "contains", MONTH: "month", CONVERT: "celsius fahrenheit units convert"
+  };
+  HELP.forEach(function (h) { h.k = KEYS[h.n] || ""; });
   L.formulaHelp = HELP;
   // all the entries: these and the science and unit functions from the catalog
   function all() {
     var have = {}, out = HELP.slice();
     HELP.forEach(function (h) { have[h.n] = 1; });
-    (L.assistCatalog || []).forEach(function (c) { if (c && c.n && !have[c.n]) { have[c.n] = 1; out.push({ n: c.n, s: c.s || "", d: c.d || "", cat: "Science and units" }); } });
+    (L.assistCatalog || []).forEach(function (c) { if (c && c.n && !have[c.n]) { have[c.n] = 1; out.push({ n: c.n, s: c.s || "", d: c.d || "", cat: "Science and units", k: KEYS[c.n] || "" }); } });
     return out;
   }
-  // find(words, cat) -> the entries, best first: the name first, then the description
+  // find(words, cat) -> the entries, best first: the name, then the words people look for it by, then what it does.
+  // A word is matched whole, or by its stem (multiply finds "multiplies"); "if" in SUMIF counts for "sum if"
+  var STOP = { a: 1, an: 1, the: 1, of: 1, to: 1, in: 1, on: 1, from: 1, my: 1, for: 1, and: 1, or: 1, by: 1, with: 1, is: 1 };
+  function stem(w) { return w.length > 4 ? w.replace(/(ies|es|s|ing|ed|y)$/, "") : w; }
+  function has(text, w) { var at = w.replace(/[.]/g, "\\."); return new RegExp("\\b" + at + "\\b").test(text) ? 2 : new RegExp("\\b" + stem(w).replace(/[.]/g, "\\.")).test(text) ? 1 : 0; }
   function find(words, cat) {
-    var q = String(words || "").toLowerCase().replace(/^\s+|\s+$/g, ""), ws = q.split(/[^a-z0-9.]+/).filter(function (w) { return w.length > 1 || /^[a-z]$/.test(q); });
+    var q = String(words || "").toLowerCase().replace(/[\u2019\x27]/g, "").replace(/^\s+|\s+$/g, "");
+    var ws = q.split(/[^a-z0-9.&]+/).filter(function (w) { return w && !STOP[w] && (w.length > 1 || w === "&" || /^[a-z]$/.test(q)); });
     return all().filter(function (h) { return !cat || h.cat === cat; }).map(function (h, i) {
-      var n = h.n.toLowerCase(), d = (h.d + " " + h.s).toLowerCase(), s = 0;
+      var n = h.n.toLowerCase(), d = (h.d + " " + h.s).toLowerCase(), k = String(h.k || "").toLowerCase(), s = 0, found = 0;
       if (!q) return { h: h, s: 1, i: i };
-      if (n === q) s += 100; else if (n.indexOf(q) === 0) s += 50; else if (q.length > 3 && n.indexOf(q) >= 0) s += 20;
-      // a word in the name counts most (if, in SUMIF), then a whole word in what it does, then the start of one
+      if (n === q.replace(/\s+/g, "")) s += 100; else if (n.indexOf(q) === 0) s += 50; else if (q.length > 3 && n.indexOf(q) >= 0) s += 8;
+      if (k && ws.length > 1 && (" " + k + " ").indexOf(" " + ws.join(" ") + " ") >= 0) s += 30;
       ws.forEach(function (w) {
-        var at = w.replace(/[.]/g, "\\.");
-        if (ws.length > 1 && n.indexOf(w) >= 0) s += 15;
-        if (new RegExp("\\b" + at + "\\b").test(d)) s += 5; else if (new RegExp("\\b" + at).test(d)) s += 3; else if (d.indexOf(w) >= 0) s += 1;
+        var hk = k ? has(k, w) : 0, hd = has(d, w), got = false;
+        if (n === w) { s += 12; got = true; }
+        else if (w.length > 2 && n.indexOf(w) === 0) { s += 6; got = true; }
+        else if (ws.length > 1 && w.length > 1 && n.length - w.length === n.lastIndexOf(w) && n.lastIndexOf(w) > 0) { s += 6; got = true; }
+        if (hk) { s += hk === 2 ? 10 : 6; got = true; }
+        if (hd) { s += hd === 2 ? 5 : 3; got = true; } else if (d.indexOf(w) >= 0) { s += 1; got = true; }
+        if (got) found++;
       });
-      if (ws.length > 1 && ws.every(function (w) { return d.indexOf(w) >= 0 || n.indexOf(w) >= 0; })) s += 10;
+      if (ws.length > 1 && found === ws.length) s += 8;
       return { h: h, s: s, i: i };
     }).filter(function (x) { return x.s > 0; }).sort(function (a, b) { return b.s - a.s || a.i - b.i; }).map(function (x) { return x.h; });
   }
