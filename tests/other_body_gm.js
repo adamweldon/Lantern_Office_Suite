@@ -1,8 +1,10 @@
 // other_body_gm.js -- an orbit function given another body's radius and no GM (1.24.22). Adam's quick run of set A
 // with the 9B on his laptop (bench_run_1261_9b_seta_quick.json): "What is the escape velocity from Mars?" came back as
 // =ESCV(PLANET("Mars","radius")). ESCV, ORBITV and ORBITT given one value use Earth's GM; Lantern refused the radius as
-// "inside the Earth ... add 6371 km to an altitude", the wrong mend for Mars, and the 9B wrote the same again. Now the
-// line with the body's GM goes back with it (tried first), and a radius big enough to run (Jupiter's) is questioned.
+// "inside the Earth ... add 6371 km to an altitude", the wrong mend for Mars, and the 9B wrote the same again. Three
+// reviews later (review1_1262.json, review2_1262.json, review3_1262.json): a refusal carries only what is true of the
+// function whatever the question, and the line to write goes only to the plainest escape question; a formula that
+// runs is questioned only with that line.
 "use strict";
 var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
 var fs = require("fs"), path = require("path");
@@ -24,54 +26,56 @@ setTimeout(async function () {
   var asked = [];
   var call = function (msgs) { asked.push(msgs[msgs.length - 1].content); return Promise.resolve(asked.length === 1 ? row.first : "=ESCV(PLANET(\"Mars\",\"radius\"),PLANET(\"Mars\",\"gm\"))\nANSWER: The escape velocity from Mars is {result} m/s."); };
   var r = await A.solve(row.q, { call: call });
-  ok("now the line with Mars's GM goes back with the refusal", /ESCV given one value works out Earth.s .*PLANET\("Mars","radius"\) is Mars.s radius, not a height above Earth, so do not add 6371 km: give it Mars.s GM as its second value\. Write =ESCV\(PLANET\("Mars","radius"\),PLANET\("Mars","gm"\)\)/.test(asked[1] || ""), asked[1]);
+  ok("now what is true of ESCV goes back with the refusal, and the line for the plainest question", /ESCV given one value works out Earth.s \(it uses Earth.s GM\)\. For an orbit round Mars, or to escape from Mars, give Mars.s GM, PLANET\("Mars","gm"\), as its second value\. Write =ESCV\(PLANET\("Mars","radius"\),PLANET\("Mars","gm"\)\)/.test(asked[1] || ""), asked[1]);
+  ok("...and the refusal itself names another body's GM", /for another planet or moon, give that body.s GM as the second value/.test(asked[1] || ""), asked[1]);
   ok("...and that line, written, gives Mars's escape velocity (PLANET(\"Mars\",\"escape\"))", r.run && Math.abs(r.run.value - row.expected) < 1e-6, r.run && r.run.value);
-  // which lines are given, and which are left (the review's cases, tests/fixtures/review1_1262.json, are replayed below)
-  var Q = { marsT: "How long, in minutes, does a satellite 400 km above Mars take to go round once?", moonV: "How fast does a probe orbit 100 km above the Moon?",
-    jup: "What is the escape velocity from Jupiter's cloud tops?", moonE: "What is the escape velocity from the Moon, in m/s?", marsE: "What is the escape velocity from Mars, in m/s?",
-    iss: "How long does the space station take to orbit Earth at 420 km altitude, in minutes?", moonP: "How many days does the Moon take to orbit Earth?" };
+  // (three reviews) the line only for the plainest escape question; everything else: what is true of the function, no line
+  var Q = { moonE: "What is the escape velocity from the Moon, in m/s?", marsE: "What is the escape velocity from Mars, in m/s?" };
   var cases = [
-    [Q.marsT, "=ORBITT(PLANET(\"Mars\",\"radius\")+CONVERT(400,\"km\",\"m\"))/60", "ORBITT(PLANET(\"Mars\",\"radius\")+CONVERT(400,\"km\",\"m\"),PLANET(\"Mars\",\"gm\"))/60"],
-    [Q.marsT, "=ORBITT(PLANET(\"Mars\",\"radius\")+400*1000)/60", "ORBITT(PLANET(\"Mars\",\"radius\")+CONVERT(400,\"km\",\"m\"),PLANET(\"Mars\",\"gm\"))/60"],
-    [Q.moonV, "=ORBITV(PLANET(\"the Moon\",\"radius\")+100000)", "ORBITV(PLANET(\"the Moon\",\"radius\")+CONVERT(100,\"km\",\"m\"),PLANET(\"the Moon\",\"gm\"))"],
-    [Q.jup, "=ESCV(PLANET(\"Jupiter\",\"eqradius\"))", "ESCV(PLANET(\"Jupiter\",\"eqradius\"),PLANET(\"Jupiter\",\"gm\"))"],
-    [Q.marsE, "=ESCV(PLANET(\"Mars\",\"radius\"),PLANET(\"Mars\",\"gm\"))", null],
-    [Q.moonE, "=ESCV(PLANET(\"Earth\",\"radius\"))", null],
-    [Q.moonP, "=ORBITT(PLANET(\"Moon\",\"distance\"))/86400", null],
-    [Q.marsE, "=ESCV(6371000)", null],
-    [Q.iss, "=ORBITT(PLANET(\"Earth\",\"radius\")+CONVERT(420,\"km\",\"m\"))/60", null],
-    [Q.marsE, "=PLANET(\"Mars\",\"radius\")\n=ESCV(ANS)", null],
+    [Q.marsE, "=ESCV(PLANET(\"Mars\",\"radius\"))", "ESCV(PLANET(\"Mars\",\"radius\"),PLANET(\"Mars\",\"gm\"))"],
+    ["What's Mars's escape velocity?", "=ESCV(PLANET(\"Mars\",\"radius\"))", "ESCV(PLANET(\"Mars\",\"radius\"),PLANET(\"Mars\",\"gm\"))"],
+    ["What is the escape velocity from the surface of Jupiter, in km/s?", "=ESCV(PLANET(\"Jupiter\",\"radius\"))/1000", "ESCV(PLANET(\"Jupiter\",\"radius\"),PLANET(\"Jupiter\",\"gm\"))/1000"],
+    ["What is the escape speed from the Sun?", "=ESCV(PLANET(\"Sun\",\"radius\"))", "ESCV(PLANET(\"Sun\",\"radius\"),PLANET(\"Sun\",\"gm\"))"],
     // (set B, the Moon: told to add 6371 km, the 9B added it -- the line leaves it out, however it was written)
     [Q.moonE, "=ESCV(PLANET(\"Moon\",\"radius\")+6371000)", "ESCV(PLANET(\"Moon\",\"radius\"),PLANET(\"Moon\",\"gm\"))"],
     [Q.moonE, "=ESCV(PLANET(\"Moon\",\"radius\")+CONVERT(6371,\"km\",\"m\"))", "ESCV(PLANET(\"Moon\",\"radius\"),PLANET(\"Moon\",\"gm\"))"],
     [Q.moonE, "=ESCV(PLANET(\"Moon\",\"radius\")+6371*1000)", "ESCV(PLANET(\"Moon\",\"radius\"),PLANET(\"Moon\",\"gm\"))"],
     [Q.moonE, "=ESCV(PLANET(\"Moon\",\"radius\")+PLANET(\"Earth\",\"radius\"))", "ESCV(PLANET(\"Moon\",\"radius\"),PLANET(\"Moon\",\"gm\"))"],
-    // (the review) a number from nowhere, a height in the wrong unit, a body the question does not name, Earth named: no line
+    // right ones, and Earth's: nothing
+    [Q.marsE, "=ESCV(PLANET(\"Mars\",\"radius\"),PLANET(\"Mars\",\"gm\"))", null],
+    [Q.moonE, "=ESCV(PLANET(\"Earth\",\"radius\"))", null],
+    ["How many days does the Moon take to orbit Earth?", "=ORBITT(PLANET(\"Moon\",\"distance\"))/86400", null],
+    [Q.marsE, "=ESCV(6371000)", null],
+    ["How long does the space station take to orbit Earth at 420 km altitude, in minutes?", "=ORBITT(PLANET(\"Earth\",\"radius\")+CONVERT(420,\"km\",\"m\"))/60", null],
+    [Q.marsE, "=PLANET(\"Mars\",\"radius\")\n=ESCV(ANS)", null],
+    ["How much faster is the escape velocity from Jupiter than from Saturn?", "=ESCV(PLANET(\"Jupiter\",\"radius\"))-ESCV(PLANET(\"Saturn\",\"radius\"))", null],
+    // not the plainest question: no line (what is said is only what is true of the function)
+    ["How long, in minutes, does a satellite 400 km above Mars take to go round once?", "=ORBITT(PLANET(\"Mars\",\"radius\")+CONVERT(400,\"km\",\"m\"))/60", "no line"],
+    ["How fast does a probe orbit 100 km above the Moon?", "=ORBITV(PLANET(\"the Moon\",\"radius\")+100000)", "no line"],
+    ["What is the escape velocity from Jupiter's cloud tops?", "=ESCV(PLANET(\"Jupiter\",\"eqradius\"))", "no line"],
     [Q.moonE, "=ESCV(PLANET(\"Moon\",\"radius\")+250000)", "no line"],
-    ["What is the orbital speed 200 km above the Moon?", "=ORBITV(PLANET(\"Moon\",\"radius\")+200)", "no line"],
-    ["What is the orbital speed 100 miles above the Moon?", "=ORBITV(PLANET(\"Moon\",\"radius\")+100000)", "no line"],
-    ["What is the escape velocity from Venus?", "=ESCV(PLANET(\"Mars\",\"radius\"))", null],
-    ["What would Earth's escape velocity be if it were squeezed to the Moon's size?", "=ESCV(PLANET(\"Moon\",\"radius\"))", null],
-    ["How long would an orbit take at a height above Earth equal to Mars's radius, in minutes?", "=ORBITT(PLANET(\"Mars\",\"radius\")+CONVERT(6371,\"km\",\"m\"))/60", null],
-    ["A satellite orbits 6371 km above Mars. What is its period in hours?", "=ORBITT(PLANET(\"Mars\",\"radius\")+CONVERT(6371,\"km\",\"m\"))/3600", "ORBITT(PLANET(\"Mars\",\"radius\")+CONVERT(6371,\"km\",\"m\"),PLANET(\"Mars\",\"gm\"))/3600"],
-    [Q.jup, "=ESCV(PLANET(\"Jupiter\",\"radius\"))*SQRT(PLANET(\"Jupiter\",\"gm\")/PLANET(\"Earth\",\"gm\"))", null],
-    ["How much faster is the escape velocity from Jupiter than from Saturn?", "=ESCV(PLANET(\"Jupiter\",\"radius\"))-ESCV(PLANET(\"Saturn\",\"radius\"))", null]];
+    ["What is the escape velocity from Mars in km per second?", "=ESCV(PLANET(\"Mars\",\"radius\"))/1000", "no line"],
+    ["What is half the escape velocity from Mars?", "=ESCV(PLANET(\"Mars\",\"radius\"))/2", "no line"],
+    ["What is the escape velocity from Venus?", "=ESCV(PLANET(\"Mars\",\"radius\"))", "no line"],
+    ["What would Earth's escape velocity be if it were squeezed to the Moon's size?", "=ESCV(PLANET(\"Moon\",\"radius\"))", "no line"],
+    ["What is the escape velocity from Phobos, one of Mars's moons?", "=ESCV(PLANET(\"Mars\",\"radius\"))", "no line"],
+    ["What is the escape velocity from Mars?", "=ESCV(PLANET(\"Mars\",\"radius\"))*0.327789478360", "no line"]];
   cases.forEach(function (c) {
     var o = C.otherBodyCall(c[1], c[0]), got = o ? (o.line || "no line") : null;
     ok("line for " + c[1].replace(/\n/g, " / ") + " (" + c[0] + "): " + (c[2] || "none"), got === c[2], o);
-    if (o && o.line) { var v = A.run("=" + o.line).value; ok("...and it runs", typeof v === "number" && isFinite(v), v); }
   });
   // every line given is right when written in: worked out here from the body's own figures
   var P = L.planetData, chk = [
-    [Q.marsT, "=ORBITT(PLANET(\"Mars\",\"radius\")+CONVERT(400,\"km\",\"m\"))/60", 2 * Math.PI * Math.sqrt(Math.pow(P.mars[2] + 400000, 3) / P.mars[1]) / 60],
-    [Q.moonV, "=ORBITV(PLANET(\"the Moon\",\"radius\")+100000)", Math.sqrt(P.moon[1] / (P.moon[2] + 100000))],
+    [Q.marsE, "=ESCV(PLANET(\"Mars\",\"radius\"))", Math.sqrt(2 * P.mars[1] / P.mars[2])],
     [Q.moonE, "=ESCV(PLANET(\"Moon\",\"radius\")+6371*1000)", Math.sqrt(2 * P.moon[1] / P.moon[2])],
-    ["A satellite orbits 6371 km above Mars. What is its period in hours?", "=ORBITT(PLANET(\"Mars\",\"radius\")+CONVERT(6371,\"km\",\"m\"))/3600", 2 * Math.PI * Math.sqrt(Math.pow(P.mars[2] + 6371000, 3) / P.mars[1]) / 3600],
-    ["Orbital speed 100 miles above the Moon?", "=ORBITV(PLANET(\"Moon\",\"radius\")+CONVERT(100,\"mi\",\"m\"))", Math.sqrt(P.moon[1] / (P.moon[2] + 160934.4))]];
+    ["What is the escape velocity from the surface of Jupiter, in km/s?", "=ESCV(PLANET(\"Jupiter\",\"radius\"))/1000", Math.sqrt(2 * P.jupiter[1] / P.jupiter[2]) / 1000]];
   chk.forEach(function (c) { var o = C.otherBodyCall(c[1], c[0]), v = o && o.line ? A.run("=" + o.line).value : null; ok("written in, " + c[1] + " gives " + c[2].toFixed(3), v != null && Math.abs(v - c[2]) <= 1e-6 * c[2], [o && o.line, v]); });
-  // no line: what is said instead names the GM and no number
+  // no line: what is said is true whatever the question
   var hint = C.otherBodyCall("=ORBITV(PLANET(\"Moon\",\"radius\")+200)", "What is the orbital speed 200 km above the Moon?");
-  ok("a height in the wrong unit: no line, but the Moon's GM named", hint && !hint.line && /give it the Moon.s GM as its second value, PLANET\("Moon","gm"\), with the distance from the Moon.s centre in metres as the first \(the Moon.s radius plus the height above it\)/.test(L.aiChecks.otherBodySay ? L.aiChecks.otherBodySay(hint) : ""), hint);
+  ok("no line: only what is true of the function, with no number of the question's", hint && !hint.line && L.aiChecks.otherBodySay(hint) === "ORBITV given one value works out Earth’s (it uses Earth’s GM). For an orbit round the Moon, or to escape from the Moon, give the Moon’s GM, PLANET(\"Moon\",\"gm\"), as its second value.", L.aiChecks.otherBodySay(hint));
+  var runs = A.run("=ORBITV(PLANET(\"Jupiter\",\"radius\")+CONVERT(1000,\"km\",\"m\"))");
+  var said0 = (L.assistChecks || []).map(function (f) { try { return f("A probe orbits 1000 km above the globe's biggest neighbour, Jupiter. How fast?", "=ORBITV(PLANET(\"Jupiter\",\"radius\")+CONVERT(1000,\"km\",\"m\"))", runs, {}); } catch (e) { return null; } }).filter(function (x) { return x && /GM/.test(x); });
+  ok("a formula that runs is not questioned without the line", !said0.length, said0);
   // the review's cases: no right one questioned, no line wrong
   var RV = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review1_1262.json"), "utf8"));
   var rq = 0, rw = 0, rn = 0, rm = 0, badR = [];
@@ -115,11 +119,24 @@ setTimeout(async function () {
     if (c.kind === "meant" && !(p2.lang && p2.text.split("\n")[0] === c.raw[1])) cut.push("meant: " + c.raw[0]);
   });
   ok("the second review's " + lc.length + " code blocks: none throws, every program kept whole, every lone name read", !thrown.length && !cut.length, [thrown, cut]);
+  // the third review's cases (tests/fixtures/review3_1262.json, a share of its 28,133): no line wrong, no right formula
+  // that runs given a line
+  var R3 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review3_1262.json"), "utf8")), w3 = [], n3 = 0, l3 = 0;
+  R3.rule1.forEach(function (c) {
+    var o = C.otherBodyCall(c.expr, c.question);
+    n3++;
+    if (!(o && o.line)) return;
+    l3++;
+    var v = A.run("=" + o.line).value;
+    if (typeof c.expected === "number" && !(typeof v === "number" && Math.abs(v - c.expected) <= 0.005 * Math.abs(c.expected))) w3.push(["wrong", c.question, c.expr, o.line, v, c.expected]);
+    if (c.exprRight && c.exprValue != null) w3.push(["a right formula that runs given a line", c.question, c.expr, o.line]);
+  });
+  ok("the third review's " + n3 + " cases: " + l3 + " lines given, none wrong; no right formula that runs given one", n3 > 1000 && !w3.length, w3.slice(0, 8));
   var run = A.run("=ESCV(PLANET(\"Jupiter\",\"radius\"))");
   var said = (L.assistChecks || []).map(function (f) { try { return f("What is the escape velocity from Jupiter?", "=ESCV(PLANET(\"Jupiter\",\"radius\"))", run, {}); } catch (e) { return null; } }).filter(Boolean);
   ok("Jupiter's radius, which runs as Earth's, is questioned with its line", said.some(function (x) { return /Write =ESCV\(PLANET\("Jupiter","radius"\),PLANET\("Jupiter","gm"\)\)/.test(x); }), said);
   // the run's passed rows: none questioned by it
-  var bad = F.rows.filter(function (r0) { return r0.pass && /^=/.test(r0.reply || ""); }).filter(function (r0) { return C.otherBodyCall(r0.reply); });
+  var bad = F.rows.filter(function (r0) { return r0.pass && /^=/.test(r0.reply || ""); }).filter(function (r0) { var o = C.otherBodyCall(r0.reply, r0.q); return o && o.line; });
   ok("the run's passed rows: none given the line", !bad.length, bad.map(function (b) { return b.id; }));
   console.log(fails ? fails + " OTHER BODY GM FAILURES (" + passes + " passed)" : "ALL OTHER BODY GM CHECKS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);
