@@ -111,8 +111,10 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   // --- replies ---
   function msgs(q) { return [{ role: "system", content: "You are Lantern\u2019s helper." }, { role: "user", content: "Lantern works sums out.\nQUESTION: " + q + "\n" }, { role: "assistant", content: "=1" }, { role: "user", content: "Lantern questioned that: try again" }]; }
   function outcome(text) { var p = A.parseReply(text), run = p.exprText ? A.run(p.exprText) : null, v = run ? run.value : null; return { value: v, answer: p.answer != null ? A.finalAnswer(p.answer, v, run && run.steps).text : null }; }
+  // (1.24.24) Sheets has Excel's CONCAT: what was "?" (an unknown function) is now the words joined
+  var NOW = { "Join the words 'go' and '->' and 'home'.": "go->home", "What is 'a\u2192b' joined to 'c'?": "a\u2192bc" };
   var rNow = RD.replies.filter(function (x) { var rd = L.aiRead(x.reply, x.msgs ? msgs(x.q) : x.q), b = outcome(x.reply), a = outcome(rd.text);
-    return a.answer !== x.answer || (b.value !== a.value || b.answer !== a.answer) !== x.readerChanges; });
+    return a.answer !== (NOW[x.q] || x.answer) || (b.value !== a.value || b.answer !== a.answer) !== x.readerChanges; });
   // (after the eighth review the arrow and the second = are read as the model wrote them: "= 65*40 = 2600" is a test,
   // "=9^2-1 -> 80" goes back with what is wrong said)
   ok("the 154 replies: the readers change 23 -- \u201cANS: 4*9\u201d, \u201c= ANSWER: 9\u201d, and 21 that give a formula after ANSWER: it is worked out, and where the question names the formula as the thing asked the answer says both (\u201cSQRT(2), which gives 1.4142\u201d) -- and each answer is the fixture\u2019s",

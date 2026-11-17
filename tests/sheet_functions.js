@@ -138,6 +138,13 @@ function close(v, want) {
   var now = new Date(), today = L.sheetDocs.compute({ A1: "=TODAY()", A2: "=NOW()" });
   ok("TODAY() is today", today.A1 === L.formula.isoDay(now.getFullYear() + "-" + (now.getMonth() + 1) + "-" + now.getDate()) && today.A2 > today.A1 && today.A2 < today.A1 + 1, today);
 
+  // --- the AI's sums: Excel's functions work out; a wrong number of values says what the function takes ---------
+  var A = L.assist, r1 = A.run("=PMT(0.05/12,360,200000)"), r2 = A.run("=COUNTIF({5,6,5},\"=5\")");
+  ok("a model's =PMT(...) is worked out", r1 && Math.abs(r1.value + 1073.6432460242795) < 1e-9, r1);
+  ok("COUNTIF({5,6,5},\"=5\") (the braces read away, 4 values) is not counted wrong: it says what COUNTIF takes",
+    r2 && r2.value == null && /COUNTIF\(range, test\) takes 2 values, not 4/.test(JSON.stringify(r2)), r2);
+  ok("in a cell too", L.sheetDocs.compute({ A1: "=VLOOKUP(1,2)" }).A1 === "#VALUE!");
+
   // --- every function has its line in the fx list; none goes to the AI ---------------------------------------
   L.suite.entries();
   var und = L.suite.undescribed || [];
