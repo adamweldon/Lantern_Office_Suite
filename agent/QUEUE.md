@@ -5,6 +5,25 @@ file in the same commit as the work. Read `CLAUDE.md` first.
 
 ## Next, in order
 
+**Now: what commercial office software does, in Lantern (Adam,
+2026-11-17).** "Anything that is available on commercial software should be
+available on Lantern as much as possible plus more while being easier to use
+where possible." The plan sent to him, one version each, each tested and
+tried by a reviewer:
+- Sheets' functions: **done in 1.24.24** (about 200 of Excel's, the fx
+  button; `tests/sheet_functions.js`, the review in
+  `tests/fixtures/review_sheetfn_1264.json`). Left: spilling functions
+  (UNIQUE, SORT, FILTER, SEQUENCE), TRUE/FALSE shown as words, a typed date
+  held as a date (it stays text, counted as a date in formulas), Excel's
+  POWER (QUESTIONS 16).
+- Sheets' editing, next (1.24.25): select a range; copy and paste to and from
+  Excel and Google Sheets; fill down and right (references moving as in
+  Excel); insert and delete rows and columns; sort; undo and redo; bold and
+  number formats (money, %, dates, decimals); freeze the top row; more than
+  100 rows.
+- Then opening and saving .docx, .xlsx and .pptx (a ZIP reader and writer
+  are needed; PDF_PARSE has DecompressionStream).
+
 0. **The Health lessons' sources (1.24.22, Adam).** Every lesson names the
    guidelines it was checked against in November 2026; where they said
    otherwise the lesson says what they say (CHANGELOG 1.24.22,

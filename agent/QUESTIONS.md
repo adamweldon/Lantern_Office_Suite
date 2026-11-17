@@ -153,3 +153,12 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    readings are checked by their notes, lengths and bars, not by ear. If one
    sounds wrong, say which.
    (Asked 2026-11-05.)
+16. **Which POWER should Sheets have?** (1.24.24, numbered last so the
+   numbers above stay as the reports cite them.) Sheets now works out about
+   200 of Excel's functions. One name clashes: in Lantern, POWER(energy,
+   time) is the physics power in watts (POWER(100,4) is 25), and the AI's
+   catalog and lessons use it; in Excel, POWER(2,10) is 2 to the 10th, 1024.
+   Lantern keeps its own, and says so in the fx list; Excel's is POW(2,10)
+   or 2^10. Changing it would mean renaming the physics one (WATTS exists
+   already, as volts times amps) and teaching the AI the new name. Keep it,
+   or change it? (Asked 2026-11-17.)
