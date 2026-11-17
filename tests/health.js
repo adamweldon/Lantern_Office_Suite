@@ -150,7 +150,7 @@ function all(root, sel) { return Array.prototype.slice.call(root.querySelectorAl
     ["health_food", /under their own brine/, "a ferment kept under its brine"],
     ["health_fever", /Do not sponge a child to cool a fever/, "no sponging for fever"],
     ["health_bites", /Leave the wound open/, "a bite wound is not bound"],
-    ["health_bites", /Never cut, suck or tie off a snake bite/, "what is never done to a snake bite (WHO)"],
+    ["health_bites", /Never cut, suck, ice or tie off a snake bite/, "what is never done to a snake bite"],
     ["health_heatcold", /cool water up to the neck/, "the quickest cooling for heatstroke"],
     ["health_heatcold", /no rubbing, no alcohol/, "hypothermia: no rubbing, no alcohol"],
     ["health_teeth", /milk tooth is not put back/, "a milk tooth is not replanted"],
@@ -165,9 +165,9 @@ function all(root, sel) { return Array.prototype.slice.call(root.querySelectorAl
     ["health_diarrhoea", /For a week after it stops, give one extra meal a day/, "an extra meal for a week (WHO and UNICEF)"],
     ["health_muac", /a health worker to see the child again within a month/, "a thin child seen again within a month (IMCI)"],
     ["health_pregnancy", /more than 2 or 3 pads soaked in 20 to 30 minutes/, "bleeding after a birth, WHO's second measure"],
-    ["health_afterbirth", /about every three seconds/, "a newborn's puffs (Hesperian)"],
+    ["health_afterbirth", /about every two seconds/, "a newborn's puffs, 30 a minute (Hesperian; Helping Babies Breathe 40, 30 to 50)"],
     ["health_electric", /Anyone who has had an electric shock should see a health worker/, "every electric shock is seen (Healthdirect)"],
-    ["health_infection", /more than 5 years ago, or never, get one within a day/, "tetanus after a deep or dirty wound (Healthdirect)"],
+    ["health_infection", /more than 5 years ago, or never, or nobody knows, get one within a day/, "tetanus after a deep or dirty wound (Healthdirect)"],
     ["health_first", /Response[\s\S]*Help[\s\S]*Bleeding[\s\S]*Breathing/, "heavy bleeding before the breathing check (St John Ambulance, RCUK 2025)"]
   ];
   var missing = FACTS.filter(function (f) { return !f[1].test(lesson(f[0])); }).map(function (f) { return f[0] + ": " + f[2]; });
