@@ -1129,8 +1129,27 @@ Lantern.physics = (function () {
 // ctx = { resolve(ref) -> number|null, range(a,b) -> number[], deg: bool }
 Lantern.formula = (function () {
   var REF = /^[A-Z]{1,2}[0-9]{1,3}$/;
-  // the error a sheet cell can hold (it travels to formulas that use it)
-  var ERRCODE = /^#(?:ERR|CYCLE|DIV\x2F0!|VALUE!|NAME\?|NUM!|REF!)$/;
+  // the error a sheet cell can hold (it travels to formulas that use it);
+  // #N/A (1.24.24) is a lookup's "not found"
+  var ERRCODE = /^#(?:ERR|CYCLE|DIV\x2F0!|VALUE!|NAME\?|NUM!|REF!|N\x2FA)$/;
+  // (1.24.24) functions whose arguments are worked out one by one, an error
+  // kept for the function to look at (IF, IFERROR here; IFS, IFNA, SWITCH,
+  // CHOOSE and ISERROR in SHEET_FN_LOOKUP), and functions that are given a
+  // cell named alone as that cell, blank or not (ISBLANK(A1), COUNTA(A1),
+  // ROW(A5)) -- the same as A1:A1
+  var LAZY = { IF: 1, IFERROR: 1, IFNA: 1, IFS: 1, SWITCH: 1, CHOOSE: 1, ISERROR: 1, ISERR: 1, ISNA: 1,
+    ISBLANK: 1, ISNUMBER: 1, ISTEXT: 1, ISNONTEXT: 1, ISEVEN: 1, ISODD: 1 };
+  var RAWREF = { ISBLANK: 1, ISNUMBER: 1, ISTEXT: 1, ISNONTEXT: 1, COUNTA: 1, COUNTBLANK: 1, ROW: 1, COLUMN: 1, ROWS: 1, COLUMNS: 1 };
+  // (1.24.24) a date written as text, 2026-11-17, is the day's number as a
+  // spreadsheet counts it (1 January 1900 = 1; 1970-01-01 = 25569), so
+  // ="2026-11-17"+30 is a date 30 days on and not 2026+30
+  function isoDay(s) {
+    var m = /^\s*(\d{4})-(\d{1,2})-(\d{1,2})\s*$/.exec(s);
+    if (!m) return null;
+    var t = Date.UTC(+m[1], +m[2] - 1, +m[3]), d = new Date(t);
+    if (d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[3]) return null;
+    return t / 86400000 + 25569;
+  }
   // Extension boundary: other modules (Convert, Physics) register cell
   // functions here without FORMULA depending on them. evaluate() consults
   // EXT after its own built-ins, so =CONVERT(...) or =FORCE(...) just work.
@@ -1147,7 +1166,7 @@ Lantern.formula = (function () {
         toks.push({ t: "num", v: parseFloat(m[0]) }); i += m[0].length; continue;
       }
       if (/[A-Za-z_]/.test(ch)) {
-        var w = /^[A-Za-z_][A-Za-z_0-9]*/.exec(s.slice(i))[0];
+        var w = /^[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*/.exec(s.slice(i))[0];
         toks.push({ t: "id", v: w.toUpperCase() }); i += w.length; continue;
       }
       if (ch === '"' || ch === "'") {
@@ -1159,7 +1178,7 @@ Lantern.formula = (function () {
       if (ch === "<" && s[i + 1] === "=") { toks.push({ t: "op", v: "<=" }); i += 2; continue; }
       if (ch === ">" && s[i + 1] === "=") { toks.push({ t: "op", v: ">=" }); i += 2; continue; }
       if (ch === "<" && s[i + 1] === ">") { toks.push({ t: "op", v: "<>" }); i += 2; continue; }
-      if ("+-*/^%(),:<>=".indexOf(ch) >= 0) { toks.push({ t: "op", v: ch }); i++; continue; }
+      if ("+-*/^%(),:<>=&".indexOf(ch) >= 0) { toks.push({ t: "op", v: ch }); i++; continue; }
       throw new Error("Bad character: " + ch);
     }
     return toks;
@@ -1178,6 +1197,8 @@ Lantern.formula = (function () {
       if (x == null) return 0;
       if (typeof x === "number") { if (!isFinite(x)) throw new Error("Overflow"); return x; }
       if (Array.isArray(x)) throw new Error("Range used as a single value");
+      var day = isoDay(x);
+      if (day !== null) return day;
       var n = parseFloat(x);
       if (isNaN(n)) throw new Error("Not a number");
       return n;
@@ -1197,6 +1218,13 @@ Lantern.formula = (function () {
       return out;
     }
     function trigIn(x) { return ctx.deg ? x * Math.PI / 180 : x; }
+    function toMultiple(x, s, f) {
+      if (s === 0) { if (x === 0) return 0; throw new Error("Divide by zero"); }
+      if (x > 0 && s < 0) throw new Error("FLOOR or CEILING: a negative multiple of a positive number is out of range");
+      var q = x / s, r = Math.round(q);
+      if (Math.abs(q - r) < 1e-9 * Math.max(1, Math.abs(q))) q = r;
+      return Number((f(q) * s).toPrecision(15));
+    }
     // quarter(x) -> 0..3 when the angle is a whole number of quarter turns
     // (0, 90, 180, 270 degrees, or the same in radians), else null: SIN(180)
     // is 0, not 1.2e-16, and TAN(90) is undefined, not 1.6e16
@@ -1221,8 +1249,10 @@ Lantern.formula = (function () {
         var y = Number((Math.abs(x) * f).toPrecision(15));
         return (x < 0 ? -1 : 1) * Math.round(y) / f;
       },
-      FLOOR: function (a) { return Math.floor(num(a[0])); },
-      CEIL: function (a) { return Math.ceil(num(a[0])); },
+      // FLOOR(x) and CEIL(x) to a whole number; given a second value, to a
+      // multiple of it, as Excel's FLOOR(7,5) = 5 and CEILING(7,5) = 10
+      FLOOR: function (a) { return toMultiple(num(a[0]), a.length > 1 ? num(a[1]) : 1, Math.floor); },
+      CEIL: function (a) { return toMultiple(num(a[0]), a.length > 1 ? num(a[1]) : 1, Math.ceil); },
       SQRT: function (a) { return Math.sqrt(num(a[0])); },
       POW: function (a) { return Math.pow(num(a[0]), num(a[1])); },
       // MOD as Excel does: the sign of the divisor (MOD(-7,3) = 2)
@@ -1260,7 +1290,7 @@ Lantern.formula = (function () {
         var r = 1; for (var i = 2; i <= n; i++) r *= i; return r;
       }
     };
-    var CONST = { PI: Math.PI, E: Math.E,
+    var CONST = { PI: Math.PI, E: Math.E, TRUE: 1, FALSE: 0,
       ANS: (typeof ctx.ans === "number" || typeof ctx.ans === "string" ? ctx.ans : 0) };
 
     function primary() {
@@ -1277,10 +1307,11 @@ Lantern.formula = (function () {
         var name = t.v;
         if (peek() && peek().t === "op" && peek().v === "(") {
           next(); // (
-          var args = [], lazy = name === "IF" || name === "IFERROR";
+          var args = [], lazy = LAZY[name] === 1, raw = RAWREF[name] === 1;
+          var one = function () { return lazy ? lazyArg(raw) : raw && ctx.range && rawRef() || argExpr(); };
           if (!(peek() && peek().v === ")")) {
-            args.push(lazy ? lazyArg() : argExpr());
-            while (peek() && peek().v === ",") { next(); args.push(lazy ? lazyArg() : argExpr()); }
+            args.push(one());
+            while (peek() && peek().v === ",") { next(); args.push(one()); }
           }
           expect(")");
           var fn = FN[name] || EXT[name];
@@ -1317,11 +1348,20 @@ Lantern.formula = (function () {
       }
       throw new Error("Unexpected " + t.v);
     }
-    // lazyArg(): one argument whose error is kept, not thrown (IF, IFERROR):
-    // the rest of the argument is skipped from where it started
-    function lazyArg() {
+    // rawRef(): a cell named alone as a whole argument, given as that one cell
+    // (A1:A1), blank or not; null when the argument is anything else
+    function rawRef() {
+      var t = peek(), t2 = toks[p + 1];
+      if (!t || t.t !== "id" || !REF.test(t.v) || !t2 || t2.t !== "op" || (t2.v !== "," && t2.v !== ")")) return null;
+      next();
+      return ctx.range(t.v, t.v);
+    }
+    // lazyArg(): one argument whose error is kept, not thrown (IF, IFERROR;
+    // ISNUMBER(MATCH(...)) is 0 when MATCH finds nothing): the rest of the
+    // argument is skipped from where it started
+    function lazyArg(raw) {
       var at = p;
-      try { return argExpr(); } catch (e) {
+      try { return raw && ctx.range && rawRef() || argExpr(); } catch (e) {
         p = at;
         for (var depth = 0; p < toks.length; p++) {
           var tk = toks[p];
@@ -1385,15 +1425,36 @@ Lantern.formula = (function () {
       }
       return v;
     }
-    function compare() {
+    // (1.24.24) & joins text, as in Excel: ="Total: "&SUM(A1:A3); a number
+    // joins as it would show (0.1+0.2 joins as 0.3), a blank cell as nothing
+    function asText(x) {
+      if (x == null) return "";
+      if (typeof x === "number") return String(Number(num(x).toPrecision(15)));
+      return String(x);
+    }
+    function join() {
       var v = addSub();
+      while (peek() && peek().t === "op" && peek().v === "&") { next(); v = asText(v) + asText(addSub()); }
+      return v;
+    }
+    // (1.24.24) blankAt(): the argument here is an empty cell named alone,
+    // which is "" beside text (=A1="" asks if A1 is empty) and 0 beside a number
+    function blankAt() {
+      var t = toks[p], t2 = toks[p + 1];
+      if (!t || t.t !== "id" || !REF.test(t.v) || !ctx.resolve || (t2 && !(t2.t === "op" && /^(?:=|<>|<|>|<=|>=|,|\x29)$/.test(t2.v)))) return false;
+      var cv = ctx.resolve(t.v);
+      return cv == null || cv === "";
+    }
+    function compare() {
+      var lb = blankAt(), v = join();
       while (peek() && peek().t === "op" &&
              ["=", "<", ">", "<=", ">=", "<>"].indexOf(peek().v) >= 0) {
-        var op = next().v, r = addSub(), l = v;
+        var op = next().v, rb = blankAt(), r = join(), l = v;
         // text against text (or a number) compares as text, ignoring case
         if (typeof l === "string" || typeof r === "string") {
-          l = String(l == null ? "" : l).toLowerCase(); r = String(r == null ? "" : r).toLowerCase();
+          l = lb ? "" : String(l == null ? "" : l).toLowerCase(); r = rb ? "" : String(r == null ? "" : r).toLowerCase();
         } else { l = num(l); r = num(r); }
+        lb = false;
         v = (op === "=" ? l === r : op === "<" ? l < r : op === ">" ? l > r :
              op === "<=" ? l <= r : op === ">=" ? l >= r : l !== r) ? 1 : 0;
       }
@@ -1404,7 +1465,7 @@ Lantern.formula = (function () {
     // a text result (="abc", =REVERSE("abc") -- TEXT_FUNCS) stays text
     return typeof result === "string" ? result : num(result);
   }
-  return { evaluate: evaluate, register: register, REF: REF,
+  return { evaluate: evaluate, register: register, REF: REF, isoDay: isoDay,
     names: function () { return Object.keys(EXT).sort(); } };
 })();
 // ===========================================================================
@@ -1791,7 +1852,7 @@ Lantern.formula = (function () {
   // thrown away by a click on another cell, "<- Sheets", another app or a
   // reload -- now it is kept, as in Excel and Calc)
   var dirty = false, pointed = false;
-  var ERRCODE = /^#(?:ERR|CYCLE|DIV\x2F0!|VALUE!|NAME\?|NUM!|REF!)$/;
+  var ERRCODE = /^#(?:ERR|CYCLE|DIV\x2F0!|VALUE!|NAME\?|NUM!|REF!|N\x2FA)$/;
   // typed(raw) -> the number a typed cell means, or null: 1500, 1,500,
   // $12.50, -3.5, 10% (0.1), 4.7e-11 -- but not " ", 0x1F or Infinity
   function typed(raw) {
@@ -1833,16 +1894,28 @@ Lantern.formula = (function () {
         try {
           v = Lantern.formula.evaluate(raw.slice(1), {
             resolve: val,
+            cell: ref,   // (1.24.24) the cell itself: ROW() and COLUMN() with nothing in the brackets
+            // a range is its numbers (what SUM and AVERAGE take), and (1.24.24)
+            // .cells, its rows of values as they are -- text, and null for a
+            // blank -- with .r0/.c0 its top-left (VLOOKUP, COUNTIF, ROW)
             range: function (a, b) {
-              var A = parseRef(a), B = parseRef(b), arr = [];
-              for (var r = Math.min(A.r, B.r); r <= Math.max(A.r, B.r); r++)
+              var A = parseRef(a), B = parseRef(b), arr = [], rows = [];
+              for (var r = Math.min(A.r, B.r); r <= Math.max(A.r, B.r); r++) {
+                var row = [];
                 for (var c = Math.min(A.c, B.c); c <= Math.max(A.c, B.c); c++) {
                   var x = val(refOf(c, r));
                   // an error (or a loop) in the range is the range's error:
                   // SUM used to skip it and show a total that looked right
                   if (typeof x === "string" && ERRCODE.test(x)) { var re = new Error(x); re.code = x; throw re; }
                   if (typeof x === "number") arr.push(x);
+                  // (1.24.24) a date written 2026-11-17 counts as its day's
+                  // number, as in Excel: =MAX(A2:A9) is the latest date
+                  else if (typeof x === "string" && Lantern.formula.isoDay) { var dn = Lantern.formula.isoDay(x); if (dn !== null) arr.push(dn); }
+                  row.push(x == null || x === "" ? null : x);
                 }
+                rows.push(row);
+              }
+              arr.cells = rows; arr.r0 = Math.min(A.r, B.r); arr.c0 = Math.min(A.c, B.c);
               return arr;
             }
           });
@@ -1871,6 +1944,40 @@ Lantern.formula = (function () {
     }
   };
 
+  // (1.24.24) a formula that gives a date shows it as one, 2026-11-17: one
+  // whose outer function gives a date (TODAY, DATE, EDATE, EOMONTH, WORKDAY,
+  // DATEVALUE; NOW with the time), or a date cell with days added or taken
+  // (=A1+30, where A1 holds 2026-11-17 or such a formula) -- but not two dates
+  // taken one from the other, which is a count of days
+  var DATEFN = /^=\s*(TODAY|DATE|EDATE|EOMONTH|WORKDAY|WORKDAY\.INTL|DATEVALUE|NOW)\s*\x28/i;
+  function dateKind(ref, seen) {
+    var raw = doc.cells[ref];
+    if (typeof raw !== "string") return null;
+    if (/^\s*\d{4}-\d{1,2}-\d{1,2}\s*$/.test(raw)) return "date";
+    var m = DATEFN.exec(raw);
+    if (m) return /^now$/i.test(m[1]) ? "time" : "date";
+    seen = seen || {};
+    if (seen[ref]) return null;
+    seen[ref] = 1;
+    // =A1, =A1+30, and the latest or earliest of dates (=MAX(A2:A9))
+    var r = /^=\s*([A-Z]{1,2}[0-9]{1,3})\s*(?:[+-]([^A-Za-z]*))?$/i.exec(raw);
+    if (r) return (r[2] == null || /\d/.test(r[2])) && dateKind(r[1].toUpperCase(), seen) === "date" ? "date" : null;
+    var g = /^=\s*(?:MAX|MIN|LARGE|SMALL|MEDIAN)\s*\x28\s*([A-Z])([0-9]{1,3})(?::([A-Z])([0-9]{1,3}))?\s*[,\x29]/i.exec(raw);
+    if (!g) return null;
+    var c0 = g[1].toUpperCase().charCodeAt(0), r0 = +g[2], c1 = g[3] ? g[3].toUpperCase().charCodeAt(0) : c0, r1 = g[4] ? +g[4] : r0;
+    for (var rr = Math.min(r0, r1); rr <= Math.max(r0, r1); rr++)
+      for (var cc = Math.min(c0, c1); cc <= Math.max(c0, c1); cc++) {
+        var k = String.fromCharCode(cc) + rr;
+        if (doc.cells[k] != null && doc.cells[k] !== "") return dateKind(k, seen) === "date" ? "date" : null;
+      }
+    return null;
+  }
+  function dayText(v, withTime) {
+    var t = new Date(Math.round((v - 25569) * 86400000)), p2 = function (x) { return (x < 10 ? "0" : "") + x; };
+    var d = t.getUTCFullYear() + "-" + p2(t.getUTCMonth() + 1) + "-" + p2(t.getUTCDate());
+    return withTime ? d + " " + p2(t.getUTCHours()) + ":" + p2(t.getUTCMinutes()) : d;
+  }
+
   function repaint() {
     var out = computeAll(doc.cells);
     var union = {};
@@ -1884,8 +1991,9 @@ Lantern.formula = (function () {
       if (v == null) { td.textContent = ""; td.className = ""; }
       else if (typeof v === "number") {
         // a number typed with its format ($12.50, 1,500, 10%) shows as typed
-        var raw = doc.cells[k];
-        td.textContent = typeof raw === "string" && raw.charAt(0) !== "=" && /[,%\$\u20ac\u00a3]/.test(raw) ? raw.replace(/^\s+|\s+$/g, "") : Lantern.fmtNum(v);
+        var raw = doc.cells[k], dk = dateKind(k);
+        td.textContent = typeof raw === "string" && raw.charAt(0) !== "=" && /[,%\$\u20ac\u00a3]/.test(raw) ? raw.replace(/^\s+|\s+$/g, "") :
+          dk && v >= 1 && v < 2958466 ? dayText(v, dk === "time") : Lantern.fmtNum(v);
         td.className = "num";
       }
       else { td.textContent = String(v); td.className = /^#/.test(String(v)) ? "num" : ""; }
@@ -2080,7 +2188,17 @@ Lantern.formula = (function () {
           values: rangeVals,
           used: usedRange,
           refresh: repaint,
-          COLS: COLS, ROWS: ROWS
+          COLS: COLS, ROWS: ROWS,
+          // (1.24.24) the cell being edited, and text put into its formula
+          // bar where the cursor is (a formula started if the bar is empty)
+          selected: function () { return sel; },
+          insert: function (text) {
+            var v = fbar.value, at = fbar.selectionStart == null ? v.length : fbar.selectionStart;
+            if (!dirty) { if (v.charAt(0) !== "=") v = "="; at = v.length; }
+            fbar.value = v.slice(0, at) + text + v.slice(at);
+            try { fbar.setSelectionRange(at + text.length, at + text.length); } catch (e2) { /* old browser */ }
+            dirty = true; fbar.focus();
+          }
         });
       } catch (e) {}
     }
@@ -34909,7 +35027,8 @@ Lantern.RFB = (function () {
 (function () {
   var L = window.Lantern;
   if (!L || !L.formula || !L.formula.register) return;
-  function str(v) { return v == null ? "" : typeof v === "number" ? String(v) : String(v); }
+  // a number as a cell shows it, 15 digits (LEFT(0.1+0.2,4) is "0.3")
+  function str(v) { return v == null ? "" : typeof v === "number" ? String(Number(v.toPrecision(15))) : String(v); }
   function n(v, name) {
     var x = typeof v === "number" ? v : parseFloat(v);
     if (!isFinite(x)) throw new Error(name + " needs a number");
@@ -34954,6 +35073,1450 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: TEXT_FUNCS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SHEET_FN_CORE - START
+// Depends: FORMULA (Lantern.formula.register) -- feature-detected
+// Exports: Lantern.sheetFn (err, lz, isRange, grid, flat, nums, N, T,
+//          truthy, crit, wild, eqv, serial, ymd, dayOf, fmtGeneral) for the
+//          other SHEET_FN modules; formula functions: SUMIF SUMIFS COUNTIF
+//          COUNTIFS AVERAGEIF AVERAGEIFS MINIFS MAXIFS SUMPRODUCT SUMSQ
+//          PRODUCT COUNTA COUNTBLANK MEDIAN MODE STDEV VAR LARGE SMALL RANK
+//          PERCENTILE QUARTILE ROUNDUP ROUNDDOWN INT TRUNC CEILING MROUND
+//          SIGN QUOTIENT GCD LCM RAND RANDBETWEEN LOG10 COMBIN PERMUT DEGREES
+//          RADIANS ATAN2 EVEN ODD POWER... (the .S/.P/.INC/.EQ/.MATH names too)
+// ===========================================================================
+// (1.24.24, Adam: "Anything that is available on commercial software should
+// be available on Lantern as much as possible plus more while being easier
+// to use") Sheets knew about thirty of Excel's functions; a person, or a
+// model writing a formula by habit, met "Unknown function" for SUMIF,
+// VLOOKUP, PMT. These are Excel's, worked as Excel works them: a range's
+// text and blanks skipped where Excel skips them, criteria as Excel reads
+// them (">5", "<>done", "ap*"), the same errors (#N/A not found, #DIV/0!
+// nothing to average, #NUM! out of range).
+(function () {
+  var L = window.Lantern;
+  if (!(L && L.formula && L.formula.register)) return;
+  var reg = L.formula.register;
+  function err(code, msg) { var e = new Error(msg || code); e.code = code; return e; }
+  // lz(x): an argument worked out one by one (IFS, CHOOSE...): its error now counts
+  function lz(x) { if (x && x.lazyErr) throw x.lazyErr; return x; }
+  function isRange(x) { return Object.prototype.toString.call(x) === "[object Array]"; }
+  // grid(x): the rows of a range's values (numbers, text, null for a blank); one value is one cell
+  function grid(x) { x = lz(x); if (isRange(x)) return x.cells || [x.slice()]; return [[x]]; }
+  function flat(x) { var g = grid(x), out = [], i; for (i = 0; i < g.length; i++) out.push.apply(out, g[i]); return out; }
+  // ---- dates: the day's number as a spreadsheet counts it (1970-01-01 = 25569)
+  var DAY = 86400000, EPOCH = 25569;
+  var MON = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+  // Excel counts a 29 February 1900 that never was (Lotus 1-2-3's), so its days before 1 March 1900 are one less
+  function serial(y, m, d) {
+    if (y >= 0 && y < 1900) y += 1900;
+    if (y < 1900 || y > 9999) throw err("#NUM!", "a year out of range");
+    var s = Date.UTC(y, m - 1, d) / DAY + EPOCH;
+    if (s < 1) throw err("#NUM!", "a date before 1900");
+    return s < 61 ? s - 1 : s;
+  }
+  function ymd(s) {
+    s = Math.floor(s);
+    if (s === 60) return { y: 1900, m: 2, d: 29, w: 3 };
+    var t = new Date(Math.round(((s < 60 ? s + 1 : s) - EPOCH) * DAY));
+    return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate(), w: t.getUTCDay() };
+  }
+  function valid(y, m, d) { var t = new Date(Date.UTC(y, m - 1, d)); return t.getUTCMonth() === m - 1 && t.getUTCDate() === d; }
+  function clock(h, mi, se, ap) {
+    h = +h; mi = +mi; se = +(se || 0);
+    if (ap) { ap = ap.toLowerCase(); if (h < 1 || h > 12) return null; if (ap === "pm" && h < 12) h += 12; if (ap === "am" && h === 12) h = 0; }
+    if (h > 23 || mi > 59 || se > 59) return null;
+    return (h * 3600 + mi * 60 + se) / 86400;
+  }
+  // dayOf(text) -> the day (and time) a text names, or null: 2026-11-17, 2026/11/17, 17 Nov 2026, November 17, 2026,
+  // with a time 14:30 or 2:30 pm after it, or a time alone. Not 11/12/2026: day and month can be either way round.
+  function dayOf(text) {
+    var s = String(text).replace(/^\s+|\s+$/g, "").toLowerCase(), m, d = null, rest = s, y, mo, dd;
+    if ((m = /^(\d{4})[-\x2F](\d{1,2})[-\x2F](\d{1,2})(?:[t ]+|$)/.exec(s))) { y = +m[1]; mo = +m[2]; dd = +m[3]; }
+    else if ((m = /^(\d{1,2})[ -]([a-z]{3,9})\.?,?[ -](\d{4})(?:[ ,]+|$)/.exec(s))) { y = +m[3]; mo = month(m[2]); dd = +m[1]; }
+    else if ((m = /^([a-z]{3,9})\.? (\d{1,2})(?:st|nd|rd|th)?,? (\d{4})(?:[ ,]+|$)/.exec(s))) { y = +m[3]; mo = month(m[1]); dd = +m[2]; }
+    if (m) { if (!mo || y < 1900 || y > 9999 || !valid(y, mo, dd)) return null; d = serial(y, mo, dd); rest = s.slice(m[0].length); }
+    if (!rest) return d;
+    var t = /^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?$/.exec(rest), f = t ? clock(t[1], t[2], t[3], t[4]) : null;
+    if (f === null) return null;
+    return (d || 0) + f;
+  }
+  function month(w) { var i = MON.indexOf(w.slice(0, 3)); return i < 0 || (w.length > 3 && "january february march april may june july august september october november december".split(" ")[i].indexOf(w) !== 0) ? 0 : i + 1; }
+  // ---- numbers and text, as Excel turns one into the other
+  var NUMTXT = /^([+-]?)\s*([\$\u20ac\u00a3]?)\s*(\d{1,3}(?:,\d{3})+(?:\.\d*)?|\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?)\s*(%?)$/;
+  function numText(v) {
+    var s = String(v).replace(/^\s+|\s+$/g, ""), m = NUMTXT.exec(s);
+    if (m) { var x = parseFloat(m[3].replace(/,/g, "")) * (m[1] === "-" ? -1 : 1) / (m[4] ? 100 : 1); return isFinite(x) ? x : null; }
+    var dd = s ? dayOf(s) : null;
+    return dd;
+  }
+  function N(x) {
+    x = lz(x);
+    if (x == null || x === "") return 0;
+    if (typeof x === "number") { if (!isFinite(x)) throw err("#NUM!"); return x; }
+    if (isRange(x)) { if (x.cells && x.cells.length === 1 && x.cells[0].length === 1) return N(x.cells[0][0]); throw err("#VALUE!", "a range where one value belongs"); }
+    var v = numText(x);
+    if (v !== null) return v;
+    if (/^\s*true\s*$/i.test(x)) return 1;
+    if (/^\s*false\s*$/i.test(x)) return 0;
+    throw err("#VALUE!", "\u201c" + x + "\u201d is not a number");
+  }
+  // a number as text, as a cell shows it unformatted: 15 digits; 1E+21 and 1E-10 for the very large and small
+  function fmtGeneral(x) {
+    var y = Number(x.toPrecision(15));
+    if (y === 0 || (Math.abs(y) < 1e15 && Math.abs(y) >= 1e-9)) return String(y);
+    var m = /^(-?[0-9.]+)e([+-])([0-9]+)$/.exec(y.toExponential());
+    return m[1] + "E" + m[2] + (m[3].length < 2 ? "0" : "") + m[3];
+  }
+  function T(x) {
+    x = lz(x);
+    if (isRange(x)) x = x.cells && x.cells.length === 1 && x.cells[0].length === 1 ? x.cells[0][0] : flat(x)[0];
+    return x == null ? "" : typeof x === "number" ? fmtGeneral(x) : String(x);
+  }
+  function truthy(x) {
+    x = lz(x);
+    if (isRange(x)) x = flat(x)[0];
+    if (x == null || x === "") return false;
+    if (typeof x === "number") return x !== 0;
+    if (/^\s*true\s*$/i.test(x)) return true;
+    if (/^\s*false\s*$/i.test(x)) return false;
+    return N(x) !== 0;
+  }
+  // the numbers of the arguments, as SUM takes them: a range's numbers (its text and blanks left out), a value given itself
+  function nums(args) {
+    var out = [], i, j;
+    for (i = 0; i < args.length; i++) {
+      var a = lz(args[i]);
+      if (isRange(a)) { for (j = 0; j < a.length; j++) if (typeof a[j] === "number" && isFinite(a[j])) out.push(a[j]); }
+      else if (a != null && a !== "") out.push(N(a));
+    }
+    return out;
+  }
+  // ---- criteria, as COUNTIF reads them: 5, ">5", "<>done", "ap*", "", "<>" (not blank), ">2026-01-01"
+  function wild(t) {
+    var re = "", i, c;
+    for (i = 0; i < t.length; i++) {
+      c = t.charAt(i);
+      if (c === "~" && i + 1 < t.length) { re += t.charAt(++i).replace(/[.*+?^${}()|[\]\\\x2F]/g, "\\$&"); continue; }
+      re += c === "*" ? "[\\s\\S]*" : c === "?" ? "[\\s\\S]" : c.replace(/[.*+?^${}()|[\]\\\x2F]/g, "\\$&");
+    }
+    return new RegExp("^" + re + "$", "i");
+  }
+  function cmp(op, a, b) { return op === "=" ? a === b : op === "<>" ? a !== b : op === "<" ? a < b : op === ">" ? a > b : op === "<=" ? a <= b : a >= b; }
+  function blank(v) { return v == null || v === ""; }
+  function crit(c) {
+    c = lz(c);
+    if (isRange(c)) c = flat(c)[0];
+    if (typeof c === "number") return function (v) { return typeof v === "number" ? v === c : !blank(v) && numText(v) === c; };
+    var s = c == null ? "" : String(c), m = /^(<=|>=|<>|=|<|>)?([\s\S]*)$/.exec(s), op = m[1] || "", rest = m[2];
+    if (rest === "") return op === "<>" ? function (v) { return !blank(v); } : op === "" || op === "=" ? blank : function () { return false; };
+    var rn = numText(rest);
+    if (rn !== null) return function (v) {
+      var x = typeof v === "number" ? v : blank(v) ? null : numText(v);
+      return x === null ? op === "<>" : cmp(op || "=", x, rn);
+    };
+    if (op === "" || op === "=" || op === "<>") {
+      var re = wild(rest);
+      return function (v) { var hit = !blank(v) && typeof v !== "number" && re.test(String(v)); return op === "<>" ? !hit : hit; };
+    }
+    var low = rest.toLowerCase();
+    return function (v) { return typeof v === "string" && v !== "" && cmp(op, v.toLowerCase(), low); };
+  }
+  // eqv(a, b): the = of a lookup -- numbers by value, text ignoring case
+  function eqv(a, b) {
+    if (blank(a) || blank(b)) return blank(a) && blank(b);
+    if (typeof a === "number" || typeof b === "number") return typeof a === typeof b && a === b;
+    return String(a).toLowerCase() === String(b).toLowerCase();
+  }
+  // ---- the criteria functions
+  function pairs(args, start) {
+    if ((args.length - start) % 2 || args.length - start < 2) throw err("#VALUE!", "each range needs its criterion");
+    var ps = [], rows = -1, cols = -1;
+    for (var i = start; i < args.length; i += 2) {
+      var g = grid(args[i]);
+      if (rows < 0) { rows = g.length; cols = g[0].length; }
+      else if (g.length !== rows || g[0].length !== cols) throw err("#VALUE!", "the ranges are not the same size");
+      ps.push({ g: g, f: crit(args[i + 1]) });
+    }
+    return { ps: ps, rows: rows, cols: cols };
+  }
+  function hits(sp) {
+    var out = [], r, c, k;
+    for (r = 0; r < sp.rows; r++) for (c = 0; c < sp.cols; c++) {
+      for (k = 0; k < sp.ps.length; k++) if (!sp.ps[k].f(sp.ps[k].g[r][c])) break;
+      if (k === sp.ps.length) out.push([r, c]);
+    }
+    return out;
+  }
+  function picked(g, at, sameSize) {
+    if (sameSize && g !== null && (g.length !== sameSize[0] || g[0].length !== sameSize[1])) throw err("#VALUE!", "the ranges are not the same size");
+    var out = [];
+    at.forEach(function (p) { var v = g[p[0]] && g[p[0]][p[1]]; if (typeof v === "number") out.push(v); });
+    return out;
+  }
+  function sum(a) { var s = 0; for (var i = 0; i < a.length; i++) s += a[i]; return s; }
+  function ifOne(args, kind) {
+    var g = grid(args[0]), sp = { ps: [{ g: g, f: crit(args[1]) }], rows: g.length, cols: g[0].length };
+    var vals = picked(args.length > 2 ? grid(args[2]) : g, hits(sp));
+    return kind(vals);
+  }
+  function ifMany(args, kind) {
+    var tg = grid(args[0]), sp = pairs(args, 1);
+    return kind(picked(tg, hits(sp), [sp.rows, sp.cols]));
+  }
+  function avg(v) { if (!v.length) throw err("#DIV/0!", "nothing to average"); return sum(v) / v.length; }
+  function mn(v) { return v.length ? Math.min.apply(null, v) : 0; }
+  function mx(v) { return v.length ? Math.max.apply(null, v) : 0; }
+  var F = {
+    SUMIF: function (a) { return ifOne(a, sum); },
+    SUMIFS: function (a) { return ifMany(a, sum); },
+    COUNTIF: function (a) { var g = grid(a[0]); return hits({ ps: [{ g: g, f: crit(a[1]) }], rows: g.length, cols: g[0].length }).length; },
+    COUNTIFS: function (a) { return hits(pairs(a, 0)).length; },
+    AVERAGEIF: function (a) { return ifOne(a, avg); },
+    AVERAGEIFS: function (a) { return ifMany(a, avg); },
+    MINIFS: function (a) { return ifMany(a, mn); },
+    MAXIFS: function (a) { return ifMany(a, mx); },
+    SUMPRODUCT: function (a) {
+      var gs = a.map(grid), rows = gs[0].length, cols = gs[0][0].length, s = 0, r, c, k;
+      gs.forEach(function (g) { if (g.length !== rows || g[0].length !== cols) throw err("#VALUE!", "the ranges are not the same size"); });
+      for (r = 0; r < rows; r++) for (c = 0; c < cols; c++) {
+        var p = 1;
+        for (k = 0; k < gs.length; k++) { var v = gs[k][r][c]; p *= typeof v === "number" ? v : 0; }
+        s += p;
+      }
+      return s;
+    },
+    SUMSQ: function (a) { return sum(nums(a).map(function (x) { return x * x; })); },
+    PRODUCT: function (a) { var v = nums(a), p = 1; for (var i = 0; i < v.length; i++) p *= v[i]; return v.length ? p : 0; },
+    COUNTA: function (a) { var n = 0; a.forEach(function (x) { x = lz(x); if (isRange(x)) flat(x).forEach(function (v) { if (!blank(v)) n++; }); else if (x != null) n++; }); return n; },
+    COUNTBLANK: function (a) { var n = 0; flat(a[0]).forEach(function (v) { if (blank(v)) n++; }); return n; },
+    MEDIAN: function (a) {
+      var v = nums(a).sort(function (x, y) { return x - y; }), h = v.length >> 1;
+      if (!v.length) throw err("#NUM!", "MEDIAN of nothing");
+      return v.length % 2 ? v[h] : (v[h - 1] + v[h]) / 2;
+    },
+    // the number that comes most often; of two as often, the one that came first
+    MODE: function (a) {
+      var v = nums(a), seen = {}, top = 1, i;
+      for (i = 0; i < v.length; i++) { seen[v[i]] = (seen[v[i]] || 0) + 1; if (seen[v[i]] > top) top = seen[v[i]]; }
+      if (top < 2) throw err("#N/A", "no number comes twice");
+      for (i = 0; i < v.length; i++) if (seen[v[i]] === top) return v[i];
+    },
+    STDEV: function (a) { return Math.sqrt(vari(nums(a), 1)); },
+    STDEVP: function (a) { return Math.sqrt(vari(nums(a), 0)); },
+    VAR: function (a) { return vari(nums(a), 1); },
+    VARP: function (a) { return vari(nums(a), 0); },
+    LARGE: function (a) { return kth(a, -1); },
+    SMALL: function (a) { return kth(a, 1); },
+    RANK: function (a) {
+      var x = N(a[0]), v = nums([a[1]]), asc = a.length > 2 && N(a[2]) !== 0;
+      if (v.indexOf(x) < 0) throw err("#N/A", "the number is not in the list");
+      return 1 + v.filter(function (y) { return asc ? y < x : y > x; }).length;
+    },
+    PERCENTILE: function (a) { return pct(nums([a[0]]), N(a[1])); },
+    QUARTILE: function (a) { var q = Math.floor(N(a[1])); if (q < 0 || q > 4) throw err("#NUM!", "QUARTILE takes 0 to 4"); return pct(nums([a[0]]), q / 4); },
+    ROUNDUP: function (a) { return roundTo(N(a[0]), a.length > 1 ? N(a[1]) : 0, Math.ceil); },
+    ROUNDDOWN: function (a) { return roundTo(N(a[0]), a.length > 1 ? N(a[1]) : 0, Math.floor); },
+    TRUNC: function (a) { return roundTo(N(a[0]), a.length > 1 ? N(a[1]) : 0, Math.floor); },
+    INT: function (a) { return Math.floor(N(a[0])); },
+    CEILING: function (a) { return multiple(N(a[0]), a.length > 1 ? N(a[1]) : 1, Math.ceil); },
+    "CEILING.MATH": function (a) { var x = N(a[0]), s = Math.abs(a.length > 1 ? N(a[1]) : 1); return multiple(x, x < 0 && a.length > 2 && N(a[2]) ? -s : s, Math.ceil); },
+    "FLOOR.MATH": function (a) { var x = N(a[0]), s = Math.abs(a.length > 1 ? N(a[1]) : 1); return multiple(x, x < 0 && a.length > 2 && N(a[2]) ? -s : s, Math.floor); },
+    MROUND: function (a) {
+      var x = N(a[0]), m = N(a[1]);
+      if (m === 0) return 0;
+      if (x * m < 0) throw err("#NUM!", "MROUND: the number and the multiple have different signs");
+      return Number(((x < 0 ? -1 : 1) * Math.round(Number(Math.abs(x / m).toPrecision(15))) * Math.abs(m)).toPrecision(15));
+    },
+    SIGN: function (a) { var x = N(a[0]); return x > 0 ? 1 : x < 0 ? -1 : 0; },
+    QUOTIENT: function (a) { var d = N(a[1]); if (d === 0) throw err("#DIV/0!", "Divide by zero"); var q = N(a[0]) / d; return q < 0 ? Math.ceil(q) : Math.floor(q); },
+    GCD: function (a) { return nums(a).map(whole).reduce(gcd, 0); },
+    LCM: function (a) { return nums(a).map(whole).reduce(function (x, y) { return x === 0 || y === 0 ? 0 : x / gcd(x, y) * y; }, 1); },
+    RAND: function () { return Math.random(); },
+    RANDBETWEEN: function (a) { var lo = Math.ceil(N(a[0])), hi = Math.floor(N(a[1])); if (hi < lo) throw err("#NUM!", "RANDBETWEEN: the top is below the bottom"); return lo + Math.floor(Math.random() * (hi - lo + 1)); },
+    LOG10: function (a) { var x = N(a[0]); if (x <= 0) throw err("#NUM!", "LOG10 of a number that is not above 0"); return Math.log(x) / Math.LN10; },
+    COMBIN: function (a) { return choose(whole(N(a[0])), whole(N(a[1])), true); },
+    PERMUT: function (a) { return choose(whole(N(a[0])), whole(N(a[1])), false); },
+    DEGREES: function (a) { return N(a[0]) * 180 / Math.PI; },
+    RADIANS: function (a) { return N(a[0]) * Math.PI / 180; },
+    // Excel's order: ATAN2(x, y)
+    ATAN2: function (a, ctx) { var x = N(a[0]), y = N(a[1]); if (x === 0 && y === 0) throw err("#DIV/0!", "ATAN2 of 0,0"); var t = Math.atan2(y, x); return ctx && ctx.deg ? t * 180 / Math.PI : t; },
+    EVEN: function (a) { var x = N(a[0]), s = x < 0 ? -1 : 1, v = Math.ceil(Math.abs(x)); return s * (v % 2 ? v + 1 : v); },
+    ODD: function (a) { var x = N(a[0]), s = x < 0 ? -1 : 1, v = Math.ceil(Math.abs(x)); return s * (v % 2 ? v : v + 1); },
+    SQRTPI: function (a) { var x = N(a[0]); if (x < 0) throw err("#NUM!", "SQRTPI of a negative number"); return Math.sqrt(x * Math.PI); }
+  };
+  function whole(x) { if (x < 0) throw err("#NUM!", "a negative number"); return Math.floor(x); }
+  function gcd(x, y) { while (y) { var t = x % y; x = y; y = t; } return x; }
+  function choose(n, k, comb) {
+    if (k > n) throw err("#NUM!", "more chosen than there are");
+    var r = 1;
+    for (var i = 0; i < k; i++) r = r * (n - i) / (comb ? i + 1 : 1);
+    return Math.round(r);
+  }
+  function vari(v, ddof) {
+    if (v.length - ddof < 1) throw err("#DIV/0!", "too few numbers");
+    var m = sum(v) / v.length, s = 0;
+    for (var i = 0; i < v.length; i++) s += (v[i] - m) * (v[i] - m);
+    return s / (v.length - ddof);
+  }
+  function kth(a, dir) {
+    var v = nums([a[0]]).sort(function (x, y) { return dir * (x - y); }), k = Math.ceil(N(a[1]));
+    if (k < 1 || k > v.length) throw err("#NUM!", "there is no number " + k + " in the list");
+    return v[k - 1];
+  }
+  function pct(v, k) {
+    if (!v.length || k < 0 || k > 1) throw err("#NUM!", "a percentile is 0 to 1");
+    v.sort(function (x, y) { return x - y; });
+    var at = (v.length - 1) * k, i = Math.floor(at);
+    return i + 1 < v.length ? v[i] + (at - i) * (v[i + 1] - v[i]) : v[i];
+  }
+  // ROUNDUP / ROUNDDOWN: away from zero / toward it, worked at 15 digits (as ROUND)
+  function roundTo(x, d, f) {
+    d = d < 0 ? Math.ceil(d) : Math.floor(d);
+    var p = Math.pow(10, Math.abs(d)), y = Number((d < 0 ? Math.abs(x) / p : Math.abs(x) * p).toPrecision(15));
+    return (x < 0 ? -1 : 1) * Number((d < 0 ? f(y) * p : f(y) / p).toPrecision(15));
+  }
+  function multiple(x, s, f) {
+    if (s === 0) return 0;
+    if (x > 0 && s < 0) throw err("#NUM!", "a negative multiple of a positive number");
+    var q = Number((x / s).toPrecision(15));
+    return Number((f(q) * s).toPrecision(15));
+  }
+  // SUBTOTAL(how, range...): 1 AVERAGE, 2 COUNT, 3 COUNTA, 4 MAX, 5 MIN, 6 PRODUCT, 7 STDEV, 8 STDEVP, 9 SUM,
+  // 10 VAR, 11 VARP (101 to 111 the same: Sheets has no hidden rows)
+  F.SUBTOTAL = function (a, ctx) {
+    var k = Math.floor(N(a[0])), rest = a.slice(1), v = nums(rest);
+    var how = { 1: avg, 2: function (x) { return x.length; }, 4: mx, 5: mn, 9: sum,
+      3: function () { return F.COUNTA(rest); }, 6: function () { return F.PRODUCT(rest); },
+      7: function () { return F.STDEV(rest); }, 8: function () { return F.STDEVP(rest); },
+      10: function () { return F.VAR(rest); }, 11: function () { return F.VARP(rest); } }[k > 100 ? k - 100 : k];
+    if (!how) throw err("#VALUE!", "SUBTOTAL takes 1 to 11 (or 101 to 111) first");
+    return how(v);
+  };
+  // the names Excel gives some of them since 2010
+  F["STDEV.S"] = F.STDEV; F["STDEV.P"] = F.STDEVP; F["VAR.S"] = F.VAR; F["VAR.P"] = F.VARP; F["MODE.SNGL"] = F.MODE;
+  F["RANK.EQ"] = F.RANK; F["PERCENTILE.INC"] = F.PERCENTILE; F["QUARTILE.INC"] = F.QUARTILE; F["CEILING.PRECISE"] = F["CEILING.MATH"]; F["FLOOR.PRECISE"] = F["FLOOR.MATH"];
+  Object.keys(F).forEach(function (k) { reg(k, F[k]); });
+  L.sheetFn = { err: err, lz: lz, isRange: isRange, grid: grid, flat: flat, nums: nums, N: N, T: T, truthy: truthy,
+    crit: crit, wild: wild, eqv: eqv, blank: blank, serial: serial, ymd: ymd, dayOf: dayOf, numText: numText, fmtGeneral: fmtGeneral, F: F };
+})();
+// ===========================================================================
+// MODULE: SHEET_FN_CORE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SHEET_FN_LOOKUP - START
+// Depends: FORMULA (Lantern.formula.register), SHEET_FN_CORE (Lantern.sheetFn)
+//          -- feature-detected
+// Exports: formula functions AND OR XOR NOT IFS IFNA SWITCH CHOOSE ISBLANK
+//          ISNUMBER ISTEXT ISNONTEXT ISERROR ISERR ISNA ISEVEN ISODD NA
+//          VLOOKUP HLOOKUP XLOOKUP INDEX MATCH XMATCH LOOKUP ROW COLUMN ROWS
+//          COLUMNS
+// ===========================================================================
+// (1.24.24) Excel's logic and lookups. A lookup that finds nothing is #N/A,
+// as in Excel, so IFNA and IFERROR catch it and ISNUMBER(MATCH(...)) is 0.
+// Sheets has no spilling: a function that would give several cells (INDEX
+// with row 0, XLOOKUP of a whole row) says so and gives #VALUE!.
+(function () {
+  var L = window.Lantern;
+  if (!(L && L.formula && L.formula.register && L.sheetFn)) return;
+  var H = L.sheetFn, err = H.err, lz = H.lz, grid = H.grid, flat = H.flat, N = H.N, truthy = H.truthy, isRange = H.isRange;
+  // the error an argument was kept with, named as a cell shows it
+  function codeOf(e) {
+    if (e.code) return e.code;
+    var m = String(e.message || "");
+    return /Divide by zero/.test(m) ? "#DIV/0!" : /^Unknown (?:function|name)/.test(m) ? "#NAME?" :
+      /Not a number|single value|text/i.test(m) ? "#VALUE!" : /range|Overflow|not a real|undefined|whole number/i.test(m) ? "#NUM!" : "#ERR";
+  }
+  function bad(x) { return !!(x && x.lazyErr); }
+  // the one value of an IS... function's argument: a cell named alone is that cell as it is (null when blank)
+  function one(x) { return isRange(x) ? (x.cells && x.cells.length === 1 && x.cells[0].length === 1 ? x.cells[0][0] : flat(x)[0]) : x; }
+  function notFound(what) { return err("#N/A", what || "not found"); }
+  // logic: ranges give their numbers (text and blanks left out), as in Excel
+  function logicals(args) {
+    var out = [];
+    args.forEach(function (a) {
+      a = lz(a);
+      if (isRange(a)) flat(a).forEach(function (v) { if (typeof v === "number") out.push(v !== 0); });
+      else out.push(truthy(a));
+    });
+    if (!out.length) throw err("#VALUE!", "nothing true or false to look at");
+    return out;
+  }
+  // the matching of a lookup: equal (text ignoring case; * and ? when asked), or the nearest below / above
+  function sameKind(a, b) { return (typeof a === "number") === (typeof b === "number"); }
+  function order(a, b) {
+    if (typeof a === "number") return a < b ? -1 : a > b ? 1 : 0;
+    a = String(a).toLowerCase(); b = String(b).toLowerCase();
+    return a < b ? -1 : a > b ? 1 : 0;
+  }
+  function equalTo(want, wild) {
+    if (wild && typeof want === "string" && /[*?~]/.test(want)) { var re = H.wild(want); return function (v) { return typeof v === "string" && re.test(v); }; }
+    return function (v) { return H.eqv(v, want); };
+  }
+  // find(list, want, mode, fromEnd): the index in list, or -1. mode 0 equal (wildcards; "exact" without), 2 the
+  // same, -1 equal or the next
+  // smaller, 1 equal or the next larger (the list in any order), "sorted" the last at or below in a sorted list
+  function find(list, want, mode, fromEnd) {
+    var i, n = list.length, best = -1, eq;
+    if (want == null || want === "") want = typeof list[0] === "number" ? 0 : "";
+    if (mode === "sorted") {
+      for (i = 0; i < n; i++) {
+        var v = list[i];
+        if (v == null || v === "" || !sameKind(v, want)) continue;
+        if (order(v, want) <= 0) best = i; else break;
+      }
+      return best;
+    }
+    eq = equalTo(want, mode === 0 || mode === 2);
+    for (var k = 0; k < n; k++) { i = fromEnd ? n - 1 - k : k; if (eq(list[i])) return i; }
+    if (mode === 0 || mode === 2 || mode === "exact") return -1;
+    for (i = 0; i < n; i++) {
+      var x = list[i];
+      if (x == null || x === "" || !sameKind(x, want)) continue;
+      var o = order(x, want);
+      if ((mode < 0 && o < 0 && (best < 0 || order(x, list[best]) > 0)) || (mode > 0 && o > 0 && (best < 0 || order(x, list[best]) < 0))) best = i;
+    }
+    return best;
+  }
+  function value(v) { return v == null ? 0 : v; }
+  function vector(x, what) {
+    var g = grid(x);
+    if (g.length === 1) return g[0];
+    if (g[0].length === 1) return g.map(function (r) { return r[0]; });
+    throw err("#N/A", what + " looks along one row or one column");
+  }
+  function whole(x, what) { var n = Math.floor(N(x)); if (n < 1) throw err("#VALUE!", what + " starts at 1"); return n; }
+  var F = {
+    AND: function (a) { return logicals(a).every(function (t) { return t; }) ? 1 : 0; },
+    OR: function (a) { return logicals(a).some(function (t) { return t; }) ? 1 : 0; },
+    XOR: function (a) { return logicals(a).filter(function (t) { return t; }).length % 2; },
+    NOT: function (a) { return truthy(a[0]) ? 0 : 1; },
+    IFS: function (a) {
+      if (a.length < 2 || a.length % 2) throw err("#VALUE!", "IFS takes a test and a value, then another test and value...");
+      for (var i = 0; i < a.length; i += 2) if (truthy(lz(a[i]))) return lz(a[i + 1]);
+      throw notFound("no test in IFS was true (end with TRUE,\u2026 for the rest)");
+    },
+    IFNA: function (a) { return bad(a[0]) && codeOf(a[0].lazyErr) === "#N/A" ? lz(a[1]) : lz(a[0]); },
+    SWITCH: function (a) {
+      var x = lz(a[0]), i;
+      for (i = 1; i + 1 < a.length; i += 2) if (H.eqv(x, lz(a[i]))) return lz(a[i + 1]);
+      if (i < a.length) return lz(a[i]);
+      throw notFound("SWITCH: nothing matched and there is no value for the rest");
+    },
+    CHOOSE: function (a) {
+      var k = Math.floor(N(lz(a[0])));
+      if (k < 1 || k >= a.length) throw err("#VALUE!", "CHOOSE has no value number " + k);
+      return lz(a[k]);
+    },
+    ISERROR: function (a) { return bad(a[0]) ? 1 : 0; },
+    ISERR: function (a) { return bad(a[0]) && codeOf(a[0].lazyErr) !== "#N/A" ? 1 : 0; },
+    ISNA: function (a) { return bad(a[0]) && codeOf(a[0].lazyErr) === "#N/A" ? 1 : 0; },
+    ISBLANK: function (a) { if (bad(a[0])) return 0; var v = one(a[0]); return isRange(a[0]) && v == null ? 1 : 0; },
+    ISNUMBER: function (a) { return !bad(a[0]) && typeof one(a[0]) === "number" ? 1 : 0; },
+    ISTEXT: function (a) { if (bad(a[0])) return 0; var v = one(a[0]); return typeof v === "string" ? 1 : 0; },
+    ISNONTEXT: function (a) { if (bad(a[0])) return 1; return typeof one(a[0]) === "string" ? 0 : 1; },
+    ISEVEN: function (a) { var v = one(lz(a[0])); return Math.floor(Math.abs(N(v))) % 2 ? 0 : 1; },
+    ISODD: function (a) { var v = one(lz(a[0])); return Math.floor(Math.abs(N(v))) % 2 ? 1 : 0; },
+    NA: function () { throw notFound("#N/A"); },
+    // VLOOKUP(value, table, column, [FALSE for an exact match]) -- without the FALSE, Excel's way: the table
+    // sorted by its first column, and the last row at or below the value
+    VLOOKUP: function (a) { return look(a, false); },
+    HLOOKUP: function (a) { return look(a, true); },
+    // XLOOKUP(value, look in, give from, [if not found], [0 exact, -1 or next smaller, 1 or next larger, 2 wildcards], [1 first, -1 last])
+    XLOOKUP: function (a) {
+      var want = one(a[0]), lk = vector(a[1], "XLOOKUP"), rg = grid(a[2]), col = grid(a[1]).length > 1;
+      var mode = a.length > 4 ? Math.floor(N(a[4])) : 0, back = a.length > 5 && N(a[5]) < 0;
+      if (mode === 0) mode = "exact";
+      var i = find(lk, want, mode, back);
+      if (i < 0) { if (a.length > 3 && a[3] !== undefined) return a[3]; throw notFound("XLOOKUP found nothing equal to " + H.T(want)); }
+      var out = col ? rg[i] : rg.map(function (r) { return r[i]; });
+      if (!out || out.length !== 1) throw err("#VALUE!", "XLOOKUP here gives one cell: give a return range one column (or one row) wide");
+      return value(out[0]);
+    },
+    // INDEX(range, row, [column])
+    INDEX: function (a) {
+      var g = grid(a[0]), r = a.length > 1 ? Math.floor(N(a[1])) : 0, c = a.length > 2 ? Math.floor(N(a[2])) : 0;
+      if (a.length === 2 && g.length === 1) { c = r; r = 1; }
+      if (a.length === 2 && g[0].length === 1) c = 1;
+      if (r === 0 && g.length === 1) r = 1;
+      if (c === 0 && g[0].length === 1) c = 1;
+      if (r < 0 || c < 0) throw err("#VALUE!", "INDEX: a row or column below 1");
+      if (!r || !c) throw err("#VALUE!", "INDEX with 0 gives a whole row or column; Sheets gives one cell: name both");
+      if (r > g.length || c > g[0].length) throw err("#REF!", "INDEX: row " + r + ", column " + c + " is outside the range");
+      return value(g[r - 1][c - 1]);
+    },
+    // MATCH(value, range, [1 sorted up: the last at or below; 0 equal; -1 sorted down: the last at or above])
+    MATCH: function (a) {
+      var list = vector(a[1], "MATCH"), want = one(a[0]), t = a.length > 2 ? N(a[2]) : 1, i;
+      if (t === 0) i = find(list, want, 0);
+      else if (t > 0) i = find(list, want, "sorted");
+      else { i = -1; for (var k = 0; k < list.length; k++) { var v = list[k]; if (v == null || !sameKind(v, want)) continue; if (order(v, want) >= 0) i = k; else break; } }
+      if (i < 0) throw notFound("MATCH found no " + H.T(want));
+      return i + 1;
+    },
+    XMATCH: function (a) {
+      var mode = a.length > 2 ? Math.floor(N(a[2])) : 0;
+      var i = find(vector(a[1], "XMATCH"), one(a[0]), mode === 0 ? "exact" : mode, a.length > 3 && N(a[3]) < 0);
+      if (i < 0) throw notFound("XMATCH found no " + H.T(one(a[0])));
+      return i + 1;
+    },
+    // LOOKUP(value, sorted range, [results]): the last at or below, as Excel
+    LOOKUP: function (a) {
+      var g = grid(a[1]), wide = g[0].length > g.length, lk, res;
+      if (a.length > 2) { lk = vector(a[1], "LOOKUP"); res = vector(a[2], "LOOKUP"); }
+      else if (wide) { lk = g[0]; res = g[g.length - 1]; }
+      else { lk = g.map(function (r) { return r[0]; }); res = g.map(function (r) { return r[r.length - 1]; }); }
+      var i = find(lk, one(a[0]), "sorted");
+      if (i < 0 || i >= res.length) throw notFound("LOOKUP: nothing at or below " + H.T(one(a[0])));
+      return value(res[i]);
+    },
+    ROW: function (a, ctx) { return place(a, ctx, "r0", /[0-9]+$/, 1); },
+    COLUMN: function (a, ctx) { return place(a, ctx, "c0", /^[A-Z]+/, 0); },
+    ROWS: function (a) { return grid(a[0]).length; },
+    COLUMNS: function (a) { return grid(a[0])[0].length; }
+  };
+  function place(a, ctx, key, part, isRow) {
+    if (a.length && isRange(a[0]) && typeof a[0][key] === "number") return a[0][key] + 1;
+    if (!a.length && ctx && ctx.cell) { var s = part.exec(ctx.cell)[0]; return isRow ? +s : s.charCodeAt(0) - 64; }
+    throw err("#VALUE!", (isRow ? "ROW" : "COLUMN") + " needs a cell (ROW(A5) is 5)");
+  }
+  function look(a, across) {
+    var g = grid(a[1]), k = whole(a[2], across ? "HLOOKUP's row" : "VLOOKUP's column"), sorted = a.length < 4 || truthy(a[3]);
+    if (across) g = g[0].map(function (_, c) { return g.map(function (r) { return r[c]; }); });
+    if (k > g[0].length) throw err("#REF!", (across ? "the table has " + g[0].length + " rows" : "the table has " + g[0].length + " columns") + ", not " + k);
+    var want = one(a[0]), i = find(g.map(function (r) { return r[0]; }), want, sorted ? "sorted" : 0);
+    if (i < 0) throw notFound((across ? "HLOOKUP" : "VLOOKUP") + " found no " + H.T(want) + (sorted ? " (without FALSE at the end it looks for the nearest below in a sorted table)" : ""));
+    return value(g[i][k - 1]);
+  }
+  Object.keys(F).forEach(function (k) { L.formula.register(k, F[k]); });
+  H.find = find;
+})();
+// ===========================================================================
+// MODULE: SHEET_FN_LOOKUP - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SHEET_FN_TEXT - START
+// Depends: FORMULA (Lantern.formula.register), SHEET_FN_CORE (Lantern.sheetFn)
+//          -- feature-detected
+// Exports: formula functions TEXT PROPER TRIM CONCAT CONCATENATE TEXTJOIN
+//          VALUE SEARCH FIND (with a start) SUBSTITUTE (with which one)
+//          REPLACE REPT EXACT CHAR CODE UNICHAR UNICODE DOLLAR FIXED CLEAN
+//          TEXTBEFORE TEXTAFTER T N; Lantern.sheetFn.format (TEXT's formats)
+// ===========================================================================
+// (1.24.24) Excel's text functions. TEXT(value, "format") takes Excel's
+// format codes: 0 and # for digits, a comma for thousands, % and E+00,
+// "$" and other text, and for dates yyyy mm dd, mmm and mmmm, ddd and dddd,
+// hh:mm:ss and AM/PM -- so =TEXT(A1,"#,##0.00") and ="Due "&TEXT(B2,"d mmm
+// yyyy") give what they give in Excel.
+(function () {
+  var L = window.Lantern;
+  if (!(L && L.formula && L.formula.register && L.sheetFn)) return;
+  var H = L.sheetFn, err = H.err, N = H.N, T = H.T, flat = H.flat, isRange = H.isRange, lz = H.lz;
+  var MONTHS = "January February March April May June July August September October November December".split(" ");
+  var DAYS = "Sunday Monday Tuesday Wednesday Thursday Friday Saturday".split(" ");
+  // round half away from zero at 15 digits, as ROUND
+  function roundTo(x, d) { var p = Math.pow(10, d), y = Number((Math.abs(x) * p).toPrecision(15)); return (x < 0 ? -1 : 1) * Math.round(y) / p; }
+  function commas(s) { return s.replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+  // the parts of a format: quoted text, \x, and the rest as it stands
+  function sections(f) {
+    var out = [""], q = false, i, c;
+    for (i = 0; i < f.length; i++) {
+      c = f.charAt(i);
+      if (c === "\x22") q = !q;
+      if (c === "\\" && i + 1 < f.length) { out[out.length - 1] += c + f.charAt(++i); continue; }
+      if (c === ";" && !q) { out.push(""); continue; }
+      out[out.length - 1] += c;
+    }
+    return out;
+  }
+  // tokens(section) -> [{lit: text} | {code: text}]
+  function tokens(f) {
+    var out = [], i = 0, c, m;
+    while (i < f.length) {
+      c = f.charAt(i);
+      if (c === "\x22") { var j = f.indexOf("\x22", i + 1); if (j < 0) j = f.length; out.push({ lit: f.slice(i + 1, j) }); i = j + 1; continue; }
+      if (c === "\\") { out.push({ lit: f.charAt(i + 1) }); i += 2; continue; }
+      if (c === "_") { out.push({ lit: " " }); i += 2; continue; }
+      if (c === "*") { i += 2; continue; }
+      if (c === "[") { var k = f.indexOf("]", i); i = k < 0 ? f.length : k + 1; continue; }
+      if ((m = /^(AM\x2FPM|am\x2Fpm|A\x2FP|a\x2Fp)/.exec(f.slice(i)))) { out.push({ code: m[1] }); i += m[1].length; continue; }
+      if ((m = /^(y+|m+|d+|h+|s+|[0#?.,%]+(?:[eE][+-][0#]+)?)/i.exec(f.slice(i)))) { out.push({ code: m[1] }); i += m[1].length; continue; }
+      out.push({ lit: c }); i++;
+    }
+    return out;
+  }
+  function isDate(ts) { return ts.some(function (t) { return t.code && /^[ymdhs]|^a/i.test(t.code); }); }
+  // a date and time format
+  function fmtDate(x, ts) {
+    if (x < 0 || x >= 2958466) throw err("#VALUE!", "a date out of range");
+    var day = Math.floor(x), sec = Math.round((x - day) * 86400);
+    if (sec >= 86400) { day++; sec -= 86400; }
+    var d = H.ymd(day), hh = Math.floor(sec / 3600), mi = Math.floor(sec / 60) % 60, ss = sec % 60;
+    var ampm = ts.some(function (t) { return t.code && /^a/i.test(t.code); });
+    function p2(n) { return (n < 10 ? "0" : "") + n; }
+    var out = "";
+    ts.forEach(function (t, i) {
+      if (t.lit != null) { out += t.lit; return; }
+      var c = t.code, lc = c.toLowerCase();
+      if (/^y/.test(lc)) out += lc.length <= 2 ? p2(d.y % 100) : d.y;
+      else if (/^m/.test(lc)) {
+        // m right after an hour, or just before seconds, is minutes
+        var prev = null, next = null, k;
+        for (k = i - 1; k >= 0; k--) if (ts[k].code) { prev = ts[k].code.toLowerCase(); break; }
+        for (k = i + 1; k < ts.length; k++) if (ts[k].code) { next = ts[k].code.toLowerCase(); break; }
+        if (lc.length <= 2 && ((prev && /^h/.test(prev)) || (next && /^s/.test(next)))) out += lc.length === 2 ? p2(mi) : mi;
+        else out += lc.length === 1 ? d.m : lc.length === 2 ? p2(d.m) : lc.length === 3 ? MONTHS[d.m - 1].slice(0, 3) : lc.length === 5 ? MONTHS[d.m - 1].charAt(0) : MONTHS[d.m - 1];
+      }
+      else if (/^d/.test(lc)) out += lc.length === 1 ? d.d : lc.length === 2 ? p2(d.d) : lc.length === 3 ? DAYS[d.w].slice(0, 3) : DAYS[d.w];
+      else if (/^h/.test(lc)) { var h = ampm ? (hh % 12 || 12) : hh; out += lc.length > 1 ? p2(h) : h; }
+      else if (/^s/.test(lc)) out += lc.length > 1 ? p2(ss) : ss;
+      else if (/^a/.test(lc)) { var pm = hh >= 12; out += c.length > 3 ? (c.charAt(0) === "a" ? (pm ? "pm" : "am") : (pm ? "PM" : "AM")) : (c.charAt(0) === "a" ? (pm ? "p" : "a") : (pm ? "P" : "A")); }
+      else out += c;
+    });
+    return out;
+  }
+  // a number format: 0 # ? for digits, . , % E+00 and text around them
+  function fmtNumber(x, ts, signed) {
+    var code = ts.filter(function (t) { return t.code; }).map(function (t) { return t.code; }).join("");
+    var pct = (code.match(/%/g) || []).length, e = /[eE]([+-])([0#]+)/.exec(code);
+    var num = code.replace(/[eE][+-][0#]+/, "").replace(/%/g, ""), dot = num.indexOf(".");
+    var ip = dot < 0 ? num : num.slice(0, dot), dp = dot < 0 ? "" : num.slice(dot + 1).replace(/,/g, "");
+    var scale = /,+$/.exec(ip.replace(/[^0#?,]/g, "")), sep = /[0#?],[0#?]/.test(ip);
+    var y = Math.abs(x) * Math.pow(100, pct), body;
+    if (scale && !sep) y /= Math.pow(1000, scale[0].length);
+    else if (scale) { var tail = /,+$/.exec(ip); if (tail) y /= Math.pow(1000, tail[0].length); }
+    var minD = (dp.match(/0/g) || []).length, maxD = (dp.match(/[0#?]/g) || []).length, minI = (ip.match(/0/g) || []).length;
+    if (e) {
+      var ex = y === 0 ? 0 : Math.floor(Math.log(y) / Math.LN10), mant = y / Math.pow(10, ex);
+      mant = roundTo(mant, maxD); if (mant >= 10) { mant /= 10; ex++; }
+      body = digits(mant, minD, maxD, Math.max(minI, 1), false, dot >= 0) + "E" + (ex < 0 ? "-" : e[1] === "+" ? "+" : "") + pad(String(Math.abs(ex)), e[2].length);
+    } else body = digits(roundTo(y, maxD), minD, maxD, minI, sep, dot >= 0);
+    if (signed && x < 0 && /[1-9]/.test(body)) body = "-" + body;
+    // the text around the digits goes where it stood
+    var out = "", put = false;
+    ts.forEach(function (t) {
+      if (t.lit != null) { out += t.lit; return; }
+      if (/^[0#?.,]/.test(t.code) || /^[eE]/.test(t.code)) { if (!put) { out += body; put = true; } }
+      if (/%/.test(t.code)) { if (!put) { out += body; put = true; } out += t.code.replace(/[^%]/g, ""); }
+    });
+    if (!put) out += body;
+    return out;
+  }
+  function pad(s, n) { while (s.length < n) s = "0" + s; return s; }
+  // digits(y, fewest decimals, most decimals, fewest whole digits, thousands, a point in the format)
+  function digits(y, minD, maxD, minI, sep, point) {
+    var s = Math.abs(y).toFixed(maxD), parts = s.split("."), ip = parts[0], dp = parts[1] || "";
+    while (dp.length > minD && dp.charAt(dp.length - 1) === "0") dp = dp.slice(0, -1);
+    if (ip === "0" && minI === 0) ip = "";
+    ip = pad(ip, minI);
+    if (sep) ip = commas(ip);
+    return ip + (point ? "." + dp : "");
+  }
+  // format(value, "format") -> text, as Excel's TEXT
+  function format(v, f) {
+    f = String(f);
+    var x = typeof v === "number" ? v : H.numText(v);
+    var secs = sections(f);
+    if (x === null) { var tsec = secs.length > 3 ? secs[3] : null; return tsec == null ? String(v) : tsec.replace(/@/g, String(v)).replace(/\x22/g, ""); }
+    var s = secs[0], signed = true;
+    if (x < 0 && secs.length > 1 && secs[1] !== "") { s = secs[1]; signed = false; }
+    else if (x === 0 && secs.length > 2) s = secs[2];
+    if (/^\s*general\s*$/i.test(s)) return H.fmtGeneral(signed ? x : Math.abs(x));
+    var ts = tokens(s);
+    if (!ts.some(function (t) { return t.code; })) return ts.map(function (t) { return t.lit; }).join("");
+    return isDate(ts) ? fmtDate(x, ts) : fmtNumber(x, ts, signed);
+  }
+  function str(x) { return T(x); }
+  function whole(x, what, lo) { var n = Math.floor(N(x)); if (n < lo) throw err("#VALUE!", what); return n; }
+  // texts(args): every value of the arguments as text, a range cell by cell (blanks as "")
+  function texts(args) {
+    var out = [];
+    args.forEach(function (a) { a = lz(a); if (isRange(a)) flat(a).forEach(function (v) { out.push(v == null ? "" : T(v)); }); else out.push(T(a)); });
+    return out;
+  }
+  // nth(text, part, n): where the nth part starts (n below 0 counts from the end), or -1
+  function nth(s, part, n, low) {
+    var hay = low ? s.toLowerCase() : s, needle = low ? part.toLowerCase() : part, at = -1, i;
+    if (n > 0) { for (i = 0; i < n; i++) { at = hay.indexOf(needle, at + 1); if (at < 0) return -1; } }
+    else { at = hay.length + 1; for (i = 0; i < -n; i++) { at = at - 1 < 0 ? -1 : hay.lastIndexOf(needle, at - 1); if (at < 0) return -1; } }
+    return at;
+  }
+  function beforeAfter(a, after) {
+    var s = str(a[0]), part = str(a[1]), n = a.length > 2 ? Math.floor(N(a[2])) : 1, low = a.length > 3 && N(a[3]) === 1;
+    if (n === 0) throw err("#VALUE!", "which one: 1 is the first, -1 the last");
+    if (part === "") return after ? (n > 0 ? s : "") : (n > 0 ? "" : s);
+    var at = nth(s, part, n, low);
+    if (at < 0) { if (a.length > 5) return a[5]; throw err("#N/A", "\u201c" + part + "\u201d is not in the text" + (Math.abs(n) > 1 ? " " + Math.abs(n) + " times" : "")); }
+    return after ? s.slice(at + part.length) : s.slice(0, at);
+  }
+  var F = {
+    TEXT: function (a) { var v = isRange(a[0]) ? flat(a[0])[0] : a[0]; return format(v == null || v === "" ? 0 : v, str(a[1])); },
+    PROPER: function (a) { return str(a[0]).toLowerCase().replace(/(^|[^A-Za-z\u00c0-\u024f])([a-z\u00df-\u024f])/g, function (m, b, c) { return b + c.toUpperCase(); }); },
+    TRIM: function (a) { return str(a[0]).replace(/^ +| +$/g, "").replace(/ {2,}/g, " "); },
+    CONCAT: function (a) { return texts(a).join(""); },
+    CONCATENATE: function (a) { return texts(a).join(""); },
+    TEXTJOIN: function (a) {
+      var sep = str(a[0]), skip = H.truthy(a[1]);
+      return texts(a.slice(2)).filter(function (t) { return !skip || t !== ""; }).join(sep);
+    },
+    VALUE: function (a) {
+      var v = isRange(a[0]) ? flat(a[0])[0] : a[0];
+      if (typeof v === "number") return v;
+      var x = H.numText(v == null ? "" : v);
+      if (x === null) throw err("#VALUE!", "\u201c" + str(v) + "\u201d is not a number");
+      return x;
+    },
+    // SEARCH ignores case and takes * and ?; FIND matches exactly
+    SEARCH: function (a) {
+      var part = str(a[0]), s = str(a[1]), st = a.length > 2 ? whole(a[2], "SEARCH starts at 1", 1) : 1, i;
+      if (st > s.length + 1) throw err("#VALUE!", "SEARCH starts past the end of the text");
+      if (/[*?~]/.test(part)) {
+        var re = new RegExp(H.wild(part).source.replace(/^\^|\$$/g, ""), "i"), m = re.exec(s.slice(st - 1));
+        i = m ? m.index + st - 1 : -1;
+      } else i = s.toLowerCase().indexOf(part.toLowerCase(), st - 1);
+      if (i < 0) throw err("#VALUE!", "SEARCH: \u201c" + part + "\u201d is not in the text");
+      return i + 1;
+    },
+    FIND: function (a) {
+      var part = str(a[0]), s = str(a[1]), st = a.length > 2 ? whole(a[2], "FIND starts at 1", 1) : 1, i = s.indexOf(part, st - 1);
+      if (st > s.length + 1 || i < 0) throw err("#VALUE!", "FIND: \u201c" + part + "\u201d is not in the text (FIND matches capitals exactly; SEARCH does not)");
+      return i + 1;
+    },
+    SUBSTITUTE: function (a) {
+      var s = str(a[0]), old = str(a[1]), nw = str(a[2]);
+      if (old === "") return s;
+      if (a.length < 4) return s.split(old).join(nw);
+      var k = whole(a[3], "SUBSTITUTE: which one starts at 1", 1), at = nth(s, old, k, false);
+      return at < 0 ? s : s.slice(0, at) + nw + s.slice(at + old.length);
+    },
+    REPLACE: function (a) {
+      var s = str(a[0]), st = whole(a[1], "REPLACE starts at 1", 1), n = whole(a[2], "REPLACE: how many cannot be below 0", 0);
+      return s.slice(0, st - 1) + str(a[3]) + s.slice(st - 1 + n);
+    },
+    REPT: function (a) { var n = whole(a[1], "REPT: how many times cannot be below 0", 0); if (str(a[0]).length * n > 32767) throw err("#VALUE!", "REPT: longer than a cell holds"); return new Array(n + 1).join(str(a[0])); },
+    EXACT: function (a) { return str(a[0]) === str(a[1]) ? 1 : 0; },
+    CHAR: function (a) { var n = Math.floor(N(a[0])); if (n < 1 || n > 255) throw err("#VALUE!", "CHAR takes 1 to 255"); return String.fromCharCode(n); },
+    CODE: function (a) { var s = str(a[0]); if (!s) throw err("#VALUE!", "CODE of no text"); return s.charCodeAt(0); },
+    UNICHAR: function (a) { var n = Math.floor(N(a[0])); if (n < 1 || n > 0x10ffff) throw err("#VALUE!", "UNICHAR takes 1 to 1114111"); return n > 0xffff ? String.fromCharCode(0xd800 + ((n - 0x10000) >> 10), 0xdc00 + ((n - 0x10000) & 1023)) : String.fromCharCode(n); },
+    UNICODE: function (a) {
+      var s = str(a[0]); if (!s) throw err("#VALUE!", "UNICODE of no text");
+      var c = s.charCodeAt(0), d = s.charCodeAt(1);
+      return c >= 0xd800 && c < 0xdc00 && d >= 0xdc00 && d < 0xe000 ? (c - 0xd800) * 1024 + d - 0xdc00 + 0x10000 : c;
+    },
+    // DOLLAR as Excel: $1,234.57, ($1,234.57) when below 0
+    DOLLAR: function (a) {
+      var x = N(a[0]), d = a.length > 1 ? Math.floor(N(a[1])) : 2, y = roundTo(Math.abs(x), d), s;
+      s = "$" + commas(d > 0 ? y.toFixed(d) : String(y));
+      return x < 0 && y !== 0 ? "(" + s + ")" : s;
+    },
+    FIXED: function (a) {
+      var x = N(a[0]), d = a.length > 1 ? Math.floor(N(a[1])) : 2, y = roundTo(x, d), s = d > 0 ? Math.abs(y).toFixed(d) : String(Math.abs(y));
+      return (y < 0 ? "-" : "") + (a.length > 2 && H.truthy(a[2]) ? s : commas(s));
+    },
+    CLEAN: function (a) { return str(a[0]).replace(/[\x00-\x1f]/g, ""); },
+    TEXTBEFORE: function (a) { return beforeAfter(a, false); },
+    TEXTAFTER: function (a) { return beforeAfter(a, true); },
+    T: function (a) { var v = isRange(a[0]) ? flat(a[0])[0] : a[0]; return typeof v === "string" ? v : ""; },
+    N: function (a) { var v = isRange(a[0]) ? flat(a[0])[0] : a[0]; return typeof v === "number" ? v : 0; }
+  };
+  Object.keys(F).forEach(function (k) { L.formula.register(k, F[k]); });
+  H.format = format;
+})();
+// ===========================================================================
+// MODULE: SHEET_FN_TEXT - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SHEET_FN_DATE - START
+// Depends: FORMULA (Lantern.formula.register), SHEET_FN_CORE (Lantern.sheetFn)
+//          -- feature-detected
+// Exports: formula functions TODAY NOW DATE TIME YEAR MONTH DAY HOUR MINUTE
+//          SECOND WEEKDAY WEEKNUM ISOWEEKNUM EDATE EOMONTH DATEDIF DAYS
+//          DAYS360 YEARFRAC NETWORKDAYS NETWORKDAYS.INTL WORKDAY WORKDAY.INTL
+//          DATEVALUE TIMEVALUE
+// ===========================================================================
+// (1.24.24) Dates as Excel counts them: a day is a whole number (1 January
+// 1900 is 1, 17 November 2026 is 46343) and a time the part of a day after
+// the point (noon is 0.5), so two dates taken one from the other are the
+// days between, and a date plus 30 is 30 days on. A cell that holds a date
+// written 2026-11-17 is that day to every function here, and Sheets shows a
+// formula that gives a date (=TODAY(), =EDATE(A1,3), =A1+30) as a date.
+(function () {
+  var L = window.Lantern;
+  if (!(L && L.formula && L.formula.register && L.sheetFn)) return;
+  var H = L.sheetFn, err = H.err, N = H.N, serial = H.serial, ymd = H.ymd, flat = H.flat, isRange = H.isRange;
+  function day(x) { var v = N(x); if (v < 0 || v >= 2958466) throw err("#NUM!", "not a date Sheets can count (1900 to 9999)"); return Math.floor(v); }
+  function frac(x) { var v = N(x); if (v < 0) throw err("#NUM!", "a time below 0"); return Math.round((v - Math.floor(v)) * 86400); }
+  function local(withTime) {
+    var t = new Date(), d = serial(t.getFullYear(), t.getMonth() + 1, t.getDate());
+    return withTime ? d + (t.getHours() * 3600 + t.getMinutes() * 60 + t.getSeconds()) / 86400 : d;
+  }
+  function lastDay(y, m) { return new Date(Date.UTC(y, m, 0)).getUTCDate(); }
+  // months on from a date, the day kept or the month's last if it has fewer
+  function addMonths(s, k) {
+    var d = ymd(s), t = d.m - 1 + k, y = d.y + Math.floor(t / 12), m = ((t % 12) + 12) % 12 + 1;
+    return serial(y, m, Math.min(d.d, lastDay(y, m)));
+  }
+  // the days off: the weekend (Excel's numbers 1-7 and 11-17, or "0000011", Monday first) and the holidays
+  var WKND = { 1: [6, 0], 2: [0, 1], 3: [1, 2], 4: [2, 3], 5: [3, 4], 6: [4, 5], 7: [5, 6], 11: [0], 12: [1], 13: [2], 14: [3], 15: [4], 16: [5], 17: [6] };
+  function weekend(w) {
+    var off = [false, false, false, false, false, false, false], i;
+    if (w == null) w = 1;
+    if (typeof w === "string" && /^[01]{7}$/.test(w)) { for (i = 0; i < 7; i++) off[(i + 1) % 7] = w.charAt(i) === "1"; }
+    else {
+      var k = Math.floor(N(w));
+      if (!WKND[k]) throw err("#NUM!", "the weekend is 1 (Saturday and Sunday) to 7, 11 (Sunday only) to 17, or seven 0s and 1s from Monday");
+      WKND[k].forEach(function (d) { off[d] = true; });
+    }
+    if (off.every(function (x) { return x; })) throw err("#VALUE!", "every day is a weekend day");
+    return off;
+  }
+  function holidays(x) {
+    var out = {};
+    if (x == null) return out;
+    (isRange(x) ? flat(x) : [x]).forEach(function (v) { if (v != null && v !== "") out[day(v)] = 1; });
+    return out;
+  }
+  function working(s, off, hol) { return !off[ymd(s).w] && !hol[s]; }
+  function netdays(a, off, holArg) {
+    var s = day(a[0]), e = day(a[1]), hol = holidays(holArg), sign = 1, n = 0, t;
+    if (s > e) { t = s; s = e; e = t; sign = -1; }
+    if (e - s > 400000) throw err("#NUM!", "too many days");
+    for (t = s; t <= e; t++) if (working(t, off, hol)) n++;
+    return sign * n;
+  }
+  function workday(a, off, holArg) {
+    var s = day(a[0]), n = N(a[1]), k = n < 0 ? Math.ceil(n) : Math.floor(n), hol = holidays(holArg), step = k < 0 ? -1 : 1;
+    if (Math.abs(k) > 100000) throw err("#NUM!", "too many days");
+    while (k !== 0) { s += step; if (working(s, off, hol)) k -= step; }
+    return s;
+  }
+  // week of the year: the week with 1 January is week 1; weeks start on Sunday (1) or Monday (2); 21 is the ISO week
+  function isoWeek(s) {
+    var d = ymd(s), w = (d.w + 6) % 7, thu = s - w + 3, y = ymd(thu).y;
+    return Math.floor((thu - serial(y, 1, 1)) / 7) + 1;
+  }
+  var STARTS = { 1: 0, 17: 0, 2: 1, 11: 1, 12: 2, 13: 3, 14: 4, 15: 5, 16: 6 };
+  function days360(s, e, europe) {
+    var a = ymd(s), b = ymd(e), d1 = a.d, d2 = b.d;
+    if (europe) { if (d1 === 31) d1 = 30; if (d2 === 31) d2 = 30; }
+    else {
+      var lastFeb = function (x) { return x.m === 2 && x.d === lastDay(x.y, 2); };
+      if (lastFeb(a)) { if (lastFeb(b)) d2 = 30; d1 = 30; }
+      if (d1 === 31) d1 = 30;
+      if (d2 === 31 && d1 >= 30) d2 = 30;
+    }
+    return (b.y - a.y) * 360 + (b.m - a.m) * 30 + d2 - d1;
+  }
+  function leap(y) { return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0; }
+  var F = {
+    TODAY: function () { return local(false); },
+    NOW: function () { return local(true); },
+    // DATE(year, month, day): a month past 12 or a day past the month's end runs on, as in Excel
+    DATE: function (a) {
+      var y = Math.floor(N(a[0])), m = Math.floor(N(a[1])), d = Math.floor(N(a[2]));
+      if (y >= 0 && y < 1900) y += 1900;
+      return serial(y + Math.floor((m - 1) / 12), ((m - 1) % 12 + 12) % 12 + 1, 1) + d - 1;
+    },
+    TIME: function (a) {
+      var t = Math.floor(N(a[0])) * 3600 + Math.floor(N(a[1])) * 60 + Math.floor(N(a[2]));
+      if (t < 0) throw err("#NUM!", "a time below 0");
+      return (t % 86400) / 86400;
+    },
+    YEAR: function (a) { return ymd(day(a[0])).y; },
+    MONTH: function (a) { return ymd(day(a[0])).m; },
+    DAY: function (a) { return ymd(day(a[0])).d; },
+    HOUR: function (a) { return Math.floor(frac(a[0]) / 3600) % 24; },
+    MINUTE: function (a) { return Math.floor(frac(a[0]) / 60) % 60; },
+    SECOND: function (a) { return frac(a[0]) % 60; },
+    // WEEKDAY(date, [1: Sunday 1 ... Saturday 7; 2: Monday 1 ... Sunday 7; 3: Monday 0 ... Sunday 6; 11-17: from Monday ... Sunday])
+    WEEKDAY: function (a) {
+      var w = ymd(day(a[0])).w, t = a.length > 1 ? Math.floor(N(a[1])) : 1;
+      if (t === 1) return w + 1;
+      if (t === 2) return (w + 6) % 7 + 1;
+      if (t === 3) return (w + 6) % 7;
+      if (t >= 11 && t <= 17) { var st = (t - 10) % 7; return (w - st + 7) % 7 + 1; }
+      throw err("#NUM!", "WEEKDAY takes 1, 2, 3 or 11 to 17");
+    },
+    WEEKNUM: function (a) {
+      var s = day(a[0]), t = a.length > 1 ? Math.floor(N(a[1])) : 1;
+      if (t === 21) return isoWeek(s);
+      if (!(t in STARTS)) throw err("#NUM!", "WEEKNUM takes 1, 2, 11 to 17 or 21");
+      var j1 = serial(ymd(s).y, 1, 1), off = (ymd(j1).w - STARTS[t] + 7) % 7;
+      return Math.floor((s - j1 + off) / 7) + 1;
+    },
+    ISOWEEKNUM: function (a) { return isoWeek(day(a[0])); },
+    EDATE: function (a) { return addMonths(day(a[0]), Math.floor(N(a[1]))); },
+    EOMONTH: function (a) { var s = addMonths(serial(ymd(day(a[0])).y, ymd(day(a[0])).m, 1), Math.floor(N(a[1]))), d = ymd(s); return serial(d.y, d.m, lastDay(d.y, d.m)); },
+    // DATEDIF(start, end, "Y" years, "M" months, "D" days, "YM" months over the years, "YD" days over the years, "MD" days over the months)
+    DATEDIF: function (a) {
+      var s = day(a[0]), e = day(a[1]), u = String(a[2] == null ? "" : a[2]).toUpperCase().replace(/^\s+|\s+$/g, "");
+      if (s > e) throw err("#NUM!", "DATEDIF: the start is after the end");
+      var A = ymd(s), B = ymd(e), months = (B.y - A.y) * 12 + B.m - A.m - (B.d < A.d ? 1 : 0);
+      if (u === "D") return e - s;
+      if (u === "M") return months;
+      if (u === "Y") return Math.floor(months / 12);
+      if (u === "YM") return months % 12;
+      if (u === "MD") { var md = B.d - A.d; return md >= 0 ? md : md + lastDay(B.m === 1 ? B.y - 1 : B.y, B.m === 1 ? 12 : B.m - 1); }
+      if (u === "YD") {
+        var y = B.y, st = serial(y, A.m, Math.min(A.d, lastDay(y, A.m)));
+        if (st > e) { y--; st = serial(y, A.m, Math.min(A.d, lastDay(y, A.m))); }
+        return e - st;
+      }
+      throw err("#NUM!", "DATEDIF takes \x22Y\x22, \x22M\x22, \x22D\x22, \x22YM\x22, \x22YD\x22 or \x22MD\x22");
+    },
+    DAYS: function (a) { return day(a[0]) - day(a[1]); },
+    DAYS360: function (a) { return days360(day(a[0]), day(a[1]), a.length > 2 && H.truthy(a[2])); },
+    // YEARFRAC(start, end, [0 30/360 US, 1 actual/actual, 2 actual/360, 3 actual/365, 4 30/360 European])
+    YEARFRAC: function (a) {
+      var s = day(a[0]), e = day(a[1]), b = a.length > 2 ? Math.floor(N(a[2])) : 0, t;
+      if (s > e) { t = s; s = e; e = t; }
+      if (b === 0) return days360(s, e, false) / 360;
+      if (b === 4) return days360(s, e, true) / 360;
+      if (b === 2) return (e - s) / 360;
+      if (b === 3) return (e - s) / 365;
+      if (b !== 1) throw err("#NUM!", "YEARFRAC takes 0 to 4 last");
+      var A = ymd(s), B = ymd(e), per;
+      if (A.y === B.y) per = leap(A.y) ? 366 : 365;
+      else if (B.y - A.y === 1 && (B.m < A.m || (B.m === A.m && B.d <= A.d))) {
+        per = (leap(A.y) && (A.m < 3)) || (leap(B.y) && (B.m > 2 || (B.m === 2 && B.d === 29))) ? 366 : 365;
+      } else {
+        var tot = 0; for (var y = A.y; y <= B.y; y++) tot += leap(y) ? 366 : 365;
+        per = tot / (B.y - A.y + 1);
+      }
+      return (e - s) / per;
+    },
+    NETWORKDAYS: function (a) { return netdays(a, weekend(1), a[2]); },
+    "NETWORKDAYS.INTL": function (a) { return netdays(a, weekend(a[2]), a[3]); },
+    WORKDAY: function (a) { return workday(a, weekend(1), a[2]); },
+    "WORKDAY.INTL": function (a) { return workday(a, weekend(a[2]), a[3]); },
+    DATEVALUE: function (a) {
+      var v = isRange(a[0]) ? flat(a[0])[0] : a[0], d = typeof v === "number" ? v : H.dayOf(v == null ? "" : v);
+      if (d === null || d < 1) throw err("#VALUE!", "\u201c" + H.T(v) + "\u201d is not a date Sheets reads (2026-11-17, 17 Nov 2026 or November 17, 2026)");
+      return Math.floor(d);
+    },
+    TIMEVALUE: function (a) {
+      var v = isRange(a[0]) ? flat(a[0])[0] : a[0], d = typeof v === "number" ? v : H.dayOf(v == null ? "" : v);
+      if (d === null) throw err("#VALUE!", "\u201c" + H.T(v) + "\u201d is not a time Sheets reads (14:30 or 2:30 pm)");
+      return d - Math.floor(d);
+    }
+  };
+  Object.keys(F).forEach(function (k) { L.formula.register(k, F[k]); });
+})();
+// ===========================================================================
+// MODULE: SHEET_FN_DATE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SHEET_FN_MONEY - START
+// Depends: FORMULA (Lantern.formula.register), SHEET_FN_CORE (Lantern.sheetFn)
+//          -- feature-detected
+// Exports: formula functions PMT PV FV NPER RATE IPMT PPMT CUMIPMT CUMPRINC
+//          NPV IRR XNPV XIRR SLN DDB EFFECT NOMINAL
+// ===========================================================================
+// (1.24.24) Loans, savings and investments, worked as Excel works them. The
+// signs are Excel's: money paid out is below 0 and money received above, so
+// a loan of 200,000 at 5% a year over 30 years, =PMT(5%/12,360,200000), is
+// -1073.64 a month. The rate is per period: a yearly rate paid monthly is
+// divided by 12.
+(function () {
+  var L = window.Lantern;
+  if (!(L && L.formula && L.formula.register && L.sheetFn)) return;
+  var H = L.sheetFn, err = H.err, N = H.N, flat = H.flat, isRange = H.isRange;
+  function opt(a, i, d) { return a.length > i && a[i] != null && a[i] !== "" ? N(a[i]) : d; }
+  function when(a, i) { return opt(a, i, 0) ? 1 : 0; }
+  function grow(r, n) { return Math.pow(1 + r, n); }
+  function pmt(r, n, pv, fv, t) {
+    if (n === 0) throw err("#NUM!", "no periods");
+    if (r === 0) return -(pv + fv) / n;
+    var g = grow(r, n);
+    return -(r * (pv * g + fv)) / ((1 + r * t) * (g - 1));
+  }
+  function fv(r, n, p, pv, t) { if (r === 0) return -(pv + p * n); var g = grow(r, n); return -(pv * g + p * (1 + r * t) * (g - 1) / r); }
+  function pv(r, n, p, f, t) { if (r === 0) return -(f + p * n); var g = grow(r, n); return -(f + p * (1 + r * t) * (g - 1) / r) / g; }
+  function ipmt(r, per, n, v, f, t) {
+    if (per < 1 || per > n) throw err("#NUM!", "the period is 1 to the number of periods");
+    var p = pmt(r, n, v, f, t);
+    if (t === 1) return per === 1 ? 0 : (fv(r, per - 2, p, v, 1) - p) * r;
+    return fv(r, per - 1, p, v, 0) * r;
+  }
+  // newton(f, guess): where f is 0, or #NUM! when it does not settle
+  function newton(f, x, what) {
+    for (var i = 0; i < 100; i++) {
+      var y = f(x), h = Math.max(1e-7, Math.abs(x) * 1e-7), d = (f(x + h) - y) / h;
+      if (!isFinite(y) || !isFinite(d) || d === 0) break;
+      var nx = x - y / d;
+      if (nx <= -1) nx = (x - 1) / 2;
+      if (Math.abs(nx - x) < 1e-12) return nx;
+      x = nx;
+    }
+    throw err("#NUM!", what + " found no rate that fits; try a guess as the last value");
+  }
+  // values(x): a range's numbers (text and blanks left out), or the one value; dates(x): every date, 2026-11-17 too
+  function values(x) { return (isRange(x) ? flat(x) : [x]).filter(function (v) { return typeof v === "number" || (v != null && v !== "" && !isRange(x)); }).map(N); }
+  function dates(x) { return (isRange(x) ? flat(x) : [x]).filter(function (v) { return v != null && v !== ""; }).map(N); }
+  function cum(a, interest) {
+    var r = N(a[0]), n = N(a[1]), v = N(a[2]), s = Math.floor(N(a[3])), e = Math.floor(N(a[4])), t = when(a, 5), tot = 0;
+    if (r <= 0 || n <= 0 || v <= 0 || s < 1 || e < s || e > n) throw err("#NUM!", "a rate, periods and loan above 0, and periods start to end within them");
+    for (var k = s; k <= e; k++) { var i = ipmt(r, k, n, v, 0, t); tot += interest ? i : pmt(r, n, v, 0, t) - i; }
+    return tot;
+  }
+  var F = {
+    // PMT(rate, periods, loan, [left at the end], [1 paid at the start of each period])
+    PMT: function (a) { return pmt(N(a[0]), N(a[1]), N(a[2]), opt(a, 3, 0), when(a, 4)); },
+    PV: function (a) { return pv(N(a[0]), N(a[1]), N(a[2]), opt(a, 3, 0), when(a, 4)); },
+    FV: function (a) { return fv(N(a[0]), N(a[1]), N(a[2]), opt(a, 3, 0), when(a, 4)); },
+    NPER: function (a) {
+      var r = N(a[0]), p = N(a[1]), v = N(a[2]), f = opt(a, 3, 0), t = when(a, 4);
+      if (r === 0) { if (p === 0) throw err("#NUM!", "no payment"); return -(v + f) / p; }
+      var q = (p * (1 + r * t) - f * r) / (v * r + p * (1 + r * t));
+      if (!(q > 0)) throw err("#NUM!", "these payments never pay it off");
+      return Math.log(q) / Math.log(1 + r);
+    },
+    RATE: function (a) {
+      var n = N(a[0]), p = N(a[1]), v = N(a[2]), f = opt(a, 3, 0), t = when(a, 4);
+      return newton(function (r) { return Math.abs(r) < 1e-12 ? v + p * n + f : v * grow(r, n) + p * (1 + r * t) * (grow(r, n) - 1) / r + f; }, opt(a, 5, 0.1), "RATE");
+    },
+    IPMT: function (a) { return ipmt(N(a[0]), N(a[1]), N(a[2]), N(a[3]), opt(a, 4, 0), when(a, 5)); },
+    PPMT: function (a) { var r = N(a[0]), n = N(a[2]), v = N(a[3]), f = opt(a, 4, 0), t = when(a, 5); return pmt(r, n, v, f, t) - ipmt(r, N(a[1]), n, v, f, t); },
+    // CUMIPMT(rate, periods, loan, first, last, 0 or 1): the interest paid from one period to another
+    CUMIPMT: function (a) { return cum(a, true); },
+    CUMPRINC: function (a) { return cum(a, false); },
+    // NPV(rate, values...): the first value one period from now
+    NPV: function (a) {
+      var r = N(a[0]), tot = 0, k = 0;
+      a.slice(1).forEach(function (x) { values(x).forEach(function (v) { k++; tot += v / grow(r, k); }); });
+      return tot;
+    },
+    IRR: function (a) {
+      var v = values(a[0]);
+      if (!(v.some(function (x) { return x > 0; }) && v.some(function (x) { return x < 0; }))) throw err("#NUM!", "IRR needs money both paid and received");
+      return newton(function (r) { var s = 0; for (var i = 0; i < v.length; i++) s += v[i] / grow(r, i); return s; }, opt(a, 1, 0.1), "IRR");
+    },
+    XNPV: function (a) { return xnpv(N(a[0]), values(a[1]), dates(a[2])); },
+    XIRR: function (a) {
+      var v = values(a[0]), d = dates(a[1]);
+      if (!(v.some(function (x) { return x > 0; }) && v.some(function (x) { return x < 0; }))) throw err("#NUM!", "XIRR needs money both paid and received");
+      return newton(function (r) { return xnpv(r, v, d); }, opt(a, 2, 0.1), "XIRR");
+    },
+    // SLN(cost, left at the end, years): the same each year
+    SLN: function (a) { var life = N(a[2]); if (life === 0) throw err("#DIV/0!", "Divide by zero"); return (N(a[0]) - N(a[1])) / life; },
+    // DDB(cost, left at the end, years, which year, [2]): double-declining balance
+    DDB: function (a) {
+      var c = N(a[0]), s = N(a[1]), life = N(a[2]), per = N(a[3]), f = opt(a, 4, 2), book = c, dep = 0;
+      if (life <= 0 || per < 1 || per > life || c < 0 || s < 0 || f <= 0) throw err("#NUM!", "DDB: cost, value left, years and year in range");
+      for (var i = 1; i <= Math.ceil(per); i++) { dep = Math.min(book * f / life, Math.max(0, book - s)); book -= dep; }
+      return dep;
+    },
+    EFFECT: function (a) { var r = N(a[0]), p = Math.floor(N(a[1])); if (r <= 0 || p < 1) throw err("#NUM!", "EFFECT: a rate above 0 and 1 or more periods a year"); return grow(r / p, p) - 1; },
+    NOMINAL: function (a) { var r = N(a[0]), p = Math.floor(N(a[1])); if (r <= 0 || p < 1) throw err("#NUM!", "NOMINAL: a rate above 0 and 1 or more periods a year"); return p * (Math.pow(1 + r, 1 / p) - 1); }
+  };
+  function xnpv(r, v, d) {
+    if (v.length !== d.length || !v.length) throw err("#NUM!", "as many dates as values");
+    var s = 0;
+    for (var i = 0; i < v.length; i++) s += v[i] / Math.pow(1 + r, (d[i] - d[0]) / 365);
+    return s;
+  }
+  Object.keys(F).forEach(function (k) { L.formula.register(k, F[k]); });
+})();
+// ===========================================================================
+// MODULE: SHEET_FN_MONEY - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SHEET_FN_STATS - START
+// Depends: FORMULA (Lantern.formula.register), SHEET_FN_CORE (Lantern.sheetFn)
+//          -- feature-detected
+// Exports: formula functions CORREL PEARSON RSQ SLOPE INTERCEPT FORECAST
+//          FORECAST.LINEAR STEYX COVARIANCE.S COVARIANCE.P COVAR GEOMEAN
+//          HARMEAN AVEDEV DEVSQ STANDARDIZE NORM.DIST NORM.S.DIST NORM.INV
+//          NORM.S.INV NORMDIST NORMSDIST NORMINV NORMSINV CONFIDENCE.NORM
+// ===========================================================================
+// (1.24.24) A line through measured points and the bell curve, as Excel has
+// them: =SLOPE(B2:B20,A2:A20) and =INTERCEPT(...) for a calibration line,
+// =FORECAST(x, ys, xs) to read it, =CORREL for how well the points keep to
+// it; NORM.DIST and NORM.INV for the normal distribution (J. F. Hart's 1968
+// algorithm as G. West gives it, 2005; P. J. Acklam's inverse, refined once).
+(function () {
+  var L = window.Lantern;
+  if (!(L && L.formula && L.formula.register && L.sheetFn)) return;
+  var H = L.sheetFn, err = H.err, N = H.N, grid = H.grid, nums = H.nums, flat = H.flat, isRange = H.isRange;
+  // pairs(ys, xs): the points where both cells hold a number, as Excel takes them
+  function pairs(ya, xa) {
+    var y = flat(ya), x = flat(xa), out = { x: [], y: [] };
+    if (y.length !== x.length) throw err("#N/A", "the two ranges are not the same size");
+    for (var i = 0; i < y.length; i++) if (typeof y[i] === "number" && typeof x[i] === "number") { out.y.push(y[i]); out.x.push(x[i]); }
+    return out;
+  }
+  function mean(v) { var s = 0; for (var i = 0; i < v.length; i++) s += v[i]; return s / v.length; }
+  // fit(ys, xs) -> {n, sxx, syy, sxy, mx, my}
+  function fit(ya, xa, least) {
+    var p = pairs(ya, xa), n = p.x.length;
+    if (n < (least || 1)) throw err("#DIV/0!", "too few points with a number in both");
+    var mx = mean(p.x), my = mean(p.y), sxx = 0, syy = 0, sxy = 0;
+    for (var i = 0; i < n; i++) { var dx = p.x[i] - mx, dy = p.y[i] - my; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; }
+    return { n: n, sxx: sxx, syy: syy, sxy: sxy, mx: mx, my: my };
+  }
+  function slope(f) { if (f.sxx === 0) throw err("#DIV/0!", "every x is the same"); return f.sxy / f.sxx; }
+  function correl(f) { if (f.sxx === 0 || f.syy === 0) throw err("#DIV/0!", "every value is the same"); return f.sxy / Math.sqrt(f.sxx * f.syy); }
+  // the standard normal distribution: phi(z) the area below z (Hart 1968, as in G. West 2005)
+  function phi(z) {
+    var x = Math.abs(z), c;
+    if (x > 37) c = 0;
+    else {
+      var e = Math.exp(-x * x / 2), b;
+      if (x < 7.07106781186547) {
+        b = 3.52624965998911e-2 * x + 0.700383064443688; b = b * x + 6.37396220353165; b = b * x + 33.912866078383;
+        b = b * x + 112.079291497871; b = b * x + 221.213596169931; b = b * x + 220.206867912376;
+        c = e * b;
+        b = 8.83883476483184e-2 * x + 1.75566716318264; b = b * x + 16.064177579207; b = b * x + 86.7807322029461;
+        b = b * x + 296.564248779674; b = b * x + 637.333633378831; b = b * x + 793.826512519948; b = b * x + 440.413735824752;
+        c = c / b;
+      } else {
+        b = x + 0.65; b = x + 4 / b; b = x + 3 / b; b = x + 2 / b; b = x + 1 / b;
+        c = e / b / 2.506628274631;
+      }
+    }
+    return z > 0 ? 1 - c : c;
+  }
+  function density(z) { return Math.exp(-z * z / 2) / Math.sqrt(2 * Math.PI); }
+  // the z below which the area is p (P. J. Acklam's approximation, then one Halley step)
+  function probit(p) {
+    if (!(p > 0 && p < 1)) throw err("#NUM!", "a probability between 0 and 1");
+    var a = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02, 1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00];
+    var b = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02, 6.680131188771972e+01, -1.328068155288572e+01];
+    var c = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00, -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00];
+    var d = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00, 3.754408661907416e+00];
+    var q, r, x;
+    if (p < 0.02425) { q = Math.sqrt(-2 * Math.log(p)); x = (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1); }
+    else if (p > 1 - 0.02425) { q = Math.sqrt(-2 * Math.log(1 - p)); x = -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1); }
+    else { q = p - 0.5; r = q * q; x = (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1); }
+    var e = phi(x) - p, u = e * Math.sqrt(2 * Math.PI) * Math.exp(x * x / 2);
+    return x - u / (1 + x * u / 2);
+  }
+  function sd(a, i) { var s = N(a[i]); if (s <= 0) throw err("#NUM!", "a standard deviation above 0"); return s; }
+  function positive(a, what) { var v = nums(a); if (!v.length) throw err("#NUM!", what + " of nothing"); v.forEach(function (x) { if (x <= 0) throw err("#NUM!", what + " takes numbers above 0"); }); return v; }
+  var F = {
+    CORREL: function (a) { return correl(fit(a[0], a[1], 2)); },
+    PEARSON: function (a) { return correl(fit(a[0], a[1], 2)); },
+    RSQ: function (a) { var r = correl(fit(a[0], a[1], 2)); return r * r; },
+    // SLOPE(ys, xs), INTERCEPT(ys, xs): the straight line through the points, y = slope * x + intercept
+    SLOPE: function (a) { return slope(fit(a[0], a[1], 2)); },
+    INTERCEPT: function (a) { var f = fit(a[0], a[1], 2); return f.my - slope(f) * f.mx; },
+    // FORECAST(x, ys, xs): the line's y at x
+    FORECAST: function (a) { var f = fit(a[1], a[2], 2), m = slope(f); return f.my + m * (N(a[0]) - f.mx); },
+    STEYX: function (a) { var f = fit(a[0], a[1], 3), m = slope(f); return Math.sqrt(Math.max(0, f.syy - m * f.sxy) / (f.n - 2)); },
+    "COVARIANCE.S": function (a) { var f = fit(a[0], a[1], 2); return f.sxy / (f.n - 1); },
+    "COVARIANCE.P": function (a) { var f = fit(a[0], a[1], 1); return f.sxy / f.n; },
+    GEOMEAN: function (a) { var v = positive(a, "GEOMEAN"), s = 0; v.forEach(function (x) { s += Math.log(x); }); return Math.exp(s / v.length); },
+    HARMEAN: function (a) { var v = positive(a, "HARMEAN"), s = 0; v.forEach(function (x) { s += 1 / x; }); return v.length / s; },
+    AVEDEV: function (a) { var v = nums(a); if (!v.length) throw err("#NUM!", "AVEDEV of nothing"); var m = mean(v), s = 0; v.forEach(function (x) { s += Math.abs(x - m); }); return s / v.length; },
+    DEVSQ: function (a) { var v = nums(a); if (!v.length) throw err("#NUM!", "DEVSQ of nothing"); var m = mean(v), s = 0; v.forEach(function (x) { s += (x - m) * (x - m); }); return s; },
+    STANDARDIZE: function (a) { return (N(a[0]) - N(a[1])) / sd(a, 2); },
+    // NORM.DIST(x, mean, standard deviation, TRUE for the area below x or FALSE for the height of the curve)
+    "NORM.DIST": function (a) { var z = (N(a[0]) - N(a[1])) / sd(a, 2); return H.truthy(a[3]) ? phi(z) : density(z) / N(a[2]); },
+    "NORM.S.DIST": function (a) { var z = N(a[0]); return a.length < 2 || H.truthy(a[1]) ? phi(z) : density(z); },
+    "NORM.INV": function (a) { return N(a[1]) + sd(a, 2) * probit(N(a[0])); },
+    "NORM.S.INV": function (a) { return probit(N(a[0])); },
+    // CONFIDENCE.NORM(alpha, standard deviation, how many): half the width of the confidence interval
+    "CONFIDENCE.NORM": function (a) {
+      var al = N(a[0]), n = Math.floor(N(a[2]));
+      if (!(al > 0 && al < 1) || n < 1) throw err("#NUM!", "alpha between 0 and 1, and 1 or more");
+      return -probit(al / 2) * sd(a, 1) / Math.sqrt(n);
+    }
+  };
+  F["FORECAST.LINEAR"] = F.FORECAST; F.COVAR = F["COVARIANCE.P"]; F.NORMDIST = F["NORM.DIST"]; F.NORMSDIST = F["NORM.S.DIST"];
+  F.NORMINV = F["NORM.INV"]; F.NORMSINV = F["NORM.S.INV"]; F.CONFIDENCE = F["CONFIDENCE.NORM"];
+  Object.keys(F).forEach(function (k) { L.formula.register(k, F[k]); });
+  H.phi = phi; H.probit = probit;
+})();
+// ===========================================================================
+// MODULE: SHEET_FN_STATS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SHEET_FN_HELP - START
+// Depends: SHEET (Lantern.sheetEditHooks: selected, insert), FORMULA, the
+//          SHEET_FN modules, ASSIST_CATALOG (Lantern.assistCatalog) -- all
+//          feature-detected
+// Exports: Lantern.formulaHelp ([{n, s, d, cat}]: every spreadsheet function
+//          with what it takes and what it gives, in plain words);
+//          Lantern.formulaFind(words, cat) (for tests); an fx button beside
+//          Sheets' formula bar
+// ===========================================================================
+// (1.24.24) The fx button: every function Sheets knows, found by a word
+// ("loan", "date", "look up", "average") or by kind, each with what to put in
+// the brackets and an example. Choosing one puts NAME( in the cell's formula,
+// where the cursor is. Lantern's own science and unit functions (CONVERT,
+// FORCE, ORBITV...) are listed too, from the catalog the AI reads. This list
+// is not sent to the AI (rule 5).
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var CATS = ["Maths", "Statistics", "Logic", "Look up", "Text", "Date and time", "Money", "Science and units"];
+  function e(cat, rows) { return rows.map(function (r) { return { n: r[0], s: r[1], d: r[2], cat: cat }; }); }
+  var HELP = [].concat(
+    e("Maths", [
+      ["SUM", "(numbers or ranges...)", "adds them up: SUM(B2:B10)"],
+      ["SUMIF", "(range, test, [range to add])", "adds the cells that pass the test: SUMIF(A2:A9,\x22rent\x22,B2:B9); a test can be 5, \x22>5\x22, \x22<>done\x22 or \x22ap*\x22"],
+      ["SUMIFS", "(range to add, range1, test1, range2, test2...)", "adds the cells whose rows pass every test"],
+      ["SUMPRODUCT", "(range1, range2...)", "multiplies the ranges cell by cell and adds: SUMPRODUCT(B2:B5,C2:C5) is quantity times price, totalled"],
+      ["SUMSQ", "(numbers...)", "the sum of the squares"],
+      ["PRODUCT", "(numbers...)", "multiplies them all"],
+      ["SUBTOTAL", "(how, ranges...)", "1 average, 2 count, 3 count filled, 4 max, 5 min, 6 product, 7 stdev, 9 sum, 10 var"],
+      ["ABS", "(number)", "without its sign: ABS(-3) is 3"],
+      ["ROUND", "(number, places)", "to so many decimal places, halves away from zero: ROUND(2.345,2) is 2.35; -1 rounds to tens"],
+      ["ROUNDUP", "(number, places)", "rounds away from zero: ROUNDUP(2.301,1) is 2.4"],
+      ["ROUNDDOWN", "(number, places)", "rounds toward zero: ROUNDDOWN(2.399,1) is 2.3"],
+      ["MROUND", "(number, multiple)", "to the nearest multiple: MROUND(17,5) is 15"],
+      ["CEILING", "(number, multiple)", "up to a multiple: CEILING(17,5) is 20 (CEIL(x) to a whole number)"],
+      ["FLOOR", "(number, [multiple])", "down to a multiple: FLOOR(17,5) is 15; FLOOR(2.7) is 2"],
+      ["CEILING.MATH", "(number, [multiple], [mode])", "up to a multiple; a negative number toward zero unless mode is 1 (CEILING.PRECISE)"],
+      ["FLOOR.MATH", "(number, [multiple], [mode])", "down to a multiple; a negative number away from zero unless mode is 1 (FLOOR.PRECISE)"],
+      ["INT", "(number)", "down to a whole number: INT(-2.5) is -3"],
+      ["TRUNC", "(number, [places])", "cuts off the decimals: TRUNC(-2.5) is -2"],
+      ["MOD", "(number, divisor)", "the remainder, with the divisor's sign: MOD(10,3) is 1"],
+      ["QUOTIENT", "(number, divisor)", "the whole part of a division: QUOTIENT(10,3) is 3"],
+      ["SQRT", "(number)", "the square root"],
+      ["POW", "(number, power)", "a number to a power: POW(2,10) is 1024; also 2^10. (POWER is Lantern's physics power, energy / time)"],
+      ["EXP", "(number)", "e to that power"],
+      ["LN", "(number)", "the natural log"],
+      ["LOG", "(number, [base])", "the log, base 10 unless given: LOG(8,2) is 3"],
+      ["LOG10", "(number)", "the log, base 10"],
+      ["SIGN", "(number)", "1, 0 or -1"],
+      ["EVEN", "(number)", "up (away from zero) to an even whole number"],
+      ["ODD", "(number)", "up (away from zero) to an odd whole number"],
+      ["GCD", "(numbers...)", "the greatest common divisor"],
+      ["LCM", "(numbers...)", "the least common multiple"],
+      ["FACT", "(number)", "the factorial: FACT(5) is 120"],
+      ["COMBIN", "(n, k)", "ways to choose k of n, order not counting"],
+      ["PERMUT", "(n, k)", "ways to choose k of n in order"],
+      ["RAND", "()", "a random number from 0 up to 1, new each time the sheet works out"],
+      ["RANDBETWEEN", "(bottom, top)", "a random whole number between them"],
+      ["PI", "()", "3.14159..."],
+      ["SIN", "(angle)", "the sine (angles in radians; in degrees on a calculator set to DEG); also COS, TAN"],
+      ["ASIN", "(number)", "the angle with that sine; also ACOS, ATAN"],
+      ["ATAN2", "(x, y)", "the angle of the point x, y from the x axis (Excel's order)"],
+      ["DEGREES", "(radians)", "radians to degrees"],
+      ["RADIANS", "(degrees)", "degrees to radians"],
+      ["SQRTPI", "(number)", "the square root of the number times pi"]
+    ]),
+    e("Statistics", [
+      ["AVERAGE", "(numbers or ranges...)", "the mean"],
+      ["AVERAGEIF", "(range, test, [range to average])", "the mean of the cells that pass the test"],
+      ["AVERAGEIFS", "(range to average, range1, test1...)", "the mean where every test passes"],
+      ["MEDIAN", "(numbers...)", "the middle value"],
+      ["MODE", "(numbers...)", "the value that comes most often (MODE.SNGL)"],
+      ["MIN", "(numbers...)", "the smallest; MINIFS(range, range1, test1...) the smallest that passes"],
+      ["MAX", "(numbers...)", "the largest; MAXIFS(range, range1, test1...) the largest that passes"],
+      ["MINIFS", "(range, range1, test1...)", "the smallest of the cells whose rows pass every test"],
+      ["MAXIFS", "(range, range1, test1...)", "the largest of the cells whose rows pass every test"],
+      ["LARGE", "(range, k)", "the k-th largest: LARGE(B2:B30,2) is the second highest"],
+      ["SMALL", "(range, k)", "the k-th smallest"],
+      ["RANK", "(number, range, [1 for smallest first])", "its place in the list, 1 for the largest (RANK.EQ)"],
+      ["COUNT", "(ranges...)", "how many cells hold numbers"],
+      ["COUNTA", "(ranges...)", "how many cells are not empty"],
+      ["COUNTBLANK", "(range)", "how many cells are empty"],
+      ["COUNTIF", "(range, test)", "how many cells pass the test: COUNTIF(C2:C50,\x22yes\x22), COUNTIF(B2:B50,\x22>=18\x22)"],
+      ["COUNTIFS", "(range1, test1, range2, test2...)", "how many rows pass every test"],
+      ["STDEV", "(numbers...)", "the standard deviation of a sample (STDEV.S); STDEVP for a whole population"],
+      ["STDEVP", "(numbers...)", "the standard deviation of a whole population (STDEV.P)"],
+      ["VAR", "(numbers...)", "the variance of a sample (VAR.S); VARP for a whole population"],
+      ["VARP", "(numbers...)", "the variance of a whole population (VAR.P)"],
+      ["PERCENTILE", "(range, fraction)", "the value at that fraction of the way up: PERCENTILE(B2:B99,0.9) (PERCENTILE.INC)"],
+      ["QUARTILE", "(range, 0 to 4)", "1 the lower quartile, 2 the median, 3 the upper (QUARTILE.INC)"],
+      ["GEOMEAN", "(numbers...)", "the geometric mean (growth rates)"],
+      ["HARMEAN", "(numbers...)", "the harmonic mean (average speeds)"],
+      ["AVEDEV", "(numbers...)", "the average distance from the mean"],
+      ["DEVSQ", "(numbers...)", "the sum of squared distances from the mean"],
+      ["CORREL", "(range1, range2)", "how closely two columns move together, -1 to 1 (PEARSON)"],
+      ["RSQ", "(ys, xs)", "R squared of the straight line through the points"],
+      ["SLOPE", "(ys, xs)", "the slope of the straight line through the points"],
+      ["INTERCEPT", "(ys, xs)", "where that line crosses x = 0"],
+      ["FORECAST", "(x, ys, xs)", "the line's y at x: reads a calibration line, or carries a trend on (FORECAST.LINEAR)"],
+      ["STEYX", "(ys, xs)", "the standard error of a y read from the line"],
+      ["COVARIANCE.S", "(range1, range2)", "the covariance of a sample; COVARIANCE.P (COVAR) of a population"],
+      ["STANDARDIZE", "(x, mean, stdev)", "how many standard deviations x is from the mean"],
+      ["NORM.DIST", "(x, mean, stdev, TRUE)", "the share below x of a normal (bell) curve; FALSE for the curve's height (NORMDIST)"],
+      ["NORM.INV", "(fraction, mean, stdev)", "the x below which that share lies (NORMINV)"],
+      ["NORM.S.DIST", "(z, TRUE)", "the same for mean 0, stdev 1 (NORMSDIST); NORM.S.INV(fraction) back (NORMSINV)"],
+      ["CONFIDENCE.NORM", "(alpha, stdev, how many)", "the plus-or-minus of a confidence interval: 0.05 for 95% (CONFIDENCE)"]
+    ]),
+    e("Logic", [
+      ["IF", "(test, if true, [if false])", "one value or another: IF(B2>=50,\x22pass\x22,\x22fail\x22)"],
+      ["IFS", "(test1, value1, test2, value2...)", "the value of the first test that is true; end with TRUE, value for the rest"],
+      ["SWITCH", "(value, match1, result1, ..., [else])", "the result whose match equals the value"],
+      ["IFERROR", "(value, if error)", "the value, or the second if it is an error: IFERROR(A2/B2,0)"],
+      ["IFNA", "(value, if not found)", "the value, or the second if it is #N/A (a lookup found nothing)"],
+      ["AND", "(tests...)", "1 (TRUE) if every test is true"],
+      ["OR", "(tests...)", "1 (TRUE) if any test is true"],
+      ["XOR", "(tests...)", "1 if an odd number of tests are true"],
+      ["NOT", "(test)", "the opposite"],
+      ["TRUE", "()", "1; FALSE() is 0. Sheets shows true and false as 1 and 0"],
+      ["CHOOSE", "(n, value1, value2...)", "the n-th value: CHOOSE(2,\x22a\x22,\x22b\x22,\x22c\x22) is b"],
+      ["ISBLANK", "(cell)", "1 if the cell is empty"],
+      ["ISNUMBER", "(value)", "1 if it is a number: ISNUMBER(SEARCH(\x22red\x22,A2)) asks if A2 has red in it"],
+      ["ISTEXT", "(value)", "1 if it is text; ISNONTEXT the opposite"],
+      ["ISERROR", "(value)", "1 if it is any error; ISERR any but #N/A; ISNA only #N/A"],
+      ["ISEVEN", "(number)", "1 if even; ISODD if odd"],
+      ["NA", "()", "the #N/A error, on purpose"]
+    ]),
+    e("Look up", [
+      ["VLOOKUP", "(value, table, column, FALSE)", "finds the value in the table's first column and gives that row's cell in the column numbered: VLOOKUP(\x22rice\x22,A2:C40,3,FALSE). Without FALSE the table must be sorted and the nearest below is taken"],
+      ["HLOOKUP", "(value, table, row, FALSE)", "the same across: the value in the first row, the cell in the row numbered"],
+      ["XLOOKUP", "(value, look in, give from, [if not found])", "finds the value in one column and gives the cell beside it from another: XLOOKUP(E2,A2:A40,C2:C40,\x22none\x22)"],
+      ["INDEX", "(range, row, [column])", "the cell at that row and column of the range"],
+      ["MATCH", "(value, range, 0)", "its position in the range (0 equal; 1 sorted, the nearest below); INDEX(C2:C40,MATCH(E2,A2:A40,0)) looks up like XLOOKUP"],
+      ["XMATCH", "(value, range)", "its position, equal by default"],
+      ["LOOKUP", "(value, sorted range, [results])", "the nearest at or below in a sorted list, and its result"],
+      ["ROW", "([cell])", "the row number; ROW() of this cell"],
+      ["COLUMN", "([cell])", "the column number: COLUMN(C1) is 3"],
+      ["ROWS", "(range)", "how many rows; COLUMNS how many columns"]
+    ]),
+    e("Text", [
+      ["&", "", "joins text: =A2&\x22 \x22&B2, =\x22Total: \x22&SUM(B2:B9)"],
+      ["CONCAT", "(texts or ranges...)", "joins them; CONCATENATE the same"],
+      ["TEXTJOIN", "(between, TRUE, texts or ranges...)", "joins with a separator, empty cells skipped: TEXTJOIN(\x22, \x22,TRUE,A2:A9)"],
+      ["TEXT", "(value, \x22format\x22)", "a number or date as text: TEXT(B2,\x22#,##0.00\x22), TEXT(A2,\x22d mmm yyyy\x22), TEXT(0.25,\x220%\x22)"],
+      ["LEN", "(text)", "how many characters"],
+      ["LEFT", "(text, n)", "the first n characters; RIGHT the last; MID(text, start, n) from the middle"],
+      ["MID", "(text, start, n)", "n characters from position start (1 is the first)"],
+      ["FIND", "(part, text, [start])", "where the part starts, matching capitals exactly"],
+      ["SEARCH", "(part, text, [start])", "where the part starts, any case, * and ? allowed"],
+      ["SUBSTITUTE", "(text, old, new, [which])", "puts new for old, every time or only the one numbered"],
+      ["REPLACE", "(text, start, n, new)", "puts new for the n characters from start"],
+      ["UPPER", "(text)", "in capitals; LOWER in small letters; PROPER Each Word Capitalised"],
+      ["PROPER", "(text)", "Each Word With A Capital"],
+      ["TRIM", "(text)", "without spaces at the ends, and single spaces between words"],
+      ["CLEAN", "(text)", "without the characters that do not print"],
+      ["TEXTBEFORE", "(text, delimiter, [which])", "the text before it: TEXTBEFORE(\x22Ada Lovelace\x22,\x22 \x22) is Ada"],
+      ["TEXTAFTER", "(text, delimiter, [which])", "the text after it; -1 for after the last"],
+      ["REPT", "(text, n)", "the text n times"],
+      ["EXACT", "(text1, text2)", "1 if they are the same, capitals too"],
+      ["VALUE", "(text)", "the number in the text: VALUE(\x22$1,200\x22) is 1200"],
+      ["FIXED", "(number, places)", "a number as text with commas: 1,234.50"],
+      ["DOLLAR", "(number, places)", "a number as money text: $1,234.50"],
+      ["CHAR", "(code)", "the character with that code; CODE(text) the code of the first; UNICHAR and UNICODE for any"],
+      ["REVERSE", "(text)", "spelled backwards (Lantern's)"],
+      ["REMOVE", "(text, letters)", "without the letters listed, any case (Lantern's)"],
+      ["COUNTCHARS", "(text, letters)", "how many of those letters (Lantern's)"],
+      ["WORDS", "(text)", "how many words (Lantern's)"],
+      ["SORTLETTERS", "(text)", "its letters in order, for anagrams (Lantern's)"],
+      ["T", "(value)", "the value if it is text, else nothing"],
+      ["N", "(value)", "the value if it is a number, else 0"]
+    ]),
+    e("Date and time", [
+      ["TODAY", "()", "today's date; NOW() with the time"],
+      ["DATE", "(year, month, day)", "a date: DATE(2026,11,17)"],
+      ["TIME", "(hour, minute, second)", "a time of day, as part of a day: noon is 0.5"],
+      ["YEAR", "(date)", "the year; MONTH the month, DAY the day of the month"],
+      ["WEEKDAY", "(date, [2])", "the day of the week, 1 Sunday to 7 Saturday; with 2, 1 Monday to 7 Sunday"],
+      ["HOUR", "(time)", "the hour; MINUTE and SECOND the same"],
+      ["DATEDIF", "(start, end, \x22Y\x22)", "whole years between (an age); \x22M\x22 months, \x22D\x22 days, \x22YM\x22 months over the years"],
+      ["DAYS", "(end, start)", "days between; also end - start"],
+      ["EDATE", "(date, months)", "the same day so many months on: EDATE(A2,6)"],
+      ["EOMONTH", "(date, months)", "the last day of the month so many months on (0 for this month)"],
+      ["NETWORKDAYS", "(start, end, [holidays])", "working days between, Monday to Friday, both counted"],
+      ["WORKDAY", "(start, days, [holidays])", "the date so many working days on"],
+      ["NETWORKDAYS.INTL", "(start, end, weekend, [holidays])", "with another weekend: 7 Friday and Saturday, 11 Sunday only, or \x220000011\x22"],
+      ["WORKDAY.INTL", "(start, days, weekend, [holidays])", "the same with another weekend"],
+      ["WEEKNUM", "(date, [2])", "the week of the year; ISOWEEKNUM the ISO week"],
+      ["YEARFRAC", "(start, end, [basis])", "the years between, with the part of a year"],
+      ["DAYS360", "(start, end)", "days between in a 360-day year, as some loans count"],
+      ["DATEVALUE", "(text)", "the date in a text: 2026-11-17, 17 Nov 2026, November 17, 2026"],
+      ["TIMEVALUE", "(text)", "the time in a text: 14:30 or 2:30 pm"]
+    ]),
+    e("Money", [
+      ["PMT", "(rate, periods, loan)", "the payment each period: PMT(5%/12,360,200000) is -1073.64 a month (paid out shows below 0)"],
+      ["IPMT", "(rate, period, periods, loan)", "the interest in one payment; PPMT the part that pays the loan down"],
+      ["PPMT", "(rate, period, periods, loan)", "the part of one payment that pays the loan down"],
+      ["CUMIPMT", "(rate, periods, loan, first, last, 0)", "the interest paid between two payments; CUMPRINC the loan paid"],
+      ["PV", "(rate, periods, payment)", "what a run of payments is worth today"],
+      ["FV", "(rate, periods, payment, [now])", "what savings grow to: FV(4%/12,120,-100) saving 100 a month"],
+      ["NPER", "(rate, payment, loan)", "how many payments to pay it off"],
+      ["RATE", "(periods, payment, loan)", "the rate per period that fits"],
+      ["NPV", "(rate, values...)", "today's worth of money coming in later, one period apart"],
+      ["IRR", "(values)", "the rate at which the money in and out balance"],
+      ["XNPV", "(rate, values, dates)", "NPV with a date for each amount; XIRR(values, dates) the rate"],
+      ["SLN", "(cost, left at the end, years)", "straight-line depreciation a year; DDB(cost, left, years, year) declining"],
+      ["EFFECT", "(rate, times a year)", "the yearly rate after compounding; NOMINAL back"]
+    ])
+  );
+  L.formulaHelp = HELP;
+  // all the entries: these and the science and unit functions from the catalog
+  function all() {
+    var have = {}, out = HELP.slice();
+    HELP.forEach(function (h) { have[h.n] = 1; });
+    (L.assistCatalog || []).forEach(function (c) { if (c && c.n && !have[c.n]) { have[c.n] = 1; out.push({ n: c.n, s: c.s || "", d: c.d || "", cat: "Science and units" }); } });
+    return out;
+  }
+  // find(words, cat) -> the entries, best first: the name first, then the description
+  function find(words, cat) {
+    var q = String(words || "").toLowerCase().replace(/^\s+|\s+$/g, ""), ws = q.split(/[^a-z0-9.]+/).filter(function (w) { return w.length > 1 || /^[a-z]$/.test(q); });
+    return all().filter(function (h) { return !cat || h.cat === cat; }).map(function (h, i) {
+      var n = h.n.toLowerCase(), d = (h.d + " " + h.s).toLowerCase(), s = 0;
+      if (!q) return { h: h, s: 1, i: i };
+      if (n === q) s += 100; else if (n.indexOf(q) === 0) s += 50; else if (q.length > 3 && n.indexOf(q) >= 0) s += 20;
+      // a word in the name counts most (if, in SUMIF), then a whole word in what it does, then the start of one
+      ws.forEach(function (w) {
+        var at = w.replace(/[.]/g, "\\.");
+        if (ws.length > 1 && n.indexOf(w) >= 0) s += 15;
+        if (new RegExp("\\b" + at + "\\b").test(d)) s += 5; else if (new RegExp("\\b" + at).test(d)) s += 3; else if (d.indexOf(w) >= 0) s += 1;
+      });
+      if (ws.length > 1 && ws.every(function (w) { return d.indexOf(w) >= 0 || n.indexOf(w) >= 0; })) s += 10;
+      return { h: h, s: s, i: i };
+    }).filter(function (x) { return x.s > 0; }).sort(function (a, b) { return b.s - a.s || a.i - b.i; }).map(function (x) { return x.h; });
+  }
+  L.formulaFind = find;
+  if (!L.el) return;
+  function panel(api, close) {
+    var catSel = L.el("select", { "aria-label": "Kind of function" }, [L.el("option", { value: "", text: "Every kind" })].concat(CATS.map(function (c) { return L.el("option", { value: c, text: c }); })));
+    var q = L.el("input", { type: "search", placeholder: "Find a function: total, average, date, loan, look up\u2026", "aria-label": "Find a function", style: "flex:1;min-width:140px;" });
+    var list = L.el("div", { "class": "fx-list", style: "max-height:46vh;overflow:auto;margin-top:6px;", role: "listbox" });
+    var shown = [];
+    function pick(h) { close(); if (h.n !== "&") api.insert(h.n + "("); else api.insert("&"); }
+    function draw() {
+      shown = find(q.value, catSel.value).slice(0, 400);
+      list.innerHTML = "";
+      if (!shown.length) list.appendChild(L.el("p", { "class": "muted", text: "No function has those words. Try one word, such as sum, date or text." }));
+      shown.forEach(function (h) {
+        list.appendChild(L.el("button", { "class": "ghost fx-item", type: "button", role: "option", style: "display:block;width:100%;text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);border-radius:0;white-space:normal;",
+          onclick: function () { pick(h); } }, [
+          L.el("code", { text: h.n + h.s, style: "font-weight:600;" }),
+          L.el("span", { "class": "muted", text: " \u2014 " + h.d })
+        ]));
+      });
+    }
+    q.addEventListener("input", draw);
+    q.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter" && shown.length) { ev.preventDefault(); pick(shown[0]); }
+      else if (ev.key === "Escape") { ev.preventDefault(); close(); }
+    });
+    catSel.addEventListener("change", draw);
+    var box = L.el("div", { "class": "fx-panel", style: "padding:8px 12px;border-bottom:1px solid var(--line);background:var(--soft);" }, [
+      L.el("div", { style: "display:flex;gap:6px;flex-wrap:wrap;align-items:center;" }, [q, catSel,
+        L.el("button", { type: "button", text: "Close", onclick: close })]),
+      L.el("p", { "class": "muted", style: "margin:6px 0 0;font-size:13px;", text: "Choose one to put it in " + api.selected() + "'s formula. A test in quotes can be \x22>5\x22, \x22<>done\x22 or \x22ap*\x22. Lantern's own science and unit functions are under Science and units." }),
+      list]);
+    draw();
+    return { box: box, focus: function () { q.focus(); } };
+  }
+  function mount(api) {
+    if (!api || !api.insert || !api.gridwrap) return;
+    var host = api.gridwrap.parentNode, bar = host && host.querySelector ? host.querySelector(".fbar") : null, open = null;
+    if (!bar || !bar.insertBefore) return;
+    function close() { if (open && open.box.parentNode) open.box.parentNode.removeChild(open.box); open = null; }
+    var btn = L.el("button", { type: "button", "class": "fx-btn", text: "fx", title: "Insert a function", "aria-label": "Insert a function",
+      style: "font-style:italic;font-weight:600;min-width:40px;",
+      onclick: function () {
+        if (open) { close(); return; }
+        open = panel(api, close);
+        bar.parentNode.insertBefore(open.box, bar.nextSibling);
+        open.focus();
+      } });
+    bar.insertBefore(btn, bar.lastChild);
+  }
+  (L.sheetEditHooks = L.sheetEditHooks || []).push(mount);
+})();
+// ===========================================================================
+// MODULE: SHEET_FN_HELP - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: AI_PUZZLE - START
@@ -43364,6 +44927,8 @@ Lantern.RFB = (function () {
       add({ kind: "function", id: f.n, title: f.n + (f.s || ""), desc: f.d || "", app: "sheet" });
     });
     String(L.assistBuiltins || "").split(/\s+/).forEach(function (n) { if (n) described[n] = 1; });
+    // (1.24.24) the spreadsheet functions are described in the fx list (SHEET_FN_HELP), not to the AI
+    (L.formulaHelp || []).forEach(function (f) { described[f.n] = 1; String(f.d + " " + f.s).replace(/\b[A-Z][A-Z0-9]+(?:\.[A-Z0-9]+)*\b/g, function (m) { described[m] = 1; return m; }); });
     // a function named inside another entry's description counts (TEXT_FUNCS
     // describes LEFT, RIGHT, UPPER ... in its LEN and MID lines)
     (L.assistCatalog || []).forEach(function (f) { String(f.d || "").replace(/\b[A-Z][A-Z0-9]{1,}\b/g, function (m) { described[m] = 1; return m; }); });
