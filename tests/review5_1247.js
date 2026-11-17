@@ -44,7 +44,10 @@ function near(a, b) { return typeof a === "number" && typeof b === "number" && M
   var S = L.aiScene, A = L.assist;
   ok("boot clean; the review\u2019s inputs: 113 replies, 36 recipe questions, 30 pictures", o.errs.length === 0 && F.replies.length === 113 && F.recipes.length === 36 && F.scenes.length === 30, o.errs);
   function outcome(reply, q) { var t = L.aiRead(reply, q).text, p = A.parseReply(t), run = null; try { run = p.exprText ? A.run(p.exprText) : null; } catch (e) { run = null; } return { text: t, value: run ? run.value : null }; }
-  var rNow = F.replies.filter(function (r) { var b = outcome(r.reply, r.q); return !(b.value === r.value || near(b.value, r.value)); });
+  // (1.24.24) numbers equal to 15 digits are equal, as in Excel: the model's test CONVERT(6,"ft","cm") = 182.88 is now
+  // true (182.88000000000002 = 182.88); Lantern questions the line as before, for the 182.88 the question does not give
+  var NOW = { "How many cm is 6 feet?": 1 };
+  var rNow = F.replies.filter(function (r) { var b = outcome(r.reply, r.q), want = r.q in NOW ? NOW[r.q] : r.value; return !(b.value === want || near(b.value, want)); });
   ok("the 113 replies: each read as the fixture has it", rNow.length === 0, rNow.map(function (r) { return [r.q, r.reply, outcome(r.reply, r.q)]; }));
   var lost = F.replies.filter(function (r) { return r.kind === "right" && r.expect !== null && near(r.v1246, r.expect) && !near(r.value, r.expect); });
   ok("...no right reply that 1.24.6 read right is read wrong: a last step done in the head stands (\u201c=80*25/100\u201d, \u201c=60\u201d; \u201c=100-60\u201d ...), a test against 0 is a test, a next step after an arrow is not cut away",
