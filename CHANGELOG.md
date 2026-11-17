@@ -193,7 +193,7 @@ prefers (Adam, 2026-11-16: "that changes nothing"): `LICENSE`, the About page,
 the Charter, Sources & licences, the READMEs, package.json; the zip carries
 `LICENSE`.
 
-**Tested.** `npm test` (ALL CHECKS PASS); the browser tests `health_e2e`,
+**Tested.** `npm test` (ALL CHECKS PASS, 102 suites); the browser tests `health_e2e`,
 `code_lab_e2e`, `bench_headless_e2e` and `bench_run9_e2e`; a lesson looked at
 in Chromium at a phone's width, its sources under the advice to get help. The
 checkers' records (`tests/fixtures/health_sources_1262.json`: 219 pages, 658
