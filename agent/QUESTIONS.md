@@ -115,7 +115,12 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    comments), public-domain US government wording (CDC, FEMA) where it
    fits, and a reader who teaches first aid to lay people (anywhere, not a
    local licence) only to flag what is missing or misleading, every change
-   still from a published guideline.
+   still from a published guideline. Adam, 2026-11-17: show the sources
+   ("I see no negatives to stating the source"). Done in 1.24.22: every
+   lesson names its guidelines, checked again in November 2026, and where a
+   guideline said otherwise the lesson now says what it says (the list is
+   in the 1.24.22 changelog). Still open: the trained reader, if you want
+   one.
 12. **Medicines in the Health tile: none, unless you say.** The tile's rule is
    no medicine and no dose, and a test now holds it. The sources the lessons
    come from also give these, each of which saves lives where there is no
@@ -128,8 +133,13 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    - chlorhexidine on the cord stump after a home birth where many newborns
      die (WHO 2017), instead of "nothing on the stump";
    - paracetamol for fever and pain by the label (now the AI's rule says
-     "follow the dose on the package label" and stops there).
-   (Asked 2026-11-05.)
+     "follow the dose on the package label" and stops there);
+   - (1.24.22) helping someone with severe allergy use their own adrenaline
+     pen (auto-injector), which they carry because a doctor gave it to them.
+     Allergy UK, which the Bites and stings lesson now names, puts it first
+     ("Call emergency services immediately after using your first dose of
+     adrenaline"). The lesson says only to lay them flat and get help.
+   (Asked 2026-11-05; updated 2026-11-17.)
 13. **WHO's amounts of ORS are in the Diarrhoea lesson** (after each loose
    stool: 50 to 100 ml under 2 years, 100 to 200 ml for an older child). I
    read them as fluid, not as a medicine dose. Say if you want them out.
