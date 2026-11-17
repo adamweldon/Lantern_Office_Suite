@@ -24,7 +24,7 @@ setTimeout(async function () {
   var asked = [];
   var call = function (msgs) { asked.push(msgs[msgs.length - 1].content); return Promise.resolve(asked.length === 1 ? row.first : "=ESCV(PLANET(\"Mars\",\"radius\"),PLANET(\"Mars\",\"gm\"))\nANSWER: The escape velocity from Mars is {result} m/s."); };
   var r = await A.solve(row.q, { call: call });
-  ok("now the line with Mars's GM goes back with the refusal", /ESCV given one value works out Earth.s .*PLANET\("Mars","radius"\) is Mars.s radius, not a height above Earth: give it Mars.s GM as its second value\. Write =ESCV\(PLANET\("Mars","radius"\),PLANET\("Mars","gm"\)\)/.test(asked[1] || ""), asked[1]);
+  ok("now the line with Mars's GM goes back with the refusal", /ESCV given one value works out Earth.s .*PLANET\("Mars","radius"\) is Mars.s radius, not a height above Earth, so do not add 6371 km: give it Mars.s GM as its second value\. Write =ESCV\(PLANET\("Mars","radius"\),PLANET\("Mars","gm"\)\)/.test(asked[1] || ""), asked[1]);
   ok("...and that line, written, gives Mars's escape velocity (PLANET(\"Mars\",\"escape\"))", r.run && Math.abs(r.run.value - row.expected) < 1e-6, r.run && r.run.value);
   // which lines are given, and which are left (the review's cases, tests/fixtures/review1_1262.json, are replayed below)
   var Q = { marsT: "How long, in minutes, does a satellite 400 km above Mars take to go round once?", moonV: "How fast does a probe orbit 100 km above the Moon?",
@@ -88,6 +88,33 @@ setTimeout(async function () {
   });
   ok("the review's " + rn + " cases: no right formula given a line, no line wrong when written in (" + rm + " left with no line where one could be given)", rn > 100 && !rq && !rw, badR.slice(0, 12));
   console.log("review cases: " + rn + "; lines that could have been given and were not: " + rm);
+  // the second review's cases (tests/fixtures/review2_1262.json): no line wrong; a right formula given a line only when
+  // Lantern cannot run it as written (Earth's ESCV refuses a radius inside the Earth), and then the line gives what it meant
+  var R2 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review2_1262.json"), "utf8"));
+  var n2 = 0, wrong2 = [], right2 = 0;
+  (R2.rule1 || []).filter(function (c) { return c.cls; }).forEach(function (c) {
+    var o = C.otherBodyCall(c.expr, c.question), mv = /giving\s+(-?[\d.e+]+)/i.exec(c.expected || "");
+    n2++;
+    if (!(o && o.line)) return;
+    var v = A.run("=" + o.line).value;
+    if (mv) { if (!(typeof v === "number" && Math.abs(v - parseFloat(mv[1])) <= Math.max(1e-6, 1e-6 * Math.abs(parseFloat(mv[1]))))) wrong2.push([c.question, c.expr, o.line, v, mv[1]]); return; }
+    if (c.cls === "right") {
+      right2++;
+      var meant = A.run(c.expr.replace(/\b(ESCV|ORBITV|ORBITT)\s*\x28([^\x28\x29]*(?:\x28[^\x28\x29]*\x29[^\x28\x29]*)*)\x29/i, "$1($2,PLANET(\"Earth\",\"gm\"))")).value, ran = A.run(c.expr).value;
+      if (ran != null || !(typeof meant === "number" && Math.abs(v - meant) <= 1e-6 * Math.abs(meant))) wrong2.push(["right formula given a line", c.question, c.expr, o.line, v, meant, ran]);
+      return;
+    }
+    if (/^no line$|^null|line null/i.test(c.expected || "")) wrong2.push(["a line where none was meant", c.question, c.expr, o.line]);
+  });
+  console.log("second review: " + n2 + " cases, " + right2 + " right but unrunnable given a line");
+  ok("the second review.s " + n2 + " cases: no line wrong; " + right2 + " right formulas Lantern cannot run as written given the line they mean", n2 > 3000 && !wrong2.length, wrong2.slice(0, 8));
+  var lc = (R2.rule2 || []).filter(function (c) { return c.raw; }), thrown = [], cut = [];
+  lc.forEach(function (c) {
+    var p2; try { p2 = L.aiCode.parse({ raw: c.raw.slice() }); } catch (e) { thrown.push([c.raw[0], String(e.message)]); return; }
+    if (c.kind === "keep" && c.raw.filter(function (l) { return /\S/.test(l); }).length > 1 && p2.text.replace(/\s+$/, "") !== c.raw.join("\n").replace(/^\s+|\s+$/g, "")) cut.push(c.raw[0]);
+    if (c.kind === "meant" && !(p2.lang && p2.text.split("\n")[0] === c.raw[1])) cut.push("meant: " + c.raw[0]);
+  });
+  ok("the second review's " + lc.length + " code blocks: none throws, every program kept whole, every lone name read", !thrown.length && !cut.length, [thrown, cut]);
   var run = A.run("=ESCV(PLANET(\"Jupiter\",\"radius\"))");
   var said = (L.assistChecks || []).map(function (f) { try { return f("What is the escape velocity from Jupiter?", "=ESCV(PLANET(\"Jupiter\",\"radius\"))", run, {}); } catch (e) { return null; } }).filter(Boolean);
   ok("Jupiter's radius, which runs as Earth's, is questioned with its line", said.some(function (x) { return /Write =ESCV\(PLANET\("Jupiter","radius"\),PLANET\("Jupiter","gm"\)\)/.test(x); }), said);
