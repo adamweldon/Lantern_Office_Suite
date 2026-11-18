@@ -1135,7 +1135,7 @@ Lantern.physics = (function () {
 // Recursive descent: compare > add/sub > mul/div > unary > power > primary.
 // ctx = { resolve(ref) -> number|null, range(a,b) -> number[], deg: bool }
 Lantern.formula = (function () {
-  var REF = /^[A-Z]{1,2}[0-9]{1,3}$/;
+  var REF = /^[A-Z]{1,2}[0-9]{1,4}$/;   // (1.24.25) rows to 9999
   // the error a sheet cell can hold (it travels to formulas that use it);
   // #N/A (1.24.24) is a lookup's "not found"
   var ERRCODE = /^#(?:ERR|CYCLE|DIV\x2F0!|VALUE!|NAME\?|NUM!|REF!|N\x2FA)$/;
@@ -1260,7 +1260,7 @@ Lantern.formula = (function () {
         toks.push({ t: "num", v: parseFloat(m[0]) }); i += m[0].length; continue;
       }
       // (1.24.24) $A$1, A$1, $A1: a cell kept from moving when copied -- here the same cell
-      var dr = /^\$?[A-Za-z]{1,2}\$?[0-9]{1,3}(?![A-Za-z0-9_.\x28])|^\$[A-Za-z]{1,2}(?![A-Za-z0-9_.\x28$])/.exec(s.slice(i));
+      var dr = /^\$?[A-Za-z]{1,2}\$?[0-9]{1,4}(?![A-Za-z0-9_.\x28])|^\$[A-Za-z]{1,2}(?![A-Za-z0-9_.\x28$])/.exec(s.slice(i));
       if (dr && /\$/.test(dr[0])) { toks.push({ t: "id", v: dr[0].replace(/\$/g, "").toUpperCase() }); i += dr[0].length; continue; }
       if (/[A-Za-z_]/.test(ch)) {
         var w = /^[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*/.exec(s.slice(i))[0];
@@ -1651,7 +1651,10 @@ Lantern.formula = (function () {
   reg("WEIGHT", function (a) { return n(a[0]) * (a.length > 1 ? n(a[1]) : P.g0); }); // W = m*g
   reg("MOMENTUM", function (a) { return n(a[0]) * n(a[1]); });                    // p = m*v
   reg("WORK", function (a) { return n(a[0]) * n(a[1]); });                        // W = F*d
-  reg("POWER", function (a) { return n(a[0]) / n(a[1]); });                       // P = E/t
+  // (1.24.25, Adam: "we need to keep the excel formula as it works in excel and lantern") POWER(x,y) is Excel's,
+  // x to the power y (SHEET_FN_CORE), so a sheet saved for Excel works the same there; power in watts from
+  // energy and time is POWERW, and AI_CHECKS tells a model that wrote POWER(joules, seconds) which it meant
+  reg("POWERW", function (a) { return n(a[0]) / n(a[1]); });                      // P = E/t
   reg("PRESSURE", function (a) { return n(a[0]) / n(a[1]); });                    // P = F/A
   reg("STRESS", function (a) { return n(a[0]) / n(a[1]); });                      // sigma = F/A
   reg("KE", function (a) { return 0.5 * n(a[0]) * n(a[1]) * n(a[1]); });          // KE = 1/2 m v^2
@@ -2003,11 +2006,15 @@ Lantern.formula = (function () {
 // Exports: Lantern.sheetDocs (list, values, create, compute, open); (registers "sheet" app; runs Lantern.sheetEditHooks when a
 //          sheet opens so grid features like page setup can bind)
 // ===========================================================================
-// 26 columns x 100 rows, plain <table> built once (light DOM for weak CPUs).
+// 26 columns x 100 rows (more on request, 1.24.25), plain <table> built once (light DOM for weak CPUs).
 // One shared formula bar edits the selected cell -- no per-cell inputs.
 // Formulas start with "=", e.g. =SUM(B2:B9)*1.05
 (function () {
-  var COLS = 26, ROWS = 100;
+  // (1.24.25) a sheet has 100 rows, or as many as it uses or has been given (doc.rows), to MAXROWS
+  var COLS = 26, ROWS = 100, MAXROWS = 2000;
+  // hooks for SHEET_EDIT (1.24.25): a cell selected, a change about to be made (for undo), a number's text, after a repaint
+  var selHooks = [], changeHooks = [], showHooks = [], paintHooks = [];
+  function each(list, a, b, c) { for (var i = 0; i < list.length; i++) { try { var r = list[i](a, b, c); if (r != null) return r; } catch (e) { /* a hook that fails leaves the grid as it is */ } } return null; }
   var col = Lantern.store.collection("sheet.docs");
   var ws, doc = null, tds = {}, sel = "A1", fbar, nameEl, gridwrap, shown = {};
   // dirty: the formula bar holds typing not yet in the cell (1.16.0: it was
@@ -2044,7 +2051,8 @@ Lantern.formula = (function () {
   }
 
   function computeAll(cells) {
-    var out = {}, visiting = {};
+    var out = {}, visiting = {}, lastRow = ROWS;
+    for (var kr in cells) { var pr = /([0-9]+)$/.exec(kr); if (pr && +pr[1] > lastRow) lastRow = +pr[1]; }
     function val(ref) {
       if (ref in out) return out[ref];
       if (visiting[ref]) { out[ref] = "#CYCLE"; return "#CYCLE"; }
@@ -2055,7 +2063,7 @@ Lantern.formula = (function () {
         var v, cx = {
             resolve: fval,
             cell: ref,   // (1.24.24) the cell itself: ROW() and COLUMN() with nothing in the brackets
-            rows: ROWS, cols: COLS,  // (1.24.24) A:A is A1 to the last row, 2:2 A2 to the last column
+            rows: lastRow, cols: COLS,  // (1.24.24) A:A is A1 to the last row, 2:2 A2 to the last column
             formula: function (k) { return typeof cells[k] === "string" && cells[k].charAt(0) === "="; },   // ISFORMULA
             // a range is its numbers (what SUM and AVERAGE take), and (1.24.24)
             // .cells, its rows of values as they are -- text, null for an empty
@@ -2063,7 +2071,7 @@ Lantern.formula = (function () {
             // (VLOOKUP, COUNTIF, ROW) and .subtotals the cells that are SUBTOTALs
             range: function (a, b) {
               var A = parseRef(a), B = parseRef(b), arr = [], rows = [], subs = [];
-              B = { r: Math.min(B.r, ROWS - 1), c: Math.min(B.c, COLS - 1) };
+              B = { r: Math.min(B.r, lastRow - 1), c: Math.min(B.c, COLS - 1) };
               for (var r = Math.min(A.r, B.r); r <= Math.max(A.r, B.r); r++) {
                 var row = [];
                 for (var c = Math.min(A.c, B.c); c <= Math.max(A.c, B.c); c++) {
@@ -2184,7 +2192,7 @@ Lantern.formula = (function () {
       // formula, SUM, AVERAGE, INT, ROUND, MOD, MAXIFS ... show what their first value is (=SUM(A1,30), =MOD(B2-B1,1))
       var at = { MAX: 0, MIN: 0, LARGE: 0, SMALL: 0, MEDIAN: 0, INDEX: 0, XLOOKUP: 2, LOOKUP: args.length - 1, VLOOKUP: 1, SUM: 0, AVERAGE: 0,
         INT: 0, ROUND: 0, ROUNDUP: 0, ROUNDDOWN: 0, TRUNC: 0, MOD: 0, ABS: 0, MAXIFS: 0, MINIFS: 0, MROUND: 0, FLOOR: 0, CEILING: 0 }[fn];
-      var g = at == null || !args[at] ? null : /^\s*([A-Z])([0-9]{1,3})(?::([A-Z])([0-9]{1,3}))?\s*$/i.exec(args[at].s.replace(/\$/g, ""));
+      var g = at == null || !args[at] ? null : /^\s*([A-Z])([0-9]{1,4})(?::([A-Z])([0-9]{1,4}))?\s*$/i.exec(args[at].s.replace(/\$/g, ""));
       var pick = fn === "VLOOKUP" ? args[2] : fn === "INDEX" && args.length > 2 ? args[2] : fn === "LOOKUP" && args.length === 2 && g && g[3] ? { s: String(g[3].toUpperCase().charCodeAt(0) - g[1].toUpperCase().charCodeAt(0) + 1) } : null;
       if (g && pick) {
         var vc = /^\s*(\d+)\s*$/.exec(pick.s);
@@ -2206,7 +2214,7 @@ Lantern.formula = (function () {
       }
       return null;
     }
-    if (/^[A-Z]{1,2}[0-9]{1,3}$/i.test(src)) return dateKind(src.toUpperCase(), seen);
+    if (/^[A-Z]{1,2}[0-9]{1,4}$/i.test(src)) return dateKind(src.toUpperCase(), seen);
     var ts = tops(src, "+-");
     if (ts.length < 2) return null;
     var sum = 0, kind = null, clocks = 0;
@@ -2251,7 +2259,7 @@ Lantern.formula = (function () {
   // shownNum(ref, v): a number as the grid shows it -- =A1 of a cell typed 1,500 as that cell shows it; past 11
   // digits as Excel's narrow column does, 1.15292E+18
   function shownNum(ref, v) {
-    var raw = doc.cells[ref], m = typeof raw === "string" && /^=\s*\$?([A-Z])\$?([0-9]{1,3})\s*$/i.exec(raw);
+    var raw = doc.cells[ref], m = typeof raw === "string" && /^=\s*\$?([A-Z])\$?([0-9]{1,4})\s*$/i.exec(raw);
     if (m) { var src = doc.cells[(m[1] + m[2]).toUpperCase()]; if (typeof src === "string" && src.charAt(0) !== "=" && /[,%\$\u20ac\u00a3]/.test(src) && typed(src) === v) return src.replace(/^\s+|\s+$/g, ""); }
     if (Math.abs(v) >= 1e11) {
       var e = /^(-?\d)(?:\.(\d*?))0*e([+-])(\d+)$/.exec(v.toExponential(5));
@@ -2272,8 +2280,8 @@ Lantern.formula = (function () {
       if (v == null) { td.textContent = ""; td.className = ""; }
       else if (typeof v === "number") {
         // a number typed with its format ($12.50, 1,500, 10%) shows as typed
-        var raw = doc.cells[k], dk = dateKind(k);
-        td.textContent = typeof raw === "string" && raw.charAt(0) !== "=" && /[,%\$\u20ac\u00a3]/.test(raw) ? raw.replace(/^\s+|\s+$/g, "") :
+        var raw = doc.cells[k], dk = dateKind(k), own = each(showHooks, k, v, raw);
+        td.textContent = own != null ? own : typeof raw === "string" && raw.charAt(0) !== "=" && /[,%\$\u20ac\u00a3]/.test(raw) ? raw.replace(/^\s+|\s+$/g, "") :
           dk && (dk === "clock" ? Math.abs(v) < 400 : v >= 1 && v < 2958466) ? dayText(v, dk) : shownNum(k, v);
         td.className = "num";
       }
@@ -2281,6 +2289,7 @@ Lantern.formula = (function () {
     }
     shown = out;
     if (tds[sel]) tds[sel].classList.add("sel");
+    each(paintHooks, out);
   }
 
   function select(ref, keepBar) {
@@ -2292,10 +2301,12 @@ Lantern.formula = (function () {
     }
     nameEl.textContent = ref;
     if (!keepBar) { fbar.value = doc.cells[ref] == null ? "" : String(doc.cells[ref]); dirty = false; }
+    each(selHooks, ref);
   }
 
   function commit(move) {
     var v = fbar.value;
+    if ((doc.cells[sel] == null ? "" : String(doc.cells[sel])) !== v) each(changeHooks, doc);
     if (v === "") delete doc.cells[sel];
     else doc.cells[sel] = v;
     dirty = false;
@@ -2312,6 +2323,7 @@ Lantern.formula = (function () {
   // repaint (leaving the sheet, another app, the page closing)
   function keepTyping() {
     if (!doc || !dirty || !fbar) return;
+    each(changeHooks, doc);
     if (fbar.value === "") delete doc.cells[sel]; else doc.cells[sel] = fbar.value;
     dirty = false; col.put(doc);
   }
@@ -2342,6 +2354,16 @@ Lantern.formula = (function () {
   // CSV import/export moved to the SHEET_CSV module (size-gate split,
   // rule 4): it rebuilds the same buttons through Lantern.sheetEditHooks.
 
+  function makeRow(r) {
+    var tr = Lantern.el("tr", {}, [Lantern.el("th", { text: String(r + 1) })]);
+    for (var c = 0; c < COLS; c++) {
+      var td = document.createElement("td");
+      td.setAttribute("data-ref", refOf(c, r));
+      tds[refOf(c, r)] = td;
+      tr.appendChild(td);
+    }
+    return tr;
+  }
   function buildGrid() {
     tds = {}; shown = {};
     var thead = Lantern.el("thead", {}, [Lantern.el("tr", {},
@@ -2350,16 +2372,7 @@ Lantern.formula = (function () {
           return Lantern.el("th", { text: colName(c) });
         })))]);
     var tbody = Lantern.el("tbody", {});
-    for (var r = 0; r < ROWS; r++) {
-      var tr = Lantern.el("tr", {}, [Lantern.el("th", { text: String(r + 1) })]);
-      for (var c = 0; c < COLS; c++) {
-        var td = document.createElement("td");
-        td.setAttribute("data-ref", refOf(c, r));
-        tds[refOf(c, r)] = td;
-        tr.appendChild(td);
-      }
-      tbody.appendChild(tr);
-    }
+    for (var r = 0; r < ROWS; r++) tbody.appendChild(makeRow(r));
     var table = Lantern.el("table", { "class": "grid" }, [thead, tbody]);
     // while a formula is typed, a cell pressed goes into it (the focus
     // stays in the bar); otherwise a click keeps what was typed, then selects
@@ -2408,6 +2421,9 @@ Lantern.formula = (function () {
     doc = col.get(id);
     if (!doc) return libView();
     ws.innerHTML = "";
+    var ur0 = null;
+    for (var k0 in doc.cells) { var r0m = /([0-9]+)$/.exec(k0); if (r0m && (!ur0 || +r0m[1] > ur0)) ur0 = +r0m[1]; }
+    ROWS = Math.min(MAXROWS, Math.max(100, doc.rows || 0, ur0 || 0));
     var titleIn = Lantern.el("input", {
       value: doc.title || "", placeholder: "Sheet name", style: "flex:1;min-width:120px;font-weight:600;",
       oninput: function () { doc.title = titleIn.value; col.put(doc); }
@@ -2415,7 +2431,7 @@ Lantern.formula = (function () {
     // Hook: tools from other modules (see SHEET_CHART). rangeVals("A1:A5")
     // returns computed values, so tools see what the user sees.
     function rangeVals(spec) {
-      var m = /^([A-Z][0-9]{1,3})(?::([A-Z][0-9]{1,3}))?$/.exec(String(spec || "").toUpperCase().replace(/\s/g, ""));
+      var m = /^([A-Z][0-9]{1,4})(?::([A-Z][0-9]{1,4}))?$/.exec(String(spec || "").toUpperCase().replace(/\s/g, ""));
       if (!m) return null;
       var out = computeAll(doc.cells);
       var A = parseRef(m[1]), B = parseRef(m[2] || m[1]), arr = [];
@@ -2458,6 +2474,7 @@ Lantern.formula = (function () {
     // Hook: persistent grid features that live for the whole edit session
     // (see SHEET_PAGES / SHEET_PRINT). Isolated so one failing hook cannot
     // break the grid or the other hooks.
+    selHooks = []; changeHooks = []; showHooks = []; paintHooks = [];
     var eh = window.Lantern.sheetEditHooks || [];
     for (var hi = 0; hi < eh.length; hi++) {
       try {
@@ -2469,10 +2486,29 @@ Lantern.formula = (function () {
           values: rangeVals,
           used: usedRange,
           refresh: repaint,
-          COLS: COLS, ROWS: ROWS,
+          COLS: COLS, ROWS: ROWS, MAXROWS: MAXROWS,
           // (1.24.24) the cell being edited, and text put into its formula
           // bar where the cursor is (a formula started if the bar is empty)
           selected: function () { return sel; },
+          // (1.24.25, SHEET_EDIT) move to a cell; the cells' elements; hooks; typing kept; more rows
+          select: function (ref) { if (tds[ref]) select(ref); },
+          tds: function () { return tds; },
+          onSelect: function (fn) { selHooks.push(fn); },
+          beforeChange: function (fn) { changeHooks.push(fn); },
+          addShow: function (fn) { showHooks.push(fn); },
+          onPaint: function (fn) { paintHooks.push(fn); },
+          keep: function () { if (dirty) commit(); },
+          typing: function () { return dirty; },
+          bar: function () { return fbar; },
+          rows: function () { return ROWS; },
+          setRows: function (n) {
+            n = Math.min(MAXROWS, Math.max(ROWS, n));
+            if (n === ROWS) return ROWS;
+            var tb = gridwrap.querySelector("tbody");
+            for (var r = ROWS; r < n; r++) tb.appendChild(makeRow(r));
+            ROWS = n; doc.rows = n; col.put(doc); repaint();
+            return ROWS;
+          },
           insert: function (text) {
             var v = fbar.value, at = fbar.selectionStart == null ? v.length : fbar.selectionStart;
             if (!dirty) { if (v.charAt(0) !== "=") v = "="; at = v.length; }
@@ -2483,6 +2519,8 @@ Lantern.formula = (function () {
         });
       } catch (e) {}
     }
+    // (1.24.25) a hook that changes how cells look (SHEET_FORMAT) is seen from the first paint
+    if (showHooks.length || paintHooks.length) repaint();
   }
 
   function libView() {
@@ -8139,6 +8177,18 @@ if (document.readyState === "loading") {
     ["Ranges", "<p>A range like <code>A1:A10</code> means \"A1 down to A10\" and works inside functions: " +
       "<code>=SUM(B2:B20)</code> adds a whole column of prices; <code>=AVERAGE(C1:C5)</code> gives a mean; " +
       "<code>=COUNT(A1:A50)</code> counts how many cells have numbers.</p>"],
+    ["Editing like Excel", "<p>Drag over cells, or hold <b>Shift</b> and click or press the arrows, to select a range " +
+      "(on a phone: tap the first cell, <b>Select range</b>, then the last). Then:</p><ul>" +
+      "<li><b>Ctrl+C</b>, <b>Ctrl+X</b>, <b>Ctrl+V</b> copy, cut and paste &mdash; to and from Excel and Google Sheets too. " +
+      "A formula pasted somewhere else has its references moved, as in Excel: <code>=B2*C2</code> one row down is " +
+      "<code>=B3*C3</code>; <code>$A$1</code> stays put.</li>" +
+      "<li><b>Ctrl+D</b> fills the top row down the range, <b>Ctrl+R</b> the left column across.</li>" +
+      "<li><b>Ctrl+Z</b> undoes, <b>Ctrl+Y</b> redoes.</li>" +
+      "<li><b>Ctrl+B</b>, <b>Ctrl+I</b>: bold and italic. The format list shows a number as money, per cent, a date, a " +
+      "time or a fraction, or by any Excel format code; a formula shows the look of the first cell it names.</li>" +
+      "<li><b>Sort A&rarr;Z</b> and <b>Z&rarr;A</b> sort by the selected cell's column (the table round it, headings left " +
+      "on top). <b>Rows &amp; columns</b> puts rows and columns in or takes them out, and every formula follows.</li>" +
+      "<li><b>Freeze top row</b> keeps the headings in view; <b>100 more rows</b> when a sheet needs them.</li></ul>"],
     ["Excel's functions, and the fx button", "<p>Sheets works out Excel's everyday functions the way Excel does: " +
       "<code>SUMIF</code>, <code>COUNTIFS</code>, <code>VLOOKUP</code>, <code>XLOOKUP</code>, <code>INDEX</code>/<code>MATCH</code>, " +
       "<code>IFS</code>, <code>TEXT</code>, <code>DATEDIF</code>, <code>NETWORKDAYS</code>, <code>PMT</code>, <code>IRR</code>, " +
@@ -18606,7 +18656,7 @@ Lantern.RFB = (function () {
     { n: "WEIGHT", s: "(m[,g])", d: "weight in newtons; g defaults 9.80665" },
     { n: "MOMENTUM", s: "(m,v)", d: "kg*m/s" },
     { n: "WORK", s: "(F,d)", d: "joules from force*distance" },
-    { n: "POWER", s: "(E,t)", d: "watts from energy/time" },
+    { n: "POWERW", s: "(E,t)", d: "watts from energy/time" },
     { n: "PRESSURE", s: "(F,A)", d: "pascals from force/area" },
     { n: "STRESS", s: "(F,A)", d: "pascals, same as pressure" },
     { n: "KE", s: "(m,v)", d: "kinetic energy in joules" },
@@ -26976,6 +27026,26 @@ Lantern.RFB = (function () {
       ", give " + B2 + "\u2019s GM, PLANET(\x22" + o.body + "\x22,\x22gm\x22), as its second value" +
       (o.line ? (o.dropped ? ", and leave Earth\u2019s radius out (it is not " + B2 + "\u2019s)" : "") + ". Write =" + o.line : ".");
   }
+  // (1.24.25) POWER(x,y) is Excel's x to the power y; Lantern's power in watts from energy and time is POWERW.
+  // A model that writes POWER(600,4) for "600 J in 4 seconds: what power?" means 600 / 4: the line goes back
+  // with its own values, the name changed. Only when the question asks for power or watts, gives an energy
+  // (J, kJ, joules, Wh, energy, work) and a time, and says nothing of a power of a number (squared, exponent,
+  // "to the power of")
+  function powerMeantWatts(question, expr) {
+    var q = String(question || "").toLowerCase(), e = String(expr || "");
+    if (!/\bPOWER\s*\x28/i.test(e) || /\bPOWERW\b/i.test(e)) return null;
+    if (!/\b(power|watts?|kw|kilowatts?)\b/.test(q) || /to the power|squared|cubed|exponent|raised|\bpower of (?:a |the )?(?:number|ten|two|2|10)\b/.test(q)) return null;
+    if (!/\d\s*(?:j|kj|mj|wh|kwh)\b|\b(?:joules?|kilojoules?|energy|work)\b/.test(q)) return null;
+    if (!/\d\s*(?:s|sec|secs|seconds?|min|mins|minutes?|h|hrs?|hours?)\b/.test(q)) return null;
+    var ok = true, line = e.replace(/^\s*=\s*/, "").split("\n")[0].replace(/\bPOWER\s*\x28([^(),]*(?:\x28[^()]*\x29[^(),]*)*),([^(),]*(?:\x28[^()]*\x29[^(),]*)*)\x29/gi, function (m0, a, b) {
+      return "POWERW(" + a.replace(/^\s+|\s+$/g, "") + "," + b.replace(/^\s+|\s+$/g, "") + ")";
+    });
+    if (/\bPOWER\s*\x28/i.test(line)) ok = false;
+    try { var v = L.formula.evaluate(line, { deg: false, ans: 0 }); if (typeof v !== "number" || !isFinite(v)) ok = false; } catch (e2) { ok = false; }
+    return ok ? "POWER(x,y) is x to the power y, as in Excel. Power in watts from energy and time is POWERW(energy, time). Write =" + line : null;
+  }
+  add("power-in-watts", function (question, expr) { return powerMeantWatts(question, expr); });
+  L.aiChecks.powerMeantWatts = powerMeantWatts;
   // a formula that runs is questioned only with the line; a refusal always carries what is true of the function
   add("other-body-gm", function (question, expr) { var o = otherBodyCall(expr, question); return o && o.line ? otherBodySay(o) : null; });
   (L.assistRejectHints = L.assistRejectHints || []).push(function (question, expr) { var o = otherBodyCall(expr, question); return o ? otherBodySay(o) : null; });
@@ -35627,7 +35697,16 @@ Lantern.RFB = (function () {
     ATAN2: function (a, ctx) { var x = N(a[0]), y = N(a[1]); if (x === 0 && y === 0) throw err("#DIV/0!", "ATAN2 of 0,0"); var t = Math.atan2(y, x); return ctx && ctx.deg ? t * 180 / Math.PI : t; },
     EVEN: function (a) { var x = N(a[0]), s = x < 0 ? -1 : 1, v = Math.ceil(Math.abs(x)); return s * (v % 2 ? v + 1 : v); },
     ODD: function (a) { var x = N(a[0]), s = x < 0 ? -1 : 1, v = Math.ceil(Math.abs(x)); return s * (v % 2 ? v : v + 1); },
-    SQRTPI: function (a) { var x = N(a[0]); if (x < 0) throw err("#NUM!", "SQRTPI of a negative number"); return Math.sqrt(x * Math.PI); }
+    SQRTPI: function (a) { var x = N(a[0]); if (x < 0) throw err("#NUM!", "SQRTPI of a negative number"); return Math.sqrt(x * Math.PI); },
+    // (1.24.25) POWER(x, y): x to the power y, as in Excel (Lantern's power in watts is POWERW)
+    POWER: function (a) {
+      var x = N(a[0]), y = N(a[1]);
+      if (x === 0 && y === 0) throw err("#NUM!", "POWER(0,0) has no value");
+      if (x === 0 && y < 0) throw err("#DIV/0!", "Divide by zero");
+      var v = Math.pow(x, y);
+      if (!isFinite(v) || isNaN(v)) throw err("#NUM!", x < 0 ? "a negative number to a fraction of a power" : "too large");
+      return v;
+    }
   };
   function whole(x) { if (x < 0) throw err("#NUM!", "a negative number"); return Math.floor(x); }
   function gcd(x, y) { while (y) { var t = x % y; x = y; y = t; } return x; }
@@ -35712,7 +35791,7 @@ Lantern.RFB = (function () {
     "VAR 1 *, VARP 1 *, VAR.S 1 *, VAR.P 1 *, LARGE 2 2, SMALL 2 2, RANK 2 3, RANK.EQ 2 3, PERCENTILE 2 2, PERCENTILE.INC 2 2, QUARTILE 2 2, " +
     "QUARTILE.INC 2 2, ROUNDUP 1 2, ROUNDDOWN 1 2, TRUNC 1 2, INT 1 1, CEILING 1 2, CEILING.MATH 1 3, CEILING.PRECISE 1 3, FLOOR.MATH 1 3, " +
     "FLOOR.PRECISE 1 3, MROUND 2 2, SIGN 1 1, QUOTIENT 2 2, GCD 1 *, LCM 1 *, RAND 0 0, RANDBETWEEN 2 2, LOG10 1 1, COMBIN 2 2, PERMUT 2 2, " +
-    "DEGREES 1 1, RADIANS 1 1, ATAN2 2 2, EVEN 1 1, ODD 1 1, SQRTPI 1 1, SUBTOTAL 2 *",
+    "DEGREES 1 1, RADIANS 1 1, ATAN2 2 2, EVEN 1 1, ODD 1 1, SQRTPI 1 1, POWER 2 2, SUBTOTAL 2 *",
     "SUMIF SUMIFS COUNTIF COUNTIFS AVERAGEIF AVERAGEIFS MINIFS MAXIFS COUNTA COUNTBLANK");
   L.sheetFn = { registerAll: registerAll, isErr: isErr, round15: round15, err: err, lz: lz, isRange: isRange, grid: grid, flat: flat, nums: nums, N: N, T: T, truthy: truthy,
     crit: crit, wild: wild, eqv: eqv, blank: blank, serial: serial, ymd: ymd, dayOf: dayOf, numText: numText, fmtGeneral: fmtGeneral, F: F };
@@ -36687,7 +36766,7 @@ Lantern.RFB = (function () {
     },
     // INDIRECT("B"&C1): the cell or range a text names
     INDIRECT: function (a, ctx) {
-      var t = T(a[0]).replace(/\$/g, "").toUpperCase().replace(/^\s+|\s+$/g, ""), m = /^([A-Z]{1,2}[0-9]{1,3})(?::([A-Z]{1,2}[0-9]{1,3}))?$/.exec(t);
+      var t = T(a[0]).replace(/\$/g, "").toUpperCase().replace(/^\s+|\s+$/g, ""), m = /^([A-Z]{1,2}[0-9]{1,4})(?::([A-Z]{1,2}[0-9]{1,4}))?$/.exec(t);
       if (!m || !ctx || !ctx.range) throw err("#REF!", "\u201c" + t + "\u201d is not a cell");
       return cellOrRange(ctx.range(m[1], m[2] || m[1]));
     },
@@ -36864,7 +36943,8 @@ Lantern.RFB = (function () {
       ["MOD", "(number, divisor)", "the remainder, with the divisor's sign: MOD(10,3) is 1"],
       ["QUOTIENT", "(number, divisor)", "the whole part of a division: QUOTIENT(10,3) is 3"],
       ["SQRT", "(number)", "the square root"],
-      ["POW", "(number, power)", "a number to a power: POW(2,10) is 1024; also 2^10. (POWER is Lantern's physics power, energy / time)"],
+      ["POWER", "(number, power)", "a number to a power: POWER(2,10) is 1024; also 2^10 or POW(2,10). (Power in watts from energy and time is POWERW)"],
+      ["POW", "(number, power)", "the same as POWER: POW(2,10) is 1024"],
       ["EXP", "(number)", "e to that power"],
       ["LN", "(number)", "the natural log"],
       ["LOG", "(number, [base])", "the log, base 10 unless given: LOG(8,2) is 3"],
@@ -37068,7 +37148,7 @@ Lantern.RFB = (function () {
     CHOOSE: "pick from a list pick one", MID: "middle of text", AND: "true if all all true both", OR: "either any true",
     LOOKUP: "tax bracket grade from a score band", LOG: "logarithm", LN: "natural logarithm", LOG10: "logarithm base 10", SUMPRODUCT: "weighted average weighted sum",
     PRODUCT: "multiply times multiplication", NPER: "how many payments number of payments pay off", QUOTIENT: "divide division", MOD: "remainder", ABS: "absolute value positive", ROUND: "decimals",
-    TRUNC: "truncate cut off decimals", INT: "integer whole number", POW: "power exponent raise squared cubed cube root nth root", EXP: "exponent exponential",
+    TRUNC: "truncate cut off decimals", INT: "integer whole number", POWER: "power exponent raise squared cubed cube root nth root", POWERW: "power in watts energy time", EXP: "exponent exponential",
     SQRT: "square root", COMBIN: "combinations choose", PERMUT: "permutations arrangements", RAND: "random", AVERAGE: "mean",
     MEDIAN: "middle value", MODE: "most common most often", MIN: "minimum smallest lowest least", MAX: "maximum largest highest biggest largest value highest value",
     LARGE: "second largest top", SMALL: "second smallest bottom", COUNT: "count numbers how many", COUNTA: "count filled cells non-blank",
@@ -37175,6 +37255,622 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: SHEET_FN_HELP - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SHEET_EDIT - START
+// Depends: SHEET (Lantern.sheetEditHooks: select, onSelect, beforeChange,
+//          onPaint, tds, keep, setRows ...) -- feature-detected
+// Exports: Lantern.sheetEdit (shift: a formula's references moved as a copy
+//          moves them; move: as rows or columns put in or taken out move
+//          them; parseTSV; the open sheet's range(), snap(), redraw());
+//          a range selected (drag, Shift+click, Shift+arrows, or Select
+//          range on a phone), copy, cut and paste (to and from Excel and
+//          Google Sheets), undo and redo, fill down and right
+// ===========================================================================
+// (1.24.25) Adam: "Anything that is available on commercial software should
+// be available on Lantern as much as possible plus more while being easier
+// to use". Sheets edited one cell at a time: no range, no copy and paste,
+// no undo. Now, as in Excel: drag over cells, or Shift with a click or the
+// arrows, to select a range; Ctrl+C, Ctrl+X, Ctrl+V copy, cut and paste it,
+// with Excel and Google Sheets too (as text with tabs, which both use); a
+// formula pasted or filled has its references moved as Excel moves them
+// ($A$1 kept); Ctrl+D and Ctrl+R fill down and right; Ctrl+Z and Ctrl+Y
+// undo and redo. On a phone the same are buttons.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.el) return;
+  var COLS = 26;
+  function colName(c) { return String.fromCharCode(65 + c); }
+  function refOf(c, r) { return colName(c) + (r + 1); }
+  function parse(ref) { var m = /^([A-Z])([0-9]+)$/.exec(ref); return m ? { c: m[1].charCodeAt(0) - 65, r: +m[2] - 1 } : null; }
+  // ---- references in a formula, outside its texts ---------------------------------------------------------------
+  // each(f, fn): fn(ref parts) for every reference -- {c1, r1, ac1, ar1, c2, r2, ac2, ar2, whole: "col" | null} --
+  // and its return the text put in its place
+  var REFAT = /^(\$?)([A-Z]{1,2})(\$?)([0-9]{1,4})(?::(\$?)([A-Z]{1,2})(\$?)([0-9]{1,4}))?(?![A-Za-z0-9_.\x28])/i;
+  var COLAT = /^(\$?)([A-Z]{1,2}):(\$?)([A-Z]{1,2})(?![A-Za-z0-9_.\x28])/i;
+  function cnum(s) { s = s.toUpperCase(); return s.length === 1 ? s.charCodeAt(0) - 65 : (s.charCodeAt(0) - 64) * 26 + s.charCodeAt(1) - 65; }
+  function cname(n) { return n < 26 ? colName(n) : colName(Math.floor(n / 26) - 1) + colName(n % 26); }
+  function eachRef(f, fn) {
+    var out = "", i = 0, q = null;
+    while (i < f.length) {
+      var ch = f.charAt(i);
+      if (q) { out += ch; if (ch === q) q = null; i++; continue; }
+      if (ch === "\x22") { q = ch; out += ch; i++; continue; }
+      var prev = i ? f.charAt(i - 1) : "";
+      if (!/[A-Za-z0-9_.$]/.test(prev)) {
+        var rest = f.slice(i), m = REFAT.exec(rest), w = !m && COLAT.exec(rest);
+        if (m) {
+          out += fn({ c1: cnum(m[2]), r1: +m[4] - 1, ac1: !!m[1], ar1: !!m[3], two: !!m[6],
+            c2: m[6] ? cnum(m[6]) : null, r2: m[6] ? +m[8] - 1 : null, ac2: !!m[5], ar2: !!m[7] }, m[0]);
+          i += m[0].length; continue;
+        }
+        if (w) { out += fn({ whole: "col", c1: cnum(w[2]), ac1: !!w[1], c2: cnum(w[4]), ac2: !!w[3] }, w[0]); i += w[0].length; continue; }
+      }
+      out += ch; i++;
+    }
+    return out;
+  }
+  function write(c, r, ac, ar) { return (ac ? "$" : "") + cname(c) + (ar ? "$" : "") + (r + 1); }
+  // shift(f, dr, dc): a formula copied dr rows down and dc columns across -- its relative references move, $ ones stay
+  function shift(f, dr, dc) {
+    if (typeof f !== "string" || f.charAt(0) !== "=") return f;
+    return eachRef(f, function (x) {
+      if (x.whole) {
+        var a = x.ac1 ? x.c1 : x.c1 + dc, b = x.ac2 ? x.c2 : x.c2 + dc;
+        return a < 0 || b < 0 || a >= COLS || b >= COLS ? "#REF!" : (x.ac1 ? "$" : "") + cname(a) + ":" + (x.ac2 ? "$" : "") + cname(b);
+      }
+      var c1 = x.ac1 ? x.c1 : x.c1 + dc, r1 = x.ar1 ? x.r1 : x.r1 + dr;
+      if (c1 < 0 || r1 < 0 || c1 >= COLS) return "#REF!";
+      if (!x.two) return write(c1, r1, x.ac1, x.ar1);
+      var c2 = x.ac2 ? x.c2 : x.c2 + dc, r2 = x.ar2 ? x.r2 : x.r2 + dr;
+      if (c2 < 0 || r2 < 0 || c2 >= COLS) return "#REF!";
+      return write(c1, r1, x.ac1, x.ar1) + ":" + write(c2, r2, x.ac2, x.ar2);
+    });
+  }
+  // move(f, kind, at, n): rows (kind "row") or columns put in at index at (n above 0) or taken out (n below 0):
+  // every reference past them moves, $ or not; a reference to a cell taken out is #REF!; a range loses what went
+  function move(f, kind, at, n) {
+    if (typeof f !== "string" || f.charAt(0) !== "=") return f;
+    var row = kind === "row";
+    function one(i) { if (n > 0) return i >= at ? i + n : i; if (i >= at && i < at - n) return null; return i >= at - n ? i + n : i; }
+    function span(a, b) {
+      if (n > 0) return [one(a), one(b)];
+      var lo = Math.min(a, b), hi = Math.max(a, b), gone0 = at, gone1 = at - n - 1;
+      if (lo >= gone0 && hi <= gone1) return null;
+      var nlo = lo >= gone0 && lo <= gone1 ? gone0 : one(lo), nhi = hi >= gone0 && hi <= gone1 ? gone0 - 1 : one(hi);
+      return [nlo, nhi];
+    }
+    return eachRef(f, function (x, text) {
+      if (x.whole) {
+        if (row) return text;
+        var s = span(x.c1, x.c2);
+        return s ? (x.ac1 ? "$" : "") + cname(s[0]) + ":" + (x.ac2 ? "$" : "") + cname(s[1]) : "#REF!";
+      }
+      if (!x.two) {
+        var v = one(row ? x.r1 : x.c1);
+        if (v === null) return "#REF!";
+        return row ? write(x.c1, v, x.ac1, x.ar1) : write(v, x.r1, x.ac1, x.ar1);
+      }
+      var sp = span(row ? x.r1 : x.c1, row ? x.r2 : x.c2);
+      if (!sp) return "#REF!";
+      return row ? write(x.c1, sp[0], x.ac1, x.ar1) + ":" + write(x.c2, sp[1], x.ac2, x.ar2)
+        : write(sp[0], x.r1, x.ac1, x.ar1) + ":" + write(sp[1], x.r2, x.ac2, x.ar2);
+    });
+  }
+  // parseTSV(text): rows of cells, as Excel and Google Sheets put them on the clipboard (tabs; a cell with a tab,
+  // a line or a quote in it in quotes, its quotes doubled)
+  function parseTSV(t) {
+    t = String(t || "").replace(/\r\n?/g, "\n");
+    if (/\n$/.test(t)) t = t.slice(0, -1);
+    var rows = [[]], cell = "", i = 0, q = false;
+    var sep = "\t";
+    while (i < t.length) {
+      var ch = t.charAt(i);
+      if (q) {
+        if (ch === "\x22" && t.charAt(i + 1) === "\x22") { cell += "\x22"; i += 2; continue; }
+        if (ch === "\x22") { q = false; i++; continue; }
+        cell += ch; i++; continue;
+      }
+      if (ch === "\x22" && cell === "") { q = true; i++; continue; }
+      if (ch === sep) { rows[rows.length - 1].push(cell); cell = ""; i++; continue; }
+      if (ch === "\n") { rows[rows.length - 1].push(cell); rows.push([]); cell = ""; i++; continue; }
+      cell += ch; i++;
+    }
+    rows[rows.length - 1].push(cell);
+    return rows;
+  }
+  function toTSV(rows) {
+    return rows.map(function (r) { return r.map(function (c) { c = c == null ? "" : String(c); return /[\t\n\x22]/.test(c) ? "\x22" + c.replace(/\x22/g, "\x22\x22") + "\x22" : c; }).join("\t"); }).join("\r\n");
+  }
+  var css = document.createElement("style");
+  css.appendChild(document.createTextNode([
+    ".grid td.rsel{background:#e3f0e6;}.grid td.sel.rsel{background:#f2f7ff;}",
+    ".lp-editbar{display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:4px 12px;border-bottom:1px solid var(--line);}",
+    ".lp-editbar button,.lp-editbar select{padding:4px 8px;min-height:32px;font-size:13px;}",
+    ".lp-editbar .on{background:var(--accent);color:#fff;}.lp-editbar .gap{width:6px;}",
+    "@media (max-width:700px){.lp-editbar{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;}.lp-editbar>*{flex:none;}}"
+  ].join("")));
+  (document.head || document.documentElement).appendChild(css);
+  var clip = null;   // what this page copied last: {text, raws, fmts, r0, c0, cut}
+  var stacks = {};   // each sheet's undo and redo, kept while the page is open
+  function mount(api) {
+    if (!api || !api.onSelect || !api.tds || !api.beforeChange) return;
+    var doc = api.doc, host = api.gridwrap.parentNode, tds = api.tds;
+    var st = stacks[doc.id] = stacks[doc.id] || { undo: [], redo: [] }, undo = st.undo;
+    var anchor = api.selected(), focus = anchor, extending = false, rangeMode = false;
+    var bar = host.querySelector(".fbar"), nameEl = host.querySelector(".cellname");
+    function rect() { var a = parse(anchor), b = parse(focus); return { c0: Math.min(a.c, b.c), r0: Math.min(a.r, b.r), c1: Math.max(a.c, b.c), r1: Math.max(a.r, b.r) }; }
+    function isRange() { return anchor !== focus; }
+    var painted = [];
+    function paintRange() {
+      painted.forEach(function (k) { if (tds()[k]) tds()[k].classList.remove("rsel"); });
+      painted = [];
+      if (isRange()) {
+        var R = rect();
+        for (var r = R.r0; r <= R.r1; r++) for (var c = R.c0; c <= R.c1; c++) { var k = refOf(c, r); if (tds()[k]) { tds()[k].classList.add("rsel"); painted.push(k); } }
+        if (nameEl) nameEl.textContent = refOf(R.c0, R.r0) + ":" + refOf(R.c1, R.r1);
+      }
+    }
+    api.onSelect(function (ref) { if (!extending && !rangeMode) anchor = ref; focus = ref; paintRange(); });
+    api.onPaint(function () { paintRange(); });
+    function extendTo(ref) { extending = true; try { api.select(ref); } finally { extending = false; } }
+    // ---- undo and redo: the cells (and their looks, and the rows) as they were before each change -----------
+    function state() { return JSON.stringify({ cells: doc.cells, fmt: doc.fmt || null, rows: doc.rows || null, freeze: doc.freeze || null }); }
+    function snap() { var s = state(); if (undo[undo.length - 1] !== s) undo.push(s); if (undo.length > 100) undo.shift(); st.redo = []; }
+    api.beforeChange(function () { snap(); });
+    function restore(s) {
+      var o = JSON.parse(s);
+      doc.cells = o.cells || {}; if (o.fmt) doc.fmt = o.fmt; else delete doc.fmt;
+      if (o.freeze) doc.freeze = o.freeze; else delete doc.freeze;
+      api.put();
+      if ((o.rows || 0) > api.rows()) api.setRows(o.rows);
+      api.refresh(); keepRange();
+    }
+    function doUndo() { api.keep(); if (!undo.length) return false; st.redo.push(state()); restore(undo.pop()); return true; }
+    function doRedo() { if (!st.redo.length) return false; undo.push(state()); restore(st.redo.pop()); return true; }
+    // after a change the range stays selected
+    function keepRange() { extending = true; try { api.select(focus); } finally { extending = false; } paintRange(); }
+    function done() { api.put(); api.refresh(); keepRange(); }
+    // ---- copy, cut, paste ---------------------------------------------------------------------------------------
+    function copy(cut) {
+      api.keep();
+      var R = rect(), shown = [], raws = [], fmts = [];
+      for (var r = R.r0; r <= R.r1; r++) {
+        var sr = [], rr = [], fr = [];
+        for (var c = R.c0; c <= R.c1; c++) { var k = refOf(c, r); sr.push(tds()[k] ? tds()[k].textContent : ""); rr.push(doc.cells[k]); fr.push(doc.fmt && doc.fmt[k] ? JSON.parse(JSON.stringify(doc.fmt[k])) : null); }
+        shown.push(sr); raws.push(rr); fmts.push(fr);
+      }
+      clip = { text: toTSV(shown), raws: raws, fmts: fmts, r0: R.r0, c0: R.c0, cut: !!cut };
+      if (cut) { snap(); clearRange(R); done(); }
+      return clip.text;
+    }
+    function clearRange(R) {
+      for (var r = R.r0; r <= R.r1; r++) for (var c = R.c0; c <= R.c1; c++) { var k = refOf(c, r); delete doc.cells[k]; if (doc.fmt) delete doc.fmt[k]; }
+    }
+    // paste(text): this page's own copy is pasted as it was (formulas moved, looks kept); text from elsewhere as
+    // typed into the cells. A single copied cell fills a selected range
+    function paste(text) {
+      api.keep();
+      var R = rect(), own = clip && (text == null || text.replace(/\r\n/g, "\n") === clip.text.replace(/\r\n/g, "\n")), rows;
+      if (own) rows = clip.raws; else { if (text == null || text === "") return false; rows = parseTSV(text); }
+      var h = rows.length, w = rows.reduce(function (m, r) { return Math.max(m, r.length); }, 0);
+      var reps = h === 1 && w === 1 && isRange() ? { h: R.r1 - R.r0 + 1, w: R.c1 - R.c0 + 1 } : { h: h, w: w };
+      if (R.c0 + reps.w > COLS) return say("That is " + reps.w + " columns wide: it does not fit from " + colName(R.c0) + " (the sheet ends at Z).");
+      if (R.r0 + reps.h > api.rows()) {
+        if (R.r0 + reps.h > (api.MAXROWS || 2000)) return say("That is " + reps.h + " rows: it does not fit here (a sheet has " + (api.MAXROWS || 2000) + " rows at most).");
+        api.setRows(Math.ceil((R.r0 + reps.h) / 100) * 100);
+      }
+      snap();
+      for (var r = 0; r < reps.h; r++) for (var c = 0; c < reps.w; c++) {
+        var sr = h === 1 && w === 1 ? 0 : r, sc = h === 1 && w === 1 ? 0 : c, k = refOf(R.c0 + c, R.r0 + r), v = rows[sr] ? rows[sr][sc] : undefined;
+        if (own && !clip.cut) v = shift(v, R.r0 + r - (clip.r0 + sr), R.c0 + c - (clip.c0 + sc));
+        if (v == null || v === "") delete doc.cells[k]; else doc.cells[k] = own ? v : String(v).replace(/^\s+$/, "");
+        if (own) { var f = clip.fmts[sr] && clip.fmts[sr][sc]; doc.fmt = doc.fmt || {}; if (f) doc.fmt[k] = JSON.parse(JSON.stringify(f)); else delete doc.fmt[k]; }
+      }
+      if (own && clip.cut) clip = null;
+      anchor = refOf(R.c0, R.r0); focus = refOf(R.c0 + reps.w - 1, R.r0 + reps.h - 1);
+      done();
+      return true;
+    }
+    // ---- fill down and right: the first row (column) of the range copied over the rest; one cell, from above -----
+    function fill(down) {
+      api.keep();
+      var R = rect();
+      if (!isRange()) { if (down ? R.r0 === 0 : R.c0 === 0) return false; if (down) R.r0--; else R.c0--; }
+      snap();
+      for (var r = R.r0; r <= R.r1; r++) for (var c = R.c0; c <= R.c1; c++) {
+        if (down ? r === R.r0 : c === R.c0) continue;
+        var src = down ? refOf(c, R.r0) : refOf(R.c0, r), k = refOf(c, r), v = doc.cells[src];
+        if (v == null) delete doc.cells[k]; else doc.cells[k] = shift(v, r - (down ? R.r0 : r), c - (down ? c : R.c0));
+        if (doc.fmt) { if (doc.fmt[src]) doc.fmt[k] = JSON.parse(JSON.stringify(doc.fmt[src])); else delete doc.fmt[k]; }
+      }
+      done();
+      return true;
+    }
+    function clearSel() { api.keep(); snap(); clearRange(rect()); done(); }
+    var note = null;
+    function say(t) { if (note) { note.textContent = t; note.style.display = t ? "" : "none"; } return false; }
+    // ---- mouse: drag over cells, Shift+click; the click after a drag does not reselect ------------------------
+    // (the listeners are on the app's own element, bound once; each sheet opened puts its own handlers there)
+    var down = null, dragged = false, H = {};
+    function cellOf(e) { var t = e.target; return t && t.getAttribute && api.table.contains(t) ? t.getAttribute("data-ref") : null; }
+    H.mousedown = function (e) {
+      var ref = cellOf(e);
+      if (!ref || api.typing()) return;
+      if (e.shiftKey) { e.preventDefault(); extendTo(ref); dragged = true; return; }
+      down = ref; dragged = false;
+    };
+    H.mouseover = function (e) {
+      var ref = cellOf(e);
+      if (!down || !ref || !e.buttons || (!dragged && ref === down)) return;
+      if (!dragged) api.select(down);
+      dragged = true; extendTo(ref);
+    };
+    H.mouseup = function () { down = null; };
+    H.click = function (e) {
+      var ref = cellOf(e);
+      if (!ref) return;
+      if (dragged) { dragged = false; e.stopPropagation(); api.gridwrap.focus(); return; }
+      if (rangeMode && !api.typing()) { e.stopPropagation(); extendTo(ref); api.gridwrap.focus(); }
+    };
+    // ---- keys -----------------------------------------------------------------------------------------------
+    H.keydown = function (e) {
+      if (e.target !== api.gridwrap) return;   // in the formula bar Ctrl+Z is the bar's own, until the typing is in
+      var k = e.key, ctrl = e.ctrlKey || e.metaKey, p = parse(focus), handled = true;
+      if ((L.sheetEdit.keyHooks || []).some(function (fn) { try { return fn(e); } catch (e2) { return false; } })) handled = true;
+      else if (e.shiftKey && !ctrl && /^Arrow/.test(k)) {
+        var c = p.c + (k === "ArrowRight" ? 1 : k === "ArrowLeft" ? -1 : 0), r = p.r + (k === "ArrowDown" ? 1 : k === "ArrowUp" ? -1 : 0);
+        if (c >= 0 && c < COLS && r >= 0 && r < api.rows()) extendTo(refOf(c, r));
+      }
+      else if (ctrl && !e.altKey && (k === "z" || k === "Z")) { if (e.shiftKey) doRedo(); else doUndo(); }
+      else if (ctrl && (k === "y" || k === "Y")) doRedo();
+      else if (ctrl && (k === "d" || k === "D")) fill(true);
+      else if (ctrl && (k === "r" || k === "R")) fill(false);
+      else if (ctrl && (k === "a" || k === "A")) { var u = api.used() || { c: 0, r: 0 }; api.select("A1"); extendTo(refOf(u.c, u.r)); }
+      else if ((k === "Delete" || k === "Backspace") && isRange()) clearSel();
+      else if (k === "Escape" && rangeMode) setMode(false);
+      else handled = false;
+      if (handled) { e.preventDefault(); e.stopPropagation(); }
+    };
+    // the clipboard: Ctrl+C, Ctrl+X and Ctrl+V reach the grid as the browser's copy, cut and paste
+    function inGrid(e) { return api.gridwrap.contains(e.target) || document.activeElement === api.gridwrap; }
+    H.copy = function (e) { if (!inGrid(e) || !e.clipboardData || api.typing()) return; e.clipboardData.setData("text/plain", copy(false)); e.preventDefault(); };
+    H.cut = function (e) { if (!inGrid(e) || !e.clipboardData || api.typing()) return; e.clipboardData.setData("text/plain", copy(true)); e.preventDefault(); };
+    H.paste = function (e) { if (!inGrid(e) || !e.clipboardData || e.target === bar.querySelector("input")) return; paste(e.clipboardData.getData("text/plain")); e.preventDefault(); };
+    host.__lpEdit = H;
+    if (!host.__lpEditBound) {
+      host.__lpEditBound = 1;
+      ["mousedown", "mouseover", "click", "keydown", "copy", "cut", "paste"].forEach(function (t) {
+        host.addEventListener(t, function (e) { var h = host.__lpEdit; if (h && h[t] && document.documentElement.contains(e.target)) h[t](e); }, t !== "copy" && t !== "cut" && t !== "paste");
+      });
+      document.addEventListener("mouseup", function () { var h = host.__lpEdit; if (h) h.mouseup(); }, true);
+    }
+    // ---- the bar ------------------------------------------------------------------------------------------------
+    var modeBtn;
+    function setMode(on) { rangeMode = on; if (modeBtn) modeBtn.className = on ? "on" : ""; if (!on) { anchor = focus; paintRange(); } }
+    function btn(text, title, fn) { return L.el("button", { type: "button", text: text, title: title, "aria-label": title, onclick: function () { fn(); if (api.gridwrap.focus) api.gridwrap.focus(); } }); }
+    var sys = navigator.clipboard;
+    var row = L.el("div", { "class": "lp-editbar", role: "toolbar", "aria-label": "Editing" }, [
+      btn("\u21b6", "Undo (Ctrl+Z)", doUndo), btn("\u21b7", "Redo (Ctrl+Y)", doRedo), L.el("span", { "class": "gap" }),
+      btn("Copy", "Copy (Ctrl+C)", function () { var t = copy(false); try { if (sys && sys.writeText) sys.writeText(t); } catch (e2) { /* the page's own copy still pastes here */ } }),
+      btn("Cut", "Cut (Ctrl+X)", function () { var t = copy(true); try { if (sys && sys.writeText) sys.writeText(t); } catch (e2) { /* as above */ } }),
+      btn("Paste", "Paste (Ctrl+V)", function () {
+        var own = function () { if (clip) paste(null); else say("Copy something first, or press Ctrl+V to paste from another program."); };
+        try { if (sys && sys.readText) sys.readText().then(function (t) { if (!paste(t)) own(); }, own); else own(); } catch (e2) { own(); }
+      }),
+      L.el("span", { "class": "gap" }),
+      btn("Fill \u2193", "Fill down (Ctrl+D): the top row copied down the range", function () { fill(true); }),
+      btn("Fill \u2192", "Fill right (Ctrl+R): the left column copied across the range", function () { fill(false); }),
+      modeBtn = btn("Select range", "Select a range: tap the first cell, then the last", function () { setMode(!rangeMode); })
+    ]);
+    note = L.el("span", { "class": "muted", style: "font-size:13px;display:none;", role: "status" });
+    row.appendChild(note);
+    if (bar && bar.parentNode) bar.parentNode.insertBefore(row, bar.nextSibling);
+    // the grid takes the height left under the bars, so selecting a cell never scrolls the bars away
+    function fit() {
+      var gw = api.gridwrap, top = gw.getBoundingClientRect ? gw.getBoundingClientRect().top + (window.pageYOffset || 0) : 0;
+      if (top > 0 && window.innerHeight) gw.style.maxHeight = Math.max(220, window.innerHeight - top - 8) + "px";
+    }
+    setTimeout(fit, 0);
+    if (!host.__lpFitBound) { host.__lpFitBound = 1; window.addEventListener("resize", function () { var h = host.__lpEdit; if (h && h.fit) h.fit(); }); }
+    H.fit = fit;
+    var S = L.sheetEdit = L.sheetEdit || {};
+    S.range = function () { return rect(); };
+    S.select = function (a, b) { api.select(a); if (b) extendTo(b); };
+    S.snap = snap; S.done = done; S.say = say; S.bar = row; S.undo = doUndo; S.redo = doRedo; S.copy = copy; S.paste = paste; S.fill = fill;
+  }
+  (L.sheetEditHooks = L.sheetEditHooks || []).push(mount);
+  L.sheetEdit = { shift: shift, move: move, parseTSV: parseTSV, toTSV: toTSV, eachRef: eachRef };
+})();
+// ===========================================================================
+// MODULE: SHEET_EDIT - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SHEET_FORMAT - START
+// Depends: SHEET (Lantern.sheetEditHooks: addShow, onPaint), SHEET_EDIT
+//          (Lantern.sheetEdit: range, snap, done, bar, keyHooks),
+//          SHEET_FN_TEXT (Lantern.sheetFn.format: Excel's format codes) --
+//          all feature-detected
+// Exports: Lantern.sheetFormat (codes: the formats offered; shown(v, code));
+//          bold, italic, left / centre / right, a number format for the
+//          selected cells (Money, Percent, Number, Date, Time, Fraction ...,
+//          or any Excel format code), more or fewer decimals; the top row
+//          kept in view (freeze); a formula takes the look of the first cell
+//          it names, as in Excel (=A1*2 of $1,200 is $2,400.00)
+// ===========================================================================
+// (1.24.25) A cell's look is kept in the sheet (doc.fmt[ref]: b bold, i
+// italic, al alignment, nf an Excel number format code), so a sheet saved
+// for Excel later can carry it there. The number shown is made by the same
+// code as =TEXT(value, format).
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.el) return;
+  var CODES = [
+    ["", "General"], ["#,##0.00", "Number 1,234.50"], ["#,##0", "Number 1,235"], ["$#,##0.00", "Money $1,234.50"],
+    ["\u20ac#,##0.00", "Money \u20ac1,234.50"], ["\u00a3#,##0.00", "Money \u00a31,234.50"], ["0%", "Per cent 12%"], ["0.0%", "Per cent 12.5%"],
+    ["yyyy-mm-dd", "Date 2026-11-17"], ["d mmm yyyy", "Date 17 Nov 2026"], ["mm/dd/yyyy", "Date 11/17/2026"], ["dd/mm/yyyy", "Date 17/11/2026"],
+    ["hh:mm", "Time 14:30"], ["h:mm AM/PM", "Time 2:30 PM"], ["[h]:mm", "Hours 36:30"], ["# ?/?", "Fraction 1 1/2"], ["0.00E+00", "Scientific 1.23E+03"]
+  ];
+  function fmtOf(doc, ref) { return doc.fmt && doc.fmt[ref]; }
+  function shown(v, code) { try { return L.sheetFn && L.sheetFn.format ? L.sheetFn.format(v, code) : null; } catch (e) { return null; } }
+  // the code a formula carries, as Excel does: from the first cell it names that has a look -- its own code, or $ or %
+  // as it was typed (=B2*C2 with C2 typed $3.50 shows money)
+  function carried(doc, raw, depth) {
+    if (typeof raw !== "string" || raw.charAt(0) !== "=" || (depth || 0) > 6) return null;
+    var body = " " + raw.slice(1).replace(/\x22[^\x22]*\x22/g, "\x22\x22"), re = /[^A-Za-z0-9_.$]\$?([A-Z])\$?([0-9]{1,4})(?![A-Za-z0-9_.\x28])/g, m, n = 0;
+    while ((m = re.exec(body)) && n++ < 8) {
+      var k = m[1] + m[2], f = fmtOf(doc, k), src = doc.cells[k];
+      if (f && f.nf) { if (!/[ymdhs]/i.test(f.nf.replace(/\x22[^\x22]*\x22/g, ""))) return f.nf; continue; }
+      if (typeof src !== "string") continue;
+      if (src.charAt(0) === "=") { var via = carried(doc, src, (depth || 0) + 1); if (via) return via; continue; }   // =SUM(D2:D4) of money totals is money
+      var t = src.replace(/^\s+|\s+$/g, ""), dec = /\.(\d+)/.exec(t), places = dec ? dec[1].length : 0, zeros = places ? "." + new Array(places + 1).join("0") : "";
+      var cur = /^[-+]?\s*([\$\u20ac\u00a3])/.exec(t);
+      if (cur && /\d/.test(t)) return cur[1] + "#,##0" + (zeros || ".00");
+      if (/\d\s*%$/.test(t)) return "0" + zeros + "%";
+      re.lastIndex = m.index + m[0].length - 1;
+    }
+    return null;
+  }
+  function decimals(code, more) {
+    code = code || "0";
+    if (/^general$/i.test(code)) code = "0";
+    var m = /^([^.0#]*[#,]*0)(\.0*)?(.*)$/.exec(code);
+    if (!m) return code;
+    var d = m[2] ? m[2].length - 1 : 0;
+    d = Math.max(0, Math.min(10, d + (more ? 1 : -1)));
+    return m[1] + (d ? "." + new Array(d + 1).join("0") : "") + m[3];
+  }
+  var css = document.createElement("style");
+  css.appendChild(document.createTextNode(
+    ".grid.frz1 tbody tr:first-child>*{position:sticky;top:var(--lp-head,30px);z-index:3;box-shadow:0 2px 0 var(--line);}" +
+    ".grid.frz1 tbody tr:first-child>th{z-index:4;}"));
+  (document.head || document.documentElement).appendChild(css);
+  function mount(api) {
+    var S = L.sheetEdit;
+    if (!api || !api.addShow || !api.onPaint || !S || !S.range || !S.bar) return;
+    var doc = api.doc, styled = [];
+    api.addShow(function (ref, v, raw) {
+      var f = fmtOf(doc, ref), code = f && f.nf ? f.nf : null;
+      if (code === null) code = carried(doc, raw);
+      return code ? shown(v, code) : null;
+    });
+    api.onPaint(function () {
+      var tds = api.tds();
+      styled.forEach(function (k) { var td = tds[k]; if (td) { td.style.fontWeight = ""; td.style.fontStyle = ""; td.style.textAlign = ""; } });
+      styled = [];
+      for (var k in doc.fmt || {}) {
+        var f = doc.fmt[k], td = tds[k];
+        if (!td || !f) continue;
+        if (f.b) td.style.fontWeight = "700";
+        if (f.i) td.style.fontStyle = "italic";
+        if (f.al) td.style.textAlign = f.al;
+        styled.push(k);
+      }
+      var table = api.table;
+      if (table && table.classList) {
+        table.classList.toggle("frz1", !!doc.freeze);
+        var th = table.querySelector("thead");
+        if (th && th.offsetHeight) table.style.setProperty("--lp-head", th.offsetHeight + "px");
+      }
+    });
+    function eachSel(fn) {
+      var R = S.range();
+      for (var r = R.r0; r <= R.r1; r++) for (var c = R.c0; c <= R.c1; c++) fn(String.fromCharCode(65 + c) + (r + 1));
+    }
+    function set(key, value) {
+      api.keep(); S.snap();
+      doc.fmt = doc.fmt || {};
+      eachSel(function (k) {
+        var f = doc.fmt[k] || {};
+        if (value == null || value === "" || value === false) delete f[key]; else f[key] = value;
+        if (Object.keys(f).length) doc.fmt[k] = f; else delete doc.fmt[k];
+      });
+      S.done();
+    }
+    // bold and italic: on for all the range unless the first cell has it already
+    function toggle(key) { var R = S.range(), f = fmtOf(doc, String.fromCharCode(65 + R.c0) + (R.r0 + 1)); set(key, !(f && f[key]) ? 1 : null); }
+    function firstCode() { var R = S.range(), k = String.fromCharCode(65 + R.c0) + (R.r0 + 1), f = fmtOf(doc, k); return f && f.nf ? f.nf : carried(doc, doc.cells[k]) || ""; }
+    var pick = L.el("select", { "aria-label": "Number format", title: "How a number shows" },
+      CODES.map(function (c) { return L.el("option", { value: c[0], text: c[1] }); }).concat([L.el("option", { value: "*", text: "Your own format code\u2026" })]));
+    pick.addEventListener("change", function () {
+      var v = pick.value;
+      if (v === "*") {
+        v = window.prompt ? window.prompt("A format code, as in Excel: #,##0.00  0.0%  $#,##0  d mmm yyyy  hh:mm  0 \x22kg\x22", firstCode() || "#,##0.00") : null;
+        if (v == null) { pick.value = firstCode(); return; }
+      }
+      set("nf", v);
+    });
+    function btn(text, title, fn, style) { return L.el("button", { type: "button", text: text, title: title, "aria-label": title, style: style || "", onclick: function () { fn(); if (api.gridwrap.focus) api.gridwrap.focus(); } }); }
+    var freezeBox = L.el("input", { type: "checkbox", onchange: function () { api.keep(); S.snap(); if (freezeBox.checked) doc.freeze = 1; else delete doc.freeze; S.done(); } });
+    freezeBox.checked = !!doc.freeze;
+    var row = S.bar;
+    [L.el("span", { "class": "gap" }),
+      btn("B", "Bold (Ctrl+B)", function () { toggle("b"); }, "font-weight:700;"),
+      btn("I", "Italic (Ctrl+I)", function () { toggle("i"); }, "font-style:italic;"),
+      btn("\u21e4", "Left", function () { set("al", "left"); }), btn("\u2194", "Centre", function () { set("al", "center"); }), btn("\u21e5", "Right", function () { set("al", "right"); }),
+      L.el("span", { "class": "gap" }), pick,
+      btn(".0\u2190", "Fewer decimals", function () { set("nf", decimals(firstCode(), false)); }),
+      btn(".00\u2192", "More decimals", function () { set("nf", decimals(firstCode(), true)); }),
+      L.el("label", { style: "display:flex;align-items:center;gap:4px;font-size:13px;", title: "Keep the top row in view as the sheet scrolls" }, [freezeBox, L.el("span", { text: "Freeze top row" })])
+    ].forEach(function (el) { row.insertBefore(el, row.lastChild); });
+    api.onSelect(function () { var c = firstCode(); pick.value = CODES.some(function (x) { return x[0] === c; }) ? c : ""; });
+    S.keyHooks = [function (e) {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return false;
+      if (e.key === "b" || e.key === "B") { toggle("b"); return true; }
+      if (e.key === "i" || e.key === "I") { toggle("i"); return true; }
+      return false;
+    }];
+  }
+  (L.sheetEditHooks = L.sheetEditHooks || []).push(mount);
+  L.sheetFormat = { codes: CODES, shown: shown, decimals: decimals };
+})();
+// ===========================================================================
+// MODULE: SHEET_FORMAT - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SHEET_ROWS - START
+// Depends: SHEET (Lantern.sheetEditHooks: rows, setRows, values), SHEET_EDIT
+//          (Lantern.sheetEdit: move, shift, range, snap, done, say, bar) --
+//          feature-detected
+// Exports: Lantern.sheetRows (insert(doc, kind, at, n), sort(doc, rect, col,
+//          desc, header) -- on a sheet's cells, for tests and other tools);
+//          rows and columns put in and taken out, every formula's references
+//          moved as Excel moves them (a reference to a cell taken out is
+//          #REF!); sorting A to Z and Z to A; 100 rows more
+// ===========================================================================
+// (1.24.25) Sort works on the selected rows, or with one cell selected on
+// the block of filled cells round it (as Excel's "current region"), by the
+// selected cell's column. A first row of words above a column of numbers or
+// formulas, or a bold first row, is taken as the headings and left on top.
+// Numbers come before text, empty cells last, either way.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.el) return;
+  var COLS = 26;
+  function colName(c) { return String.fromCharCode(65 + c); }
+  function refOf(c, r) { return colName(c) + (r + 1); }
+  function parse(ref) { var m = /^([A-Z])([0-9]+)$/.exec(ref); return m ? { c: m[1].charCodeAt(0) - 65, r: +m[2] - 1 } : null; }
+  // insert(doc, kind, at, n): n rows (kind "row") or columns put in before index at (n below 0: taken out from at)
+  function insert(doc, kind, at, n) {
+    var S = L.sheetEdit, row = kind === "row", cells = {}, fmt = {}, k, p;
+    for (k in doc.cells) {
+      p = parse(k); if (!p) continue;
+      var i = row ? p.r : p.c, j;
+      if (n < 0 && i >= at && i < at - n) continue;
+      j = i >= at ? i + n : i;
+      if (j < 0 || (!row && j >= COLS)) continue;
+      var nk = row ? refOf(p.c, j) : refOf(j, p.r);
+      cells[nk] = S.move(doc.cells[k], kind, at, n);
+      if (doc.fmt && doc.fmt[k]) fmt[nk] = doc.fmt[k];
+    }
+    doc.cells = cells;
+    if (doc.fmt) doc.fmt = fmt;
+  }
+  // the columns a cell's computed value sorts by: numbers, then text, then errors; empty last
+  function rank(v) { return v == null || v === "" ? 3 : typeof v === "number" ? 0 : /^#/.test(String(v)) ? 2 : 1; }
+  function compare(a, b, desc) {
+    var ra = rank(a), rb = rank(b);
+    if (ra === 3 || rb === 3) return ra - rb;   // empty last, either way
+    var d = ra !== rb ? ra - rb : ra === 0 ? a - b : String(a).toLowerCase() < String(b).toLowerCase() ? -1 : String(a).toLowerCase() > String(b).toLowerCase() ? 1 : 0;
+    return desc ? -d : d;
+  }
+  // sort(doc, R, col, desc, header, values): the rows of R reordered by column col; a formula moves with its row
+  function sort(doc, R, col, desc, header, values) {
+    var S = L.sheetEdit, top = R.r0 + (header ? 1 : 0), rows = [], r, c;
+    for (r = top; r <= R.r1; r++) {
+      var raws = [], fm = [];
+      for (c = R.c0; c <= R.c1; c++) { raws.push(doc.cells[refOf(c, r)]); fm.push(doc.fmt ? doc.fmt[refOf(c, r)] : null); }
+      rows.push({ r: r, key: values[refOf(col, r)], raws: raws, fm: fm });
+    }
+    rows.sort(function (a, b) { return compare(a.key, b.key, desc) || a.r - b.r; });
+    rows.forEach(function (x, i) {
+      var to = top + i;
+      for (c = R.c0; c <= R.c1; c++) {
+        var k = refOf(c, to), v = x.raws[c - R.c0], f = x.fm[c - R.c0];
+        if (v == null) delete doc.cells[k]; else doc.cells[k] = S.shift(v, to - x.r, 0);
+        if (doc.fmt) { if (f) doc.fmt[k] = f; else delete doc.fmt[k]; }
+      }
+    });
+  }
+  // region(doc, ref): the block of filled cells round a cell, bounded by an empty row and column
+  function region(doc, ref, rows) {
+    var p = parse(ref), R = { c0: p.c, c1: p.c, r0: p.r, r1: p.r }, grew = true;
+    function filled(c, r) { var v = doc.cells[refOf(c, r)]; return v != null && v !== ""; }
+    function rowHas(r, c0, c1) { for (var c = c0; c <= c1; c++) if (filled(c, r)) return true; return false; }
+    function colHas(c, r0, r1) { for (var r = r0; r <= r1; r++) if (filled(c, r)) return true; return false; }
+    while (grew) {
+      grew = false;
+      if (R.r0 > 0 && rowHas(R.r0 - 1, Math.max(0, R.c0 - 1), Math.min(COLS - 1, R.c1 + 1))) { R.r0--; grew = true; }
+      if (R.r1 < rows - 1 && rowHas(R.r1 + 1, Math.max(0, R.c0 - 1), Math.min(COLS - 1, R.c1 + 1))) { R.r1++; grew = true; }
+      if (R.c0 > 0 && colHas(R.c0 - 1, Math.max(0, R.r0 - 1), Math.min(rows - 1, R.r1 + 1))) { R.c0--; grew = true; }
+      if (R.c1 < COLS - 1 && colHas(R.c1 + 1, Math.max(0, R.r0 - 1), Math.min(rows - 1, R.r1 + 1))) { R.c1++; grew = true; }
+    }
+    return R;
+  }
+  // headings: a first row of words over numbers or formulas, or a bold first row
+  function hasHeader(doc, R, values) {
+    if (R.r1 <= R.r0) return false;
+    var c, words = 0, below = false;
+    for (c = R.c0; c <= R.c1; c++) {
+      var k = refOf(c, R.r0), v = doc.cells[k];
+      if (doc.fmt && doc.fmt[k] && doc.fmt[k].b) return true;
+      if (v == null || v === "") continue;
+      if (typeof values[k] !== "string" || String(v).charAt(0) === "=") return false;
+      words++;
+      for (var r = R.r0 + 1; r <= R.r1; r++) { var w = values[refOf(c, r)], raw = doc.cells[refOf(c, r)]; if (typeof w === "number" || (typeof raw === "string" && raw.charAt(0) === "=")) below = true; }
+    }
+    return words > 0 && below;
+  }
+  function mount(api) {
+    var S = L.sheetEdit;
+    if (!api || !api.setRows || !S || !S.range || !S.bar || !S.move) return;
+    var doc = api.doc;
+    function all() { var out = {}, R = { c0: 0, r0: 0, c1: COLS - 1, r1: api.rows() - 1 }; var v = api.values(refOf(R.c0, R.r0) + ":" + refOf(R.c1, R.r1)); for (var r = R.r0, i = 0; r <= R.r1; r++) for (var c = R.c0; c <= R.c1; c++, i++) out[refOf(c, r)] = v[i]; return out; }
+    function act(what) {
+      api.keep();
+      var R = S.range(), nRows = R.r1 - R.r0 + 1, nCols = R.c1 - R.c0 + 1;
+      if (what === "more") { api.setRows(api.rows() + 100); return; }
+      if (what === "rowAbove" || what === "rowBelow") {
+        var last = 0; for (var k in doc.cells) { var p = parse(k); if (p && p.r > last) last = p.r; }
+        if (last + nRows >= (api.MAXROWS || 2000)) return S.say("The sheet is full: no rows can go in.");
+        S.snap(); insert(doc, "row", what === "rowAbove" ? R.r0 : R.r1 + 1, nRows);
+        if (last + nRows >= api.rows()) api.setRows(last + nRows + 1);
+      } else if (what === "colLeft" || what === "colRight") {
+        var lastC = -1; for (var k2 in doc.cells) { var p2 = parse(k2); if (p2 && p2.c > lastC) lastC = p2.c; }
+        if (lastC + nCols >= COLS) return S.say("Columns up to Z are in use: none can go in without losing what is in " + colName(COLS - 1) + ".");
+        S.snap(); insert(doc, "col", what === "colLeft" ? R.c0 : R.c1 + 1, nCols);
+      } else if (what === "rowDel") { S.snap(); insert(doc, "row", R.r0, -nRows); }
+      else if (what === "colDel") { S.snap(); insert(doc, "col", R.c0, -nCols); }
+      else if (what === "az" || what === "za") {
+        var vals = all(), single = R.r0 === R.r1 && R.c0 === R.c1, G = single ? region(doc, refOf(R.c0, R.r0), api.rows()) : R;
+        if (G.r1 <= G.r0) return S.say("Select the rows to sort, or a cell inside a table.");
+        var head = hasHeader(doc, G, vals), keyCol = R.c0;
+        S.snap(); sort(doc, G, keyCol, what === "za", head, vals);
+        S.say("Sorted " + refOf(G.c0, G.r0 + (head ? 1 : 0)) + ":" + refOf(G.c1, G.r1) + " by column " + colName(keyCol) + (head ? ", the headings left on top" : "") + ".");
+      }
+      S.done();
+    }
+    var menu = L.el("select", { "aria-label": "Rows and columns", title: "Put in or take out rows and columns" }, [
+      L.el("option", { value: "", text: "Rows & columns\u2026" }),
+      L.el("option", { value: "rowAbove", text: "Insert row above" }), L.el("option", { value: "rowBelow", text: "Insert row below" }),
+      L.el("option", { value: "rowDel", text: "Delete row" }),
+      L.el("option", { value: "colLeft", text: "Insert column left" }), L.el("option", { value: "colRight", text: "Insert column right" }),
+      L.el("option", { value: "colDel", text: "Delete column" }),
+      L.el("option", { value: "more", text: "100 more rows" })]);
+    menu.addEventListener("change", function () { var v = menu.value; menu.value = ""; if (v) act(v); if (api.gridwrap.focus) api.gridwrap.focus(); });
+    function btn(text, title, fn) { return L.el("button", { type: "button", text: text, title: title, "aria-label": title, onclick: function () { fn(); if (api.gridwrap.focus) api.gridwrap.focus(); } }); }
+    var row = S.bar;
+    [L.el("span", { "class": "gap" }),
+      btn("Sort A\u2192Z", "Sort smallest to largest, A to Z, by the selected column", function () { act("az"); }),
+      btn("Sort Z\u2192A", "Sort largest to smallest, Z to A, by the selected column", function () { act("za"); }),
+      menu].forEach(function (el) { row.insertBefore(el, row.lastChild); });
+    S.rowAct = act;
+  }
+  (L.sheetEditHooks = L.sheetEditHooks || []).push(mount);
+  L.sheetRows = { insert: insert, sort: sort, region: region, hasHeader: hasHeader };
+})();
+// ===========================================================================
+// MODULE: SHEET_ROWS - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: AI_PUZZLE - START

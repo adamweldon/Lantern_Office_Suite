@@ -36,6 +36,7 @@ var steps = [
   ["Sheets with Excel's functions: SUMIF to XLOOKUP, TEXT, dates, loans, statistics, as Excel gives them; & and blanks; the fx list (1.24.24)", "node", ["tests/sheet_functions.js"], /ALL SHEET FUNCTION CHECKS PASS/],
   ["The review of Sheets' functions, replayed: 887 formulas of a reviewer's own against LibreOffice and Excel, what the grid shows, 119 fx searches (1.24.24)", "node", ["tests/review_sheetfn_1264.js"], /ALL SHEET FUNCTION REVIEW CHECKS PASS/],
   ["The second review of Sheets' functions, replayed: 1,248 formulas, 77 of the grid, 109 calculator sums against 1.24.23, 91 fx searches (1.24.24)", "node", ["tests/review2_sheetfn_1264.js"], /ALL SHEET FUNCTION REVIEW CHECKS PASS/],
+  ["Sheets editing like Excel: a range, copy and paste with Excel, fill, undo, rows and columns in and out, sort, formats, freeze, more rows (1.24.25)", "node", ["tests/sheet_edit.js"], /ALL SHEET EDIT CHECKS PASS/],
   ["Calculator after the audit (after =, errors kept, brackets closed, memory and RAD kept, keyboard and dialogs) and the shared number and formula fixes (1.16)", "node", ["tests/calc_audit.js"], /ALL CALC AUDIT TESTS PASS/],
   ["Draw's schematic symbols: a right-click only deletes, Turn and R point them any way, the preview (1.15)", "node", ["tests/draw_symbols.js"], /ALL DRAW SYMBOL TESTS PASS/],
   ["Code Lab (editor, checks, ladder, sandbox, examples; MAKE CODE, EXAMPLE:, code in replies)", "node", ["tests/code_lab.js"], /ALL CODE LAB TESTS PASS/],
