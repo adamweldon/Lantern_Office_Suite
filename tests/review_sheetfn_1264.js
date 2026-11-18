@@ -82,6 +82,8 @@ w.Date = FixedDate;
     var td = d.querySelector("td[data-ref=" + c.ref + "]"), shown = td ? td.textContent : null;
     // (two the reviewer described: "14:30 (Excel shows 2:30 PM)", and "a fraction of a day" -- a time of day here)
     var want = /^a fraction of a day$/.test(c.expected) ? /^\d\d:\d\d$/ : new RegExp("^" + String(c.expected).replace(/ \(.*$/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$");
+    // a test (=TODAY()>A1) the reviewer wrote as 1 with "(TRUE)" beside it: Excel shows TRUE, and so does Lantern from 1.24.25
+    if (c.expected === "1" && /\(TRUE\)/.test(c.note || "")) want = /^TRUE$/;
     if (!want.test(shown)) gw.push([c.cells[c.ref], shown, c.expected]);
   }
   ok("what the grid shows: a date as a date, a count of days as a number (" + grid.length + ")", !gw.length, gw);

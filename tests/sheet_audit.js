@@ -60,7 +60,7 @@ function btn(re) { return Array.prototype.filter.call(d.querySelectorAll("button
   enter("A1", "hello");
   enter("B2", "=A1"); enter("C2", "=LEN(A1)"); enter("D2", "=UPPER(A1)"); enter("E2", "=A1=\"HELLO\"");
   ok("a formula reads a text cell: =A1, =LEN(A1), =UPPER(A1), =A1=\"HELLO\" (text compares ignore case)",
-    td("B2").textContent === "hello" && td("C2").textContent === "5" && td("D2").textContent === "HELLO" && td("E2").textContent === "1",
+    td("B2").textContent === "hello" && td("C2").textContent === "5" && td("D2").textContent === "HELLO" && td("E2").textContent === "TRUE",   // TRUE, as Excel shows it (1.24.25; 1 before)
     [td("B2").textContent, td("C2").textContent, td("D2").textContent, td("E2").textContent]);
   enter("A3", "10"); enter("B3", "0");
   enter("C3", "=IF(B3=0,0,A3/B3)"); enter("D3", "=IF(A3>10,\"big\",\"small\")"); enter("E3", "=IFERROR(A3/B3,\"none\")"); enter("F3", "=PI()");
