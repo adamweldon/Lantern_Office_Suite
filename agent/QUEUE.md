@@ -29,6 +29,9 @@ tried by a reviewer:
   colours, column widths; find and replace; a fill handle to drag; charts
   from a range; paste special (values only); the second review's mends if
   any are left (see the report).
+- Small, from the 1.24.25 bench: the 0.8B wrote "= 65*35 = 2275" for
+  fuel-cost on 1.24.23 and 1.24.25, read as a comparison (1). A sum followed
+  by its own result, when the two agree, is the sum.
 - **Next: opening and saving .docx, .xlsx and .pptx** (a ZIP reader and
   writer are needed; PDF_PARSE has DecompressionStream). A sheet's looks are
   already kept as Excel format codes for .xlsx.
@@ -51,8 +54,9 @@ tried by a reviewer:
    background while Lantern is already usable. Done: the starter for
    Windows, a Mac and Linux, run for real on GitHub's three computers on
    every push (`.github/workflows/lantern-starter.yml`). Published: `main`
-   is 1.24.21 since 2026-11-16 (Adam: "proceed ... the current version is
-   much better than 1.14.3"), so the release carries the starter and the
+   was 1.24.21 from 2026-11-16 (Adam: "proceed ... the current version is
+   much better than 1.14.3") and is 1.24.25 since 2026-11-18 (Adam: "merge
+   into the public release once verified"), so the release carries the starter and the
    website is that version. **Windows Defender quarantined Get-Lantern.exe
    as a Trojan on Adam's laptop (2026-11-16)**; the page gives Windows
    Lantern.zip and Install Lantern until it is cleared. Mended in 1.24.22:

@@ -11,8 +11,8 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    whether that reads right; it is yours to judge. Make one in the Draw
    tile, or ask Chat "Draw a colour wheel of the primary and secondary
    colours". (Asked 2026-11-15.)
-2. **The one link: try it** (1.24.19; `main` is 1.24.21 since 2026-11-16,
-   on your word "proceed"). Merging published Get-Lantern.exe, the Mac zip
+2. **The one link: try it** (1.24.19; `main` was 1.24.21 from 2026-11-16,
+   on your word "proceed", and is 1.24.25 since 2026-11-18). Merging published Get-Lantern.exe, the Mac zip
    and the Linux programs on the release, and made the website the same
    version: https://adamweldon.github.io/Lantern_Office_Suite/get.html works
    for anyone (Adam's screenshot, 2026-11-16 12:08: the page loads, finds
@@ -104,7 +104,7 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    then the work moves only when a chat is open.
    (Asked 2026-11-05.)
 11. **Somebody trained should read the Health lessons** (they are public
-   since 2026-11-16, with `main` at 1.24.21). They
+   since 2026-11-16; `main` is 1.24.25 since 2026-11-18). They
    were checked line by line against WHO, CDC, NHS and the 2025
    resuscitation guidelines, by checkers that had not seen the drafting, and
    corrected. That is not the same as a nurse, a midwife or a first-aid
