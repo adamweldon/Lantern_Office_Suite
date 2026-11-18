@@ -1,5 +1,125 @@
 # Changelog
 
+## 1.24.25 — Sheets is edited as Excel is; POWER is Excel's, and watts are POWERW (2026-11-18)
+
+Adam (2026-11-18): "we need to keep the excel formula as it works in excel and
+lantern and make a change for the power in watts that lantern can discern that
+will work for the ai correctly that way we stay more excel compatible when we
+export an xls. Proceed with the next stage for sheets editing and merge into
+the public release once verified".
+
+**POWER is Excel's.** POWER(2,10) is 1024 in Sheets, the calculator and the
+AI's sums, as in Excel, so a sheet saved for Excel will work the same there.
+Lantern's power in watts from energy and time is now POWERW(energy, time)
+(POWERW(600,4) is 150); the AI's list of functions says so. A model that
+writes POWER(600,4) for "a motor does 600 J of work in 4 seconds: what is its
+power?" is told, once, with the line for that question: "POWER(x,y) is x to
+the power y, as in Excel. Power in watts from energy in joules and time in
+seconds is POWERW(energy, time). Write =POWERW(600,4)". Lantern reads the
+question's energy (J, kJ, MJ, Wh, kWh, in figures or words) and time (ms, s,
+min, h, days; "an hour", "half a minute", "per hour"), and speaks only when
+the reply's one POWER takes that energy and that time, as stated or converted.
+The line is in joules and seconds whatever the question's units (2 kWh in 3
+hours is =POWERW(7200000,10800)), over 1000 when kilowatts are asked. A POWER
+used as a power (0.5*m*POWER(v,2), POWER(I,2)*R, POWER(10,3)) is left alone,
+in a question about power or not. Nothing in the lessons, tables or bench used
+the old POWER. QUESTIONS 16 is answered.
+
+**Editing as in Excel.** Sheets was edited a cell at a time: no range, no copy
+and paste, no undo.
+
+- **A range**: drag over cells, hold Shift and click or press the arrows, or
+  click a column letter or row number; on a phone, tap the first cell, then
+  Select range, then the last. The active cell stays where the range began.
+  Ctrl+A selects the table round the cell (again: all that is filled);
+  Ctrl+arrow jumps to the end of the data and Ctrl+Shift+arrow selects to it.
+  The name box shows the range (A2:C9).
+- **Copy, cut, paste**: Ctrl+C, Ctrl+X, Ctrl+V, or the buttons. What is copied
+  is the text the cells show, with tabs between, as Excel and Google Sheets
+  put it on the clipboard, so a range goes both ways between them and Lantern.
+  Pasted inside the sheet, a formula's references move as Excel moves them
+  (=B2*C2 one row down is =B3*C3; $A$1 stays; off the sheet is #REF!), and its
+  look comes too. A cut moves the cells when they are pasted, as in Excel:
+  until then nothing goes, typing anything lets it be, and the formulas that
+  used the cut cells follow them. One cell pasted over a range fills it; a
+  block pasted over a range a whole number of times its size is repeated to
+  fill it. A paste longer than the sheet adds rows.
+- **Fill**: Ctrl+D fills the top row down the range (one cell: from the cell
+  above), Ctrl+R the left column across, references moving as in a paste.
+- **Undo and redo**: Ctrl+Z and Ctrl+Y (or the arrows), a hundred steps back,
+  for typing, paste, fill, delete, sort, rows and columns, and looks.
+- **Rows and columns**: put in above, below, left or right, or taken out, as
+  many as are selected. Every formula follows, whole rows (2:2) and whole
+  columns (B:B) too: =SUM(D2:D4) with a row put in above row 3 is =SUM(D2:D5);
+  a reference to a cell taken out is #REF!; a range loses what went; a cell
+  pushed past column Z is #REF!, a range that ran to Z still ends there. The
+  looks of empty cells move with their rows. Delete empties the cells and
+  keeps their looks, as in Excel.
+- **Sort A→Z, Z→A**: by the active cell's column. One cell, or one column of a
+  table, sorts the whole table round it (Excel's "expand the selection"), so
+  no row is torn apart. A first row of words above numbers or formulas, or a
+  bold first row, is the headings and stays on top. Excel's order: numbers
+  (dates and times typed as text are dates and times), then text (capitals and
+  lower case alike), then FALSE and TRUE, then errors; empty cells last either
+  way. A formula moves with its row.
+- **Looks**: bold and italic (Ctrl+B, Ctrl+I), left, centre and right, and a
+  number format: money ($, €, £), per cent, number with thousands, dates,
+  times, hours past a day ([h]:mm), fractions, scientific, or any Excel format
+  code; fewer and more decimals (from General, starting from the decimals
+  shown). A date or time typed as text takes a number format given to its
+  cell. A formula shows the look of the first cell it names, as Excel does
+  (=B2*C2 with prices typed $3.50 shows $7.00, and =SUM of those totals money
+  too), but not a count, a place, a part of a date or a yes or no (=COUNT of
+  prices is 8, not $8.00). A yes or no shows TRUE or FALSE, as in Excel
+  (=A1>2, =AND(...), =ISNUMBER(...)). The looks are kept with the sheet (an
+  Excel format code for each cell), ready for saving to .xlsx.
+- **Freeze top row** keeps the headings in view as the sheet scrolls.
+- **More rows**: a sheet keeps as many rows as it uses or has been given; Rows
+  & columns, 100 more rows, to 2,000. Formulas reach past row 999 (A1200). The
+  engine reads AA1 as past Z (an empty cell), not as A1.
+- The grid takes the height left under the bars, so choosing a cell never
+  scrolls the bars away. On a phone the editing bar is one row that scrolls
+  sideways, Select range first, then undo, copy and paste, fill, sort and
+  rows, then looks; any other button ends Select range, so the tap after Copy
+  chooses where to paste.
+- The Sheets help has "Editing like Excel".
+
+**Reviewed.** A reviewer that had not seen the code made 1,032 cases of its
+own, with an oracle for references checked against LibreOffice on all 696. At
+1.24.25's first draft 653 of 696 references, 182 of 254 grid cases and 36 of
+67 POWERW questions agreed with Excel. What it found, most harmful first:
+sorting one selected column tore the rows apart; a cut emptied the cells at
+once and left the formulas that used them pointing at nothing; the looks of
+empty cells were lost when rows went in; Delete took the looks too; whole rows
+(2:2) never moved; a column put in could push a reference to AA, which the
+engine read as column A (a wrong total with no error); =A1>2 under a money
+cell showed $1.00; typed dates sorted as text and ignored a date format; the
+POWERW check handed back POWERW(5,10) for "5 kJ in 10 s" (0.5 W, not 500) and
+fired on 0.5*1000*POWER(20,2)/8 and POWER(I,2)*R. All are mended. Its cases
+are kept (tests/fixtures/review_sheetedit_1265.json) and replayed: every one
+agrees now except seven left as they are, for reasons written in the test
+(Lantern's formulas reach row 9999, so =A2000 copied down a row is A2001, as
+in Excel; and two questions whose energy is per beat or per motor, where no
+line made from the energy stated would be right, so the check says nothing).
+
+ **Tested.** `tests/review_sheetedit_1265.js` (the review above: 696
+references, 252 grid cases, 67 questions). `tests/sheet_edit.js` (46 checks:
+the references moved by a copy and by rows and columns put in and taken out;
+in the grid a fill, undo and redo of a fill and of typing, copy of what is
+shown, a paste that moves formulas, text pasted from Excel, one cell over a
+range, cut and paste once, Shift+arrows, Delete on a range, a drag, Select
+range on a phone with Copy and Paste, Ctrl+B, number formats and decimals, a
+sort with headings and formulas, rows and columns in and out, freeze, more
+rows, a paste past the last row). `tests/sheet_functions.js` (Excel's POWER,
+POWERW, the AI check and where it stays quiet). In Chromium at a laptop's and
+a phone's width: a drag, Ctrl+D, Shift+arrows, Ctrl+B, a sort, and Ctrl+C and
+Ctrl+V through the real clipboard. The reviews of 1.24.24 replayed with the
+day they were made. `npm test` (ALL CHECKS PASS).
+
+**Not tested.** Pasting from Excel itself and into it (the text Excel puts on
+the clipboard was made by hand, from its documented form). A phone's own
+browser and touch. The 35B and the small models on 1.24.25.
+
 ## 1.24.24 — Sheets works out Excel's functions, and an fx button finds them (2026-11-17)
 
 Adam (2026-11-17, while rerunning set B on 1.24.23): "Can we work on improving

@@ -14,16 +14,24 @@ tried by a reviewer:
   button; `tests/sheet_functions.js`; two reviews,
   `tests/fixtures/review_sheetfn_1264.json` and `review2_sheetfn_1264.json`,
   replayed). Left: array arithmetic and spilling functions (SUMPRODUCT((A=x)*B),
-  UNIQUE, SORT, FILTER, SEQUENCE), TRUE/FALSE as words (ISLOGICAL), T.TEST,
-  Excel's POWER (QUESTIONS 16); a third reviewer on the second review's mends.
-- Sheets' editing, next (1.24.25): select a range; copy and paste to and from
-  Excel and Google Sheets; fill down and right (references moving as in
-  Excel, $ kept); insert and delete rows and columns; sort; undo and redo;
-  bold and number formats (money, %, dates, decimals; a formula carrying its
-  first cell's look, as =A1*2 of $1,200 in Excel); freeze the top row; more
-  than 100 rows and 26 columns.
-- Then opening and saving .docx, .xlsx and .pptx (a ZIP reader and writer
-  are needed; PDF_PARSE has DecompressionStream).
+  UNIQUE, SORT, FILTER, SEQUENCE), TRUE/FALSE as values of their own (they
+  are 1 and 0 to formulas, shown as TRUE and FALSE since 1.24.25; ISLOGICAL),
+  T.TEST.
+- Sheets' editing: **done in 1.24.25** (a range, copy, cut and paste with
+  Excel's clipboard text, fill, undo and redo, rows and columns in and out
+  with every reference following, sort in Excel's order keeping rows whole,
+  bold, italic, alignment and Excel number formats kept per cell as format
+  codes, a formula's carried look, TRUE/FALSE shown, freeze, to 2,000 rows;
+  `tests/sheet_edit.js`; the review `tests/fixtures/review_sheetedit_1265.json`
+  replayed by `tests/review_sheetedit_1265.js`). POWER is Excel's and watts
+  are POWERW (Adam, 2026-11-18), with a check that hands back the line.
+  Left: columns past Z (the sheet has 26); merged cells, borders, fill
+  colours, column widths; find and replace; a fill handle to drag; charts
+  from a range; paste special (values only); the second review's mends if
+  any are left (see the report).
+- **Next: opening and saving .docx, .xlsx and .pptx** (a ZIP reader and
+  writer are needed; PDF_PARSE has DecompressionStream). A sheet's looks are
+  already kept as Excel format codes for .xlsx.
 
 0. **The Health lessons' sources (1.24.22, Adam).** Every lesson names the
    guidelines it was checked against in November 2026; where they said
