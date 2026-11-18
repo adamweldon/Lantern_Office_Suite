@@ -159,7 +159,7 @@ function orderErrors(xml) {
     lh.indexOf("<blockquote>A quote.</blockquote><blockquote style=\"margin: 0 0 0 40px; border: none; padding: 0px;\"><p>Indented.</p></blockquote><pre>code  line 1\n    indented</pre><hr>") > 0 &&
     /<p style="text-align:right">Right<\/p><p style="text-align:justify">Justified text\.<\/p>$/.test(lh), lh);
   function rerr(b, n) { try { L.docx.read(b, n); return ""; } catch (e) { return e.message; } }
-  ok("an Excel file is sent to Sheets, an old .doc is named, a damaged file says so", /Excel workbook.*Sheets/.test(rerr(u8(fs.readFileSync(path.join(FX, "book.xlsx"))))) &&
+  ok("an Excel file is named as one, an old .doc is named, a damaged file says so", /Excel workbook \(\.xlsx\), not a Word document/.test(rerr(u8(fs.readFileSync(path.join(FX, "book.xlsx"))))) &&
     /\.doc\b/.test(rerr(new w.Uint8Array(40))) && /damaged/.test(rerr(changed)), [rerr(u8(fs.readFileSync(path.join(FX, "book.xlsx")))), rerr(new w.Uint8Array(40)), rerr(changed)]);
 
   // --- DOCX_WRITE + DOCX_PACKAGE: a Writer document as a Word file, and back ---
@@ -266,6 +266,12 @@ function orderErrors(xml) {
   ok("...it saves Winter checklist.docx: the title on top, headings, both lists and the table", s1 && s1.name === "Winter checklist.docx" && s1r.html.indexOf("<h1>Winter checklist</h1><h2>Engine</h2><ul><li>Drain the fuel</li><li>Change the oil</li></ul><h2>Blade</h2><ol><li>Sharpen it</li><li>Oil it</li></ol><table><tr><th>Part</th><th>When</th></tr>") === 0, s1r && s1r.html);
   ok("the AI's instructions for a document name Save .docx and Word files", act.prompt.join(" ").indexOf("Save .docx") > 0 && /Word file \(\.docx\)/.test(act.prompt.join(" ")) && /Save \.docx a Word file/.test(act.also));
   ok("a request for a Word file or a .docx is a document", act.match("Make me a Word document I can print: a weekly checklist") && act.match("Write the procedure and save it as a .docx") && act.match("put it in a docx for me"));
+  // the bench's Word file question
+  var bq = L.aiBenchQuestions.filter(function (q) { return q.id === "make-doc-word-checklist"; })[0];
+  function bgrade(reply) { return L.aiBench.grade(bq, reply, { made: L.aiAct.build(reply, bq.q) }); }
+  var gi = bgrade(bq.ideal), gn = bgrade("ANSWER: I cannot create Word files, but here is a checklist: extinguishers, exits, guards."),
+    gs = bgrade("MAKE DOC: Checklist\n## Weekly\n- Extinguishers checked and in their places on the wall\n- Exits clear of boxes, carts and tools\nThe foreman signs this sheet each Friday afternoon and keeps it in the office file for a year.\nEND");
+  ok("bench: the Word file question's ideal passes; \u201cI cannot create Word files\u201d fails; two things to check fail", bq && gi.pass && !gn.pass && !gs.pass && /fewer than five/.test(gs.why), [gi.why, gn.why, gs.why]);
   L.guide.open("writer"); await sleep(10);
   var gov = d.querySelector(".guide-overlay");
   ok("Writer's help says how Word files come and go", gov && /Word files \(\.docx\)/.test(gov.textContent) && /Save \.docx downloads the document as a Word file/.test(gov.textContent) && /Import file in the document library opens a \.docx/.test(gov.textContent), gov && gov.textContent.slice(-900));

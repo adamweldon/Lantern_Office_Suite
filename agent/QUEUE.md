@@ -30,11 +30,25 @@ tried by a reviewer:
   from a range; paste special (values only); the second review's mends if
   any are left (see the report).
 - Small, from the 1.24.25 bench: the 0.8B wrote "= 65*35 = 2275" for
-  fuel-cost on 1.24.23 and 1.24.25, read as a comparison (1). A sum followed
-  by its own result, when the two agree, is the sum.
-- **Next: opening and saving .docx, .xlsx and .pptx** (a ZIP reader and
-  writer are needed; PDF_PARSE has DecompressionStream). A sheet's looks are
-  already kept as Excel format codes for .xlsx.
+  fuel-cost on 1.24.23 and 1.24.25. The formula engine reads it as a
+  comparison, TRUE (1), and ASSIST_CORE's run takes it as worked out, so it
+  is not sent back (an arrow after a sum is: "a formula line holds only the
+  sum"). 1.24.7's eight reviews found the second = can be a rounding, a per
+  cent or a test asked as "isn't it?", so do not read it as the sum: send
+  the line back as an arrow is, unless the question asks a yes or no.
+- Word files: **done in 1.24.26** (Writer's Save .docx and Import file;
+  MAKE DOC's Save .docx; ZIP_INFLATE and ZIP read and write the zip;
+  `tests/docx.js`, fixtures in `tests/fixtures/docx`, the review replayed by
+  `tests/review_docx_1266.js`). Left: headers and footers, comments, fonts
+  and colours, page breaks (Writer has none), .odt and .rtf.
+- **Next: .xlsx in Sheets** (1.24.27): open and save, formulas kept as
+  formulas (Adam had to type his back in after a .csv), Excel's number
+  formats (already kept per cell as codes), bold, alignment, column widths,
+  merged cells (his file has C1:E1), shared formulas (his file has them).
+  Adam's House_Square_Footage file is in the session only: it has his
+  home's rooms and a Windows user name in it, so it is not in the repo.
+- Then .pptx in Slides (1.24.28). Adam's ITW deck is ITW's training
+  material: test with it in the session, never commit it.
 
 0. **The Health lessons' sources (1.24.22, Adam).** Every lesson names the
    guidelines it was checked against in November 2026; where they said

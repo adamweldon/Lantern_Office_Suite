@@ -225,7 +225,7 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   // --- the bench ---
   var Q = L.aiBenchQuestions;
   function gradeIdeal(id) { var item = Q.filter(function (q) { return q.id === id; })[0]; return L.aiBench.grade(item, item.ideal, { made: act.build(item.ideal, item.q) }); }
-  ["make-doc-oil-change", "make-slides-ladder", "make-cards-si-units", "make-plan-compressor"].forEach(function (id) {
+  ["make-doc-oil-change", "make-doc-word-checklist", "make-slides-ladder", "make-cards-si-units", "make-plan-compressor"].forEach(function (id) {
     var g = gradeIdeal(id);
     ok("bench: the ideal reply passes " + id, g.pass, g.why);
   });
@@ -318,7 +318,7 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
     "proceed with creating a document using the Writer module"].forEach(function (q) {
     ok("offered MAKE DOC: " + q.slice(0, 40), act.relevant(q).some(function (a) { return a.id === "doc"; }));
   });
-  ok("the MAKE DOC instructions say it is how to make a PDF, and to use it rather than LESSON", /Save \.pdf: this is how you make a Writer document or a PDF/.test(act.prompt("write a letter to my landlord")) &&
+  ok("the MAKE DOC instructions say it is how to make a PDF (and, from 1.24.26, a Word file), and to use it rather than LESSON", /Save \.pdf and Save \.docx: this is how you make a Writer document, a PDF or a Word file \(\.docx\)/.test(act.prompt("write a letter to my landlord")) &&
     /not LESSON/.test(act.prompt("write a letter to my landlord")));
   var sysGo = L.CHAT.buildSystem("yes, go ahead"), sysDoc = L.CHAT.buildSystem("write a letter to my landlord");
   ok("a follow-up that names nothing still hears what Lantern can make, and how to ask (MAKE: document)", /Lantern can also MAKE a schematic/.test(sysGo) && /reply only MAKE: <document/.test(sysGo) &&
