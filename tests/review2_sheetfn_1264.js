@@ -56,6 +56,14 @@ function same(v, want) {
   return String(v) === String(want);
 }
 
+// the reviews were made on 17 November 2026: TODAY() is that day here, whatever the day the test runs
+var RealDate = w.Date, FIXED = RealDate.UTC(2026, 10, 17, 18, 0, 0);
+function FixedDate() {
+  if (!(this instanceof FixedDate)) return new RealDate(FIXED).toString();
+  return arguments.length ? new (Function.prototype.bind.apply(RealDate, [null].concat([].slice.call(arguments))))() : new RealDate(FIXED);
+}
+FixedDate.UTC = RealDate.UTC; FixedDate.parse = RealDate.parse; FixedDate.now = function () { return FIXED; }; FixedDate.prototype = RealDate.prototype;
+w.Date = FixedDate;
 (async function () {
   w.eval(js);
   fire(d, "DOMContentLoaded");
@@ -114,10 +122,11 @@ function same(v, want) {
   // --- the fx searches -------------------------------------------------------------------------------------------
   // the reviewer wanted UPPER for "lowercase", LEFT for "right", YEAR for "month" and CHAR for "code" because those
   // had no line of their own; now they have
-  var ALSO = { lowercase: "LOWER", lower: "LOWER", right: "RIGHT", month: "MONTH", code: "CODE" };
+  var ALSO = { lowercase: "LOWER", lower: "LOWER", right: "RIGHT", month: "MONTH", code: "CODE", power: "POWER" };   // (POWER is Excel's from 1.24.25)
   var miss = [], first = 0, notFirst = [];
   R.search.forEach(function (s) {
     if (ALSO[s.words]) s.wanted = s.wanted.concat([ALSO[s.words]]);
+    if (s.wanted.indexOf("POW") >= 0) s.wanted = s.wanted.concat(["POWER"]);   // the same since 1.24.25
     if (!s.wanted.length) return;   // ("percent change": no function is that; =(B2-A2)/A2 is)
     var top = L.formulaFind(s.words).slice(0, 3).map(function (h) { return h.n; });
     if (s.wanted.indexOf(top[0]) >= 0) first++;

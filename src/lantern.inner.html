@@ -1644,7 +1644,10 @@ Lantern.formula = (function () {
   reg("WEIGHT", function (a) { return n(a[0]) * (a.length > 1 ? n(a[1]) : P.g0); }); // W = m*g
   reg("MOMENTUM", function (a) { return n(a[0]) * n(a[1]); });                    // p = m*v
   reg("WORK", function (a) { return n(a[0]) * n(a[1]); });                        // W = F*d
-  reg("POWER", function (a) { return n(a[0]) / n(a[1]); });                       // P = E/t
+  // (1.24.25, Adam: "we need to keep the excel formula as it works in excel and lantern") POWER(x,y) is Excel's,
+  // x to the power y (SHEET_FN_CORE), so a sheet saved for Excel works the same there; power in watts from
+  // energy and time is POWERW, and AI_CHECKS tells a model that wrote POWER(joules, seconds) which it meant
+  reg("POWERW", function (a) { return n(a[0]) / n(a[1]); });                      // P = E/t
   reg("PRESSURE", function (a) { return n(a[0]) / n(a[1]); });                    // P = F/A
   reg("STRESS", function (a) { return n(a[0]) / n(a[1]); });                      // sigma = F/A
   reg("KE", function (a) { return 0.5 * n(a[0]) * n(a[1]) * n(a[1]); });          // KE = 1/2 m v^2
@@ -18599,7 +18602,7 @@ Lantern.RFB = (function () {
     { n: "WEIGHT", s: "(m[,g])", d: "weight in newtons; g defaults 9.80665" },
     { n: "MOMENTUM", s: "(m,v)", d: "kg*m/s" },
     { n: "WORK", s: "(F,d)", d: "joules from force*distance" },
-    { n: "POWER", s: "(E,t)", d: "watts from energy/time" },
+    { n: "POWERW", s: "(E,t)", d: "watts from energy/time" },
     { n: "PRESSURE", s: "(F,A)", d: "pascals from force/area" },
     { n: "STRESS", s: "(F,A)", d: "pascals, same as pressure" },
     { n: "KE", s: "(m,v)", d: "kinetic energy in joules" },
@@ -26969,6 +26972,26 @@ Lantern.RFB = (function () {
       ", give " + B2 + "\u2019s GM, PLANET(\x22" + o.body + "\x22,\x22gm\x22), as its second value" +
       (o.line ? (o.dropped ? ", and leave Earth\u2019s radius out (it is not " + B2 + "\u2019s)" : "") + ". Write =" + o.line : ".");
   }
+  // (1.24.25) POWER(x,y) is Excel's x to the power y; Lantern's power in watts from energy and time is POWERW.
+  // A model that writes POWER(600,4) for "600 J in 4 seconds: what power?" means 600 / 4: the line goes back
+  // with its own values, the name changed. Only when the question asks for power or watts, gives an energy
+  // (J, kJ, joules, Wh, energy, work) and a time, and says nothing of a power of a number (squared, exponent,
+  // "to the power of")
+  function powerMeantWatts(question, expr) {
+    var q = String(question || "").toLowerCase(), e = String(expr || "");
+    if (!/\bPOWER\s*\x28/i.test(e) || /\bPOWERW\b/i.test(e)) return null;
+    if (!/\b(power|watts?|kw|kilowatts?)\b/.test(q) || /to the power|squared|cubed|exponent|raised|\bpower of (?:a |the )?(?:number|ten|two|2|10)\b/.test(q)) return null;
+    if (!/\d\s*(?:j|kj|mj|wh|kwh)\b|\b(?:joules?|kilojoules?|energy|work)\b/.test(q)) return null;
+    if (!/\d\s*(?:s|sec|secs|seconds?|min|mins|minutes?|h|hrs?|hours?)\b/.test(q)) return null;
+    var ok = true, line = e.replace(/^\s*=\s*/, "").split("\n")[0].replace(/\bPOWER\s*\x28([^(),]*(?:\x28[^()]*\x29[^(),]*)*),([^(),]*(?:\x28[^()]*\x29[^(),]*)*)\x29/gi, function (m0, a, b) {
+      return "POWERW(" + a.replace(/^\s+|\s+$/g, "") + "," + b.replace(/^\s+|\s+$/g, "") + ")";
+    });
+    if (/\bPOWER\s*\x28/i.test(line)) ok = false;
+    try { var v = L.formula.evaluate(line, { deg: false, ans: 0 }); if (typeof v !== "number" || !isFinite(v)) ok = false; } catch (e2) { ok = false; }
+    return ok ? "POWER(x,y) is x to the power y, as in Excel. Power in watts from energy and time is POWERW(energy, time). Write =" + line : null;
+  }
+  add("power-in-watts", function (question, expr) { return powerMeantWatts(question, expr); });
+  L.aiChecks.powerMeantWatts = powerMeantWatts;
   // a formula that runs is questioned only with the line; a refusal always carries what is true of the function
   add("other-body-gm", function (question, expr) { var o = otherBodyCall(expr, question); return o && o.line ? otherBodySay(o) : null; });
   (L.assistRejectHints = L.assistRejectHints || []).push(function (question, expr) { var o = otherBodyCall(expr, question); return o ? otherBodySay(o) : null; });
@@ -35620,7 +35643,16 @@ Lantern.RFB = (function () {
     ATAN2: function (a, ctx) { var x = N(a[0]), y = N(a[1]); if (x === 0 && y === 0) throw err("#DIV/0!", "ATAN2 of 0,0"); var t = Math.atan2(y, x); return ctx && ctx.deg ? t * 180 / Math.PI : t; },
     EVEN: function (a) { var x = N(a[0]), s = x < 0 ? -1 : 1, v = Math.ceil(Math.abs(x)); return s * (v % 2 ? v + 1 : v); },
     ODD: function (a) { var x = N(a[0]), s = x < 0 ? -1 : 1, v = Math.ceil(Math.abs(x)); return s * (v % 2 ? v : v + 1); },
-    SQRTPI: function (a) { var x = N(a[0]); if (x < 0) throw err("#NUM!", "SQRTPI of a negative number"); return Math.sqrt(x * Math.PI); }
+    SQRTPI: function (a) { var x = N(a[0]); if (x < 0) throw err("#NUM!", "SQRTPI of a negative number"); return Math.sqrt(x * Math.PI); },
+    // (1.24.25) POWER(x, y): x to the power y, as in Excel (Lantern's power in watts is POWERW)
+    POWER: function (a) {
+      var x = N(a[0]), y = N(a[1]);
+      if (x === 0 && y === 0) throw err("#NUM!", "POWER(0,0) has no value");
+      if (x === 0 && y < 0) throw err("#DIV/0!", "Divide by zero");
+      var v = Math.pow(x, y);
+      if (!isFinite(v) || isNaN(v)) throw err("#NUM!", x < 0 ? "a negative number to a fraction of a power" : "too large");
+      return v;
+    }
   };
   function whole(x) { if (x < 0) throw err("#NUM!", "a negative number"); return Math.floor(x); }
   function gcd(x, y) { while (y) { var t = x % y; x = y; y = t; } return x; }
@@ -35705,7 +35737,7 @@ Lantern.RFB = (function () {
     "VAR 1 *, VARP 1 *, VAR.S 1 *, VAR.P 1 *, LARGE 2 2, SMALL 2 2, RANK 2 3, RANK.EQ 2 3, PERCENTILE 2 2, PERCENTILE.INC 2 2, QUARTILE 2 2, " +
     "QUARTILE.INC 2 2, ROUNDUP 1 2, ROUNDDOWN 1 2, TRUNC 1 2, INT 1 1, CEILING 1 2, CEILING.MATH 1 3, CEILING.PRECISE 1 3, FLOOR.MATH 1 3, " +
     "FLOOR.PRECISE 1 3, MROUND 2 2, SIGN 1 1, QUOTIENT 2 2, GCD 1 *, LCM 1 *, RAND 0 0, RANDBETWEEN 2 2, LOG10 1 1, COMBIN 2 2, PERMUT 2 2, " +
-    "DEGREES 1 1, RADIANS 1 1, ATAN2 2 2, EVEN 1 1, ODD 1 1, SQRTPI 1 1, SUBTOTAL 2 *",
+    "DEGREES 1 1, RADIANS 1 1, ATAN2 2 2, EVEN 1 1, ODD 1 1, SQRTPI 1 1, POWER 2 2, SUBTOTAL 2 *",
     "SUMIF SUMIFS COUNTIF COUNTIFS AVERAGEIF AVERAGEIFS MINIFS MAXIFS COUNTA COUNTBLANK");
   L.sheetFn = { registerAll: registerAll, isErr: isErr, round15: round15, err: err, lz: lz, isRange: isRange, grid: grid, flat: flat, nums: nums, N: N, T: T, truthy: truthy,
     crit: crit, wild: wild, eqv: eqv, blank: blank, serial: serial, ymd: ymd, dayOf: dayOf, numText: numText, fmtGeneral: fmtGeneral, F: F };
@@ -36857,7 +36889,8 @@ Lantern.RFB = (function () {
       ["MOD", "(number, divisor)", "the remainder, with the divisor's sign: MOD(10,3) is 1"],
       ["QUOTIENT", "(number, divisor)", "the whole part of a division: QUOTIENT(10,3) is 3"],
       ["SQRT", "(number)", "the square root"],
-      ["POW", "(number, power)", "a number to a power: POW(2,10) is 1024; also 2^10. (POWER is Lantern's physics power, energy / time)"],
+      ["POWER", "(number, power)", "a number to a power: POWER(2,10) is 1024; also 2^10 or POW(2,10). (Power in watts from energy and time is POWERW)"],
+      ["POW", "(number, power)", "the same as POWER: POW(2,10) is 1024"],
       ["EXP", "(number)", "e to that power"],
       ["LN", "(number)", "the natural log"],
       ["LOG", "(number, [base])", "the log, base 10 unless given: LOG(8,2) is 3"],
@@ -37061,7 +37094,7 @@ Lantern.RFB = (function () {
     CHOOSE: "pick from a list pick one", MID: "middle of text", AND: "true if all all true both", OR: "either any true",
     LOOKUP: "tax bracket grade from a score band", LOG: "logarithm", LN: "natural logarithm", LOG10: "logarithm base 10", SUMPRODUCT: "weighted average weighted sum",
     PRODUCT: "multiply times multiplication", NPER: "how many payments number of payments pay off", QUOTIENT: "divide division", MOD: "remainder", ABS: "absolute value positive", ROUND: "decimals",
-    TRUNC: "truncate cut off decimals", INT: "integer whole number", POW: "power exponent raise squared cubed cube root nth root", EXP: "exponent exponential",
+    TRUNC: "truncate cut off decimals", INT: "integer whole number", POWER: "power exponent raise squared cubed cube root nth root", POWERW: "power in watts energy time", EXP: "exponent exponential",
     SQRT: "square root", COMBIN: "combinations choose", PERMUT: "permutations arrangements", RAND: "random", AVERAGE: "mean",
     MEDIAN: "middle value", MODE: "most common most often", MIN: "minimum smallest lowest least", MAX: "maximum largest highest biggest largest value highest value",
     LARGE: "second largest top", SMALL: "second smallest bottom", COUNT: "count numbers how many", COUNTA: "count filled cells non-blank",

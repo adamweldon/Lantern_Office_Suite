@@ -153,7 +153,17 @@ function close(v, want) {
   ok("Excel's functions are registered (" + names.length + ")", ["SUMIF", "VLOOKUP", "XLOOKUP", "TEXT", "DATEDIF", "PMT", "IRR", "NORM.DIST", "TEXTJOIN", "NETWORKDAYS.INTL"].every(function (n) { return names.indexOf(n) >= 0; }));
   var overview = L.suite.catalog ? L.suite.catalog("").text : "";
   ok("the AI's catalog of Lantern is no longer for them (rule 5)", overview && !/VLOOKUP|SUMIF|NETWORKDAYS/.test(overview) && !/VLOOKUP|SUMIF/.test(String(L.assistBuiltins || "")), overview.length);
-  ok("Lantern's POWER is still the physics one (energy / time); POW is x to a power", out && L.sheetDocs.compute({ A1: "=POWER(100,4)", A2: "=POW(2,10)" }).A1 === 25 && L.sheetDocs.compute({ A2: "=POW(2,10)" }).A2 === 1024);
+  // (1.24.25, Adam: "we need to keep the excel formula as it works in excel and lantern") POWER is Excel's; Lantern's
+  // power in watts from energy and time is POWERW, and a model's POWER(joules, seconds) goes back with POWERW written
+  var pw = L.sheetDocs.compute({ A1: "=POWER(2,10)", A2: "=POW(2,10)", A3: "=POWERW(100,4)", A4: "=POWER(0,0)", A5: "=POWER(-8,1/3)" });
+  ok("POWER is Excel's (2 to the 10th); POWERW is watts from energy and time", pw.A1 === 1024 && pw.A2 === 1024 && pw.A3 === 25 && pw.A4 === "#NUM!" && pw.A5 === "#NUM!", pw);
+  var C = L.aiChecks, said = C.powerMeantWatts("A motor does 600 J of work in 4 seconds. What is its power in watts?", "=POWER(600,4)");
+  ok("a model's POWER(600,4) for 600 J in 4 s goes back with the line: =POWERW(600,4)", /Write =POWERW\(600,4\)$/.test(said || ""), said);
+  ok("...its own sum kept round it (=POWERW(12000,30)/1000)", /Write =POWERW\(12000,30\)\/1000$/.test(C.powerMeantWatts("A lift does 12000 J of work in 30 s. Power in kW?", "=POWER(12000,30)/1000") || ""));
+  ok("...and not when the question asks for a power of a number", C.powerMeantWatts("What is 2 to the power of 10?", "=POWER(2,10)") === null &&
+    C.powerMeantWatts("What power is 5 squared?", "=POWER(5,2)") === null && C.powerMeantWatts("A 60 W bulb runs for 3 hours. How much energy in joules?", "=60*3*3600") === null);
+  var cat = (L.assistCatalog || []).map(function (c) { return c.n; });
+  ok("the AI's catalog has POWERW, not POWER", cat.indexOf("POWERW") >= 0 && cat.indexOf("POWER") < 0);
   var find = L.formulaFind;
   ok("fx finds by a word: loan -> PMT", find("loan")[0].n === "PMT", find("loan").slice(0, 3).map(function (h) { return h.n; }));
   ok("fx finds by name: vlook -> VLOOKUP", find("vlook")[0].n === "VLOOKUP");
