@@ -2013,8 +2013,8 @@ Lantern.formula = (function () {
   // (1.24.25) a sheet has 100 rows, or as many as it uses or has been given (doc.rows), to MAXROWS
   var COLS = 26, ROWS = 100, MAXROWS = 2000;
   // hooks for SHEET_EDIT (1.24.25): a cell selected, a change about to be made (for undo), a number's text, after a repaint
-  var selHooks = [], changeHooks = [], showHooks = [], paintHooks = [];
-  function each(list, a, b, c) { for (var i = 0; i < list.length; i++) { try { var r = list[i](a, b, c); if (r != null) return r; } catch (e) { /* a hook that fails leaves the grid as it is */ } } return null; }
+  var selHooks = [], changeHooks = [], showHooks = [], paintHooks = [], typedHooks = [];
+  function each(list, a, b, c, d) { for (var i = 0; i < list.length; i++) { try { var r = list[i](a, b, c, d); if (r != null) return r; } catch (e) { /* a hook that fails leaves the grid as it is */ } } return null; }
   var col = Lantern.store.collection("sheet.docs");
   var ws, doc = null, tds = {}, sel = "A1", fbar, nameEl, gridwrap, shown = {};
   // dirty: the formula bar holds typing not yet in the cell (1.16.0: it was
@@ -2070,10 +2070,19 @@ Lantern.formula = (function () {
     var r = /^\s*\$?([A-Z])\$?([0-9]{1,4})\s*$/i.exec(body);
     if (r && cells) { var src = cells[r[1].toUpperCase() + r[2]]; return /^\s*(TRUE|FALSE)\s*$/i.test(src || "") || logical(src, cells, (depth || 0) + 1); }
     if (m && !m[2]) return /^(TRUE|FALSE)$/i.test(m[1]) && !/\S/.test(body.slice(m[0].length));
-    return !!(m && LOGICAL.test(m[1]) && shut > 0 && !/\S/.test(body.slice(shut + 1)));
+    if (!m || shut < 0 || /\S/.test(body.slice(shut + 1))) return false;
+    if (LOGICAL.test(m[1])) return true;
+    var fn = m[1].toUpperCase(), args = tops(body.slice(m[0].length, shut), ","), pick = [], ai;
+    if (fn === "IF") pick = args.length === 2 ? [1] : [1, 2];
+    else if (fn === "IFERROR" || fn === "IFNA") pick = [0, 1];
+    else if (fn === "IFS") for (ai = 1; ai < args.length; ai += 2) pick.push(ai);
+    else if (fn === "CHOOSE") for (ai = 1; ai < args.length; ai++) pick.push(ai);
+    else if (fn === "SWITCH") { for (ai = 2; ai < args.length; ai += 2) pick.push(ai); if (args.length % 2 === 0) pick.push(args.length - 1); }
+    return pick.length > 0 && pick.every(function (i) { return args[i] && logical("=" + args[i].s, cells, (depth || 0) + 1); });
   }
   function computeAll(cells) {
-    var out = {}, visiting = {}, lastRow = ROWS;
+    var out = {}, visiting = {}, lastRow = ROWS, lg = {};
+    function isLogical(k) { if (!(k in lg)) lg[k] = typeof cells[k] === "string" && (/^\s*(TRUE|FALSE)\s*$/i.test(cells[k]) || logical(cells[k], cells)); return lg[k]; }
     for (var kr in cells) { var pr = /([0-9]+)$/.exec(kr); if (pr && +pr[1] > lastRow) lastRow = +pr[1]; }
     function val(ref) {
       if (ref in out) return out[ref];
@@ -2106,7 +2115,7 @@ Lantern.formula = (function () {
                     if (!cx.errOk) { var re = new Error(x); re.code = x; throw re; }
                     if (!arr.err) arr.err = x;
                   }
-                  else if (typeof x === "number") arr.push(x);
+                  else if (typeof x === "number" && !((x === 0 || x === 1) && isLogical(k))) arr.push(x);
                   if (typeof cells[k] === "string" && /^=\s*SUBTOTAL\s*\x28/i.test(cells[k])) subs.push([rows.length, row.length]);
                   row.push(x == null ? null : x);
                 }
@@ -2304,7 +2313,7 @@ Lantern.formula = (function () {
       else if (typeof v === "number" && (v === 0 || v === 1) && logical(doc.cells[k], doc.cells)) { td.textContent = v ? "TRUE" : "FALSE"; td.className = "num"; }
       else if (typeof v === "number") {
         // a number typed with its format ($12.50, 1,500, 10%) shows as typed
-        var raw = doc.cells[k], dk = dateKind(k), own = each(showHooks, k, v, raw);
+        var raw = doc.cells[k], dk = dateKind(k), own = each(showHooks, k, v, raw, dk);
         td.textContent = own != null ? own : typeof raw === "string" && raw.charAt(0) !== "=" && /[,%\$\u20ac\u00a3]/.test(raw) ? raw.replace(/^\s+|\s+$/g, "") :
           dk && (dk === "clock" ? Math.abs(v) < 400 : v >= 1 && v < 2958466) ? dayText(v, dk) : shownNum(k, v);
         td.className = "num";
@@ -2339,6 +2348,7 @@ Lantern.formula = (function () {
     if ((doc.cells[sel] == null ? "" : String(doc.cells[sel])) !== v) each(changeHooks, doc);
     if (v === "") delete doc.cells[sel];
     else doc.cells[sel] = v;
+    each(typedHooks, sel, v);
     dirty = false;
     col.put(doc);
     repaint();
@@ -2355,6 +2365,7 @@ Lantern.formula = (function () {
     if (!doc || !dirty || !fbar) return;
     each(changeHooks, doc);
     if (fbar.value === "") delete doc.cells[sel]; else doc.cells[sel] = fbar.value;
+    each(typedHooks, sel, fbar.value);
     dirty = false; col.put(doc);
   }
   // pointing(): a formula being typed, with the cursor after an operator,
@@ -2432,6 +2443,12 @@ Lantern.formula = (function () {
     else if ((k === "ArrowLeft" || (k === "Tab" && e.shiftKey)) && p.c > 0) select(refOf(p.c - 1, p.r));
     else if (k === "Tab") { /* at the edge: stay in the grid */ }
     else if (k === "Home") select(e.ctrlKey || e.metaKey ? "A1" : refOf(0, p.r));
+    else if (k === "End" && (e.ctrlKey || e.metaKey)) {
+      // Ctrl+End: the last row and the last column anything is in, as in Excel
+      var lr = 0, lc = 0;
+      for (var ke in doc.cells) { var pe = /^([A-Z])([0-9]+)$/.exec(ke); if (pe && doc.cells[ke] !== "") { lc = Math.max(lc, pe[1].charCodeAt(0) - 65); lr = Math.max(lr, +pe[2] - 1); } }
+      select(refOf(lc, Math.min(lr, ROWS - 1)));
+    }
     else if (k === "End") {
       var last = 0;
       for (var cc = 0; cc < COLS; cc++) if (doc.cells[refOf(cc, p.r)] != null) last = cc;
@@ -2504,7 +2521,7 @@ Lantern.formula = (function () {
     // Hook: persistent grid features that live for the whole edit session
     // (see SHEET_PAGES / SHEET_PRINT). Isolated so one failing hook cannot
     // break the grid or the other hooks.
-    selHooks = []; changeHooks = []; showHooks = []; paintHooks = [];
+    selHooks = []; changeHooks = []; showHooks = []; paintHooks = []; typedHooks = [];
     var eh = window.Lantern.sheetEditHooks || [];
     for (var hi = 0; hi < eh.length; hi++) {
       try {
@@ -2525,6 +2542,8 @@ Lantern.formula = (function () {
           tds: function () { return tds; },
           onSelect: function (fn) { selHooks.push(fn); },
           beforeChange: function (fn) { changeHooks.push(fn); },
+          // after a cell is typed into and Enter pressed, changed or not: fn(ref, raw)
+          onTyped: function (fn) { typedHooks.push(fn); },
           addShow: function (fn) { showHooks.push(fn); },
           onPaint: function (fn) { paintHooks.push(fn); },
           keep: function () { if (dirty) commit(); },
@@ -8215,7 +8234,8 @@ if (document.readyState === "loading") {
       "that used them follow. Copy one row and paste over three to fill them.</li>" +
       "<li><b>Ctrl+D</b> fills the top row down the range, <b>Ctrl+R</b> the left column across.</li>" +
       "<li><b>Ctrl+A</b> selects the table round the cell (again: all that is filled); <b>Ctrl+arrow</b> jumps to the " +
-      "end of the data, <b>Ctrl+Shift+arrow</b> selects to it; a column letter or row number selects the column or row.</li>" +
+      "end of the data, <b>Ctrl+Shift+arrow</b> selects to it; a column letter or row number selects the column or row. " +
+      "Typing with a range selected, <b>Enter</b> and <b>Tab</b> move through the range.</li>" +
       "<li><b>Ctrl+Z</b> undoes, <b>Ctrl+Y</b> redoes.</li>" +
       "<li><b>Ctrl+B</b>, <b>Ctrl+I</b>: bold and italic. The format list shows a number as money, per cent, a date, a " +
       "time or a fraction, or by any Excel format code; a formula shows the look of the first cell it names.</li>" +
@@ -27061,30 +27081,62 @@ Lantern.RFB = (function () {
   }
   // (1.24.25) POWER(x,y) is Excel's x to the power y; Lantern's power in watts from energy and time is POWERW.
   // A model that writes POWER(600,4) for "600 J in 4 seconds: what power?" means 600 / 4. It is told so, with
-  // the line for THIS question, only when Lantern can be sure: the question asks for a power, states one energy
-  // (J, kJ, MJ, Wh, kWh) and one time (ms, s, min, h, days, "an hour", "half a minute"), and the reply's one
-  // POWER takes that energy and that time, as stated or converted. The line is POWERW(joules, seconds), over
-  // 1000 when kW are asked. 2^10 joules, or the energy of 2 motors, is not the energy stated: no line is sure.
-  var PW_E = /(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?:e([-+]?\d+))?\s*(kilowatt[-\s]?hours?|watt[-\s]?hours?|kilojoules?|megajoules?|joules?|kwh|mwh|wh|kj|mj|j)\b/gi;
+  // the line for THIS question, only when Lantern can be sure (rule 7):
+  //  - the question asks for a power, in watts or kilowatts, and for nothing else (not the energy too, not ohms,
+  //    not horsepower);
+  //  - it states one energy (J, kJ, MJ, mJ, Wh, kWh, MWh, mWh, in figures or words) and one time (ms, s, min, h,
+  //    days, "an hour", "half a minute", "per hour"); mj or mwh in small letters could be milli or mega: no line;
+  //  - the reply's one POWER is its whole sum, or that over 1000 (a line before may give it the energy or the time
+  //    through ANS, a line after may turn ANS into kilowatts), and takes that energy and that time, as stated or
+  //    converted. A POWER inside a bigger sum (=(4*POWER(4,2)-4)/2, =POWER(E,t)*0.8) is the model's own.
+  // The line is POWERW(joules, seconds), over 1000 when kilowatts are asked.
+  var PW_E = /(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?:e([-+]?\d+))?\s*(kilowatt[-\s]?hours?|megawatt[-\s]?hours?|milliwatt[-\s]?hours?|watt[-\s]?hours?|kilojoules?|megajoules?|millijoules?|joules?|kwh|mwh|wh|kj|mj|j)\b/gi;
   var PW_T = /(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?\s*(milliseconds?|ms|seconds?|secs?|s|minutes?|mins?|hours?|hrs?|hr|h|days?)\b/gi;
   function pwEnergyUnit(u) {
     if (u === "mJ") return 1e-3;
-    u = u.toLowerCase().replace(/[-\s]/g, "");
-    return /^(kilowatthours?|kwh)$/.test(u) ? 3.6e6 : u === "mwh" ? 3.6e9 : /^(watthours?|wh)$/.test(u) ? 3600 : /^(kilojoules?|kj)$/.test(u) ? 1e3 : /^(megajoules?|mj)$/.test(u) ? 1e6 : 1;
+    if (u === "MJ") return 1e6;
+    if (u === "mWh") return 3.6;
+    if (u === "MWh") return 3.6e9;
+    var l = u.toLowerCase().replace(/[-\s]/g, "");
+    if (l === "mj" || l === "mwh") return null;   // milli or mega? not sure
+    return /^(kilowatthours?|kwh)$/.test(l) ? 3.6e6 : /^megawatthours?$/.test(l) ? 3.6e9 : /^milliwatthours?$/.test(l) ? 3.6 :
+      /^(watthours?|wh)$/.test(l) ? 3600 : /^(kilojoules?|kj)$/.test(l) ? 1e3 : /^megajoules?$/.test(l) ? 1e6 : /^millijoules?$/.test(l) ? 1e-3 : 1;
   }
   function pwTimeUnit(u) {
     u = u.toLowerCase();
     return /^(milliseconds?|ms)$/.test(u) ? 1e-3 : /^(minutes?|mins?)$/.test(u) ? 60 : /^(hours?|hrs?|hr|h)$/.test(u) ? 3600 : /^days?$/.test(u) ? 86400 : 1;
   }
   function pwNum(x) { return +(+x).toPrecision(12); }
-  // pwStated(question): {E: [as stated, in J], t: [as stated, in s], kw} when it states one energy and one time
+  // pwAsked(question): the sentences that ask (ending "?", or Find / Calculate ...), the given values taken out
+  function pwAsked(question) {
+    var q = String(question || "").replace(/\brate of (?:energy|work|doing work)\b/gi, " power ").replace(/\bfrom (?:the )?energy and (?:the )?time\b/gi, " ");
+    // a point inside a number (1.5 min, 1.2E3) does not end a sentence
+    var parts = q.match(/(?:[^.?!]|\.(?=\S))+[?]|\b(?:find|calculate|work out|determine|compute|give)\b(?:[^.?!]|\.(?=\S))*/gi);
+    var t = parts ? parts.join(" ") : q;
+    PW_E.lastIndex = 0; PW_T.lastIndex = 0;
+    return t.replace(PW_E, " ").replace(PW_T, " ").replace(/\b(?:half an?|an?|one|per|each|every)\s+(?:hour|minute|second|day)s?\b/gi, " ")
+      .replace(/\bof (?:electrical |electric )?(?:energy|work|heat)\b/gi, " ");   // "500 J of energy" is given, not asked
+  }
+  // pwAsks(question): "W" or "kW" when it asks for a power and nothing else, or null
+  var PW_OTHER = /\b(?:how (?:many|much) (?:joules|kilojoules|energy|work|heat|charge|current|time|seconds|minutes|hours|kwh|ohms)|(?:what|find|calculate|work out|determine|and)(?: is| are| was)?(?: the| its| his| her| their)?(?: total| kinetic| potential| electrical| useful| average| mean)? (?:energy|work done|resistance|current|voltage|time|charge|heat|efficiency|speed|velocity|force|distance)|in (?:joules|j|kilojoules|kj|kwh|wh|ohms|amps|amperes|volts|seconds|minutes|hours|hp|horsepower|mw|megawatts|milliwatts|btu)|how long|horsepower|hp|megawatts?|milliwatts?|mw)\b/i;
+  var PW_ELSE = /\b(?:energy|joules?|kilojoules?|kwh|work done|heat|resistance|ohms?|current|amps?|amperes?|voltage|volts?|time|how long|speed|velocity|distance|force|charge|efficiency|height|mass|horsepower|hp|megawatts?|milliwatts?|btu|to the (?:\w+ )?power|squared|cubed|raised to|exponent)\b/i;
+  function pwAsks(question) {
+    var q = String(question || ""), a = pwAsked(q).replace(/\bmW\b/g, " milliwatts ").replace(/\bMW\b/g, " megawatts ");
+    if (!/\b(?:power|watts?|wattage|kw|kilowatts?)\b|\bin w\b/i.test(a)) return null;
+    if (PW_ELSE.test(a) || PW_OTHER.test(a)) return null;
+    // kilowatts only when they are what is asked ("in kW", "how many kilowatts"); a 2 kW kettle's draw is in watts
+    return /\b(?:in|into|as)\s+(?:kw|kilowatts?)\b|\bhow many (?:kw|kilowatts)\b/i.test(a) ? "kW" : "W";
+  }
+  // pwStated(question): {E: [as stated, in J], t: [as stated, in s]} when it states one energy and one time
   function pwStated(question) {
-    var q = String(question || ""), m, es = [], ts = [], w;
+    var q = String(question || ""), m, es = [], ts = [];
     PW_E.lastIndex = 0;
     while ((m = PW_E.exec(q))) {
       if (/[\^*]\s*$/.test(q.slice(0, m.index))) return null;   // 2^10 J: the energy is a sum, not a number stated
+      var unit = pwEnergyUnit(m[4]);
+      if (unit === null) return null;
       var v = +(m[1].replace(/,/g, "") + (m[2] || "") + (m[3] ? "e" + m[3] : ""));
-      es.push([v, pwNum(v * pwEnergyUnit(m[4]))]);
+      es.push([v, pwNum(v * unit)]);
     }
     var rest = q.replace(/\bhalf an? (hour|minute|second|day)\b/gi, function (x, u) { ts.push([0.5, pwNum(0.5 * pwTimeUnit(u))]); return " "; });
     rest = rest.replace(/\b(?:an?|one|per|each|every)\s+(hour|minute|second|day)\b/gi, function (x, u) { ts.push([1, pwTimeUnit(u)]); return " "; });
@@ -27093,14 +27145,12 @@ Lantern.RFB = (function () {
       var tv = +(m[1].replace(/,/g, "") + (m[2] || ""));
       ts.push([tv, pwNum(tv * pwTimeUnit(m[3]))]);
     }
-    function one(list, k) { for (var i = 1; i < list.length; i++) if (list[i][1] !== list[0][1]) return null; return list.length ? list[0] : null; }
+    function one(list) { for (var i = 1; i < list.length; i++) if (list[i][1] !== list[0][1]) return null; return list.length ? list[0] : null; }
     var E = one(es), t = one(ts);
     if (!E || !t || !(E[1] > 0) || !(t[1] > 0)) return null;
-    w = /\b(?:in|into|as)\s+(kw|kilowatts?|watts?|w)\b/i.exec(q);
-    var kw = w ? /^k/i.test(w[1]) : /\b(?:kw|kilowatts?)\b(?![-\s]*hours?)/i.test(q) && !/\bwatts?\b/i.test(q);
-    return { E: E, t: t, kw: kw };
+    return { E: E, t: t };
   }
-  // pwCalls(text): each POWER( call in the text, with its arguments' text (quotes and brackets kept whole)
+  // pwCalls(text): each POWER( call in the text, where it starts and ends, with its arguments' text
   function pwCalls(text) {
     var out = [], re = /\bPOWER\s*\x28/gi, m;
     while ((m = re.exec(text))) {
@@ -27113,31 +27163,37 @@ Lantern.RFB = (function () {
         else if (ch === "\x29") { d--; if (!d) args.push(text.slice(from, i)); }
         else if (ch === "," && d === 1) { args.push(text.slice(from, i)); from = i + 1; }
       }
-      out.push({ at: m.index, args: d ? null : args });
+      out.push({ at: m.index, end: i, args: d ? null : args });
     }
     return out;
   }
+  // what may follow the POWER on its line: a change of unit (to kilowatts, from minutes or hours), nothing else
+  var PW_SCALE = /^\s*(?:[*\x2F]\s*(?:1000|1e3|0\.001|1e-3|60|3600|86400|24|1e6|1000000|3\.6e6|3600000)\s*){0,2}$/i;
   function powerMeantWatts(question, expr) {
-    var q = String(question || ""), e = String(expr || "");
-    if (!/\b(power|watts?|wattage|kw|kilowatts?)\b|\brate of (?:energy|work|doing work)\b/i.test(q)) return null;
+    var q = String(question || ""), e = String(expr || ""), unit = pwAsks(q);
+    if (!unit) return null;
     var lines = e.split(/\r?\n/).map(function (x) { return x.replace(/^\s*=\s*/, ""); }).filter(function (x) { return /\S/.test(x); });
     var all = pwCalls(lines.join("\n"));
     if (all.length !== 1 || !all[0].args || all[0].args.length !== 2) return null;
     var st = pwStated(q);
     if (!st) return null;
-    var ans = 0, a = null, b = null;
-    for (var i = 0; i < lines.length; i++) {
-      var c = pwCalls(lines[i]);
-      try {
-        if (c.length) { a = L.formula.evaluate(c[0].args[0], { deg: false, ans: ans }); b = L.formula.evaluate(c[0].args[1], { deg: false, ans: ans }); break; }
-        ans = L.formula.evaluate(lines[i], { deg: false, ans: ans });
-      } catch (e2) { return null; }
-    }
+    var at = -1, i;
+    for (i = 0; i < lines.length; i++) if (pwCalls(lines[i]).length) at = i;
+    var c = pwCalls(lines[at])[0], ln = lines[at];
+    // the POWER is the whole sum on its line (or that in kilowatts); a line before feeds it through ANS; a line after
+    // only turns ANS into kilowatts
+    if (/\S/.test(ln.slice(0, c.at)) || !PW_SCALE.test(ln.slice(c.end))) return null;
+    for (i = at + 1; i < lines.length; i++) if (!/^\s*ANS\s*[*\x2F]\s*(?:1000|1e3|0\.001)\s*$/i.test(lines[i])) return null;
+    var ans = 0, a, b;
+    try {
+      for (i = 0; i < at; i++) ans = L.formula.evaluate(lines[i], { deg: false, ans: ans });
+      a = L.formula.evaluate(c.args[0], { deg: false, ans: ans }); b = L.formula.evaluate(c.args[1], { deg: false, ans: ans });
+    } catch (e2) { return null; }
     if (typeof a !== "number" || typeof b !== "number") return null;
     function near(x, list) { for (var j = 0; j < list.length; j++) if (Math.abs(x - list[j]) <= 1e-9 * Math.max(1, Math.abs(list[j]))) return true; return false; }
     var EJ = st.E[1], ts = st.t[1];
     if (!near(a, [st.E[0], EJ, EJ / 1e3, EJ / 3600, EJ / 3.6e6]) || !near(b, [st.t[0], ts, ts / 60, ts / 3600])) return null;
-    var line = "POWERW(" + EJ + "," + ts + ")" + (st.kw ? "/1000" : "");
+    var line = "POWERW(" + EJ + "," + ts + ")" + (unit === "kW" ? "/1000" : "");
     return "POWER(x,y) is x to the power y, as in Excel. Power in watts from energy in joules and time in seconds is POWERW(energy, time). Write =" + line;
   }
   add("power-in-watts", function (question, expr) { return powerMeantWatts(question, expr); });
@@ -37523,7 +37579,9 @@ Lantern.RFB = (function () {
     if (!api || !api.onSelect || !api.tds || !api.beforeChange) return;
     var doc = api.doc, host = api.gridwrap.parentNode, tds = api.tds;
     var st = stacks[doc.id] = stacks[doc.id] || { undo: [], redo: [] }, undo = st.undo;
-    var anchor = api.selected(), focus = anchor, extending = false, rangeMode = false;
+    // anchor and focus are the range's corners (where it began, and the end that moves); active is the cell typing
+    // goes into -- the corner where it began, but Ctrl+A and Enter inside a range leave it where it is
+    var anchor = api.selected(), focus = anchor, active = anchor, extending = false, rangeMode = false, moving = false;
     var bar = host.querySelector(".fbar"), nameEl = host.querySelector(".cellname");
     function rect() { var a = parse(anchor), b = parse(focus); return { c0: Math.min(a.c, b.c), r0: Math.min(a.r, b.r), c1: Math.max(a.c, b.c), r1: Math.max(a.r, b.r) }; }
     function isRange() { return anchor !== focus; }
@@ -37538,7 +37596,7 @@ Lantern.RFB = (function () {
       }
     }
     // the active cell (the one typing goes into, Excel's white cell) is where the range began; its far end moves
-    api.onSelect(function (ref) { if (!extending) { anchor = ref; focus = ref; if (rangeMode) setMode(false, true); } paintRange(); });
+    api.onSelect(function (ref) { if (!extending) { anchor = ref; focus = ref; active = ref; if (rangeMode) setMode(false, true); } paintRange(); });
     api.onPaint(function () { paintRange(); });
     function extendTo(ref) {
       if (!tds()[ref]) return;
@@ -37547,9 +37605,11 @@ Lantern.RFB = (function () {
     }
     // ---- undo and redo: the cells (and their looks, and the rows) as they were before each change -----------
     function state() { return JSON.stringify({ cells: doc.cells, fmt: doc.fmt || null, rows: doc.rows || null, freeze: doc.freeze || null }); }
-    function snap() { var s = state(); if (undo[undo.length - 1] !== s) undo.push(s); if (undo.length > 100) undo.shift(); st.redo = []; }
-    // typing anything lets a cut be, as in Excel
-    api.beforeChange(function () { snap(); if (clip && clip.cut) { clip = { text: clip.text, dead: true }; say(""); } });
+    // any change to the sheet but the paste of a cut lets the cut be, as in Excel (the cells it named may have moved)
+    function snap() { var s = state(); if (undo[undo.length - 1] !== s) undo.push(s); if (undo.length > 100) undo.shift(); st.redo = []; if (!moving) endCut(); }
+    function endCut() { if (clip && clip.cut) { clip = { text: clip.text, dead: true }; say(""); } }
+    api.beforeChange(function () { snap(); });
+    if (api.onTyped) api.onTyped(function () { endCut(); });   // Enter on a cell, changed or not
     function restore(s) {
       var o = JSON.parse(s);
       doc.cells = o.cells || {}; if (o.fmt) doc.fmt = o.fmt; else delete doc.fmt;
@@ -37558,10 +37618,10 @@ Lantern.RFB = (function () {
       if ((o.rows || 0) > api.rows()) api.setRows(o.rows);
       api.refresh(); keepRange();
     }
-    function doUndo() { api.keep(); if (!undo.length) return false; st.redo.push(state()); restore(undo.pop()); return true; }
-    function doRedo() { if (!st.redo.length) return false; undo.push(state()); restore(st.redo.pop()); return true; }
-    // after a change the range stays selected
-    function keepRange() { extending = true; try { api.select(anchor); } finally { extending = false; } paintRange(); }
+    function doUndo() { api.keep(); endCut(); if (!undo.length) return false; st.redo.push(state()); restore(undo.pop()); return true; }
+    function doRedo() { endCut(); if (!st.redo.length) return false; undo.push(state()); restore(st.redo.pop()); return true; }
+    // after a change the range stays selected, and the active cell where it was
+    function keepRange() { extending = true; try { api.select(active); } finally { extending = false; } paintRange(); }
     function done() { api.put(); api.refresh(); keepRange(); }
     // ---- copy, cut, paste ---------------------------------------------------------------------------------------
     function copy(cut) {
@@ -37573,52 +37633,65 @@ Lantern.RFB = (function () {
         shown.push(sr); raws.push(rr); fmts.push(fr);
       }
       // a cut moves the cells when they are pasted, as in Excel: until then nothing goes
-      clip = { text: toTSV(shown), raws: raws, fmts: fmts, r0: R.r0, c0: R.c0, h: R.r1 - R.r0 + 1, w: R.c1 - R.c0 + 1, cut: !!cut, doc: doc.id };
+      endCut();
+      clip = { text: toTSV(shown), raws: raws, fmts: fmts, r0: R.r0, c0: R.c0, h: R.r1 - R.r0 + 1, w: R.c1 - R.c0 + 1, cut: !!cut, doc: doc.id, id: String(Math.random()).slice(2) };
       if (cut) say("Cut: choose where it goes and paste. Typing anything else lets it be.");
       return clip.text;
     }
     // clearRange(R, looksToo): the cells emptied; their looks stay unless looksToo (Delete keeps them, as in Excel)
     function clearRange(R, looksToo) {
-      for (var r = R.r0; r <= R.r1; r++) for (var c = R.c0; c <= R.c1; c++) { var k = refOf(c, r); delete doc.cells[k]; if (looksToo && doc.fmt) delete doc.fmt[k]; }
+      var tc = L.sheetFormat && L.sheetFormat.typedCode;
+      for (var r = R.r0; r <= R.r1; r++) for (var c = R.c0; c <= R.c1; c++) {
+        var k = refOf(c, r), was = !looksToo && tc ? tc(doc.cells[k]) : null;
+        // a number typed with its look ($3.50) leaves the look on its cell, as Excel's format stays after Delete
+        if (was && !(doc.fmt && doc.fmt[k] && doc.fmt[k].nf)) { doc.fmt = doc.fmt || {}; doc.fmt[k] = doc.fmt[k] || {}; doc.fmt[k].nf = was; doc.fmt[k].nfT = 1; }
+        delete doc.cells[k]; if (looksToo && doc.fmt) delete doc.fmt[k];
+      }
     }
-    // moved(f, S, dr, dc): a reference into the cut cells S follows them; a range follows when both its ends were cut
-    function moved(f, S, dr, dc) {
+    // moved(f, S, D, dr, dc): a reference into the cut cells S follows them (a range when both its ends were cut);
+    // one to the cells D they are pasted over, that were not cut, is #REF! -- what it named is gone, as in Excel
+    function moved(f, S, D, dr, dc) {
       if (typeof f !== "string" || f.charAt(0) !== "=") return f;
       function inS(c, r) { return c >= S.c0 && c <= S.c1 && r >= S.r0 && r <= S.r1; }
+      function inD(c, r) { return c >= D.c0 && c <= D.c1 && r >= D.r0 && r <= D.r1 && !inS(c, r); }
       return eachRef(f, function (x, text) {
         if (x.whole) return text;
-        if (!x.two) return inS(x.c1, x.r1) ? write(x.c1 + dc, x.r1 + dr, x.ac1, x.ar1) : text;
-        return inS(x.c1, x.r1) && inS(x.c2, x.r2) ? write(x.c1 + dc, x.r1 + dr, x.ac1, x.ar1) + ":" + write(x.c2 + dc, x.r2 + dr, x.ac2, x.ar2) : text;
+        if (!x.two) return inS(x.c1, x.r1) ? write(x.c1 + dc, x.r1 + dr, x.ac1, x.ar1) : inD(x.c1, x.r1) ? "#REF!" : text;
+        if (inS(x.c1, x.r1) && inS(x.c2, x.r2)) return write(x.c1 + dc, x.r1 + dr, x.ac1, x.ar1) + ":" + write(x.c2 + dc, x.r2 + dr, x.ac2, x.ar2);
+        return inD(x.c1, x.r1) && inD(x.c2, x.r2) ? "#REF!" : text;
       });
     }
     function moveCut(R) {
       var S = { r0: clip.r0, c0: clip.c0, r1: clip.r0 + clip.h - 1, c1: clip.c0 + clip.w - 1 }, dr = R.r0 - S.r0, dc = R.c0 - S.c0, k, r, c;
       if (R.c0 + clip.w > COLS) return say("That is " + clip.w + " columns wide: it does not fit from " + colName(R.c0) + " (the sheet ends at Z).");
       if (R.r0 + clip.h > api.rows()) api.setRows(Math.min(api.MAXROWS || 2000, Math.ceil((R.r0 + clip.h) / 100) * 100));
-      snap();
+      var D = { r0: R.r0, c0: R.c0, r1: R.r0 + clip.h - 1, c1: R.c0 + clip.w - 1 };
+      moving = true; try { snap(); } finally { moving = false; }
       var raws = [], fmts = [];
       for (r = 0; r < clip.h; r++) for (c = 0; c < clip.w; c++) {
         k = refOf(S.c0 + c, S.r0 + r);
         raws.push(doc.cells[k]); fmts.push(doc.fmt && doc.fmt[k]);
         delete doc.cells[k]; if (doc.fmt) delete doc.fmt[k];
       }
-      for (k in doc.cells) doc.cells[k] = moved(doc.cells[k], S, dr, dc);
+      for (k in doc.cells) doc.cells[k] = moved(doc.cells[k], S, D, dr, dc);
       for (r = 0; r < clip.h; r++) for (c = 0; c < clip.w; c++) {
         var i = r * clip.w + c, to = refOf(R.c0 + c, R.r0 + r);
-        if (raws[i] == null) delete doc.cells[to]; else doc.cells[to] = moved(raws[i], S, dr, dc);
+        if (raws[i] == null) delete doc.cells[to]; else doc.cells[to] = moved(raws[i], S, D, dr, dc);
         if (fmts[i]) { doc.fmt = doc.fmt || {}; doc.fmt[to] = fmts[i]; } else if (doc.fmt) delete doc.fmt[to];
       }
       clip = { text: clip.text, dead: true };
-      anchor = refOf(R.c0, R.r0); focus = refOf(R.c0 + S.c1 - S.c0, R.r0 + S.r1 - S.r0);
+      anchor = active = refOf(R.c0, R.r0); focus = refOf(R.c0 + S.c1 - S.c0, R.r0 + S.r1 - S.r0);
       say("");
       done();
       return true;
     }
     // paste(text): this page's own copy is pasted as it was (formulas moved, looks kept); text from elsewhere as
     // typed into the cells. A single copied cell fills a selected range
-    function paste(text) {
+    // paste(text, mine): mine true when the clipboard carries Lantern's mark for this copy, false when it carries
+    // none (another program's, though its text may match), undefined when that cannot be told (the Paste button)
+    function paste(text, mine) {
       api.keep();
-      var R = rect(), own = clip && (text == null || text.replace(/\r\n/g, "\n") === clip.text.replace(/\r\n/g, "\n")), rows;
+      var R = rect(), own = clip && (text == null || mine === true || (mine !== false && text.replace(/\r\n/g, "\n") === clip.text.replace(/\r\n/g, "\n"))), rows;
       if (own && clip.dead) return true;   // a cut already moved, or let be: the clipboard's copy of it pastes nothing
       if (own && clip.cut) return clip.doc === doc.id ? moveCut(R) : say("A cut moves within its own sheet: copy it to paste it here.");
       if (own) rows = clip.raws; else { if (text == null || text === "") return false; rows = parseTSV(text); }
@@ -37638,7 +37711,7 @@ Lantern.RFB = (function () {
         if (v == null || v === "") delete doc.cells[k]; else doc.cells[k] = String(v);
         if (own) { var f = clip.fmts[sr] && clip.fmts[sr][sc]; doc.fmt = doc.fmt || {}; if (f) doc.fmt[k] = JSON.parse(JSON.stringify(f)); else delete doc.fmt[k]; }
       }
-      anchor = refOf(R.c0, R.r0); focus = refOf(R.c0 + reps.w - 1, R.r0 + reps.h - 1);
+      anchor = active = refOf(R.c0, R.r0); focus = refOf(R.c0 + reps.w - 1, R.r0 + reps.h - 1);
       done();
       return true;
     }
@@ -37702,13 +37775,28 @@ Lantern.RFB = (function () {
       if (rangeMode && !api.typing()) { e.stopPropagation(); extendTo(ref); api.gridwrap.focus(); }
     };
     // ---- keys -----------------------------------------------------------------------------------------------
+    // step(key, back): Enter moves the active cell down the range, then to the next column's top; Tab across, then
+    // to the next row; Shift goes back; the range stays selected, as in Excel
+    function step(k, back) {
+      var R = rect(), p = parse(active), c = p.c, r = p.r, w = R.c1 - R.c0 + 1, h = R.r1 - R.r0 + 1;
+      var i = k === "Enter" ? (c - R.c0) * h + (r - R.r0) : (r - R.r0) * w + (c - R.c0), n = w * h;
+      i = (i + (back ? n - 1 : 1)) % n;
+      if (k === "Enter") { c = R.c0 + Math.floor(i / h); r = R.r0 + i % h; } else { r = R.r0 + Math.floor(i / w); c = R.c0 + i % w; }
+      active = refOf(c, r); keepRange();
+    }
     H.keydown = function (e) {
+      if ((e.key === "Enter" || e.key === "Tab") && isRange() && !e.ctrlKey && !e.metaKey && !e.altKey && bar && e.target === bar.querySelector("input")) {
+        e.preventDefault(); e.stopPropagation();
+        extending = true; try { api.keep(); } finally { extending = false; }
+        step(e.key, e.shiftKey); api.gridwrap.focus();
+        return;
+      }
       if (e.target !== api.gridwrap) return;   // in the formula bar Ctrl+Z is the bar's own, until the typing is in
       var k = e.key, ctrl = e.ctrlKey || e.metaKey, p = parse(focus), handled = true;
       if ((L.sheetEdit.keyHooks || []).some(function (fn) { try { return fn(e); } catch (e2) { return false; } })) handled = true;
       else if (/^Arrow/.test(k) && (e.shiftKey || ctrl)) {
         var dc = k === "ArrowRight" ? 1 : k === "ArrowLeft" ? -1 : 0, dr = k === "ArrowDown" ? 1 : k === "ArrowUp" ? -1 : 0;
-        var to = ctrl ? edge(e.shiftKey ? focus : anchor, dc, dr) : refOf(Math.max(0, Math.min(COLS - 1, p.c + dc)), Math.max(0, Math.min(api.rows() - 1, p.r + dr)));
+        var to = ctrl ? edge(e.shiftKey ? focus : active, dc, dr) : refOf(Math.max(0, Math.min(COLS - 1, p.c + dc)), Math.max(0, Math.min(api.rows() - 1, p.r + dr)));
         if (e.shiftKey) extendTo(to); else api.select(to);
       }
       else if (ctrl && !e.altKey && (k === "z" || k === "Z")) { if (e.shiftKey) doRedo(); else doUndo(); }
@@ -37717,20 +37805,34 @@ Lantern.RFB = (function () {
       else if (ctrl && (k === "r" || k === "R")) fill(false);
       else if (ctrl && (k === "a" || k === "A")) {
         // the table round the cell, as Excel's first Ctrl+A; again, the whole of what is filled
-        var G = L.sheetRows && L.sheetRows.region ? L.sheetRows.region(doc, anchor, api.rows()) : null, u = api.used() || { c: 0, r: 0 };
-        if (G && (G.r1 > G.r0 || G.c1 > G.c0) && !(rect().r0 === G.r0 && rect().r1 === G.r1 && rect().c0 === G.c0 && rect().c1 === G.c1)) { api.select(refOf(G.c0, G.r0)); extendTo(refOf(G.c1, G.r1)); }
-        else { api.select("A1"); extendTo(refOf(u.c, u.r)); }
+        var G = L.sheetRows && L.sheetRows.region ? L.sheetRows.region(doc, active, api.rows()) : null, Rn = rect();
+        if (G && (G.r1 > G.r0 || G.c1 > G.c0) && !(Rn.r0 === G.r0 && Rn.r1 === G.r1 && Rn.c0 === G.c0 && Rn.c1 === G.c1)) { anchor = refOf(G.c0, G.r0); focus = refOf(G.c1, G.r1); }
+        else { anchor = "A1"; focus = refOf(COLS - 1, api.rows() - 1); }
+        keepRange();   // the active cell stays where it is, as in Excel
       }
       else if ((k === "Delete" || k === "Backspace") && isRange()) clearSel();
-      else if (k === "Escape" && rangeMode) setMode(false);
+      else if (k === "Escape" && (rangeMode || (clip && clip.cut))) { if (rangeMode) setMode(false); endCut(); }
+      else if ((k === "Enter" || k === "Tab") && isRange() && !ctrl && !e.altKey) step(k, e.shiftKey);
       else handled = false;
       if (handled) { e.preventDefault(); e.stopPropagation(); }
     };
     // the clipboard: Ctrl+C, Ctrl+X and Ctrl+V reach the grid as the browser's copy, cut and paste
     function inGrid(e) { return api.gridwrap.contains(e.target) || document.activeElement === api.gridwrap; }
-    H.copy = function (e) { if (!inGrid(e) || !e.clipboardData || api.typing()) return; e.clipboardData.setData("text/plain", copy(false)); e.preventDefault(); };
-    H.cut = function (e) { if (!inGrid(e) || !e.clipboardData || api.typing()) return; e.clipboardData.setData("text/plain", copy(true)); e.preventDefault(); };
-    H.paste = function (e) { if (!inGrid(e) || !e.clipboardData || e.target === bar.querySelector("input")) return; paste(e.clipboardData.getData("text/plain")); e.preventDefault(); };
+    // the clipboard: the text for Excel and other programs, and a mark (Lantern's own kind of clipboard data) that
+    // says the copy is this one, so a paste of the same text copied elsewhere is taken as text
+    var MARK = "text/x-lantern-cells";
+    function put(e, t) { try { e.clipboardData.setData(MARK, clip.id); } catch (e2) { /* a browser without custom kinds */ } e.clipboardData.setData("text/plain", t); }
+    function mineOf(e) {
+      var ty = e.clipboardData.types;
+      if (!ty || !ty.length) return undefined;
+      var has = false;
+      for (var i = 0; i < ty.length; i++) if (ty[i] === MARK) has = true;
+      if (!has) return false;
+      try { return !!clip && e.clipboardData.getData(MARK) === clip.id; } catch (e2) { return undefined; }
+    }
+    H.copy = function (e) { if (!inGrid(e) || !e.clipboardData || api.typing()) return; put(e, copy(false)); e.preventDefault(); };
+    H.cut = function (e) { if (!inGrid(e) || !e.clipboardData || api.typing()) return; put(e, copy(true)); e.preventDefault(); };
+    H.paste = function (e) { if (!inGrid(e) || !e.clipboardData || e.target === bar.querySelector("input")) return; paste(e.clipboardData.getData("text/plain"), mineOf(e)); e.preventDefault(); };
     host.__lpEdit = H;
     if (!host.__lpEditBound) {
       host.__lpEditBound = 1;
@@ -37772,7 +37874,7 @@ Lantern.RFB = (function () {
     H.fit = fit;
     var S = L.sheetEdit = L.sheetEdit || {};
     S.range = function () { return rect(); };
-    S.active = function () { return anchor; };
+    S.active = function () { return active; };
     S.select = function (a, b) { api.select(a); if (b) extendTo(b); };
     // S.add(els, rank): tools from other modules join the bar in rank order (sort and rows 20, looks 30), before the note
     S.add = function (els, rank) {
@@ -37780,6 +37882,9 @@ Lantern.RFB = (function () {
       for (var i = 0; i < kids.length; i++) if (+(kids[i].getAttribute("data-rank") || 0) > rank) { before = kids[i]; break; }
       els.forEach(function (el) { el.setAttribute("data-rank", String(rank)); row.insertBefore(el, before); });
     };
+    ["click", "change"].forEach(function (t) {
+      row.addEventListener(t, function (e) { if (rangeMode && modeBtn && e.target !== row && !modeBtn.contains(e.target)) setMode(false, true); }, true);
+    });
     S.snap = snap; S.done = done; S.say = say; S.bar = row; S.undo = doUndo; S.redo = doRedo; S.copy = copy; S.paste = paste; S.fill = fill;
   }
   (L.sheetEditHooks = L.sheetEditHooks || []).push(mount);
@@ -37844,23 +37949,44 @@ Lantern.RFB = (function () {
     }
     return !!(outer && NOCARRY.test(outer[1]) && !/\S/.test(body.slice(shut + 1)));
   }
-  function carried(doc, raw, depth) {
+  // dateCode(code): "date" for a code that shows a day (d mmm yyyy), "clock" for one that shows a time (hh:mm,
+  // [h]:mm), or null; colours ([Red]) and quoted text are not read as either
+  function dateCode(code) {
+    var c = String(code || "").replace(/\x22[^\x22]*\x22/g, "").replace(/\x5b(?![hms]+\x5d)[^\x5d]*\x5d/gi, "").replace(/\\./g, "");
+    return /[yd]/i.test(c) || (/m/i.test(c) && !/[hs]/i.test(c)) ? "date" : /[hs]/i.test(c) ? "clock" : null;
+  }
+  // carried(doc, raw, depth, kind): kind, what the formula's answer is to the grid ("date" for =D2+1 of a date):
+  // a date or time code is carried only to a formula whose answer is one, as Excel does (=D2-D1 is days)
+  function carried(doc, raw, depth, kind) {
     if (typeof raw !== "string" || raw.charAt(0) !== "=" || (depth || 0) > 6) return null;
     if (noCarry(raw.slice(1))) return null;
-    var body = " " + raw.slice(1).replace(/\x22[^\x22]*\x22/g, "\x22\x22"), re = /[^A-Za-z0-9_.$]\$?([A-Z])\$?([0-9]{1,4})(?![A-Za-z0-9_.\x28])/g, m, n = 0;
+    var body = " " + raw.slice(1).replace(/\x22[^\x22]*\x22/g, "\x22\x22"), re = /[^A-Za-z0-9_.$]\$?([A-Z])\$?([0-9]{1,4})(?![A-Za-z0-9_.\x28])/gi, m, n = 0;
     while ((m = re.exec(body)) && n++ < 8) {
       if (m[0].charAt(0) === ":") { re.lastIndex = m.index + m[0].length - 1; continue; }   // a range counts by its first cell
-      var k = m[1] + m[2], f = fmtOf(doc, k), src = doc.cells[k];
-      if (f && f.nf) { if (!/[ymdhs]/i.test(f.nf.replace(/\x22[^\x22]*\x22/g, ""))) return f.nf; continue; }
+      var k = m[1].toUpperCase() + m[2], f = fmtOf(doc, k), src = doc.cells[k];
+      // a look that came from typing 1,500 (nfT) is the cell's own, not carried: thousands alone do not carry
+      if (f && f.nf && f.nfT && /^#,##0/.test(f.nf)) { re.lastIndex = m.index + m[0].length - 1; continue; }
+      if (f && f.nf) {
+        var dc = dateCode(f.nf);
+        if (!dc || (dc === "date" ? kind === "date" || kind === "time" : kind === "clock" || kind === "time")) return f.nf;
+        continue;
+      }
       if (typeof src !== "string") continue;
-      if (src.charAt(0) === "=") { var via = carried(doc, src, (depth || 0) + 1); if (via) return via; continue; }   // =SUM(D2:D4) of money totals is money
+      if (src.charAt(0) === "=") { var via = carried(doc, src, (depth || 0) + 1, kind); if (via) return via; continue; }   // =SUM(D2:D4) of money totals is money
       var tc = typedCode(src);
       if (tc && !/^#,##0/.test(tc)) return tc;   // money and per cent carry; thousands alone do not
       re.lastIndex = m.index + m[0].length - 1;
     }
     return null;
   }
+  // decimals(code, more): one place more or fewer, in each part of a code (#,##0.00;(#,##0.00) both)
   function decimals(code, more) {
+    var parts = [], cur = "", q = false;
+    String(code || "0").split("").forEach(function (ch) { if (ch === "\x22") q = !q; if (ch === ";" && !q) { parts.push(cur); cur = ""; } else cur += ch; });
+    parts.push(cur);
+    return parts.map(function (x, i) { return i < 2 || /[0#]/.test(x) ? decimals1(x, more) : x; }).join(";");
+  }
+  function decimals1(code, more) {
     code = code || "0";
     if (/^general$/i.test(code)) code = "0";
     var m = /^([^.0#]*[#,]*0)(\.0*)?(.*)$/.exec(code);
@@ -37878,10 +38004,25 @@ Lantern.RFB = (function () {
     var S = L.sheetEdit;
     if (!api || !api.addShow || !api.onPaint || !S || !S.range || !S.bar) return;
     var doc = api.doc, styled = [];
-    api.addShow(function (ref, v, raw) {
+    api.addShow(function (ref, v, raw, kind) {
       var f = fmtOf(doc, ref), code = f && f.nf ? f.nf : null;
-      if (code === null) code = carried(doc, raw);
+      if (code === null) code = carried(doc, raw, 0, kind);
       return code ? shown(v, code) : null;
+    });
+    // a number typed with its look ($3.50, 12%, 1,500) gives its cell that look, as in Excel, so 5 typed over it
+    // later shows $5.00; a whole number typed into a per cent cell is that many per cent (20 is 20%)
+    // (a cell typed $3.50 before looks were kept per cell has that look still: what is typed over it keeps it)
+    var before = null;
+    api.beforeChange(function () { var k = api.selected ? api.selected() : null; before = k ? { k: k, raw: doc.cells[k] } : null; });
+    if (api.onTyped) api.onTyped(function (ref, raw) {
+      var was = before && before.k === ref ? typedCode(before.raw) : null, f = fmtOf(doc, ref);
+      before = null;
+      if (was && !(f && f.nf)) { doc.fmt = doc.fmt || {}; var g0 = doc.fmt[ref] || {}; g0.nf = was; g0.nfT = 1; doc.fmt[ref] = g0; f = g0; }
+      if (typeof raw !== "string" || raw === "" || /^[=\x27]/.test(raw)) return;
+      var tc = typedCode(raw);
+      if (tc && !(f && f.nf)) { doc.fmt = doc.fmt || {}; var g = doc.fmt[ref] || {}; g.nf = tc; g.nfT = 1; doc.fmt[ref] = g; return; }
+      var t = raw.replace(/^\s+|\s+$/g, "");
+      if (f && f.nf && /%$/.test(f.nf.replace(/\x22[^\x22]*\x22/g, "")) && /^[-+]?(\d+\.?\d*|\.\d+)$/.test(t) && Math.abs(+t) >= 1) doc.cells[ref] = t + "%";
     });
     api.onPaint(function () {
       var tds = api.tds();
@@ -37906,19 +38047,21 @@ Lantern.RFB = (function () {
       var R = S.range();
       for (var r = R.r0; r <= R.r1; r++) for (var c = R.c0; c <= R.c1; c++) fn(String.fromCharCode(65 + c) + (r + 1));
     }
-    function set(key, value) {
+    function set(key, value, also) {
       api.keep(); S.snap();
       doc.fmt = doc.fmt || {};
       eachSel(function (k) {
         var f = doc.fmt[k] || {};
         if (value == null || value === "" || value === false) delete f[key]; else f[key] = value;
+        if (key === "nf") delete f.nfT;   // chosen, no longer only as typed
         if (Object.keys(f).length) doc.fmt[k] = f; else delete doc.fmt[k];
+        if (also) also(k);
       });
       S.done();
     }
-    // bold and italic: on for all the range unless the first cell has it already
-    function toggle(key) { var R = S.range(), f = fmtOf(doc, String.fromCharCode(65 + R.c0) + (R.r0 + 1)); set(key, !(f && f[key]) ? 1 : null); }
-    function firstKey() { var R = S.range(); return String.fromCharCode(65 + R.c0) + (R.r0 + 1); }
+    // the active cell (Excel's white cell in the range) decides: bold on unless it is bold already; its format shows
+    function firstKey() { if (S.active) return S.active(); var R = S.range(); return String.fromCharCode(65 + R.c0) + (R.r0 + 1); }
+    function toggle(key) { var f = fmtOf(doc, firstKey()); set(key, !(f && f[key]) ? 1 : null); }
     function firstCode() { var k = firstKey(), f = fmtOf(doc, k); return f && f.nf ? f.nf : carried(doc, doc.cells[k]) || typedCode(doc.cells[k]) || ""; }
     // fewer or more decimals from General start from the decimals the cell shows (1234.5 then 1234.50), as in Excel
     function stepDecimals(more) {
@@ -37934,7 +38077,11 @@ Lantern.RFB = (function () {
         v = window.prompt ? window.prompt("A format code, as in Excel: #,##0.00  0.0%  $#,##0  d mmm yyyy  hh:mm  0 \x22kg\x22", firstCode() || "#,##0.00") : null;
         if (v == null) { pick.value = firstCode(); return; }
       }
-      set("nf", v);
+      // General takes away a look typed with the number too: $3.50 is 3.5, 10% is 0.1, as in Excel
+      set("nf", v, v === "" ? function (k) {
+        var raw = doc.cells[k], n = typedCode(raw) && L.formula && L.formula.textNum ? L.formula.textNum(raw, true) : null;
+        if (typeof n === "number") doc.cells[k] = String(+n.toPrecision(15));
+      } : null);
     });
     function btn(text, title, fn, style) { return L.el("button", { type: "button", text: text, title: title, "aria-label": title, style: style || "", onclick: function () { fn(); if (api.gridwrap.focus) api.gridwrap.focus(); } }); }
     var freezeBox = L.el("input", { type: "checkbox", onchange: function () { api.keep(); S.snap(); if (freezeBox.checked) doc.freeze = 1; else delete doc.freeze; S.done(); } });
@@ -37958,7 +38105,7 @@ Lantern.RFB = (function () {
     }];
   }
   (L.sheetEditHooks = L.sheetEditHooks || []).push(mount);
-  L.sheetFormat = { codes: CODES, shown: shown, decimals: decimals };
+  L.sheetFormat = { codes: CODES, shown: shown, decimals: decimals, typedCode: typedCode, dateCode: dateCode };
 })();
 // ===========================================================================
 // MODULE: SHEET_FORMAT - END
@@ -38001,6 +38148,13 @@ Lantern.RFB = (function () {
       if (k in doc.cells) cells[nk] = S.move(doc.cells[k], kind, at, n);
       if (doc.fmt && doc.fmt[k]) fmt[nk] = doc.fmt[k];
     }
+    // rows (columns) put in take the looks of the row above (the column to the left), as Excel's do
+    if (n > 0 && at > 0 && doc.fmt) {
+      for (k in doc.fmt) {
+        p = parse(k); if (!p || (row ? p.r : p.c) !== at - 1) continue;
+        for (var t = 0; t < n; t++) fmt[row ? refOf(p.c, at + t) : refOf(at + t, p.r)] = JSON.parse(JSON.stringify(doc.fmt[k]));
+      }
+    }
     doc.cells = cells;
     if (doc.fmt) doc.fmt = fmt;
   }
@@ -38011,10 +38165,18 @@ Lantern.RFB = (function () {
   function compare(a, b, desc) {
     var ra = rank(a), rb = rank(b);
     if (ra === 4 || rb === 4) return ra - rb;   // empty last, either way
-    var d = ra !== rb ? ra - rb : ra === 0 ? a - b : ra === 2 ? (a ? 1 : 0) - (b ? 1 : 0) : ra === 3 ? 0 :
-      String(a).localeCompare ? String(a).localeCompare(String(b), undefined, { sensitivity: "base", ignorePunctuation: true }) :
-      String(a).toLowerCase() < String(b).toLowerCase() ? -1 : String(a).toLowerCase() > String(b).toLowerCase() ? 1 : 0;
+    var d = ra !== rb ? ra - rb : ra === 0 ? a - b : ra === 2 ? (a ? 1 : 0) - (b ? 1 : 0) : ra === 3 ? 0 : text(String(a), String(b));
     return desc ? -d : d;
+  }
+  // text in Excel's order: capitals and small letters alike; hyphens and apostrophes passed over (co-op by coop,
+  // coop first); spaces and other marks before letters (a b, a.b, ab); an accent after the plain letter
+  function text(a, b) {
+    var x = a.replace(/[-\x27\u2019]/g, ""), y = b.replace(/[-\x27\u2019]/g, ""), d;
+    if (!x.localeCompare) return x.toLowerCase() < y.toLowerCase() ? -1 : x.toLowerCase() > y.toLowerCase() ? 1 : 0;
+    d = x.localeCompare(y, undefined, { sensitivity: "base" });
+    if (!d) d = x.localeCompare(y, undefined, { sensitivity: "accent" });
+    if (!d) d = (a.length - x.length) - (b.length - y.length);
+    return d < 0 ? -1 : d > 0 ? 1 : 0;
   }
   // keyOf(doc, values, k): what a cell sorts by -- a date or time typed as text (2026-11-17, 9:30) is its number
   function keyOf(doc, values, k) {
@@ -38098,11 +38260,10 @@ Lantern.RFB = (function () {
         // one cell, or one column of a table, sorts the whole table round it (Excel: "expand the selection"), so no
         // row is torn apart; the column sorted by is the active cell's
         var vals = all(), act0 = parse(S.active ? S.active() : refOf(R.c0, R.r0)) || { c: R.c0, r: R.r0 }, G = R;
-        if (R.c0 === R.c1) {
-          var W = region(doc, refOf(act0.c, act0.r), api.rows());
-          if (R.r0 === R.r1) G = W;
-          else if (W.c1 > W.c0) G = { c0: W.c0, c1: W.c1, r0: Math.min(R.r0, W.r0), r1: Math.max(R.r1, W.r1) };
-        }
+        // so do some columns of a table: Excel offers to expand the selection, and expanding is what keeps rows whole
+        var W = region(doc, refOf(act0.c, act0.r), api.rows());
+        if (R.r0 === R.r1 && R.c0 === R.c1) G = W;
+        else if ((R.c0 > W.c0 || R.c1 < W.c1) && R.c0 >= W.c0 && R.c1 <= W.c1 && R.r0 >= W.r0 && R.r1 <= W.r1) G = W;
         if (G.r1 <= G.r0) return S.say("Select the rows to sort, or a cell inside a table.");
         var head = hasHeader(doc, G, vals), keyCol = act0.c >= G.c0 && act0.c <= G.c1 ? act0.c : R.c0;
         S.snap(); sort(doc, G, keyCol, what === "za", head, vals);

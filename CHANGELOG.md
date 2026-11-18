@@ -102,19 +102,61 @@ agrees now except seven left as they are, for reasons written in the test
 in Excel; and two questions whose energy is per beat or per motor, where no
 line made from the energy stated would be right, so the check says nothing).
 
- **Tested.** `tests/review_sheetedit_1265.js` (the review above: 696
-references, 252 grid cases, 67 questions). `tests/sheet_edit.js` (46 checks:
-the references moved by a copy and by rows and columns put in and taken out;
-in the grid a fill, undo and redo of a fill and of typing, copy of what is
-shown, a paste that moves formulas, text pasted from Excel, one cell over a
-range, cut and paste once, Shift+arrows, Delete on a range, a drag, Select
-range on a phone with Copy and Paste, Ctrl+B, number formats and decimals, a
-sort with headings and formulas, rows and columns in and out, freeze, more
-rows, a paste past the last row). `tests/sheet_functions.js` (Excel's POWER,
-POWERW, the AI check and where it stays quiet). In Chromium at a laptop's and
-a phone's width: a drag, Ctrl+D, Shift+arrows, Ctrl+B, a sort, and Ctrl+C and
-Ctrl+V through the real clipboard. The reviews of 1.24.24 replayed with the
-day they were made. `npm test` (ALL CHECKS PASS).
+**Reviewed again.** A second reviewer, new to the code, tried the mends with
+586 cases of its own: 153 references, every one as LibreOffice moves them; 286
+of the grid (214 agreed, 56 did not, 16 it could not say); 147 questions for
+the check (98 agreed). What it found, most harmful first, and what was done: a
+cut waiting to be pasted outlived a row put in, a sort, a fill or an undo, and
+then moved the wrong cell (now any change, Esc, or Enter on a cell lets a cut
+be); on a phone, Select range stayed on after Bold, Sort, a format or the Rows
+menu, so the next tap grew the range and Delete or Fill took more than was
+meant (now any tool on the bar ends it); Ctrl+A moved the active cell to the
+corner, so typing went over a heading (it stays where it was; a second Ctrl+A
+selects the whole sheet); TRUE and FALSE were counted by SUM, COUNT and
+AVERAGE over a range (now left out, as in Excel); a yes or no given by IF,
+IFERROR, IFS, CHOOSE or SWITCH showed as $1.00 (now TRUE); a cut pasted over
+cells a formula named left the formula pointing there (now #REF!, as in
+Excel); the same text copied in another program was pasted as Lantern's own
+copy (Lantern now marks its copy on the clipboard); Enter in a selected range
+left it (Enter and Tab now move through it); a look typed with a number
+($3.50, 10%, 1,500) did not stay on its cell (it does, and 20 typed into a per
+cent cell is 20%); General left a typed $ in place; a date format was not
+carried to =D2+1, and [Red] was read as a date; formulas in small letters did
+not carry a look; rows put in were not formatted like the row above; sorting
+text passed over spaces, hyphens and accents differently from Excel; more
+decimals changed only the first part of a code; Ctrl+B followed the corner,
+not the active cell; Ctrl+End went to the end of the row. All are mended. The
+check on POWER fired on right sums (the power of a spring, a cube law, a heart
+rate) and handed back a line that was wrong; it read 5 mWh as megawatt-hours;
+it gave kilowatts for "a 2 kW kettle ... what power does it draw?"; and it
+answered "what is 600 to the power 4?". Now it reads only the sentences that
+ask, speaks only when they ask for a power in watts or kilowatts and nothing
+else, and only when POWER is the whole sum (or that in other units). Kept as
+they are, with the reason in the test: a cut pasted into another sheet
+(Lantern says to copy it there), freeze kept in undo, a lookup that finds TRUE
+shows 1, a paste of text that matches Lantern's copy in the replay (whose
+clipboard keeps no mark), and 24 questions where the check now says nothing
+because it cannot be sure (two hours in words, "an hour and a half", 1 200 J
+with a space, horsepower, megawatts, milliwatts, an energy shared by two
+motors, 80% efficient, "Find it"): the model's sum stays as it wrote it,
+nothing wrong is handed back. Its cases are kept
+(tests/fixtures/review2_sheetedit_1265.json) and replayed with the first's.
+
+**Tested.** `tests/review_sheetedit_1265.js` (both reviews above: 849
+references, 522 grid cases, 214 questions; 1,550 agree with Excel, 37 kept as
+they are). `tests/sheet_edit.js` (52 checks: the references moved by a copy
+and by rows and columns put in and taken out; in the grid a fill, undo and
+redo of a fill and of typing, copy of what is shown, a paste that moves
+formulas, text pasted from Excel, one cell over a range, cut and paste once,
+Shift+arrows, Lantern's mark on the clipboard, Ctrl+A keeping the active cell,
+Enter inside a range, Delete on a range, a drag, Select range on a phone with
+Copy and Paste, Ctrl+B, number formats and decimals, a sort with headings and
+formulas, rows and columns in and out, freeze, more rows, a paste past the
+last row). `tests/sheet_functions.js` (Excel's POWER, POWERW, the AI check and
+where it stays quiet). In Chromium at a laptop's and a phone's width: a drag,
+Ctrl+D, Shift+arrows, Ctrl+B, a sort, and Ctrl+C and Ctrl+V through the real
+clipboard. The reviews of 1.24.24 replayed with the day they were made. `npm
+test` (ALL CHECKS PASS).
 
 **Not tested.** Pasting from Excel itself and into it (the text Excel puts on
 the clipboard was made by hand, from its documented form). A phone's own

@@ -120,6 +120,28 @@ function btn(text) { return Array.prototype.filter.call(d.querySelectorAll(".lp-
   btn("Paste").click(); await sleep(10);
   ok("...and Paste puts the two by two block there, nothing else touched", current().cells.D12 === "rice" && current().cells.E13 === "5" && current().cells.A2 === "rice" && current().cells.B2 === "2", [current().cells.D12, current().cells.E13]);
   key(grid(), "z", { ctrl: true });
+  // the clipboard in a browser keeps kinds: Lantern marks its own copy, so the same text from another program is text
+  function clipKinds(type, box) {
+    var e = d.createEvent("Event"); e.initEvent(type, true, true);
+    e.clipboardData = { types: box.types, setData: function (k, v) { box.data[k] = v; if (box.types.indexOf(k) < 0) box.types.push(k); }, getData: function (k) { return box.data[k] || ""; } };
+    grid().focus(); grid().dispatchEvent(e);
+  }
+  var box = { data: {}, types: [] };
+  clickCell("D2"); clipKinds("copy", box);
+  ok("a copy puts Excel's text and Lantern's mark on the clipboard", box.data["text/plain"] === "$7.00" && box.types.length === 2, box);
+  clickCell("G20"); clipKinds("paste", box);
+  ok("...pasted with its mark: the formula, moved", current().cells.G20 === "=E20*F20", current().cells.G20);
+  var other = { data: { "text/plain": "$7.00" }, types: ["text/plain"] };
+  clickCell("G21"); clipKinds("paste", other);
+  ok("...the same text with no mark (copied in another program) is pasted as text", current().cells.G21 === "$7.00", current().cells.G21);
+  key(grid(), "z", { ctrl: true }); key(grid(), "z", { ctrl: true });
+  // Ctrl+A keeps the active cell; Enter inside a range moves through it
+  clickCell("B3"); key(grid(), "a", { ctrl: true });
+  ok("Ctrl+A selects the table round B3 and B3 stays the active cell", /^A1:/.test(d.querySelector(".cellname").textContent) && L.sheetEdit.active() === "B3", [d.querySelector(".cellname").textContent, L.sheetEdit.active()]);
+  clickCell("H2"); clickCell("I3", { shift: true }); key(grid(), "Enter"); 
+  ok("Enter inside H2:I3 moves to H3, the range kept", L.sheetEdit.active() === "H3" && d.querySelector(".cellname").textContent === "H2:I3");
+  key(grid(), "Enter");
+  ok("...then to the top of the next column, I2", L.sheetEdit.active() === "I2");
   // bold, number format
   clickCell("A1"); clickCell("E1", { shift: true });
   key(grid(), "b", { ctrl: true });
