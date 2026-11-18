@@ -155,7 +155,10 @@ formulas, rows and columns in and out, freeze, more rows, a paste past the
 last row). `tests/sheet_functions.js` (Excel's POWER, POWERW, the AI check and
 where it stays quiet). In Chromium at a laptop's and a phone's width: a drag,
 Ctrl+D, Shift+arrows, Ctrl+B, a sort, and Ctrl+C and Ctrl+V through the real
-clipboard. The reviews of 1.24.24 replayed with the day they were made. `npm
+clipboard; `tests/browser/sheet_edit_real.py` (Lantern's mark on the real
+clipboard, another program's same text pasted as text, a cut followed by its
+formula, TRUE, Ctrl+A, and on a Pixel 5 Select range ended by Bold, the bar
+one row). The reviews of 1.24.24 replayed with the day they were made. `npm
 test` (ALL CHECKS PASS).
 
 **Not tested.** Pasting from Excel itself and into it (the text Excel puts on
