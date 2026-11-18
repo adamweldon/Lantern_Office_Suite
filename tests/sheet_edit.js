@@ -99,9 +99,11 @@ function btn(text) { return Array.prototype.filter.call(d.querySelectorAll(".lp-
   ok("one cell copied, pasted over H2:H4, fills it", current().cells.H2 === "x" && current().cells.H4 === "x");
   // cut moves
   clickCell("H2"); clickCell("H4", { shift: true }); var cut = clip("cut");
-  ok("cut empties the cells", current().cells.H2 == null);
+  ok("a cut leaves the cells until they are pasted, as in Excel", current().cells.H2 === "x");
   clickCell("I2"); clip("paste", cut);
-  ok("...and paste puts them where chosen", current().cells.I2 === "x" && current().cells.I4 === "x");
+  ok("...and paste moves them where chosen", current().cells.I2 === "x" && current().cells.I4 === "x" && current().cells.H2 == null);
+  clickCell("K2"); clip("paste", cut);
+  ok("...once: a second paste of the cut puts nothing", current().cells.K2 == null);
   // Shift+arrows, Delete on a range
   clickCell("I2"); key(grid(), "ArrowDown", { shift: true }); key(grid(), "ArrowDown", { shift: true });
   ok("Shift+arrows grow the range", d.querySelector(".cellname").textContent === "I2:I4");
@@ -110,6 +112,14 @@ function btn(text) { return Array.prototype.filter.call(d.querySelectorAll(".lp-
   // drag
   mouse(td("A2"), "mousedown", { buttons: 1 }); mouse(td("B2"), "mouseover", { buttons: 1 }); mouse(td("B3"), "mouseover", { buttons: 1 }); mouse(td("B3"), "mouseup"); mouse(td("B3"), "click");
   ok("dragging from A2 to B3 selects A2:B3", d.querySelector(".cellname").textContent === "A2:B3", d.querySelector(".cellname").textContent);
+  // on a phone: tap A2, Select range, tap B3, Copy -- the next tap chooses where to paste, it does not grow the range
+  clickCell("A2"); btn("Select range").click(); clickCell("B3");
+  ok("Select range, then a tap: A2:B3, A2 still the active cell", d.querySelector(".cellname").textContent === "A2:B3" && L.sheetEdit.active() === "A2");
+  btn("Copy").click(); clickCell("D12");
+  ok("...after Copy, Select range is off: the tap on D12 chooses D12 alone", d.querySelector(".cellname").textContent === "D12" && !btn("Select range").className);
+  btn("Paste").click(); await sleep(10);
+  ok("...and Paste puts the two by two block there, nothing else touched", current().cells.D12 === "rice" && current().cells.E13 === "5" && current().cells.A2 === "rice" && current().cells.B2 === "2", [current().cells.D12, current().cells.E13]);
+  key(grid(), "z", { ctrl: true });
   // bold, number format
   clickCell("A1"); clickCell("E1", { shift: true });
   key(grid(), "b", { ctrl: true });
