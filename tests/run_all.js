@@ -37,6 +37,7 @@ var steps = [
   ["The review of Sheets' functions, replayed: 887 formulas of a reviewer's own against LibreOffice and Excel, what the grid shows, 119 fx searches (1.24.24)", "node", ["tests/review_sheetfn_1264.js"], /ALL SHEET FUNCTION REVIEW CHECKS PASS/],
   ["The second review of Sheets' functions, replayed: 1,248 formulas, 77 of the grid, 109 calculator sums against 1.24.23, 91 fx searches (1.24.24)", "node", ["tests/review2_sheetfn_1264.js"], /ALL SHEET FUNCTION REVIEW CHECKS PASS/],
   ["Sheets editing like Excel: a range, copy and paste with Excel, fill, undo, rows and columns in and out, sort, formats, freeze, more rows (1.24.25)", "node", ["tests/sheet_edit.js"], /ALL SHEET EDIT CHECKS PASS/],
+  ["Word files: the zip read and written, a .docx read from Word, python-docx, LibreOffice and Strict, Writer saved as .docx and read back, Save .docx and Import (1.24.26)", "node", ["tests/docx.js"], /ALL DOCX CHECKS PASS/],
   ["The review of Sheets editing and the POWERW check, replayed: 696 references against LibreOffice, 252 of the grid, 67 questions (1.24.25)", "node", ["tests/review_sheetedit_1265.js"], /ALL REVIEW 1.24.25 EDITING CASES PASS/],
   ["Calculator after the audit (after =, errors kept, brackets closed, memory and RAD kept, keyboard and dialogs) and the shared number and formula fixes (1.16)", "node", ["tests/calc_audit.js"], /ALL CALC AUDIT TESTS PASS/],
   ["Draw's schematic symbols: a right-click only deletes, Turn and R point them any way, the preview (1.15)", "node", ["tests/draw_symbols.js"], /ALL DRAW SYMBOL TESTS PASS/],

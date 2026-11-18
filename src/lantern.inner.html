@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.24.25 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.24.26 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0, or the
 // Zero-Clause BSD licence, 0BSD, if you prefer: LICENSE).
@@ -187,7 +187,7 @@
 //          Lantern.uid, Lantern.fmtNum, Lantern.today
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.24.25",
+  version: "1.24.26",
   apps: {},
   order: []
 };
@@ -6670,7 +6670,9 @@ Lantern.drawShapes = (function () {
 // ===========================================================================
 // Opens a .txt or .html file from the device as a new document. Imported
 // HTML is sanitized (scripts, styles, event handlers stripped) because the
-// Writer page renders it with innerHTML.
+// Writer page renders it with innerHTML. A Word file (.docx) is opened by
+// WRITER_DOCX when it is there (1.24.26); an old .doc, an .odt or an .rtf
+// is turned away with the way to make it a .docx.
 (function () {
   var LT = window.Lantern.writerLibTools = window.Lantern.writerLibTools || [];
   function sanitize(h) {
@@ -6691,13 +6693,19 @@ Lantern.drawShapes = (function () {
     }
     return html || "<p></p>";
   }
-  LT.push({ label: "Import file", title: "Open a .txt or .html file as a new document", run: function (api) {
+  LT.push({ label: "Import file", title: "Open a Word file (.docx), a .txt or an .html file as a new document", run: function (api) {
+    var DOCX = !!Lantern.writerDocx;
     var inp = Lantern.el("input", { type: "file",
-      accept: ".txt,.text,.htm,.html,text/plain,text/html", style: "display:none" });
+      accept: ".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.txt,.text,.htm,.html,text/plain,text/html", style: "display:none" });
     inp.onchange = function () {
       var f = inp.files && inp.files[0];
       if (inp.parentNode) inp.parentNode.removeChild(inp);
       if (!f) return;
+      if (DOCX && /\.docx$/i.test(f.name)) { Lantern.writerDocx.open(f, api); return; }
+      if (/\.(doc|docx|odt|rtf|wps|pages)$/i.test(f.name)) {
+        window.alert("Lantern opens Word files saved as .docx" + (DOCX ? "" : " (not in this copy)") + ", and .txt and .html. Open \u201c" + f.name + "\u201d in Word, LibreOffice or Google Docs and save it as .docx (Word document) first.");
+        return;
+      }
       var reader = new FileReader();
       reader.onload = function () {
         var txt = String(reader.result || ""), html;
@@ -6748,8 +6756,8 @@ Lantern.drawShapes = (function () {
     ["History (snapshots)", "<p><b>History</b> keeps up to 8 snapshots of each document. " +
       "Tap <b>Take snapshot</b> before a big rewrite; <b>Restore</b> brings a snapshot back. " +
       "The current text is snapshotted automatically before every restore, so nothing is lost.</p>"],
-    ["Importing files", "<p>In the document library, <b>Import file</b> opens a .txt or .html file " +
-      "from your device as a new document. Scripts and styles are stripped from imported HTML for " +
+    ["Importing files", "<p>In the document library, <b>Import file</b> opens a Word file (.docx), a .txt or an .html file " +
+      "from your device as a new document (Word files: see \u201cWord files\u201d below). Scripts and styles are stripped from imported HTML for " +
       "safety; plain text becomes one paragraph per line.</p>"]
   ]);
 })();
@@ -8317,6 +8325,7 @@ if (document.readyState === "loading") {
       "Edit everything - it is a normal document once created.</p>"],
     ["Getting your work out", "<ul><li><b>Print / PDF</b> opens the device's print box - " +
       "choose \"Save as PDF\" there to make a PDF for free</li>" +
+      "<li><b>Save .docx</b> saves a Word file that keeps your headings, lists, tables and pictures, for Word, LibreOffice or Google Docs</li>" +
       "<li><b>Save .html</b> saves a file that keeps your formatting and opens in any browser or word processor</li>" +
       "<li><b>Save .txt</b> saves plain text, one line per paragraph, for SMS, email, or old machines</li></ul>"],
     ["Tips", "<ul><li>The word count sits under the page, with \u201csaved\u201d (or a warning if the device is out of space) - useful for assignments with limits</li>" +
@@ -43399,6 +43408,1132 @@ Lantern.RFB = (function () {
 // MODULE: PDF_DOC - END
 // ===========================================================================
 // ===========================================================================
+// MODULE: ZIP_INFLATE - START
+// Depends: CORE
+// Exports: Lantern.inflate(bytes, size) -> Uint8Array
+// ===========================================================================
+// Unpacks DEFLATE (RFC 1951), the packing inside .docx, .xlsx and .pptx
+// files (they are zip files), in plain JavaScript, so any browser that runs
+// Lantern can open them, with nothing to wait for (1.24.26). size, when
+// known, is how many bytes come out. A damaged stream throws an Error whose
+// message says so in plain words.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var ORDER = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+  var LBASE = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+  var LEXT = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+  var DBASE = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
+  var DEXT = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+  function bad(why) { return new Error("the file is damaged: " + why); }
+  // a canonical Huffman code: how many codes of each length, and the
+  // symbols in code order
+  function huff(lens, n) {
+    var count = [], sym = [], offs = [], i;
+    for (i = 0; i < 16; i++) count[i] = 0;
+    for (i = 0; i < n; i++) count[lens[i]]++;
+    count[0] = 0;
+    offs[1] = 0;
+    for (i = 1; i < 15; i++) offs[i + 1] = offs[i] + count[i];
+    for (i = 0; i < n; i++) if (lens[i]) sym[offs[lens[i]]++] = i;
+    return { count: count, sym: sym };
+  }
+  var FIXL = null, FIXD = null;
+  function fixed() {
+    if (FIXL) return;
+    var l = [], i;
+    for (i = 0; i < 144; i++) l[i] = 8;
+    for (; i < 256; i++) l[i] = 9;
+    for (; i < 280; i++) l[i] = 7;
+    for (; i < 288; i++) l[i] = 8;
+    FIXL = huff(l, 288);
+    l = [];
+    for (i = 0; i < 30; i++) l[i] = 5;
+    FIXD = huff(l, 30);
+  }
+  function inflate(src, size) {
+    var n = src.length, pos = 0, buf = 0, bits = 0;
+    var out = new Uint8Array(size > 0 ? size : Math.max(1024, n * 4)), op = 0;
+    function room(k) {
+      if (op + k <= out.length) return;
+      var m = out.length * 2;
+      while (m < op + k) m *= 2;
+      var t = new Uint8Array(m);
+      t.set(out.subarray(0, op));
+      out = t;
+    }
+    function get(k) {
+      while (bits < k) {
+        if (pos >= n) throw bad("it ends too soon");
+        buf |= src[pos++] << bits;
+        bits += 8;
+      }
+      var v = buf & ((1 << k) - 1);
+      buf >>>= k;
+      bits -= k;
+      return v;
+    }
+    function decode(h) {
+      var code = 0, first = 0, index = 0, len, count;
+      for (len = 1; len < 16; len++) {
+        if (!bits) {
+          if (pos >= n) throw bad("it ends too soon");
+          buf = src[pos++];
+          bits = 8;
+        }
+        code |= buf & 1;
+        buf >>>= 1;
+        bits--;
+        count = h.count[len];
+        if (code - count < first) return h.sym[index + (code - first)];
+        index += count;
+        first += count;
+        first <<= 1;
+        code <<= 1;
+      }
+      throw bad("a code that means nothing");
+    }
+    function codes(lh, dh) {
+      for (;;) {
+        var s = decode(lh);
+        if (s < 256) { room(1); out[op++] = s; continue; }
+        if (s === 256) return;
+        s -= 257;
+        if (s >= 29) throw bad("a length that means nothing");
+        var len = LBASE[s] + get(LEXT[s]);
+        var ds = decode(dh);
+        if (ds >= 30) throw bad("a distance that means nothing");
+        var dist = DBASE[ds] + get(DEXT[ds]);
+        if (dist > op) throw bad("a distance back past the start");
+        room(len);
+        for (var k = 0; k < len; k++) { out[op] = out[op - dist]; op++; }
+      }
+    }
+    function stored() {
+      buf = 0;
+      bits = 0;
+      if (pos + 4 > n) throw bad("it ends too soon");
+      var len = src[pos] | (src[pos + 1] << 8), nlen = src[pos + 2] | (src[pos + 3] << 8);
+      pos += 4;
+      if (len !== (~nlen & 0xffff)) throw bad("a stored block's length does not check");
+      if (pos + len > n) throw bad("it ends too soon");
+      room(len);
+      out.set(src.subarray(pos, pos + len), op);
+      op += len;
+      pos += len;
+    }
+    function dynamic() {
+      var nlen = get(5) + 257, ndist = get(5) + 1, ncode = get(4) + 4, lens = [], i;
+      if (nlen > 286 || ndist > 30) throw bad("too many codes");
+      for (i = 0; i < 19; i++) lens[i] = 0;
+      for (i = 0; i < ncode; i++) lens[ORDER[i]] = get(3);
+      var lc = huff(lens, 19), all = [];
+      i = 0;
+      while (i < nlen + ndist) {
+        var s = decode(lc), rep = 0, val = 0;
+        if (s < 16) { all[i++] = s; continue; }
+        if (s === 16) {
+          if (!i) throw bad("a repeat with nothing before it");
+          val = all[i - 1];
+          rep = 3 + get(2);
+        } else if (s === 17) rep = 3 + get(3);
+        else rep = 11 + get(7);
+        if (i + rep > nlen + ndist) throw bad("too many code lengths");
+        while (rep--) all[i++] = val;
+      }
+      codes(huff(all.slice(0, nlen), nlen), huff(all.slice(nlen), ndist));
+    }
+    var last;
+    do {
+      last = get(1);
+      var type = get(2);
+      if (type === 0) stored();
+      else if (type === 1) { fixed(); codes(FIXL, FIXD); }
+      else if (type === 2) dynamic();
+      else throw bad("a block of an unknown kind");
+    } while (!last);
+    return op === out.length ? out : out.subarray(0, op);
+  }
+  L.inflate = inflate;
+})();
+// ===========================================================================
+// MODULE: ZIP_INFLATE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: ZIP - START
+// Depends: CORE, ZIP_INFLATE (Lantern.inflate)
+// Exports: Lantern.zip = {read(bytes) -> {names, has(name), bytes(name),
+//          text(name)}, write([{name, data}]) -> Uint8Array, crc32(bytes),
+//          utf8(text) -> Uint8Array, text(bytes) -> string}
+// ===========================================================================
+// A .docx, .xlsx or .pptx is a zip of XML files (1.24.26). read() finds the
+// parts from the zip's list at its end (names matched without regard to
+// capitals, as Office matches them), and unpacks one when it is asked for,
+// checking its CRC-32. write() packs the parts stored, without
+// compression: every program that opens a zip opens that, and it needs no
+// packer (the files Lantern writes are small).
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var CRC = null;
+  function crc32(b) {
+    if (!CRC) {
+      CRC = [];
+      for (var n = 0; n < 256; n++) {
+        var c = n;
+        for (var k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+        CRC[n] = c >>> 0;
+      }
+    }
+    var x = 0xffffffff;
+    for (var i = 0; i < b.length; i++) x = CRC[(x ^ b[i]) & 255] ^ (x >>> 8);
+    return (x ^ 0xffffffff) >>> 0;
+  }
+  function utf8(t) {
+    t = String(t);
+    if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(t);
+    var out = [], i, c;
+    for (i = 0; i < t.length; i++) {
+      c = t.charCodeAt(i);
+      if (c >= 0xd800 && c < 0xdc00 && i + 1 < t.length) {
+        var d = t.charCodeAt(i + 1);
+        if (d >= 0xdc00 && d < 0xe000) { c = 0x10000 + ((c - 0xd800) << 10) + (d - 0xdc00); i++; }
+      }
+      if (c < 0x80) out.push(c);
+      else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+      else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+      else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    }
+    return new Uint8Array(out);
+  }
+  function text(b) {
+    if (typeof TextDecoder !== "undefined") return new TextDecoder("utf-8").decode(b);
+    var s = "", i = 0, c;
+    while (i < b.length) {
+      c = b[i++];
+      if (c >= 0xf0) { c = ((c & 7) << 18) | ((b[i] & 63) << 12) | ((b[i + 1] & 63) << 6) | (b[i + 2] & 63); i += 3; }
+      else if (c >= 0xe0) { c = ((c & 15) << 12) | ((b[i] & 63) << 6) | (b[i + 1] & 63); i += 2; }
+      else if (c >= 0xc0) { c = ((c & 31) << 6) | (b[i] & 63); i += 1; }
+      if (c >= 0x10000) { c -= 0x10000; s += String.fromCharCode(0xd800 + (c >> 10), 0xdc00 + (c & 1023)); }
+      else s += String.fromCharCode(c);
+    }
+    return s;
+  }
+  function u16(b, p) { return b[p] | (b[p + 1] << 8); }
+  function u32(b, p) { return (b[p] | (b[p + 1] << 8) | (b[p + 2] << 16) | (b[p + 3] << 24)) >>> 0; }
+  // the name a part is asked for by: no leading slash, capitals ignored
+  function key(name) { return String(name || "").replace(/^\x2F+/, "").toLowerCase(); }
+  function read(bytes) {
+    var b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), e = -1, i;
+    if (b.length < 22 || u32(b, 0) !== 0x04034b50 && u32(b, 0) !== 0x06054b50) throw new Error("this is not a zip file (a .docx, .xlsx or .pptx is one); it may be an older .doc, .xls or .ppt, which Lantern cannot open");
+    for (i = b.length - 22; i >= 0 && i >= b.length - 65557; i--) if (u32(b, i) === 0x06054b50) { e = i; break; }
+    if (e < 0) throw new Error("the file is damaged: the zip's list of parts is missing (the file may be cut short)");
+    var count = u16(b, e + 10), at = u32(b, e + 16);
+    if (count === 0xffff || at === 0xffffffff) throw new Error("this zip is too big for Lantern to open (zip64)");
+    var parts = {}, names = [];
+    for (i = 0; i < count; i++) {
+      if (at + 46 > b.length || u32(b, at) !== 0x02014b50) throw new Error("the file is damaged: the zip's list of parts is broken");
+      var nl = u16(b, at + 28), el = u16(b, at + 30), cl = u16(b, at + 32);
+      var name = text(b.subarray(at + 46, at + 46 + nl));
+      var p = { name: name, method: u16(b, at + 10), flags: u16(b, at + 8), crc: u32(b, at + 16), csize: u32(b, at + 20), size: u32(b, at + 24), local: u32(b, at + 42) };
+      parts[key(name)] = p;
+      names.push(name);
+      at += 46 + nl + el + cl;
+    }
+    function bytesOf(name) {
+      var p = parts[key(name)];
+      if (!p) return null;
+      if (p.data) return p.data;
+      if (p.flags & 1) throw new Error("\u201c" + p.name + "\u201d is locked with a password; Lantern cannot open it");
+      var h = p.local;
+      if (h + 30 > b.length || u32(b, h) !== 0x04034b50) throw new Error("the file is damaged: \u201c" + p.name + "\u201d cannot be found in it");
+      var start = h + 30 + u16(b, h + 26) + u16(b, h + 28), raw = b.subarray(start, start + p.csize), out;
+      if (start + p.csize > b.length) throw new Error("the file is damaged: \u201c" + p.name + "\u201d is cut short");
+      if (p.method === 0) out = raw;
+      else if (p.method === 8) out = L.inflate(raw, p.size);
+      else throw new Error("\u201c" + p.name + "\u201d is packed in a way Lantern cannot unpack (method " + p.method + ")");
+      if (out.length !== p.size || crc32(out) !== p.crc) throw new Error("the file is damaged: \u201c" + p.name + "\u201d does not check (CRC)");
+      p.data = out;
+      return out;
+    }
+    return {
+      names: names,
+      has: function (name) { return !!parts[key(name)]; },
+      bytes: bytesOf,
+      text: function (name) { var x = bytesOf(name); return x ? text(x) : null; }
+    };
+  }
+  // write(files) -> the zip's bytes; files = [{name, data}] in order (a
+  // string is written as UTF-8). Dated 1980-01-01, as Office dates its parts.
+  function write(files) {
+    var chunks = [], dir = [], off = 0, i;
+    function push(a) { chunks.push(a); off += a.length; }
+    function head(sig, n) { var h = new Uint8Array(n); h[0] = sig & 255; h[1] = (sig >>> 8) & 255; h[2] = (sig >>> 16) & 255; h[3] = sig >>> 24; return h; }
+    function put16(h, p, v) { h[p] = v & 255; h[p + 1] = (v >>> 8) & 255; }
+    function put32(h, p, v) { h[p] = v & 255; h[p + 1] = (v >>> 8) & 255; h[p + 2] = (v >>> 16) & 255; h[p + 3] = (v >>> 24) & 255; }
+    for (i = 0; i < files.length; i++) {
+      var f = files[i], name = utf8(f.name), data = typeof f.data === "string" ? utf8(f.data) : new Uint8Array(f.data), crc = crc32(data);
+      var lh = head(0x04034b50, 30);
+      put16(lh, 4, 20); put16(lh, 6, 0x0800); put16(lh, 8, 0); put16(lh, 10, 0); put16(lh, 12, 0x21);
+      put32(lh, 14, crc); put32(lh, 18, data.length); put32(lh, 22, data.length); put16(lh, 26, name.length); put16(lh, 28, 0);
+      dir.push({ name: name, crc: crc, size: data.length, at: off });
+      push(lh); push(name); push(data);
+    }
+    var cdAt = off;
+    for (i = 0; i < dir.length; i++) {
+      var d = dir[i], ch = head(0x02014b50, 46);
+      put16(ch, 4, 20); put16(ch, 6, 20); put16(ch, 8, 0x0800); put16(ch, 10, 0); put16(ch, 12, 0); put16(ch, 14, 0x21);
+      put32(ch, 16, d.crc); put32(ch, 20, d.size); put32(ch, 24, d.size); put16(ch, 28, d.name.length);
+      put32(ch, 42, d.at);
+      push(ch); push(d.name);
+    }
+    var eo = head(0x06054b50, 22);
+    put16(eo, 8, dir.length); put16(eo, 10, dir.length); put32(eo, 12, off - cdAt); put32(eo, 16, cdAt);
+    push(eo);
+    var all = new Uint8Array(off), p = 0;
+    for (i = 0; i < chunks.length; i++) { all.set(chunks[i], p); p += chunks[i].length; }
+    return all;
+  }
+  L.zip = { read: read, write: write, crc32: crc32, utf8: utf8, text: text };
+})();
+// ===========================================================================
+// MODULE: ZIP - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: DOCX_PARTS - START
+// Depends: ZIP (Lantern.zip)
+// Exports: Lantern.docx.parts(bytes) -> {zip, main, xml(name), rels(name),
+//          styles, numbering, kind}; Lantern.docx.ns, Lantern.docx.kids,
+//          Lantern.docx.attr
+// ===========================================================================
+// The parts of a Word file that the reader (DOCX_READ) needs (1.24.26): the
+// main document found through the package's own list (_rels/.rels), the
+// relationships of each part (pictures, links, footnotes), the styles
+// (which are headings, quotes, lists; bold or italic by style) and the
+// numbering (which lists are bullets and which are numbered, and from what
+// number). Word's usual names (w:, r:) and the Strict names are both read.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.zip) return;
+  var D = L.docx = L.docx || {};
+  var W = ["http://schemas.openxmlformats.org/wordprocessingml/2006/main", "http://purl.oclc.org/ooxml/wordprocessingml/main"];
+  var R = ["http://schemas.openxmlformats.org/officeDocument/2006/relationships", "http://purl.oclc.org/ooxml/officeDocument/relationships"];
+  function kids(el) { var a = []; for (var n = el ? el.firstChild : null; n; n = n.nextSibling) if (n.nodeType === 1) a.push(n); return a; }
+  function name(el) { return el.localName || String(el.nodeName).replace(/^.*:/, ""); }
+  // attr(el, "val") -> w:val (or r:id with attr(el, "id", "r"))
+  function attr(el, a, pre) {
+    if (!el) return null;
+    var ns = pre === "r" ? R : W, v;
+    for (var i = 0; i < ns.length; i++) { v = el.getAttributeNS ? el.getAttributeNS(ns[i], a) : null; if (v != null && v !== "") return v; }
+    v = el.getAttribute((pre || "w") + ":" + a);
+    return v == null ? el.getAttribute(a) : v;
+  }
+  function child(el, n) { var k = kids(el); for (var i = 0; i < k.length; i++) if (name(k[i]) === n) return k[i]; return null; }
+  function on(el) { if (!el) return null; var v = attr(el, "val"); return !(v === "0" || v === "false" || v === "off" || v === "none"); }
+  function parse(t) {
+    var x = new DOMParser().parseFromString(t, "application/xml");
+    if (!x || !x.documentElement || name(x.documentElement) === "parsererror" || x.getElementsByTagName("parsererror").length) throw new Error("the file is damaged: a part of it is not readable XML");
+    return x;
+  }
+  // dir("word/document.xml") -> "word/"; join a relationship's target to it
+  function join(from, target) {
+    if (/^\x2F/.test(target)) return target.replace(/^\x2F+/, "");
+    var p = from.replace(/[^\x2F]*$/, "").split("\x2F"), t = target.split("\x2F");
+    p.pop();
+    for (var i = 0; i < t.length; i++) { if (t[i] === "..") p.pop(); else if (t[i] !== ".") p.push(t[i]); }
+    return p.join("\x2F");
+  }
+  function parts(bytes) {
+    var z = L.zip.read(bytes), cache = {};
+    function xml(n) { if (!(n in cache)) { var t = z.text(n); cache[n] = t == null ? null : parse(t); } return cache[n]; }
+    // rels("word/document.xml") -> {rId: {type, target (a part name or an address), external}}
+    function rels(n) {
+      var rn = n.replace(/([^\x2F]*)$/, "_rels\x2F$1.rels"), x = xml(rn), out = {};
+      if (!x) return out;
+      kids(x.documentElement).forEach(function (r) {
+        var ext = /^external$/i.test(r.getAttribute("TargetMode") || ""), tg = r.getAttribute("Target") || "";
+        out[r.getAttribute("Id")] = { type: (r.getAttribute("Type") || "").replace(/^.*\x2F/, ""), target: ext ? tg : join(n, tg), external: ext };
+      });
+      return out;
+    }
+    function byType(rs, type) { for (var k in rs) if (rs[k].type === type) return rs[k].target; return null; }
+    var main = byType(rels(""), "officeDocument") || "word/document.xml", ct = z.text("[Content_Types].xml") || "";
+    var kind = /spreadsheetml/.test(ct) && /^xl\x2F/i.test(main) ? "xlsx" : /presentationml/.test(ct) && /^ppt\x2F/i.test(main) ? "pptx" : "docx";
+    if (kind !== "docx") return { kind: kind, zip: z };
+    if (!z.has(main)) throw new Error("this zip file has no Word document in it");
+    var mr = rels(main), st = {}, num = { nums: {}, abs: {} }, defP = "Normal";
+    var sx = byType(mr, "styles") && xml(byType(mr, "styles"));
+    if (sx) kids(sx.documentElement).forEach(function (s) {
+      if (name(s) !== "style") return;
+      var pp = child(s, "pPr"), rp = child(s, "rPr"), np = pp && child(pp, "numPr"), ol = pp && child(pp, "outlineLvl"), ind = pp && child(pp, "ind");
+      if (attr(s, "type") === "paragraph" && /^(1|true|on)$/.test(attr(s, "default") || "")) defP = attr(s, "styleId");
+      st[attr(s, "styleId")] = { type: attr(s, "type"), name: String(attr(child(s, "name"), "val") || "").toLowerCase(),
+        based: attr(child(s, "basedOn"), "val"), outline: ol ? parseInt(attr(ol, "val"), 10) : null, left: ind ? parseInt(attr(ind, "left") || attr(ind, "start") || "0", 10) || 0 : null,
+        numId: np && child(np, "numId") ? attr(child(np, "numId"), "val") : null, ilvl: np && child(np, "ilvl") ? parseInt(attr(child(np, "ilvl"), "val"), 10) : 0,
+        b: rp ? on(child(rp, "b")) : null, i: rp ? on(child(rp, "i")) : null, u: rp ? on(child(rp, "u")) : null, s: rp ? on(child(rp, "strike")) : null };
+    });
+    var nx = byType(mr, "numbering") && xml(byType(mr, "numbering"));
+    if (nx) kids(nx.documentElement).forEach(function (e) {
+      if (name(e) === "abstractNum") {
+        var lv = {};
+        kids(e).forEach(function (l) {
+          if (name(l) !== "lvl") return;
+          lv[attr(l, "ilvl")] = { fmt: attr(child(l, "numFmt"), "val") || "decimal", start: parseInt(attr(child(l, "start"), "val") || "1", 10) };
+        });
+        num.abs[attr(e, "abstractNumId")] = lv;
+      } else if (name(e) === "num") {
+        var o = {};
+        kids(e).forEach(function (l) {
+          if (name(l) === "lvlOverride" && child(l, "startOverride")) o[attr(l, "ilvl")] = parseInt(attr(child(l, "startOverride"), "val"), 10);
+        });
+        num.nums[attr(e, "numId")] = { abs: attr(child(e, "abstractNumId"), "val"), starts: o };
+      }
+    });
+    // style(id) -> what a paragraph or run style means, following basedOn
+    function style(id) {
+      var out = { head: 0, quote: false, pre: false, numId: null, ilvl: 0, left: null, b: null, i: null, u: null, s: null }, seen = 0, s;
+      while (id && (s = st[id]) && seen++ < 12) {
+        var m = /^heading\s*(\d)$/.exec(s.name);
+        if (!out.head && m) out.head = Math.min(4, parseInt(m[1], 10));
+        if (!out.head && s.name === "title") out.head = 1;
+        if (!out.head && s.outline != null && s.outline >= 0 && s.outline < 9) out.head = Math.min(4, s.outline + 1);
+        if (/^(quote|intense quote|block text)$/.test(s.name)) out.quote = true;
+        if (/^(code|html preformatted|source code|preformatted text|macro text)$/.test(s.name)) out.pre = true;
+        if (out.numId == null && s.numId != null) { out.numId = s.numId; out.ilvl = s.ilvl; }
+        if (out.left == null && s.left != null) out.left = s.left;
+        ["b", "i", "u", "s"].forEach(function (k) { if (out[k] == null && s[k] != null) out[k] = s[k]; });
+        id = s.based;
+      }
+      return out;
+    }
+    // list(numId, ilvl) -> {tag: "ul"|"ol", start, abs, restart} or null
+    // (numId 0: no list). Lists that share an abstractNum count on from
+    // one another, as in Word, unless a startOverride restarts them.
+    function list(numId, ilvl) {
+      var n = num.nums[numId];
+      if (!n || numId === "0") return null;
+      var l = (num.abs[n.abs] || {})[ilvl] || (num.abs[n.abs] || {})["0"] || { fmt: "decimal", start: 1 };
+      if (l.fmt === "none") return null;
+      var ov = n.starts[ilvl] != null;
+      return { tag: l.fmt === "bullet" ? "ul" : "ol", start: ov ? n.starts[ilvl] : l.start, abs: "a" + n.abs, restart: ov };
+    }
+    return { kind: "docx", zip: z, main: main, xml: xml, rels: rels, byType: byType, style: style, list: list, defP: defP };
+  }
+  D.parts = parts;
+  D.kids = kids;
+  D.name = name;
+  D.attr = attr;
+  D.child = child;
+  D.on = on;
+})();
+// ===========================================================================
+// MODULE: DOCX_PARTS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: DOCX_READ - START
+// Depends: DOCX_PARTS (Lantern.docx.parts), ZIP
+// Exports: Lantern.docx.read(bytes, fileName) -> {title, html, notes,
+//          paper}
+// ===========================================================================
+// A Word file (.docx) as a Writer document (1.24.26): headings (Word's
+// Heading 1 to 4, Title, or any style with an outline level), paragraphs as
+// they are aligned, bullet and numbered lists to the depth Word has them
+// (numbering carried on where Word carries it on), tables (cells spanning
+// columns and rows), bold, italic, underline, strike, superscript and
+// subscript, highlight, links, pictures (PNG, JPEG, GIF), tabs, line
+// breaks, text boxes (after their paragraph), footnotes and endnotes (at
+// the end), tracked changes as Word shows them with markup off (insertions
+// kept, deletions gone), and the paper size and margin. notes says, in
+// plain words, what Writer could not keep (fonts, colours, headers and
+// footers, comments, pictures it cannot show), so nobody thinks it was
+// lost without telling them.
+(function () {
+  var L = window.Lantern, D = L && L.docx;
+  if (!D || !D.parts) return;
+  var kids = D.kids, name = D.name, attr = D.attr, child = D.child, on = D.on;
+  function esc(t) { return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\x22/g, "&quot;"); }
+  function b64(b) {
+    var s = "", i;
+    for (i = 0; i < b.length; i += 8192) s += String.fromCharCode.apply(null, Array.prototype.slice.call(b.subarray(i, i + 8192)));
+    return btoa(s);
+  }
+  var MIME = { png: "image\x2Fpng", jpg: "image\x2Fjpeg", jpeg: "image\x2Fjpeg", gif: "image\x2Fgif", bmp: "image\x2Fbmp", webp: "image\x2Fwebp" };
+  var SIZES = { letter: [12240, 15840], legal: [12240, 20160], a4: [11906, 16838], a5: [8391, 11906] };
+  function read(bytes, fileName) {
+    var P = D.parts(bytes);
+    if (P.kind === "xlsx") throw new Error("this is an Excel workbook (.xlsx), not a Word document: open it in Sheets");
+    if (P.kind === "pptx") throw new Error("this is a PowerPoint presentation (.pptx), not a Word document: open it in Slides");
+    var doc = P.xml(P.main), rels = P.rels(P.main), notes = {}, fld = [], counts = { del: 0, foot: 0 }, pics = 0, foot = [], picNo = 0;
+    function note(t) { notes[t] = 1; }
+    var body = child(doc.documentElement, "body");
+    if (!body) throw new Error("this Word file has no body");
+    // a picture from a relationship id, as a data: address, or null
+    function picture(rid, cx, alt, from) {
+      var r = (from || rels)[rid];
+      if (!r || r.external) { note("pictures linked from outside the file are not shown"); return ""; }
+      var ext = (r.target.match(/\.([a-z0-9]+)$/i) || [])[1], m = ext && MIME[ext.toLowerCase()];
+      if (!m) { note("pictures in " + String(ext || "an unknown").toUpperCase() + " format (Writer shows PNG, JPEG and GIF) are left out"); return ""; }
+      var bb = P.zip.bytes(r.target);
+      if (!bb) return "";
+      pics++;
+      var w = cx ? Math.min(624, Math.max(8, Math.round(cx / 9525))) : 0;
+      return "<img src=\x22data:" + m + ";base64," + b64(bb) + "\x22" + (alt ? " alt=\x22" + esc(alt) + "\x22" : "") + (w ? " width=\x22" + w + "\x22" : "") + ">";
+    }
+    // one paragraph's words as HTML: runs of the same look merged
+    function inline(p, ctx) {
+      var segs = [], extra = [];
+      var ps = ctx.pstyle || {};
+      function add(html, look) {
+        var last = segs[segs.length - 1], k = JSON.stringify(look);
+        if (last && last.k === k) last.h += html; else segs.push({ k: k, look: look, h: html });
+      }
+      function run(r, href) {
+        var rp = child(r, "rPr"), rs = rp && child(rp, "rStyle") ? P.style(attr(child(rp, "rStyle"), "val")) : {};
+        function pick(k, tag) { var e = rp && child(rp, tag); if (e) return on(e); if (rs[k] != null) return rs[k]; return ctx.head || ps.quote || ps.pre ? false : ps[k] || false; }
+        var va = rp && child(rp, "vertAlign") ? attr(child(rp, "vertAlign"), "val") : "";
+        var hl = rp && child(rp, "highlight") && on(child(rp, "highlight"));
+        var look = { a: href || "", b: pick("b", "b"), i: pick("i", "i"), u: !href && (pick("u", "u")), s: pick("s", "strike") || !!(rp && on(child(rp, "dstrike"))),
+          v: va === "superscript" ? "sup" : va === "subscript" ? "sub" : "", h: !!hl };
+        kids(r).forEach(function (c) {
+          var n = name(c);
+          if (fld.length && fld[fld.length - 1].instr && n !== "fldChar") { if (n === "instrText") fld[fld.length - 1].code += c.textContent; return; }
+          if (n === "t") add(esc(c.textContent).replace(/  /g, " \u00a0"), look);
+          else if (n === "tab" || n === "ptab") add("<span style=\x22white-space:pre\x22>\t<\x2Fspan>", look);
+          else if (n === "br" || n === "cr") { var bt = attr(c, "type"); if (bt === "page" || bt === "column") note("page breaks are left to Writer\u2019s own pages"); else add("<br>", look); }
+          else if (n === "noBreakHyphen") add("-", look);
+          else if (n === "sym") add("\u25a1", look);
+          else if (n === "fldChar") {
+            var ty = attr(c, "fldCharType");
+            if (ty === "begin") fld.push({ instr: true, code: "" });
+            else if (ty === "separate" && fld.length) fld[fld.length - 1].instr = false;
+            else if (ty === "end") fld.pop();
+          } else if (n === "footnoteReference" || n === "endnoteReference") {
+            var fx = P.xml(P.byType(rels, n === "footnoteReference" ? "footnotes" : "endnotes") || "-"), id = attr(c, "id"), txt = "";
+            if (fx) kids(fx.documentElement).forEach(function (f) { if (attr(f, "id") === id) txt = f.textContent.replace(/\s+/g, " ").trim(); });
+            foot.push(txt);
+            add("<sup>[" + foot.length + "]<\x2Fsup>", { a: "", b: false, i: false, u: false, s: false, v: "", h: false });
+          } else if (n === "drawing" || n === "pict" || n === "object") drawing(c, look);
+          else if (n === "AlternateContent") { var ch = child(c, "Choice") || child(c, "Fallback"); if (ch) kids(ch).forEach(function (k) { if (name(k) === "drawing" || name(k) === "pict") drawing(k, look); }); }
+          else if (n === "commentReference") note("comments are not shown");
+        });
+      }
+      function drawing(c, look) {
+        var blips = c.getElementsByTagNameNS ? c.getElementsByTagNameNS("*", "blip") : [], done = false, i;
+        var ext = c.getElementsByTagNameNS ? c.getElementsByTagNameNS("*", "extent")[0] : null, pr = c.getElementsByTagNameNS ? c.getElementsByTagNameNS("*", "docPr")[0] : null;
+        var alt = pr ? pr.getAttribute("descr") || pr.getAttribute("title") || "" : "";
+        for (i = 0; i < blips.length && !done; i++) { var rid = attr(blips[i], "embed", "r"); if (rid) { add(picture(rid, ext ? parseInt(ext.getAttribute("cx"), 10) : 0, alt), look); done = true; } }
+        var im = c.getElementsByTagNameNS ? c.getElementsByTagNameNS("*", "imagedata") : [];
+        for (i = 0; i < im.length && !done; i++) { var r2 = attr(im[i], "id", "r"); if (r2) { add(picture(r2, 0, alt), look); done = true; } }
+        var tb = c.getElementsByTagNameNS ? c.getElementsByTagNameNS("*", "txbxContent") : [];
+        if (tb.length) { note("text in text boxes is placed after the paragraph it was in"); kids(tb[0]).forEach(function (k) { extra.push(k); }); done = true; }
+        if (!done) note("drawn shapes, charts and diagrams are left out");
+      }
+      function walk(el, href) {
+        kids(el).forEach(function (c) {
+          var n = name(c);
+          if (n === "r") run(c, href || (fld.length && !fld[fld.length - 1].instr ? link(fld[fld.length - 1].code) : ""));
+          else if (n === "hyperlink") {
+            var id = attr(c, "id", "r"), an = attr(c, "anchor"), h = "";
+            if (id && rels[id] && rels[id].external) h = rels[id].target; else if (an) h = "#" + an;
+            walk(c, /^(https?:|mailto:|#)/i.test(h) ? h : "");
+          } else if (n === "fldSimple") walk(c, link(attr(c, "instr") || ""));
+          else if (n === "del" || n === "moveFrom") counts.del++;
+          else if (n === "ins" || n === "moveTo" || n === "smartTag" || n === "customXml" || n === "dir" || n === "bdo") walk(c, href);
+          else if (n === "sdt") walk(child(c, "sdtContent") || c, href);
+          else if (n === "oMath" || n === "oMathPara") { note("equations are shown as plain text"); add(esc(Array.prototype.map.call(c.getElementsByTagNameNS("*", "t"), function (t) { return t.textContent; }).join("")), { a: "", b: false, i: true, u: false, s: false, v: "", h: false }); }
+        });
+      }
+      walk(p, "");
+      var html = segs.map(function (g) {
+        var o = g.look, h = g.h;
+        if (o.h) h = "<span style=\x22background-color:#fde68a\x22>" + h + "<\x2Fspan>";
+        if (o.v) h = "<" + o.v + ">" + h + "<\x2F" + o.v + ">";
+        if (o.s) h = "<s>" + h + "<\x2Fs>";
+        if (o.u) h = "<u>" + h + "<\x2Fu>";
+        if (o.i) h = "<i>" + h + "<\x2Fi>";
+        if (o.b) h = "<b>" + h + "<\x2Fb>";
+        if (o.a) h = "<a href=\x22" + esc(o.a) + "\x22>" + h + "<\x2Fa>";
+        return h;
+      }).join("").replace(/<\x2F(b|i|u|s|sup|sub)><\1>/g, "");
+      return { html: html, extra: extra };
+    }
+    function link(code) { var m = /HYPERLINK\s+(?:\\l\s+)?\x22([^\x22]+)\x22/.exec(code || ""); if (!m) return ""; var h = /\\l/.test(code) ? "#" + m[1] : m[1]; return /^(https?:|mailto:|#)/i.test(h) ? h : ""; }
+    // a paragraph -> {tag, align, html, list} (and any text boxes after it)
+    function para(p, out) {
+      var pp = child(p, "pPr"), sid = pp && child(pp, "pStyle") ? attr(child(pp, "pStyle"), "val") : null, s = P.style(sid || P.defP);
+      var ol = pp && child(pp, "outlineLvl"), head = s.head;
+      if (ol) { var lv = parseInt(attr(ol, "val"), 10); head = lv >= 0 && lv < 9 ? Math.min(4, lv + 1) : 0; }
+      var np = pp && child(pp, "numPr"), numId = s.numId, ilvl = s.ilvl;
+      if (np) { if (child(np, "numId")) numId = attr(child(np, "numId"), "val"); if (child(np, "ilvl")) ilvl = parseInt(attr(child(np, "ilvl"), "val"), 10) || 0; }
+      var li = numId != null && !head ? P.list(numId, ilvl) : null;
+      var jc = pp && child(pp, "jc") ? attr(child(pp, "jc"), "val") : "", al = jc === "center" ? "center" : jc === "right" || jc === "end" ? "right" : jc === "both" || jc === "distribute" ? "justify" : "";
+      var r = inline(p, { pstyle: s, head: head });
+      var ind = pp && child(pp, "ind"), left = ind && (attr(ind, "left") || attr(ind, "start")) ? parseInt(attr(ind, "left") || attr(ind, "start"), 10) || 0 : s.left || 0;
+      var hr = !r.html && pp && child(pp, "pBdr") && child(child(pp, "pBdr"), "bottom");
+      out.push({ tag: hr ? "hr" : head ? "h" + head : s.quote ? "blockquote" : s.pre ? "pre" : "p", align: al, left: left, indent: !li && !head && !s.quote && left >= 360 ? Math.min(6, Math.round(left / 720) || 1) : 0, html: r.html,
+        list: li ? { tag: li.tag, start: li.start, num: li.abs, id: numId, restart: li.restart, lvl: Math.min(8, ilvl) } : null });
+      r.extra.forEach(function (k) { block(k, out); });
+    }
+    function cellText(tc) {
+      var parts = [], o = [];
+      kids(tc).forEach(function (k) { block(k, o); });
+      o.forEach(function (b) {
+        if (b.tag === "table") parts.push(b.text);
+        else parts.push((b.list ? (b.list.tag === "ul" ? "\u2022 " : "") : "") + b.html);
+      });
+      while (parts.length > 1 && !parts[parts.length - 1]) parts.pop();
+      return parts.join("<br>") || "&nbsp;";
+    }
+    function table(tbl) {
+      var rows = [], text = [];
+      function rowsOf(el) { kids(el).forEach(function (k) { var n = name(k); if (n === "tr") rows.push(k); else if (n === "sdt" || n === "customXml") rowsOf(child(k, "sdtContent") || k); }); }
+      rowsOf(tbl);
+      var grid = rows.map(function (tr) {
+        var cells = [], col = 0, trp = child(tr, "trPr"), th = !!(trp && child(trp, "tblHeader") && on(child(trp, "tblHeader")));
+        var gb = trp && child(trp, "gridBefore"); if (gb) col += parseInt(attr(gb, "val"), 10) || 0;
+        function cellsOf(el) {
+          kids(el).forEach(function (tc) {
+            var n = name(tc);
+            if (n === "sdt" || n === "customXml") { cellsOf(child(tc, "sdtContent") || tc); return; }
+            if (n !== "tc") return;
+            var pr = child(tc, "tcPr"), sp = pr && child(pr, "gridSpan") ? parseInt(attr(child(pr, "gridSpan"), "val"), 10) || 1 : 1;
+            var vm = pr && child(pr, "vMerge"), vmv = vm ? attr(vm, "val") || "continue" : "";
+            var h = vmv === "continue" ? "" : cellText(tc);
+            if (th) h = h.replace(/<\x2F?b>/g, "");
+            cells.push({ col: col, span: sp, vm: vmv, html: h, th: th });
+            text.push(h.replace(/<[^>]+>/g, ""));
+            col += sp;
+          });
+        }
+        cellsOf(tr);
+        return cells;
+      });
+      var html = "<table>" + grid.map(function (cells, r) {
+        return "<tr>" + cells.filter(function (c) { return c.vm !== "continue"; }).map(function (c) {
+          var rs = 1;
+          if (c.vm === "restart") for (var k = r + 1; k < grid.length; k++) { var below = grid[k].filter(function (x) { return x.col === c.col; })[0]; if (below && below.vm === "continue") rs++; else break; }
+          var t = c.th ? "th" : "td";
+          return "<" + t + (c.span > 1 ? " colspan=\x22" + c.span + "\x22" : "") + (rs > 1 ? " rowspan=\x22" + rs + "\x22" : "") + ">" + c.html + "<\x2F" + t + ">";
+        }).join("") + "<\x2Ftr>";
+      }).join("") + "<\x2Ftable>";
+      return { tag: "table", html: html, text: text.join(" | ") };
+    }
+    function block(el, out) {
+      var n = name(el);
+      if (n === "p") para(el, out);
+      else if (n === "tbl") out.push(table(el));
+      else if (n === "sdt") kids(child(el, "sdtContent") || el).forEach(function (k) { block(k, out); });
+      else if (n === "customXml" || n === "ins" || n === "moveTo") kids(el).forEach(function (k) { block(k, out); });
+      else if (n === "AlternateContent") { var ch = child(el, "Choice") || child(el, "Fallback"); if (ch) kids(ch).forEach(function (k) { block(k, out); }); }
+      else if (n === "del" || n === "moveFrom") counts.del++;
+      else if (n === "altChunk") note("a part pasted in from another file (altChunk) is left out");
+    }
+    var blocks = [];
+    kids(body).forEach(function (k) { block(k, blocks); });
+    // lists: items of the same list together, deeper levels inside the item above
+    var out = [], stack = [], cur = {}, seen = {};
+    function closeTo(lvl) { while (stack.length && stack[stack.length - 1].lvl > lvl) out.push("<\x2Fli><\x2F" + stack.pop().tag + ">"); }
+    function al(b) { return b.align ? " style=\x22text-align:" + b.align + "\x22" : ""; }
+    blocks.forEach(function (b) {
+      // an indented paragraph with no number of its own, under a list item, is that item's next paragraph
+      if (!b.list && stack.length && b.tag === "p" && b.left >= 360) { out.push("<p" + al(b) + ">" + (b.html || "<br>") + "<\x2Fp>"); return; }
+      if (!b.list) {
+        closeTo(-1);
+        if (b.tag === "table") out.push(b.html);
+        else if (b.tag === "hr") out.push("<hr>");
+        else if (b.tag === "pre") {
+          var code = b.html.replace(/<br>/g, "\n").replace(/<span style=\x22white-space:pre\x22>\t<\x2Fspan>/g, "\t").replace(/ \u00a0/g, "  ");
+          if (/<\x2Fpre>$/.test(out[out.length - 1] || "")) out[out.length - 1] = out[out.length - 1].replace(/<\x2Fpre>$/, "\n" + code + "<\x2Fpre>");
+          else out.push("<pre>" + code + "<\x2Fpre>");
+        } else if (b.indent) out.push("<blockquote style=\x22margin: 0 0 0 " + 40 * b.indent + "px; border: none; padding: 0px;\x22><" + b.tag + al(b) + ">" + (b.html || "<br>") + "<\x2F" + b.tag + "><\x2Fblockquote>");
+        else out.push("<" + b.tag + al(b) + ">" + (b.html || "<br>") + "<\x2F" + b.tag + ">");
+        return;
+      }
+      // cur: the number each list (an abstractNum) and level is at; a level
+      // starts again after an item above it, and where a startOverride says
+      var l = b.list.lvl, key = b.list.num + ":" + l, again = b.list.restart && !seen[b.list.id + ":" + l];
+      seen[b.list.id + ":" + l] = 1;
+      cur[key] = again || cur[key] == null ? b.list.start : cur[key] + 1;
+      for (var k in cur) if (k.indexOf(b.list.num + ":") === 0 && parseInt(k.split(":")[1], 10) > l) delete cur[k];
+      closeTo(l);
+      var top = stack[stack.length - 1];
+      if (top && top.lvl === l && (top.tag !== b.list.tag || top.num !== b.list.num || again)) { out.push("<\x2Fli><\x2F" + stack.pop().tag + ">"); top = stack[stack.length - 1]; }
+      if (top && top.lvl === l) out.push("<\x2Fli><li>");
+      else {
+        out.push("<" + b.list.tag + (b.list.tag === "ol" && cur[key] !== 1 ? " start=\x22" + cur[key] + "\x22" : "") + "><li>");
+        stack.push({ tag: b.list.tag, lvl: l, num: b.list.num });
+      }
+      out.push(b.tag === "p" || b.tag === "blockquote" ? b.html || "<br>" : "<" + b.tag + ">" + b.html + "<\x2F" + b.tag + ">");
+    });
+    closeTo(-1);
+    if (foot.length) {
+      out.push("<p><b>Notes<\x2Fb><\x2Fp>");
+      foot.forEach(function (t, i) { out.push("<p>[" + (i + 1) + "] " + esc(t) + "<\x2Fp>"); });
+      note("footnotes and endnotes are at the end, numbered [1], [2] ...");
+    }
+    if (counts.del) note("tracked changes are shown accepted: " + counts.del + " deletion" + (counts.del === 1 ? " is" : "s are") + " left out, insertions are kept");
+    var mr = P.rels(P.main);
+    for (var id in mr) {
+      if (mr[id].type === "header" || mr[id].type === "footer") { var hx = P.xml(mr[id].target); if (hx && hx.documentElement.textContent.replace(/\s/g, "")) note("headers and footers are not shown"); }
+      if (mr[id].type === "comments") note("comments are not shown");
+    }
+    var paper = null, sp = child(body, "sectPr");
+    if (sp) {
+      var pg = child(sp, "pgSz"), mg = child(sp, "pgMar"), w = pg ? parseInt(attr(pg, "w"), 10) : 0, h = pg ? parseInt(attr(pg, "h"), 10) : 0;
+      for (var sz in SIZES) {
+        var a = SIZES[sz];
+        if ((Math.abs(w - a[0]) < 120 && Math.abs(h - a[1]) < 120) || (Math.abs(w - a[1]) < 120 && Math.abs(h - a[0]) < 120)) paper = { size: sz, orient: w > h ? "l" : "p" };
+      }
+      if (paper && mg) { var px = (parseInt(attr(mg, "left"), 10) || 1440) / 15; paper.margin = [48, 72, 96, 120].reduce(function (best, m) { return Math.abs(m - px) < Math.abs(best - px) ? m : best; }, 96); }
+    }
+    var title = "", core = P.xml("docProps\x2Fcore.xml");
+    if (core) { var t = core.getElementsByTagNameNS("*", "title")[0]; title = t ? t.textContent.trim() : ""; }
+    if (!title) title = String(fileName || "Document").replace(/^.*[\\\x2F]/, "").replace(/\.docx?$/i, "");
+    note("the fonts, sizes and colours are Writer\u2019s own");
+    var html = out.join("");
+    return { title: title, html: html || "<p><br><\x2Fp>", notes: Object.keys(notes), paper: paper, pictures: pics };
+  }
+  D.read = read;
+})();
+// ===========================================================================
+// MODULE: DOCX_READ - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: DOCX_WRITE - START
+// Depends: ZIP (Lantern.zip)
+// Exports: Lantern.docx.body(html, opts) -> {xml, rels, media, nums,
+//          notes} (DOCX_PACKAGE wraps it in a whole Word file)
+// ===========================================================================
+// A Writer document as the body of a Word file (1.24.26): headings as
+// Word's Heading 1 to 4 (so Word's navigation pane and table of contents
+// find them), paragraphs with their alignment, bullet and numbered lists
+// to their depth (each numbered list counting from its own start), tables
+// with ruled cells (cells spanning columns and rows; heading cells bold and
+// repeated at the top of each page), bold, italic, underline, strike,
+// superscript, subscript, highlight, links that open, pictures at their
+// size, tabs and line breaks, quotes, code, divider lines. Word checks the
+// order of every element's properties, so they are written in the order
+// its schema gives.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.zip) return;
+  var D = L.docx = L.docx || {};
+  function x(t) {
+    return String(t).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]/g, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\x22/g, "&quot;");
+  }
+  var INLINE = /^(B|STRONG|I|EM|U|S|STRIKE|DEL|INS|SUB|SUP|A|SPAN|FONT|CODE|KBD|TT|SAMP|MARK|SMALL|BIG|ABBR|CITE|Q|DFN|VAR|LABEL|TIME|BR|IMG|WBR)$/;
+  function size(b, mime) {
+    if (/png/.test(mime) && b.length > 24) return [(b[16] << 24 | b[17] << 16 | b[18] << 8 | b[19]) >>> 0, (b[20] << 24 | b[21] << 16 | b[22] << 8 | b[23]) >>> 0];
+    if (/gif/.test(mime) && b.length > 10) return [b[6] | b[7] << 8, b[8] | b[9] << 8];
+    if (/bmp/.test(mime) && b.length > 26) return [b[18] | b[19] << 8 | b[20] << 16, Math.abs((b[22] | b[23] << 8 | b[24] << 16 | b[25] << 24))];
+    if (/jpe?g/.test(mime)) {
+      var p = 2;
+      while (p + 9 < b.length) {
+        if (b[p] !== 0xff) { p++; continue; }
+        var m = b[p + 1], len = b[p + 2] << 8 | b[p + 3];
+        if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return [b[p + 7] << 8 | b[p + 8], b[p + 5] << 8 | b[p + 6]];
+        p += 2 + len;
+      }
+    }
+    return null;
+  }
+  // body(html, {width}) -> the document's body XML and what it needs:
+  // rels [{id, type, target, external}], media [{name, bytes}], nums [{start, lvl}]
+  function body(html, opts) {
+    opts = opts || {};
+    var root = new DOMParser().parseFromString("<!DOCTYPE html><body>" + String(html || ""), "text/html").body;
+    var out = [], rels = [], media = [], nums = [], notes = {}, pid = 0, width = opts.width || 9360;
+    function rel(type, target, ext) { var id = "rId" + (10 + rels.length); rels.push({ id: id, type: type, target: target, external: !!ext }); return id; }
+    function sty(el, p) { try { return (el.style && el.style[p]) || ""; } catch (e) { return ""; } }
+    // the look of a run: {b, i, u, s, v, h, mono, link, pre}
+    function look(el, o) {
+      var n = {}, k;
+      for (k in o) n[k] = o[k];
+      var t = el.tagName, fw = sty(el, "fontWeight"), td = sty(el, "textDecoration") || sty(el, "textDecorationLine"), bg = sty(el, "backgroundColor"), va = sty(el, "verticalAlign");
+      if (t === "B" || t === "STRONG" || /^(bold|bolder|[6-9]00)$/.test(fw)) n.b = true;
+      if (t === "I" || t === "EM" || t === "CITE" || t === "DFN" || t === "VAR" || sty(el, "fontStyle") === "italic") n.i = true;
+      if (t === "U" || t === "INS" || /underline/.test(td)) n.u = true;
+      if (t === "S" || t === "STRIKE" || t === "DEL" || /line-through/.test(td)) n.s = true;
+      if (t === "SUP" || va === "super") n.v = "superscript";
+      if (t === "SUB" || va === "sub") n.v = "subscript";
+      if (t === "MARK" || (bg && !/^(transparent|initial|inherit|rgba\(0, 0, 0, 0\)|white|#fff(fff)?|rgb\(255, 255, 255\))$/i.test(bg))) n.h = true;
+      if (t === "CODE" || t === "KBD" || t === "TT" || t === "SAMP") n.mono = true;
+      if (/^pre/.test(sty(el, "whiteSpace"))) n.pre = true;
+      return n;
+    }
+    function rpr(o) {
+      var r = (o.link ? "<w:rStyle w:val=\x22Hyperlink\x22\x2F>" : "") + (o.mono ? "<w:rFonts w:ascii=\x22Courier New\x22 w:hAnsi=\x22Courier New\x22 w:cs=\x22Courier New\x22\x2F>" : "") +
+        (o.b ? "<w:b\x2F>" : "") + (o.i ? "<w:i\x2F>" : "") + (o.s ? "<w:strike\x2F>" : "") + (o.h ? "<w:highlight w:val=\x22yellow\x22\x2F>" : "") +
+        (o.u ? "<w:u w:val=\x22single\x22\x2F>" : "") + (o.v ? "<w:vertAlign w:val=\x22" + o.v + "\x22\x2F>" : "");
+      return r ? "<w:rPr>" + r + "<\x2Fw:rPr>" : "";
+    }
+    function textRuns(t, o, acc) {
+      if (!o.pre) t = t.replace(/[ \n\r\f\t]+/g, " ");
+      t = t.replace(/\u00a0/g, " ").replace(/\u200b/g, "");
+      if (!t) return;
+      var bits = t.split(/(\t|\n)/), r = "";
+      for (var i = 0; i < bits.length; i++) {
+        if (bits[i] === "\t") r += "<w:tab\x2F>";
+        else if (bits[i] === "\n") r += "<w:br\x2F>";
+        else if (bits[i]) r += "<w:t xml:space=\x22preserve\x22>" + x(bits[i]) + "<\x2Fw:t>";
+      }
+      // a run of spaces only is kept between words, not at a paragraph's ends (HTML shows none there)
+      if (r) acc.push({ xml: "<w:r>" + rpr(o) + r + "<\x2Fw:r>", text: o.pre || /\S/.test(t), space: !o.pre && !/\S/.test(t) });
+    }
+    function picture(el, acc) {
+      var m = /^data:(image\x2F(png|jpe?g|gif|bmp));base64,([\s\S]*)$/i.exec(el.getAttribute("src") || "");
+      if (!m) { notes["pictures that are not PNG, JPEG, GIF or BMP are left out"] = 1; return; }
+      var bin = atob(m[3].replace(/\s+/g, "")), b = new Uint8Array(bin.length), i;
+      for (i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
+      var ext = m[2].toLowerCase() === "jpg" ? "jpeg" : m[2].toLowerCase(), nat = size(b, m[1].toLowerCase()) || [300, 200];
+      var w = parseInt(el.getAttribute("width"), 10) || nat[0], h = parseInt(el.getAttribute("height"), 10) || Math.round(w * nat[1] / Math.max(1, nat[0]));
+      var max = Math.round(width / 15);
+      if (w > max) { h = Math.round(h * max / w); w = max; }
+      var nm = "image" + (media.length + 1) + "." + ext, id = rel("image", "media\x2F" + nm);
+      media.push({ name: nm, bytes: b, ext: ext });
+      pid++;
+      var cx = w * 9525, cy = h * 9525, alt = x(el.getAttribute("alt") || "");
+      acc.push({ xml: "<w:r><w:drawing><wp:inline distT=\x220\x22 distB=\x220\x22 distL=\x220\x22 distR=\x220\x22><wp:extent cx=\x22" + cx + "\x22 cy=\x22" + cy + "\x22\x2F>" +
+        "<wp:docPr id=\x22" + pid + "\x22 name=\x22Picture " + pid + "\x22 descr=\x22" + alt + "\x22\x2F><wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect=\x221\x22\x2F><\x2Fwp:cNvGraphicFramePr>" +
+        "<a:graphic><a:graphicData uri=\x22http:\x2F\x2Fschemas.openxmlformats.org\x2Fdrawingml\x2F2006\x2Fpicture\x22><pic:pic><pic:nvPicPr><pic:cNvPr id=\x22" + pid + "\x22 name=\x22" + nm + "\x22\x2F><pic:cNvPicPr\x2F><\x2Fpic:nvPicPr>" +
+        "<pic:blipFill><a:blip r:embed=\x22" + id + "\x22\x2F><a:stretch><a:fillRect\x2F><\x2Fa:stretch><\x2Fpic:blipFill><pic:spPr><a:xfrm><a:off x=\x220\x22 y=\x220\x22\x2F><a:ext cx=\x22" + cx + "\x22 cy=\x22" + cy + "\x22\x2F><\x2Fa:xfrm>" +
+        "<a:prstGeom prst=\x22rect\x22><a:avLst\x2F><\x2Fa:prstGeom><\x2Fpic:spPr><\x2Fpic:pic><\x2Fa:graphicData><\x2Fa:graphic><\x2Fwp:inline><\x2Fw:drawing><\x2Fw:r>", text: true });
+    }
+    // inline content (text, looks, links, breaks, pictures) -> runs
+    function inl(n, o, acc) {
+      for (var c = n.firstChild; c; c = c.nextSibling) {
+        if (c.nodeType === 3) { textRuns(c.nodeValue, o, acc); continue; }
+        if (c.nodeType !== 1) continue;
+        var t = c.tagName;
+        if (t === "BR") { acc.push({ xml: "<w:r>" + rpr(o) + "<w:br\x2F><\x2Fw:r>", br: true }); continue; }
+        if (t === "IMG") { picture(c, acc); continue; }
+        if (t === "SCRIPT" || t === "STYLE") continue;
+        if (t === "A" && !o.link) {
+          var h = (c.getAttribute("href") || "").replace(/^\s+|\s+$/g, ""), sub = [];
+          inl(c, h ? (function () { var k = look(c, o); k.link = true; return k; })() : look(c, o), sub);
+          if (/^(https?:|mailto:)/i.test(h)) acc.push({ xml: "<w:hyperlink r:id=\x22" + rel("hyperlink", h, true) + "\x22 w:history=\x221\x22>" + sub.map(function (s) { return s.xml; }).join("") + "<\x2Fw:hyperlink>", text: true });
+          else if (/^#./.test(h)) acc.push({ xml: "<w:hyperlink w:anchor=\x22" + x(h.slice(1)) + "\x22 w:history=\x221\x22>" + sub.map(function (s) { return s.xml; }).join("") + "<\x2Fw:hyperlink>", text: true });
+          else Array.prototype.push.apply(acc, sub);
+          continue;
+        }
+        inl(c, look(c, o), acc);
+      }
+    }
+    function para(acc, ps) {
+      while (acc.length && acc[0].space) acc.shift();
+      while (acc.length && acc[acc.length - 1].space) acc.pop();
+      // a <br> at the end of a block makes no line in a page (the browser adds one to keep an empty line open)
+      while (acc.length && acc[acc.length - 1].br) { acc.pop(); if (acc.length) break; }
+      var p = (ps.style ? "<w:pStyle w:val=\x22" + ps.style + "\x22\x2F>" : "") + (ps.num ? "<w:numPr><w:ilvl w:val=\x22" + ps.lvl + "\x22\x2F><w:numId w:val=\x22" + ps.num + "\x22\x2F><\x2Fw:numPr>" : "") +
+        (ps.hr ? "<w:pBdr><w:bottom w:val=\x22single\x22 w:sz=\x226\x22 w:space=\x221\x22 w:color=\x22auto\x22\x2F><\x2Fw:pBdr>" : "") +
+        (ps.ind ? "<w:ind w:left=\x22" + ps.ind + "\x22\x2F>" : "") + (ps.jc ? "<w:jc w:val=\x22" + ps.jc + "\x22\x2F>" : "");
+      out.push("<w:p>" + (p ? "<w:pPr>" + p + "<\x2Fw:pPr>" : "") + acc.map(function (a) { return a.xml; }).join("") + "<\x2Fw:p>");
+    }
+    function jc(el, ctx) {
+      var a = sty(el, "textAlign") || el.getAttribute("align") || ctx.jc || "";
+      return /center/.test(a) ? "center" : /right|end/.test(a) ? "right" : /justify/.test(a) ? "both" : "";
+    }
+    // blocks(el, ctx): ctx = {style, lvl, ind, jc, o (run look), out}
+    function blocks(el, ctx) {
+      var acc = [], first = true;
+      function flush() {
+        var has = acc.some(function (a) { return a.text; }) || acc.filter(function (a) { return a.br; }).length > 1;
+        if (has || (ctx.keepEmpty && acc.length)) { para(acc, { style: ctx.style || (ctx.inList ? "ListParagraph" : ""), num: first ? ctx.num : 0, lvl: ctx.lvl, ind: !first && ctx.num ? 720 * (ctx.lvl + 1) : ctx.ind, jc: ctx.jc }); if (ctx.num) first = false; }
+        acc = [];
+      }
+      for (var c = el.firstChild; c; c = c.nextSibling) {
+        if (c.nodeType === 3) { textRuns(c.nodeValue, ctx.o, acc); continue; }
+        if (c.nodeType !== 1) continue;
+        var t = c.tagName;
+        if (t === "BR") { acc.push({ xml: "<w:r>" + rpr(ctx.o) + "<w:br\x2F><\x2Fw:r>", br: true }); continue; }
+        if (t === "IMG") { picture(c, acc); continue; }
+        if (INLINE.test(t)) { if (t === "A") { var one = c.ownerDocument.createElement("span"); one.appendChild(c.cloneNode(true)); inl(one, ctx.o, acc); } else inl(c, look(c, ctx.o), acc); continue; }
+        if (!acc.some(function (a) { return a.text; }) && acc.length === 1 && acc[0].br) acc = [];
+        flush();
+        // a list item's second paragraph sits under its first, without a number of its own
+        var sub = { style: ctx.style, lvl: ctx.lvl, ind: !first && ctx.num ? 720 * (ctx.lvl + 1) : ctx.ind, jc: jc(c, ctx), o: ctx.o, num: first ? ctx.num : 0, inList: ctx.inList }, m;
+        if ((m = /^H([1-6])$/.exec(t))) { sub.style = "Heading" + Math.min(4, +m[1]); sub.o = look(c, ctx.o); sub.keepEmpty = true; blocks(c, sub); }
+        else if (t === "P" || t === "DIV" || t === "LI" || t === "DT" || t === "DD" || t === "CENTER" || t === "SECTION" || t === "ARTICLE" || t === "HEADER" || t === "FOOTER" || t === "MAIN" || t === "NAV" || t === "ASIDE" || t === "FIGURE" || t === "FIGCAPTION" || t === "ADDRESS" || t === "DETAILS" || t === "SUMMARY") {
+          if (t === "CENTER") sub.jc = "center";
+          sub.o = look(c, ctx.o); sub.keepEmpty = t === "P" || t === "DIV" || t === "LI"; blocks(c, sub);
+        } else if (t === "BLOCKQUOTE") {
+          var indentOnly = /margin/.test(c.getAttribute("style") || ""), ml = parseInt(sty(c, "marginLeft"), 10);
+          if (!indentOnly && !ctx.num) sub.style = "Quote"; else sub.ind = (ctx.ind || 0) + (ml > 0 ? Math.round(ml * 18) : 720);
+          sub.o = look(c, ctx.o); blocks(c, sub);
+        } else if (t === "PRE") {
+          var lines = (c.textContent || "").replace(/\r\n?/g, "\n").replace(/\n$/, "").split("\n");
+          lines.forEach(function (ln) { var a = []; textRuns(ln, { pre: true, mono: false }, a); para(a, { style: "Code", ind: ctx.ind }); });
+        } else if (t === "UL" || t === "OL" || t === "MENU") list(c, ctx.num || ctx.inList ? Math.min(8, ctx.lvl + 1) : 0, ctx);
+        else if (t === "TABLE") table(c, ctx);
+        else if (t === "HR") para([], { hr: true });
+        else if (t === "DL" || t === "FORM" || t === "FIELDSET" || t === "TBODY") blocks(c, sub);
+        else if (t !== "SCRIPT" && t !== "STYLE" && t !== "TEMPLATE") { sub.o = look(c, ctx.o); blocks(c, sub); }
+        if (sub.num && ctx.num) first = false;
+      }
+      flush();
+    }
+    function list(el, lvl, ctx) {
+      var num = 1;
+      if (el.tagName === "OL") { num = 2 + nums.length; nums.push({ lvl: lvl, start: parseInt(el.getAttribute("start"), 10) || 1 }); }
+      for (var c = el.firstChild; c; c = c.nextSibling) {
+        if (c.nodeType !== 1) { if (c.nodeType === 3 && c.nodeValue.replace(/\s/g, "")) { var tw = c.ownerDocument.createElement("span"); tw.appendChild(c.ownerDocument.createTextNode(c.nodeValue)); blocks(tw, { o: ctx.o, num: num, lvl: lvl, inList: true }); } continue; }
+        if (c.tagName === "UL" || c.tagName === "OL") { list(c, Math.min(8, lvl + 1), ctx); continue; }
+        blocks(c, { o: look(c, ctx.o), num: num, lvl: lvl, inList: true, jc: jc(c, {}), keepEmpty: true });
+      }
+    }
+    function table(el, ctx) {
+      var rows = [], occ = [], ncol = 0, r, c, i;
+      Array.prototype.forEach.call(el.rows || [], function (tr) { rows.push(tr); });
+      if (!rows.length) return;
+      var grid = rows.map(function () { return []; });
+      rows.forEach(function (tr, ri) {
+        var col = 0;
+        Array.prototype.forEach.call(tr.cells, function (td) {
+          while (occ[ri] && occ[ri][col]) col++;
+          var cs = Math.max(1, Math.min(63, parseInt(td.getAttribute("colspan"), 10) || 1)), rs = Math.max(1, Math.min(rows.length - ri, parseInt(td.getAttribute("rowspan"), 10) || 1));
+          grid[ri].push({ col: col, cs: cs, rs: rs, td: td });
+          for (r = ri; r < ri + rs; r++) for (c = col; c < col + cs; c++) { occ[r] = occ[r] || []; occ[r][c] = r === ri ? 1 : { from: ri, col: col, cs: cs, last: r === ri + rs - 1 }; }
+          col += cs;
+          if (col > ncol) ncol = col;
+        });
+      });
+      var cw = Math.max(200, Math.floor(width / Math.max(1, ncol))), x0 = "<w:tbl><w:tblPr><w:tblStyle w:val=\x22TableGrid\x22\x2F><w:tblW w:w=\x22" + cw * ncol + "\x22 w:type=\x22dxa\x22\x2F>" +
+        "<w:tblBorders>" + ["top", "left", "bottom", "right", "insideH", "insideV"].map(function (s) { return "<w:" + s + " w:val=\x22single\x22 w:sz=\x224\x22 w:space=\x220\x22 w:color=\x22auto\x22\x2F>"; }).join("") + "<\x2Fw:tblBorders>" +
+        "<w:tblLook w:val=\x2204A0\x22 w:firstRow=\x221\x22 w:lastRow=\x220\x22 w:firstColumn=\x221\x22 w:lastColumn=\x220\x22 w:noHBand=\x220\x22 w:noVBand=\x221\x22\x2F><\x2Fw:tblPr><w:tblGrid>";
+      for (i = 0; i < ncol; i++) x0 += "<w:gridCol w:w=\x22" + cw + "\x22\x2F>";
+      out.push(x0 + "<\x2Fw:tblGrid>");
+      var headRows = true;
+      rows.forEach(function (tr, ri) {
+        var allTh = Array.prototype.every.call(tr.cells, function (td) { return td.tagName === "TH"; }) && tr.cells.length > 0;
+        headRows = headRows && allTh;
+        out.push("<w:tr>" + (headRows ? "<w:trPr><w:tblHeader\x2F><\x2Fw:trPr>" : ""));
+        var col = 0, k = 0;
+        while (col < ncol) {
+          var cell = grid[ri][k] && grid[ri][k].col === col ? grid[ri][k] : null, o = occ[ri] && occ[ri][col];
+          var pr = function (cs, vm) { return "<w:tcPr><w:tcW w:w=\x22" + cw * cs + "\x22 w:type=\x22dxa\x22\x2F>" + (cs > 1 ? "<w:gridSpan w:val=\x22" + cs + "\x22\x2F>" : "") + vm + "<\x2Fw:tcPr>"; };
+          if (cell) {
+            out.push("<w:tc>" + pr(cell.cs, cell.rs > 1 ? "<w:vMerge w:val=\x22restart\x22\x2F>" : ""));
+            var n0 = out.length, th = cell.td.tagName === "TH", oo = look(cell.td, ctx.o);
+            if (th) oo.b = true;
+            blocks(cell.td, { o: oo, jc: jc(cell.td, {}) });
+            if (out.length === n0) out.push("<w:p\x2F>");
+            out.push("<\x2Fw:tc>");
+            col += cell.cs; k++;
+          } else if (o && o.from !== undefined && o.col === col) {
+            out.push("<w:tc>" + pr(o.cs, "<w:vMerge\x2F>") + "<w:p\x2F><\x2Fw:tc>");
+            col += o.cs;
+          } else { out.push("<w:tc>" + pr(1, "") + "<w:p\x2F><\x2Fw:tc>"); col++; }
+        }
+        out.push("<\x2Fw:tr>");
+      });
+      out.push("<\x2Fw:tbl>");
+    }
+    blocks(root, { o: {}, keepEmpty: false });
+    // Word wants a paragraph after a table that ends the document
+    if (!out.length || /<\x2Fw:tbl>$/.test(out[out.length - 1])) out.push("<w:p\x2F>");
+    return { xml: out.join(""), rels: rels, media: media, nums: nums, notes: Object.keys(notes) };
+  }
+  D.body = body;
+})();
+// ===========================================================================
+// MODULE: DOCX_WRITE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: DOCX_PACKAGE - START
+// Depends: ZIP (Lantern.zip), DOCX_WRITE (Lantern.docx.body)
+// Exports: Lantern.docx.write(title, html, paper) -> {bytes, notes},
+//          Lantern.docx.save(title, html, paper) -> notes (downloads it)
+// ===========================================================================
+// The rest of a Word file round the body (1.24.26): its styles (Normal in
+// Calibri 11, Heading 1 to 4, Quote, Code, List Paragraph, Hyperlink, Table
+// Grid), its numbering (bullets, and 1. a. i. by level), settings that keep
+// Word out of Compatibility Mode, the title, and the paper (Letter, Legal,
+// A4 or A5, upright or sideways, and its margin) as Writer's pages have it.
+(function () {
+  var L = window.Lantern, D = L && L.docx;
+  if (!D || !D.body || !L.zip) return;
+  function x(t) { return String(t).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\x22/g, "&quot;"); }
+  var S = "http:\x2F\x2Fschemas.openxmlformats.org\x2F", W = S + "wordprocessingml\x2F2006\x2Fmain", RT = S + "officeDocument\x2F2006\x2Frelationships";
+  var HEAD = "<?xml version=\x221.0\x22 encoding=\x22UTF-8\x22 standalone=\x22yes\x22?>\n";
+  var PAPER = { letter: [12240, 15840], legal: [12240, 20160], a4: [11906, 16838], a5: [8391, 11906] };
+  function styles() {
+    function ps(id, nm, ppr, rpr, extra) {
+      return "<w:style w:type=\x22paragraph\x22 w:styleId=\x22" + id + "\x22><w:name w:val=\x22" + nm + "\x22\x2F><w:basedOn w:val=\x22Normal\x22\x2F><w:next w:val=\x22Normal\x22\x2F>" + (extra || "") +
+        "<w:qFormat\x2F><w:pPr>" + ppr + "<\x2Fw:pPr><w:rPr>" + rpr + "<\x2Fw:rPr><\x2Fw:style>";
+    }
+    var h = [[32, 360, 120], [26, 240, 80], [24, 200, 60], [22, 160, 40]].map(function (a, i) {
+      return ps("Heading" + (i + 1), "heading " + (i + 1), "<w:keepNext\x2F><w:keepLines\x2F><w:spacing w:before=\x22" + a[1] + "\x22 w:after=\x22" + a[2] + "\x22\x2F><w:outlineLvl w:val=\x22" + i + "\x22\x2F>",
+        "<w:b\x2F><w:bCs\x2F>" + (i === 3 ? "<w:i\x2F>" : "") + "<w:sz w:val=\x22" + a[0] + "\x22\x2F><w:szCs w:val=\x22" + a[0] + "\x22\x2F>", "<w:uiPriority w:val=\x229\x22\x2F>");
+    }).join("");
+    return HEAD + "<w:styles xmlns:w=\x22" + W + "\x22><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\x22Calibri\x22 w:hAnsi=\x22Calibri\x22 w:eastAsia=\x22Calibri\x22 w:cs=\x22Calibri\x22\x2F>" +
+      "<w:sz w:val=\x2222\x22\x2F><w:szCs w:val=\x2222\x22\x2F><w:lang w:val=\x22en-US\x22\x2F><\x2Fw:rPr><\x2Fw:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after=\x22120\x22 w:line=\x22264\x22 w:lineRule=\x22auto\x22\x2F><\x2Fw:pPr><\x2Fw:pPrDefault><\x2Fw:docDefaults>" +
+      "<w:style w:type=\x22paragraph\x22 w:default=\x221\x22 w:styleId=\x22Normal\x22><w:name w:val=\x22Normal\x22\x2F><w:qFormat\x2F><\x2Fw:style>" +
+      "<w:style w:type=\x22character\x22 w:default=\x221\x22 w:styleId=\x22DefaultParagraphFont\x22><w:name w:val=\x22Default Paragraph Font\x22\x2F><w:uiPriority w:val=\x221\x22\x2F><w:semiHidden\x2F><w:unhideWhenUsed\x2F><\x2Fw:style>" +
+      "<w:style w:type=\x22table\x22 w:default=\x221\x22 w:styleId=\x22TableNormal\x22><w:name w:val=\x22Normal Table\x22\x2F><w:semiHidden\x2F><w:unhideWhenUsed\x2F><w:tblPr><w:tblInd w:w=\x220\x22 w:type=\x22dxa\x22\x2F><w:tblCellMar><w:top w:w=\x220\x22 w:type=\x22dxa\x22\x2F><w:left w:w=\x22108\x22 w:type=\x22dxa\x22\x2F><w:bottom w:w=\x220\x22 w:type=\x22dxa\x22\x2F><w:right w:w=\x22108\x22 w:type=\x22dxa\x22\x2F><\x2Fw:tblCellMar><\x2Fw:tblPr><\x2Fw:style>" +
+      "<w:style w:type=\x22numbering\x22 w:default=\x221\x22 w:styleId=\x22NoList\x22><w:name w:val=\x22No List\x22\x2F><w:semiHidden\x2F><w:unhideWhenUsed\x2F><\x2Fw:style>" + h +
+      ps("Quote", "Quote", "<w:spacing w:before=\x22120\x22 w:after=\x22120\x22\x2F><w:ind w:left=\x22720\x22 w:right=\x22720\x22\x2F>", "<w:i\x2F><w:iCs\x2F>") +
+      ps("Code", "Code", "<w:spacing w:after=\x220\x22 w:line=\x22240\x22 w:lineRule=\x22auto\x22\x2F>", "<w:rFonts w:ascii=\x22Courier New\x22 w:hAnsi=\x22Courier New\x22 w:cs=\x22Courier New\x22\x2F><w:sz w:val=\x2220\x22\x2F>") +
+      ps("ListParagraph", "List Paragraph", "<w:spacing w:after=\x2260\x22\x2F><w:ind w:left=\x22720\x22\x2F><w:contextualSpacing\x2F>", "") +
+      "<w:style w:type=\x22character\x22 w:styleId=\x22Hyperlink\x22><w:name w:val=\x22Hyperlink\x22\x2F><w:basedOn w:val=\x22DefaultParagraphFont\x22\x2F><w:unhideWhenUsed\x2F><w:rPr><w:color w:val=\x220563C1\x22\x2F><w:u w:val=\x22single\x22\x2F><\x2Fw:rPr><\x2Fw:style>" +
+      "<w:style w:type=\x22table\x22 w:styleId=\x22TableGrid\x22><w:name w:val=\x22Table Grid\x22\x2F><w:basedOn w:val=\x22TableNormal\x22\x2F><w:pPr><w:spacing w:after=\x220\x22\x2F><\x2Fw:pPr><w:tblPr><w:tblBorders>" +
+      ["top", "left", "bottom", "right", "insideH", "insideV"].map(function (s) { return "<w:" + s + " w:val=\x22single\x22 w:sz=\x224\x22 w:space=\x220\x22 w:color=\x22auto\x22\x2F>"; }).join("") +
+      "<\x2Fw:tblBorders><\x2Fw:tblPr><\x2Fw:style><\x2Fw:styles>";
+  }
+  function numbering(nums) {
+    var BUL = ["\u2022", "\u25e6", "\u25aa"], FMT = ["decimal", "lowerLetter", "lowerRoman"], a = "", b = "", i;
+    function lvl(i, fmt, txt) {
+      return "<w:lvl w:ilvl=\x22" + i + "\x22><w:start w:val=\x221\x22\x2F><w:numFmt w:val=\x22" + fmt + "\x22\x2F><w:lvlText w:val=\x22" + txt + "\x22\x2F><w:lvlJc w:val=\x22left\x22\x2F>" +
+        "<w:pPr><w:ind w:left=\x22" + (720 * (i + 1)) + "\x22 w:hanging=\x22360\x22\x2F><\x2Fw:pPr><\x2Fw:lvl>";
+    }
+    for (i = 0; i < 9; i++) { a += lvl(i, "bullet", BUL[i % 3]); b += lvl(i, FMT[i % 3], "%" + (i + 1) + "."); }
+    var out = HEAD + "<w:numbering xmlns:w=\x22" + W + "\x22><w:abstractNum w:abstractNumId=\x220\x22><w:multiLevelType w:val=\x22hybridMultilevel\x22\x2F>" + a + "<\x2Fw:abstractNum>" +
+      "<w:abstractNum w:abstractNumId=\x221\x22><w:multiLevelType w:val=\x22hybridMultilevel\x22\x2F>" + b + "<\x2Fw:abstractNum><w:num w:numId=\x221\x22><w:abstractNumId w:val=\x220\x22\x2F><\x2Fw:num>";
+    nums.forEach(function (n, k) {
+      out += "<w:num w:numId=\x22" + (k + 2) + "\x22><w:abstractNumId w:val=\x221\x22\x2F><w:lvlOverride w:ilvl=\x22" + n.lvl + "\x22><w:startOverride w:val=\x22" + n.start + "\x22\x2F><\x2Fw:lvlOverride><\x2Fw:num>";
+    });
+    return out + "<\x2Fw:numbering>";
+  }
+  // write(title, html, paper) -> {bytes (the .docx), notes (what was left out)}
+  function write(title, html, paper) {
+    paper = paper || {};
+    var pg = PAPER[paper.size] || PAPER.letter, land = paper.orient === "l", pw = land ? pg[1] : pg[0], ph = land ? pg[0] : pg[1];
+    var mar = Math.round((paper.margin > 0 ? paper.margin : 96) * 15), bd = D.body(html, { width: pw - 2 * mar });
+    var NS = "xmlns:w=\x22" + W + "\x22 xmlns:r=\x22" + RT + "\x22 xmlns:wp=\x22" + S + "drawingml\x2F2006\x2FwordprocessingDrawing\x22 xmlns:a=\x22" + S + "drawingml\x2F2006\x2Fmain\x22 xmlns:pic=\x22" + S + "drawingml\x2F2006\x2Fpicture\x22";
+    var doc = HEAD + "<w:document " + NS + "><w:body>" + bd.xml + "<w:sectPr><w:pgSz w:w=\x22" + pw + "\x22 w:h=\x22" + ph + "\x22" + (land ? " w:orient=\x22landscape\x22" : "") + "\x2F>" +
+      "<w:pgMar w:top=\x22" + mar + "\x22 w:right=\x22" + mar + "\x22 w:bottom=\x22" + mar + "\x22 w:left=\x22" + mar + "\x22 w:header=\x22720\x22 w:footer=\x22720\x22 w:gutter=\x220\x22\x2F><\x2Fw:sectPr><\x2Fw:body><\x2Fw:document>";
+    var R = "<Relationship Id=\x22rId1\x22 Type=\x22" + RT + "\x2Fstyles\x22 Target=\x22styles.xml\x22\x2F><Relationship Id=\x22rId2\x22 Type=\x22" + RT + "\x2Fnumbering\x22 Target=\x22numbering.xml\x22\x2F>" +
+      "<Relationship Id=\x22rId3\x22 Type=\x22" + RT + "\x2Fsettings\x22 Target=\x22settings.xml\x22\x2F>";
+    bd.rels.forEach(function (r) { R += "<Relationship Id=\x22" + r.id + "\x22 Type=\x22" + RT + "\x2F" + r.type + "\x22 Target=\x22" + x(r.target) + "\x22" + (r.external ? " TargetMode=\x22External\x22" : "") + "\x2F>"; });
+    var PR = "http:\x2F\x2Fschemas.openxmlformats.org\x2Fpackage\x2F2006\x2Frelationships", OD = "application\x2Fvnd.openxmlformats-officedocument.";
+    var exts = {};
+    bd.media.forEach(function (m) { exts[m.ext] = 1; });
+    var ct = HEAD + "<Types xmlns=\x22http:\x2F\x2Fschemas.openxmlformats.org\x2Fpackage\x2F2006\x2Fcontent-types\x22><Default Extension=\x22rels\x22 ContentType=\x22application\x2Fvnd.openxmlformats-package.relationships+xml\x22\x2F>" +
+      "<Default Extension=\x22xml\x22 ContentType=\x22application\x2Fxml\x22\x2F>" + Object.keys(exts).map(function (e) { return "<Default Extension=\x22" + e + "\x22 ContentType=\x22image\x2F" + e + "\x22\x2F>"; }).join("") +
+      "<Override PartName=\x22\x2Fword\x2Fdocument.xml\x22 ContentType=\x22" + OD + "wordprocessingml.document.main+xml\x22\x2F><Override PartName=\x22\x2Fword\x2Fstyles.xml\x22 ContentType=\x22" + OD + "wordprocessingml.styles+xml\x22\x2F>" +
+      "<Override PartName=\x22\x2Fword\x2Fnumbering.xml\x22 ContentType=\x22" + OD + "wordprocessingml.numbering+xml\x22\x2F><Override PartName=\x22\x2Fword\x2Fsettings.xml\x22 ContentType=\x22" + OD + "wordprocessingml.settings+xml\x22\x2F>" +
+      "<Override PartName=\x22\x2FdocProps\x2Fcore.xml\x22 ContentType=\x22application\x2Fvnd.openxmlformats-package.core-properties+xml\x22\x2F><Override PartName=\x22\x2FdocProps\x2Fapp.xml\x22 ContentType=\x22" + OD + "extended-properties+xml\x22\x2F><\x2FTypes>";
+    var now = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+    var files = [
+      { name: "[Content_Types].xml", data: ct },
+      { name: "_rels\x2F.rels", data: HEAD + "<Relationships xmlns=\x22" + PR + "\x22><Relationship Id=\x22rId1\x22 Type=\x22" + RT + "\x2FofficeDocument\x22 Target=\x22word\x2Fdocument.xml\x22\x2F>" +
+        "<Relationship Id=\x22rId2\x22 Type=\x22" + PR + "\x2Fmetadata\x2Fcore-properties\x22 Target=\x22docProps\x2Fcore.xml\x22\x2F><Relationship Id=\x22rId3\x22 Type=\x22" + RT + "\x2Fextended-properties\x22 Target=\x22docProps\x2Fapp.xml\x22\x2F><\x2FRelationships>" },
+      { name: "word\x2Fdocument.xml", data: doc },
+      { name: "word\x2F_rels\x2Fdocument.xml.rels", data: HEAD + "<Relationships xmlns=\x22" + PR + "\x22>" + R + "<\x2FRelationships>" },
+      { name: "word\x2Fstyles.xml", data: styles() },
+      { name: "word\x2Fnumbering.xml", data: numbering(bd.nums) },
+      { name: "word\x2Fsettings.xml", data: HEAD + "<w:settings xmlns:w=\x22" + W + "\x22><w:defaultTabStop w:val=\x22720\x22\x2F><w:characterSpacingControl w:val=\x22doNotCompress\x22\x2F><w:compat>" +
+        "<w:compatSetting w:name=\x22compatibilityMode\x22 w:uri=\x22http:\x2F\x2Fschemas.microsoft.com\x2Foffice\x2Fword\x22 w:val=\x2215\x22\x2F><\x2Fw:compat><\x2Fw:settings>" },
+      { name: "docProps\x2Fcore.xml", data: HEAD + "<cp:coreProperties xmlns:cp=\x22http:\x2F\x2Fschemas.openxmlformats.org\x2Fpackage\x2F2006\x2Fmetadata\x2Fcore-properties\x22 xmlns:dc=\x22http:\x2F\x2Fpurl.org\x2Fdc\x2Felements\x2F1.1\x2F\x22 " +
+        "xmlns:dcterms=\x22http:\x2F\x2Fpurl.org\x2Fdc\x2Fterms\x2F\x22 xmlns:xsi=\x22http:\x2F\x2Fwww.w3.org\x2F2001\x2FXMLSchema-instance\x22><dc:title>" + x(title || "") + "<\x2Fdc:title><dc:creator>Lantern<\x2Fdc:creator>" +
+        "<dcterms:created xsi:type=\x22dcterms:W3CDTF\x22>" + now + "<\x2Fdcterms:created><dcterms:modified xsi:type=\x22dcterms:W3CDTF\x22>" + now + "<\x2Fdcterms:modified><\x2Fcp:coreProperties>" },
+      { name: "docProps\x2Fapp.xml", data: HEAD + "<Properties xmlns=\x22" + S + "officeDocument\x2F2006\x2Fextended-properties\x22><Application>Lantern<\x2FApplication><\x2FProperties>" }
+    ];
+    bd.media.forEach(function (m) { files.push({ name: "word\x2Fmedia\x2F" + m.name, data: m.bytes }); });
+    return { bytes: L.zip.write(files), notes: bd.notes };
+  }
+  // a name a file can have on Windows, a Mac and a phone
+  function fileName(title) { return (String(title || "document").replace(/[\\\x2F:*?\x22<>|\x00-\x1f]+/g, " ").replace(/\s+/g, " ").replace(/^[\s.]+|[\s.]+$/g, "").slice(0, 120) || "document") + ".docx"; }
+  D.write = write;
+  D.fileName = fileName;
+  D.save = function (title, html, paper) {
+    var w = write(title, html, paper);
+    L.download(fileName(title), w.bytes, "application\x2Fvnd.openxmlformats-officedocument.wordprocessingml.document");
+    return w.notes;
+  };
+})();
+// ===========================================================================
+// MODULE: DOCX_PACKAGE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: WRITER_DOCX - START
+// Depends: WRITER (writerTools, writerEditHooks, writerSerialize hooks),
+//          DOCX_READ (Lantern.docx.read), DOCX_PACKAGE (Lantern.docx.save)
+//          -- feature-detected
+// Exports: Lantern.writerDocx = {open(file, api)} (WRITER_IMPORT uses it)
+// ===========================================================================
+// Word files in Writer (1.24.26). Save .docx downloads the document as a
+// Word file that Word, LibreOffice, Google Docs and Pages open with its
+// headings, lists, tables, looks, links and pictures, on Writer's paper.
+// Import file in the library opens a .docx as a new document, and a note
+// above the page says what Writer could not keep, so nothing goes missing
+// without a word.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.docx || !L.el) return;
+  var WT = L.writerTools = L.writerTools || [], EH = L.writerEditHooks = L.writerEditHooks || [];
+  var pending = null;
+  function note(api, head, lines) {
+    if (!api || !api.panel) return;
+    var box = L.el("div", { "class": "lp-docx-note", role: "status", style: "border:1px solid var(--line,#ccc);border-radius:6px;padding:6px 10px;margin:6px auto;max-width:780px;font-size:13px;background:var(--panel,#fffbe6)" });
+    box.appendChild(L.el("b", { text: head }));
+    if (lines.length) {
+      var ul = L.el("ul", { style: "margin:4px 0 4px 18px;padding:0" });
+      lines.forEach(function (t) { ul.appendChild(L.el("li", { text: t })); });
+      box.appendChild(ul);
+    }
+    box.appendChild(L.el("button", { text: "OK", style: "margin-top:2px", onclick: function () { if (box.parentNode) box.parentNode.removeChild(box); } }));
+    api.panel(box);
+  }
+  WT.push({ label: "Save .docx", title: "Download this document as a Word file (.docx), for Word, LibreOffice or Google Docs", run: function (api) {
+    if (api.save) api.save();
+    var html = api.page ? api.page.innerHTML : "", fx = L.writerSerialize || [], d = api.doc || {};
+    fx.forEach(function (f) { try { html = f(html) || html; } catch (e) { } });
+    try {
+      var left = L.docx.save(d.title || "document", html, d.paper);
+      if (left.length) note(api, "Saved as a Word file, except:", left);
+    } catch (e) { note(api, "The Word file could not be made: " + e.message, []); }
+  } });
+  EH.push(function (api) {
+    if (!pending || !api.doc || api.doc.id !== pending.id) return;
+    var p = pending;
+    pending = null;
+    note(api, p.head, p.lines);
+  });
+  L.writerDocx = {
+    // open(file, libApi): the file read, a document made of it and opened
+    open: function (file, api) {
+      var r = new FileReader();
+      r.onload = function () {
+        var res;
+        try { res = L.docx.read(new Uint8Array(r.result), file.name); }
+        catch (e) { window.alert("Lantern could not open \u201c" + file.name + "\u201d: " + e.message + "."); return; }
+        var d = { id: L.uid(), title: res.title, html: res.html, words: 0 };
+        if (res.paper) d.paper = { size: res.paper.size, orient: res.paper.orient, margin: res.paper.margin || 96, zoom: (window.innerWidth || 1000) < 700 ? "fit" : "100" };
+        api.col.put(d);
+        pending = { id: d.id, head: "Opened from the Word file \u201c" + file.name + "\u201d. Save .docx makes a Word file again.", lines: res.notes };
+        api.open(d.id);
+      };
+      r.onerror = function () { window.alert("Lantern could not read \u201c" + file.name + "\u201d from this device."); };
+      r.readAsArrayBuffer(file);
+    }
+  };
+})();
+// ===========================================================================
+// MODULE: WRITER_DOCX - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: GUIDE_WRITER_DOCX - START
+// Depends: GUIDE, WRITER_DOCX
+// Exports: (none) -- appends a section to the "writer" guide
+// ===========================================================================
+(function () {
+  if (!window.Lantern || !Lantern.guide || !Lantern.guide.append) return;
+  Lantern.guide.append("writer", [
+    ["Word files (.docx)", "<p><b>Save .docx</b> downloads the document as a Word file. Word, LibreOffice, " +
+      "Google Docs and Pages open it with its headings (Word\u2019s Heading 1 to 4, so its navigation pane and " +
+      "table of contents find them), bullet and numbered lists, tables, bold, italic, underline, highlight, " +
+      "alignment, links and pictures, on the paper and margin set in Writer. The title is the file\u2019s name.</p>" +
+      "<p><b>Import file</b> in the document library opens a .docx as a new document: headings, lists, tables " +
+      "(with cells joined across or down), looks, links, pictures (PNG, JPEG, GIF), footnotes (at the end) and " +
+      "the paper size come with it. A note above the page says what Writer could not keep: the fonts, sizes and " +
+      "colours, headers and footers, comments, drawn shapes and charts. Tracked changes come in accepted. An old " +
+      "Word file (.doc) must be saved as .docx in Word or LibreOffice first.</p>"]
+  ]);
+})();
+// ===========================================================================
+// MODULE: GUIDE_WRITER_DOCX - END
+// ===========================================================================
+// ===========================================================================
 // MODULE: HANDWRITING_READER - START
 // Depends: CORE (window.Lantern) -- feature-detected
 // Exports: Lantern.handwritingReader = {available() -> false, read(canvas,
@@ -48538,7 +49673,8 @@ Lantern.RFB = (function () {
       },
       png: null,
       // a PDF file of it straight away (PDF_DOC)
-      extra: L.pdf && L.pdf.saveHtml ? [{ label: "Save .pdf", title: "Download it as a PDF file", run: function () { L.pdf.saveHtml(title, "<h1>" + esc(title) + "<\u002Fh1>\n" + d.html); } }] : [],
+      extra: (L.pdf && L.pdf.saveHtml ? [{ label: "Save .pdf", title: "Download it as a PDF file", run: function () { L.pdf.saveHtml(title, "<h1>" + esc(title) + "<\u002Fh1>\n" + d.html); } }] : [])
+        .concat(L.docx && L.docx.save ? [{ label: "Save .docx", title: "Download it as a Word file", run: function () { L.docx.save(title, "<h1>" + esc(title) + "<\u002Fh1>\n" + d.html); } }] : []),
       open: function () {
         if (!L.writerDocs) return;
         if (!made) made = L.writerDocs.create(title, "<h1>" + esc(title) + "<\u002Fh1>\n" + d.html);
@@ -48548,16 +49684,16 @@ Lantern.RFB = (function () {
   }
   window.Lantern.aiDoc = { doc: doc };
   if (!ACTS.some(function (a) { return a.id === "doc"; })) ACTS.push({
-    id: "doc", kind: "DOC", kinds: ["DOC", "DOCUMENT", "LETTER", "REPORT", "WRITER"], title: "a document", opens: "Writer", also: "Save .pdf makes a PDF",
+    id: "doc", kind: "DOC", kinds: ["DOC", "DOCUMENT", "LETTER", "REPORT", "WRITER"], title: "a document", opens: "Writer", also: "Save .pdf makes a PDF, Save .docx a Word file",
     // (also: rewrite with corrections, turn into a PDF, in the Writer module)
     match: function (q) {
-      return /\b(writ(e|es|ing|ten)|wrote|rewrit\w*|re-?typ\w*|draft\w*|compos(e|es|ing)|prepar(e|es|ing)|mak(e|es|ing)|made|creat(e|es|ing)|generat(e|es|ing)|produc(e|es|ing)|put together|type up|clean up|tidy up|correct(s|ing)?|proofread\w*|transcrib\w*|format\w*|turn(s|ing)?|convert\w*|sav(e|es|ing)|export\w*)\b[^.?!]{0,60}\b(letter|report|memo|procedure|sop|instructions?|notice|essay|minutes|policy|checklist|document|doc|handout|manual|cover letter|pdf|word file|copy|version)\b/i.test(q) ||
-        /\b(in|into|to|as|with|using|via|through)\s+(an?\s+|the\s+)?(pdf|writer|word (doc|document|file)|document|doc|text writer|writing (module|app|tile)|writer (module|app|tile))\b/i.test(q) ||
+      return /\b(writ(e|es|ing|ten)|wrote|rewrit\w*|re-?typ\w*|draft\w*|compos(e|es|ing)|prepar(e|es|ing)|mak(e|es|ing)|made|creat(e|es|ing)|generat(e|es|ing)|produc(e|es|ing)|put together|type up|clean up|tidy up|correct(s|ing)?|proofread\w*|transcrib\w*|format\w*|turn(s|ing)?|convert\w*|sav(e|es|ing)|export\w*)\b[^.?!]{0,60}\b(letter|report|memo|procedure|sop|instructions?|notice|essay|minutes|policy|checklist|document|doc|docx|handout|manual|cover letter|pdf|word file|copy|version)\b/i.test(q) ||
+        /\b(in|into|to|as|with|using|via|through)\s+(an?\s+|the\s+)?(pdf|writer|word (doc|document|file)|document|doc|\.?docx|text writer|writing (module|app|tile)|writer (module|app|tile))\b/i.test(q) ||
         /\b(text writer|writing module|word processor|in writer|writer (module|app|tile))\b/i.test(q);
     },
     prompt: [
       "MAKE DOC: <title>   -- a document (letter, report, procedure, notice, a corrected copy of a page or picture). Lantern shows it",
-      "with Open in Writer and Save .pdf: this is how you make a Writer document or a PDF. Use it, not LESSON, when a document is wanted.",
+      "with Open in Writer, Save .pdf and Save .docx: this is how you make a Writer document, a PDF or a Word file (.docx). Use it, not LESSON, when a document is wanted.",
       "One line per paragraph. ## Heading, ### Smaller heading, 1. numbered step, - bullet point, **bold**,",
       "rows with | for a small table (first row is the header). No blank-line tricks, no HTML.",
       "END",
@@ -49127,6 +50263,22 @@ Lantern.RFB = (function () {
         if (p.parts.headings < 2) return "no headings to find your way";
         if (p.parts.items < 3) return "no steps: a procedure needs its steps as a list";
         return /\boil\b/i.test(p.text) ? "" : "says nothing about the oil";
+      } },
+    // (1.24.26) a Word file asked for by name: MAKE DOC is how it is made (Save .docx beside Open in Writer), not "I
+    // cannot make Word files". The check also reads back the Word file Lantern makes from what the model wrote.
+    { id: "make-doc-word-checklist", kind: "DOC", max_tokens: 900,
+      q: "Make me a Word document (.docx) I can print: a weekly safety checklist for a small workshop.",
+      ideal: "MAKE DOC: Weekly workshop safety checklist\n## Each week\n- Fire extinguishers in place and charged\n- Exits and walkways clear\n- Guards fitted on every machine\n" +
+        "- First aid kit stocked\n- Extension leads and plugs undamaged\n- Spills cleaned up\n## Signed\nChecked by: ____________ Date: ________\nEND",
+      check: function (p) {
+        if (p.words < 25) return "only " + p.words + " words";
+        if (p.parts.items + Math.max(0, p.parts.rows - 1) < 5) return "fewer than five things to check";
+        var D = window.Lantern.docx;
+        if (D && D.write && D.read) {
+          var back = D.read(D.write("check", p.html).bytes).html;
+          if ((back.match(/<li>/g) || []).length !== p.parts.items) return "the Word file Lantern made of it lost list items";
+        }
+        return "";
       } },
     { id: "make-slides-ladder", kind: "SLIDES",
       q: "Make a short slide deck, 4 to 6 slides, for a toolbox talk on ladder safety.",
