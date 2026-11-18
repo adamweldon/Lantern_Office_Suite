@@ -1,5 +1,94 @@
 # Changelog
 
+## 1.24.26 — Word files: Writer opens and saves .docx (2026-11-18)
+
+Adam (2026-11-18), with three files: "Here are some files for 1.24.26. I had
+lantern create them then opened in word and excel made some changes and
+resaved as a .docx, .xlsx (I had to reintroduce the formulas because lantern
+would only save as a .csv so it lost the formulas), the .pptx is one I already
+had". His Word file showed what Lantern gave him: Writer saved .txt or .html,
+so Word opened the text as Plain Text in Courier, every heading a plain line,
+and he made the title bold, underlined and centred by hand. Now Writer saves a
+Word file, and opens one.
+
+**Save .docx.** In Writer (beside Save .pdf) and beside MAKE DOC's Open in
+Writer in Chat. The file opens in Word, LibreOffice, Google Docs and Pages
+with what the document has: headings as Word's Heading 1 to 4 (so Word's
+navigation pane and table of contents find them); paragraphs with their
+alignment; bullet and numbered lists to their depth, each numbered list
+counting from its own start (1. a. i. by level, as Word numbers them); tables
+with ruled cells, cells joined across and down, the heading row bold and
+repeated at the top of each page; bold, italic, underline, strike,
+superscript, subscript, highlight; links that open, and links within the
+document; pictures at their size (PNG, JPEG, GIF, BMP; one wider than the page
+is fitted to it); tabs and line breaks; quotes, Writer's indents, code in
+Courier, divider lines; the paper (Letter, Legal, A4, A5, upright or sideways)
+and margin set in Writer; the title in the file's properties and its name.
+Word checks the order of every element's properties, so they are written in
+the order its schema gives; every file written in testing passed the OOXML
+schema (ISO/IEC 29500) and opened in LibreOffice as it was meant. A character
+XML cannot hold (a bell, say) is left out rather than making a file Word will
+not open. The title is not added to the page: it is the file's name, as in
+Word.
+
+**Import file** in Writer's library now opens a .docx as a new document:
+headings (Heading 1 to 4, Title, or any style with an outline level),
+alignment, lists (numbering carried on after a paragraph between, or started
+again, as Word does it, including where several lists share one definition, as
+LibreOffice writes them; a list item's second paragraph stays in the item),
+tables (cells across and down, heading rows), bold, italic, underline, strike,
+double strike, superscript, subscript, highlight, links (http, https, mailto,
+and within the document; a HYPERLINK field too), pictures (PNG, JPEG, GIF),
+tabs, line breaks, text boxes (after the paragraph they were in), footnotes
+and endnotes (at the end, numbered [1], [2] ...), content controls, tracked
+changes as Word shows them with markup off (insertions kept, deletions gone),
+equations as plain text, Writer's indents, code, divider lines, and the paper
+size, orientation and margin. A note above the page says, in plain words, what
+Writer could not keep: the fonts, sizes and colours; headers and footers;
+comments; drawn shapes, charts and diagrams; pictures in other formats (EMF,
+TIFF); page breaks. An old Word file (.doc), an .odt or an .rtf is turned away
+with how to make it a .docx; an Excel or PowerPoint file is named for what it
+is; a damaged file says so, and no document is made.
+
+**Underneath.** A .docx is a zip of XML files. ZIP_INFLATE unpacks the zip's
+packing (DEFLATE) in plain JavaScript, so any browser that runs Lantern opens
+Word files with nothing to wait for (Adam's 66-part PowerPoint file unpacks in
+17 ms); ZIP reads the parts and checks each one's CRC-32, and writes a zip
+stored, which every program opens. Both will be used again for .xlsx and
+.pptx.
+
+**Chat.** MAKE DOC's instructions say it makes a Word file (.docx) as well as
+a Writer document and a PDF, and a request for "a Word document", "a .docx" or
+"a docx" is a document. The bench has a new question, make-doc-word-checklist
+("Make me a Word document (.docx) I can print: a weekly safety checklist for a
+small workshop"): a model that says it cannot make Word files fails it, and so
+does one whose list Lantern's Word file would lose. The bench is 115 scored
+questions from this version.
+
+REVIEWED
+
+**Tested.** `tests/docx.js` (59 checks: inflate against node's zlib at every
+level and strategy; zips read and written, damaged ones named; Word's own
+document.xml from Adam's file, python-docx, a file of Word's harder features
+written in Word's form, the Strict names and LibreOffice's save of a Lantern
+file, each read as it should be; a Writer document saved and read back as it
+was, its parts and their order checked; a browser's own lines, twelve-deep
+lists, odd tables, javascript: links, pictures from the web, two thousand
+paragraphs; Save .docx and Import file in Writer, MAKE DOC's Save .docx, the
+help). The fixtures are in `tests/fixtures/docx`, made by `make.py` there; the
+Word file's document.xml is Adam's (Lantern's own help text), without his
+name. `tests/browser/docx_real.py` in Chromium, at a laptop's width and on a
+Pixel 5: Import file through the browser's own chooser, the note, Save .docx
+through a real download read by python-docx, Adam's title centred, bold and
+underlined. In this session: every file Lantern wrote in testing checked
+against the OOXML schema and opened in LibreOffice; Adam's three files (his
+Word file opens and saves back the same; his Excel and PowerPoint files are
+named as what they are). `npm test` (ALL CHECKS PASS).
+
+**Not tested.** Microsoft Word itself, Google Docs and Pages (LibreOffice and
+the schema stood in). A phone's own browser and its file chooser. The 35B and
+the small models on the new question (the GitHub bench runs on the push).
+
 ## 1.24.25 — Sheets is edited as Excel is; POWER is Excel's, and watts are POWERW (2026-11-18)
 
 Adam (2026-11-18): "we need to keep the excel formula as it works in excel and
