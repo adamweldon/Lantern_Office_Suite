@@ -38,9 +38,11 @@ tried by a reviewer:
   the line back as an arrow is, unless the question asks a yes or no.
 - Word files: **done in 1.24.26** (Writer's Save .docx and Import file;
   MAKE DOC's Save .docx; ZIP_INFLATE and ZIP read and write the zip;
-  `tests/docx.js`, fixtures in `tests/fixtures/docx`, the review replayed by
-  `tests/review_docx_1266.js`). Left: headers and footers, comments, fonts
-  and colours, page breaks (Writer has none), .odt and .rtf.
+  `tests/docx.js`, fixtures in `tests/fixtures/docx`, two reviews replayed
+  by `tests/review_docx_1266.js` and `tests/review_docx_1266_lo.py`, each
+  with `--second`). Left: headers and footers, comments, fonts and colours,
+  page breaks (Writer has none), .odt and .rtf; DOCX_READ past the size
+  gate (split it); Adam's QUESTIONS 0 (Word itself; lists in lists).
 - **Next: .xlsx in Sheets** (1.24.27): open and save, formulas kept as
   formulas (Adam had to type his back in after a .csv), Excel's number
   formats (already kept per cell as codes), bold, alignment, column widths,

@@ -16,39 +16,51 @@ Writer in Chat. The file opens in Word, LibreOffice, Google Docs and Pages
 with what the document has: headings as Word's Heading 1 to 4 (so Word's
 navigation pane and table of contents find them); paragraphs with their
 alignment; bullet and numbered lists to their depth, each numbered list
-counting from its own start (1. a. i. by level, as Word numbers them); tables
-with ruled cells, cells joined across and down, the heading row bold and
-repeated at the top of each page; bold, italic, underline, strike,
-superscript, subscript, highlight; links that open, and links within the
-document; pictures at their size (PNG, JPEG, GIF, BMP; one wider than the page
-is fitted to it); tabs and line breaks; quotes, Writer's indents, code in
-Courier, divider lines; the paper (Letter, Legal, A4, A5, upright or sideways)
-and margin set in Writer; the title in the file's properties and its name.
-Word checks the order of every element's properties, so they are written in
-the order its schema gives; every file written in testing passed the OOXML
+counting from its own start (0 too) in its own style (1, a, A, i, I; a list
+inside another is 1, 2, 3, as Writer's page shows it); tables with ruled
+cells, cells joined across and down, the heading row bold and repeated at the
+top of each page; bold, italic, underline, strike, superscript, subscript,
+highlight (Writer's yellow) and other background colours (as shading); links
+that open (www. given http://), links within the document and the places they
+go to (as Word's bookmarks); right-to-left paragraphs; pictures at their size
+(PNG, JPEG, GIF, BMP; one wider than the page is fitted to it, one given only
+a height keeps its shape); tabs and line breaks; quotes, Writer's indents,
+code in Courier, divider lines; the paper (Letter, Legal, A4, A5, upright or
+sideways) and margin set in Writer; the title in the file's properties and its
+name. Word checks the order of every element's properties, so they are written
+in the order its schema gives; every file written in testing passed the OOXML
 schema (ISO/IEC 29500) and opened in LibreOffice as it was meant. A character
 XML cannot hold (a bell, say) is left out rather than making a file Word will
 not open. The title is not added to the page: it is the file's name, as in
 Word.
 
 **Import file** in Writer's library now opens a .docx as a new document:
-headings (Heading 1 to 4, Title, or any style with an outline level),
-alignment, lists (numbering carried on after a paragraph between, or started
-again, as Word does it, including where several lists share one definition, as
-LibreOffice writes them; a list item's second paragraph stays in the item),
-tables (cells across and down, heading rows), bold, italic, underline, strike,
-double strike, superscript, subscript, highlight, links (http, https, mailto,
-and within the document; a HYPERLINK field too), pictures (PNG, JPEG, GIF),
-tabs, line breaks, text boxes (after the paragraph they were in), footnotes
-and endnotes (at the end, numbered [1], [2] ...), content controls, tracked
-changes as Word shows them with markup off (insertions kept, deletions gone),
-equations as plain text, Writer's indents, code, divider lines, and the paper
-size, orientation and margin. A note above the page says, in plain words, what
-Writer could not keep: the fonts, sizes and colours; headers and footers;
-comments; drawn shapes, charts and diagrams; pictures in other formats (EMF,
-TIFF); page breaks. An old Word file (.doc), an .odt or an .rtf is turned away
-with how to make it a .docx; an Excel or PowerPoint file is named for what it
-is; a damaged file says so, and no document is made.
+headings (Heading 1 to 4, Title, or any style with an outline level) with
+their numbers ("1.2 Scope", Legal numbering too), alignment (by the paragraph
+or its style), right-to-left direction, lists (numbering carried on after a
+paragraph between, or started again, as Word does it, including where several
+lists share one definition, as LibreOffice writes them; a list item's second
+paragraph stays in the item), lists numbered 1.1., 1.2.1. as numbered
+paragraphs, a, b, c and I, II kept; tables (cells across and down, rows that
+start late, heading rows, tables in tables, lists in cells, numbering counted
+through them), bold, italic, underline, strike, double strike, superscript,
+subscript, highlight and shading, capitals by look, links (http, https,
+mailto, and within the document, with the bookmarks they go to; HYPERLINK
+fields too), symbols from the Symbol, Wingdings and Wingdings 2 fonts (Ω, °,
+✓, ☒), old form check boxes ticked or not, pictures (PNG, JPEG, GIF), tabs,
+line breaks, text boxes (after the paragraph they were in, every one of a
+group), every picture of a group, footnotes and endnotes (at the end, numbered
+[1], [2] ..., their tables too), content controls, fields as their results,
+tracked changes as Word shows them with markup off (insertions kept, deletions
+gone, paragraphs joined where their mark was deleted), hidden text left out,
+equations in a line ("x=(a+b)/2", "A=πr<sup>2</sup>", "x̅"), Writer's indents,
+code, divider lines, and the paper size, orientation and margin. A note above
+the page says, in plain words, what Writer could not keep: the fonts, sizes
+and colours; headers and footers; comments; drawn shapes, charts and diagrams;
+pictures in other formats (EMF, TIFF), or too big to open; page breaks (a line
+break between the words). An old Word file (.doc), an .odt or an .rtf is
+turned away with how to make it a .docx; an Excel or PowerPoint file is named
+for what it is; a damaged file says so, and no document is made.
 
 **Underneath.** A .docx is a zip of XML files. ZIP_INFLATE unpacks the zip's
 packing (DEFLATE) in plain JavaScript, so any browser that runs Lantern opens
@@ -65,9 +77,84 @@ small workshop"): a model that says it cannot make Word files fails it, and so
 does one whose list Lantern's Word file would lose. The bench is 115 scored
 questions from this version.
 
-REVIEWED
+**Reviewed.** A reviewer that had not seen the code made 160 cases of its own:
+97 Word files (Word's own form written by hand, as Word writes numbering,
+styles, fields, tracked changes, notes and text boxes; python-docx;
+LibreOffice saving HTML, flat ODF, RTF and Word files; odd but legal zips;
+hostile files) and 63 Writer documents (typed in Chromium with Writer's own
+tools, pasted, MAKE DOC's, Writer's templates). Every file Lantern wrote
+passed the schema and opened in LibreOffice; 57 cases did not do what a person
+would expect. Most harmful first, all mended: a symbol inserted from the
+Symbol font was a white square ("470 □" for 470 Ω; now Adobe's Symbol encoding
+and Wingdings' check marks and boxes are read); hidden text was shown, and so
+saved and printed; a footnote showed its field code and deleted words, and ran
+its paragraphs together; an IF field showed the field inside it too; the
+second of two grouped text boxes was lost; the words under Japanese
+pronunciation guides were lost; numbered lists in table cells lost their
+numbers, and the body's numbering did not count them; numbered headings lost
+"1.1", so "see section 1.2" pointed at nothing; a table in a table became one
+line of run-together words; a page break joined the words either side;
+equations lost their fractions and powers ("x=a+b2"; now "x=(a+b)/2",
+"A=πr<sup>2</sup>"); a list starting at 0 was saved starting at 1; a UTF-16
+part and a zip64 file were refused; a 128 KB file that unpacks to 120 MB froze
+Writer (no part may now unpack past 64 MB, and none past the size it says); a
+cell whose last thing is a table had no paragraph after it, which Word asks to
+repair; rows starting late put their values under the wrong headings; a level
+given again in a lvlOverride, or a list defined by a list style, made bullets
+into numbers; (a), (b) and I, II became 1, 2 (they are kept as list types,
+read and saved); pretty-printed HTML made empty paragraphs and an empty first
+bullet; a deleted paragraph mark left one sentence in two paragraphs, and
+deleted rows left empty ones; bookmarks were dropped, so links within the
+document went nowhere (they are kept, and saved as Word's bookmarks), and a
+link's #part was lost; right-to-left direction, alignment set by a style, run
+shading (LibreOffice's highlighting), raised and lowered small text and a
+divider set by a style were lost; a picture given only a height was squashed;
+a line break ending a paragraph was lost; a link without https:// was blue but
+went nowhere (www. now gets http://; others are words). Kept as they are, with
+the reason in the test: a link to #section-2 is saved as #section_2, with its
+bookmark, because Word's bookmark names allow only letters, digits and _;
+3,000 content controls one inside another are read at once rather than
+refused. Its cases are kept (tests/fixtures/review_docx_1266.json,
+tests/fixtures/docx/review/) and replayed: tests/review_docx_1266.js (158
+agree, 2 kept) and tests/review_docx_1266_lo.py (the saved files against the
+schema, in LibreOffice and python-docx: 62 agree, 1 kept).
 
-**Tested.** `tests/docx.js` (59 checks: inflate against node's zlib at every
+**Reviewed again.** A second reviewer, new to the code, tried the mends with
+105 cases of its own: 60 Word files and 45 Writer documents, pressing on
+lists, tables, notes, fields, tracked changes, bookmarks, direction, symbols,
+equations and zips; 29 did not do what a person would expect. Most harmful
+first, all mended: a picture whose data: address writes its padding as %3D
+(Chromium shows it) stopped Save .docx making any file (it is decoded; a
+picture that cannot be is left out and said); one picture that unpacks past 64
+MB made the whole document be refused (the picture is left out and said); a
+table in a footnote was lost; old Word form check boxes vanished, so which
+items were ticked was lost; Wingdings 2 ticks and crossed boxes were empty
+boxes; the second picture of a group was lost; Legal numbering read "I.1"
+where Word shows 1.1; one item indented by hand renumbered the items after it
+(a list's depth is now its level; indents decide only between lists); lists
+numbered 1.1., 1.2.1. lost those numbers; a drop cap split the first word and
+became a subscript; equation accents and bars were dropped and a binomial
+became a division; a list inside a list came in without its letters (a list's
+style is now written wherever it is not 1, 2, 3, because Writer's page shows a
+list in a list 1, 2, 3, and a list in a list is saved 1, 2, 3 for the same
+reason); a HYPERLINK field to a place in another page, or without quotes, went
+nowhere; deleting the row that starts a merged cell moved the name under it
+into the wrong column; a bookmark on a table was lost; right-to-left lists
+lost their direction both ways, and in a right-to-left paragraph left and
+right were swapped (Word reads them as start and end); LibreOffice's Block
+Quotation was not a quote; "not bold" in a heading was saved bold; capitals by
+look came in as typed; a footnote after one with its own mark was numbered
+[2]; a list item starting with a table lost its number; spaces at a
+paragraph's ends were saved. Kept as it is, with the reason in the test: a
+case that expected the list style "i" left out where it was Word's usual one
+(the round trip now gives back exactly what was written). Four of the first
+review's cases expected a list in a list to be lettered (1. a. i.) where
+Writer's page shows it 1, 2, 3; they are kept with that reason. Its cases are
+kept (tests/fixtures/review2_docx_1266.json, tests/fixtures/docx/review2/) and
+replayed with the first's. Not tried by a third reviewer after this second
+round of mends.
+
+**Tested.** `tests/docx.js` (60 checks: inflate against node's zlib at every
 level and strategy; zips read and written, damaged ones named; Word's own
 document.xml from Adam's file, python-docx, a file of Word's harder features
 written in Word's form, the Strict names and LibreOffice's save of a Lantern
@@ -75,15 +162,19 @@ file, each read as it should be; a Writer document saved and read back as it
 was, its parts and their order checked; a browser's own lines, twelve-deep
 lists, odd tables, javascript: links, pictures from the web, two thousand
 paragraphs; Save .docx and Import file in Writer, MAKE DOC's Save .docx, the
-help). The fixtures are in `tests/fixtures/docx`, made by `make.py` there; the
-Word file's document.xml is Adam's (Lantern's own help text), without his
-name. `tests/browser/docx_real.py` in Chromium, at a laptop's width and on a
+bench's Word file question, the help). The fixtures are in
+`tests/fixtures/docx`, made by `make.py` there; the Word file's document.xml
+is Adam's (Lantern's own help text), without his name. The two reviews
+replayed: `tests/review_docx_1266.js` (the first: 157 agree, 3 kept;
+`--second`: 104 agree, 1 kept) and `tests/review_docx_1266_lo.py` (every saved
+Word file of both reviews checked against the OOXML schema, opened in
+LibreOffice as text and HTML, and read by python-docx: 59 agree and 4 kept; 45
+agree). `tests/browser/docx_real.py` in Chromium, at a laptop's width and on a
 Pixel 5: Import file through the browser's own chooser, the note, Save .docx
 through a real download read by python-docx, Adam's title centred, bold and
-underlined. In this session: every file Lantern wrote in testing checked
-against the OOXML schema and opened in LibreOffice; Adam's three files (his
-Word file opens and saves back the same; his Excel and PowerPoint files are
-named as what they are). `npm test` (ALL CHECKS PASS).
+underlined. In this session: Adam's three files (his Word file opens and saves
+back the same, and passes the schema; his Excel and PowerPoint files are named
+as what they are). `npm test` (ALL CHECKS PASS).
 
 **Not tested.** Microsoft Word itself, Google Docs and Pages (LibreOffice and
 the schema stood in). A phone's own browser and its file chooser. The 35B and
