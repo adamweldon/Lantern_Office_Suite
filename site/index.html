@@ -191,7 +191,8 @@
 // MODULE: CORE - START
 // Depends: (none)
 // Exports: Lantern, Lantern.el, Lantern.esc, Lantern.download, Lantern.csv,
-//          Lantern.uid, Lantern.fmtNum, Lantern.today
+//          Lantern.uid, Lantern.fmtNum, Lantern.today,
+//          Lantern.lists = {level(el), type(el), mark(type, n), css(scope)}
 // ===========================================================================
 var Lantern = window.Lantern = {
   version: "1.24.26",
@@ -298,6 +299,62 @@ Lantern.today = function () {
   var day = ("0" + d.getDate()).slice(-2);
   return d.getFullYear() + "-" + m + "-" + day;
 };
+// lists -- how a list inside a list is numbered: as Word and Google Docs number
+// it (Adam, 2026-11-19). A numbered list with no style of its own counts
+// 1, 2, 3 at the first level, a, b, c at the second, i, ii, iii at the third,
+// then 1, a, i again; bullets go disc, circle, square the same way. A list's
+// level is how many lists it is inside (Word has nine levels; a deeper list
+// is shown as the ninth). Writer's page, its Save .html, .txt and .pdf and
+// its Word file all ask here, so they agree.
+//   level(el)    -> 0 for a list in no list, 1 inside one ... (at most 8)
+//   type(el)     -> an <ol>'s "1" | "a" | "A" | "i" | "I"; a <ul>'s "disc" | "circle" | "square"
+//   mark(t, n)   -> "1." "b." "iv." for a number, the sign for a bullet
+//   css(scope)   -> CSS rules that show lists so inside scope (".page")
+Lantern.lists = (function () {
+  var OL = ["1", "a", "i"], UL = ["disc", "circle", "square"], OWN = { "1": 1, a: 1, A: 1, i: 1, I: 1 };
+  var CSS = { "1": "decimal", a: "lower-alpha", A: "upper-alpha", i: "lower-roman", I: "upper-roman" };
+  var SIGN = { disc: "\u2022", circle: "\u25e6", square: "\u25aa" };
+  function level(el) {
+    var n = 0;
+    for (var p = el.parentNode; p && p.nodeType === 1; p = p.parentNode) if (/^(?:OL|UL|MENU)$/i.test(p.tagName)) n++;
+    return Math.min(8, n);
+  }
+  // a type="..." of its own wins (one the browser does not know shows 1, 2, 3, as the browser shows it)
+  function type(el) {
+    var own = el.getAttribute ? el.getAttribute("type") : null, d = level(el);
+    if (/^ol$/i.test(el.tagName)) return own == null ? OL[d % 3] : OWN[own] ? own : "1";
+    own = String(own || "").toLowerCase();
+    return SIGN[own] ? own : UL[d % 3];
+  }
+  // letters as the browser counts them (z, aa, ab), Roman to 3999; past those, and at 0 or less, the number
+  function letters(n) { var s = ""; while (n > 0) { n--; s = String.fromCharCode(97 + n % 26) + s; n = Math.floor(n / 26); } return s; }
+  function roman(n) {
+    var V = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1], R = ["m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"], s = "", i;
+    for (i = 0; i < V.length; i++) while (n >= V[i]) { s += R[i]; n -= V[i]; }
+    return s;
+  }
+  function mark(t, n) {
+    if (SIGN[t]) return SIGN[t];
+    var s = String(n);
+    if ((t === "a" || t === "A") && n > 0) s = letters(n);
+    else if ((t === "i" || t === "I") && n > 0 && n < 4000) s = roman(n);
+    return (t === "A" || t === "I" ? s.toUpperCase() : s) + ".";
+  }
+  // a rule for each level; the :is() rules count bullets and numbers both, and a browser too old for
+  // :is() keeps the rules that count numbered lists only
+  function css(scope) {
+    var out = [], d, k, a, b;
+    for (d = 1; d <= 8; d++) {
+      a = ""; b = "";
+      for (k = 0; k < d; k++) { a += "ol "; b += ":is(ol,ul,menu) "; }
+      out.push(scope + " " + a + "ol:not([type]){list-style-type:" + CSS[OL[d % 3]] + ";}");
+      out.push(scope + " " + b + "ol:not([type]){list-style-type:" + CSS[OL[d % 3]] + ";}");
+      out.push(scope + " " + b + "ul:not([type]){list-style-type:" + UL[d % 3] + ";}");
+    }
+    return out.join("\n");
+  }
+  return { level: level, type: type, mark: mark, css: css };
+})();
 // ===========================================================================
 // MODULE: CORE - END
 // ===========================================================================
@@ -373,6 +430,8 @@ Lantern.injectStyles = function () {
     "min-height:70vh;padding:34px 38px;font-family:Georgia,'Times New Roman',serif;font-size:17px;line-height:1.6;}",
     ".page:focus{outline:none;}.page h1,.page h2{line-height:1.25;margin:14px 0 6px;}",
     ".page ul,.page ol{padding-left:26px;}.page p{margin:6px 0;}",
+    // a list inside a list is numbered as Word numbers it: 1. a. i. (Adam, 2026-11-19)
+    Lantern.lists ? Lantern.lists.css(".page") : "",
     ".page blockquote{border-left:3px solid var(--line);margin:8px 0;padding:2px 12px;color:#374151;}",
     ".page hr{border:none;border-top:1px solid var(--line);margin:14px 0;}",
     ".page a{color:#2563eb;}",
@@ -1735,6 +1794,9 @@ Lantern.formula = (function () {
           el = document.createElement(tag.toLowerCase());
           if (tag === "A") { var h = n.getAttribute("href") || ""; if (/^(?:https?:|mailto:|#)/i.test(h.replace(/\s+/g, ""))) el.setAttribute("href", h); }
           if ((tag === "TD" || tag === "TH") && /^\d{1,2}$/.test(n.getAttribute("colspan") || "")) el.setAttribute("colspan", n.getAttribute("colspan"));
+          // a numbered list keeps its own style (a, A, i, I, 1) and the number it starts at
+          if (tag === "OL" && /^[1aAiI]$/.test(n.getAttribute("type") || "")) el.setAttribute("type", n.getAttribute("type"));
+          if (tag === "OL" && /^-?\d{1,6}$/.test(n.getAttribute("start") || "")) el.setAttribute("start", n.getAttribute("start"));
           to.appendChild(el); walk(n, el);
         } else if (tag === "DIV" || tag === "SECTION" || tag === "ARTICLE") {
           // a div of text is a paragraph; a div of blocks is unwrapped
@@ -1747,10 +1809,36 @@ Lantern.formula = (function () {
     return out.innerHTML;
   }
   Lantern.writerClean = writerClean;
-  // writerText(html) -> plain text, one line per paragraph, heading or list
-  // item (Save .txt ran every paragraph into one line)
-  function writerText(html) {
-    var t = String(html || "").replace(/<br\s*\x2F?>/gi, "\n").replace(/<li[^>]*>/gi, "- ")
+  // writerText(html, numbered) -> plain text, one line per paragraph, heading
+  // or list item (Save .txt ran every paragraph into one line). numbered (Save
+  // .txt): each item with its number as the page shows it ("1.", "a.", "i.";
+  // a bullet "-"), a list in a list indented four spaces a level; without it
+  // (the counts in Stats) every item is "- " as before.
+  function listMarks(html) {
+    var body = new DOMParser().parseFromString("<!DOCTYPE html><body>" + html, "text/html").body, LL = Lantern.lists;
+    Array.prototype.forEach.call(body.querySelectorAll("li"), function (li) {
+      var list = li.parentNode, t = list && /^(?:OL|UL|MENU)$/.test(list.tagName) ? LL.type(list) : "disc", n = 0, c, v;
+      if (/^[1aAiI]$/.test(t)) {
+        v = parseInt(list.getAttribute("start"), 10); n = isNaN(v) ? 0 : v - 1;
+        for (c = list.firstChild; c; c = c.nextSibling) if (c.nodeType === 1 && c.tagName === "LI") { v = parseInt(c.getAttribute("value"), 10); n = isNaN(v) ? n + 1 : v; if (c === li) break; }
+      }
+      var pad = new Array(4 * Math.max(0, LL.level(li) - 1) + 1).join(" ");
+      li.insertBefore(body.ownerDocument.createTextNode(pad + (/^[1aAiI]$/.test(t) ? LL.mark(t, n) : "-") + " "), li.firstChild);
+    });
+    // a list inside an item starts on a line of its own: one that ends the item goes after it, one with words
+    // after it gets a line break before it
+    Array.prototype.forEach.call(body.querySelectorAll("li"), function (li) {
+      var tail = [], c = li.lastChild, at = li.nextSibling;
+      while (c && (c.nodeType === 3 && !/\S/.test(c.nodeValue) || c.nodeType === 1 && /^(?:OL|UL|MENU)$/.test(c.tagName))) { if (c.nodeType === 1) tail.unshift(c); c = c.previousSibling; }
+      tail.forEach(function (sub) { li.parentNode.insertBefore(sub, at); });
+      for (c = li.firstChild; c; c = c.nextSibling) if (c.nodeType === 1 && /^(?:OL|UL|MENU)$/.test(c.tagName)) li.insertBefore(body.ownerDocument.createElement("br"), c);
+    });
+    return body.innerHTML;
+  }
+  function writerText(html, numbered) {
+    var src = String(html || "");
+    if (numbered && Lantern.lists && window.DOMParser && /<li[\s>]/i.test(src)) src = listMarks(src);
+    var t = src.replace(/<br\s*\x2F?>/gi, "\n").replace(/<li[^>]*>/gi, numbered && src !== String(html || "") ? "" : "- ")
       .replace(/<\x2F(?:p|div|h[1-6]|li|tr|blockquote|pre)>/gi, "\n").replace(/<\x2Ft[dh]>/gi, "\t")
       .replace(/<[^>]+>/g, "");
     var ta = document.createElement("textarea"); ta.innerHTML = t;
@@ -1900,12 +1988,12 @@ Lantern.formula = (function () {
     var sameTitle = first && first[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() === String(doc.title || "").trim();
     var body = (sameTitle || !doc.title ? "" : "<h1>" + Lantern.esc(doc.title) + "</h1>") + inner;
     var html = "<!DOCTYPE html><html><head><meta charset='utf-8'><title>" +
-      Lantern.esc(doc.title || "Untitled") + "</title><style>table{border-collapse:collapse}td,th{border:1px solid #999;padding:4px 8px}</style></head><body style='max-width:720px;margin:24px auto;" +
+      Lantern.esc(doc.title || "Untitled") + "</title><style>table{border-collapse:collapse}td,th{border:1px solid #999;padding:4px 8px}" + (Lantern.lists ? "\n" + Lantern.lists.css("body") : "") + "</style></head><body style='max-width:720px;margin:24px auto;" +
       "font-family:Georgia,serif;line-height:1.6;padding:0 16px'>" + body + "</body></html>";
     Lantern.download((doc.title || "document") + ".html", html, "text/html");
   }
   function exportTxt() {
-    Lantern.download((doc.title || "document") + ".txt", writerText(cleanHtml()));
+    Lantern.download((doc.title || "document") + ".txt", writerText(cleanHtml(), true));
   }
 
   function editView(id) {
@@ -43141,7 +43229,8 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // ===========================================================================
 // MODULE: PDF_DOC_LAYOUT - START
-// Depends: PDF_WRITE (Lantern.pdf.winAnsi) -- feature-detected
+// Depends: PDF_WRITE (Lantern.pdf.winAnsi), CORE (Lantern.lists: how a list
+//          in a list is numbered) -- feature-detected
 // Exports: Lantern.pdf.layout = {codes, cw, wid, lit, n2, enc, blocks(element),
 //          wrap(runs, size, width)} (for PDF_DOC)
 // ===========================================================================
@@ -43216,13 +43305,18 @@ Lantern.RFB = (function () {
         flush();
         if (/^h[1-6]$/.test(tag)) out.push({ kind: "h" + Math.min(4, +tag.charAt(1)), runs: runs(k, true, false, []) });
         else if (tag === "ul" || tag === "ol") {
-          var n = 0;
+          // numbered from its start, in its own style or its level's (1. a. i., as Word: CORE's Lantern.lists)
+          var LL = window.Lantern && window.Lantern.lists, lt = LL ? LL.type(k) : tag === "ol" ? "1" : "disc", n = parseInt(k.getAttribute("start"), 10);
+          n = tag === "ol" && !isNaN(n) ? n - 1 : 0;
           Array.prototype.forEach.call(k.children, function (li) {
+            // a list straight inside a list, as a browser's Indent more makes it, is a level in (it was left out)
+            if (/^(ul|ol)$/i.test(li.tagName)) { walk({ childNodes: [li] }, depth + 1); return; }
             if (li.tagName.toLowerCase() !== "li") return;
-            n++;
+            var v = parseInt(li.getAttribute("value"), 10);
+            n = tag === "ol" && !isNaN(v) ? v : n + 1;
             var inner = [], subs = [];
             Array.prototype.forEach.call(li.childNodes, function (c) { if (c.nodeType === 1 && /^(ul|ol)$/i.test(c.tagName)) subs.push(c); else inner.push(c); });
-            out.push({ kind: "li", runs: runs({ childNodes: inner }, false, false, []), mark: tag === "ol" ? n + "." : "\u2022", depth: depth });
+            out.push({ kind: "li", runs: runs({ childNodes: inner }, false, false, []), mark: LL ? LL.mark(lt, n) : tag === "ol" ? n + "." : "\u2022", depth: depth });
             subs.forEach(function (sl) { walk({ childNodes: [sl] }, depth + 1); });
           });
         } else if (tag === "table") {
@@ -43356,7 +43450,17 @@ Lantern.RFB = (function () {
       lines.forEach(function (ln, j) {
         room(lead);
         y -= lead;
-        if (j === 0 && b.kind === "li") { var mk = codes(b.mark); ops.push("BT /F1 " + n2(size) + " Tf 1 0 0 1 " + n2(M + indent - 4 - wid(mk, false, size)) + " " + n2(y + lead - size) + " Tm " + lit(mk) + " Tj ET"); }
+        if (j === 0 && b.kind === "li") {
+          var x1 = M + indent - 4, yb = y + lead - size;
+          // the second and third levels' bullets (circle, square) are not in the standard fonts: drawn
+          if (b.mark === "\u25e6" || b.mark === "\u25aa") {
+            var r = size * 0.15, q = r * 0.5523, cx = x1 - size * 0.175, cy = yb + size * 0.357;
+            if (b.mark === "\u25aa") ops.push(n2(cx - r * 0.9) + " " + n2(cy - r * 0.9) + " " + n2(r * 1.8) + " " + n2(r * 1.8) + " re f");
+            else ops.push("q 0.6 w " + n2(cx + r) + " " + n2(cy) + " m " + [[r, q, q, r, 0, r], [-q, r, -r, q, -r, 0], [-r, -q, -q, -r, 0, -r], [q, -r, r, -q, r, 0]].map(function (c) {
+              return n2(cx + c[0]) + " " + n2(cy + c[1]) + " " + n2(cx + c[2]) + " " + n2(cy + c[3]) + " " + n2(cx + c[4]) + " " + n2(cy + c[5]) + " c";
+            }).join(" ") + " S Q");
+          } else { var mk = codes(b.mark); ops.push("BT /F1 " + n2(size) + " Tf 1 0 0 1 " + n2(x1 - wid(mk, false, size)) + " " + n2(yb) + " Tm " + lit(mk) + " Tj ET"); }
+        }
         drawLine(ln, M + indent, y + lead - size, size);
       });
       y -= /^h/.test(b.kind) ? 3 : b.kind === "li" ? 2 : 6;
@@ -44310,7 +44414,9 @@ Lantern.RFB = (function () {
         if (same && (top.tag !== x.tag || top.num !== x.num || top.type !== x.type || c.again)) { out.push("<\x2Fli><\x2F" + stack.pop().tag + ">"); top = stack[stack.length - 1]; same = false; }
         if (same) out.push("<\x2Fli><li>");
         else {
-          out.push("<" + x.tag + (x.tag === "ol" && x.type ? " type=\x22" + x.type + "\x22" : "") + (x.tag === "ol" && c.n !== 1 ? " start=\x22" + c.n + "\x22" : "") + (b.rtl ? " dir=\x22rtl\x22" : "") + "><li>");
+          // its style is written where it is not its level's own (1. a. i., as Writer's page and Word show them)
+          var own = x.type || "1", lv = Math.min(8, stack.length), dflt = ["1", "a", "i"][lv % 3];
+          out.push("<" + x.tag + (x.tag === "ol" && own !== dflt ? " type=\x22" + own + "\x22" : "") + (x.tag === "ol" && c.n !== 1 ? " start=\x22" + c.n + "\x22" : "") + (b.rtl ? " dir=\x22rtl\x22" : "") + "><li>");
           stack.push({ tag: x.tag, pos: pos, num: x.num, lvl: x.lvl, type: x.type });
         }
         out.push(b.tag === "p" || b.tag === "blockquote" ? b.html || "<br>" : "<" + b.tag + attrs(b) + ">" + b.html + "<\x2F" + b.tag + ">");
@@ -44380,7 +44486,8 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // ===========================================================================
 // MODULE: DOCX_WRITE - START
-// Depends: ZIP (Lantern.zip)
+// Depends: ZIP (Lantern.zip); CORE (Lantern.lists: a list in a list is
+//          a, b, c, then i, ii, iii, as Writer's page shows it) -- feature-detected
 // Exports: Lantern.docx.body(html, opts) -> {xml, rels, media, nums,
 //          notes} (DOCX_PACKAGE wraps it in a whole Word file)
 // ===========================================================================
@@ -44588,7 +44695,8 @@ Lantern.RFB = (function () {
     function list(el, lvl, ctx) {
       var num = 1;
       if (el.tagName === "OL") {
-        var st = parseInt(el.getAttribute("start"), 10), ty = el.getAttribute("type") || "";
+        // the style Writer's page shows it in: its own (type="a"), or its level's (1. a. i., as Word numbers them)
+        var st = parseInt(el.getAttribute("start"), 10), ty = window.Lantern.lists ? window.Lantern.lists.type(el) : el.getAttribute("type") || "";
         num = 2 + nums.length;
         nums.push({ lvl: lvl, start: isNaN(st) ? 1 : Math.max(0, st), fmt: { a: "lowerLetter", A: "upperLetter", i: "lowerRoman", I: "upperRoman", "1": "decimal" }[ty] || "" });
       }
@@ -44699,8 +44807,8 @@ Lantern.RFB = (function () {
       "<\x2Fw:tblBorders><\x2Fw:tblPr><\x2Fw:style><\x2Fw:styles>";
   }
   function numbering(nums) {
-    // a numbered list with no type of its own is 1, 2, 3 at every level, as Writer's page shows it
-    var BUL = ["\u2022", "\u25e6", "\u25aa"], FMT = ["decimal", "decimal", "decimal"], a = "", b = "", i;
+    // the levels a list has no style for are Word's own: 1. a. i., then again (Adam, 2026-11-19)
+    var BUL = ["\u2022", "\u25e6", "\u25aa"], FMT = ["decimal", "lowerLetter", "lowerRoman"], a = "", b = "", i;
     function lvl(i, fmt, txt, start) {
       return "<w:lvl w:ilvl=\x22" + i + "\x22><w:start w:val=\x22" + (start == null ? 1 : start) + "\x22\x2F><w:numFmt w:val=\x22" + fmt + "\x22\x2F><w:lvlText w:val=\x22" + txt + "\x22\x2F><w:lvlJc w:val=\x22left\x22\x2F>" +
         "<w:pPr><w:ind w:left=\x22" + (720 * (i + 1)) + "\x22 w:hanging=\x22360\x22\x2F><\x2Fw:pPr><\x2Fw:lvl>";

@@ -28,15 +28,24 @@ w.HTMLElement.prototype.scrollIntoView = function () {};
 w.HTMLCanvasElement.prototype.getContext = function () { return null; };
 w.fetch = function () { return Promise.reject(new Error("offline")); };
 // Left as they are, with the reason (the case still runs; it is reported, not failed)
+// (1.24.27: a list in a list is 1. a. i. on Writer's page, as in Word and Google Docs, Adam 2026-11-19, so the cases
+// kept for showing it 1, 2, 3 agree now and are off this list)
 var KEEP = SECOND ? {
-  "hand2-ol-types-nested": "the read back is the HTML that was written, <ol type=\"i\"> and all; the case expected the innermost type left out, as the reader did when the case was made (it left out a type that was Word's usual one for its level; since this review it writes every type but 1, 2, 3, because Writer's page shows a list in a list 1, 2, 3)"
 } : {
-  "lo-lists": "Writer's page shows a numbered list inside another 1., 2. (the second review saw it on the page: no style of its own), so a Word file's lettered level comes in as <ol type=\"a\"> and Writer's plain one is saved 1., 2.; this case expected Word's 1. a. i. cycle for a plain list",
   "hand-link-odd": "Word's bookmark names hold letters, digits and _ only, so a link to #section-2 is written as #section_2, and the bookmark it goes to the same way: the link still works in Word, and reads back as #section_2",
   "hostile-deep-sdt": "3,000 content controls one inside another are read (\u201cdeep inside\u201d, \u201cafter\u201d) at once, not refused: nothing hangs, which is what the case asked of a refusal"
 };
 var fails = 0, passes = 0, kept = [];
 function u8(buf) { var a = new w.Uint8Array(buf.length); for (var i = 0; i < buf.length; i++) a[i] = buf[i]; return a; }
+// a list's style asked for as type="a" is met too where Writer's page shows that style by the list's level, with no
+// type of its own (1. a. i., 1.24.27; the second review offered either: "Either the reader writes type=\"a\"/\"i\"
+// for these levels or Writer's page styles nested <ol> as a./i.")
+function shows(h, t) {
+  var m = /^type="([1aAiI])"$/.exec(t);
+  if (!m || !w.Lantern.lists) return false;
+  var d = w.document.createElement("div"); d.innerHTML = h;
+  return Array.prototype.some.call(d.querySelectorAll("ol"), function (o) { return w.Lantern.lists.type(o) === m[1]; });
+}
 function short(h) { return String(h).replace(/base64,[A-Za-z0-9+\/=]+/g, "base64,..."); }
 w.eval(js);
 var L = w.Lantern;
@@ -58,7 +67,7 @@ R.read.forEach(function (c) {
   if (!e.error && !e.error_ok && r.err) bad.push("refused: " + r.err);
   if (e.max_ms && r.ms > e.max_ms) bad.push("took " + r.ms + " ms (limit " + e.max_ms + ")");
   if (r.out) {
-    (e.contains || []).forEach(function (t) { if (h.indexOf(t) < 0) bad.push("missing " + t); });
+    (e.contains || []).forEach(function (t) { if (h.indexOf(t) < 0 && !shows(h, t)) bad.push("missing " + t); });
     (e.not_contains || []).forEach(function (t) { if (h.indexOf(t) >= 0) bad.push("has " + t); });
     (e.notes_contain || []).forEach(function (t) { if (r.out.notes.join(" | ").indexOf(t) < 0) bad.push("notes lack “" + t + "”: " + r.out.notes.join(" | ")); });
     if (e.title != null && r.out.title !== e.title) bad.push("title " + r.out.title);

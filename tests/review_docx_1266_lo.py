@@ -16,11 +16,12 @@ VALIDATOR = "/mnt/skills/public/docx/scripts/office/validate.py"
 # left as they are, with the reason (the same as tests/review_docx_1266.js)
 KEEP = {
 } if SECOND else {
-    "typed-ol-nested": "Writer's page shows a numbered list inside another 1., 2. (the second review saw it on the page: no style of its own), so a Word file's lettered level comes in as <ol type=\"a\"> and Writer's plain one is saved 1., 2.; this case expected Word's 1. a. i. cycle for a plain list",
-    "hand-deep-list-mixed": "Writer's page shows a numbered list inside another 1., 2. (the second review saw it on the page: no style of its own), so a Word file's lettered level comes in as <ol type=\"a\"> and Writer's plain one is saved 1., 2.; this case expected Word's 1. a. i. cycle for a plain list",
-    "roundtrip-lo-html": "Writer's page shows a numbered list inside another 1., 2. (the second review saw it on the page: no style of its own), so a Word file's lettered level comes in as <ol type=\"a\"> and Writer's plain one is saved 1., 2.; this case expected Word's 1. a. i. cycle for a plain list",
     "hand-link-odd": "Word's bookmark names hold letters, digits and _ only: #section-2 is written as #section_2, with its bookmark",
 }
+# (1.24.27) a list in a list is 1. a. i. on Writer's page, as in Word and Google Docs (Adam, 2026-11-19): the first
+# review's three cases kept for showing it 1, 2, 3 agree now. This case of the second expected 1., 2. "as the page is
+# today", and said Word's a., b. would be right "if Writer's page is made to show nested lists the same way": it is.
+NOW = {"hand2-ol-in-ul": {"lo_text_contains": ["a. Wrench", "b. Socket"], "lo_text_not_contains": ["1. Wrench"]}} if SECOND else {}
 tmp = tempfile.mkdtemp(prefix="docx_review_")
 cases = [c for c in R["write"]]
 # Lantern writes every case, in node
@@ -58,7 +59,7 @@ except Exception:
     docx = None; skips.add("python-docx")
 if not os.path.exists(VALIDATOR): skips.add("the OOXML schema validator")
 for c in cases:
-    e, bad, f = c["expect"], [], os.path.join(tmp, c["id"] + ".docx")
+    e, bad, f = dict(c["expect"], **NOW.get(c["id"], {})), [], os.path.join(tmp, c["id"] + ".docx")
     if not os.path.exists(f):
         result(c["id"], ["Lantern made no file"]); continue
     if e.get("valid") and os.path.exists(VALIDATOR):
