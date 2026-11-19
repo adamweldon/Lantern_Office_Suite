@@ -7,7 +7,7 @@
 # and each fixture saved again by LibreOffice and read back by Lantern: the same formulas.
 # What a machine lacks (LibreOffice, openpyxl, lxml, the schema) is said as SKIP, not failed.
 # Usage: python3 tests/xlsx_lo.py [-v]
-import csv, glob, json, os, shutil, subprocess, sys, tempfile, zipfile
+import csv, glob, json, os, re, shutil, subprocess, sys, tempfile, zipfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "xlsx")
 VERBOSE = "-v" in sys.argv
@@ -43,10 +43,17 @@ save("made_in_lantern", { title: "Fence", cells: { A1: "Item", B1: "Qty", C1: "P
   A8: "Joined", B8: "=A2&\" and \"&A3", C8: "=IF(D4>190,\"over\",\"under\")", D8: "=D4>190", A9: "Lookup", B9: "=VLOOKUP(\"Rails\",A2:D3,4,FALSE)", C9: "=COUNTIF(B2:B3,\">20\")",
   D9: "=TEXT(D4,\"0.0\")", A10: "Ohm", B10: "=VOLTS(2,3)", C10: "=17%%5", D10: "=pi" },
   fmt: { A1: { b: 1 }, B1: { b: 1 }, C1: { b: 1 }, D1: { b: 1 }, D4: { b: 1, nf: "$#,##0.00" }, A4: { al: "right" }, B6: { nf: "yyyy-mm-dd" } }, widths: { A: 14 }, merges: ["A12:D12"], freeze: 1 });
+// (1.24.28, the first review) a workbook of several sheets saved together, as Save .xlsx saves one Import file opened
+var wb2 = X.read(u8(fs.readFileSync(path.join(FX, "workbook2.xlsx"))), "workbook2.xlsx"), bm = {};
+wb2.sheets.forEach(function (s) { bm[s.name] = s.cells; });
+var bk = X.writeBook(wb2.sheets.map(function (s) { return { doc: s, name: s.name, values: L.sheetDocs.compute(s.cells, bm, s.name) }; }));
+fs.writeFileSync(path.join(TMP, "book.xlsx"), Buffer.from(bk.bytes));
+var bookOut = { names: bk.names, notes: bk.notes, values: wb2.sheets.map(function (s) { return L.sheetDocs.compute(s.cells, bm, s.name); }), cells: wb2.sheets.map(function (s) { return s.cells; }) };
 var made = L.aiAct.build("MAKE SHEET: Paint\nRoom | Wall area m2 | Litres per m2 | Litres\nHall | 24 | 0.1 | =[Wall area m2]*[Litres per m2]\nKitchen | 30 | 0.1 | =[Wall area m2]*[Litres per m2]\nTotal | | | =SUM([Litres])\nEND", "");
 var plan = made.plan || made;
 save("make_sheet", { title: "Paint", cells: plan.cells });
 fs.writeFileSync(path.join(TMP, "out.json"), JSON.stringify(out));
+fs.writeFileSync(path.join(TMP, "book.json"), JSON.stringify(bookOut));
 // and LibreOffice's saves of the fixtures, read back (when they are there)
 var back = {};
 if (fs.existsSync(path.join(TMP, "lo"))) fs.readdirSync(path.join(TMP, "lo")).filter(function (f) { return /\.xlsx$/.test(f); }).forEach(function (f) {
@@ -65,6 +72,7 @@ r = subprocess.run(["node", os.path.join(tmp, "w.js")], cwd=ROOT, capture_output
 if r.returncode: print(r.stderr[-2000:]); sys.exit(1)
 OUT = json.load(open(os.path.join(tmp, "out.json"), encoding="utf-8"))
 BACK = json.load(open(os.path.join(tmp, "back.json"), encoding="utf-8"))
+BOOK = json.load(open(os.path.join(tmp, "book.json"), encoding="utf-8"))
 files = sorted(OUT)
 # 1. the schema
 try:
@@ -73,7 +81,7 @@ except Exception:
     ET = None; skips.add("lxml")
 if ET is not None and XSD and os.path.exists(XSD):
     sml = ET.XMLSchema(ET.parse(XSD))
-    for fid in files:
+    for fid in files + ["book"]:
         z = zipfile.ZipFile(os.path.join(tmp, fid + ".xlsx"))
         for n in z.namelist():
             if n.startswith("xl/") and n.endswith(".xml") and "_rels" not in n:
@@ -96,7 +104,8 @@ if openpyxl:
         wrong = []
         for ref, raw in o["cells"].items():
             got = ws[ref].value
-            if raw.startswith("=") and not any(n.startswith("Saved as text") and ref + " (" in n for n in o["notes"]):
+            # (a formula naming a sheet not in a sheet saved alone is saved as its value, and said)
+            if raw.startswith("=") and not any((n.startswith("Saved as text") or n.startswith("Saved as the value")) and ref + " (" in n for n in o["notes"]):
                 if not (isinstance(got, str) and got.startswith("=")): wrong.append((ref, raw, got))
         ok("%s: openpyxl reads every formula as a formula" % fid, not wrong, wrong[:5])
         ok("%s: ...the merged cells" % fid, sorted(str(m) for m in ws.merged_cells.ranges) == sorted(o["merges"]), [sorted(str(m) for m in ws.merged_cells.ranges), o["merges"]])
@@ -105,6 +114,10 @@ if openpyxl:
         bad = [(k, f, ws[k].font.b, ws[k].alignment.horizontal) for k, f in o["fmt"].items() if type(ws[k]).__name__ != "MergedCell" and
                ((f.get("b") and not ws[k].font.b) or (f.get("al") and ws[k].alignment.horizontal != f["al"]))]
         ok("%s: ...bold and alignment" % fid, not bad, bad[:5])
+    # the workbook saved together: its sheets under their own names, the formula naming the others kept as a formula
+    wbk = openpyxl.load_workbook(os.path.join(tmp, "book.xlsx"))
+    ok("the workbook saved together: three sheets under their own names, Order!C2 a formula", wbk.sheetnames == ["Prices", "Order", "Rates"] and wbk["Order"]["C2"].value == "=B2*Prices!B2*(1+'Rates'!B1)" and not any("Saved as" in n for n in BOOK["notes"]),
+       [wbk.sheetnames, wbk["Order"]["C2"].value, BOOK["notes"]])
 # 3. LibreOffice works it all out again
 def num(s):
     try: return float(s.replace(",", ""))
@@ -125,7 +138,7 @@ if soffice:
             return rows[r][col - 1] if r < len(rows) and col - 1 < len(rows[r]) else ""
         differ = []
         for ref, raw in o["cells"].items():
-            if not raw.startswith("=") or any(n.startswith("Saved as text") and ref + " (" in n for n in o["notes"]): continue
+            if not raw.startswith("=") or any((n.startswith("Saved as text") or n.startswith("Saved as the value")) and ref + " (" in n for n in o["notes"]): continue
             mine, lo = o["values"].get(ref), at(ref)
             if isinstance(mine, str) and mine.startswith("#"):   # an error here: LibreOffice may know better (another sheet)
                 continue
@@ -133,10 +146,24 @@ if soffice:
             if isinstance(mine, (int, float)):
                 n = num(lo)
                 if lo in ("TRUE", "FALSE") and mine in (0, 1): n = 1.0 if lo == "TRUE" else 0.0
+                # (1.24.28) a date shown as a date, as Lantern shows it: 2026-12-17 is the day's number
+                dm = re.match(r"^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}):(\d{2}))?$", lo)
+                if n is None and dm:
+                    import datetime
+                    d0 = datetime.datetime(int(dm.group(1)), int(dm.group(2)), int(dm.group(3)), int(dm.group(4) or 0), int(dm.group(5) or 0))
+                    n = (d0 - datetime.datetime(1899, 12, 30)).total_seconds() / 86400
+                    if abs(n - mine) * 1440 < 1: n = mine
                 if n is None or abs(n - mine) > 1e-6 * max(1, abs(mine)): differ.append((ref, raw, mine, lo))
             elif (mine or "").replace("\r\n", "\n").replace("\r", "\n") != lo: differ.append((ref, raw, mine, lo))
         ok("%s: LibreOffice works out every formula as Lantern does" % fid, not differ, differ[:6])
         if VERBOSE: print(fid, "checked", len(o["cells"]), "cells")
+    # 3b. the workbook saved together: LibreOffice works out Order!C2 from Prices and Rates
+    os.makedirs(os.path.join(tmp, "bookcsv"), exist_ok=True)
+    subprocess.run([soffice, "--headless", "--convert-to", "csv:Text - txt - csv (StarCalc):44,34,76,1,,0,false,true,false,false,false,-1", "--outdir", os.path.join(tmp, "bookcsv"),
+                    os.path.join(tmp, "book.xlsx")], capture_output=True, timeout=300)
+    oc = glob.glob(os.path.join(tmp, "bookcsv", "book-Order.csv"))
+    rows2 = list(csv.reader(open(oc[0], encoding="utf-8"))) if oc else []
+    ok("the workbook saved together: LibreOffice works out Order!C2 from the other sheets as Lantern does (30)", rows2 and num(rows2[1][2]) == BOOK["values"][1]["C2"] == 30, [rows2[:3], BOOK["values"][1].get("C2")])
     # 4. LibreOffice's saves, read by Lantern
     for f, sheets in sorted(BACK.items()):
         ok("LibreOffice's save of %s opens in Lantern" % f, isinstance(sheets, list) and sheets, sheets)

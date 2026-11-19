@@ -1327,11 +1327,50 @@ Lantern.formula = (function () {
     if (opts && opts.errors) ERRSAFE[n] = 1;
   }
 
+  // (1.24.28, the first Excel review) a list of values in { } as Excel writes it, {1,2;3,4}: a row's values between
+  // commas, rows between semicolons -- [[1, 2], [3, 4]], or null when it is not one
+  function arrayConst(s, i) {
+    var rows = [[]], j = i + 1, want = true, m;
+    while (j < s.length) {
+      var c = s.charAt(j), rest = s.slice(j);
+      if (c === " ") { j++; continue; }
+      if (want) {
+        if (c === "\x22") {
+          var k = j + 1, sv = "";
+          while (k < s.length && (s.charAt(k) !== "\x22" || s.charAt(k + 1) === "\x22")) { if (s.charAt(k) === "\x22") k++; sv += s.charAt(k); k++; }
+          if (k >= s.length) return null;
+          rows[rows.length - 1].push(sv); j = k + 1; want = false; continue;
+        }
+        if ((m = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?/.exec(rest))) { rows[rows.length - 1].push(parseFloat(m[0])); j += m[0].length; want = false; continue; }
+        if ((m = /^(TRUE|FALSE)(?![A-Za-z0-9_.])/i.exec(rest))) { rows[rows.length - 1].push(/^t/i.test(m[1]) ? 1 : 0); j += m[0].length; want = false; continue; }
+        if ((m = /^#(?:N\x2FA|DIV\x2F0!|VALUE!|REF!|NAME\?|NUM!|NULL!)/i.exec(rest))) { rows[rows.length - 1].push(m[0].toUpperCase()); j += m[0].length; want = false; continue; }
+        return null;
+      }
+      if (c === ",") { want = true; j++; continue; }
+      if (c === ";") { rows.push([]); want = true; j++; continue; }
+      if (c === "}") {
+        for (var r = 1; r < rows.length; r++) if (rows[r].length !== rows[0].length) return null;
+        return { rows: rows, end: j + 1 };
+      }
+      return null;
+    }
+    return null;
+  }
+  // (1.24.28) another sheet before a cell, as Excel writes it: Rates!B2, 'Tax 2026'!B2:B9, Jan:Mar!B2 (the sheets
+  // from Jan to Mar)
+  var SHEETAT = /^(\x27(?:[^\x27]|\x27\x27)+\x27|[A-Za-z_\u00c0-\uffff][A-Za-z0-9_.\u00c0-\uffff]*(?::[A-Za-z_\u00c0-\uffff][A-Za-z0-9_.\u00c0-\uffff]*)?)!(?=\$?[A-Za-z]{1,3}\$?[0-9])/;
   function tokenize(src) {
     var toks = [], i = 0, s = src;
     while (i < s.length) {
       var ch = s[i];
       if (ch === " " || ch === "\t") { i++; continue; }
+      if (ch === "{") {
+        var ac = arrayConst(s, i);
+        if (!ac) throw new Error("Bad character: " + ch);
+        toks.push({ t: "arr", v: ac.rows }); i = ac.end; continue;
+      }
+      var sh = /[A-Za-z_\x27\u00c0-\uffff]/.test(ch) ? SHEETAT.exec(s.slice(i)) : null;
+      if (sh) { toks.push({ t: "sheet", v: sh[1].charAt(0) === "\x27" ? sh[1].slice(1, -1).replace(/\x27\x27/g, "\x27") : sh[1] }); i += sh[0].length; continue; }
       if (/[0-9.]/.test(ch)) {
         var m = /^[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?/.exec(s.slice(i));
         toks.push({ t: "num", v: parseFloat(m[0]) }); i += m[0].length; continue;
@@ -1385,6 +1424,48 @@ Lantern.formula = (function () {
     }
     // picked(x): an argument IF chose -- its error, if it had one, now counts
     function picked(x) { if (x && x.lazyErr) throw x.lazyErr; return x; }
+    // (1.24.28, the first Excel review) in a sheet a range or a list in { } can stand where a value does, and is worked
+    // out cell by cell, as in Excel: SUMPRODUCT((A2:A8="North")*D2:D8), SUM(B2:B5*C2:C5), SUMPRODUCT(--(A2:A9>5)),
+    // SUM(IF(B2:B5>2,C2:C5)). The answer is a list (numbers its own, .cells its rows) that SUM, SUMPRODUCT, MAX,
+    // AVERAGE take as they take a range; a list of yes and no (.logical) is left out of a sum, as Excel leaves out
+    // TRUE and FALSE (so --, or *1, makes them numbers). A cell whose formula gives a list shows its first value.
+    function isList(x) { return Object.prototype.toString.call(x) === "[object Array]" && !!x.cells; }
+    function listOf(rows, logical) {
+      var a = [], r, c;
+      if (!logical) for (r = 0; r < rows.length; r++) for (c = 0; c < rows[r].length; c++) if (typeof rows[r][c] === "number" && isFinite(rows[r][c])) a.push(rows[r][c]);
+      a.cells = rows; a.lifted = true;
+      if (logical) a.logical = true;
+      return a;
+    }
+    // zip(values, fn): fn of each cell of the lists given (a value alone is used for every cell; a row with a
+    // column, each with each), or fn of the values when none is a list
+    function zip(vals, fn, logical) {
+      var any = false, R = 1, C = 1, i, r, c, gs = [];
+      for (i = 0; i < vals.length; i++) {
+        var g = isList(vals[i]) ? vals[i].cells : null;
+        gs.push(g);
+        if (g) { any = true; R = Math.max(R, g.length); C = Math.max(C, g[0] ? g[0].length : 1); }
+      }
+      if (!any || !ctx.excel) return fn.apply(null, vals);
+      var rows = [];
+      for (r = 0; r < R; r++) {
+        var row = [];
+        for (c = 0; c < C; c++) {
+          var args = [];
+          for (i = 0; i < vals.length; i++) {
+            var gi = gs[i];
+            if (!gi) { args.push(vals[i]); continue; }
+            var rr = gi.length === 1 ? 0 : r, cc = gi[0].length === 1 ? 0 : c, v = gi[rr] ? gi[rr][cc] : undefined;
+            if (v === undefined) { var ne = new Error("the lists are not the same size"); ne.code = "#N/A"; throw ne; }
+            if (typeof v === "string" && ERRCODE.test(v)) { var ve = new Error(v); ve.code = v; throw ve; }
+            args.push(v);
+          }
+          row.push(fn.apply(null, args));
+        }
+        rows.push(row);
+      }
+      return listOf(rows, logical);
+    }
     function flatNums(args) {
       var out = [];
       for (var i = 0; i < args.length; i++) {
@@ -1455,6 +1536,15 @@ Lantern.formula = (function () {
       // =IF(B1=0,0,A1/B1) works; a branch can be text (=IF(A1>10,"big","small"))
       IF: function (a) {
         var t = picked(a[0]);
+        // (1.24.28) IF of a list chooses cell by cell; a cell it does not choose, with no third value, is left out
+        // (Excel's FALSE, which SUM, AVERAGE and MAX pass over): {=AVERAGE(IF(A2:A9="x",B2:B9))}
+        if (ctx.excel && isList(t)) {
+          var yv = a.length > 1 ? picked(a[1]) : 1, nv = a.length > 2 ? picked(a[2]) : null;
+          return zip([t, yv, nv], function (c, y, n) {
+            var on = typeof c === "string" ? (/^\s*true\s*$/i.test(c) ? true : /^\s*false\s*$/i.test(c) ? false : num(c) !== 0) : c != null && num(c) !== 0;
+            return on ? y : n;
+          });
+        }
         if (typeof t === "string" && ctx.resolve && !/^\s*(true|false)\s*$/i.test(t)) { var ie = new Error("IF: \u201c" + t.slice(0, 30) + "\u201d is not TRUE or FALSE"); ie.code = "#VALUE!"; throw ie; }
         var yes = typeof t === "string" ? t !== "" && t.toUpperCase() !== "FALSE" : num(t) !== 0;
         return yes ? (a.length > 1 ? picked(a[1]) : 1) : (a.length > 2 ? picked(a[2]) : 0);
@@ -1491,6 +1581,8 @@ Lantern.formula = (function () {
       if (t.t === "num") return t.v;
       if (t.t === "str") return t.v;
       if (t.t === "err") { var le = new Error(t.v); le.code = t.v; throw le; }
+      if (t.t === "arr") { if (!ctx.excel) throw new Error("Bad character: {"); return listOf(t.v.map(function (row) { return row.slice(); })); }
+      if (t.t === "sheet") return otherSheet(t.v);
       if (t.t === "op" && t.v === "(") {
         var v = compare(); expect(")"); return v;
       }
@@ -1555,6 +1647,27 @@ Lantern.formula = (function () {
       }
       throw new Error("Unexpected " + t.v);
     }
+    // (1.24.28) a cell or a range on another sheet of the same workbook (ctx.other(name) -> that sheet's {resolve,
+    // range}), or on each of the sheets from one to another (Jan:Mar!B2, ctx.others(from, to) -> a list of them):
+    // a sheet not in the workbook is #REF!, as in Excel
+    function otherSheet(name) {
+      var a = next(), b = null;
+      if (!a || a.t !== "id" || !REF.test(a.v)) throw new Error("Bad reference after " + name + "!");
+      if (peek() && peek().t === "op" && peek().v === ":" && toks[p + 1] && toks[p + 1].t === "id" && REF.test(toks[p + 1].v)) { next(); b = next().v; }
+      var cut = name.indexOf(":"), list = cut > 0 ? (ctx.others ? ctx.others(name.slice(0, cut), name.slice(cut + 1)) : null) : null, one = cut > 0 ? null : ctx.other ? ctx.other(name) : null;
+      if (!one && !(list && list.length)) { var re = new Error("No sheet named " + name + " here"); re.code = "#REF!"; throw re; }
+      if (one && !b) {
+        var cv = one.resolve(a.v);
+        if (typeof cv === "string" && ERRCODE.test(cv)) { var ce = new Error(cv); ce.code = cv; throw ce; }
+        return cv == null ? null : typeof cv === "string" ? cv : num(cv);
+      }
+      if (one) return one.range(a.v, b, ctx.errOk);
+      // the same cells on each sheet: one list of them all, for SUM, AVERAGE, COUNT, MAX and MIN
+      var all = [], rows = [];
+      list.forEach(function (sh) { var g = sh.range(a.v, b || a.v, ctx.errOk); all.push.apply(all, g); rows.push.apply(rows, g.cells || []); if (g.err && !all.err) all.err = g.err; });
+      all.cells = rows;
+      return all;
+    }
     // blankRef(): an empty cell (or one whose formula gives "") named alone as a whole argument: true, and it is
     // passed over -- the function is given null (LEN, &, CONCAT see nothing; SUM and IF see 0)
     function blankRef() {
@@ -1603,24 +1716,32 @@ Lantern.formula = (function () {
       // Ranges are only legal as function arguments; compare() handles rest.
       if (peek() && peek().t === "id" && REF.test(peek().v) &&
           toks[p + 1] && toks[p + 1].v === ":") {
-        var a = next().v; next();
+        var at0 = p, a = next().v; next();
         var b = next();
         if (!b || b.t !== "id" || !REF.test(b.v)) throw new Error("Bad range");
         if (!ctx.range) throw new Error("Ranges not allowed here");
+        // (1.24.28) a range with a sign after it, (A2:A8="North")*.., is worked out cell by cell (in a sheet)
+        if (ctx.excel && peek() && !(peek().t === "op" && (peek().v === "," || peek().v === ")"))) { p = at0; return compare(); }
         return ctx.range(a, b.v);
       }
       return compare();
     }
     // (1.24.28) in a sheet (ctx.excel), as in Excel, LibreOffice and Google Sheets, a minus sign goes before a power
     // and powers are worked from the left: =-2^2 is 4 and =2^3^2 is 64 (the calculator keeps -4 and 512, as on paper)
+    // (1.24.28, the first Excel review) and a per cent sign after a value goes before a power, as in Excel: =50%^2 is
+    // 0.25 and =2^300% is 8 (17%5 is still Lantern's remainder)
+    function startsValue(tk) { return !!tk && (tk.t === "num" || tk.t === "id" || tk.t === "str" || tk.t === "arr" || tk.t === "sheet" || (tk.t === "op" && tk.v === "\x28")); }
     function signed() {
-      if (peek() && peek().t === "op" && (peek().v === "-" || peek().v === "+")) { var sg = next().v === "-" ? -1 : 1; return sg * num(signed()); }
-      return primary();
+      if (peek() && peek().t === "op" && (peek().v === "-" || peek().v === "+")) { var sg = next().v === "-" ? -1 : 1; return zip([signed()], function (x) { return sg * num(x); }); }
+      var v = primary();
+      while (ctx.excel && peek() && peek().t === "op" && peek().v === "%" && !startsValue(toks[p + 1])) { next(); v = zip([v], function (x) { return num(x) / 100; }); }
+      return v;
     }
+    function pow(a, b) { return Math.pow(num(a), num(b)); }
     function power() {
       if (ctx.excel) {
         var v = signed();
-        while (peek() && peek().t === "op" && peek().v === "^") { next(); v = Math.pow(num(v), num(signed())); }
+        while (peek() && peek().t === "op" && peek().v === "^") { next(); v = zip([v, signed()], pow); }
         return v;
       }
       var base = primary();
@@ -1644,21 +1765,27 @@ Lantern.formula = (function () {
         // % with no number after it is percent, as on a calculator and in a
         // spreadsheet (50% = 0.5, 200*5% = 10); 17%5 is still the remainder
         if (op === "%" && !(peek() && (peek().t === "num" || peek().t === "id" || peek().t === "str" || (peek().t === "op" && peek().v === "(")))) { v = num(v) / 100; continue; }
-        var r = num(unary());
-        if (op === "*") v = num(v) * r;
-        else if (op === "%") v = num(v) % r;
-        else { if (r === 0) throw new Error("Divide by zero"); v = num(v) / r; }
+        v = zip([v, unary()], function (x, y) {
+          var r = num(y);
+          if (op === "*") return num(x) * r;
+          if (op === "%") return num(x) % r;
+          if (r === 0) throw new Error("Divide by zero");
+          return num(x) / r;
+        });
       }
       return v;
     }
     function addSub() {
       var v = mulDiv();
       while (peek() && peek().t === "op" && (peek().v === "+" || peek().v === "-")) {
-        var op = next().v, r = num(mulDiv()), l = num(v);
-        v = op === "+" ? l + r : l - r;
-        // what is left when two nearly equal numbers cancel is float noise:
-        // 0.1*3-0.3 is 0, not 5.55e-17 (Excel does the same)
-        if (v !== 0 && Math.abs(v) < 1e-12 * Math.max(Math.abs(l), Math.abs(r))) v = 0;
+        var op = next().v;
+        v = zip([v, mulDiv()], function (x, y) {
+          var r = num(y), l = num(x), w = op === "+" ? l + r : l - r;
+          // what is left when two nearly equal numbers cancel is float noise:
+          // 0.1*3-0.3 is 0, not 5.55e-17 (Excel does the same)
+          if (w !== 0 && Math.abs(w) < 1e-12 * Math.max(Math.abs(l), Math.abs(r))) w = 0;
+          return w;
+        });
       }
       return v;
     }
@@ -1673,8 +1800,8 @@ Lantern.formula = (function () {
       var lb = blankAt(), v = addSub();
       while (peek() && peek().t === "op" && peek().v === "&") {
         next();
-        var rb = blankAt(), r = addSub();
-        v = (lb ? "" : asText(v)) + (rb ? "" : asText(r));
+        var rb = blankAt(), r = addSub(), lb0 = lb;
+        v = zip([v, r], function (x, y) { return (lb0 ? "" : asText(x)) + (rb ? "" : asText(y)); });
         lb = false;
       }
       return v;
@@ -1691,32 +1818,44 @@ Lantern.formula = (function () {
       var lb = blankAt(), v = join();
       while (peek() && peek().t === "op" &&
              ["=", "<", ">", "<=", ">=", "<>"].indexOf(peek().v) >= 0) {
-        var op = next().v, rb = blankAt(), r = join(), l = v;
-        // text against text compares as text, ignoring case; (1.24.24) text against a number: text is
-        // above every number, as in Excel (="10">5 is TRUE, =A1="5" is FALSE when A1 holds 5); numbers
-        // equal to 15 digits are equal (=0.1+0.2=0.3 is TRUE)
-        var lt = typeof l === "string", rt = typeof r === "string";
-        if ((lb || l == null) && rt) l = "";
-        if ((rb || r == null) && lt) r = "";
-        var ls = typeof l === "string", rs = typeof r === "string";
-        if (ls && rs) { l = l.toLowerCase(); r = r.toLowerCase(); }
-        else if (ls || rs) {
-          if (ctx.resolve) { l = ls ? 1 : 0; r = rs ? 1 : 0; }
-          else { l = String(l == null ? "" : l).toLowerCase(); r = String(r == null ? "" : r).toLowerCase(); }
-        }
-        else { l = Number(num(l).toPrecision(15)); r = Number(num(r).toPrecision(15)); }
+        var op = next().v, rb = blankAt(), r = join(), lb0 = lb;
         lb = false;
-        v = (op === "=" ? l === r : op === "<" ? l < r : op === ">" ? l > r :
-             op === "<=" ? l <= r : op === ">=" ? l >= r : l !== r) ? 1 : 0;
+        v = zip([v, r], function (l, r) {
+          // text against text compares as text, ignoring case; (1.24.24) text against a number: text is
+          // above every number, as in Excel (="10">5 is TRUE, =A1="5" is FALSE when A1 holds 5); numbers
+          // equal to 15 digits are equal (=0.1+0.2=0.3 is TRUE)
+          var lt = typeof l === "string", rt = typeof r === "string";
+          if ((lb0 || l == null) && rt) l = "";
+          if ((rb || r == null) && lt) r = "";
+          var ls = typeof l === "string", rs = typeof r === "string";
+          if (ls && rs) { l = l.toLowerCase(); r = r.toLowerCase(); }
+          else if (ls || rs) {
+            if (ctx.resolve) { l = ls ? 1 : 0; r = rs ? 1 : 0; }
+            else { l = String(l == null ? "" : l).toLowerCase(); r = String(r == null ? "" : r).toLowerCase(); }
+          }
+          else { l = Number(num(l).toPrecision(15)); r = Number(num(r).toPrecision(15)); }
+          return (op === "=" ? l === r : op === "<" ? l < r : op === ">" ? l > r :
+               op === "<=" ? l <= r : op === ">=" ? l >= r : l !== r) ? 1 : 0;
+        }, true);
       }
       return v;
     }
     var result = compare();
     if (p < toks.length) throw new Error("Unexpected " + toks[p].v);
+    // (1.24.28) a formula that gives a list shows its first value (an array formula in one cell, as in Excel)
+    if (ctx.excel && isList(result) && result.lifted) { result = result.cells[0] ? result.cells[0][0] : null; if (result == null) result = 0; }
     // a text result (="abc", =REVERSE("abc") -- TEXT_FUNCS) stays text
     return typeof result === "string" ? result : num(result);
   }
-  return { evaluate: evaluate, register: register, REF: REF, isoDay: isoDay, textNum: textNum, dayOf: dayOf, general: general, LAZY: LAZY, RAWREF: RAWREF,
+  // (1.24.28) list(rows): the answer of a function that gives several values (UNIQUE, SORT, FILTER, SEQUENCE), as a
+  // range is given: its numbers, and .cells its rows; a cell whose formula gives one shows its first value
+  function list(rows) {
+    var a = [], r, c;
+    for (r = 0; r < rows.length; r++) for (c = 0; c < rows[r].length; c++) if (typeof rows[r][c] === "number" && isFinite(rows[r][c])) a.push(rows[r][c]);
+    a.cells = rows; a.lifted = true;
+    return a;
+  }
+  return { evaluate: evaluate, register: register, REF: REF, isoDay: isoDay, textNum: textNum, dayOf: dayOf, general: general, LAZY: LAZY, RAWREF: RAWREF, list: list,
     names: function () { return Object.keys(EXT).sort(); },
     // (1.24.28) every function a formula can call, the built-in ones too (SUM, IF): which of an Excel file's Lantern has
     all: function () { if (!CORE) { try { evaluate("0", {}); } catch (e) { } } return (CORE || []).concat(Object.keys(EXT)).sort(); } };
@@ -2319,8 +2458,37 @@ Lantern.formula = (function () {
     else if (fn === "SWITCH") { for (ai = 2; ai < args.length; ai += 2) pick.push(ai); if (args.length % 2 === 0) pick.push(args.length - 1); }
     return pick.length > 0 && pick.every(function (i) { return args[i] && logical("=" + args[i].s, cells, (depth || 0) + 1); });
   }
-  function computeAll(cells) {
-    var out = {}, visiting = {}, lastRow = ROWS, lg = {};
+  // (1.24.28, the first Excel review) computeAll(cells, book): book(name) -> the cells of another sheet of the same
+  // workbook, or null; book.self, this sheet's own name; book.order, the sheets' names in the workbook's order (for
+  // Jan:Mar!B2). A formula on one sheet can then use the cells of another, as in Excel (=Jan!B6, =SUM(Rates!B2:B9))
+  function computeAll(cells, book) {
+    var me = sheetEval(cells, book, { evals: {} });
+    for (var k in cells) me.val(k);
+    return me.out;
+  }
+  function sheetEval(cells, book, shared) {
+    var out = {}, visiting = {}, lastRow = ROWS, lg = {}, ev = null;
+    function other(name) {
+      var key = String(name).toUpperCase();
+      if (!book) return null;
+      if (book.self != null && key === String(book.self).toUpperCase()) return ev;
+      if (key in shared.evals) return shared.evals[key];
+      shared.evals[key] = null;
+      var oc = book(name);
+      if (!oc) return null;
+      // the other sheet's own formulas see the workbook too
+      var sb = function (n) { return book(n); };
+      sb.self = name; sb.order = book.order;
+      return (shared.evals[key] = sheetEval(oc, sb, shared));
+    }
+    function others(a, b) {
+      var order = book && book.order ? book.order : [], i0 = -1, i1 = -1;
+      order.forEach(function (n, i) { if (String(n).toUpperCase() === String(a).toUpperCase()) i0 = i; if (String(n).toUpperCase() === String(b).toUpperCase()) i1 = i; });
+      if (i0 < 0 || i1 < 0) return null;
+      var list = [];
+      for (var i = Math.min(i0, i1); i <= Math.max(i0, i1); i++) { var o = other(order[i]); if (o) list.push(o); }
+      return list;
+    }
     function isLogical(k) { if (!(k in lg)) lg[k] = typeof cells[k] === "string" && (/^\s*(TRUE|FALSE)\s*$/i.test(cells[k]) || logical(cells[k], cells)); return lg[k]; }
     for (var kr in cells) { var pr = /([0-9]+)$/.exec(kr); if (pr && +pr[1] > lastRow) lastRow = +pr[1]; }
     function val(ref) {
@@ -2332,6 +2500,8 @@ Lantern.formula = (function () {
         visiting[ref] = 1;
         var v, cx = {
             resolve: fval,
+            other: function (name) { return other(name); },
+            others: others,
             excel: true,   // (1.24.28) =-2^2 is 4, as in Excel
             cell: ref,   // (1.24.24) the cell itself: ROW() and COLUMN() with nothing in the brackets
             rows: lastRow, cols: COLS,  // (1.24.24) A:A is A1 to the last row, 2:2 A2 to the last column
@@ -2340,30 +2510,7 @@ Lantern.formula = (function () {
             // .cells, its rows of values as they are -- text, null for an empty
             // cell, "" for a formula that gives "" -- with .r0/.c0 its top-left
             // (VLOOKUP, COUNTIF, ROW) and .subtotals the cells that are SUBTOTALs
-            range: function (a, b) {
-              var A = parseRef(a), B = parseRef(b), arr = [], rows = [], subs = [];
-              var r0 = Math.min(A.r, B.r), r1 = Math.min(Math.max(A.r, B.r), lastRow - 1), c0 = Math.min(A.c, B.c), c1 = Math.min(Math.max(A.c, B.c), COLS - 1);
-              for (var r = r0; r <= r1; r++) {
-                var row = [];
-                for (var c = c0; c <= c1; c++) {
-                  var k = refOf(c, r), x = fval(k);
-                  // an error (or a loop) in the range is the range's error:
-                  // SUM used to skip it and show a total that looked right.
-                  // (1.24.24) A function that looks at each cell (COUNT,
-                  // VLOOKUP, SUMIF) is given it, the error in its cell
-                  if (typeof x === "string" && ERRCODE.test(x)) {
-                    if (!cx.errOk) { var re = new Error(x); re.code = x; throw re; }
-                    if (!arr.err) arr.err = x;
-                  }
-                  else if (typeof x === "number" && !((x === 0 || x === 1) && isLogical(k))) arr.push(x);
-                  if (typeof cells[k] === "string" && /^=\s*SUBTOTAL\s*\x28/i.test(cells[k])) subs.push([rows.length, row.length]);
-                  row.push(x == null ? null : x);
-                }
-                rows.push(row);
-              }
-              arr.cells = rows; arr.r0 = r0; arr.c0 = c0; arr.subtotals = subs;
-              return arr;
-            }
+            range: function (a, b) { return range(a, b, cx.errOk); }
           };
         try {
           v = Lantern.formula.evaluate(raw.slice(1), cx);
@@ -2376,6 +2523,30 @@ Lantern.formula = (function () {
       var n = typed(raw);
       out[ref] = n === null ? raw : n; return out[ref];
     }
+            function range(a, b, errOk) {
+              var A = parseRef(a), B = parseRef(b), arr = [], rows = [], subs = [];
+              var r0 = Math.min(A.r, B.r), r1 = Math.min(Math.max(A.r, B.r), lastRow - 1), c0 = Math.min(A.c, B.c), c1 = Math.min(Math.max(A.c, B.c), COLS - 1);
+              for (var r = r0; r <= r1; r++) {
+                var row = [];
+                for (var c = c0; c <= c1; c++) {
+                  var k = refOf(c, r), x = fval(k);
+                  // an error (or a loop) in the range is the range's error:
+                  // SUM used to skip it and show a total that looked right.
+                  // (1.24.24) A function that looks at each cell (COUNT,
+                  // VLOOKUP, SUMIF) is given it, the error in its cell
+                  if (typeof x === "string" && ERRCODE.test(x)) {
+                    if (!errOk) { var re = new Error(x); re.code = x; throw re; }
+                    if (!arr.err) arr.err = x;
+                  }
+                  else if (typeof x === "number" && !((x === 0 || x === 1) && isLogical(k))) arr.push(x);
+                  if (typeof cells[k] === "string" && /^=\s*SUBTOTAL\s*\x28/i.test(cells[k])) subs.push([rows.length, row.length]);
+                  row.push(x == null ? null : x);
+                }
+                rows.push(row);
+              }
+              arr.cells = rows; arr.r0 = r0; arr.c0 = c0; arr.subtotals = subs;
+              return arr;
+            }
     // fval(ref): a cell as a formula sees it -- (1.24.24) text typed in it
     // that Excel reads as a number is that number: a date (2026-11-17,
     // 17 Nov 2026), a time (17:00), TRUE and FALSE, (100). The cell still
@@ -2388,22 +2559,46 @@ Lantern.formula = (function () {
       }
       return v;
     }
-    for (var k in cells) val(k);
-    return out;
+    ev = { out: out, val: val, resolve: fval, range: range };
+    if (book && book.self != null) shared.evals[String(book.self).toUpperCase()] = ev;
+    return ev;
+  }
+  // bookOf(d): the other sheets of the workbook a sheet came from (d.book, from an Excel file), for computeAll
+  function bookOf(d) {
+    if (!d || !d.book || d.book.id == null) return null;
+    var sib = col.all().filter(function (o) { return o.book && o.book.id === d.book.id; }).sort(function (a, b) { return (a.book.at || 0) - (b.book.at || 0); });
+    var f = function (name) {
+      var u = String(name).toUpperCase(), hit = null;
+      sib.forEach(function (o) { if (!hit && String(o.book.sheet).toUpperCase() === u) hit = o; });
+      return hit ? (doc && hit.id === doc.id ? doc.cells : hit.cells) || {} : null;
+    };
+    f.self = d.book.sheet;
+    f.order = sib.map(function (o) { return o.book.sheet; });
+    f.docs = sib;
+    return f;
   }
 
   // Public API for other apps (e.g. COMPOSE_MERGE): list sheets, read
   // computed values, create a sheet from {A1: raw} cells.
   Lantern.sheetDocs = {
     list: function () { return col.all().map(function (d) { return { id: d.id, title: d.title || "" }; }); },
-    values: function (id) { var d = col.get(id); return d ? computeAll(d.cells || {}) : null; },
+    values: function (id) { var d = col.get(id); return d ? computeAll(d.cells || {}, bookOf(d)) : null; },
     // (1.24.28) more: an Excel file's {fmt, widths, merges, freeze, rows}
     create: function (title, cells, more) {
       var d = { id: Lantern.uid(), title: title || "", cells: cells || {} };
-      ["fmt", "widths", "merges", "freeze", "rows", "paper"].forEach(function (k) { if (more && more[k] != null && !(typeof more[k] === "object" && !Object.keys(more[k]).length)) d[k] = more[k]; });
+      ["fmt", "widths", "merges", "freeze", "rows", "paper", "book", "arrays"].forEach(function (k) { if (more && more[k] != null && !(typeof more[k] === "object" && !Object.keys(more[k]).length)) d[k] = more[k]; });
       return col.put(d).id;
     },
-    compute: function (cells) { return computeAll(cells || {}); },
+    // (1.24.28) book: a function (name -> cells of that sheet) or {name: cells}; self, this sheet's own name there
+    compute: function (cells, book, self) {
+      if (book && typeof book === "object") { var m = book, f = function (n) { var u = String(n).toUpperCase(); for (var k in m) if (k.toUpperCase() === u) return m[k]; return null; }; f.order = Object.keys(m); book = f; }
+      if (book && self != null) book.self = self;
+      return computeAll(cells || {}, book || null);
+    },
+    // (1.24.28) the other sheets of a sheet's workbook ({sheet, at, docs} for Save .xlsx), and what a cell's answer
+    // is to the grid: "date", "time" (a date and time), "clock" (a time of day or hours), or null
+    book: function (d) { return bookOf(d); },
+    kind: function (cells, ref) { var was = KC; KC = cells || {}; try { return dateKind(ref); } finally { KC = was; } },
     logical: function (raw, cells) { return logical(raw, cells || {}); },
     open: function (id) {
       if (ws && document.contains(ws) && document.body.getAttribute("data-app") === "sheet") { editView(id); return; }
@@ -2421,6 +2616,8 @@ Lantern.formula = (function () {
   // is a date (=A1+30, =A1+A2 where A2 holds a number of days, =TODAY()+7);
   // a date minus a date is days (=TODAY()-A1); a comparison is not a date;
   // =IF(test,"",A1+30) is a date. TIME() is a time of day.
+  var KC = null;   // (1.24.28) the cells dateKind reads: Lantern.sheetDocs.kind's, or the open sheet's
+  function kc() { return KC || (doc && doc.cells) || {}; }
   var DATEFN = { TODAY: "date", DATE: "date", EDATE: "date", EOMONTH: "date", WORKDAY: "date", "WORKDAY.INTL": "date",
     DATEVALUE: "date", NOW: "time", TIME: "clock", TIMEVALUE: "clock" };
   function shut(src, at) {   // the index of the bracket that closes the one at src[at], or -1
@@ -2486,7 +2683,7 @@ Lantern.formula = (function () {
         for (var rr = Math.min(r0, r1); rr <= Math.max(r0, r1); rr++)
           for (var cc = Math.min(c0, c1); cc <= Math.max(c0, c1); cc++) {
             var k = String.fromCharCode(cc) + rr;
-            if (doc.cells[k] != null && doc.cells[k] !== "") return dateKind(k, seen);
+            if (kc()[k] != null && kc()[k] !== "") return dateKind(k, seen);
           }
       }
       return null;
@@ -2509,7 +2706,7 @@ Lantern.formula = (function () {
     return null;
   }
   function dateKind(ref, seen) {
-    var raw = doc.cells[ref];
+    var raw = kc()[ref];
     if (typeof raw !== "string") return null;
     if (raw.charAt(0) !== "=") {
       var n = Lantern.formula.textNum ? Lantern.formula.textNum(raw) : null;
@@ -2545,7 +2742,7 @@ Lantern.formula = (function () {
     return Lantern.fmtNum(v);
   }
   function repaint() {
-    var out = computeAll(doc.cells);
+    var out = computeAll(doc.cells, bookOf(doc));
     var union = {};
     var k;
     for (k in shown) union[k] = 1;
@@ -6318,7 +6515,8 @@ Lantern.drawShapes = (function () {
   // --- Convert boundary: callable by other modules (e.g. spreadsheet cells)
   // via =CONVERT(value, "from", "to"). Resolves within a single category so
   // ambiguous names (e.g. "g" = grams vs gravity) stay unambiguous.
-  var ALIAS = { mi: "mile", "in": "inch", lbs: "lb", sec: "s", hr: "h", kph: "km/h" };
+  // (1.24.28) and Excel's CONVERT names for the pound and the ounce of weight, and for the US and imperial measures
+  var ALIAS = { mi: "mile", "in": "inch", lbs: "lb", sec: "s", hr: "h", kph: "km/h", lbm: "lb", ozm: "oz" };
   // Spelled-out, plural and typed forms people (and AI models) use.
   var WORDS = { l: "liter", litre: "liter", litres: "liter", liters: "liter", millilitre: "ml", milliliter: "ml",
     gal: "gallon_us", gallon: "gallon_us", gallons: "gallon_us", cup: "cup_us", cups: "cup_us", quart: "quart_us",
@@ -36089,8 +36287,10 @@ Lantern.RFB = (function () {
     AVERAGEIFS: function (a) { return ifMany(a, avg); },
     MINIFS: function (a) { return ifMany(a, mn); },
     MAXIFS: function (a) { return ifMany(a, mx); },
+    // (1.24.28) a list of yes and no counts as 0s, as in Excel: SUMPRODUCT(A2:A9="x") is 0, and --(A2:A9="x") or
+    // (A2:A9="x")*1 is how Excel counts them
     SUMPRODUCT: function (a) {
-      var gs = a.map(grid), rows = gs[0].length, cols = gs[0][0].length, s = 0, r, c, k;
+      var gs = a.map(function (x) { var g = grid(x); return x && x.logical ? g.map(function (r) { return r.map(function () { return 0; }); }) : g; }), rows = gs[0].length, cols = gs[0][0].length, s = 0, r, c, k;
       gs.forEach(function (g) { if (g.length !== rows || g[0].length !== cols) throw err("#VALUE!", "the ranges are not the same size"); });
       for (r = 0; r < rows; r++) for (c = 0; c < cols; c++) {
         var p = 1;
@@ -36502,6 +36702,8 @@ Lantern.RFB = (function () {
       if (c === "_") { out.push({ lit: " " }); i += 2; continue; }
       if (c === "*") { i += 2; continue; }
       if ((m = /^\x5b(h+|m+|s+)\x5d/i.exec(f.slice(i)))) { out.push({ code: m[0].toLowerCase() }); i += m[0].length; continue; }
+      // (1.24.28, the first Excel review) a currency as Excel and LibreOffice write it, [$\u00a5-411] or [$$-409]: its symbol
+      if ((m = /^\x5b\$([^\x5d-]*)(?:-[0-9A-Fa-f]+)?\x5d/.exec(f.slice(i)))) { if (m[1]) out.push({ lit: m[1] }); i += m[0].length; continue; }
       if (c === "\x5b") { var k = f.indexOf("]", i); i = k < 0 ? f.length : k + 1; continue; }
       if ((m = /^(AM\x2FPM|am\x2Fpm|A\x2FP|a\x2Fp)/.exec(f.slice(i)))) { out.push({ code: m[1] }); i += m[1].length; continue; }
       if ((m = /^(y+|m+|d+|h+|s+|[0#?.,%\x2F]+(?:[eE][+-][0#]+)?)/i.exec(f.slice(i)))) { out.push({ code: m[1] }); i += m[1].length; continue; }
@@ -36639,7 +36841,21 @@ Lantern.RFB = (function () {
     var secs = sections(f);
     if (x === null) { var tsec = secs.length > 3 ? secs[3] : null; return tsec == null ? String(v) : tokens(tsec.replace(/@/g, "\x22" + String(v).replace(/\x22/g, "") + "\x22")).map(function (t) { return t.lit != null ? t.lit : t.code; }).join(""); }
     var s = secs[0], signed = true;
-    if (x < 0 && secs.length > 1 && secs[1] !== "") { s = secs[1]; signed = false; }
+    // (1.24.28) a section with a condition, [<=9999999]###-####;(###) ###-#### (Excel's phone number): the first whose
+    // condition the number meets, else the next with none
+    var COND = /^(?:\x5b[A-Za-z]+\d*\x5d)*\x5b(<=|>=|<>|<|>|=)(-?\d+\.?\d*)\x5d/;
+    if (secs.some(function (z) { return COND.test(z); })) {
+      var hit = null;
+      for (var si = 0; si < Math.min(secs.length, 3) && hit == null; si++) {
+        var cm = COND.exec(secs[si]);
+        if (!cm) { hit = si; break; }
+        var b = +cm[2], op = cm[1];
+        if (op === "<" ? x < b : op === "<=" ? x <= b : op === ">" ? x > b : op === ">=" ? x >= b : op === "=" ? x === b : x !== b) hit = si;
+      }
+      s = (hit == null ? secs[0] : secs[hit]).replace(/\x5b(<=|>=|<>|<|>|=)-?\d+\.?\d*\x5d/, "");
+      signed = !(hit != null && x < 0 && hit > 0);
+    }
+    else if (x < 0 && secs.length > 1 && secs[1] !== "") { s = secs[1]; signed = false; }
     else if (x === 0 && secs.length > 2) s = secs[2];
     if (/^\s*general\s*$/i.test(s)) return H.fmtGeneral(signed ? x : Math.abs(x));
     var ts = tokens(s);
@@ -37349,8 +37565,110 @@ Lantern.RFB = (function () {
       return per === 1 ? c * rate * mo / 12 : dep;
     }
   };
+  // (1.24.28, the first Excel review) Excel's BASE and DECIMAL (a whole number in base 2 to 36 and back), GAMMALN,
+  // the gamma function (Excel's GAMMA: in Lantern GAMMA is the Lorentz factor of physics, so Excel's is GAMMAFN here,
+  // and an Excel file's GAMMA is read as GAMMAFN and saved as GAMMA again), and ERROR.TYPE
+  var LANCZOS = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059,
+    12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+  function lnGamma(x) {
+    if (x < 0.5) return Math.log(Math.PI / Math.abs(Math.sin(Math.PI * x))) - lnGamma(1 - x);
+    x -= 1;
+    var s = LANCZOS[0], t = x + 7.5;
+    for (var i = 1; i < 9; i++) s += LANCZOS[i] / (x + i);
+    return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(s);
+  }
+  function gammaOf(x) {
+    if (x === Math.floor(x)) {
+      if (x <= 0) throw err("#NUM!", "the gamma function has no value at 0 or a negative whole number");
+      if (x <= 171) { var f = 1; for (var i = 2; i < x; i++) f *= i; return f; }
+    }
+    if (x > 171.6) throw err("#NUM!", "too large");
+    var g = x < 0.5 ? Math.PI / (Math.sin(Math.PI * x) * Math.exp(lnGamma(1 - x))) : Math.exp(lnGamma(x));
+    return Number(g.toPrecision(15));
+  }
+  F.BASE = function (a) {
+    var n = whole(a[0]), radix = whole(a[1]), len = a.length > 2 && a[2] != null ? whole(a[2]) : 0;
+    if (n < 0 || n >= 9007199254740992 || radix < 2 || radix > 36 || len < 0 || len > 255) throw err("#NUM!", "BASE(a whole number from 0, a base from 2 to 36, [at least this many digits])");
+    var s = n.toString(radix).toUpperCase();
+    while (s.length < len) s = "0" + s;
+    return s;
+  };
+  F.DECIMAL = function (a) {
+    var s = T(a[0]).replace(/^\s+|\s+$/g, ""), radix = whole(a[1]), n = 0;
+    if (radix < 2 || radix > 36 || s.length > 255) throw err("#NUM!", "DECIMAL(text, a base from 2 to 36)");
+    if (radix === 16) s = s.replace(/^0x/i, "").replace(/h$/i, "");
+    if (radix === 2) s = s.replace(/b$/i, "");
+    for (var i = 0; i < s.length; i++) {
+      var d = parseInt(s.charAt(i), 36);
+      if (isNaN(d) || d >= radix) throw err("#NUM!", "\u201c" + s.charAt(i) + "\u201d is not a digit in base " + radix);
+      n = n * radix + d;
+    }
+    return n;
+  };
+  F.GAMMALN = function (a) { var x = N(a[0]); if (x <= 0) throw err("#NUM!", "GAMMALN of a number above 0"); return Number(lnGamma(x).toPrecision(15)); };
+  F["GAMMALN.PRECISE"] = F.GAMMALN;
+  F.GAMMAFN = function (a) { return gammaOf(N(a[0])); };
+  // ERROR.TYPE(value): 1 #NULL!, 2 #DIV/0!, 3 #VALUE!, 4 #REF!, 5 #NAME?, 6 #NUM!, 7 #N/A; a value with no error is #N/A
+  F["ERROR.TYPE"] = function (a) {
+    var x = a[0], code = x && x.lazyErr ? (x.lazyErr.code || "#VALUE!") : typeof x === "string" && isErr(x) ? x : null;
+    var n = { "#NULL!": 1, "#DIV/0!": 2, "#VALUE!": 3, "#REF!": 4, "#NAME?": 5, "#NUM!": 6, "#N/A": 7 }[code];
+    if (!code) throw err("#N/A", "ERROR.TYPE of a value that is not an error");
+    return n || 3;
+  };
+  if (L.formula.LAZY) L.formula.LAZY["ERROR.TYPE"] = 1;
+  // (1.24.28, the first Excel review) Excel 365's UNIQUE, SORT, FILTER and SEQUENCE: their answer is a list, which
+  // another function takes whole (=COUNTA(UNIQUE(A2:A9)), =SUM(FILTER(B2:B9,A2:A9="x"))); a cell whose formula gives
+  // one shows its first value (Sheets does not spill one into the cells below; an Excel file keeps the values Excel
+  // put there, and Save .xlsx writes the formula so that Excel spills it again)
+  var asList = L.formula.list, grid = H.grid, truthy = H.truthy;
+  function calc(msg) { return err("#CALC!", msg); }
+  function cellKey(v) { return v == null ? "\u0000" : typeof v === "number" ? "n" + Number(v.toPrecision(15)) : "s" + String(v).toLowerCase(); }
+  function rank(v) { return v == null ? 0 : typeof v === "number" ? 1 : isErr(v) ? 4 : 2; }
+  function cmpCell(a, b) {
+    var ra = rank(a), rb = rank(b);
+    if (a == null) a = 0;
+    if (b == null) b = 0;
+    if (ra <= 1 && rb <= 1) return a - b;
+    if (ra !== rb) return (ra || 1) - (rb || 1);
+    var x = String(a).toLowerCase(), y = String(b).toLowerCase();
+    return x < y ? -1 : x > y ? 1 : 0;
+  }
+  function turn(g) { var out = [], r, c; for (c = 0; c < g[0].length; c++) { out.push([]); for (r = 0; r < g.length; r++) out[c].push(g[r][c]); } return out; }
+  if (asList) {
+    F.UNIQUE = function (a) {
+      var g = grid(a[0]), byCol = a.length > 1 && a[1] != null && truthy(a[1]), once = a.length > 2 && a[2] != null && truthy(a[2]);
+      var items = byCol ? turn(g) : g, seen = {}, order = [];
+      items.forEach(function (it) { var k = it.map(cellKey).join("\u0001"); if (!seen[k]) { seen[k] = { it: it, n: 0 }; order.push(k); } seen[k].n++; });
+      var out = order.filter(function (k) { return !once || seen[k].n === 1; }).map(function (k) { return seen[k].it.slice(); });
+      if (!out.length) throw calc("UNIQUE found nothing");
+      return asList(byCol ? turn(out) : out);
+    };
+    F.SORT = function (a) {
+      var g = grid(a[0]), at = a.length > 1 && a[1] != null ? Math.floor(N(a[1])) : 1, dir = a.length > 2 && a[2] != null ? N(a[2]) : 1, byCol = a.length > 3 && a[3] != null && truthy(a[3]);
+      var items = byCol ? turn(g) : g;
+      if (at < 1 || at > items[0].length || (dir !== 1 && dir !== -1)) throw err("#VALUE!", "SORT(range, [by which column], [1 up or -1 down], [by columns])");
+      var out = items.map(function (it, i) { return { it: it.slice(), i: i }; }).sort(function (x, y) { return dir * cmpCell(x.it[at - 1], y.it[at - 1]) || x.i - y.i; }).map(function (o) { return o.it; });
+      return asList(byCol ? turn(out) : out);
+    };
+    F.FILTER = function (a) {
+      var g = grid(a[0]), inc = grid(a[1]), out = [];
+      if (inc.length === g.length && inc[0].length === 1) g.forEach(function (row, r) { if (inc[r][0] != null && truthy(inc[r][0])) out.push(row.slice()); });
+      else if (inc.length === 1 && inc[0].length === g[0].length) {
+        var keep = inc[0].map(function (v) { return v != null && truthy(v); });
+        if (keep.some(function (k) { return k; })) out = g.map(function (row) { return row.filter(function (v, c) { return keep[c]; }); });
+      } else throw err("#VALUE!", "FILTER: the test is not as tall or as wide as the range");
+      if (!out.length) { if (a.length > 2) return a[2]; throw calc("FILTER found nothing"); }
+      return asList(out);
+    };
+    F.SEQUENCE = function (a) {
+      var rows = Math.floor(N(a[0])), cols = a.length > 1 && a[1] != null ? Math.floor(N(a[1])) : 1, start = a.length > 2 && a[2] != null ? N(a[2]) : 1, step = a.length > 3 && a[3] != null ? N(a[3]) : 1, out = [];
+      if (rows < 1 || cols < 1 || rows * cols > 100000) throw calc("SEQUENCE needs at least one row and column");
+      for (var r = 0; r < rows; r++) { var row = []; for (var c = 0; c < cols; c++) row.push(start + step * (r * cols + c)); out.push(row); }
+      return asList(out);
+    };
+  }
   F["PERCENTRANK.INC"] = F.PERCENTRANK; F.BINOMDIST = F["BINOM.DIST"];
-  H.registerAll(F, "OFFSET 3 5, INDIRECT 1 2, ADDRESS 2 5, ISFORMULA 1 1, AGGREGATE 3 *, NUMBERVALUE 1 3, RANK.AVG 2 3, PERCENTRANK 2 3, " +
+  H.registerAll(F, "BASE 2 3, DECIMAL 2 2, GAMMALN 1 1, GAMMALN.PRECISE 1 1, GAMMAFN 1 1, ERROR.TYPE 1 1, UNIQUE 1 3, SORT 1 4, FILTER 2 3, SEQUENCE 1 4, OFFSET 3 5, INDIRECT 1 2, ADDRESS 2 5, ISFORMULA 1 1, AGGREGATE 3 *, NUMBERVALUE 1 3, RANK.AVG 2 3, PERCENTRANK 2 3, " +
     "PERCENTRANK.INC 2 3, PERCENTILE.EXC 2 2, QUARTILE.EXC 2 2, AVERAGEA 1 *, MAXA 1 *, MINA 1 *, FREQUENCY 2 2, BINOM.DIST 4 4, BINOMDIST 4 4, " +
     "ROMAN 1 2, ARABIC 1 1, DEC2BIN 1 2, DEC2OCT 1 2, DEC2HEX 1 2, BIN2DEC 1 1, OCT2DEC 1 1, HEX2DEC 1 1, HYPERLINK 1 2, MIRR 3 3, SYD 4 4, DB 4 5",
     "AGGREGATE ISFORMULA");
@@ -37891,7 +38209,21 @@ Lantern.RFB = (function () {
     // goes into -- the corner where it began, but Ctrl+A and Enter inside a range leave it where it is
     var anchor = api.selected(), focus = anchor, active = anchor, extending = false, rangeMode = false, moving = false;
     var bar = host.querySelector(".fbar"), nameEl = host.querySelector(".cellname");
-    function rect() { var a = parse(anchor), b = parse(focus); return { c0: Math.min(a.c, b.c), r0: Math.min(a.r, b.r), c1: Math.max(a.c, b.c), r1: Math.max(a.r, b.r) }; }
+    function rect() { var a = parse(anchor), b = parse(focus); return grow({ c0: Math.min(a.c, b.c), r0: Math.min(a.r, b.r), c1: Math.max(a.c, b.c), r1: Math.max(a.r, b.r) }); }
+    // (1.24.28, the first Excel review) a range that takes in part of a merged cell takes in all of it, as in Excel:
+    // Shift+Right from B1 beside the merged C1:E1 selects B1:E1, and a merged cell copied is copied whole
+    function boxOf(m) { var a = String(m).split(":"), p = parse(a[0]), q = parse(a[1] || a[0]); return p && q ? { c0: Math.min(p.c, q.c), r0: Math.min(p.r, q.r), c1: Math.max(p.c, q.c), r1: Math.max(p.r, q.r) } : null; }
+    function grow(R) {
+      var list = (doc.merges || []).map(boxOf).filter(function (b) { return b; }), more = true;
+      while (more) {
+        more = false;
+        list.forEach(function (b) {
+          var meets = b.c0 <= R.c1 && b.c1 >= R.c0 && b.r0 <= R.r1 && b.r1 >= R.r0, inside = b.c0 >= R.c0 && b.c1 <= R.c1 && b.r0 >= R.r0 && b.r1 <= R.r1;
+          if (meets && !inside) { R.c0 = Math.min(R.c0, b.c0); R.c1 = Math.max(R.c1, b.c1); R.r0 = Math.min(R.r0, b.r0); R.r1 = Math.max(R.r1, b.r1); more = true; }
+        });
+      }
+      return R;
+    }
     function isRange() { return anchor !== focus; }
     var painted = [];
     function paintRange() {
@@ -37908,7 +38240,11 @@ Lantern.RFB = (function () {
     api.onPaint(function () { paintRange(); });
     function extendTo(ref) {
       if (!tds()[ref]) return;
-      focus = ref; paintRange();
+      focus = ref;
+      // the moving end is the far corner of the range as merged cells widen it, so the next arrow goes on past them
+      var R = rect(), a = parse(anchor), fr = refOf(a.c <= R.c0 ? R.c1 : R.c0, a.r <= R.r0 ? R.r1 : R.r0);
+      if (tds()[fr]) focus = fr;
+      paintRange();
       if (tds()[ref].scrollIntoView) tds()[ref].scrollIntoView({ block: "nearest", inline: "nearest" });
     }
     // ---- undo and redo: the cells (and their looks, and the rows) as they were before each change -----------
@@ -37944,7 +38280,10 @@ Lantern.RFB = (function () {
       }
       // a cut moves the cells when they are pasted, as in Excel: until then nothing goes
       endCut();
-      clip = { text: toTSV(shown), raws: raws, fmts: fmts, r0: R.r0, c0: R.c0, h: R.r1 - R.r0 + 1, w: R.c1 - R.c0 + 1, cut: !!cut, doc: doc.id, id: String(Math.random()).slice(2) };
+      // (1.24.28) the merged cells inside what is copied go with it, as in Excel
+      var ms = (doc.merges || []).map(boxOf).filter(function (b) { return b && b.c0 >= R.c0 && b.c1 <= R.c1 && b.r0 >= R.r0 && b.r1 <= R.r1; })
+        .map(function (b) { return { c: b.c0 - R.c0, r: b.r0 - R.r0, w: b.c1 - b.c0, h: b.r1 - b.r0 }; });
+      clip = { text: toTSV(shown), raws: raws, fmts: fmts, merges: ms, r0: R.r0, c0: R.c0, h: R.r1 - R.r0 + 1, w: R.c1 - R.c0 + 1, cut: !!cut, doc: doc.id, id: String(Math.random()).slice(2) };
       if (cut) say("Cut: choose where it goes and paste. Typing anything else lets it be.");
       return clip.text;
     }
@@ -37989,6 +38328,11 @@ Lantern.RFB = (function () {
         if (raws[i] == null) delete doc.cells[to]; else doc.cells[to] = moved(raws[i], S, D, dr, dc);
         if (fmts[i]) { doc.fmt = doc.fmt || {}; doc.fmt[to] = fmts[i]; } else if (doc.fmt) delete doc.fmt[to];
       }
+      // merged cells cut go with the cells: off where they were, on where they land
+      if (clip.merges && clip.merges.length) {
+        doc.merges = (doc.merges || []).filter(function (m) { var b = boxOf(m); return !b || !((b.c0 >= S.c0 && b.c1 <= S.c1 && b.r0 >= S.r0 && b.r1 <= S.r1) || (b.c0 <= D.c1 && b.c1 >= D.c0 && b.r0 <= D.r1 && b.r1 >= D.r0)); });
+        clip.merges.forEach(function (m) { doc.merges.push(refOf(D.c0 + m.c, D.r0 + m.r) + ":" + refOf(D.c0 + m.c + m.w, D.r0 + m.r + m.h)); });
+      }
       clip = { text: clip.text, dead: true };
       anchor = active = refOf(R.c0, R.r0); focus = refOf(R.c0 + S.c1 - S.c0, R.r0 + S.r1 - S.r0);
       say("");
@@ -38020,6 +38364,15 @@ Lantern.RFB = (function () {
         if (own) v = shift(v, R.r0 + r - (clip.r0 + sr), R.c0 + c - (clip.c0 + sc));
         if (v == null || v === "") delete doc.cells[k]; else doc.cells[k] = String(v);
         if (own) { var f = clip.fmts[sr] && clip.fmts[sr][sc]; doc.fmt = doc.fmt || {}; if (f) doc.fmt[k] = JSON.parse(JSON.stringify(f)); else delete doc.fmt[k]; }
+      }
+      // merged cells copied are merged where they are pasted (each time a copy is repeated), and a merge that was
+      // there in their way is undone, as in Excel
+      if (own && clip.merges && clip.merges.length) {
+        var D = { c0: R.c0, r0: R.r0, c1: R.c0 + reps.w - 1, r1: R.r0 + reps.h - 1 };
+        doc.merges = (doc.merges || []).filter(function (m) { var b = boxOf(m); return !b || !(b.c0 <= D.c1 && b.c1 >= D.c0 && b.r0 <= D.r1 && b.r1 >= D.r0); });
+        for (var tr = 0; tr < reps.h; tr += h) for (var tc = 0; tc < reps.w; tc += w) clip.merges.forEach(function (m) {
+          if (tr + m.r + m.h < reps.h && tc + m.c + m.w < reps.w) doc.merges.push(refOf(R.c0 + tc + m.c, R.r0 + tr + m.r) + ":" + refOf(R.c0 + tc + m.c + m.w, R.r0 + tr + m.r + m.h));
+        });
       }
       anchor = active = refOf(R.c0, R.r0); focus = refOf(R.c0 + reps.w - 1, R.r0 + reps.h - 1);
       done();
@@ -38417,7 +38770,7 @@ Lantern.RFB = (function () {
     }];
   }
   (L.sheetEditHooks = L.sheetEditHooks || []).push(mount);
-  L.sheetFormat = { codes: CODES, shown: shown, decimals: decimals, typedCode: typedCode, dateCode: dateCode, carried: function (doc, raw) { return carried(doc, raw); } };
+  L.sheetFormat = { codes: CODES, shown: shown, decimals: decimals, typedCode: typedCode, dateCode: dateCode, carried: function (doc, raw, kind) { return carried(doc, raw, 0, kind); } };
 })();
 // ===========================================================================
 // MODULE: SHEET_FORMAT - END
@@ -38615,7 +38968,7 @@ Lantern.RFB = (function () {
         if (G.r1 <= G.r0) return S.say("Select the rows to sort, or a cell inside a table.");
         var head = hasHeader(doc, G, vals), keyCol = act0.c >= G.c0 && act0.c <= G.c1 ? act0.c : R.c0;
         S.snap();
-        if (sort(doc, G, keyCol, what === "za", head, vals) === false) { S.done(); return S.say("These rows have merged cells: unmerge them first (as in Excel), or sort the rows below them."); }
+        if (sort(doc, G, keyCol, what === "za", head, vals) === false) { S.done(); return S.say("These rows have merged cells, which a sort would tear apart (Excel will not sort them either): sort the rows below them."); }
         S.say("Sorted " + refOf(G.c0, G.r0 + (head ? 1 : 0)) + ":" + refOf(G.c1, G.r1) + " by column " + colName(keyCol) + (head ? ", the headings left on top" : "") + ".");
       }
       S.done();
@@ -45311,7 +45664,8 @@ Lantern.RFB = (function () {
 //          (Lantern.sheetDocs.compute, to compare with the values Excel
 //          saved) -- feature-detected
 // Exports: Lantern.xlsx = {read(bytes, fileName) -> {title, sheets: [{name,
-//          title, cells, fmt, widths, merges, freeze, rows}], notes},
+//          title, cells, fmt, widths, merges, freeze, rows, paper, arrays}],
+//          notes},
 //          BUILTIN (Excel's built-in number formats by id), shift(formula,
 //          rows, columns), isDateCode(code), colName(i), colNum(letters)}
 // ===========================================================================
@@ -45346,9 +45700,11 @@ Lantern.RFB = (function () {
   function colNum(s) { s = s.toUpperCase(); var n = 0; for (var i = 0; i < s.length; i++) n = n * 26 + s.charCodeAt(i) - 64; return n - 1; }
   X.colName = colName; X.colNum = colNum;
   function at(ref) { var m = /^\$?([A-Za-z]{1,3})\$?([0-9]{1,7})$/.exec(ref); return m ? { c: colNum(m[1]), r: +m[2] - 1 } : null; }
-  // a date's number format: a day, a month or a year in it (outside quotes and [colours]); a time alone is not
+  // a date's number format: a day, a month or a year in it (outside quotes and [colours]); a time alone is not, nor
+  // (1.24.28, the first Excel review) a length of time, [h]:mm or [mm]:ss -- a 36-hour shift in an old Mac's
+  // workbook is 36 hours, not a day in 1904
   function isDateCode(code) {
-    var t = String(code || "").replace(/\x22[^\x22]*\x22/g, "").replace(/\\./g, "").replace(/\x5b[^\x5d]*\x5d/g, "").split(";")[0];
+    var t = String(code || "").replace(/\x22[^\x22]*\x22/g, "").replace(/\\./g, "").replace(/\x5b(h+|m+|s+)\x5d/gi, "h").replace(/\x5b[^\x5d]*\x5d/g, "").split(";")[0];
     return /[dy]/i.test(t) || /m{3,}/i.test(t) || (/m/i.test(t) && !/[hs]/i.test(t) && !/[0#?]/.test(t));
   }
   X.isDateCode = isDateCode;
@@ -45472,6 +45828,17 @@ Lantern.RFB = (function () {
 
   // ---- the parts of the workbook
   X.read = function (bytes, fileName) {
+    // (1.24.28) a workbook locked with a password is not a zip but an older Office file holding an EncryptedPackage
+    if (bytes && bytes.length > 512 && bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0) {
+      var key = "EncryptedPackage", hit = false;
+      for (var bi = 0; bi < bytes.length - 32 && !hit; bi++) {
+        if (bytes[bi] !== 69 || bytes[bi + 1] !== 0) continue;
+        hit = true;
+        for (var bj = 0; bj < key.length; bj++) if (bytes[bi + 2 * bj] !== key.charCodeAt(bj) || bytes[bi + 2 * bj + 1] !== 0) { hit = false; break; }
+      }
+      if (hit) throw new Error("this workbook is locked with a password; open it in Excel or LibreOffice, save a copy without the password (File, Info, or Save As), and open that");
+      throw new Error("this is an older Excel file (.xls), not an .xlsx; open it in Excel or LibreOffice and save it as an Excel workbook (.xlsx) first");
+    }
     var z = L.zip.read(bytes), notes = [], said = {};
     function note(t) { if (!said[t]) { said[t] = 1; notes.push(t); } }
     var book = null;
@@ -45497,6 +45864,9 @@ Lantern.RFB = (function () {
     var wb = parse(z.text(book), "workbook"), wrels = rels(book), styles = null, strings = [], rich = false;
     if (/\.xlsm$/i.test(String(fileName || "")) || z.has("xl\x2FvbaProject.bin")) note("The workbook\u2019s macros are not kept: Lantern does not run them");
     var date1904 = yes(attr(kid(wb, "workbookPr"), "date1904"));
+    // a file that asks to be worked out again when it opens (a Python report's, or Lantern's own) may have saved 0 for a
+    // value it did not work out: XlsxWriter writes 0 beside each formula given no value, so a 0 there is not compared
+    var recalc = yes(attr(kid(wb, "calcPr"), "fullCalcOnLoad"));
     for (var id in wrels) {
       var t = wrels[id].type;
       if (/\x2Fstyles$/.test(t)) styles = wrels[id].target;
@@ -45542,6 +45912,23 @@ Lantern.RFB = (function () {
       if (!nm || /^_xlnm\./i.test(nm) || /^_xlfn\./i.test(nm)) return;
       names[nm.toUpperCase()] = { name: nm, ref: n.textContent.replace(/^\s*=?\s*|\s+$/g, ""), sheet: attr(n, "localSheetId") };
     });
+    // (1.24.28, the first Excel review) Excel's tables (Insert, Table): Orders[Qty] in a formula is the cells of the
+    // column Qty, Orders[@Qty] that cell in the formula's own row -- written so here, as a name is
+    var TABLES = {}, books = [];
+    kids(kid(wb, "sheets"), "sheet").forEach(function (sh, si) {
+      var r = wrels[rid(sh) || ""];
+      if (!r || !z.has(r.target)) return;
+      var sr = rels(r.target);
+      for (var k in sr) if (/\x2Ftable$/.test(sr[k].type) && z.has(sr[k].target)) {
+        try {
+          var t = parse(z.text(sr[k].target), "table"), ref = String(attr(t, "ref") || "").split(":"), a = at(ref[0] || ""), b = at(ref[1] || ref[0] || "");
+          if (!a || !b) continue;
+          var hr = attr(t, "headerRowCount"), tr = attr(t, "totalsRowCount");
+          TABLES[String(attr(t, "displayName") || attr(t, "name") || "").toUpperCase()] = { name: attr(t, "displayName") || attr(t, "name"), sheet: attr(sh, "name") || "", c0: Math.min(a.c, b.c), r0: Math.min(a.r, b.r), c1: Math.max(a.c, b.c), r1: Math.max(a.r, b.r),
+            head: hr == null ? 1 : +hr, tot: tr == null ? 0 : +tr, cols: kids(kid(t, "tableColumns"), "tableColumn").map(function (c) { return String(attr(c, "name") || ""); }) };
+        } catch (e) { /* a table that cannot be read leaves its names as they are */ }
+      }
+    });
     var list = kids(kid(wb, "sheets"), "sheet"), out = [], title = String(fileName || "Workbook").replace(/^.*[\\\x2F]/, "").replace(/\.(xlsx|xlsm|xltx|xltm)$/i, "") || "Workbook";
     list.forEach(function (sh, si) {
       var name = attr(sh, "name") || "Sheet" + (si + 1), r = wrels[rid(sh) || ""], where = list.length > 1 ? "\u201c" + name + "\u201d: " : "";
@@ -45551,16 +45938,40 @@ Lantern.RFB = (function () {
       var one = sheet(name, r.target, si, function (t) { note(where + t); });
       if (/^(hidden|veryHidden)$/.test(attr(sh, "state") || "")) note("\u201c" + name + "\u201d was hidden in Excel; it is opened like the others");
       one.title = list.length > 1 ? title + " \u2014 " + name : title;
+      one.where = where;
       out.push(one);
     });
     if (!out.length) throw new Error("this workbook has no worksheet Lantern can open");
-    if (out.length > 1) notes.unshift("Each of the workbook\u2019s " + out.length + " sheets is a sheet of its own here (in the list of sheets); formulas that use another sheet show an error here and are kept as written");
+    if (out.length > 1) notes.unshift("Each of the workbook\u2019s " + out.length + " sheets is a sheet of its own here (in the list of sheets); a formula that uses another sheet (Rates!B2) is worked out from it, and Save .xlsx saves the sheets together again");
+    // what Lantern works out, beside what Excel saved (the workbook's other sheets used as Excel uses them)
+    var LS = L.sheetDocs;
+    if (LS && LS.compute) {
+      var bookMap = {};
+      out.forEach(function (o) { bookMap[o.name] = o.cells; });
+      out.forEach(function (o) {
+        var cached = o.cached, got = {}, diff = [];
+        if (!Object.keys(cached).length) return;
+        try { got = LS.compute(o.cells, bookMap, o.name); } catch (e) { got = {}; }
+        Object.keys(cached).forEach(function (ref) {
+          if (calls(o.cells[ref]).some(function (fn) { return VOLATILE[fn]; })) return;
+          var want = cached[ref], have = got[ref], same;
+          if (recalc && want.n === 0) return;
+          if (want.n != null) same = typeof have === "number" && (Math.abs(have - want.n) <= 1e-9 * Math.max(1, Math.abs(want.n)));
+          else if (want.b != null) same = have === (want.b ? 1 : 0) || have === want.b;
+          else if (want.e != null) same = have === want.e;
+          else same = (have == null ? "" : String(have)) === want.s;
+          if (!same) diff.push(ref + " (Excel " + show(want) + ", here " + (have == null || have === "" ? "empty" : String(have)) + ")");
+        });
+        if (diff.length) note(o.where + "Lantern works out " + diff.length + " formula" + (diff.length > 1 ? "s" : "") + " differently from what Excel saved: " + diff.slice(0, 6).join(", ") + (diff.length > 6 ? " and " + (diff.length - 6) + " more" : ""));
+      });
+    }
+    out.forEach(function (o) { delete o.cached; delete o.where; });
     if (rich) note("Bold or coloured words inside a cell\u2019s text are kept as the words alone");
     return { title: title, sheets: out, notes: notes };
 
     function sheet(name, path, index, note) {
       var ws = parse(z.text(path), "sheet \u201c" + name + "\u201d"), srels = rels(path);
-      var cells = {}, fmt = {}, widths = {}, merges = [], freeze = 0, used = 0, shared = {}, cached = {}, look = false, wrap = false, cut = { c: 0, r: 0 }, hid = false;
+      var cells = {}, fmt = {}, widths = {}, merges = [], freeze = 0, used = 0, shared = {}, cached = {}, look = false, wrap = false, cut = { c: 0, r: 0 }, hid = false, arrays = {};
       var view = kid(kid(ws, "sheetViews"), "sheetView"), pane = kid(view, "pane");
       if (pane && /^frozen/.test(attr(pane, "state") || "")) {
         var ys = +(attr(pane, "ySplit") || 0), xs = +(attr(pane, "xSplit") || 0);
@@ -45585,16 +45996,26 @@ Lantern.RFB = (function () {
           var p = attr(ce, "r") ? at(attr(ce, "r")) : { c: c, r: r - 1 };
           if (!p) return;
           c = p.c + 1;
-          var s = +(attr(ce, "s") || 0), t = attr(ce, "t") || "n", f = kid(ce, "f"), v = kid(ce, "v"), x = S.xf[s] || null, raw = null, fx = null;
+          var s = +(attr(ce, "s") || 0), t = attr(ce, "t") || "n", f = kid(ce, "f"), v = kid(ce, "v"), x = S.xf[s] || null, raw = null, fx = null, here = null;
           if (f) {
             var ft = attr(f, "t") || "normal", txt = f.textContent;
             if (ft === "shared") {
               var si = attr(f, "si");
               if (/\S/.test(txt)) shared[si] = { f: txt, c: p.c, r: p.r };
               else txt = shared[si] ? shift(shared[si].f, p.r - shared[si].r, p.c - shared[si].c) : "";
-            } else if (ft === "array" && attr(f, "ref") && attr(f, "ref").indexOf(":") > 0) note("An array formula over several cells (" + attr(f, "ref") + ") is kept in its first cell; the others keep the values Excel saved");
+            } else if (ft === "array") {
+              // (1.24.28, the first Excel review) an array formula ({=SUM(B2:B5*C2:C5)}) is saved as one again: Excel
+              // works it out cell by cell only so
+              var aref = String(attr(f, "ref") || "").toUpperCase(), aa = aref.split(":"), a0 = at(aa[0] || ""), a1 = at(aa[1] || aa[0] || "");
+              // Excel 365's spilling formula (=UNIQUE(A2:A9)) is an array formula with cell metadata (cm)
+              var dyn = attr(ce, "cm") != null;
+              if (a0 && a1 && a0.c === p.c && a0.r === p.r && a1.c < MAXC && a1.r < MAXR) arrays[colName(p.c) + (p.r + 1)] = { ref: aref.indexOf(":") > 0 ? aref : colName(p.c) + (p.r + 1), dyn: dyn ? 1 : 0 };
+              if (aref.indexOf(":") > 0) note(dyn ? "A formula that spills into the cells below or beside it (" + aref + ") shows its first value here; the others keep the values Excel put there, and Save .xlsx writes it so that Excel spills it again" :
+                "An array formula over several cells (" + aref + ") is kept in its first cell; the others keep the values Excel saved, and Save .xlsx makes it an array formula over them again");
+            }
             else if (ft === "dataTable") { note("A what-if data table (" + (attr(f, "ref") || "") + ") keeps the values Excel saved, not its formula"); txt = ""; }
             if (/\S/.test(txt)) fx = txt;
+            here = p;
           }
           if (p.c >= MAXC || p.r >= MAXR) {
             if (fx || (v && v.textContent !== "") || kid(ce, "is")) { if (p.c >= MAXC) cut.c++; else cut.r++; }
@@ -45613,7 +46034,7 @@ Lantern.RFB = (function () {
           var code = x ? codeOf(x.nf) : "";
           if (val && val.n != null && date1904 && isDateCode(code)) val.n += 1462;
           if (fx) {
-            raw = "=" + formula(fx, name, index, note);
+            raw = "=" + formula(fx, name, index, note, here);
             if (val) cached[ref] = val;
           } else if (val) raw = val.s != null ? text(val.s) : val.b != null ? (val.b ? "TRUE" : "FALSE") : val.e != null ? val.e : num(val.n);
           if (raw != null && raw !== "") { cells[ref] = raw; used = Math.max(used, p.r + 1); }
@@ -45634,13 +46055,16 @@ Lantern.RFB = (function () {
           else if (fx) fmt[ref] = { nf: "General" };
         });
       });
-      // a number Lantern would read from the text, or text that starts like a formula, stays text ('0123)
+      // a number Lantern would read from the text, or text that starts like a formula, stays text ('0123); (1.24.28,
+      // the first Excel review) so does text Sheets would read as a date, a time or a fraction (2026-11-17, 3:30, 1 1/2):
+      // Excel's COUNT of it is 0
       function text(s) {
-        if (/^[=\x27]/.test(s) || /^\s*[+-]?\s*[\$\u20ac\u00a3]?\s*[+-]?(\d{1,3}(,\d{3})+(\.\d*)?|\d+\.?\d*([eE][+-]?\d+)?|\.\d+([eE][+-]?\d+)?)\s*%?\s*$/.test(s) ||
+        if (/^[=\x27]/.test(s) || (L.formula && L.formula.textNum && L.formula.textNum(s, true) !== null) || /^\s*[+-]?\s*[\$\u20ac\u00a3]?\s*[+-]?(\d{1,3}(,\d{3})+(\.\d*)?|\d+\.?\d*([eE][+-]?\d+)?|\.\d+([eE][+-]?\d+)?)\s*%?\s*$/.test(s) ||
           /^\s*(TRUE|FALSE)\s*$/i.test(s) || /^#(NULL!|DIV\x2F0!|VALUE!|REF!|NAME\?|NUM!|N\x2FA|ERR|CYCLE)$/.test(s)) return "\x27" + s;
         return s;
       }
-      function num(n) { return String(+n) === "-0" ? "0" : String(+n); }
+      // a number as Excel shows it, to 15 digits (0.30000000000000004 is 0.3)
+      function num(n) { var y = Number((+n).toPrecision(15)); return String(y) === "-0" ? "0" : String(y); }
       kids(kid(ws, "mergeCells"), "mergeCell").forEach(function (m) {
         var rr = String(attr(m, "ref") || "").split(":"), a = at(rr[0] || ""), b = at(rr[1] || rr[0] || "");
         if (!a || !b) return;
@@ -45652,29 +46076,26 @@ Lantern.RFB = (function () {
       if (cut.r) note(cut.r + " cell" + (cut.r > 1 ? "s" : "") + " past row " + MAXR + " " + (cut.r > 1 ? "are" : "is") + " left out: a sheet has up to " + MAXR + " rows");
       if (look) note("Colours, borders, fonts and font sizes are not kept: Sheets keeps bold, italic, alignment, number formats, column widths and merged cells");
       if (wrap) note("Text wrapped in its cell shows on one line");
-      if (hid) note("Hidden rows and columns are shown");
-      var sm = { drawing: "Pictures, charts and shapes are not kept", comments: "Comments (notes) on cells are not kept", table: "Excel tables are kept as plain cells (their names in formulas show an error here)",
+      if (hid) note("Hidden rows and columns are shown" + (Object.keys(cells).some(function (k) { return /SUBTOTAL\s*\x28\s*1\d\d|AGGREGATE\s*\x28/i.test(cells[k]); }) ?
+        ": a SUBTOTAL or AGGREGATE that leaves hidden rows out in Excel counts them here, and in the file Save .xlsx makes" : ""));
+      if (kid(ws, "autoFilter")) note("The filter buttons on the headings (AutoFilter) are not kept; every row is shown");
+      // the comments' cells and words, so that they can be found again
+      var said0 = [];
+      for (var ck in srels) if (/\x2Fcomments$/.test(srels[ck].type) && z.has(srels[ck].target)) {
+        try {
+          kids(kid(parse(z.text(srels[ck].target), "comments"), "commentList"), "comment").forEach(function (c) {
+            var t = clean(kid(c, "text") ? kid(c, "text").textContent : "").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "");
+            said0.push((attr(c, "ref") || "") + " \u201c" + (t.length > 60 ? t.slice(0, 57) + "\u2026" : t) + "\u201d");
+          });
+        } catch (e) { /* a comments part that cannot be read is said below */ }
+      }
+      if (said0.length) note("Comments are not kept: " + said0.slice(0, 8).join("; ") + (said0.length > 8 ? "; and " + (said0.length - 8) + " more" : ""));
+      var sm = { drawing: "Pictures, charts and shapes are not kept", comments: "Comments (notes) on cells are not kept", table: "An Excel table is kept as plain cells; a formula that names its columns (Orders[Qty]) is written with the cells they stand for",
         pivotTable: "A pivot table keeps the values Excel saved, not its workings", hyperlink: "Links in cells are kept as their words" };
-      for (var k in srels) for (var key in sm) if (new RegExp("\x2F" + key + "$").test(srels[k].type)) note(sm[key]);
+      for (var k in srels) for (var key in sm) if (new RegExp("\x2F" + key + "$").test(srels[k].type) && !(key === "comments" && said0.length)) note(sm[key]);
       if (kid(ws, "conditionalFormatting")) note("Conditional formatting (cells coloured by their values) is not kept");
       if (kid(ws, "dataValidations")) note("Drop-down lists and the rules for what a cell may hold are not kept");
       if (kid(ws, "sheetProtection")) note("The sheet\u2019s protection is not kept: every cell can be changed here");
-      // what Lantern works out, beside what Excel saved
-      var LS = L.sheetDocs;
-      if (LS && LS.compute && Object.keys(cached).length) {
-        var got = {}, diff = [];
-        try { got = LS.compute(cells); } catch (e) { got = {}; }
-        Object.keys(cached).forEach(function (ref) {
-          if (calls(cells[ref]).some(function (fn) { return VOLATILE[fn]; })) return;
-          var want = cached[ref], have = got[ref], same;
-          if (want.n != null) same = typeof have === "number" && (Math.abs(have - want.n) <= 1e-9 * Math.max(1, Math.abs(want.n)));
-          else if (want.b != null) same = have === (want.b ? 1 : 0) || have === want.b;
-          else if (want.e != null) same = have === want.e;
-          else same = (have == null ? "" : String(have)) === want.s;
-          if (!same) diff.push(ref + " (Excel " + show(want) + ", here " + (have == null || have === "" ? "empty" : String(have)) + ")");
-        });
-        if (diff.length) note("Lantern works out " + diff.length + " formula" + (diff.length > 1 ? "s" : "") + " differently from what Excel saved: " + diff.slice(0, 6).join(", ") + (diff.length > 6 ? " and " + (diff.length - 6) + " more" : ""));
-      }
       // the paper (Sheets' Page setup): Letter, Legal, Tabloid, A4 or A3, upright or sideways, the margin and the scale
       var ps = kid(ws, "pageSetup"), pm = kid(ws, "pageMargins"), paper = null;
       if (ps || pm) {
@@ -45682,12 +46103,81 @@ Lantern.RFB = (function () {
         paper = { size: size, orient: attr(ps, "orientation") === "landscape" ? "l" : "p", margin: [0.25, 0.5, 0.75, 1].reduce(function (a, b) { return Math.abs(b - lm) < Math.abs(a - lm) ? b : a; }),
           scale: Math.max(25, Math.min(400, +(attr(ps, "scale") || 100) || 100)), show: (window.innerWidth || 1000) < 700 ? 0 : 1 };
       }
-      return { name: name, cells: cells, fmt: fmt, widths: widths, merges: merges, freeze: freeze, rows: Math.max(100, used), paper: paper };
+      return { name: name, cells: cells, fmt: fmt, widths: widths, merges: merges, freeze: freeze, rows: Math.max(100, used), paper: paper, arrays: arrays, cached: cached };
+    }
+    // structured(f, at, own, note): a table's names in a formula as the cells they stand for -- Orders[Qty] (the
+    // column's data), Orders[@Qty] or Orders[[#This Row],[Qty]] (the formula's own row), Orders[#All], [#Headers],
+    // [#Totals], [[Qty]:[Price]]; a table on another sheet with that sheet's name before it
+    function structured(f, at, own, note) {
+      if (!Object.keys(TABLES).length) return f;
+      return outside(f, function (s) {
+        var o = "", i = 0;
+        while (i < s.length) {
+          var m = /^([A-Za-z_\\][A-Za-z0-9_.\\]*)?\x5b/.exec(s.slice(i)), prev = i ? s.charAt(i - 1) : "";
+          if (m && !/[A-Za-z0-9_.$!\x5d]/.test(prev)) {
+            var d = 0, j = i + (m[1] ? m[1].length : 0);
+            for (; j < s.length; j++) { var ch = s.charAt(j); if (ch === "\x5b") d++; else if (ch === "\x5d") { d--; if (!d) break; } }
+            var tb = m[1] ? TABLES[m[1].toUpperCase()] : inTable(at);
+            var ref = j < s.length && tb ? tableRef(tb, s.slice(i + (m[1] ? m[1].length : 0) + 1, j), at, own) : null;
+            if (ref) { note("The names of the table " + tb.name + " in formulas are written as the cells they stand for (" + (m[1] || "") + s.slice(i + (m[1] ? m[1].length : 0), j + 1) + " as " + ref + ")"); o += ref; i = j + 1; continue; }
+          }
+          // a table's name alone is its data
+          var w = /^([A-Za-z_\\][A-Za-z0-9_.\\]*)(?![A-Za-z0-9_.\x28\x5b!])/.exec(s.slice(i));
+          if (w && !/[A-Za-z0-9_.$!\x5d]/.test(prev) && TABLES[w[1].toUpperCase()]) { var tr = tableRef(TABLES[w[1].toUpperCase()], "", at, own); if (tr) { o += tr; i += w[1].length; continue; } }
+          o += s.charAt(i); i++;
+        }
+        return o;
+      });
+    }
+    function inTable(at) { for (var k in TABLES) { var t = TABLES[k]; if (at.c >= t.c0 && at.c <= t.c1 && at.r >= t.r0 && at.r <= t.r1) return t; } return null; }
+    function tableRef(t, spec, at, own) {
+      var items = [], d = 0, cur = "", i, rows = { all: 0, data: 0, head: 0, tot: 0, row: 0 }, ca = t.c0, cb = t.c1;
+      spec = spec.replace(/^\s+|\s+$/g, "");
+      if (/^@/.test(spec)) { rows.row = 1; spec = spec.slice(1).replace(/^\x5b|\x5d$/g, ""); if (spec) items.push("[" + spec + "]"); }
+      else if (spec.charAt(0) !== "\x5b") { if (spec) items.push("[" + spec + "]"); }
+      else for (i = 0; i <= spec.length; i++) {
+        var ch = spec.charAt(i);
+        if (i === spec.length || (ch === "," && !d)) { if (cur.replace(/\s/g, "")) items.push(cur.replace(/^\s+|\s+$/g, "")); cur = ""; continue; }
+        if (ch === "\x5b") d++; else if (ch === "\x5d") d--;
+        cur += ch;
+      }
+      function colAt(nm) { nm = nm.replace(/^\x5b|\x5d$/g, "").replace(/\x27(.)/g, "$1").replace(/^\s+|\s+$/g, "").toUpperCase(); for (var c = 0; c < t.cols.length; c++) if (t.cols[c].toUpperCase() === nm) return t.c0 + c; return -1; }
+      for (i = 0; i < items.length; i++) {
+        var it = items[i], sp = /^\x5b?#(All|Data|Headers|Totals|This Row)\x5d?$/i.exec(it);
+        if (sp) { var k = sp[1].toLowerCase(); rows[k === "all" ? "all" : k === "data" ? "data" : k === "headers" ? "head" : k === "totals" ? "tot" : "row"] = 1; continue; }
+        var two = /^(\x5b[^\x5d]*\x5d)\s*:\s*(\x5b[^\x5d]*\x5d)$/.exec(it);
+        if (two) { ca = colAt(two[1]); cb = colAt(two[2]); }
+        else { ca = cb = colAt(it); }
+        if (ca < 0 || cb < 0) return null;
+      }
+      var top = t.r0 + t.head, bot = t.r1 - t.tot, r0, r1;
+      if (rows.row) { if (at.r < top || at.r > bot) return null; r0 = r1 = at.r; }
+      else if (rows.all) { r0 = t.r0; r1 = t.r1; }
+      else {
+        var want = [];
+        if (rows.head && t.head) want.push(t.r0);
+        if (rows.data || (!rows.head && !rows.tot)) want.push(top, bot);
+        if (rows.tot && t.tot) want.push(t.r1);
+        if (!want.length) return null;
+        r0 = Math.min.apply(null, want); r1 = Math.max.apply(null, want);
+      }
+      if (r1 < r0) return null;
+      var sheet = String(t.sheet).toUpperCase() === String(own).toUpperCase() ? "" : (/^[A-Za-z_][A-Za-z0-9_.]*$/.test(t.sheet) ? t.sheet : "\x27" + t.sheet.replace(/\x27/g, "\x27\x27") + "\x27") + "!";
+      var a = colName(Math.min(ca, cb)) + (r0 + 1), b = colName(Math.max(ca, cb)) + (r1 + 1);
+      return sheet + (a === b ? a : a + ":" + b);
     }
     function show(w) { return w.n != null ? String(+w.n.toPrecision(12)) : w.b != null ? (w.b ? "TRUE" : "FALSE") : w.e != null ? w.e : "\u201c" + w.s + "\u201d"; }
     // an Excel formula as Sheets reads it
-    function formula(f, own, index, note) {
+    function formula(f, own, index, note, here) {
+      // (1.24.28) Excel's GAMMA is the gamma function; Lantern's GAMMA is the Lorentz factor, so Excel's is GAMMAFN here
+      f = outside(f, function (s) {
+        return s.replace(/(^|[^A-Za-z0-9_.$])(?:_xlfn\.)?GAMMA(\s*\x28)/gi, function (m, pre, br) {
+          note("Excel\u2019s GAMMA (the gamma function) is written GAMMAFN here, since Lantern\u2019s GAMMA is the Lorentz factor of physics; Save .xlsx writes it as GAMMA again");
+          return pre + "GAMMAFN" + br;
+        });
+      });
       f = outside(f, function (s) { return s.replace(/_xlfn\.|_xlws\.|_xll\./gi, ""); });
+      if (here) f = structured(f, here, own, note);
       f = ownSheetOff(f, own);
       // names: a cell, a range or a number on this sheet
       f = outside(f, function (s) {
@@ -45751,89 +46241,116 @@ Lantern.RFB = (function () {
     "IMAGINARY IMARGUMENT IMCONJUGATE IMCOS IMDIV IMEXP IMLN IMLOG10 IMLOG2 IMPOWER IMPRODUCT IMREAL IMSIN IMSQRT IMSUB IMSUM INDEX INDIRECT INFO INT " +
     "INTERCEPT INTRATE IPMT IRR ISBLANK ISERR ISERROR ISEVEN ISLOGICAL ISNA ISNONTEXT ISNUMBER ISODD ISPMT ISREF ISTEXT JIS KURT LARGE LCM LEFT LEFTB " +
     "LEN LENB LINEST LN LOG LOG10 LOGEST LOGINV LOGNORMDIST LOOKUP LOWER MATCH MAX MAXA MDETERM MDURATION MEDIAN MID MIDB MIN MINA MINUTE MINVERSE " +
-    "MIRR MMULT MOD MODE MONTH MROUND MULTINOMIAL N NA NEGBINOMDIST NETWORKDAYS NOMINAL NORMDIST NORMINV NORMSDIST NORMSINV NOT NOW NPER NPV OCT2BIN " +
+    "MIRR MMULT MOD MODE MONTH MROUND MULTINOMIAL N NA NEGBINOMDIST NETWORKDAYS NETWORKDAYS.INTL NOMINAL NORMDIST NORMINV NORMSDIST NORMSINV NOT NOW NPER NPV OCT2BIN " +
     "OCT2DEC OCT2HEX ODD ODDFPRICE ODDFYIELD ODDLPRICE ODDLYIELD OFFSET OR PEARSON PERCENTILE PERCENTRANK PERMUT PHONETIC PI PMT POISSON POWER PPMT " +
     "PRICE PRICEDISC PRICEMAT PROB PRODUCT PROPER PV QUARTILE QUOTIENT RADIANS RAND RANDBETWEEN RANK RATE RECEIVED REPLACE REPLACEB REPT RIGHT RIGHTB " +
     "ROMAN ROUND ROUNDDOWN ROUNDUP ROW ROWS RSQ RTD SEARCH SEARCHB SECOND SERIESSUM SIGN SIN SINH SKEW SLN SLOPE SMALL SQRT SQRTPI STANDARDIZE STDEV " +
     "STDEVA STDEVP STDEVPA STEYX SUBSTITUTE SUBTOTAL SUM SUMIF SUMIFS SUMPRODUCT SUMSQ SUMX2MY2 SUMX2PY2 SUMXMY2 SYD T TAN TANH TBILLEQ TBILLPRICE " +
     "TBILLYIELD TDIST TEXT TIME TIMEVALUE TINV TODAY TRANSPOSE TREND TRIM TRIMMEAN TRUE TRUNC TTEST TYPE UPPER USDOLLAR VALUE VAR VARA VARP VARPA VDB " +
-    "VLOOKUP WEEKDAY WEEKNUM WEIBULL WORKDAY XIRR XNPV YEAR YEARFRAC YIELD YIELDDISC YIELDMAT ZTEST").split(" ");
+    "VLOOKUP WEEKDAY WEEKNUM WEIBULL WORKDAY WORKDAY.INTL XIRR XNPV YEAR YEARFRAC YIELD YIELDDISC YIELDMAT ZTEST").split(" ");
   var FUTURE = ("ACOT ACOTH AGGREGATE ARABIC BASE BETA.DIST BETA.INV BINOM.DIST BINOM.DIST.RANGE BINOM.INV BITAND BITLSHIFT BITOR BITRSHIFT BITXOR " +
     "CEILING.MATH CEILING.PRECISE CHISQ.DIST CHISQ.DIST.RT CHISQ.INV CHISQ.INV.RT CHISQ.TEST COMBINA CONCAT CONFIDENCE.NORM CONFIDENCE.T COT COTH " +
     "COVARIANCE.P COVARIANCE.S CSC CSCH DAYS DECIMAL ECMA.CEILING ERF.PRECISE ERFC.PRECISE EXPON.DIST F.DIST F.DIST.RT F.INV F.INV.RT F.TEST FILTERXML " +
     "FLOOR.MATH FLOOR.PRECISE FORECAST.ETS FORECAST.ETS.CONFINT FORECAST.ETS.SEASONALITY FORECAST.ETS.STAT FORECAST.LINEAR FORMULATEXT GAMMA GAMMA.DIST " +
     "GAMMA.INV GAMMALN.PRECISE GAUSS HYPGEOM.DIST IFNA IFS IMCOSH IMCOT IMCSC IMCSCH IMSEC IMSECH IMSINH IMTAN ISFORMULA ISO.CEILING ISOWEEKNUM " +
-    "LOGNORM.DIST LOGNORM.INV MAXIFS MINIFS MODE.MULT MODE.SNGL MUNIT NEGBINOM.DIST NETWORKDAYS.INTL NORM.DIST NORM.INV NORM.S.DIST NORM.S.INV " +
+    "LOGNORM.DIST LOGNORM.INV MAXIFS MINIFS MODE.MULT MODE.SNGL MUNIT NEGBINOM.DIST NORM.DIST NORM.INV NORM.S.DIST NORM.S.INV " +
     "NUMBERVALUE PDURATION PERCENTILE.EXC PERCENTILE.INC PERCENTRANK.EXC PERCENTRANK.INC PERMUTATIONA PHI POISSON.DIST QUARTILE.EXC QUARTILE.INC " +
     "QUERYSTRING RANK.AVG RANK.EQ RRI SEC SECH SHEET SHEETS SKEW.P STDEV.P STDEV.S SWITCH T.DIST T.DIST.2T T.DIST.RT T.INV T.INV.2T T.TEST TEXTJOIN " +
-    "UNICHAR UNICODE VAR.P VAR.S WEBSERVICE WEIBULL.DIST WORKDAY.INTL XOR Z.TEST ENCODEURL " +
+    "UNICHAR UNICODE VAR.P VAR.S WEBSERVICE WEIBULL.DIST XOR Z.TEST ENCODEURL " +
     "ANCHORARRAY BYCOL BYROW CHOOSECOLS CHOOSEROWS DROP EXPAND FILTER HSTACK ISOMITTED LAMBDA LET MAKEARRAY MAP RANDARRAY REDUCE SCAN SEQUENCE SINGLE " +
     "SORT SORTBY TAKE TEXTAFTER TEXTBEFORE TEXTSPLIT TOCOL TOROW UNIQUE VALUETOTEXT ARRAYTOTEXT VSTACK WRAPCOLS WRAPROWS XLOOKUP XMATCH").split(" ");
   var EXCEL = {}, PREFIX = {};
   CLASSIC.forEach(function (n) { EXCEL[n] = 1; });
   FUTURE.forEach(function (n) { EXCEL[n] = 1; PREFIX[n] = n === "FILTER" || n === "SORT" ? "_xlfn._xlws." : "_xlfn."; });
+  // (1.24.28, the first Excel review) a function Excel has under the same name that works out something else: a cell
+  // that uses it is saved as its value, and said (Lantern's GAMMA is the Lorentz factor; Excel's the gamma function).
+  // Lantern's GAMMAFN is Excel's GAMMA
+  var CLASH = { GAMMA: "Excel\u2019s GAMMA is the gamma function, Lantern\u2019s the Lorentz factor" };
+  // Excel 365's functions whose answer spills into the cells below or beside: a formula with one is written as Excel
+  // 365 writes it (an array formula with cell metadata, cm="1"), or Excel 2019 and before put @ before it
+  var DYN = {};
+  ("FILTER SORT SORTBY UNIQUE SEQUENCE RANDARRAY TEXTSPLIT VSTACK HSTACK TOCOL TOROW WRAPROWS WRAPCOLS TAKE DROP EXPAND CHOOSECOLS CHOOSEROWS " +
+    "MAKEARRAY MAP SCAN BYROW BYCOL").split(" ").forEach(function (n) { DYN[n] = 1; });
+  var RENAME = { GAMMAFN: "GAMMA" };
 
-  // excelFormula(f) -> {ok, f, why, lantern: [functions Excel does not have]}: the formula (no =) as it goes into the
-  // file. Excel asks to repair a workbook with a formula it cannot read, so each one is read here as Excel's grammar
-  // has it: values, references (on this sheet or another), names, functions, operators, ( ), { } and , in their places
+  // excelFormula(f) -> {ok, f, why, lantern: [functions Excel does not have], clash: [functions Excel has as another],
+  // sheets: [other sheets named], array (cells worked out one by one: an array formula), wide (a column past Z), table
+  // (an Excel table's name)}: the formula (no =) as it goes into the file. Excel asks to repair a workbook with a formula
+  // it cannot read, so each one is read here as Excel's grammar has it: values, references (on this sheet or another),
+  // names, functions, operators, ( ), { } and , in their places. Functions and cells are written in capitals, as Excel
+  // writes them
   var ERRLIT = /^#(NULL!|DIV\x2F0!|VALUE!|REF!|NAME\?|NUM!|N\x2FA|GETTING_DATA)/i;
+  var SHEETREF = /^(\x27(?:[^\x27]|\x27\x27)+\x27|[A-Za-z_\u00c0-\uffff][A-Za-z0-9_.\u00c0-\uffff]*(?::[A-Za-z_\u00c0-\uffff][A-Za-z0-9_.\u00c0-\uffff]*)?)!/;
   function excelFormula(f) {
     var s = String(f), i = 0, n = s.length, out = "", want = "v", stack = [], prevRef = false, sp = false, own = [], m;
-    function fail(why) { return { ok: false, f: s, why: why, lantern: own }; }
+    var info = { clash: [], sheets: [], array: false, wide: false, table: false, dynamic: false }, opBefore = false, range = false;
+    function fail(why) { return { ok: false, f: s, why: why, lantern: own, clash: info.clash, sheets: info.sheets }; }
+    function wideOf(ref) { (ref.match(/[A-Z]+(?=\$?\d|:|$)/gi) || []).forEach(function (c) { if (colNum(c.replace(/\$/g, "")) >= 26) info.wide = true; }); }
     while (i < n) {
       var ch = s.charAt(i), rest = s.slice(i);
       if (ch === " " || ch === "\n" || ch === "\r" || ch === "\t") { sp = true; out += ch; i++; continue; }
       if (want === "v") {
-        if (ch === "+" || ch === "-") { out += ch; i++; sp = false; continue; }
+        if (ch === "+" || ch === "-") { out += ch; i++; sp = false; opBefore = true; continue; }
         if (ch === "\x28") { stack.push("p"); out += ch; i++; sp = false; continue; }
         if (ch === "\x29" || ch === ",") {
           // an argument left out: IF(A1,,2) and NOW() are Excel's own
           var top = stack[stack.length - 1];
-          if (top === "f" && (ch === "," || /[\x28,]\s*$/.test(out))) { if (ch === "\x29") stack.pop(); out += ch; i++; want = ch === "," ? "v" : "o"; sp = false; prevRef = false; continue; }
+          if (top === "f" && (ch === "," || /[\x28,]\s*$/.test(out))) { if (ch === "\x29") stack.pop(); out += ch; i++; want = ch === "," ? "v" : "o"; sp = false; prevRef = false; opBefore = false; range = false; continue; }
           return fail("a value is missing before \u201c" + ch + "\u201d");
         }
         if (ch === "\x22") {
           var j = i + 1;
           for (; j < n; j++) { if (s.charAt(j) === "\x22") { if (s.charAt(j + 1) === "\x22") j++; else break; } }
           if (j >= n) return fail("a text in quotes is not closed");
-          out += s.slice(i, j + 1); i = j + 1; want = "o"; prevRef = false; sp = false; continue;
+          out += s.slice(i, j + 1); i = j + 1; want = "o"; prevRef = false; sp = false; opBefore = false; range = false; continue;
         }
         if (ch === "{") {
           var k = s.indexOf("}", i);
           if (k < 0 || !/^\{\s*(\x22([^\x22]|\x22\x22)*\x22|[-+]?[\d.]+([eE][-+]?\d+)?|TRUE|FALSE|#[A-Z\x2F0!?]+)(\s*[,;]\s*(\x22([^\x22]|\x22\x22)*\x22|[-+]?[\d.]+([eE][-+]?\d+)?|TRUE|FALSE|#[A-Z\x2F0!?]+))*\s*\}$/i.test(s.slice(i, k + 1))) return fail("a list in { } is not one Excel reads");
-          out += s.slice(i, k + 1); i = k + 1; want = "o"; prevRef = false; sp = false; continue;
+          if (opBefore) info.array = true;
+          out += s.slice(i, k + 1); i = k + 1; want = "o"; prevRef = false; sp = false; opBefore = false; range = true; continue;
         }
-        if ((m = ERRLIT.exec(rest))) { out += m[0]; i += m[0].length; want = "o"; prevRef = false; sp = false; continue; }
+        if ((m = ERRLIT.exec(rest))) { out += m[0].toUpperCase(); i += m[0].length; want = "o"; prevRef = false; sp = false; opBefore = false; range = false; continue; }
         if ((m = /^(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?/.exec(rest)) && !/^[0-9]+:[0-9]/.test(rest)) {
           if (/^[A-Za-z_\x28]/.test(rest.slice(m[0].length))) return fail("a number runs into \u201c" + rest.slice(m[0].length, m[0].length + 6) + "\u201d");
-          out += m[0]; i += m[0].length; want = "o"; prevRef = false; sp = false; continue;
+          out += m[0].toUpperCase(); i += m[0].length; want = "o"; prevRef = false; sp = false; opBefore = false; range = false; continue;
         }
-        // a sheet before a reference: Rates!B2, 'Tax 2026'!B2
+        // a sheet before a reference: Rates!B2, 'Tax 2026'!B2, Jan:Mar!B2 (the sheets from Jan to Mar)
         var sheet = "";
-        if ((m = /^(\x27(?:[^\x27]|\x27\x27)+\x27|[A-Za-z_\u00c0-\uffff][A-Za-z0-9_.\u00c0-\uffff]*)!/.exec(rest))) { sheet = m[0]; rest = rest.slice(sheet.length); }
+        if ((m = SHEETREF.exec(rest))) {
+          sheet = m[0]; rest = rest.slice(sheet.length);
+          var nm = m[1].charAt(0) === "\x27" ? m[1].slice(1, -1).replace(/\x27\x27/g, "\x27") : m[1];
+          nm.split(":").forEach(function (x) { if (x) info.sheets.push(x); });
+        }
         if ((m = /^\$?[A-Z]{1,3}\$?[0-9]{1,7}(:\$?[A-Z]{1,3}\$?[0-9]{1,7})?(?![A-Za-z0-9_.\x28\x5b])/i.exec(rest)) || (m = /^\$?[A-Z]{1,3}:\$?[A-Z]{1,3}(?![A-Za-z0-9_.\x28])/i.exec(rest)) ||
           (m = /^\$?[0-9]{1,7}:\$?[0-9]{1,7}(?![A-Za-z0-9_.\x28])/.exec(rest)) || (sheet && (m = /^#REF!/.exec(rest)))) {
-          if (sp && prevRef && want === "v") { /* a space between two references is Excel's intersection */ }
-          out += sheet + m[0]; i += sheet.length + m[0].length; want = "o"; prevRef = true; sp = false; continue;
+          var isRange = m[0].indexOf(":") > 0;
+          if (isRange && opBefore) info.array = true;
+          wideOf(m[0]);
+          out += sheet + m[0].toUpperCase(); i += sheet.length + m[0].length; want = "o"; prevRef = true; sp = false; opBefore = false; range = isRange; continue;
         }
         if (sheet) return fail("\u201c" + sheet + "\u201d is not followed by a cell");
         if ((m = /^([A-Za-z_\\][A-Za-z0-9_.\\]*)(\s*)/.exec(rest))) {
           var name = m[1], after = rest.charAt(m[0].length), up = name.toUpperCase();
           if (after === "\x28") {
-            if (!EXCEL[up]) own.push(up);
-            out += (PREFIX[up] && !/^_xl/i.test(name) ? PREFIX[up] : "") + name + "\x28"; i += m[0].length + 1; stack.push("f"); want = "v"; prevRef = false; sp = false; continue;
+            var xl = /^_xl/i.test(name), as = RENAME[up] || up;
+            if ((!EXCEL[as] && !xl) || CLASH[up]) own.push(up);
+            if (CLASH[up]) info.clash.push(up);
+            if (DYN[as]) info.dynamic = true;
+            out += (PREFIX[as] && !xl ? PREFIX[as] : "") + (xl ? name : as) + "\x28"; i += m[0].length + 1; stack.push("f"); want = "v"; prevRef = false; sp = false; opBefore = false; range = false; continue;
           }
-          if (after === "[") {   // a table's column: Table1[Price], Table1[[#This Row],[Price]]
+          if (after === "\x5b") {   // a table's column: Table1[Price], Table1[[#This Row],[Price]]
             var d = 0, e = i + m[1].length;
-            for (; e < n; e++) { if (s.charAt(e) === "[") d++; else if (s.charAt(e) === "]") { d--; if (!d) break; } }
+            for (; e < n; e++) { if (s.charAt(e) === "\x5b") d++; else if (s.charAt(e) === "\x5d") { d--; if (!d) break; } }
             if (d) return fail("a [ is not closed");
-            out += s.slice(i, e + 1); i = e + 1; want = "o"; prevRef = true; sp = false; continue;
+            info.table = true;
+            out += s.slice(i, e + 1); i = e + 1; want = "o"; prevRef = true; sp = false; opBefore = false; range = true; continue;
           }
           // Lantern's PI and E without brackets are Excel's PI() and EXP(1)
-          if (up === "PI") { out += "PI()"; i += name.length; want = "o"; prevRef = false; sp = false; continue; }
-          if (up === "E") { out += "EXP(1)"; i += name.length; want = "o"; prevRef = false; sp = false; continue; }
+          if (up === "PI") { out += "PI()"; i += name.length; want = "o"; prevRef = false; sp = false; opBefore = false; range = false; continue; }
+          if (up === "E") { out += "EXP(1)"; i += name.length; want = "o"; prevRef = false; sp = false; opBefore = false; range = false; continue; }
           if (up === "ANS") return fail("ANS is the calculator\u2019s last answer, not Excel\u2019s");
-          out += name; i += name.length; want = "o"; prevRef = false; sp = false; continue;
+          out += /^(TRUE|FALSE)$/.test(up) ? up : name; i += name.length; want = "o"; prevRef = false; sp = false; opBefore = false; range = false; continue;
         }
         return fail("\u201c" + ch + "\u201d is not where Excel expects a value");
       }
@@ -45843,21 +46360,24 @@ Lantern.RFB = (function () {
       if (ch === "%") {
         // % after a value is per cent; Lantern's 17%5 (a remainder) is not Excel's
         if (/^%\s*([0-9.A-Za-z_$\x28\x22\x27])/.test(rest)) return fail("% between two values is Lantern\u2019s remainder; Excel writes MOD(a, b)");
+        if (range) info.array = true;
         out += ch; i++; prevRef = false; continue;
       }
       if ((m = /^(<>|<=|>=|[-+*\x2F^&=<>:])/.exec(rest))) {
         if (m[0] === "=" && /^=[<>=]/.test(rest)) return fail("\u201c" + rest.slice(0, 2) + "\u201d is not one of Excel\u2019s signs");
         if (m[0] === ":" && !prevRef) return fail("\u201c:\u201d joins two cells");
-        out += m[0]; i += m[0].length; want = "v"; prevRef = false; continue;
+        // a range or a list beside a sign is worked out cell by cell: SUM(B2:B5*C2:C5) is an array formula in Excel
+        if (m[0] !== ":" && range) info.array = true;
+        out += m[0]; i += m[0].length; want = "v"; prevRef = false; opBefore = m[0] !== ":"; range = false; continue;
       }
-      if (ch === "\x29") { if (!stack.length) return fail("a \u201c)\u201d has no \u201c(\u201d"); stack.pop(); out += ch; i++; prevRef = false; continue; }
-      if (ch === ",") { if (stack[stack.length - 1] !== "f") return fail("a comma is outside a function\u2019s brackets"); out += ch; i++; want = "v"; prevRef = false; continue; }
-      if (ch === "!" ) return fail("\u201c!\u201d is not one of Excel\u2019s signs");
+      if (ch === "\x29") { if (!stack.length) return fail("a \u201c)\u201d has no \u201c(\u201d"); stack.pop(); out += ch; i++; prevRef = false; range = false; continue; }
+      if (ch === ",") { if (stack[stack.length - 1] !== "f") return fail("a comma is outside a function\u2019s brackets"); out += ch; i++; want = "v"; prevRef = false; opBefore = false; range = false; continue; }
+      if (ch === "!") return fail("\u201c!\u201d is not one of Excel\u2019s signs");
       return fail("\u201c" + rest.slice(0, 6) + "\u201d follows a value with no sign between");
     }
     if (stack.length) return fail("a \u201c(\u201d is not closed");
     if (want === "v") return fail("the formula ends with a sign and no value after it");
-    return { ok: true, f: out.replace(/^\s+|\s+$/g, ""), lantern: own };
+    return { ok: true, f: out.replace(/^\s+|\s+$/g, ""), lantern: own.filter(function (fn) { return !CLASH[fn]; }).concat(info.clash), clash: info.clash, sheets: info.sheets, array: info.array, wide: info.wide, table: info.table, dynamic: info.dynamic };
   }
   X.excelFormula = excelFormula;
 
@@ -45866,22 +46386,50 @@ Lantern.RFB = (function () {
     var s = String(t || "").replace(/[\x5b\x5d:*?\x2F\\\x00-\x1f]+/g, " ").replace(/\s+/g, " ").replace(/^[\s\x27]+|[\s\x27]+$/g, "").slice(0, 31).replace(/[\s\x27]+$/, "");
     return s && !/^history$/i.test(s) ? s : "Sheet1";
   }
-  // write(sheet, values, logical, carried) -> {bytes, notes}. sheet: {title, cells, fmt, widths, merges, freeze};
-  // values: what the sheet shows (Lantern.sheetDocs.compute); logical(raw): a TRUE or FALSE answer; carried(raw): the
-  // number format a formula takes from the cells it names
-  function write(doc, values, logical, carried) {
-    var cells = doc.cells || {}, fmt = doc.fmt || {}, notes = [], said = {}, k;
-    values = values || {};
+  // (1.24.28, the first Excel review) a date or a time typed in a cell (2026-11-17, 11/17/2026, 17 Nov 2026, 3:30 PM,
+  // 14:30) goes into the file as Excel keeps one, a number with a date's look, written as it was typed: Excel sorts
+  // and filters it as a date
+  function dateCodeOf(raw, serial) {
+    var t = String(raw).replace(/^\s+|\s+$/g, ""), m, code = "", rest = t;
+    var day = Math.floor(serial), dt = new Date(Math.round(((day < 60 ? day + 1 : day) - 25569) * 86400000)), mo = dt.getUTCMonth() + 1, dd = dt.getUTCDate();
+    function two(x, a, b) { return x.length > 1 ? a : b; }
+    if ((m = /^(\d{4})([-\x2F])(\d{1,2})[-\x2F](\d{1,2})/.exec(t))) code = "yyyy" + m[2] + two(m[3], "mm", "m") + m[2] + two(m[4], "dd", "d");
+    else if ((m = /^(\d{1,2})([\x2F.-])(\d{1,2})[\x2F.-](\d{4}|\d{2})/.exec(t))) {
+      var mf = +m[1] === mo && (+m[3] === dd || +m[1] !== dd), y = m[4].length > 2 ? "yyyy" : "yy";
+      code = mf ? two(m[1], "mm", "m") + m[2] + two(m[3], "dd", "d") + m[2] + y : two(m[1], "dd", "d") + m[2] + two(m[3], "mm", "m") + m[2] + y;
+    }
+    else if ((m = /^(\d{1,2})([ -])([A-Za-z]{3,9})\.?(,?[ -](\d{4}|\d{2}))?/.exec(t))) code = two(m[1], "dd", "d") + m[2] + (m[3].length > 3 ? "mmmm" : "mmm") + (m[4] ? m[4].replace(/\d+/, m[5].length > 2 ? "yyyy" : "yy") : "");
+    else if ((m = /^([A-Za-z]{3,9})\.?([ -])(\d{4})$/.exec(t))) code = (m[1].length > 3 ? "mmmm" : "mmm") + m[2] + "yyyy";
+    else if ((m = /^([A-Za-z]{3,9})\.? (\d{1,2})(st|nd|rd|th)?(,? (\d{4}))?(?=[ ,]|$)/.exec(t))) code = (m[1].length > 3 ? "mmmm" : "mmm") + " d" + (m[4] ? m[4].replace(/\d+/, "yyyy") : "");
+    if (m) rest = t.slice(m[0].length).replace(/^[\sT,]+/i, "");
+    var tm = /^(\d{1,4}):(\d{2})(:\d{2}(?:\.\d+)?)?\s*([ap]\.?m\.?)?$/i.exec(rest) || /^(\d{1,2})()()\s*([ap]\.?m\.?)$/i.exec(rest), tc = "";
+    if (tm) tc = (tm[4] ? "h" : !code && +tm[1] > 23 ? "[h]" : two(tm[1], "hh", "h")) + (tm[2] ? ":mm" : "") + (tm[3] ? ":ss" : "") + (tm[4] ? " AM\x2FPM" : "");
+    if (code && tc) return code + " " + tc;
+    return code || tc || (serial % 1 ? "yyyy-mm-dd hh:mm" : "yyyy-mm-dd");
+  }
+  // the look a formula's date or time takes when nothing else gives it one, as Sheets shows it: 2026-11-17, 14:30
+  function kindCode(kind, v) {
+    if (typeof v !== "number") return null;
+    if (kind === "clock") return Math.abs(v) >= 1 ? "[hh]:mm" : "hh:mm";
+    if (kind === "time") return "yyyy-mm-dd hh:mm";
+    if (kind === "date") return Math.abs(v - Math.round(v)) * 1440 >= 1 ? "yyyy-mm-dd hh:mm" : "yyyy-mm-dd";
+    return null;
+  }
+  var MAXTEXT = 32767;   // the most characters an Excel cell holds
+
+  // writeBook(items) -> {bytes, notes}: items [{doc: {title, cells, fmt, widths, merges, freeze, paper, arrays}, name,
+  // values (what the sheet shows: Lantern.sheetDocs.compute), logical(raw) (a TRUE or FALSE answer), carried(raw, kind)
+  // (the number format a formula takes from the cells it names), kind(ref) (a date, a time or neither), active}], a
+  // worksheet each, in that order: a workbook's sheets saved together again, so that Summary's =Jan!B6 finds Jan
+  function writeBook(items) {
+    var notes = [], said = {}, many = items.length > 1;
     function note(t) { if (!said[t]) { said[t] = 1; notes.push(t); } }
-    var keys = {}, rows = {}, last = { c: 0, r: 0 }, any = false;
-    for (k in cells) if (cells[k] != null && cells[k] !== "") keys[k] = 1;
-    for (k in fmt) if (fmt[k] && Object.keys(fmt[k]).length) keys[k] = 1;
-    Object.keys(keys).forEach(function (k) {
-      var p = /^([A-Z]{1,2})([0-9]{1,5})$/.exec(k);
-      if (!p) return;
-      var c = colNum(p[1]), r = +p[2];
-      (rows[r] = rows[r] || []).push({ c: c, k: k });
-      last.c = Math.max(last.c, c); last.r = Math.max(last.r, r); any = true;
+    var names = [], upNames = {}, active = 0;
+    items.forEach(function (it, i) {
+      var base = sheetName(it.name != null && it.name !== "" ? it.name : it.doc && it.doc.title), nm = base, k = 2;
+      while (upNames[nm.toUpperCase()]) { var suf = " (" + k++ + ")"; nm = base.slice(0, 31 - suf.length) + suf; }
+      upNames[nm.toUpperCase()] = 1; names.push(nm);
+      if (it.active) active = i;
     });
     // the looks: fonts (plain, bold, italic, both), number formats (Excel's own by number, others from 164), cell styles
     var xfs = ["<xf numFmtId=\x220\x22 fontId=\x220\x22 fillId=\x220\x22 borderId=\x220\x22 xfId=\x220\x22\x2F>"], xkey = { "0|0||": 0 }, custom = {}, codes = [], nextId = 164;
@@ -45893,11 +46441,8 @@ Lantern.RFB = (function () {
       if (custom[code] == null) { custom[code] = nextId++; codes.push("<numFmt numFmtId=\x22" + custom[code] + "\x22 formatCode=\x22" + x(code) + "\x22\x2F>"); }
       return custom[code];
     }
-    function styleOf(f, raw, isText) {
-      var font = (f && f.b ? 1 : 0) + (f && f.i ? 2 : 0), code = f && f.nf ? f.nf : null;
-      if (!code && typeof raw === "string" && raw.charAt(0) === "=" && carried) code = carried(raw);
-      if (!code && typeof raw === "string" && !isText && L.sheetFormat && L.sheetFormat.typedCode) code = L.sheetFormat.typedCode(raw);
-      var nf = nfId(code), al = f && /^(left|center|right)$/.test(f.al || "") ? f.al : "", q = typeof raw === "string" && raw.charAt(0) === "\x27" ? 1 : 0;
+    function styleOf(f, code, q) {
+      var font = (f && f.b ? 1 : 0) + (f && f.i ? 2 : 0), nf = nfId(code), al = f && /^(left|center|right)$/.test(f.al || "") ? f.al : "";
       var key = font + "|" + nf + "|" + al + "|" + (q ? "q" : "");
       if (xkey[key] == null) {
         xkey[key] = xfs.length;
@@ -45909,61 +46454,117 @@ Lantern.RFB = (function () {
     var sst = [], sidx = {}, sstCount = 0;
     function str(s) { sstCount++; var key = "~" + s; if (sidx[key] == null) { sidx[key] = sst.length; sst.push(s); } return sidx[key]; }
     function numText(v) { return Object.is ? (Object.is(v, -0) ? "0" : String(v).toUpperCase()) : String(v).toUpperCase(); }
-    var plainF = [], own = {}, textF = [];
-    function cell(k) {
-      var raw = cells[k], f = fmt[k], v = values[k], isText = false, body = "", t = "";
-      if (raw == null || raw === "") { var s0 = styleOf(f, raw, false); return "<c r=\x22" + k + "\x22" + (s0 ? " s=\x22" + s0 + "\x22" : "") + "\x2F>"; }
-      raw = String(raw);
-      if (raw.charAt(0) === "=" && raw.length > 1) {
-        var ef = excelFormula(raw.slice(1));
-        if (!ef.ok) {
-          textF.push(k + " (" + ef.why + ")");
-          t = "s"; body = "<v>" + str(raw) + "<\x2Fv>"; isText = true;
-        } else {
-          ef.lantern.forEach(function (fn) { (own[fn] = own[fn] || []).push(k); });
-          body = "<f>" + x(ef.f) + "<\x2Ff>";
-          if (typeof v === "number" && isFinite(v)) {
-            if (logical && logical(raw) && (v === 0 || v === 1)) { t = "b"; body += "<v>" + v + "<\x2Fv>"; }
-            else body += "<v>" + numText(v) + "<\x2Fv>";
-          } else if (typeof v === "string" && /^#/.test(v)) {
-            var e = ERRS[v] ? v : v === "#ERR" ? "#VALUE!" : null;
-            if (e) { t = "e"; body += "<v>" + x(e) + "<\x2Fv>"; }
-          } else if (typeof v === "string") { t = "str"; body += "<v>" + x(v) + "<\x2Fv>"; }
-          else if (typeof v === "boolean") { t = "b"; body += "<v>" + (v ? 1 : 0) + "<\x2Fv>"; }
+    var textF = [], valued = [], own = {}, wide = [], cut = [], dyn = false;
+    var sheetXmls = items.map(function (it, si) { return sheetXml(it, si); });
+    function sheetXml(it, si) {
+      var doc = it.doc || {}, cells = doc.cells || {}, fmt = doc.fmt || {}, values = it.values || {}, logical = it.logical, carried = it.carried, arrays = doc.arrays || {};
+      var keys = {}, rows = {}, last = { c: 0, r: 0 }, any = false, k;
+      function at(ref) { return many ? (/^[A-Za-z_][A-Za-z0-9_.]*$/.test(names[si]) ? names[si] : "\x27" + names[si].replace(/\x27/g, "\x27\x27") + "\x27") + "!" + ref : ref; }
+      function long(s, ref) { s = String(s); if (s.length <= MAXTEXT) return s; cut.push(at(ref)); return s.slice(0, MAXTEXT); }
+      for (k in cells) if (cells[k] != null && cells[k] !== "") keys[k] = 1;
+      for (k in fmt) if (fmt[k] && Object.keys(fmt[k]).length) keys[k] = 1;
+      Object.keys(keys).forEach(function (k) {
+        var p = /^([A-Z]{1,2})([0-9]{1,5})$/.exec(k);
+        if (!p) return;
+        var c = colNum(p[1]), r = +p[2];
+        (rows[r] = rows[r] || []).push({ c: c, k: k });
+        last.c = Math.max(last.c, c); last.r = Math.max(last.r, r); any = true;
+      });
+      // an array formula over several cells (D2:D5) is written so only when the others hold values, as in Excel's own
+      function arrayRef(k) {
+        var a = arrays[k];
+        if (a && typeof a === "object") a = a.ref;
+        if (!a) return null;
+        var q = /^([A-Z]{1,2})([0-9]{1,5}):([A-Z]{1,2})([0-9]{1,5})$/.exec(a);
+        if (!q) return k;
+        if (q[1] + q[2] !== k) return k;
+        for (var r = +q[2]; r <= +q[4]; r++) for (var c = colNum(q[1]); c <= colNum(q[3]); c++) {
+          var o = colName(c) + r, rv = cells[o];
+          if (o !== k && typeof rv === "string" && rv.charAt(0) === "=") return k;
         }
-      } else if (raw.charAt(0) === "\x27") { t = "s"; body = "<v>" + str(raw.slice(1)) + "<\x2Fv>"; isText = true; }
-      else if (/^\s*(TRUE|FALSE)\s*$/i.test(raw)) { t = "b"; body = "<v>" + (/TRUE/i.test(raw) ? 1 : 0) + "<\x2Fv>"; }
-      else if (typeof v === "number" && isFinite(v)) body = "<v>" + numText(v) + "<\x2Fv>";
-      else if (ERRS[raw.replace(/^\s+|\s+$/g, "")]) { t = "e"; body = "<v>" + x(raw.replace(/^\s+|\s+$/g, "")) + "<\x2Fv>"; }
-      else { t = "s"; body = "<v>" + str(raw) + "<\x2Fv>"; isText = true; }
-      var s = styleOf(f, raw, isText);
-      return "<c r=\x22" + k + "\x22" + (s ? " s=\x22" + s + "\x22" : "") + (t ? " t=\x22" + t + "\x22" : "") + ">" + body + "<\x2Fc>";
+        return a;
+      }
+      // a value as the file keeps it beside a formula (or alone)
+      function valueOf(v, raw, alone, ref) {
+        if (typeof v === "number" && isFinite(v)) return logical && logical(raw) && (v === 0 || v === 1) ? { t: "b", v: String(v) } : { t: "", v: numText(v) };
+        if (typeof v === "string" && /^#/.test(v)) { var e = ERRS[v] ? v : v === "#ERR" ? "#VALUE!" : null; return e ? { t: "e", v: x(e) } : { t: "", v: null }; }
+        if (typeof v === "string") return alone ? { t: "s", v: String(str(long(v, ref))) } : { t: "str", v: x(long(v, ref)) };
+        if (typeof v === "boolean") return { t: "b", v: v ? "1" : "0" };
+        return { t: "", v: null };
+      }
+      function cell(k) {
+        var raw = cells[k], f = fmt[k], v = values[k], body = "", t = "", code = f && f.nf ? f.nf : null, q = false, kind = null, spill = false;
+        if (raw == null || raw === "") { var s0 = styleOf(f, code, false); return "<c r=\x22" + k + "\x22" + (s0 ? " s=\x22" + s0 + "\x22" : "") + "\x2F>"; }
+        raw = String(raw);
+        if (raw.charAt(0) === "=" && raw.length > 1) {
+          var ef = excelFormula(raw.slice(1)), why = null;
+          if (ef.ok) {
+            var miss = ef.sheets.filter(function (n) { return !upNames[String(n).toUpperCase()]; });
+            if (ef.clash.length) why = ef.clash.map(function (fn) { return CLASH[fn]; }).join("; ");
+            else if (miss.length) why = "it uses the sheet \u201c" + miss[0] + "\u201d, which is not in this file";
+            else if (ef.table) why = "it names an Excel table, which this file does not have";
+          }
+          if (ef.ok) {
+            kind = it.kind ? it.kind(k) : null;
+            if (!code && carried) code = carried(raw, kind);
+            if (!code) code = kindCode(kind, v);
+          }
+          if (!ef.ok) {
+            textF.push(at(k) + " (" + ef.why + ")");
+            t = "s"; body = "<v>" + str(long(raw, k)) + "<\x2Fv>";
+          } else if (why) {
+            valued.push(at(k) + " (" + why + ")");
+            var vo = valueOf(v, raw, true, k);
+            t = vo.t; body = vo.v == null ? "" : "<v>" + vo.v + "<\x2Fv>";
+          } else {
+            ef.lantern.forEach(function (fn) { (own[fn] = own[fn] || []).push(at(k)); });
+            if (ef.wide) wide.push(at(k));
+            var aref = arrayRef(k) || (ef.array || ef.dynamic ? k : null);
+            if (aref && (ef.dynamic || (arrays[k] && arrays[k].dyn))) { spill = true; dyn = true; }
+            body = "<f" + (aref ? " t=\x22array\x22 ref=\x22" + aref + "\x22" : "") + ">" + x(ef.f) + "<\x2Ff>";
+            var fv = valueOf(v, raw, false, k);
+            t = fv.t; if (fv.v != null) body += "<v>" + fv.v + "<\x2Fv>";
+          }
+        } else if (raw.charAt(0) === "\x27") { t = "s"; body = "<v>" + str(long(raw.slice(1), k)) + "<\x2Fv>"; q = true; }
+        else if (/^\s*(TRUE|FALSE)\s*$/i.test(raw)) { t = "b"; body = "<v>" + (/TRUE/i.test(raw) ? 1 : 0) + "<\x2Fv>"; }
+        else if (typeof v === "number" && isFinite(v)) { body = "<v>" + numText(v) + "<\x2Fv>"; if (!code && L.sheetFormat && L.sheetFormat.typedCode) code = L.sheetFormat.typedCode(raw); }
+        else if (ERRS[raw.replace(/^\s+|\s+$/g, "")]) { t = "e"; body = "<v>" + x(raw.replace(/^\s+|\s+$/g, "")) + "<\x2Fv>"; }
+        else {
+          var day = L.formula && L.formula.dayOf ? L.formula.dayOf(raw) : null;
+          if (typeof day === "number" && isFinite(day)) { body = "<v>" + numText(day) + "<\x2Fv>"; if (!code) code = dateCodeOf(raw, day); }
+          else { t = "s"; body = "<v>" + str(long(raw, k)) + "<\x2Fv>"; }
+        }
+        var s = styleOf(f, code, q);
+        return "<c r=\x22" + k + "\x22" + (s ? " s=\x22" + s + "\x22" : "") + (t ? " t=\x22" + t + "\x22" : "") + (spill ? " cm=\x221\x22" : "") + ">" + body + "<\x2Fc>";
+      }
+      var data = Object.keys(rows).map(Number).sort(function (a, b) { return a - b; }).map(function (r) {
+        return "<row r=\x22" + r + "\x22>" + rows[r].sort(function (a, b) { return a.c - b.c; }).map(function (o) { return cell(o.k); }).join("") + "<\x2Frow>";
+      }).join("");
+      // columns, merged cells, the frozen top row
+      var cols = "", widths = doc.widths || {};
+      Object.keys(widths).filter(function (c) { return /^[A-Z]{1,2}$/.test(c) && widths[c] > 0; }).map(function (c) { return { c: colNum(c), w: +widths[c] }; })
+        .sort(function (a, b) { return a.c - b.c; }).forEach(function (o) {
+          cols += "<col min=\x22" + (o.c + 1) + "\x22 max=\x22" + (o.c + 1) + "\x22 width=\x22" + Math.round(Math.min(255, o.w) * 1e6) / 1e6 + "\x22 customWidth=\x221\x22\x2F>";
+        });
+      var merges = (doc.merges || []).filter(function (m) { return /^[A-Z]{1,2}[0-9]{1,5}:[A-Z]{1,2}[0-9]{1,5}$/.test(m); });
+      var pane = doc.freeze ? "<pane ySplit=\x221\x22 topLeftCell=\x22A2\x22 activePane=\x22bottomLeft\x22 state=\x22frozen\x22\x2F><selection pane=\x22bottomLeft\x22 activeCell=\x22A2\x22 sqref=\x22A2\x22\x2F>" : "";
+      var paper = doc.paper || {}, size = { letter: 1, tabloid: 3, legal: 5, a3: 8, a4: 9 }[paper.size];
+      return HEAD + "<worksheet xmlns=\x22" + M + "\x22 xmlns:r=\x22" + RT + "\x22><dimension ref=\x22" + (any ? "A1:" + colName(last.c) + last.r : "A1") + "\x22\x2F>" +
+        "<sheetViews><sheetView" + (si === active ? " tabSelected=\x221\x22" : "") + " workbookViewId=\x220\x22>" + pane + "<\x2FsheetView><\x2FsheetViews><sheetFormatPr defaultRowHeight=\x2215\x22\x2F>" + (cols ? "<cols>" + cols + "<\x2Fcols>" : "") +
+        "<sheetData>" + data + "<\x2FsheetData>" + (merges.length ? "<mergeCells count=\x22" + merges.length + "\x22>" + merges.map(function (m) { return "<mergeCell ref=\x22" + m + "\x22\x2F>"; }).join("") + "<\x2FmergeCells>" : "") +
+        (paper.margin > 0 ? "<pageMargins left=\x22" + paper.margin + "\x22 right=\x22" + paper.margin + "\x22 top=\x22" + paper.margin + "\x22 bottom=\x22" + paper.margin + "\x22 header=\x220.3\x22 footer=\x220.3\x22\x2F>" :
+          "<pageMargins left=\x220.7\x22 right=\x220.7\x22 top=\x220.75\x22 bottom=\x220.75\x22 header=\x220.3\x22 footer=\x220.3\x22\x2F>") +
+        (size || paper.orient === "l" ? "<pageSetup" + (size ? " paperSize=\x22" + size + "\x22" : "") + (paper.scale > 0 && paper.scale !== 100 ? " scale=\x22" + Math.round(Math.max(10, Math.min(400, paper.scale))) + "\x22" : "") +
+          " orientation=\x22" + (paper.orient === "l" ? "landscape" : "portrait") + "\x22\x2F>" : "") + "<\x2Fworksheet>";
     }
-    var data = Object.keys(rows).map(Number).sort(function (a, b) { return a - b; }).map(function (r) {
-      return "<row r=\x22" + r + "\x22>" + rows[r].sort(function (a, b) { return a.c - b.c; }).map(function (o) { return cell(o.k); }).join("") + "<\x2Frow>";
-    }).join("");
-    if (textF.length) note("Saved as text, not as a formula, because Excel could not read " + (textF.length > 1 ? "them" : "it") + ": " + textF.slice(0, 5).join("; ") + (textF.length > 5 ? "; and " + (textF.length - 5) + " more" : ""));
+    function some(list) { return list.slice(0, 5).join("; ") + (list.length > 5 ? "; and " + (list.length - 5) + " more" : ""); }
+    if (textF.length) note("Saved as text, not as a formula, because Excel could not read " + (textF.length > 1 ? "them" : "it") + ": " + some(textF));
+    if (valued.length) note("Saved as the value Lantern worked out, not as a formula, because Excel would work it out otherwise: " + some(valued));
     var ownList = Object.keys(own);
     if (ownList.length) note("Excel does not have Lantern\u2019s " + ownList.map(function (fn) { return fn + " (" + own[fn].slice(0, 3).join(", ") + (own[fn].length > 3 ? " \u2026" : "") + ")"; }).join(", ") +
       ": Excel shows #NAME? there when it works the sheet out; the value Lantern worked out is saved with each one");
-    // columns, merged cells, the frozen top row
-    var cols = "", widths = doc.widths || {};
-    Object.keys(widths).filter(function (c) { return /^[A-Z]{1,2}$/.test(c) && widths[c] > 0; }).map(function (c) { return { c: colNum(c), w: +widths[c] }; })
-      .sort(function (a, b) { return a.c - b.c; }).forEach(function (o) {
-        cols += "<col min=\x22" + (o.c + 1) + "\x22 max=\x22" + (o.c + 1) + "\x22 width=\x22" + Math.round(Math.min(255, o.w) * 1e6) / 1e6 + "\x22 customWidth=\x221\x22\x2F>";
-      });
-    var merges = (doc.merges || []).filter(function (m) { return /^[A-Z]{1,2}[0-9]{1,5}:[A-Z]{1,2}[0-9]{1,5}$/.test(m); });
-    var pane = doc.freeze ? "<pane ySplit=\x221\x22 topLeftCell=\x22A2\x22 activePane=\x22bottomLeft\x22 state=\x22frozen\x22\x2F><selection pane=\x22bottomLeft\x22 activeCell=\x22A2\x22 sqref=\x22A2\x22\x2F>" : "";
-    var S = "http:\x2F\x2Fschemas.openxmlformats.org\x2F", M = S + "spreadsheetml\x2F2006\x2Fmain", RT = S + "officeDocument\x2F2006\x2Frelationships", PR = S + "package\x2F2006\x2Frelationships";
-    var OD = "application\x2Fvnd.openxmlformats-officedocument.", HEAD = "<?xml version=\x221.0\x22 encoding=\x22UTF-8\x22 standalone=\x22yes\x22?>\n";
-    var paper = doc.paper || {}, size = { letter: 1, tabloid: 3, legal: 5, a3: 8, a4: 9 }[paper.size];
-    var sheetXml = HEAD + "<worksheet xmlns=\x22" + M + "\x22 xmlns:r=\x22" + RT + "\x22><dimension ref=\x22" + (any ? "A1:" + colName(last.c) + last.r : "A1") + "\x22\x2F>" +
-      "<sheetViews><sheetView workbookViewId=\x220\x22>" + pane + "<\x2FsheetView><\x2FsheetViews><sheetFormatPr defaultRowHeight=\x2215\x22\x2F>" + (cols ? "<cols>" + cols + "<\x2Fcols>" : "") +
-      "<sheetData>" + data + "<\x2FsheetData>" + (merges.length ? "<mergeCells count=\x22" + merges.length + "\x22>" + merges.map(function (m) { return "<mergeCell ref=\x22" + m + "\x22\x2F>"; }).join("") + "<\x2FmergeCells>" : "") +
-      (paper.margin > 0 ? "<pageMargins left=\x22" + paper.margin + "\x22 right=\x22" + paper.margin + "\x22 top=\x22" + paper.margin + "\x22 bottom=\x22" + paper.margin + "\x22 header=\x220.3\x22 footer=\x220.3\x22\x2F>" :
-        "<pageMargins left=\x220.7\x22 right=\x220.7\x22 top=\x220.75\x22 bottom=\x220.75\x22 header=\x220.3\x22 footer=\x220.3\x22\x2F>") +
-      (size || paper.orient === "l" ? "<pageSetup" + (size ? " paperSize=\x22" + size + "\x22" : "") + (paper.scale > 0 && paper.scale !== 100 ? " scale=\x22" + Math.round(Math.max(10, Math.min(400, paper.scale))) + "\x22" : "") +
-        " orientation=\x22" + (paper.orient === "l" ? "landscape" : "portrait") + "\x22\x2F>" : "") + "<\x2Fworksheet>";
+    if (wide.length) note("A formula that uses a column past Z (" + wide.slice(0, 4).join(", ") + (wide.length > 4 ? " \u2026" : "") + ") is worked out over empty cells there in Excel, as here: Sheets has the columns A to Z");
+    if (cut.length) note("A cell holds at most 32,767 characters in Excel: the text of " + cut.slice(0, 4).join(", ") + (cut.length > 4 ? " \u2026" : "") + " is cut there");
     var font = function (b, i) { return "<font>" + (b ? "<b\x2F>" : "") + (i ? "<i\x2F>" : "") + "<sz val=\x2211\x22\x2F><name val=\x22Calibri\x22\x2F><family val=\x222\x22\x2F><\x2Ffont>"; };
     var stylesXml = HEAD + "<styleSheet xmlns=\x22" + M + "\x22>" + (codes.length ? "<numFmts count=\x22" + codes.length + "\x22>" + codes.join("") + "<\x2FnumFmts>" : "") +
       "<fonts count=\x224\x22>" + font(0, 0) + font(1, 0) + font(0, 1) + font(1, 1) + "<\x2Ffonts>" +
@@ -45974,38 +46575,62 @@ Lantern.RFB = (function () {
     var sstXml = HEAD + "<sst xmlns=\x22" + M + "\x22 count=\x22" + sstCount + "\x22 uniqueCount=\x22" + sst.length + "\x22>" + sst.map(function (s) {
       return "<si><t" + (/^\s|\s$|\n/.test(s) ? " xml:space=\x22preserve\x22" : "") + ">" + x(s).replace(/_x([0-9A-Fa-f]{4})_/g, "_x005F_x$1_") + "<\x2Ft><\x2Fsi>";
     }).join("") + "<\x2Fsst>";
-    var name = sheetName(doc.title), now = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+    var title = items[0] && items[0].title != null ? items[0].title : items[0] && items[0].doc ? items[0].doc.title : "", now = new Date().toISOString().replace(/\.\d+Z$/, "Z"), N = items.length;
     var files = [
       { name: "[Content_Types].xml", data: HEAD + "<Types xmlns=\x22http:\x2F\x2Fschemas.openxmlformats.org\x2Fpackage\x2F2006\x2Fcontent-types\x22>" +
         "<Default Extension=\x22rels\x22 ContentType=\x22application\x2Fvnd.openxmlformats-package.relationships+xml\x22\x2F><Default Extension=\x22xml\x22 ContentType=\x22application\x2Fxml\x22\x2F>" +
         "<Override PartName=\x22\x2Fxl\x2Fworkbook.xml\x22 ContentType=\x22" + OD + "spreadsheetml.sheet.main+xml\x22\x2F>" +
-        "<Override PartName=\x22\x2Fxl\x2Fworksheets\x2Fsheet1.xml\x22 ContentType=\x22" + OD + "spreadsheetml.worksheet+xml\x22\x2F>" +
+        names.map(function (n, i) { return "<Override PartName=\x22\x2Fxl\x2Fworksheets\x2Fsheet" + (i + 1) + ".xml\x22 ContentType=\x22" + OD + "spreadsheetml.worksheet+xml\x22\x2F>"; }).join("") +
+        (dyn ? "<Override PartName=\x22\x2Fxl\x2Fmetadata.xml\x22 ContentType=\x22" + OD + "spreadsheetml.sheetMetadata+xml\x22\x2F>" : "") +
         "<Override PartName=\x22\x2Fxl\x2Fstyles.xml\x22 ContentType=\x22" + OD + "spreadsheetml.styles+xml\x22\x2F>" +
         "<Override PartName=\x22\x2Fxl\x2FsharedStrings.xml\x22 ContentType=\x22" + OD + "spreadsheetml.sharedStrings+xml\x22\x2F>" +
         "<Override PartName=\x22\x2FdocProps\x2Fcore.xml\x22 ContentType=\x22application\x2Fvnd.openxmlformats-package.core-properties+xml\x22\x2F>" +
         "<Override PartName=\x22\x2FdocProps\x2Fapp.xml\x22 ContentType=\x22" + OD + "extended-properties+xml\x22\x2F><\x2FTypes>" },
       { name: "_rels\x2F.rels", data: HEAD + "<Relationships xmlns=\x22" + PR + "\x22><Relationship Id=\x22rId1\x22 Type=\x22" + RT + "\x2FofficeDocument\x22 Target=\x22xl\x2Fworkbook.xml\x22\x2F>" +
         "<Relationship Id=\x22rId2\x22 Type=\x22" + PR + "\x2Fmetadata\x2Fcore-properties\x22 Target=\x22docProps\x2Fcore.xml\x22\x2F><Relationship Id=\x22rId3\x22 Type=\x22" + RT + "\x2Fextended-properties\x22 Target=\x22docProps\x2Fapp.xml\x22\x2F><\x2FRelationships>" },
-      { name: "xl\x2Fworkbook.xml", data: HEAD + "<workbook xmlns=\x22" + M + "\x22 xmlns:r=\x22" + RT + "\x22><workbookPr\x2F><bookViews><workbookView\x2F><\x2FbookViews>" +
-        "<sheets><sheet name=\x22" + x(name) + "\x22 sheetId=\x221\x22 r:id=\x22rId1\x22\x2F><\x2Fsheets><calcPr calcId=\x22191029\x22 fullCalcOnLoad=\x221\x22\x2F><\x2Fworkbook>" },
-      { name: "xl\x2F_rels\x2Fworkbook.xml.rels", data: HEAD + "<Relationships xmlns=\x22" + PR + "\x22><Relationship Id=\x22rId1\x22 Type=\x22" + RT + "\x2Fworksheet\x22 Target=\x22worksheets\x2Fsheet1.xml\x22\x2F>" +
-        "<Relationship Id=\x22rId2\x22 Type=\x22" + RT + "\x2Fstyles\x22 Target=\x22styles.xml\x22\x2F><Relationship Id=\x22rId3\x22 Type=\x22" + RT + "\x2FsharedStrings\x22 Target=\x22sharedStrings.xml\x22\x2F><\x2FRelationships>" },
-      { name: "xl\x2Fworksheets\x2Fsheet1.xml", data: sheetXml },
-      { name: "xl\x2Fstyles.xml", data: stylesXml },
-      { name: "xl\x2FsharedStrings.xml", data: sstXml },
-      { name: "docProps\x2Fcore.xml", data: HEAD + "<cp:coreProperties xmlns:cp=\x22http:\x2F\x2Fschemas.openxmlformats.org\x2Fpackage\x2F2006\x2Fmetadata\x2Fcore-properties\x22 xmlns:dc=\x22http:\x2F\x2Fpurl.org\x2Fdc\x2Felements\x2F1.1\x2F\x22 " +
-        "xmlns:dcterms=\x22http:\x2F\x2Fpurl.org\x2Fdc\x2Fterms\x2F\x22 xmlns:xsi=\x22http:\x2F\x2Fwww.w3.org\x2F2001\x2FXMLSchema-instance\x22><dc:title>" + x(doc.title || "") + "<\x2Fdc:title><dc:creator>Lantern<\x2Fdc:creator>" +
-        "<dcterms:created xsi:type=\x22dcterms:W3CDTF\x22>" + now + "<\x2Fdcterms:created><dcterms:modified xsi:type=\x22dcterms:W3CDTF\x22>" + now + "<\x2Fdcterms:modified><\x2Fcp:coreProperties>" },
-      { name: "docProps\x2Fapp.xml", data: HEAD + "<Properties xmlns=\x22" + S + "officeDocument\x2F2006\x2Fextended-properties\x22><Application>Lantern<\x2FApplication><\x2FProperties>" }
+      { name: "xl\x2Fworkbook.xml", data: HEAD + "<workbook xmlns=\x22" + M + "\x22 xmlns:r=\x22" + RT + "\x22><workbookPr\x2F><bookViews><workbookView" + (active ? " activeTab=\x22" + active + "\x22" : "") + "\x2F><\x2FbookViews>" +
+        "<sheets>" + names.map(function (n, i) { return "<sheet name=\x22" + x(n) + "\x22 sheetId=\x22" + (i + 1) + "\x22 r:id=\x22rId" + (i + 1) + "\x22\x2F>"; }).join("") + "<\x2Fsheets><calcPr calcId=\x22191029\x22 fullCalcOnLoad=\x221\x22\x2F><\x2Fworkbook>" },
+      { name: "xl\x2F_rels\x2Fworkbook.xml.rels", data: HEAD + "<Relationships xmlns=\x22" + PR + "\x22>" +
+        names.map(function (n, i) { return "<Relationship Id=\x22rId" + (i + 1) + "\x22 Type=\x22" + RT + "\x2Fworksheet\x22 Target=\x22worksheets\x2Fsheet" + (i + 1) + ".xml\x22\x2F>"; }).join("") +
+        "<Relationship Id=\x22rId" + (N + 1) + "\x22 Type=\x22" + RT + "\x2Fstyles\x22 Target=\x22styles.xml\x22\x2F><Relationship Id=\x22rId" + (N + 2) + "\x22 Type=\x22" + RT + "\x2FsharedStrings\x22 Target=\x22sharedStrings.xml\x22\x2F>" +
+        (dyn ? "<Relationship Id=\x22rId" + (N + 3) + "\x22 Type=\x22" + RT + "\x2FsheetMetadata\x22 Target=\x22metadata.xml\x22\x2F>" : "") + "<\x2FRelationships>" }
     ];
-    return { bytes: L.zip.write(files), notes: notes };
+    // the cell metadata Excel 365 gives a formula that spills (as Excel and XlsxWriter write it)
+    if (dyn) files.push({ name: "xl\x2Fmetadata.xml", data: HEAD + "<metadata xmlns=\x22" + M + "\x22 xmlns:xda=\x22http:\x2F\x2Fschemas.microsoft.com\x2Foffice\x2Fspreadsheetml\x2F2017\x2Fdynamicarray\x22>" +
+      "<metadataTypes count=\x221\x22><metadataType name=\x22XLDAPR\x22 minSupportedVersion=\x22120000\x22 copy=\x221\x22 pasteAll=\x221\x22 pasteValues=\x221\x22 merge=\x221\x22 splitFirst=\x221\x22 rowColShift=\x221\x22 clearFormats=\x221\x22 clearComments=\x221\x22 assign=\x221\x22 coerce=\x221\x22 cellMeta=\x221\x22\x2F><\x2FmetadataTypes>" +
+      "<futureMetadata name=\x22XLDAPR\x22 count=\x221\x22><bk><extLst><ext uri=\x22{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}\x22><xda:dynamicArrayProperties fDynamic=\x221\x22 fCollapsed=\x220\x22\x2F><\x2Fext><\x2FextLst><\x2Fbk><\x2FfutureMetadata>" +
+      "<cellMetadata count=\x221\x22><bk><rc t=\x221\x22 v=\x220\x22\x2F><\x2Fbk><\x2FcellMetadata><\x2Fmetadata>" });
+    sheetXmls.forEach(function (sx, i) { files.push({ name: "xl\x2Fworksheets\x2Fsheet" + (i + 1) + ".xml", data: sx }); });
+    files.push({ name: "xl\x2Fstyles.xml", data: stylesXml }, { name: "xl\x2FsharedStrings.xml", data: sstXml },
+      { name: "docProps\x2Fcore.xml", data: HEAD + "<cp:coreProperties xmlns:cp=\x22http:\x2F\x2Fschemas.openxmlformats.org\x2Fpackage\x2F2006\x2Fmetadata\x2Fcore-properties\x22 xmlns:dc=\x22http:\x2F\x2Fpurl.org\x2Fdc\x2Felements\x2F1.1\x2F\x22 " +
+        "xmlns:dcterms=\x22http:\x2F\x2Fpurl.org\x2Fdc\x2Fterms\x2F\x22 xmlns:xsi=\x22http:\x2F\x2Fwww.w3.org\x2F2001\x2FXMLSchema-instance\x22><dc:title>" + x(title || "") + "<\x2Fdc:title><dc:creator>Lantern<\x2Fdc:creator>" +
+        "<dcterms:created xsi:type=\x22dcterms:W3CDTF\x22>" + now + "<\x2Fdcterms:created><dcterms:modified xsi:type=\x22dcterms:W3CDTF\x22>" + now + "<\x2Fdcterms:modified><\x2Fcp:coreProperties>" },
+      { name: "docProps\x2Fapp.xml", data: HEAD + "<Properties xmlns=\x22" + S + "officeDocument\x2F2006\x2Fextended-properties\x22><Application>Lantern<\x2FApplication><\x2FProperties>" });
+    return { bytes: L.zip.write(files), notes: notes, names: names };
+  }
+  var S = "http:\x2F\x2Fschemas.openxmlformats.org\x2F", M = S + "spreadsheetml\x2F2006\x2Fmain", RT = S + "officeDocument\x2F2006\x2Frelationships", PR = S + "package\x2F2006\x2Frelationships";
+  var OD = "application\x2Fvnd.openxmlformats-officedocument.", HEAD = "<?xml version=\x221.0\x22 encoding=\x22UTF-8\x22 standalone=\x22yes\x22?>\n";
+  // write(sheet, values, logical, carried, kind) -> {bytes, notes}: one sheet as a workbook
+  function write(doc, values, logical, carried, kind) {
+    var LS = L.sheetDocs, SF = L.sheetFormat, cells = (doc && doc.cells) || {};
+    if (!logical && LS && LS.logical) logical = function (raw) { return LS.logical(raw, cells); };
+    if (!kind && LS && LS.kind) kind = function (ref) { return LS.kind(cells, ref); };
+    if (!carried && SF && SF.carried) carried = function (raw, k) { return SF.carried(doc, raw, k); };
+    return writeBook([{ doc: doc, name: doc && (doc.book ? doc.book.sheet : doc.name), values: values, logical: logical, carried: carried, kind: kind, title: doc && doc.title }]);
   }
   function fileName(title) { return (String(title || "sheet").replace(/[\\\x2F:*?\x22<>|\x00-\x1f]+/g, " ").replace(/\s+/g, " ").replace(/^[\s.]+|[\s.]+$/g, "").slice(0, 120) || "sheet") + ".xlsx"; }
   X.write = write;
+  X.writeBook = writeBook;
   X.fileName = fileName;
-  X.save = function (doc, values, logical, carried) {
-    var w = write(doc, values, logical, carried);
+  X.save = function (doc, values, logical, carried, kind) {
+    var w = write(doc, values, logical, carried, kind);
     L.download(fileName(doc.title), w.bytes, OD_SHEET);
+    return w.notes;
+  };
+  // saveBook(items, title): the sheets of a workbook in one file, title.xlsx
+  X.saveBook = function (items, title) {
+    var w = writeBook(items);
+    L.download(fileName(title), w.bytes, OD_SHEET);
     return w.notes;
   };
   var OD_SHEET = "application\x2Fvnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -46019,8 +46644,8 @@ Lantern.RFB = (function () {
 //          Lantern.sheetDocs: create, open, compute, logical), XLSX_READ
 //          (Lantern.xlsx.read), XLSX_WRITE (Lantern.xlsx.save), SHEET_FORMAT
 //          (Lantern.sheetFormat.carried) -- feature-detected
-// Exports: Lantern.sheetXlsx = {open(file), save(api)} (SHEET_CSV's Import
-//          file uses open)
+// Exports: Lantern.sheetXlsx = {open(file), save(api), pick()} (SHEET_CSV's
+//          Import file uses open)
 // ===========================================================================
 // Excel files in Sheets (1.24.28). Save .xlsx downloads the sheet as an
 // Excel workbook, its formulas kept as formulas. Import file, in a sheet or
@@ -46044,15 +46669,27 @@ Lantern.RFB = (function () {
     box.appendChild(L.el("button", { text: "OK", style: "margin-top:2px", onclick: function () { if (box.parentNode) box.parentNode.removeChild(box); } }));
     g.parentNode.insertBefore(box, g);
   }
+  // (1.24.28, the first Excel review) a sheet that came from an Excel workbook is saved with the workbook's other
+  // sheets, each under its own name, so that a formula naming one (=Jan!B6) finds it in the file
   function save(api) {
     if (api.keep) api.keep();
     var doc = api.doc, LS = L.sheetDocs, SF = L.sheetFormat;
-    if (!L.xlsx.save) return note(api, "This copy of Lantern cannot make Excel files.", []);
+    if (!L.xlsx.saveBook && !L.xlsx.save) return note(api, "This copy of Lantern cannot make Excel files.", []);
     try {
-      var left = L.xlsx.save(doc, LS && LS.compute ? LS.compute(doc.cells || {}) : {},
-        LS && LS.logical ? function (raw) { return LS.logical(raw, doc.cells || {}); } : null,
-        SF && SF.carried ? function (raw) { return SF.carried(doc, raw); } : null);
-      if (left.length) note(api, "Saved as an Excel file, except:", left);
+      var book = LS && LS.book ? LS.book(doc) : null, docs = book && book.docs && book.docs.length ? book.docs.map(function (d) { return d.id === doc.id ? doc : d; }) : [doc];
+      if (!docs.some(function (d) { return d.id === doc.id; })) docs = [doc];
+      var items = docs.map(function (d) {
+        var b = LS && LS.book ? LS.book(d) : null;
+        return { doc: d, name: d.book ? d.book.sheet : null, active: d.id === doc.id,
+          values: LS && LS.compute ? LS.compute(d.cells || {}, b) : {},
+          logical: LS && LS.logical ? function (raw) { return LS.logical(raw, d.cells || {}); } : null,
+          carried: SF && SF.carried ? function (raw, kind) { return SF.carried(d, raw, kind); } : null,
+          kind: LS && LS.kind ? function (ref) { return LS.kind(d.cells || {}, ref); } : null };
+      });
+      var title = docs.length > 1 && doc.book && doc.book.name ? doc.book.name : doc.title;
+      var left = L.xlsx.saveBook ? L.xlsx.saveBook(items, title) : L.xlsx.save(doc, items[0].values, items[0].logical, items[0].carried, items[0].kind);
+      if (docs.length > 1) left.unshift("The workbook\u2019s " + docs.length + " sheets are saved together, as they came from \u201c" + title + "\u201d: " + docs.map(function (d) { return d.book.sheet; }).join(", "));
+      if (left.length) note(api, docs.length > 1 && left.length === 1 ? "Saved as an Excel file." : "Saved as an Excel file, except:", left);
     } catch (e) { note(api, "The Excel file could not be made: " + e.message, []); }
   }
   // a .csv file as a new sheet (from the list of sheets)
@@ -46075,9 +46712,11 @@ Lantern.RFB = (function () {
       var res;
       try { res = L.xlsx.read(new Uint8Array(r.result), file.name); }
       catch (e) { window.alert("Lantern could not open \u201c" + file.name + "\u201d: " + e.message + "."); return; }
-      var first = null;
-      res.sheets.forEach(function (s) {
-        var id = L.sheetDocs.create(s.title, s.cells, { fmt: s.fmt, widths: s.widths, merges: s.merges, freeze: s.freeze, rows: s.rows, paper: s.paper });
+      var first = null, bookId = L.uid ? L.uid() : String(Date.now());
+      res.sheets.forEach(function (s, i) {
+        // the workbook it came from, and the sheet's own name in it (Save .xlsx, and =Jan!B6 from another sheet)
+        var id = L.sheetDocs.create(s.title, s.cells, { fmt: s.fmt, widths: s.widths, merges: s.merges, freeze: s.freeze, rows: s.rows, paper: s.paper, arrays: s.arrays,
+          book: { id: bookId, name: res.title, sheet: s.name, at: i } });
         if (!first) first = id;
       });
       pending[first] = { head: "Opened from the Excel file \u201c" + file.name + "\u201d" + (res.sheets.length > 1 ? " (" + res.sheets.length + " sheets)" : "") + ". Save .xlsx makes an Excel file again.", lines: res.notes };

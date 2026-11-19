@@ -75,7 +75,9 @@ w.eval(js);
   r = X.read(file("workbook2.xlsx"), "workbook2.xlsx");
   ok("three sheets: each a sheet of its own, the hidden one too; the chart sheet left out", r.sheets.length === 3 && r.sheets.map(function (x) { return x.title; }).join("|") === "workbook2 — Prices|workbook2 — Order|workbook2 — Rates", r.sheets.map(function (x) { return x.title; }));
   ok("...the notes say so", has(r.notes, /^Each of the workbook’s 3 sheets/) && has(r.notes, /chart sheet “Chart1” is left out/) && has(r.notes, /“Rates” was hidden/), r.notes);
-  ok("...a formula from another sheet kept as written, and the cell named where Lantern differs from Excel", r.sheets[1].cells.C2 === "=B2*Prices!B2*(1+\x27Rates\x27!B1)" && has(r.notes, /“Order”: Lantern works out 1 formula differently from what Excel saved: C2 \(Excel 30, here/), [r.sheets[1].cells.C2, r.notes]);
+  // (1.24.28, the first review) a formula that uses another sheet is worked out from it, as Excel does: C2 is 30 here too
+  ok("...a formula from another sheet kept as written, and worked out from the other sheets as Excel did (no note for C2)", r.sheets[1].cells.C2 === "=B2*Prices!B2*(1+\x27Rates\x27!B1)" && !has(r.notes, /C2 \(Excel/) &&
+    L.sheetDocs.compute(r.sheets[1].cells, { Prices: r.sheets[0].cells, Order: r.sheets[1].cells, Rates: r.sheets[2].cells }, "Order").C2 === 30, [r.sheets[1].cells.C2, r.notes]);
   ok("...a formula of its own sheet worked out as Excel did (no note for C3)", !has(r.notes, /C3 \(Excel/), r.notes);
 
   // --- the 1904 dates, Strict, inline text, past Z and row 2000 ---
@@ -167,8 +169,12 @@ w.eval(js);
   ok("a row put in above: the merged cell moves down with its row", doc().merges.join() === "C2:E2" && tdOf("C2").colSpan === 3 && tdOf("C1").colSpan === 1, doc().merges);
   key(grid, "z", { ctrl: true }); await sleep(20);
   ok("...undo puts it back", doc().merges.join() === "C1:E1" && tdOf("C1").colSpan === 3, doc().merges);
-  click("C1"); S.rowAct("colLeft"); await sleep(20);
+  click("B1"); S.rowAct("colLeft"); await sleep(20);
   ok("a column put in left of it: the merge moves right and widens nothing; widths move with their columns", doc().merges.join() === "D1:F1" && doc().widths.A === 15.28515625 && doc().widths.G === 12.42578125 && !doc().widths.F, [doc().merges, doc().widths]);
+  key(grid, "z", { ctrl: true }); await sleep(20);
+  // (1.24.28, the first review) the merged cell selected is all its columns, as in Excel: three put in before it
+  click("C1"); S.rowAct("colLeft"); await sleep(20);
+  ok("...the merged cell itself selected: as many columns put in as it covers, as in Excel", doc().merges.join() === "F1:H1" && doc().widths.I === 12.42578125, [doc().merges, doc().widths]);
   key(grid, "z", { ctrl: true }); await sleep(20);
   click("D3"); S.rowAct("rowAbove"); await sleep(20);
   ok("a row put in inside a tall merge grows it (none here: C1:E1 is one row, and stays)", doc().merges.join() === "C1:E1", doc().merges);
