@@ -3,7 +3,24 @@
 Only what he alone can answer. Newest first. Remove a question when he has
 answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
 
-1. **A colour wheel cut into one wedge a colour: how does it look?**
+1. **Excel itself: does a file Save .xlsx makes open without asking to
+   repair?** (1.24.28) There is no Excel here: LibreOffice, openpyxl and the
+   spreadsheet schema stood in, and every file passed them. The first thing
+   to try on your laptop: open your House file with Import file in Sheets,
+   change a number, Save .xlsx, and open the download in Excel. Then the
+   same with a workbook of several sheets that name each other (=Jan!B6),
+   and one with an array formula ({=SUM(B2:B5*C2:C5)}) or UNIQUE. Say what
+   Excel showed. (Asked 2026-11-19.)
+2. **GAMMA in a sheet: physics or Excel?** (1.24.28) In Lantern GAMMA(v) is
+   the Lorentz factor (the physics lessons and the AI use it); in Excel and
+   LibreOffice GAMMA(x) is the gamma function (GAMMA(5) is 24). Now a sheet
+   keeps Lantern's, Excel's is GAMMAFN here (an Excel file's GAMMA is read
+   as GAMMAFN and saved back as GAMMA), and a sheet's own GAMMA is saved for
+   Excel as its value, with a note. The other way: GAMMA in a sheet is
+   Excel's, and the Lorentz factor gets a name of its own (LORENTZ), the
+   Calculator and the lessons following. Yours to choose; until then it
+   stays as it is. (Asked 2026-11-19.)
+3. **A colour wheel cut into one wedge a colour: how does it look?**
    (1.24.20) "Primary: Red | Yellow | Blue / Secondary: Orange | Green |
    Violet" is now drawn as six wedges round the wheel, each its own colour,
    with its group's name (primary, secondary) in a ring of a pale tint of
@@ -11,7 +28,7 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    whether that reads right; it is yours to judge. Make one in the Draw
    tile, or ask Chat "Draw a colour wheel of the primary and secondary
    colours". (Asked 2026-11-15.)
-2. **The one link: try it** (1.24.19; `main` was 1.24.21 from 2026-11-16,
+4. **The one link: try it** (1.24.19; `main` was 1.24.21 from 2026-11-16,
    on your word "proceed", and is 1.24.25 since 2026-11-18). Merging published Get-Lantern.exe, the Mac zip
    and the Linux programs on the release, and made the website the same
    version: https://adamweldon.github.io/Lantern_Office_Suite/get.html works
@@ -20,7 +37,7 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    double-click is yours: on the laptop, open the link, run
    it, and say what Windows showed and how the corner button looked.
    (Asked 2026-11-13; updated 2026-11-16.)
-3. **Signing the programs** -- answered for now (Adam, 2026-11-16): not
+5. **Signing the programs** -- answered for now (Adam, 2026-11-16): not
    signed. The fixed starter was quarantined too on his home laptop with
    Windows's own protection on (Trojan:Win32/Bearfoos.A!ml: it copied itself
    into the user folder and made Start-menu and desktop icons), so Windows
@@ -32,18 +49,18 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    licences, an LLC or nonprofit as publisher, insurance), a trained reader
    for the Health lessons (11), and whether to try a starter that does not
    copy itself.
-4. **Set B on GitHub too?** (1.24.16) The small models' run on GitHub
+6. **Set B on GitHub too?** (1.24.16) The small models' run on GitHub
    asks set A only. Asking set B as well would show whether they carry
    over too, and would about double the run's time (the 4B took 147
    minutes on set A). Set A only, set B only, or both? (Asked 2026-11-12.)
-5. **Your three pictures of 1.24.14, as 1.24.15 draws them** (sheet sent
+7. **Your three pictures of 1.24.14, as 1.24.15 draws them** (sheet sent
    2026-11-12). The door now stands on its wall, shortened to fit (the 35B
    drew it 4 wide and 2 high on a wall 2 high, so on the wall it is 1.5 high
    and may read as a low window); the tree stands 2.5 cells to the right,
    clear of the roof; the road is a plain gray triangle from the bottom edge
    to the horizon, in front of the 35B's gray "mountain". Do they look right
    to you? (Asked 2026-11-12.)
-6. **Your two pictures, and which way to go on with drawing**
+8. **Your two pictures, and which way to go on with drawing**
    (pictures sent 2026-11-06).
    - Lantern stands a mountain on the horizon when its base is in the sky,
      puts the sun behind the land, and draws a road narrowing to the
@@ -66,7 +83,7 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
      draw each one well.
      Say "words", "pieces", or "both, words first".
    (Asked 2026-11-06.)
-7. **Three things to look at in 1.24.6** (pictures were sent in the chat on
+9. **Three things to look at in 1.24.6** (pictures were sent in the chat on
    2026-11-06). How a page looks is yours to judge:
    - when the AI's answer uses nothing of the lesson Lantern gave it, the
      lesson's own words are now shown in a box under the answer, with a
@@ -78,7 +95,7 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
      small grey print, that it added it.
    Say if any of them should look different, or go.
    (Asked 2026-11-06.)
-8. **Five Food lessons wait for pages I could not open.** Cassava and
+10. **Five Food lessons wait for pages I could not open.** Cassava and
    kidney beans (which poison when prepared wrongly), storing grain, the
    illnesses of a narrow diet, bread, and cooking with less fuel are
    drafted. To check them I need the pages of WHO, FAO, the US FDA and
@@ -88,7 +105,7 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    are at the app, say "finish the Food lessons" and approve the pages it
    asks about. They are on the branch `wip-2026-11-06`, not in Lantern.
    (Asked 2026-11-06.)
-9. **Should the kit give the small models more than 8,192 tokens?** Every
+11. **Should the kit give the small models more than 8,192 tokens?** Every
    model is started with that much room. Five of the 2B's conversations
    outgrew it and ended in an error. Lantern now shortens such a request
    and sends it again, and gives small models shorter instructions, so it
@@ -96,14 +113,14 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    memory on the smallest computers; I have not measured how much. Say
    "measure it" or "leave it".
    (Asked 2026-11-06.)
-10. **A nightly run.** Claude could not create the scheduled task itself: the
+12. **A nightly run.** Claude could not create the scheduled task itself: the
    app refused it (2026-11-05). The instruction for it is written and kept in
    `agent/NIGHTLY.md`. Either say "set up the nightly run" in a chat and
    approve it when the app asks, or make a scheduled task yourself with that
    text (each night, about 01:20 your time, new session each run). Until
    then the work moves only when a chat is open.
    (Asked 2026-11-05.)
-11. **Somebody trained should read the Health lessons** (they are public
+13. **Somebody trained should read the Health lessons** (they are public
    since 2026-11-16; `main` is 1.24.25 since 2026-11-18). They
    were checked line by line against WHO, CDC, NHS and the 2025
    resuscitation guidelines, by checkers that had not seen the drafting, and
@@ -121,7 +138,7 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    guideline said otherwise the lesson now says what it says (the list is
    in the 1.24.22 changelog). Still open: the trained reader, if you want
    one.
-12. **Medicines in the Health tile: none, unless you say.** The tile's rule is
+14. **Medicines in the Health tile: none, unless you say.** The tile's rule is
    no medicine and no dose, and a test now holds it. The sources the lessons
    come from also give these, each of which saves lives where there is no
    clinic. Say which, if any, should go in, with the source's own figure:
@@ -140,16 +157,16 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
      ("Call emergency services immediately after using your first dose of
      adrenaline"). The lesson says only to lay them flat and get help.
    (Asked 2026-11-05; updated 2026-11-17.)
-13. **WHO's amounts of ORS are in the Diarrhoea lesson** (after each loose
+15. **WHO's amounts of ORS are in the Diarrhoea lesson** (after each loose
    stool: 50 to 100 ml under 2 years, 100 to 200 ml for an older child). I
    read them as fluid, not as a medicine dose. Say if you want them out.
    (Asked 2026-11-05.)
-14. **The Health tile now opens on Emergencies**, then sick children and
+16. **The Health tile now opens on Emergencies**, then sick children and
    adults, mother and baby, staying well. It was staying well first. An
    emergency cannot wait for scrolling; but how a page looks is yours. Say if
    you want the old order.
    (Asked 2026-11-05.)
-15. **How the songs sound.** The songbook's nine tunes and the new bar
+17. **How the songs sound.** The songbook's nine tunes and the new bar
    readings are checked by their notes, lengths and bars, not by ear. If one
    sounds wrong, say which.
    (Asked 2026-11-05.)

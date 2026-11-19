@@ -13,8 +13,8 @@ tried by a reviewer:
 - Sheets' functions: **done in 1.24.24** (about 220 of Excel's, the fx
   button; `tests/sheet_functions.js`; two reviews,
   `tests/fixtures/review_sheetfn_1264.json` and `review2_sheetfn_1264.json`,
-  replayed). Left: array arithmetic and spilling functions (SUMPRODUCT((A=x)*B),
-  UNIQUE, SORT, FILTER, SEQUENCE), TRUE/FALSE as values of their own (they
+  replayed). Array arithmetic (SUMPRODUCT((A=x)*B)) and UNIQUE, SORT, FILTER,
+  SEQUENCE came in 1.24.28 (a spill is left). Left: TRUE/FALSE as values of their own (they
   are 1 and 0 to formulas, shown as TRUE and FALSE since 1.24.25; ISLOGICAL),
   T.TEST.
 - Sheets' editing: **done in 1.24.25** (a range, copy, cut and paste with
@@ -25,8 +25,8 @@ tried by a reviewer:
   `tests/sheet_edit.js`; the review `tests/fixtures/review_sheetedit_1265.json`
   replayed by `tests/review_sheetedit_1265.js`). POWER is Excel's and watts
   are POWERW (Adam, 2026-11-18), with a check that hands back the line.
-  Left: columns past Z (the sheet has 26); merged cells, borders, fill
-  colours, column widths; find and replace; a fill handle to drag; charts
+  Left: columns past Z (the sheet has 26); borders, fill colours (merged
+  cells and column widths came with Excel files in 1.24.28); find and replace; a fill handle to drag; charts
   from a range; paste special (values only); the second review's mends if
   any are left (see the report).
 - Small, from the 1.24.25 bench: the 0.8B wrote "= 65*35 = 2275" for
@@ -62,19 +62,33 @@ tried by a reviewer:
   an item of two paragraphs in a cell splits the row, double spaces around
   inline tags, an empty item's blank line, a code block in a step; MAKE DOC
   reads a YAML line "- name:" under a step as a bullet.
-- The 2B's oil change (make-doc-oil-change, the same failure on six
-  versions): MAKE DOC's example changed in 1.24.27 (its first heading
-  "## Steps", no figures, the machine made safe first). Read the next run's
-  row; if it still fails the same way, look at what it wrote before changing
+- The oil change (make-doc-oil-change): on 1.24.27 all three small models
+  wrote their steps under "## Steps" and stopped at one heading (the check
+  asks for two); MAKE DOC's example begins with "## You need" and a list of
+  two since 1.24.28 (`tests/bench_1267.js`). Read the next run's row: if a
+  model still writes one heading, look at what it wrote before changing
   more. A bench question for a letter would show whether a small model puts
-  a letter under "## Steps" (the first review's unsure case).
-- **Next: .xlsx in Sheets** (1.24.28): open and save, formulas kept as
-  formulas (Adam had to type his back in after a .csv), Excel's number
-  formats (already kept per cell as codes), bold, alignment, column widths,
-  merged cells (his file has C1:E1), shared formulas (his file has them).
-  Adam's House_Square_Footage file is in the session only: it has his
-  home's rooms and a Windows user name in it, so it is not in the repo.
-- Then .pptx in Slides (1.24.29). Adam's ITW deck is ITW's training
+  a letter under "## Steps" (the first lists review's unsure case).
+- Excel files in Sheets: **done in 1.24.28** (Import file opens an .xlsx,
+  Save .xlsx makes one, formulas kept as formulas; another sheet's cells
+  worked out; a workbook saved together; ranges worked out cell by cell as
+  in Excel; array and spilling formulas saved as Excel writes them;
+  `tests/xlsx.js`, `tests/xlsx_lo.py`, `tests/browser/sheet_xlsx.py`; two
+  reviews replayed by `tests/review_xlsx_1268.py` and
+  `tests/review2_xlsx_1268.py`). Adam's House file is in the session only
+  (his home's rooms and a Windows user name). Left, from the reviews:
+  a spill (a list put into the cells below its formula, #SPILL! when they
+  are full; an Excel array over several cells kept current); hiding rows
+  (SUBTOTAL 101-111 and AGGREGATE count Excel's hidden rows here; said);
+  columns past Z; TRUE and FALSE as values of their own (=A2=1 of a TRUE,
+  CONCAT of TRUE, =TRUE>1); LET and LAMBDA; MMULT, TREND, LINEST, SKEW, KURT,
+  ISLOGICAL, TYPE, SORTBY, TAKE, DROP, VSTACK, HSTACK, GAMMA.INV; Excel's
+  CONVERT unit names on saving (Lantern's lb is Excel's lbm; Lantern reads
+  lbm and ozm); conditional formatting, data validation, comments and
+  charts kept (all said now); the look MAX(IF(dates)) carries. Excel itself
+  has not opened a save (QUESTIONS 1); GAMMA in a sheet is Adam's to choose
+  (QUESTIONS 2).
+- **Next: .pptx in Slides** (1.24.29). Adam's ITW deck is ITW's training
   material: test with it in the session, never commit it.
 
 0. **The Health lessons' sources (1.24.22, Adam).** Every lesson names the
@@ -85,8 +99,8 @@ tried by a reviewer:
    "Some practical steps here are not in these sources" where they are
    many); WHO's 2005 diarrhoea manual and the Sphere 2018 PDF, which no
    checker could open; the same for the Food tile's lessons and the other
-   tiles' (a lesson's `sources`, any tile); a trained reader (QUESTIONS 11);
-   the medicines (QUESTIONS 12). Check again when a named guideline is
+   tiles' (a lesson's `sources`, any tile); a trained reader (QUESTIONS 13);
+   the medicines (QUESTIONS 14). Check again when a named guideline is
    replaced (the NHS hypothermia page was past its review date).
 
 1. **The one-link starter: what 1.24.19 leaves** (`tools/starter`,
@@ -104,11 +118,11 @@ tried by a reviewer:
    the icons made without PowerShell, the Windows build not stripped,
    another Lantern or program on 8080 handled. **Still flagged** on Adam's
    home laptop with Windows's own protection (Bearfoos.A!ml: the copy of
-   itself and its icons). Adam: no signing for now (QUESTIONS 3). The free
+   itself and its icons). Adam: no signing for now (QUESTIONS 5). The free
    thing left to try: a starter that does not copy itself (its icons to the
    kit's Start Lantern), and the kit's downloads in the starter itself (Go),
    not the setup run hidden through PowerShell. Left:
-   - Adam's first real double-click (QUESTIONS 2): what SmartScreen and
+   - Adam's first real double-click (QUESTIONS 4): what SmartScreen and
      Gatekeeper show, how the corner button looks to him;
    - the page under the starter in a real browser (Playwright on the Linux
      job: the corner button, the list, Add, Stop), not only jsdom;
@@ -116,7 +130,7 @@ tried by a reviewer:
      run without `--plan small`, perhaps by hand: 3 GB more);
    - an offer's download for real (the library's 12 GB is too big for a
      run; the shelves' 5 GB perhaps);
-   - signing (QUESTIONS 3); a Mac icon in the Dock/Applications after the
+   - signing (QUESTIONS 5); a Mac icon in the Dock/Applications after the
      first run; Windows on ARM and an Intel Mac, built but not run;
    - an update: the starter could offer a newer Lantern.zip when the release
      has one (today it sets up the newest once, and Lantern.zip is laid over
@@ -240,7 +254,7 @@ tried by a reviewer:
      checks stay.
    - **Commands for constructions Lantern knows** (a sunset sky, a road to
      the horizon, a parallel bank of resistors, a note from the chord):
-     this is Adam's "words for things" (QUESTIONS 5); waits on his answer
+     this is Adam's "words for things" (QUESTIONS 7); waits on his answer
      there for drawings, not for circuits or music.
    - **State-tracking tools: already there.** `die-four-moves` has TURN:
      Die and passes; the brief's `die-four-moves-alone` is the same puzzle
