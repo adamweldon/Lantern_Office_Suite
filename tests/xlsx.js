@@ -231,8 +231,8 @@ w.eval(js);
   ok("a range or a list in { } worked out cell by cell in a sheet, as in Excel (SUMPRODUCT, SUM(IF()), AVERAGE(IF()), VLOOKUP over { })",
     cv.E1 === 225 && cv.E2 === 2 && cv.E3 === 6.5 && cv.E4 === 1.25 && cv.E5 === 112.5 && cv.E7 === "mid", [cv.E1, cv.E2, cv.E3, cv.E4, cv.E5, cv.E7]);
   ok("...a list of yes and no counts as 0s in SUMPRODUCT, as in Excel; a list in a cell shows its first value; UNIQUE and FILTER taken whole", cv.E6 === 0 && cv.E8 === 2 && cv.E9 === 2 && cv.E10 === 225, [cv.E6, cv.E8, cv.E9, cv.E10]);
-  ok("...per cent before a power (50%^2, 2^300%), 17%5 still the remainder; ordinary formulas as before; a range alone in a cell still #VALUE!",
-    cv.F1 === 0.25 && cv.F2 === 8 && cv.F3 === 2 && cv.F4 === 11 && cv.F5 === "y" && cv.F6 === "x1" && cv.F7 === "#VALUE!", [cv.F1, cv.F2, cv.F3, cv.F4, cv.F5, cv.F6, cv.F7]);
+  ok("...per cent before a power (50%^2, 2^300%), 17%5 still the remainder; ordinary formulas as before; a range alone in a cell shows its first value, as Excel 365 does",
+    cv.F1 === 0.25 && cv.F2 === 8 && cv.F3 === 2 && cv.F4 === 11 && cv.F5 === "y" && cv.F6 === "x1" && cv.F7 === 1, [cv.F1, cv.F2, cv.F3, cv.F4, cv.F5, cv.F6, cv.F7]);
   ok("...GAMMAFN (Excel's GAMMA), BASE, ERROR.TYPE", cv.F8 === 24 && cv.F9 === "00FF" && cv.F10 === 2, [cv.F8, cv.F9, cv.F10]);
   var calcErr = function (src) { try { L.formula.evaluate(src); return null; } catch (e) { return e.message; } };
   ok("...the Calculator keeps -2^2 as -4 and does not read { }", L.formula.evaluate("-2^2") === -4 && /Bad character/.test(calcErr("{1,2}")), calcErr("{1,2}"));
@@ -273,6 +273,34 @@ w.eval(js);
   var tn = X.read(rfile("text_numbers.xlsx"), "n.xlsx").sheets[0], tnv = L.sheetDocs.compute(tn.cells);
   ok("text that Sheets would read as a number, a date or a time stays text (COUNT of it 0, as in Excel)", tnv.D5 === 0 && tn.cells.A2 === "\x2702134", [tnv.D5, tn.cells.A2]);
   ok("comments: their cells and words in the note", has(X.read(rfile("comments.xlsx"), "c.xlsx").notes, /^Comments are not kept: B2 “Price from the supplier/), "comments");
+
+  // --- the second review's mends (1.24.28; tests/review2_xlsx_1268.py replays the review itself) ---
+  var c2 = { A2: "North", A3: "South", A4: "North", A5: "East", B2: "Widget", B3: "Gadget", B4: "Widget", B5: "Bolt", C2: "5", C3: "3", C4: "4", C5: "2", E2: "2026-03-01", E3: "2026-02-01", E4: "2026-03-09", E5: "2026-01-01",
+    K1: "=SUMPRODUCT(LEN(B2:B5))", K2: "=SUMPRODUCT(1/COUNTIF(B2:B5,B2:B5))", K3: "=SUMPRODUCT(--ISNUMBER(SEARCH(\"Wid\",B2:B5)))", K4: "=SUMPRODUCT((MONTH(E2:E5)=3)*C2:C5)",
+    K5: "=SUM(IFERROR(C2:C5/(A2:A5=\"North\"),0))", K6: "=COUNT(SQRT(-1))", K7: "=ISERROR(LN(0))", K8: "=IFERROR(SQRT(-4),\"no root\")", K9: "=MAX(INDEX(C2:C5*2,0))", K10: "=ERROR.TYPE(1/0)",
+    K11: "=@C2:C5*2", K12: "=SUM(Jan!B:B)", K13: "=INDIRECT(\"Jan!B6\")", K14: "=1.2.10&\"\"" };
+  delete c2.K14;
+  var v2 = L.sheetDocs.compute(c2, { Jan: { B2: "100", B6: "40" }, Here: c2 }, "Here");
+  ok("a list given where a function takes one value is worked out for each of its cells (LEN, COUNTIF's test, SEARCH, MONTH), and a cell's error stays in its cell (IFERROR)",
+    v2.K1 === 22 && Math.abs(v2.K2 - 3) < 1e-12 && v2.K3 === 2 && v2.K4 === 9 && v2.K5 === 9, [v2.K1, v2.K2, v2.K3, v2.K4, v2.K5]);
+  ok("...SQRT(-1) and LN(0) are #NUM! to COUNT, ISERROR and IFERROR; INDEX(list,0) the whole list; ERROR.TYPE(1/0) is 2",
+    v2.K6 === 0 && v2.K7 === 1 && v2.K8 === "no root" && v2.K9 === 10 && v2.K10 === 2, [v2.K6, v2.K7, v2.K8, v2.K9, v2.K10]);
+  ok("...Excel's @ (C2:C5 in row 11: none, so #VALUE!); another sheet's whole column and INDIRECT(\"Jan!B6\")", v2.K11 === "#VALUE!" && v2.K12 === 140 && v2.K13 === 40, [v2.K11, v2.K12, v2.K13]);
+  var at5 = L.sheetDocs.compute({ C2: "1", C3: "2", C4: "3", C5: "7", J5: "=@C2:C5*2" }).J5;
+  ok("...=@C2:C5*2 in row 5 is C5*2, as Excel 2019 reads =C2:C5*2 there", at5 === 14, at5);
+  ok("a date with dots has a year of four digits: 1.2.10 is not a date, 17.11.2026 is", L.formula.dayOf("1.2.10") === null && L.formula.dayOf("17.11.2026") === 46343, [L.formula.dayOf("1.2.10"), L.formula.dayOf("17.11.2026")]);
+  var g2 = function (f) { return X.excelFormula(f); };
+  ok("Excel's grammar: ROUND(A1) as ROUND(A1,0), FLOOR(A1) as FLOOR(A1,1), POW and CEIL as POWER and CEILING; LEN(A2:A9) and =C2:C4 array formulas; @ plain, or SINGLE in an array formula; SUM() refused",
+    g2("ROUND(A1)").f === "ROUND(A1,0)" && g2("FLOOR(A1)").f === "FLOOR(A1,1)" && g2("POW(2,3)").f === "POWER(2,3)" && g2("CEIL(2.5)").f === "CEILING(2.5,1)" &&
+    g2("SUM(LEN(A2:A9))").array && g2("C2:C4").array && g2("@C2:C9*2").f === "C2:C9*2" && !g2("@C2:C9*2").array && g2("@C2:C9*D2:D9").f === "_xlfn.SINGLE(C2:C9)*D2:D9" && !g2("SUM()").ok,
+    [g2("ROUND(A1)").f, g2("@C2:C9*2"), g2("@C2:C9*D2:D9").f]);
+  var w3 = X.write({ title: "t", cells: { A1: "1 1/2", A2: "(100)", A3: "($1,200.50)", A4: "1.2.10", A5: "=SUM(A1:A3)" } }, L.sheetDocs.compute({ A1: "1 1/2", A2: "(100)", A3: "($1,200.50)", A4: "1.2.10", A5: "=SUM(A1:A3)" }));
+  var b3 = X.read(w3.bytes, "t.xlsx").sheets[0];
+  ok("1 1/2 and (100) typed are saved as numbers with their looks, as Excel keeps them; 1.2.10 as text", b3.cells.A1 === "1.5" && b3.fmt.A1.nf === "# ?\x2F?" && b3.cells.A2 === "-100" && b3.fmt.A2.nf === "#,##0_);(#,##0)" &&
+    b3.cells.A3 === "-1200.5" && b3.fmt.A3.nf === "$#,##0.00_);($#,##0.00)" && b3.cells.A4 === "1.2.10", [b3.cells, b3.fmt]);
+  // a plain formula from an Excel file that names a range where one value belongs: @ as Excel 365 shows it, saved plain
+  var imp = { title: "i", cells: { C2: "1", C3: "2", C4: "3", C5: "7", J5: "=@C2:C5*2" } }, wi = X.write(imp, L.sheetDocs.compute(imp.cells)), zi = L.zip.read(wi.bytes).text("xl\x2Fworksheets\x2Fsheet1.xml");
+  ok("...and saved again as Excel had it, a plain formula (Excel's own 14, not an array formula's 2)", /<c r="J5"><f>C2:C5\*2<\/f><v>14<\/v>/.test(zi), zi.slice(zi.indexOf('r="J5"') - 5, zi.indexOf('r="J5"') + 80));
 
   if (errs.length) { fails++; console.log("FAIL page errors", errs.slice(0, 3)); }
   console.log(fails ? fails + " XLSX FAILURES (" + passes + " passed)" : "ALL XLSX CHECKS PASS (" + passes + " passed)");
