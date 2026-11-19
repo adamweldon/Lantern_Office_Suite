@@ -3,15 +3,6 @@
 Only what he alone can answer. Newest first. Remove a question when he has
 answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
 
-0. **Word files (1.24.26): two things only you can check.**
-   (a) Open a file Lantern saved (Writer, Save .docx) in your Word: does it
-   open without asking to repair, with its headings, lists and tables? It
-   passed the OOXML schema and LibreOffice, but not Word itself.
-   (b) A numbered list inside another shows 1, 2, 3 in Writer, so Lantern
-   saves it 1, 2, 3 in Word too. Word and Google Docs usually letter that
-   level (1. a. i.). Should Writer show a list in a list as 1. a. i.? It
-   would change how existing documents look on the page, so it is yours.
-   (Asked 2026-11-18.)
 1. **A colour wheel cut into one wedge a colour: how does it look?**
    (1.24.20) "Primary: Red | Yellow | Blue / Secondary: Orange | Green |
    Violet" is now drawn as six wedges round the wheel, each its own colour,

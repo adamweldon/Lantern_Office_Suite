@@ -42,7 +42,9 @@ tried by a reviewer:
   by `tests/review_docx_1266.js` and `tests/review_docx_1266_lo.py`, each
   with `--second`). Left: headers and footers, comments, fonts and colours,
   page breaks (Writer has none), .odt and .rtf; DOCX_READ past the size
-  gate (split it); Adam's QUESTIONS 0 (Word itself; lists in lists).
+  gate (split it). Adam (2026-11-19): "The docx opens fine without asking
+  to repair. lists inside lists should follow the same schema as word and
+  google docs": done in 1.24.27 (1. a. i. on the page and in every save).
 - Small, from the 1.24.26 bench: the 2B fails make-doc-oil-change the same
   way on six versions and four processors: it copies MAKE DOC's example
   heading "## Before you start" and writes every step of the job under it
