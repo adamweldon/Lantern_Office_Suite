@@ -1,5 +1,118 @@
 # Changelog
 
+## 1.24.27 — A list in a list numbered 1. a. i., as in Word and Google Docs (2026-11-19)
+
+Adam (2026-11-19), asked whether a Word file Lantern saves opens in Word, and
+whether Writer should show a list in a list as 1. a. i.: "The docx opens fine
+without asking to repair. lists inside lists should follow the same schema as
+word and google docs". Writer showed a numbered list inside another 1, 2, 3 at
+every level, as a browser does with no style of its own, and saved it so.
+
+**A list in a list.** A numbered list with no style of its own counts 1, 2, 3
+at the first level, a, b, c at the second, i, ii, iii at the third, then 1, a,
+i again, as Word's and Google Docs' do; bullets go •, ◦, ▪ the same way. A
+list's level is how many lists it is in, numbered or bulleted (a numbered list
+under a bullet is a, b, as in Word); past Word's nine levels a list is shown
+as the ninth; past z a level's letters go aa, bb as Word's do. A list's own
+style (A, I, a start of 2) wins. One rule (CORE's Lantern.lists) is asked by
+Writer's page, Save .txt (which wrote every numbered item as "- "), Save .html
+(the file carries the rules, and each list in a list says its style, for
+LibreOffice and Word, which read no CSS), Save .pdf (which kept no start and
+no style, and left out a list that Writer's Indent more puts straight inside
+another) and Save .docx (Word's lowerLetter and lowerRoman at their levels). A
+Word file's list whose levels are Word's own comes in with no style of its
+own, so it moves with its level as in Word; one that is not (1, 2, 3 at the
+second level, A, B at the first) keeps it. MAKE DOC's preview shows a list in
+a list the same way.
+
+**In Writer.** Tab at the start or the end of a list item's words makes it a
+sub-item, and Shift+Tab takes it back (on a first-level item it does nothing);
+in the middle of the words Tab types a tab; in a table it goes to the next
+cell; in a paragraph it types a tab. It left the page before, and the words
+typed next went nowhere. Esc and then Tab leaves the page. Paste keeps a
+numbered list's style and start (Google Docs and many sites give the style as
+CSS; a start is read as a browser reads it). Save .txt lines up an item's next
+lines under its words, puts a list in a table cell on the cell's line, and
+shows an imported page's white space as a browser does. The help says all this
+under "Lists in lists".
+
+**MAKE DOC.** The small models' run of 1.24.26 (0.8B 61, 2B 73, 4B 107 of 115;
+all three made the Word file asked for) had the 2B fail the lawn mower's oil
+change the same way on six versions and four processors: the instructions'
+example began "## Before you start", and the 2B wrote that heading and every
+step of the job under it. The example's figures went in too: "30 minutes" in
+every failed reply, and a compressor's "1.8 litres of ISO VG 100" in the
+0.8B's lawn mower on 1.24.21 and 1.24.25. The example now begins with "##
+Steps" right above the steps, ends with "## Afterwards", makes the machine
+safe first ("Switch off and unplug the compressor so it cannot start, let all
+the air out of the tank, and let it cool": the first review found it had no
+step to cut the power or let the air out), and has no figure to copy. MAKE DOC
+also keeps the step number the model wrote after a note between steps (a
+second step 1 before), and reads an item's sub-points as a list inside it, a,
+b, c on the page: lines indented under it, and a., b. or i., ii. under a
+numbered step, three levels deep, of any kind ("e. g." is a line, and + is a
+bullet). The 1.24.26 run's failed rows are fixtures
+(tests/fixtures/bench_run_1266_*.json), replayed by tests/bench_1266.js;
+whether the 2B now passes is for the next run.
+
+**Reviewed.** A reviewer that had not written the change made 117 cases of its
+own: lists typed in Chromium with Writer's buttons, Word's own numbering and
+bullets, a Google Docs export, LibreOffice's saves and HTML, pastes from
+Google Docs, Word and the web, every save, round trips, and MAKE DOC documents
+written as small models write them. 37 did not do what a person would expect.
+Mended, most harmful first: the example's missing safety step (above); Tab
+left the page and lost the next words; a note between steps, or points under a
+step, began the steps again at 1; Save .html's levels were in CSS only, so
+LibreOffice showed 1. 1. 1.; .txt's ninth level sat at the eighth's indent;
+past z the page went aa, ab where Word goes aa, bb; .txt double spaced an item
+made of paragraphs, put its second paragraph at the margin, broke a table row
+at a list in a cell, and kept an imported page's tabs and line breaks; paste
+dropped a style given as CSS and starts like " 4". Kept, with the reason in
+the test: an HTML file's list in a list with no style is shown 1. a. i. as
+every list in a list is (a Word or LibreOffice file says its style, and it is
+kept). Its cases are kept (tests/fixtures/review_lists_1267.json,
+tests/fixtures/lists/review/) and replayed in Chromium and LibreOffice by
+tests/review_lists_1267.py: 95 agree, 5 kept, 17 found but not from this
+change (in the queue).
+
+**Reviewed again.** A second reviewer, new to the change and the first review,
+made 100 cases of its own after those mends: 28 did not do what a person would
+expect. Mended: MAKE DOC lost lines where an item's sub-points were of two
+kinds (a. with bullets under it: "Pull the spark plug lead off so it cannot
+start." was gone, and the bench still passed it); they are read now as a stack
+of levels, each kind a list of its own under its item; i., ii. were read as
+the letter i; Shift+Tab on a first-level item took its number away; Tab after
+"Voltage:" nested the item and ran "230 V" into it (in the middle of words it
+types a tab now); MAKE DOC's preview numbered sub-points 1, 2; a list in a
+table cell carried its level's indent into the .txt; Save .html's letters past
+z; a start past what a browser counts. Kept, with the reason in the test: Tab
+at the end of an item's words makes it a sub-item (seven of this review's own
+typed cases expect it) where Word would type a tab; LibreOffice's own HTML
+import letters past z as aa, ab; a list's own type="A" past Z is AA, AB on the
+page and BB in Word (Word has no AA, AB, and CSS cannot tell a type's A from
+a). Its cases are kept (tests/fixtures/review2_lists_1267.json,
+tests/fixtures/lists/review2/) and replayed by tests/review2_lists_1267.py: 86
+agree, 3 kept, 11 not from this change (in the queue). Not tried by a third
+reviewer after the second round of mends.
+
+**Tested.** tests/writer_lists.js (45 checks: the rule, its marks and CSS;
+.txt, paste, the PDF's marks and drawn bullets, the Word file's levels and its
+reading back, Save .txt and Save .html in Writer); tests/ai_make_docs.js (MAKE
+DOC's numbers and sub-points); tests/bench_1266.js (the 1.24.26 run, the
+example); tests/browser/writer_lists.py in Chromium at a laptop's width and on
+a Pixel 5 (typed with Writer's buttons and Tab, Shift+Tab, a table's cells,
+Esc; Save .txt, Save .html in the browser and in LibreOffice, Save .pdf
+through pdftotext, Save .docx in LibreOffice); both reviews replayed; the Word
+file reviews of 1.24.26 replayed, their lettered-level cases agreeing now. npm
+test (ALL CHECKS PASS).
+
+**Not tested.** Microsoft Word and Google Docs themselves (LibreOffice and the
+reviewers' files written in their form stood in); a phone's own browser;
+Firefox and Safari (a browser without :is() or @counter-style keeps the rules
+for numbered lists inside numbered lists, and letters past z go aa, ab); the
+35B and the small models on the new example (the GitHub bench runs on the
+push).
+
 ## 1.24.26 — Word files: Writer opens and saves .docx (2026-11-18)
 
 Adam (2026-11-18), with three files: "Here are some files for 1.24.26. I had

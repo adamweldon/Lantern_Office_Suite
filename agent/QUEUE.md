@@ -45,23 +45,36 @@ tried by a reviewer:
   gate (split it). Adam (2026-11-19): "The docx opens fine without asking
   to repair. lists inside lists should follow the same schema as word and
   google docs": done in 1.24.27 (1. a. i. on the page and in every save).
-- Small, from the 1.24.26 bench: the 2B fails make-doc-oil-change the same
-  way on six versions and four processors: it copies MAKE DOC's example
-  heading "## Before you start" and writes every step of the job under it
-  (no "## Steps"), so the heading is wrong for most of the list. The
-  example is what a small model writes (CLAUDE.md): try an example whose
-  first heading is still right when every step is put under it, or send
-  the document back once with the line to add ("## Steps" above the first
-  step that is not getting ready). Replay the 2B's rows
-  (`tests/fixtures/bench_run_1247_2b.json`, `bench_run_1253_2b.json`, and
-  the 1.24.26 log's) and have a reviewer try it first.
-- **Next: .xlsx in Sheets** (1.24.27): open and save, formulas kept as
+- Lists in lists: **done in 1.24.27** (Adam, 2026-11-19: "lists inside lists
+  should follow the same schema as word and google docs"; CORE's
+  Lantern.lists; the page, Save .txt, .html, .pdf, .docx, paste, Tab;
+  `tests/writer_lists.js`, two reviews replayed by
+  `tests/review_lists_1267.py` and `tests/review2_lists_1267.py`). Left, found
+  by the reviews and not from this change (each replay's LATER lists them):
+  the PDF prints every script past Latin-1 as "?" and does not say so (say
+  it, or embed a font); a list in a table cell loses its numbers in the PDF,
+  and an item's words after its sub-list and a table in an item run together
+  there; Word's 1. 1.1. 1.1.1., 1) a) i), (a) (i), 01. and Hebrew numbering
+  come in as 1. a. i. and go back out so; a list copied from Word pastes as
+  numbered paragraphs (read its mso-list); an item's own number (value) and
+  a start below 0 are not in the Word file, and paste drops value and
+  reversed; a bullet list's own sign (square) is written by its level; .txt:
+  an item of two paragraphs in a cell splits the row, double spaces around
+  inline tags, an empty item's blank line, a code block in a step; MAKE DOC
+  reads a YAML line "- name:" under a step as a bullet.
+- The 2B's oil change (make-doc-oil-change, the same failure on six
+  versions): MAKE DOC's example changed in 1.24.27 (its first heading
+  "## Steps", no figures, the machine made safe first). Read the next run's
+  row; if it still fails the same way, look at what it wrote before changing
+  more. A bench question for a letter would show whether a small model puts
+  a letter under "## Steps" (the first review's unsure case).
+- **Next: .xlsx in Sheets** (1.24.28): open and save, formulas kept as
   formulas (Adam had to type his back in after a .csv), Excel's number
   formats (already kept per cell as codes), bold, alignment, column widths,
   merged cells (his file has C1:E1), shared formulas (his file has them).
   Adam's House_Square_Footage file is in the session only: it has his
   home's rooms and a Windows user name in it, so it is not in the repo.
-- Then .pptx in Slides (1.24.28). Adam's ITW deck is ITW's training
+- Then .pptx in Slides (1.24.29). Adam's ITW deck is ITW's training
   material: test with it in the session, never commit it.
 
 0. **The Health lessons' sources (1.24.22, Adam).** Every lesson names the
