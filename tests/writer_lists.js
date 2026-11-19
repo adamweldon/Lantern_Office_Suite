@@ -76,7 +76,17 @@ var L = w.Lantern;
   var inli = "<ol start=\"3\"><li>Isolate<ol><li>Open<ul><li>key</li></ul></li></ol></li><li value=\"7\">Seven</li><li>Eight</li></ol><ul><li>Rags</li></ul>";
   ok("...a list inside the item on its own line; a start and a value kept; bullets as -",
     L.writerText(inli, true) === "3. Isolate\n    a. Open\n        - key\n7. Seven\n8. Eight\n- Rags\n", L.writerText(inli, true));
-  ok("...a list with words after it in the item: the words after it, in order", L.writerText("<ol><li>Lock<ol><li>pad</li></ol>then test</li></ol>", true) === "1. Lock\n    a. pad\nthen test\n", L.writerText("<ol><li>Lock<ol><li>pad</li></ol>then test</li></ol>", true));
+  ok("...a list with words after it in the item: the words after it, in order, lined up with the item's words", L.writerText("<ol><li>Lock<ol><li>pad</li></ol>then test</li></ol>", true) === "1. Lock\n    a. pad\n   then test\n", L.writerText("<ol><li>Lock<ol><li>pad</li></ol>then test</li></ol>", true));
+  // (the first review: an item's paragraphs and line breaks, a list in a table cell, an imported page's white space)
+  ok("...an item's paragraphs and line breaks are its lines, lined up with its words, not double spaced",
+    L.writerText("<ol><li><p>Isolate the supply.</p><p>Tell the operator first.</p><ol><li>Open the breaker</li></ol></li><li>Drain the oil<br>into a pan</li><li><p>Test</p></li></ol>", true) ===
+    "1. Isolate the supply.\n   Tell the operator first.\n    a. Open the breaker\n2. Drain the oil\n   into a pan\n3. Test\n", L.writerText("<ol><li><p>Isolate the supply.</p><p>Tell the operator first.</p><ol><li>Open the breaker</li></ol></li><li>Drain the oil<br>into a pan</li><li><p>Test</p></li></ol>", true));
+  ok("...a list in a table cell is a line of the cell", L.writerText("<table><tr><th>Job</th><th>Steps</th></tr><tr><td>Oil</td><td><ol><li>Drain</li><li>Refill</li></ol></td></tr></table>", true) === "Job\tSteps\nOil\t1. Drain 2. Refill\n",
+    L.writerText("<table><tr><th>Job</th><th>Steps</th></tr><tr><td>Oil</td><td><ol><li>Drain</li><li>Refill</li></ol></td></tr></table>", true));
+  ok("...white space as a browser shows it (an imported page's line breaks and tabs), a tab Writer keeps kept, <pre> as it is",
+    L.writerText("<ol>\n  <li>Isolate\n\tthe   supply\n    <ol>\n      <li>Open</li>\n    </ol>\n  </li>\n</ol>\n<p>Name:<span style=\"white-space:pre\">\t</span>value</p><pre>a  b\n  c</pre>", true) ===
+    "1. Isolate the supply\n    a. Open\nName:\tvalue\na  b\n  c\n", L.writerText("<ol>\n  <li>Isolate\n\tthe   supply\n    <ol>\n      <li>Open</li>\n    </ol>\n  </li>\n</ol>\n<p>Name:<span style=\"white-space:pre\">\t</span>value</p><pre>a  b\n  c</pre>", true));
+  ok("...a list that begins a level in keeps its first line's indent", L.writerText("<ol><ol><li>Only item</li></ol></ol>", true) === "    a. Only item\n", L.writerText("<ol><ol><li>Only item</li></ol></ol>", true));
   ok("...own styles (I, A from 2)", L.writerText("<ol type=\"I\"><li>Part<ol type=\"A\" start=\"2\"><li>Bravo</li></ol></li><li>Two</li></ol>", true) === "I. Part\n    B. Bravo\nII. Two\n");
   ok("...and the counts (Stats) read the text as before, every item - ", L.writerText(chrome) === "Steps\n- one\n- two\n- three\n- two b\n- four\nAfter.\n", L.writerText(chrome));
   // (the first review: levels 8 and 9 had one indent)
@@ -88,7 +98,11 @@ var L = w.Lantern;
 
   // --- paste and import keep a numbered list's own style and start ---
   var cl = L.writerClean("<ol type=\"a\" start=\"3\" onclick=\"x()\" style=\"color:red\"><li>c</li></ol><ol type=\"disc\" start=\"3x\"><li>y</li></ol><ol start=\"-2\" type=\"I\"><li>z</li></ol><ul type=\"square\"><li>s</li></ul>");
-  ok("paste keeps an <ol>'s type (1, a, A, i, I) and start, nothing else", cl === "<ol type=\"a\" start=\"3\"><li>c</li></ol><ol><li>y</li></ol><ol type=\"I\" start=\"-2\"><li>z</li></ol><ul><li>s</li></ul>", cl);
+  ok("paste keeps an <ol>'s type (1, a, A, i, I) and start (read as a browser reads it: 3x is 3), nothing else", cl === "<ol type=\"a\" start=\"3\"><li>c</li></ol><ol start=\"3\"><li>y</li></ol><ol type=\"I\" start=\"-2\"><li>z</li></ol><ul><li>s</li></ul>", cl);
+  // (the first review: Google Docs and many sites give a list's style as CSS; starts a browser honours)
+  var cl2 = L.writerClean("<ol style=\"list-style-type: lower-alpha\"><li>Note</li></ol><ol><li style=\"list-style-type:upper-alpha\">E<ol><li style=\"list-style-type:decimal\">Iso</li></ol><ol><li style=\"list-style-type:lower-alpha\">x</li></ol></li></ol><ol style=\"list-style-type:decimal\"><li>d</li></ol><ol start=\" 4\"><li>f</li></ol><ol start=\"+3\"><li>t</li></ol><ol start=\"1e3\"><li>e</li></ol>");
+  ok("paste: a style given as CSS is the list's type where its level would not show it anyway; starts as a browser reads them",
+    cl2 === "<ol type=\"a\"><li>Note</li></ol><ol type=\"A\"><li>E<ol type=\"1\"><li>Iso</li></ol><ol><li>x</li></ol></li></ol><ol><li>d</li></ol><ol start=\"4\"><li>f</li></ol><ol start=\"3\"><li>t</li></ol><ol start=\"1\"><li>e</li></ol>", cl2);
 
   // --- the PDF: marks by level, and nothing left out ---
   function pdfBlocks(h) { return L.pdf.layout.blocks(new w.DOMParser().parseFromString("<!DOCTYPE html><body>" + h, "text/html").body).filter(function (b) { return b.kind === "li"; }).map(function (b) { return b.depth + ":" + b.mark + b.runs.map(function (r) { return r.t; }).join(""); }); }

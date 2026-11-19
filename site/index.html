@@ -1790,6 +1790,20 @@ Lantern.formula = (function () {
   var DROP = { SCRIPT: 1, STYLE: 1, IFRAME: 1, OBJECT: 1, EMBED: 1, LINK: 1, META: 1, TITLE: 1, BASE: 1, SVG: 1, MATH: 1, FORM: 1,
     INPUT: 1, BUTTON: 1, TEXTAREA: 1, SELECT: 1, NOSCRIPT: 1, TEMPLATE: 1, HEAD: 1, CANVAS: 1, VIDEO: 1, AUDIO: 1 };
   var BLOCKY = /^(?:P|DIV|H[1-6]|UL|OL|LI|TABLE|BLOCKQUOTE|PRE|HR|SECTION|ARTICLE|HEADER|FOOTER|NAV|ASIDE|MAIN|FIGURE)$/;
+  // olLook(from, to): a numbered list's own style (a, A, i, I, 1) and the number it starts at. A style given as CSS
+  // (Google Docs puts it on each item, many sites on the list) is its type where it is not the one its level shows
+  // anyway; a start is read as a browser reads it (" 4", "+3", "1e3" is 1)
+  var LST = { decimal: "1", "lower-alpha": "a", "lower-latin": "a", "upper-alpha": "A", "upper-latin": "A", "lower-roman": "i", "upper-roman": "I" };
+  function olLook(n, el) {
+    var ty = n.getAttribute("type") || "", st = /^[\t\n\f\r ]*([+-]?\d{1,9})/.exec(n.getAttribute("start") || ""), li = null, c;
+    if (!/^[1aAiI]$/.test(ty)) {
+      for (c = n.firstChild; c && !li; c = c.nextSibling) if (c.nodeType === 1 && c.tagName === "LI") li = c;
+      ty = LST[String((n.style && n.style.listStyleType) || (li && li.style && li.style.listStyleType) || "").toLowerCase()] || "";
+      if (ty && Lantern.lists && n.getAttribute("type") == null && ty === Lantern.lists.type(n)) ty = "";
+    }
+    if (ty) el.setAttribute("type", ty);
+    if (st) el.setAttribute("start", String(parseInt(st[1], 10)));
+  }
   function writerClean(html) {
     var src = new DOMParser().parseFromString(String(html || ""), "text/html").body, out = document.createElement("div");
     (function walk(from, to) {
@@ -1807,8 +1821,7 @@ Lantern.formula = (function () {
           if (tag === "A") { var h = n.getAttribute("href") || ""; if (/^(?:https?:|mailto:|#)/i.test(h.replace(/\s+/g, ""))) el.setAttribute("href", h); }
           if ((tag === "TD" || tag === "TH") && /^\d{1,2}$/.test(n.getAttribute("colspan") || "")) el.setAttribute("colspan", n.getAttribute("colspan"));
           // a numbered list keeps its own style (a, A, i, I, 1) and the number it starts at
-          if (tag === "OL" && /^[1aAiI]$/.test(n.getAttribute("type") || "")) el.setAttribute("type", n.getAttribute("type"));
-          if (tag === "OL" && /^-?\d{1,6}$/.test(n.getAttribute("start") || "")) el.setAttribute("start", n.getAttribute("start"));
+          if (tag === "OL") olLook(n, el);
           to.appendChild(el); walk(n, el);
         } else if (tag === "DIV" || tag === "SECTION" || tag === "ARTICLE") {
           // a div of text is a paragraph; a div of blocks is unwrapped
@@ -1827,34 +1840,78 @@ Lantern.formula = (function () {
   // a bullet "-"), a list in a list indented four spaces a level; without it
   // (the counts in Stats) every item is "- " as before.
   function listMarks(html) {
-    var body = new DOMParser().parseFromString("<!DOCTYPE html><body>" + html, "text/html").body, LL = Lantern.lists;
+    var body = new DOMParser().parseFromString("<!DOCTYPE html><body>" + html, "text/html").body, LL = Lantern.lists, doc = body.ownerDocument;
+    var BLK = /^(?:OL|UL|MENU|LI|P|DIV|H[1-6]|TABLE|THEAD|TBODY|TR|TD|TH|BLOCKQUOTE|BODY|PRE|HR)$/, LIST = /^(?:OL|UL|MENU)$/;
+    function blk(n) { return !n || n.nodeType === 1 && BLK.test(n.tagName); }
+    // white space as a browser shows it: a run is one space, and none at a block's ends (an imported page's source
+    // kept its line breaks and tabs); not in <pre> or a tab Writer keeps (white-space:pre)
+    (function ws(el) {
+      for (var c = el.firstChild, nx; c; c = nx) {
+        nx = c.nextSibling;
+        if (c.nodeType === 3) {
+          var v = c.nodeValue.replace(/[ \t\r\n\f]+/g, " ");
+          if (BLK.test(el.tagName)) { if (blk(c.previousSibling)) v = v.replace(/^ /, ""); if (blk(nx)) v = v.replace(/ $/, ""); }
+          if (v) c.nodeValue = v; else el.removeChild(c);
+        } else if (c.nodeType === 1 && c.tagName !== "PRE" && !/white-space:\s*pre/i.test(c.getAttribute("style") || "")) ws(c);
+      }
+    })(body);
+    // an item's paragraphs are its lines
     Array.prototype.forEach.call(body.querySelectorAll("li"), function (li) {
-      var list = li.parentNode, t = list && /^(?:OL|UL|MENU)$/.test(list.tagName) ? LL.type(list) : "disc", n = 0, c, v;
+      var seen = false;
+      Array.prototype.slice.call(li.childNodes).forEach(function (k) {
+        if (k.nodeType === 1 && /^(?:P|DIV|H[1-6]|BLOCKQUOTE)$/.test(k.tagName)) {
+          if (seen) li.insertBefore(doc.createElement("br"), k);
+          while (k.firstChild) li.insertBefore(k.firstChild, k);
+          li.removeChild(k); seen = true;
+        } else if (k.nodeType === 3 || !LIST.test(k.tagName)) seen = true;
+      });
+    });
+    var cont = [];
+    Array.prototype.forEach.call(body.querySelectorAll("li"), function (li) {
+      var list = li.parentNode, t = list && LIST.test(list.tagName) ? LL.type(list) : "disc", n = 0, c, v;
       if (/^[1aAiI]$/.test(t)) {
         v = parseInt(list.getAttribute("start"), 10); n = isNaN(v) ? 0 : v - 1;
         for (c = list.firstChild; c; c = c.nextSibling) if (c.nodeType === 1 && c.tagName === "LI") { v = parseInt(c.getAttribute("value"), 10); n = isNaN(v) ? n + 1 : v; if (c === li) break; }
       }
-      var pad = new Array(4 * (list && /^(?:OL|UL|MENU)$/.test(list.tagName) ? LL.level(list) : 0) + 1).join(" ");
-      li.insertBefore(body.ownerDocument.createTextNode(pad + (/^[1aAiI]$/.test(t) ? LL.mark(t, n, LL.own(list)) : "-") + " "), li.firstChild);
+      var pad = new Array(4 * (list && LIST.test(list.tagName) ? LL.level(list) : 0) + 1).join(" "), mk = /^[1aAiI]$/.test(t) ? LL.mark(t, n, LL.own(list)) : "-";
+      li.insertBefore(doc.createTextNode(pad + mk + " "), li.firstChild);
+      cont.push([li, pad + new Array(mk.length + 2).join(" ")]);
     });
-    // a list inside an item starts on a line of its own: one that ends the item goes after it, one with words
-    // after it gets a line break before it
-    Array.prototype.forEach.call(body.querySelectorAll("li"), function (li) {
-      var tail = [], c = li.lastChild, at = li.nextSibling;
-      while (c && (c.nodeType === 3 && !/\S/.test(c.nodeValue) || c.nodeType === 1 && /^(?:OL|UL|MENU)$/.test(c.tagName))) { if (c.nodeType === 1) tail.unshift(c); c = c.previousSibling; }
+    // a list in a table cell is a line of the cell: its items one after another
+    Array.prototype.slice.call(body.querySelectorAll("td ol, td ul, th ol, th ul")).reverse().forEach(function (l) {
+      var sp = doc.createElement("span");
+      Array.prototype.slice.call(l.childNodes).forEach(function (k) {
+        if (k.nodeType === 1 && k.tagName === "LI") { var s2 = doc.createElement("span"); while (k.firstChild) s2.appendChild(k.firstChild); s2.appendChild(doc.createTextNode(" ")); sp.appendChild(s2); }
+        else sp.appendChild(k);
+      });
+      l.parentNode.replaceChild(sp, l);
+    });
+    // an item's next lines line up with its words; a list inside an item starts on a line of its own: one that ends
+    // the item goes after it, one with words after it gets a line break before it and the words after it line up
+    cont.forEach(function (x) {
+      var li = x[0], sp = x[1], c, at;
+      if (!li.parentNode || !LIST.test(li.parentNode.tagName)) return;
+      for (c = li.firstChild; c; c = c.nextSibling) if (c.nodeType === 1 && c.tagName === "BR" && c.nextSibling) li.insertBefore(doc.createTextNode(sp), c.nextSibling);
+      var tail = [];
+      c = li.lastChild; at = li.nextSibling;
+      while (c && (c.nodeType === 3 && !/\S/.test(c.nodeValue) || c.nodeType === 1 && LIST.test(c.tagName))) { if (c.nodeType === 1) tail.unshift(c); c = c.previousSibling; }
       tail.forEach(function (sub) { li.parentNode.insertBefore(sub, at); });
-      for (c = li.firstChild; c; c = c.nextSibling) if (c.nodeType === 1 && /^(?:OL|UL|MENU)$/.test(c.tagName)) li.insertBefore(body.ownerDocument.createElement("br"), c);
+      for (c = li.firstChild; c; c = c.nextSibling) if (c.nodeType === 1 && LIST.test(c.tagName)) {
+        li.insertBefore(doc.createElement("br"), c);
+        if (c.nextSibling) li.insertBefore(doc.createTextNode(sp), c.nextSibling);
+      }
     });
     return body.innerHTML;
   }
   function writerText(html, numbered) {
     var src = String(html || "");
-    if (numbered && Lantern.lists && window.DOMParser && /<li[\s>]/i.test(src)) src = listMarks(src);
+    if (numbered && Lantern.lists && window.DOMParser) src = listMarks(src);
     var t = src.replace(/<br\s*\x2F?>/gi, "\n").replace(/<li[^>]*>/gi, numbered && src !== String(html || "") ? "" : "- ")
       .replace(/<\x2F(?:p|div|h[1-6]|li|tr|blockquote|pre)>/gi, "\n").replace(/<\x2Ft[dh]>/gi, "\t")
       .replace(/<[^>]+>/g, "");
     var ta = document.createElement("textarea"); ta.innerHTML = t;
-    return ta.value.replace(/\u00a0/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").replace(/^\s+|\s+$/g, "") + "\n";
+    // (a first line's own indent is kept: a list that begins a level in)
+    return ta.value.replace(/\u00a0/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").replace(numbered ? /^(?:[ \t]*\n)+|\s+$/g : /^\s+|\s+$/g, "") + "\n";
   }
   Lantern.writerText = writerText;
   // exec(name, val): execCommand without a value when there is none
