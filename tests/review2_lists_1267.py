@@ -276,6 +276,7 @@ KEEP = {
     "docx-write-own-upper-letters-past-z": "a list's own type=\"A\" past Z: the page shows AA, AB as a browser draws it and Word BB; Word has no AA, AB, and CSS cannot tell a type's A from a (Chromium has no [type=\"A\" s]), so the page cannot follow Word's either",
     "page-typed-tab-in-list-in-table-cell": "unsure, and it agrees: Tab at the end of a list item in a cell makes it a sub-item, as at the start of one",
     "makedoc-e-g-line": "agrees now (e. g. is a line, not a sub-point); was unsure",
+    "makedoc-example-sound": "1.24.28 changed MAKE DOC's example on purpose after the 1.24.27 bench (all three small models wrote one heading, and the check asks for two): it begins with \u201c## You need\u201d and a list of two, \u201cThe oil its maker names\u201d among them, then \u201c## Steps\u201d and \u201c## Afterwards\u201d; tests/bench_1267.js checks it",
 }
 LATER = {
     "makedoc-config-lines-under-step": "MAKE DOC: a YAML or code line \"- name: web\" under a step is read as a bullet; code belongs in MAKE CODE or a code block",

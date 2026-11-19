@@ -34,6 +34,7 @@ KEEP = {
     "txt-save-then-import": "a .txt has no lists: it comes back as paragraphs (Import file), its indents gone, as a .txt does in Word; not run here (it needs the page's file chooser)",
     "makedoc-letter-copying-example-headings": "not seen in any run: a letter under ## Steps would be the model's, and a bench question for a letter would show whether it happens (QUEUE)",
     "makedoc-example-title-copied": "the title is the model's: Lantern cannot know that a compressor's title is wrong for a lawn mower without the question's own words for the machine",
+    "makedoc-example-as-a-document": "1.24.28 changed MAKE DOC's example on purpose after the 1.24.27 bench (all three small models wrote one heading, and the check asks for two): it begins with \u201c## You need\u201d and a list of two, \u201cThe oil its maker names\u201d among them, then \u201c## Steps\u201d and \u201c## Afterwards\u201d; tests/bench_1267.js checks it",
 }
 # Not from this change: what they found is in agent/QUEUE.md, to be mended in a version of its own
 LATER = {

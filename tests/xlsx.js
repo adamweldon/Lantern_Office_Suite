@@ -220,6 +220,60 @@ w.eval(js);
   var g2 = L.aiBench.grade(item, "MAKE SHEET: Job\nItem | Cost\nLabour | 75\nParts | 40\nTravel | 12\nTotal | 127\nEND", { made: act.build("MAKE SHEET: Job\nItem | Cost\nLabour | 75\nParts | 40\nTravel | 12\nTotal | 127\nEND", item.q) });
   ok("bench: a table with no formulas fails make-sheet-excel", !g2.pass && /no formulas/.test(g2.why), g2.why);
 
+  // --- the first review's mends (1.24.28; tests/review_xlsx_1268.py replays the review itself) ---
+  var RF = path.join(__dirname, "fixtures", "xlsx", "review", "files");
+  function rfile(n) { return u8(fs.readFileSync(path.join(RF, n))); }
+  var cs = { A2: "North", A3: "South", A4: "North", B2: "1", B3: "2", B4: "3", B5: "4", C2: "1.5", C3: "0.5", C4: "1", C5: "0.25", D2: "100", D3: "50", D4: "125",
+    E1: "=SUMPRODUCT((A2:A4=\"North\")*(D2:D4))", E2: "=SUMPRODUCT(--(B2:B5>2))", E3: "=SUM(B2:B5*C2:C5)", E4: "=SUM(IF(B2:B5>2,C2:C5))", E5: "=AVERAGE(IF(A2:A4=\"North\",D2:D4))",
+    E6: "=SUMPRODUCT(A2:A4=\"North\")", E7: "=VLOOKUP(6,{0,\"low\";5,\"mid\";10,\"high\"},2,TRUE)", E8: "=B2:B5*2", E9: "=COUNTA(UNIQUE(A2:A4))", E10: "=SUM(FILTER(D2:D4,A2:A4=\"North\"))",
+    F1: "=50%^2", F2: "=2^300%", F3: "=17%5", F4: "=SUM(B2:B5)+1", F5: "=IF(B3>1,\"y\",\"n\")", F6: "=\"x\"&B2", F7: "=B2:B5", F8: "=GAMMAFN(5)", F9: "=BASE(255,16,4)", F10: "=ERROR.TYPE(1/0)" };
+  var cv = L.sheetDocs.compute(cs);
+  ok("a range or a list in { } worked out cell by cell in a sheet, as in Excel (SUMPRODUCT, SUM(IF()), AVERAGE(IF()), VLOOKUP over { })",
+    cv.E1 === 225 && cv.E2 === 2 && cv.E3 === 6.5 && cv.E4 === 1.25 && cv.E5 === 112.5 && cv.E7 === "mid", [cv.E1, cv.E2, cv.E3, cv.E4, cv.E5, cv.E7]);
+  ok("...a list of yes and no counts as 0s in SUMPRODUCT, as in Excel; a list in a cell shows its first value; UNIQUE and FILTER taken whole", cv.E6 === 0 && cv.E8 === 2 && cv.E9 === 2 && cv.E10 === 225, [cv.E6, cv.E8, cv.E9, cv.E10]);
+  ok("...per cent before a power (50%^2, 2^300%), 17%5 still the remainder; ordinary formulas as before; a range alone in a cell still #VALUE!",
+    cv.F1 === 0.25 && cv.F2 === 8 && cv.F3 === 2 && cv.F4 === 11 && cv.F5 === "y" && cv.F6 === "x1" && cv.F7 === "#VALUE!", [cv.F1, cv.F2, cv.F3, cv.F4, cv.F5, cv.F6, cv.F7]);
+  ok("...GAMMAFN (Excel's GAMMA), BASE, ERROR.TYPE", cv.F8 === 24 && cv.F9 === "00FF" && cv.F10 === 2, [cv.F8, cv.F9, cv.F10]);
+  var calcErr = function (src) { try { L.formula.evaluate(src); return null; } catch (e) { return e.message; } };
+  ok("...the Calculator keeps -2^2 as -4 and does not read { }", L.formula.evaluate("-2^2") === -4 && /Bad character/.test(calcErr("{1,2}")), calcErr("{1,2}"));
+  var bk = { Jan: { B2: "10", B6: "=B2*2" }, Feb: { B2: "20" }, Mar: { B2: "30" }, Summary: {} }, sv = L.sheetDocs.compute({ A1: "=Jan!B6", A2: "=SUM(Jan:Mar!B2)", A3: "='Feb'!B2+1", A4: "=Nope!A1" }, bk, "Summary");
+  ok("another sheet of the workbook: =Jan!B6, =SUM(Jan:Mar!B2), ='Feb'!B2; a sheet not there is #REF!", sv.A1 === 20 && sv.A2 === 60 && sv.A3 === 21 && sv.A4 === "#REF!", sv);
+  // the writer
+  function xml(bytes, part) { return L.zip.text ? L.zip.text(L.zip.read(bytes), part) : L.zip.read(bytes).text(part); }
+  var zr = function (bytes) { return L.zip.read(bytes); };
+  var wd = { title: "Mends", cells: { A1: "2026-11-17", A2: "=A1+30", A3: "3:30 PM", A4: "17 Nov 2026", B1: "1", B2: "2", B3: "3", B4: "4", C1: "=SUM(B1:B4*B1:B4)", C2: "=UNIQUE(B1:B4)", C3: "=GAMMA(0.5*299792458)",
+    C4: "=GAMMAFN(5)", C5: "=Other!A1", C6: "=networkdays.intl(A1,A2,1)", C7: "=AB1+1", D1: new Array(33001).join("x") } };
+  var wr = X.write(wd, L.sheetDocs.compute(wd.cells)), z1 = zr(wr.bytes), sx = z1.text("xl\x2Fworksheets\x2Fsheet1.xml"), st = z1.text("xl\x2Fstyles.xml");
+  var wback = X.read(wr.bytes, "m.xlsx"), wsb = wback.sheets[0];
+  ok("typed dates and times saved as Excel's numbers with the look they were typed in; a formula's date with a date's look",
+    /<c r="A1" s="\d+"><v>46343<\/v>/.test(sx) && /<c r="A2" s="\d+"><f>A1\+30<\/f><v>46373<\/v>/.test(sx) && wsb.fmt.A1.nf === "yyyy-mm-dd" && wsb.fmt.A2.nf === "yyyy-mm-dd" &&
+    wsb.fmt.A3.nf === "h:mm AM\x2FPM" && wsb.fmt.A4.nf === "dd mmm yyyy" && wsb.cells.A3 === "0.645833333333333", [wsb.cells.A1, wsb.cells.A3, wsb.fmt]);
+  ok("Excel's GAMMA read back as GAMMAFN, and said", wsb.cells.C4 === "=GAMMAFN(5)" && has(wback.notes, /GAMMA \(the gamma function\) is written GAMMAFN/), [wsb.cells.C4, wback.notes]);
+  ok("an array formula: t=\"array\"; a spilling one with cm=\"1\" and the metadata part Excel 365 writes",
+    /<c r="C1"[^>]*><f t="array" ref="C1">SUM\(B1:B4\*B1:B4\)<\/f>/.test(sx) && /<c r="C2"[^>]* cm="1"><f t="array" ref="C2">_xlfn.UNIQUE\(B1:B4\)<\/f>/.test(sx) && z1.has("xl\x2Fmetadata.xml") &&
+    /sheetMetadata\+xml/.test(z1.text("[Content_Types].xml")) && /sheetMetadata/.test(z1.text("xl\x2F_rels\x2Fworkbook.xml.rels")), sx.slice(sx.indexOf('r="C1"') - 5, sx.indexOf('r="C1"') + 300));
+  ok("GAMMA (the Lorentz factor) saved as its value and said; GAMMAFN as Excel's _xlfn.GAMMA; a sheet not in the file: the value, and said",
+    /<c r="C3"[^>]*><v>1\.1547/.test(sx) && /<f>_xlfn.GAMMA\(5\)<\/f>/.test(sx) && /<c r="C5"[^>]*t="e"><v>#REF!<\/v>/.test(sx) &&
+    has(wr.notes, /^Saved as the value Lantern worked out.*C3 \(Excel’s GAMMA is the gamma function.*C5 \(it uses the sheet “Other”/), wr.notes);
+  ok("NETWORKDAYS.INTL without _xlfn., in capitals; a column past Z said; a text over 32,767 characters cut, and said",
+    /<f>NETWORKDAYS\.INTL\(A1,A2,1\)<\/f>/.test(sx) && has(wr.notes, /past Z \(C7\)/) && has(wr.notes, /32,767 characters.*D1/) && z1.text("xl\x2FsharedStrings.xml").indexOf(new Array(32768).join("x") + "<") > 0, wr.notes);
+  // a workbook's sheets saved together
+  var crs = X.read(rfile("crosssheet.xlsx"), "crosssheet.xlsx"), bmap = {};
+  crs.sheets.forEach(function (s) { bmap[s.name] = s.cells; });
+  var wb = X.writeBook(crs.sheets.map(function (s) { return { doc: s, name: s.name, values: L.sheetDocs.compute(s.cells, bmap, s.name) }; })), wz = zr(wb.bytes);
+  ok("a workbook's sheets saved together under their own names; no formula saved as a value", wb.names.join("|") === crs.sheets.map(function (s) { return s.name; }).join("|") && wb.names.indexOf("Summary") >= 0 &&
+    (wz.text("xl\x2Fworkbook.xml").match(/<sheet /g) || []).length === crs.sheets.length && !has(wb.notes, /^Saved as the value/), [wb.names, wb.notes]);
+  // the reader
+  var t1904 = X.read(rfile("date1904_mac.xlsx"), "m.xlsx").sheets[0];
+  ok("a 1904 workbook: a length of time in [h]:mm is left as it is (36 hours), a date is moved to Sheets' count", t1904.cells.C2 === "1.5" && +t1904.cells.A2 > 40000, [t1904.cells.A2, t1904.cells.C2]);
+  var tt = X.read(rfile("table.xlsx"), "t.xlsx");
+  ok("an Excel table's names written as the cells they stand for, and said once", tt.sheets[0].cells.D2 === "=B2*C2" && tt.sheets[0].cells.G2 === "=SUM(D2:D5)" && tt.notes.filter(function (n) { return /table Orders/.test(n); }).length === 1, [tt.sheets[0].cells, tt.notes]);
+  var pw = null; try { X.read(rfile("password.xlsx"), "p.xlsx"); } catch (e) { pw = e.message; }
+  ok("a workbook locked with a password is said to be so", /locked with a password/.test(pw || ""), pw);
+  var tn = X.read(rfile("text_numbers.xlsx"), "n.xlsx").sheets[0], tnv = L.sheetDocs.compute(tn.cells);
+  ok("text that Sheets would read as a number, a date or a time stays text (COUNT of it 0, as in Excel)", tnv.D5 === 0 && tn.cells.A2 === "\x2702134", [tnv.D5, tn.cells.A2]);
+  ok("comments: their cells and words in the note", has(X.read(rfile("comments.xlsx"), "c.xlsx").notes, /^Comments are not kept: B2 “Price from the supplier/), "comments");
+
   if (errs.length) { fails++; console.log("FAIL page errors", errs.slice(0, 3)); }
   console.log(fails ? fails + " XLSX FAILURES (" + passes + " passed)" : "ALL XLSX CHECKS PASS (" + passes + " passed)");
   process.exit(fails ? 1 : 0);

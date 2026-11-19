@@ -71,6 +71,25 @@ try:
             pg.wait_for_timeout(900)
             titles = pg.evaluate("() => window.Lantern.sheetDocs.list().map(function (d) { return d.title; })")
             ok(label + ": a workbook of three sheets opens as three sheets", all(("workbook2 — " + n) in titles for n in ("Prices", "Order", "Rates")), titles)
+            # (1.24.28, the first review) the Order sheet works out =B2*Prices!B2*(1+'Rates'!B1) from the other two, and
+            # Save .xlsx there saves the three together, each under its own name
+            pg.evaluate("() => { var L = window.Lantern, d = L.sheetDocs.list().filter(function (x) { return x.title === 'workbook2 — Order'; })[0]; L.sheetDocs.open(d.id); }")
+            pg.wait_for_timeout(600)
+            c2 = pg.evaluate("() => (document.querySelector('td[data-ref=C2]') || {}).textContent")
+            ok(label + ": the Order sheet works out C2 from the Prices and Rates sheets (30)", c2 == "30", c2)
+            with pg.expect_download() as dl2:
+                pg.locator("button", has_text="Save .xlsx").first.click()
+            p2 = os.path.join(OUT, "workbook2_%s.xlsx" % label)
+            dl2.value.save_as(p2)
+            note2 = pg.evaluate("() => (document.querySelector('.lp-xlsx-note') || {}).textContent || ''")
+            try:
+                import openpyxl
+                wb2 = openpyxl.load_workbook(p2)
+                ok(label + ": Save .xlsx there saves the workbook's three sheets together, under their own names, C2 a formula still",
+                   dl2.value.suggested_filename == "workbook2.xlsx" and wb2.sheetnames == ["Prices", "Order", "Rates"] and wb2["Order"]["C2"].value == "=B2*Prices!B2*(1+'Rates'!B1)" and "saved together" in note2,
+                   [dl2.value.suggested_filename, wb2.sheetnames, wb2["Order"]["C2"].value, note2[:200]])
+            except ImportError:
+                print("SKIP  openpyxl is not installed")
             ok(label + ": no page errors", not errs, errs)
             ctx.close()
         b.close()
