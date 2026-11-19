@@ -93,8 +93,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check("sheet: grid mounted", !!gridwrap && !!gridwrap.querySelector("table.grid"));
   const stb = gridwrap.parentNode.firstChild;
   const btns = [...stb.querySelectorAll("button")].map(b => b.textContent);
-  check("sheet: hook buttons present (CSV x2, Page setup, Print)",
-    btns.includes("Import CSV") && btns.includes("Export CSV") &&
+  check("sheet: hook buttons present (Import file, Export CSV, Save .xlsx, Page setup, Print)",
+    btns.includes("Import file") && btns.includes("Export CSV") && btns.includes("Save .xlsx") &&
     btns.includes("Page setup") && btns.includes("Print / PDF"), btns.join("|"));
   const panel = document.querySelector(".lp-shpanel");
   check("sheet: page setup panel mounted", !!panel);

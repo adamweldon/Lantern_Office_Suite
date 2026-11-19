@@ -105,9 +105,10 @@ function btn(re) { return Array.prototype.filter.call(d.querySelectorAll("button
   importFile(big, "people.csv"); await sleep(80);
   var lst = L.sheetDocs.list(), made = lst.filter(function (x) { return x.title === "people"; })[0];
   ok("a CSV into a sheet with data: Cancel opens it as a new sheet, named after the file", lst.length === nBefore + 1 && !!made && cells().A1 === "hello", lst.map(function (x) { return x.title; }));
-  ok("...and says it kept 100 of 150 rows (it used to drop them without a word)", alerts.some(function (a) { return /imported 100 of 150 rows/.test(a); }), alerts);
+  // (1.24.28) a sheet has up to 2000 rows since 1.24.25, and a .csv now fills them: 150 rows all come in, unsaid
+  ok("...and keeps all 150 rows, with nothing to say (a sheet takes up to 2000; it cut at 100)", !alerts.some(function (a) { return /imported/.test(a); }), alerts);
   var v = L.sheetDocs.values(made.id);
-  ok("...the new sheet has rows 1 to 100 of the file", v.A1 === "name" && v.B100 === 99 && v.A101 === undefined, [v.A1, v.B100]);
+  ok("...the new sheet has rows 1 to 150 of the file", v.A1 === "name" && v.B100 === 99 && v.B150 === 149 && v.A151 === undefined, [v.A1, v.B100, v.B150]);
   confirmAnswer = true;
   fileIn = d.querySelector("input[type=file][accept*=csv]");   // the new sheet's own toolbar
   importFile("a,b\n1,2", "small.csv"); await sleep(80);
