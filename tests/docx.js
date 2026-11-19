@@ -160,7 +160,8 @@ function orderErrors(xml) {
     /<p style="text-align:right">Right<\/p><p style="text-align:justify">Justified text\.<\/p>$/.test(lh), lh);
   function rerr(b, n) { try { L.docx.read(b, n); return ""; } catch (e) { return e.message; } }
   ok("an Excel file is named as one, an old .doc is named, a damaged file says so", /Excel workbook \(\.xlsx\), not a Word document/.test(rerr(u8(fs.readFileSync(path.join(FX, "book.xlsx"))))) &&
-    /\.doc\b/.test(rerr(new w.Uint8Array(40))) && /damaged/.test(rerr(changed)), [rerr(u8(fs.readFileSync(path.join(FX, "book.xlsx")))), rerr(new w.Uint8Array(40)), rerr(changed)]);
+    /older Office file \(\.doc/.test(rerr(new w.Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1].concat(new Array(40).join("0").split("").map(Number))))) && /not a zip file/.test(rerr(new w.Uint8Array(40))) &&
+    /damaged/.test(rerr(changed)), [rerr(u8(fs.readFileSync(path.join(FX, "book.xlsx")))), rerr(new w.Uint8Array(40)), rerr(changed)]);
 
   // --- DOCX_WRITE + DOCX_PACKAGE: a Writer document as a Word file, and back ---
   var png = "iVBORw0KGgoAAAANSUhEUgAAACgAAAAUCAIAAABwJOjsAAAAJElEQVR42mM4ISc3IIhh1OJRi0ctHrV41OJRi0ctHrV45FgMAFLhLK5O4QWwAAAAAElFTkSuQmCC";   // 40 by 20, red

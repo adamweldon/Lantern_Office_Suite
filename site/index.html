@@ -43463,6 +43463,7 @@ Lantern.RFB = (function () {
     var out = new Uint8Array(size > 0 ? size : Math.max(1024, n * 4)), op = 0;
     function room(k) {
       if (op + k <= out.length) return;
+      if (size > 0) throw bad("it unpacks to more than its size says");
       var m = out.length * 2;
       while (m < op + k) m *= 2;
       var t = new Uint8Array(m);
@@ -43614,6 +43615,12 @@ Lantern.RFB = (function () {
     return new Uint8Array(out);
   }
   function text(b) {
+    // XML parts may be UTF-16 (a byte-order mark says so), as OPC allows
+    if (b.length > 1 && ((b[0] === 0xff && b[1] === 0xfe) || (b[0] === 0xfe && b[1] === 0xff))) {
+      var le = b[0] === 0xff, u = "";
+      for (var j = 2; j + 1 < b.length; j += 2) u += String.fromCharCode(le ? b[j] | (b[j + 1] << 8) : (b[j] << 8) | b[j + 1]);
+      return u;
+    }
     if (typeof TextDecoder !== "undefined") return new TextDecoder("utf-8").decode(b);
     var s = "", i = 0, c;
     while (i < b.length) {
@@ -43628,21 +43635,44 @@ Lantern.RFB = (function () {
   }
   function u16(b, p) { return b[p] | (b[p + 1] << 8); }
   function u32(b, p) { return (b[p] | (b[p + 1] << 8) | (b[p + 2] << 16) | (b[p + 3] << 24)) >>> 0; }
+  function u64(b, p) { return u32(b, p) + u32(b, p + 4) * 4294967296; }
+  var MAX = 64 * 1024 * 1024;   // no part of an office file Lantern opens unpacks to more (a zip bomb would)
   // the name a part is asked for by: no leading slash, capitals ignored
   function key(name) { return String(name || "").replace(/^\x2F+/, "").toLowerCase(); }
   function read(bytes) {
     var b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), e = -1, i;
-    if (b.length < 22 || u32(b, 0) !== 0x04034b50 && u32(b, 0) !== 0x06054b50) throw new Error("this is not a zip file (a .docx, .xlsx or .pptx is one); it may be an older .doc, .xls or .ppt, which Lantern cannot open");
+    if (b.length < 22 || u32(b, 0) !== 0x04034b50 && u32(b, 0) !== 0x06054b50) {
+      if (b.length >= 8 && u32(b, 0) === 0xe011cfd0) throw new Error("this is an older Office file (.doc, .xls or .ppt), not a zip file as a .docx, .xlsx or .pptx is; Lantern cannot open it");
+      throw new Error("this is not a zip file, as a .docx, .xlsx or .pptx is");
+    }
     for (i = b.length - 22; i >= 0 && i >= b.length - 65557; i--) if (u32(b, i) === 0x06054b50) { e = i; break; }
     if (e < 0) throw new Error("the file is damaged: the zip's list of parts is missing (the file may be cut short)");
     var count = u16(b, e + 10), at = u32(b, e + 16);
-    if (count === 0xffff || at === 0xffffffff) throw new Error("this zip is too big for Lantern to open (zip64)");
+    if (count === 0xffff || at === 0xffffffff || u32(b, e + 12) === 0xffffffff) {
+      // zip64: the counts are in the zip64 end record, found through its locator just before
+      var lo = e - 20;
+      if (lo < 0 || u32(b, lo) !== 0x07064b50) throw new Error("the file is damaged: its zip64 end record is missing");
+      var z64 = u64(b, lo + 8);
+      if (z64 + 56 > b.length || u32(b, z64) !== 0x06064b50) throw new Error("the file is damaged: its zip64 end record is missing");
+      count = u64(b, z64 + 32); at = u64(b, z64 + 48);
+    }
     var parts = {}, names = [];
     for (i = 0; i < count; i++) {
       if (at + 46 > b.length || u32(b, at) !== 0x02014b50) throw new Error("the file is damaged: the zip's list of parts is broken");
       var nl = u16(b, at + 28), el = u16(b, at + 30), cl = u16(b, at + 32);
       var name = text(b.subarray(at + 46, at + 46 + nl));
       var p = { name: name, method: u16(b, at + 10), flags: u16(b, at + 8), crc: u32(b, at + 16), csize: u32(b, at + 20), size: u32(b, at + 24), local: u32(b, at + 42) };
+      if (p.size === 0xffffffff || p.csize === 0xffffffff || p.local === 0xffffffff) {
+        // zip64 sizes and place: in the extra field 0x0001, in that order, those that are 0xFFFFFFFF
+        for (var x = at + 46 + nl, xe = x + el; x + 4 <= xe; x += 4 + u16(b, x + 2)) {
+          if (u16(b, x) !== 1) continue;
+          var q = x + 4;
+          if (p.size === 0xffffffff) { p.size = u64(b, q); q += 8; }
+          if (p.csize === 0xffffffff) { p.csize = u64(b, q); q += 8; }
+          if (p.local === 0xffffffff) { p.local = u64(b, q); }
+          break;
+        }
+      }
       parts[key(name)] = p;
       names.push(name);
       at += 46 + nl + el + cl;
@@ -43652,6 +43682,7 @@ Lantern.RFB = (function () {
       if (!p) return null;
       if (p.data) return p.data;
       if (p.flags & 1) throw new Error("\u201c" + p.name + "\u201d is locked with a password; Lantern cannot open it");
+      if (p.size > MAX) throw new Error("\u201c" + p.name + "\u201d would unpack to " + Math.round(p.size / 1048576) + " MB, more than Lantern opens (" + MAX / 1048576 + " MB)");
       var h = p.local;
       if (h + 30 > b.length || u32(b, h) !== 0x04034b50) throw new Error("the file is damaged: \u201c" + p.name + "\u201d cannot be found in it");
       var start = h + 30 + u16(b, h + 26) + u16(b, h + 28), raw = b.subarray(start, start + p.csize), out;
@@ -43769,36 +43800,44 @@ Lantern.RFB = (function () {
     if (kind !== "docx") return { kind: kind, zip: z };
     if (!z.has(main)) throw new Error("this zip file has no Word document in it");
     var mr = rels(main), st = {}, num = { nums: {}, abs: {} }, defP = "Normal";
+    function jcOf(pp) { var v = pp && child(pp, "jc") ? attr(child(pp, "jc"), "val") : ""; return v === "center" ? "center" : v === "right" || v === "end" ? "right" : v === "both" || v === "distribute" ? "justify" : v === "left" || v === "start" ? "left" : ""; }
+    function leftOf(pp) { var ind = pp && child(pp, "ind"), v = ind && (attr(ind, "left") || attr(ind, "start")); return v ? parseInt(v, 10) || 0 : null; }
     var sx = byType(mr, "styles") && xml(byType(mr, "styles"));
     if (sx) kids(sx.documentElement).forEach(function (s) {
       if (name(s) !== "style") return;
-      var pp = child(s, "pPr"), rp = child(s, "rPr"), np = pp && child(pp, "numPr"), ol = pp && child(pp, "outlineLvl"), ind = pp && child(pp, "ind");
+      var pp = child(s, "pPr"), rp = child(s, "rPr"), np = pp && child(pp, "numPr"), ol = pp && child(pp, "outlineLvl"), bd = pp && child(pp, "pBdr");
       if (attr(s, "type") === "paragraph" && /^(1|true|on)$/.test(attr(s, "default") || "")) defP = attr(s, "styleId");
       st[attr(s, "styleId")] = { type: attr(s, "type"), name: String(attr(child(s, "name"), "val") || "").toLowerCase(),
-        based: attr(child(s, "basedOn"), "val"), outline: ol ? parseInt(attr(ol, "val"), 10) : null, left: ind ? parseInt(attr(ind, "left") || attr(ind, "start") || "0", 10) || 0 : null,
+        based: attr(child(s, "basedOn"), "val"), outline: ol ? parseInt(attr(ol, "val"), 10) : null, left: leftOf(pp), jc: jcOf(pp) || null,
+        rtl: pp && child(pp, "bidi") ? on(child(pp, "bidi")) : null, hr: bd && child(bd, "bottom") ? true : null,
         numId: np && child(np, "numId") ? attr(child(np, "numId"), "val") : null, ilvl: np && child(np, "ilvl") ? parseInt(attr(child(np, "ilvl"), "val"), 10) : 0,
-        b: rp ? on(child(rp, "b")) : null, i: rp ? on(child(rp, "i")) : null, u: rp ? on(child(rp, "u")) : null, s: rp ? on(child(rp, "strike")) : null };
+        b: rp ? on(child(rp, "b")) : null, i: rp ? on(child(rp, "i")) : null, u: rp ? on(child(rp, "u")) : null, s: rp ? on(child(rp, "strike")) : null,
+        hide: rp ? on(child(rp, "vanish")) : null };
     });
+    // a numbering level: its format (decimal, lowerLetter, bullet ...), start, text ("%1.%2") and indent
+    function level(l) {
+      return { fmt: attr(child(l, "numFmt"), "val") || "decimal", start: parseInt(attr(child(l, "start"), "val") || "1", 10), text: attr(child(l, "lvlText"), "val"),
+        left: leftOf(child(l, "pPr")) };
+    }
     var nx = byType(mr, "numbering") && xml(byType(mr, "numbering"));
     if (nx) kids(nx.documentElement).forEach(function (e) {
       if (name(e) === "abstractNum") {
         var lv = {};
-        kids(e).forEach(function (l) {
-          if (name(l) !== "lvl") return;
-          lv[attr(l, "ilvl")] = { fmt: attr(child(l, "numFmt"), "val") || "decimal", start: parseInt(attr(child(l, "start"), "val") || "1", 10) };
-        });
-        num.abs[attr(e, "abstractNumId")] = lv;
+        kids(e).forEach(function (l) { if (name(l) === "lvl") lv[attr(l, "ilvl")] = level(l); });
+        num.abs[attr(e, "abstractNumId")] = { lvls: lv, link: attr(child(e, "numStyleLink"), "val") };
       } else if (name(e) === "num") {
-        var o = {};
+        var o = {}, ol = {};
         kids(e).forEach(function (l) {
-          if (name(l) === "lvlOverride" && child(l, "startOverride")) o[attr(l, "ilvl")] = parseInt(attr(child(l, "startOverride"), "val"), 10);
+          if (name(l) !== "lvlOverride") return;
+          if (child(l, "startOverride")) o[attr(l, "ilvl")] = parseInt(attr(child(l, "startOverride"), "val"), 10);
+          if (child(l, "lvl")) ol[attr(l, "ilvl")] = level(child(l, "lvl"));   // a whole level given again (LibreOffice writes this)
         });
-        num.nums[attr(e, "numId")] = { abs: attr(child(e, "abstractNumId"), "val"), starts: o };
+        num.nums[attr(e, "numId")] = { abs: attr(child(e, "abstractNumId"), "val"), starts: o, lvls: ol };
       }
     });
     // style(id) -> what a paragraph or run style means, following basedOn
     function style(id) {
-      var out = { head: 0, quote: false, pre: false, numId: null, ilvl: 0, left: null, b: null, i: null, u: null, s: null }, seen = 0, s;
+      var out = { head: 0, quote: false, pre: false, numId: null, ilvl: 0, left: null, jc: null, rtl: null, hr: null, b: null, i: null, u: null, s: null, hide: null }, seen = 0, s;
       while (id && (s = st[id]) && seen++ < 12) {
         var m = /^heading\s*(\d)$/.exec(s.name);
         if (!out.head && m) out.head = Math.min(4, parseInt(m[1], 10));
@@ -43807,24 +43846,33 @@ Lantern.RFB = (function () {
         if (/^(quote|intense quote|block text)$/.test(s.name)) out.quote = true;
         if (/^(code|html preformatted|source code|preformatted text|macro text)$/.test(s.name)) out.pre = true;
         if (out.numId == null && s.numId != null) { out.numId = s.numId; out.ilvl = s.ilvl; }
-        if (out.left == null && s.left != null) out.left = s.left;
-        ["b", "i", "u", "s"].forEach(function (k) { if (out[k] == null && s[k] != null) out[k] = s[k]; });
+        ["left", "jc", "rtl", "hr", "b", "i", "u", "s", "hide"].forEach(function (k) { if (out[k] == null && s[k] != null) out[k] = s[k]; });
         id = s.based;
       }
       return out;
     }
-    // list(numId, ilvl) -> {tag: "ul"|"ol", start, abs, restart} or null
-    // (numId 0: no list). Lists that share an abstractNum count on from
-    // one another, as in Word, unless a startOverride restarts them.
+    // the levels of a list: its abstractNum's, or, where that only points to
+    // a list style (numStyleLink), the levels of the list that style names
+    function levels(absId) {
+      var a = num.abs[absId], hops = 0;
+      while (a && a.link && hops++ < 4) { var ls = style(a.link), n = ls.numId != null && num.nums[ls.numId]; if (!n || n.abs === absId) break; absId = n.abs; a = num.abs[absId]; }
+      return { id: absId, lvls: a ? a.lvls : {} };
+    }
+    // list(numId, ilvl) -> {tag: "ul"|"ol", fmt, start, text, left, abs,
+    // restart, fmts (every level's format, for "%1.%2")} or null (numId 0:
+    // no list). Lists that share an abstractNum count on from one another,
+    // as in Word, unless a startOverride restarts them.
     function list(numId, ilvl) {
       var n = num.nums[numId];
       if (!n || numId === "0") return null;
-      var l = (num.abs[n.abs] || {})[ilvl] || (num.abs[n.abs] || {})["0"] || { fmt: "decimal", start: 1 };
-      if (l.fmt === "none") return null;
-      var ov = n.starts[ilvl] != null;
-      return { tag: l.fmt === "bullet" ? "ul" : "ol", start: ov ? n.starts[ilvl] : l.start, abs: "a" + n.abs, restart: ov };
+      var lv = levels(n.abs), l = n.lvls[ilvl] || lv.lvls[ilvl] || lv.lvls["0"] || { fmt: "decimal", start: 1, text: "%1." };
+      if (l.fmt === "none" && !/%/.test(l.text || "")) return null;
+      var ov = n.starts[ilvl] != null, fmts = [];
+      for (var k = 0; k < 9; k++) { var x = n.lvls[k] || lv.lvls[k]; fmts.push(x ? x.fmt : "decimal"); }
+      return { tag: l.fmt === "bullet" ? "ul" : "ol", fmt: l.fmt, start: ov ? n.starts[ilvl] : l.start, text: l.text == null ? "%" + (ilvl + 1) + "." : l.text,
+        left: l.left, abs: "a" + lv.id, restart: ov, fmts: fmts };
     }
-    return { kind: "docx", zip: z, main: main, xml: xml, rels: rels, byType: byType, style: style, list: list, defP: defP };
+    return { kind: "docx", zip: z, main: main, xml: xml, rels: rels, byType: byType, style: style, list: list, defP: defP, jcOf: jcOf, leftOf: leftOf };
   }
   D.parts = parts;
   D.kids = kids;
@@ -43837,26 +43885,124 @@ Lantern.RFB = (function () {
 // MODULE: DOCX_PARTS - END
 // ===========================================================================
 // ===========================================================================
+// MODULE: DOCX_TEXT - START
+// Depends: DOCX_PARTS (Lantern.docx helpers)
+// Exports: Lantern.docx.symbol(font, code) -> a character or null,
+//          Lantern.docx.number(fmt, n) -> "3", "c", "iii" ...,
+//          Lantern.docx.math(el) -> HTML of an equation
+// ===========================================================================
+// What Word writes in its own codes, as text a person can read (1.24.26,
+// the first review): a character inserted from the Symbol font ("470 \u03a9" was
+// "470 \u25a1"; the Symbol font's codes are Adobe's Symbol encoding, mapped to
+// Unicode) or from Wingdings (the check marks and boxes Word puts in lists
+// and forms); a list's number in its own style (a, b, c; i, ii, iii); and an
+// equation laid out in a line, its fractions and powers kept ("x=(a+b)/2",
+// "A=\u03c0r<sup>2</sup>"; it was "x=a+b2", "A=\u03c0r2").
+(function () {
+  var D = window.Lantern && window.Lantern.docx;
+  if (!D || !D.kids) return;
+  var kids = D.kids, name = D.name, child = D.child;
+  // Adobe Symbol encoding, 0x20 to 0xFE (0 where nothing is defined)
+  var SYM = [0x20, 0x21, 0x2200, 0x23, 0x2203, 0x25, 0x26, 0x220B, 0x28, 0x29, 0x2217, 0x2B, 0x2C, 0x2212, 0x2E, 0x2F,
+    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F,
+    0x2245, 0x391, 0x392, 0x3A7, 0x394, 0x395, 0x3A6, 0x393, 0x397, 0x399, 0x3D1, 0x39A, 0x39B, 0x39C, 0x39D, 0x39F,
+    0x3A0, 0x398, 0x3A1, 0x3A3, 0x3A4, 0x3A5, 0x3C2, 0x3A9, 0x39E, 0x3A8, 0x396, 0x5B, 0x2234, 0x5D, 0x22A5, 0x5F,
+    0x203E, 0x3B1, 0x3B2, 0x3C7, 0x3B4, 0x3B5, 0x3C6, 0x3B3, 0x3B7, 0x3B9, 0x3D5, 0x3BA, 0x3BB, 0x3BC, 0x3BD, 0x3BF,
+    0x3C0, 0x3B8, 0x3C1, 0x3C3, 0x3C4, 0x3C5, 0x3D6, 0x3C9, 0x3BE, 0x3C8, 0x3B6, 0x7B, 0x7C, 0x7D, 0x223C, 0];
+  var SYM2 = [0x20AC, 0x3D2, 0x2032, 0x2264, 0x2044, 0x221E, 0x192, 0x2663, 0x2666, 0x2665, 0x2660, 0x2194, 0x2190, 0x2191, 0x2192, 0x2193,
+    0xB0, 0xB1, 0x2033, 0x2265, 0xD7, 0x221D, 0x2202, 0x2022, 0xF7, 0x2260, 0x2261, 0x2248, 0x2026, 0x23D0, 0x23AF, 0x21B5,
+    0x2135, 0x2111, 0x211C, 0x2118, 0x2297, 0x2295, 0x2205, 0x2229, 0x222A, 0x2283, 0x2287, 0x2284, 0x2282, 0x2286, 0x2208, 0x2209,
+    0x2220, 0x2207, 0xAE, 0xA9, 0x2122, 0x220F, 0x221A, 0x22C5, 0xAC, 0x2227, 0x2228, 0x21D4, 0x21D0, 0x21D1, 0x21D2, 0x21D3,
+    0x25CA, 0x2329, 0xAE, 0xA9, 0x2122, 0x2211, 0x239B, 0x239C, 0x239D, 0x23A1, 0x23A2, 0x23A3, 0x23A7, 0x23A8, 0x23A9, 0x23AA,
+    0, 0x232A, 0x222B, 0x2320, 0x23AE, 0x2321, 0x239E, 0x239F, 0x23A0, 0x23A4, 0x23A5, 0x23A6, 0x23AB, 0x23AC, 0x23AD];
+  // Wingdings: the marks Word's lists and forms use
+  var WING = { 0x4A: 0x263A, 0x4C: 0x2639, 0x6E: 0x25A0, 0x6F: 0x25A1, 0x71: 0x2751, 0x76: 0x2756, 0xA7: 0x25AA, 0xA8: 0x25FB, 0xD8: 0x27A2,
+    0xE8: 0x2794, 0xFB: 0x2717, 0xFC: 0x2713, 0xFD: 0x2612, 0xFE: 0x2611 };
+  // symbol("Symbol", 0xF057) -> "\u03a9"; null for a code it does not know
+  D.symbol = function (font, code) {
+    var c = code >= 0xF000 && code <= 0xF0FF ? code - 0xF000 : code, f = String(font || "").toLowerCase(), u = 0;
+    if (f === "symbol") u = c >= 0x20 && c < 0x80 ? SYM[c - 0x20] : c >= 0xA0 && c <= 0xFE ? SYM2[c - 0xA0] : 0;
+    else if (f === "wingdings") u = WING[c] || 0;
+    return u ? String.fromCharCode(u) : null;
+  };
+  function roman(n) {
+    var v = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1], s = ["m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"], out = "";
+    for (var i = 0; i < v.length; i++) while (n >= v[i]) { out += s[i]; n -= v[i]; }
+    return out;
+  }
+  // number("lowerLetter", 28) -> "bb" (Word repeats the letter past z)
+  D.number = function (fmt, n) {
+    if (fmt === "lowerLetter" || fmt === "upperLetter") { var ch = String.fromCharCode(97 + (n - 1) % 26), t = new Array(Math.floor((n - 1) / 26) + 2).join(ch); return fmt === "upperLetter" ? t.toUpperCase() : t; }
+    if (fmt === "lowerRoman") return n > 0 ? roman(n) : String(n);
+    if (fmt === "upperRoman") return n > 0 ? roman(n).toUpperCase() : String(n);
+    if (fmt === "decimalZero") return (n < 10 ? "0" : "") + n;
+    if (fmt === "bullet") return "\u2022";
+    if (fmt === "none") return "";
+    return String(n);
+  };
+  function esc(t) { return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  // an equation (m:oMath) in a line: fractions with a slash, powers and
+  // indices raised and lowered, roots, brackets, sums and integrals
+  function m(el) {
+    var n = name(el), k = kids(el);
+    function part(nm) { var c = child(el, nm); return c ? m(c) : ""; }
+    function wrap(t) { return /^[\w.\u0370-\u03ff]+$/.test(t.replace(/<[^>]+>/g, "")) ? t : "(" + t + ")"; }
+    if (n === "t") return esc(el.textContent);
+    if (n === "r") return k.map(m).join("");
+    if (n === "f") return wrap(part("num")) + "\x2F" + wrap(part("den"));
+    if (n === "sSup") return part("e") + "<sup>" + part("sup") + "<\x2Fsup>";
+    if (n === "sSub") return part("e") + "<sub>" + part("sub") + "<\x2Fsub>";
+    if (n === "sSubSup") return part("e") + "<sub>" + part("sub") + "<\x2Fsub><sup>" + part("sup") + "<\x2Fsup>";
+    if (n === "sPre") return "<sub>" + part("sub") + "<\x2Fsub><sup>" + part("sup") + "<\x2Fsup>" + part("e");
+    if (n === "rad") { var dg = part("deg"); return (dg ? "<sup>" + dg + "<\x2Fsup>" : "") + "\u221a" + wrap(part("e")); }
+    if (n === "d") {
+      var pr = child(el, "dPr"), beg = "(", end = ")", sep = "|";
+      if (pr) kids(pr).forEach(function (c) { var v = c.getAttribute("m:val") || c.getAttribute("val"); if (v == null) return; if (name(c) === "begChr") beg = v; if (name(c) === "endChr") end = v; if (name(c) === "sepChr") sep = v; });
+      return beg + k.filter(function (c) { return name(c) === "e"; }).map(m).join(sep) + end;
+    }
+    if (n === "nary") {
+      var np = child(el, "naryPr"), chr = "\u222b";
+      if (np && child(np, "chr")) chr = child(np, "chr").getAttribute("m:val") || child(np, "chr").getAttribute("val") || chr;
+      var lo = part("sub"), hi = part("sup");
+      return chr + (lo ? "<sub>" + lo + "<\x2Fsub>" : "") + (hi ? "<sup>" + hi + "<\x2Fsup>" : "") + " " + part("e");
+    }
+    if (n === "func") return part("fName") + " " + part("e");
+    if (n === "limLow") return part("e") + "<sub>" + part("lim") + "<\x2Fsub>";
+    if (n === "limUpp") return part("e") + "<sup>" + part("lim") + "<\x2Fsup>";
+    if (n === "eqArr") return k.filter(function (c) { return name(c) === "e"; }).map(m).join("; ");
+    if (n === "m") return "[" + k.filter(function (c) { return name(c) === "mr"; }).map(function (r) { return kids(r).filter(function (c) { return name(c) === "e"; }).map(m).join(", "); }).join("; ") + "]";
+    if (/Pr$/.test(n) || n === "ctrlPr") return "";
+    return k.map(m).join("");
+  }
+  D.math = m;
+})();
+// ===========================================================================
+// MODULE: DOCX_TEXT - END
+// ===========================================================================
+// ===========================================================================
 // MODULE: DOCX_READ - START
-// Depends: DOCX_PARTS (Lantern.docx.parts), ZIP
+// Depends: DOCX_PARTS (Lantern.docx.parts), DOCX_TEXT (symbol, number,
+//          math), ZIP
 // Exports: Lantern.docx.read(bytes, fileName) -> {title, html, notes,
-//          paper}
+//          paper, pictures}
 // ===========================================================================
 // A Word file (.docx) as a Writer document (1.24.26): headings (Word's
-// Heading 1 to 4, Title, or any style with an outline level), paragraphs as
-// they are aligned, bullet and numbered lists to the depth Word has them
-// (numbering carried on where Word carries it on), tables (cells spanning
-// columns and rows), bold, italic, underline, strike, superscript and
-// subscript, highlight, links, pictures (PNG, JPEG, GIF), tabs, line
-// breaks, text boxes (after their paragraph), footnotes and endnotes (at
-// the end), tracked changes as Word shows them with markup off (insertions
-// kept, deletions gone), and the paper size and margin. notes says, in
-// plain words, what Writer could not keep (fonts, colours, headers and
-// footers, comments, pictures it cannot show), so nobody thinks it was
-// lost without telling them.
+// Heading 1 to 4, Title, or any style with an outline level; their numbers,
+// "1.2", kept), paragraphs as they are aligned and their direction, bullet
+// and numbered lists to the depth Word has them (numbering carried on where
+// Word carries it on, in tables too; a, b, c and i, ii, iii kept), tables
+// (cells across and down, rows that start late, tables in tables, lists in
+// cells), bold, italic, underline, strike, superscript and subscript,
+// highlight and shading, links and the bookmarks they go to, pictures (PNG,
+// JPEG, GIF), tabs, line breaks, symbols, equations in a line, text boxes
+// (after their paragraph), footnotes and endnotes (at the end), tracked
+// changes as Word shows them with markup off (insertions kept, deletions
+// gone, paragraphs joined where their mark was deleted), hidden text left
+// hidden, and the paper size and margin. notes says, in plain words, what
+// Writer could not keep, so nobody thinks it was lost without telling them.
 (function () {
   var L = window.Lantern, D = L && L.docx;
-  if (!D || !D.parts) return;
+  if (!D || !D.parts || !D.number) return;
   var kids = D.kids, name = D.name, attr = D.attr, child = D.child, on = D.on;
   function esc(t) { return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\x22/g, "&quot;"); }
   function b64(b) {
@@ -43866,30 +44012,41 @@ Lantern.RFB = (function () {
   }
   var MIME = { png: "image\x2Fpng", jpg: "image\x2Fjpeg", jpeg: "image\x2Fjpeg", gif: "image\x2Fgif", bmp: "image\x2Fbmp", webp: "image\x2Fwebp" };
   var SIZES = { letter: [12240, 15840], legal: [12240, 20160], a4: [11906, 16838], a5: [8391, 11906] };
+  var TYPE = { lowerLetter: "a", upperLetter: "A", lowerRoman: "i", upperRoman: "I" };
+  var PLAIN = { a: "", b: false, i: false, u: false, s: false, v: "", h: "" };
   function read(bytes, fileName) {
     var P = D.parts(bytes);
     if (P.kind === "xlsx") throw new Error("this is an Excel workbook (.xlsx), not a Word document; Writer opens Word files (.docx)");
     if (P.kind === "pptx") throw new Error("this is a PowerPoint presentation (.pptx), not a Word document; Writer opens Word files (.docx)");
-    var doc = P.xml(P.main), rels = P.rels(P.main), notes = {}, fld = [], counts = { del: 0, foot: 0 }, pics = 0, foot = [], picNo = 0;
+    var doc = P.xml(P.main), rels = P.rels(P.main), notes = {}, fld = [], dels = 0, pics = 0, foot = [], notesOf = {};
     function note(t) { notes[t] = 1; }
     var body = child(doc.documentElement, "body");
     if (!body) throw new Error("this Word file has no body");
-    // a picture from a relationship id, as a data: address, or null
-    function picture(rid, cx, alt, from) {
-      var r = (from || rels)[rid];
-      if (!r || r.external) { note("pictures linked from outside the file are not shown"); return ""; }
-      var ext = (r.target.match(/\.([a-z0-9]+)$/i) || [])[1], m = ext && MIME[ext.toLowerCase()];
-      if (!m) { note("pictures in " + String(ext || "an unknown").toUpperCase() + " format (Writer shows PNG, JPEG and GIF) are left out"); return ""; }
+    // a picture from a relationship id, as a data: address, or ""
+    function picture(rid, cx, cy, alt, linked) {
+      var r = rels[rid];
+      if (!r || r.external || linked) { note("pictures linked from outside the file are not shown"); return ""; }
+      var ext = (r.target.match(/\.([a-z0-9]+)$/i) || [])[1], mm = ext && MIME[ext.toLowerCase()];
+      if (!mm) { note("pictures in " + String(ext || "an unknown").toUpperCase() + " format (Writer shows PNG, JPEG and GIF) are left out"); return ""; }
       var bb = P.zip.bytes(r.target);
       if (!bb) return "";
       pics++;
       var w = cx ? Math.min(624, Math.max(8, Math.round(cx / 9525))) : 0;
-      return "<img src=\x22data:" + m + ";base64," + b64(bb) + "\x22" + (alt ? " alt=\x22" + esc(alt) + "\x22" : "") + (w ? " width=\x22" + w + "\x22" : "") + ">";
+      return "<img src=\x22data:" + mm + ";base64," + b64(bb) + "\x22" + (alt ? " alt=\x22" + esc(alt) + "\x22" : "") + (w ? " width=\x22" + w + "\x22" : "") + ">";
     }
+    // the note (footnote or endnote) part's paragraphs, by id
+    function noteParas(kind, id) {
+      if (!notesOf[kind]) {
+        notesOf[kind] = {};
+        var x = P.xml(P.byType(rels, kind) || "-");
+        if (x) kids(x.documentElement).forEach(function (f) { notesOf[kind][attr(f, "id")] = f; });
+      }
+      return notesOf[kind][id];
+    }
+    function hiddenField() { for (var i = 0; i < fld.length; i++) if (fld[i].instr) return true; return false; }
     // one paragraph's words as HTML: runs of the same look merged
     function inline(p, ctx) {
-      var segs = [], extra = [];
-      var ps = ctx.pstyle || {};
+      var segs = [], extra = [], ps = ctx.pstyle || {};
       function add(html, look) {
         var last = segs[segs.length - 1], k = JSON.stringify(look);
         if (last && last.k === k) last.h += html; else segs.push({ k: k, look: look, h: html });
@@ -43897,63 +44054,95 @@ Lantern.RFB = (function () {
       function run(r, href) {
         var rp = child(r, "rPr"), rs = rp && child(rp, "rStyle") ? P.style(attr(child(rp, "rStyle"), "val")) : {};
         function pick(k, tag) { var e = rp && child(rp, tag); if (e) return on(e); if (rs[k] != null) return rs[k]; return ctx.head || ps.quote || ps.pre ? false : ps[k] || false; }
-        var va = rp && child(rp, "vertAlign") ? attr(child(rp, "vertAlign"), "val") : "";
-        var hl = rp && child(rp, "highlight") && on(child(rp, "highlight"));
-        var look = { a: href || "", b: pick("b", "b"), i: pick("i", "i"), u: !href && (pick("u", "u")), s: pick("s", "strike") || !!(rp && on(child(rp, "dstrike"))),
-          v: va === "superscript" ? "sup" : va === "subscript" ? "sub" : "", h: !!hl };
+        var hide = rp && child(rp, "vanish") ? on(child(rp, "vanish")) : rs.hide != null ? rs.hide : ps.hide;
+        var va = rp && child(rp, "vertAlign") ? attr(child(rp, "vertAlign"), "val") : "", pos = rp && child(rp, "position") ? parseInt(attr(child(rp, "position"), "val"), 10) || 0 : 0, small = !!(rp && child(rp, "sz"));
+        var hl = rp && child(rp, "highlight") && on(child(rp, "highlight")) ? "#fde68a" : "", sh = rp && child(rp, "shd") && attr(child(rp, "shd"), "fill");
+        if (!hl && sh && /^[0-9a-f]{6}$/i.test(sh) && !/^ffffff$/i.test(sh)) hl = "#" + sh.toLowerCase();
+        var fonts = rp && child(rp, "rFonts"), sym = fonts && /^(symbol|wingdings)$/i.test(attr(fonts, "ascii") || attr(fonts, "hAnsi") || "") ? (attr(fonts, "ascii") || attr(fonts, "hAnsi")) : "";
+        var look = { a: href || "", b: pick("b", "b"), i: pick("i", "i"), u: !href && pick("u", "u"), s: pick("s", "strike") || !!(rp && on(child(rp, "dstrike"))),
+          v: va === "superscript" || (!va && pos > 0 && small) ? "sup" : va === "subscript" || (!va && pos < 0 && small) ? "sub" : "", h: hl };
+        var custom = false;
         kids(r).forEach(function (c) {
           var n = name(c);
-          if (fld.length && fld[fld.length - 1].instr && n !== "fldChar") { if (n === "instrText") fld[fld.length - 1].code += c.textContent; return; }
-          if (n === "t") add(esc(c.textContent).replace(/  /g, " \u00a0"), look);
-          else if (n === "tab" || n === "ptab") add("<span style=\x22white-space:pre\x22>\t<\x2Fspan>", look);
-          else if (n === "br" || n === "cr") { var bt = attr(c, "type"); if (bt === "page" || bt === "column") note("page breaks are left to Writer\u2019s own pages"); else add("<br>", look); }
-          else if (n === "noBreakHyphen") add("-", look);
-          else if (n === "sym") add("\u25a1", look);
-          else if (n === "fldChar") {
+          if (n === "fldChar") {
             var ty = attr(c, "fldCharType");
             if (ty === "begin") fld.push({ instr: true, code: "" });
             else if (ty === "separate" && fld.length) fld[fld.length - 1].instr = false;
             else if (ty === "end") fld.pop();
+            return;
+          }
+          // a field's code, and the result of a field inside another's code, are not shown (IF, MERGEFIELD)
+          if (hiddenField()) { if (n === "instrText" && fld.length) fld[fld.length - 1].code += c.textContent; return; }
+          if (hide && n !== "footnoteReference" && n !== "endnoteReference") { if (n === "t") note("hidden text is left out, as Word leaves it out of print"); return; }
+          if (n === "t") {
+            var t = c.textContent;
+            if (sym) t = t.replace(/[\x20-\xff\uf020-\uf0ff]/g, function (ch) { return D.symbol(sym, ch.charCodeAt(0)) || ch; });
+            add(esc(t).replace(/  /g, " \u00a0"), look);
+          } else if (n === "tab" || n === "ptab") add("<span style=\x22white-space:pre\x22>\t<\x2Fspan>", look);
+          else if (n === "br" || n === "cr") {
+            var bt = attr(c, "type");
+            // a page or column break: a line break between words (not at a paragraph's ends), Writer's pages do the rest
+            if (bt === "page" || bt === "column") { note("page breaks are left to Writer\u2019s own pages"); segs.push({ k: "pb", pb: true, look: PLAIN, h: "" }); }
+            else add("<br>", look);
+          }
+          else if (n === "noBreakHyphen") add("-", look);
+          else if (n === "sym") {
+            var ch = D.symbol(attr(c, "font"), parseInt(attr(c, "char"), 16));
+            if (!ch) note("a symbol from the " + (attr(c, "font") || "symbol") + " font is shown as \u25a1");
+            add(esc(ch || "\u25a1"), look);
           } else if (n === "footnoteReference" || n === "endnoteReference") {
-            var fx = P.xml(P.byType(rels, n === "footnoteReference" ? "footnotes" : "endnotes") || "-"), id = attr(c, "id"), txt = "";
-            if (fx) kids(fx.documentElement).forEach(function (f) { if (attr(f, "id") === id) txt = f.textContent.replace(/\s+/g, " ").trim(); });
-            foot.push(txt);
-            add("<sup>[" + foot.length + "]<\x2Fsup>", { a: "", b: false, i: false, u: false, s: false, v: "", h: false });
-          } else if (n === "drawing" || n === "pict" || n === "object") drawing(c, look);
-          else if (n === "AlternateContent") { var ch = child(c, "Choice") || child(c, "Fallback"); if (ch) kids(ch).forEach(function (k) { if (name(k) === "drawing" || name(k) === "pict") drawing(k, look); }); }
+            var kind = n === "footnoteReference" ? "footnotes" : "endnotes", f = noteParas(kind, attr(c, "id")), saved = fld, txt = [];
+            custom = /^(1|true|on)$/.test(attr(c, "customMarkFollows") || "");
+            fld = [];
+            if (f) kids(f).forEach(function (k) { var o = []; block(k, o); o.forEach(function (b) { if (b.html) txt.push(b.html); }); });
+            fld = saved;
+            foot.push(txt.join(" ").replace(/^\s+/, ""));
+            if (!custom) add("<sup>[" + foot.length + "]<\x2Fsup>", PLAIN);
+          } else if (n === "footnoteRef" || n === "endnoteRef") return;
+          else if (n === "drawing" || n === "pict" || n === "object") drawing(c, look);
+          else if (n === "AlternateContent") { var cc = child(c, "Choice") || child(c, "Fallback"); if (cc) kids(cc).forEach(function (k) { if (name(k) === "drawing" || name(k) === "pict") drawing(k, look); }); }
           else if (n === "commentReference") note("comments are not shown");
+          else if (n === "ruby") { var rb = child(c, "rubyBase"); if (rb) walk(rb, href); note("pronunciation guides (ruby) are left out; the words under them are kept"); }
         });
       }
+      function all(c, n) { return c.getElementsByTagNameNS ? Array.prototype.slice.call(c.getElementsByTagNameNS("*", n)) : []; }
       function drawing(c, look) {
-        var blips = c.getElementsByTagNameNS ? c.getElementsByTagNameNS("*", "blip") : [], done = false, i;
-        var ext = c.getElementsByTagNameNS ? c.getElementsByTagNameNS("*", "extent")[0] : null, pr = c.getElementsByTagNameNS ? c.getElementsByTagNameNS("*", "docPr")[0] : null;
+        var done = false, i, ext = all(c, "extent")[0], pr = all(c, "docPr")[0];
         var alt = pr ? pr.getAttribute("descr") || pr.getAttribute("title") || "" : "";
-        for (i = 0; i < blips.length && !done; i++) { var rid = attr(blips[i], "embed", "r"); if (rid) { add(picture(rid, ext ? parseInt(ext.getAttribute("cx"), 10) : 0, alt), look); done = true; } }
-        var im = c.getElementsByTagNameNS ? c.getElementsByTagNameNS("*", "imagedata") : [];
-        for (i = 0; i < im.length && !done; i++) { var r2 = attr(im[i], "id", "r"); if (r2) { add(picture(r2, 0, alt), look); done = true; } }
-        var tb = c.getElementsByTagNameNS ? c.getElementsByTagNameNS("*", "txbxContent") : [];
-        if (tb.length) { note("text in text boxes is placed after the paragraph it was in"); kids(tb[0]).forEach(function (k) { extra.push(k); }); done = true; }
+        all(c, "blip").forEach(function (bl) {
+          if (done) return;
+          var rid = attr(bl, "embed", "r"), lk = attr(bl, "link", "r");
+          if (rid || lk) { add(picture(rid || lk, ext ? parseInt(ext.getAttribute("cx"), 10) : 0, 0, alt, !rid), look); done = true; }
+        });
+        all(c, "imagedata").forEach(function (im) { if (done) return; var r2 = attr(im, "id", "r"); if (r2) { add(picture(r2, 0, 0, alt), look); done = true; } });
+        // every text box in the drawing (a group can hold several), each once
+        var tb = all(c, "txbxContent").filter(function (t) { for (var u = t.parentNode; u && u !== c; u = u.parentNode) if (name(u) === "txbxContent") return false; return true; });
+        if (tb.length) { note("text in text boxes is placed after the paragraph it was in"); tb.forEach(function (t) { kids(t).forEach(function (k) { extra.push(k); }); }); done = true; }
         if (!done) note("drawn shapes, charts and diagrams are left out");
       }
       function walk(el, href) {
         kids(el).forEach(function (c) {
           var n = name(c);
-          if (n === "r") run(c, href || (fld.length && !fld[fld.length - 1].instr ? link(fld[fld.length - 1].code) : ""));
+          if (n === "r") run(c, href || (fld.length && !hiddenField() ? link(fld[fld.length - 1].code) : ""));
           else if (n === "hyperlink") {
             var id = attr(c, "id", "r"), an = attr(c, "anchor"), h = "";
-            if (id && rels[id] && rels[id].external) h = rels[id].target; else if (an) h = "#" + an;
+            if (id && rels[id] && rels[id].external) h = rels[id].target + (an ? "#" + an : ""); else if (an) h = "#" + an;
             walk(c, /^(https?:|mailto:|#)/i.test(h) ? h : "");
           } else if (n === "fldSimple") walk(c, link(attr(c, "instr") || ""));
-          else if (n === "del" || n === "moveFrom") counts.del++;
+          else if (n === "del" || n === "moveFrom") dels++;
           else if (n === "ins" || n === "moveTo" || n === "smartTag" || n === "customXml" || n === "dir" || n === "bdo") walk(c, href);
           else if (n === "sdt") walk(child(c, "sdtContent") || c, href);
-          else if (n === "oMath" || n === "oMathPara") { note("equations are shown as plain text"); add(esc(Array.prototype.map.call(c.getElementsByTagNameNS("*", "t"), function (t) { return t.textContent; }).join("")), { a: "", b: false, i: true, u: false, s: false, v: "", h: false }); }
+          else if (n === "bookmarkStart") { var bn = attr(c, "name"); if (bn && bn !== "_GoBack" && !hiddenField()) add("<a id=\x22" + esc(bn) + "\x22><\x2Fa>", PLAIN); }
+          else if (n === "oMath" || n === "oMathPara") { note("equations are shown in a line, as plain text"); add(D.math(c), { a: "", b: false, i: true, u: false, s: false, v: "", h: "" }); }
         });
       }
       walk(p, "");
+      while (segs.length && segs[0].pb) segs.shift();
+      while (segs.length && segs[segs.length - 1].pb) segs.pop();
+      segs.forEach(function (g) { if (g.pb) g.h = "<br>"; });
       var html = segs.map(function (g) {
         var o = g.look, h = g.h;
-        if (o.h) h = "<span style=\x22background-color:#fde68a\x22>" + h + "<\x2Fspan>";
+        if (o.h) h = "<span style=\x22background-color:" + o.h + "\x22>" + h + "<\x2Fspan>";
         if (o.v) h = "<" + o.v + ">" + h + "<\x2F" + o.v + ">";
         if (o.s) h = "<s>" + h + "<\x2Fs>";
         if (o.u) h = "<u>" + h + "<\x2Fu>";
@@ -43962,68 +44151,65 @@ Lantern.RFB = (function () {
         if (o.a) h = "<a href=\x22" + esc(o.a) + "\x22>" + h + "<\x2Fa>";
         return h;
       }).join("").replace(/<\x2F(b|i|u|s|sup|sub)><\1>/g, "");
+      // a line break that ends a paragraph needs a second one to show in a page
+      if (/<br>(<\x2F[a-z]+>)*$/.test(html)) html += "<br>";
       return { html: html, extra: extra };
     }
     function link(code) { var m = /HYPERLINK\s+(?:\\l\s+)?\x22([^\x22]+)\x22/.exec(code || ""); if (!m) return ""; var h = /\\l/.test(code) ? "#" + m[1] : m[1]; return /^(https?:|mailto:|#)/i.test(h) ? h : ""; }
-    // a paragraph -> {tag, align, html, list} (and any text boxes after it)
+    // a paragraph -> a block {tag, align, rtl, left, indent, html, list, num, join}
     function para(p, out) {
       var pp = child(p, "pPr"), sid = pp && child(pp, "pStyle") ? attr(child(pp, "pStyle"), "val") : null, s = P.style(sid || P.defP);
       var ol = pp && child(pp, "outlineLvl"), head = s.head;
       if (ol) { var lv = parseInt(attr(ol, "val"), 10); head = lv >= 0 && lv < 9 ? Math.min(4, lv + 1) : 0; }
-      var np = pp && child(pp, "numPr"), numId = s.numId, ilvl = s.ilvl;
-      if (np) { if (child(np, "numId")) numId = attr(child(np, "numId"), "val"); if (child(np, "ilvl")) ilvl = parseInt(attr(child(np, "ilvl"), "val"), 10) || 0; }
-      var li = numId != null && !head ? P.list(numId, ilvl) : null;
-      var jc = pp && child(pp, "jc") ? attr(child(pp, "jc"), "val") : "", al = jc === "center" ? "center" : jc === "right" || jc === "end" ? "right" : jc === "both" || jc === "distribute" ? "justify" : "";
+      var np = pp && child(pp, "numPr"), numId = s.numId, ilvl = s.ilvl, direct = false;
+      if (np) { if (child(np, "numId")) { numId = attr(child(np, "numId"), "val"); direct = true; } if (child(np, "ilvl")) ilvl = parseInt(attr(child(np, "ilvl"), "val"), 10) || 0; }
+      var li = numId != null ? P.list(numId, ilvl) : null;
+      var mrk = pp && child(pp, "rPr"), gone = mrk && (child(mrk, "del") || child(mrk, "moveFrom")), hideMark = mrk && child(mrk, "vanish") ? on(child(mrk, "vanish")) : s.hide;
       var r = inline(p, { pstyle: s, head: head });
-      var ind = pp && child(pp, "ind"), left = ind && (attr(ind, "left") || attr(ind, "start")) ? parseInt(attr(ind, "left") || attr(ind, "start"), 10) || 0 : s.left || 0;
-      var hr = !r.html && pp && child(pp, "pBdr") && child(child(pp, "pBdr"), "bottom");
-      out.push({ tag: hr ? "hr" : head ? "h" + head : s.quote ? "blockquote" : s.pre ? "pre" : "p", align: al, left: left, indent: !li && !head && !s.quote && left >= 360 ? Math.min(6, Math.round(left / 720) || 1) : 0, html: r.html,
-        list: li ? { tag: li.tag, start: li.start, num: li.abs, id: numId, restart: li.restart, lvl: Math.min(8, ilvl) } : null });
+      var left = P.leftOf(pp), al = P.jcOf(pp) || (s.quote ? "" : s.jc) || "", rtl = pp && child(pp, "bidi") ? on(child(pp, "bidi")) : s.rtl;
+      if (left == null) left = li && li.left != null ? li.left : s.left || 0;
+      var hr = !r.html && ((pp && child(pp, "pBdr") && child(child(pp, "pBdr"), "bottom")) || s.hr);
+      if (hideMark && !r.html) { r.extra.forEach(function (k) { block(k, out); }); return; }   // a hidden paragraph: gone, as in print
+      if (gone) dels++;
+      // a numbered heading keeps its number ("1.2 Scope"); a heading put in a list by hand stays a list item
+      var headNum = head && li && li.tag === "ol" && (!direct || /%[1-9][^%]*%[1-9]/.test(li.text || "")) ? li : null;
+      if (head && li && !headNum && !direct) li = null;
+      // a list's type is written only where it is not Word's usual one for its level (1. a. i.), as Lantern writes a list without one
+      var cyc = ["decimal", "lowerLetter", "lowerRoman"][ilvl % 3];
+      var info = li && !headNum ? { tag: li.tag, type: li.fmt === cyc ? "" : TYPE[li.fmt] || (li.fmt === "decimal" ? "1" : ""), start: li.start, num: li.abs, id: numId, restart: li.restart, lvl: Math.min(8, ilvl), pos: left } : null;
+      out.push({ tag: hr ? "hr" : head ? "h" + head : s.quote ? "blockquote" : s.pre ? "pre" : "p", align: al === "left" ? "" : al, rtl: !!rtl, left: left,
+        indent: !info && !head && !s.quote && left >= 360 ? Math.min(6, Math.round(left / 720) || 1) : 0, html: r.html, list: info,
+        num: headNum ? { li: headNum, id: numId, lvl: Math.min(8, ilvl) } : null, join: !!gone });
       r.extra.forEach(function (k) { block(k, out); });
     }
-    function cellText(tc) {
-      var parts = [], o = [];
-      kids(tc).forEach(function (k) { block(k, o); });
-      o.forEach(function (b) {
-        if (b.tag === "table") parts.push(b.text);
-        else parts.push((b.list ? (b.list.tag === "ul" ? "\u2022 " : "") : "") + b.html);
-      });
-      while (parts.length > 1 && !parts[parts.length - 1]) parts.pop();
-      return parts.join("<br>") || "&nbsp;";
-    }
     function table(tbl) {
-      var rows = [], text = [];
-      function rowsOf(el) { kids(el).forEach(function (k) { var n = name(k); if (n === "tr") rows.push(k); else if (n === "sdt" || n === "customXml") rowsOf(child(k, "sdtContent") || k); }); }
+      var rows = [];
+      function rowsOf(el) { kids(el).forEach(function (k) { var n = name(k); if (n === "tr") rows.push(k); else if (n === "sdt" || n === "customXml" || n === "ins") rowsOf(child(k, "sdtContent") || k); }); }
       rowsOf(tbl);
-      var grid = rows.map(function (tr) {
+      var grid = [];
+      rows.forEach(function (tr) {
         var cells = [], col = 0, trp = child(tr, "trPr"), th = !!(trp && child(trp, "tblHeader") && on(child(trp, "tblHeader")));
-        var gb = trp && child(trp, "gridBefore"); if (gb) col += parseInt(attr(gb, "val"), 10) || 0;
+        if (trp && child(trp, "del")) { dels++; return; }   // a row deleted with changes tracked
+        var gb = trp && child(trp, "gridBefore"), ga = trp && child(trp, "gridAfter"), nb = gb ? parseInt(attr(gb, "val"), 10) || 0 : 0;
+        if (nb > 0) { cells.push({ col: 0, span: nb, vm: "", blocks: [], th: false, fill: true }); col = nb; }
         function cellsOf(el) {
           kids(el).forEach(function (tc) {
             var n = name(tc);
             if (n === "sdt" || n === "customXml") { cellsOf(child(tc, "sdtContent") || tc); return; }
             if (n !== "tc") return;
             var pr = child(tc, "tcPr"), sp = pr && child(pr, "gridSpan") ? parseInt(attr(child(pr, "gridSpan"), "val"), 10) || 1 : 1;
-            var vm = pr && child(pr, "vMerge"), vmv = vm ? attr(vm, "val") || "continue" : "";
-            var h = vmv === "continue" ? "" : cellText(tc);
-            if (th) h = h.replace(/<\x2F?b>/g, "");
-            cells.push({ col: col, span: sp, vm: vmv, html: h, th: th });
-            text.push(h.replace(/<[^>]+>/g, ""));
+            var vm = pr && child(pr, "vMerge"), vmv = vm ? attr(vm, "val") || "continue" : "", bl = [];
+            if (vmv !== "continue") kids(tc).forEach(function (k) { block(k, bl); });
+            cells.push({ col: col, span: sp, vm: vmv, blocks: bl, th: th });
             col += sp;
           });
         }
         cellsOf(tr);
-        return cells;
+        var na = ga ? parseInt(attr(ga, "val"), 10) || 0 : 0;
+        if (na > 0) cells.push({ col: col, span: na, vm: "", blocks: [], th: false, fill: true });
+        grid.push(cells);
       });
-      var html = "<table>" + grid.map(function (cells, r) {
-        return "<tr>" + cells.filter(function (c) { return c.vm !== "continue"; }).map(function (c) {
-          var rs = 1;
-          if (c.vm === "restart") for (var k = r + 1; k < grid.length; k++) { var below = grid[k].filter(function (x) { return x.col === c.col; })[0]; if (below && below.vm === "continue") rs++; else break; }
-          var t = c.th ? "th" : "td";
-          return "<" + t + (c.span > 1 ? " colspan=\x22" + c.span + "\x22" : "") + (rs > 1 ? " rowspan=\x22" + rs + "\x22" : "") + ">" + c.html + "<\x2F" + t + ">";
-        }).join("") + "<\x2Ftr>";
-      }).join("") + "<\x2Ftable>";
-      return { tag: "table", html: html, text: text.join(" | ") };
+      return { tag: "table", grid: grid };
     }
     function block(el, out) {
       var n = name(el);
@@ -44032,57 +44218,100 @@ Lantern.RFB = (function () {
       else if (n === "sdt") kids(child(el, "sdtContent") || el).forEach(function (k) { block(k, out); });
       else if (n === "customXml" || n === "ins" || n === "moveTo") kids(el).forEach(function (k) { block(k, out); });
       else if (n === "AlternateContent") { var ch = child(el, "Choice") || child(el, "Fallback"); if (ch) kids(ch).forEach(function (k) { block(k, out); }); }
-      else if (n === "del" || n === "moveFrom") counts.del++;
+      else if (n === "del" || n === "moveFrom") dels++;
       else if (n === "altChunk") note("a part pasted in from another file (altChunk) is left out");
+    }
+    // --- the blocks as HTML, in the document's order: lists counted as Word counts them ---
+    var cur = {}, seen = {};
+    function count(x) {
+      // cur: the number each list (an abstractNum) and level is at; a level starts again after an item above it,
+      // and where a startOverride says
+      var key = x.num + ":" + x.lvl, again = x.restart && !seen[x.id + ":" + x.lvl];
+      seen[x.id + ":" + x.lvl] = 1;
+      cur[key] = again || cur[key] == null ? x.start : cur[key] + 1;
+      for (var k in cur) if (k.indexOf(x.num + ":") === 0 && parseInt(k.split(":")[1], 10) > x.lvl) delete cur[k];
+      return { n: cur[key], again: again };
+    }
+    function attrs(b) { return (b.align ? " style=\x22text-align:" + b.align + "\x22" : "") + (b.rtl ? " dir=\x22rtl\x22" : ""); }
+    function assemble(blocks, inCell) {
+      var out = [], stack = [], i;
+      // a paragraph whose mark was deleted runs on into the next one
+      for (i = blocks.length - 2; i >= 0; i--) if (blocks[i].join && blocks[i].html != null && blocks[i + 1].html != null && blocks[i + 1].tag !== "table") {
+        blocks[i + 1].html = blocks[i].html + blocks[i + 1].html; blocks.splice(i, 1);
+      }
+      function closeTo(pos) { while (stack.length && stack[stack.length - 1].pos > pos + 90) out.push("<\x2Fli><\x2F" + stack.pop().tag + ">"); }
+      blocks.forEach(function (b) {
+        if (b.tag === "table") { closeTo(-1e9); out.push(tableHtml(b)); return; }
+        if (b.num) {
+          var hc = count({ num: b.num.li.abs, lvl: b.num.lvl, start: b.num.li.start, restart: b.num.li.restart, id: b.num.id }), lvl = b.num.lvl;
+          var txt = String(b.num.li.text || "").replace(/%([1-9])/g, function (all, d) {
+            var k = +d - 1, v = k === lvl ? hc.n : cur[b.num.li.abs + ":" + k];
+            return D.number(b.num.li.fmts[k] || "decimal", v == null ? 1 : v);
+          });
+          if (txt) b.html = esc(txt) + " " + b.html;
+        }
+        // an indented paragraph with no number of its own, under a list item, is that item's next paragraph
+        if (!b.list && stack.length && b.tag === "p" && b.left >= 360) { out.push("<p" + attrs(b) + ">" + (b.html || "<br>") + "<\x2Fp>"); return; }
+        if (!b.list) {
+          closeTo(-1e9);
+          if (b.tag === "hr") out.push("<hr>");
+          else if (b.tag === "pre") {
+            var code = b.html.replace(/<br>/g, "\n").replace(/<span style=\x22white-space:pre\x22>\t<\x2Fspan>/g, "\t").replace(/ \u00a0/g, "  ");
+            if (/<\x2Fpre>$/.test(out[out.length - 1] || "")) out[out.length - 1] = out[out.length - 1].replace(/<\x2Fpre>$/, "\n" + code + "<\x2Fpre>");
+            else out.push("<pre>" + code + "<\x2Fpre>");
+          } else if (b.indent && !inCell) out.push("<blockquote style=\x22margin: 0 0 0 " + 40 * b.indent + "px; border: none; padding: 0px;\x22><" + b.tag + attrs(b) + ">" + (b.html || "<br>") + "<\x2F" + b.tag + "><\x2Fblockquote>");
+          else out.push("<" + b.tag + attrs(b) + ">" + (b.html || "<br>") + "<\x2F" + b.tag + ">");
+          return;
+        }
+        var x = b.list, c = count(x), pos = x.pos != null ? x.pos : 720 * (x.lvl + 1);
+        closeTo(pos);
+        var top = stack[stack.length - 1], same = top && Math.abs(top.pos - pos) <= 90;
+        if (same && (top.tag !== x.tag || top.num !== x.num || top.type !== x.type || c.again)) { out.push("<\x2Fli><\x2F" + stack.pop().tag + ">"); top = stack[stack.length - 1]; same = false; }
+        if (same) out.push("<\x2Fli><li>");
+        else {
+          out.push("<" + x.tag + (x.tag === "ol" && x.type ? " type=\x22" + x.type + "\x22" : "") + (x.tag === "ol" && c.n !== 1 ? " start=\x22" + c.n + "\x22" : "") + "><li>");
+          stack.push({ tag: x.tag, pos: pos, num: x.num, type: x.type });
+        }
+        out.push(b.tag === "p" || b.tag === "blockquote" ? b.html || "<br>" : "<" + b.tag + attrs(b) + ">" + b.html + "<\x2F" + b.tag + ">");
+      });
+      closeTo(-1e9);
+      return out.join("");
+    }
+    // a cell: plain paragraphs joined by line breaks (as Writer's own cells are), lists and tables as they are
+    function cellHtml(blocks) {
+      blocks = blocks.filter(function (b, i) { return !(i > 0 && i === blocks.length - 1 && b.tag === "p" && !b.html && !b.list && blocks[i - 1].tag === "table"); });
+      blocks.forEach(function (b) { b.align = ""; });
+      var plain = blocks.every(function (b) { return b.tag === "p" && !b.list && !b.num && !b.rtl; });
+      if (plain) {
+        var parts = blocks.map(function (b) { return b.html; });
+        while (parts.length > 1 && !parts[parts.length - 1]) parts.pop();
+        return parts.join("<br>") || "&nbsp;";
+      }
+      return assemble(blocks, true).replace(/^<p>([\s\S]*?)<\x2Fp>(?=<(ol|ul|table))/, "$1") || "&nbsp;";
+    }
+    function tableHtml(t) {
+      var g = t.grid;
+      return "<table>" + g.map(function (cells, r) {
+        return "<tr>" + cells.filter(function (c) { return c.vm !== "continue"; }).map(function (c) {
+          var rs = 1;
+          if (c.vm === "restart") for (var k = r + 1; k < g.length; k++) { var below = g[k].filter(function (x) { return x.col === c.col; })[0]; if (below && below.vm === "continue") rs++; else break; }
+          var tg = c.th ? "th" : "td", h = c.fill ? "&nbsp;" : cellHtml(c.blocks);
+          if (c.th) h = h.replace(/<\x2F?b>/g, "");
+          return "<" + tg + (c.span > 1 ? " colspan=\x22" + c.span + "\x22" : "") + (rs > 1 ? " rowspan=\x22" + rs + "\x22" : "") + ">" + h + "<\x2F" + tg + ">";
+        }).join("") + "<\x2Ftr>";
+      }).join("") + "<\x2Ftable>";
     }
     var blocks = [];
     kids(body).forEach(function (k) { block(k, blocks); });
-    // lists: items of the same list together, deeper levels inside the item above
-    var out = [], stack = [], cur = {}, seen = {};
-    function closeTo(lvl) { while (stack.length && stack[stack.length - 1].lvl > lvl) out.push("<\x2Fli><\x2F" + stack.pop().tag + ">"); }
-    function al(b) { return b.align ? " style=\x22text-align:" + b.align + "\x22" : ""; }
-    blocks.forEach(function (b) {
-      // an indented paragraph with no number of its own, under a list item, is that item's next paragraph
-      if (!b.list && stack.length && b.tag === "p" && b.left >= 360) { out.push("<p" + al(b) + ">" + (b.html || "<br>") + "<\x2Fp>"); return; }
-      if (!b.list) {
-        closeTo(-1);
-        if (b.tag === "table") out.push(b.html);
-        else if (b.tag === "hr") out.push("<hr>");
-        else if (b.tag === "pre") {
-          var code = b.html.replace(/<br>/g, "\n").replace(/<span style=\x22white-space:pre\x22>\t<\x2Fspan>/g, "\t").replace(/ \u00a0/g, "  ");
-          if (/<\x2Fpre>$/.test(out[out.length - 1] || "")) out[out.length - 1] = out[out.length - 1].replace(/<\x2Fpre>$/, "\n" + code + "<\x2Fpre>");
-          else out.push("<pre>" + code + "<\x2Fpre>");
-        } else if (b.indent) out.push("<blockquote style=\x22margin: 0 0 0 " + 40 * b.indent + "px; border: none; padding: 0px;\x22><" + b.tag + al(b) + ">" + (b.html || "<br>") + "<\x2F" + b.tag + "><\x2Fblockquote>");
-        else out.push("<" + b.tag + al(b) + ">" + (b.html || "<br>") + "<\x2F" + b.tag + ">");
-        return;
-      }
-      // cur: the number each list (an abstractNum) and level is at; a level
-      // starts again after an item above it, and where a startOverride says
-      var l = b.list.lvl, key = b.list.num + ":" + l, again = b.list.restart && !seen[b.list.id + ":" + l];
-      seen[b.list.id + ":" + l] = 1;
-      cur[key] = again || cur[key] == null ? b.list.start : cur[key] + 1;
-      for (var k in cur) if (k.indexOf(b.list.num + ":") === 0 && parseInt(k.split(":")[1], 10) > l) delete cur[k];
-      closeTo(l);
-      var top = stack[stack.length - 1];
-      if (top && top.lvl === l && (top.tag !== b.list.tag || top.num !== b.list.num || again)) { out.push("<\x2Fli><\x2F" + stack.pop().tag + ">"); top = stack[stack.length - 1]; }
-      if (top && top.lvl === l) out.push("<\x2Fli><li>");
-      else {
-        out.push("<" + b.list.tag + (b.list.tag === "ol" && cur[key] !== 1 ? " start=\x22" + cur[key] + "\x22" : "") + "><li>");
-        stack.push({ tag: b.list.tag, lvl: l, num: b.list.num });
-      }
-      out.push(b.tag === "p" || b.tag === "blockquote" ? b.html || "<br>" : "<" + b.tag + ">" + b.html + "<\x2F" + b.tag + ">");
-    });
-    closeTo(-1);
+    var html = assemble(blocks, false);
     if (foot.length) {
-      out.push("<p><b>Notes<\x2Fb><\x2Fp>");
-      foot.forEach(function (t, i) { out.push("<p>[" + (i + 1) + "] " + esc(t) + "<\x2Fp>"); });
+      html += "<p><b>Notes<\x2Fb><\x2Fp>" + foot.map(function (t, i) { return "<p>[" + (i + 1) + "] " + t + "<\x2Fp>"; }).join("");
       note("footnotes and endnotes are at the end, numbered [1], [2] ...");
     }
-    if (counts.del) note("tracked changes are shown accepted: " + counts.del + " deletion" + (counts.del === 1 ? " is" : "s are") + " left out, insertions are kept");
-    var mr = P.rels(P.main);
-    for (var id in mr) {
-      if (mr[id].type === "header" || mr[id].type === "footer") { var hx = P.xml(mr[id].target); if (hx && hx.documentElement.textContent.replace(/\s/g, "")) note("headers and footers are not shown"); }
-      if (mr[id].type === "comments") note("comments are not shown");
+    if (dels) note("tracked changes are shown accepted: " + dels + " deletion" + (dels === 1 ? " is" : "s are") + " left out, insertions are kept");
+    for (var id in rels) {
+      if (rels[id].type === "header" || rels[id].type === "footer") { var hx = P.xml(rels[id].target); if (hx && hx.documentElement.textContent.replace(/\s/g, "")) note("headers and footers are not shown"); }
+      if (rels[id].type === "comments") note("comments are not shown");
     }
     var paper = null, sp = child(body, "sectPr");
     if (sp) {
@@ -44093,11 +44322,12 @@ Lantern.RFB = (function () {
       }
       if (paper && mg) { var px = (parseInt(attr(mg, "left"), 10) || 1440) / 15; paper.margin = [48, 72, 96, 120].reduce(function (best, m) { return Math.abs(m - px) < Math.abs(best - px) ? m : best; }, 96); }
     }
+    // Writer keeps a document in the page; one past a few thousand pages would stop it
+    if (html.replace(/data:[^\x22]*/g, "").length > 8000000) throw new Error("this document is too big for Writer (" + Math.round(html.length / 1e6) + " million characters)");
     var title = "", core = P.xml("docProps\x2Fcore.xml");
     if (core) { var t = core.getElementsByTagNameNS("*", "title")[0]; title = t ? t.textContent.trim() : ""; }
     if (!title) title = String(fileName || "Document").replace(/^.*[\\\x2F]/, "").replace(/\.docx?$/i, "");
     note("the fonts, sizes and colours are Writer\u2019s own");
-    var html = out.join("");
     return { title: title, html: html || "<p><br><\x2Fp>", notes: Object.keys(notes), paper: paper, pictures: pics };
   }
   D.read = read;
@@ -44163,15 +44393,24 @@ Lantern.RFB = (function () {
       if (t === "S" || t === "STRIKE" || t === "DEL" || /line-through/.test(td)) n.s = true;
       if (t === "SUP" || va === "super") n.v = "superscript";
       if (t === "SUB" || va === "sub") n.v = "subscript";
-      if (t === "MARK" || (bg && !/^(transparent|initial|inherit|rgba\(0, 0, 0, 0\)|white|#fff(fff)?|rgb\(255, 255, 255\))$/i.test(bg))) n.h = true;
+      if (t === "MARK" || (bg && !/^(transparent|initial|inherit|rgba\(0, 0, 0, 0\)|white|#fff(fff)?|rgb\(255, 255, 255\))$/i.test(bg))) n.h = t === "MARK" ? "yellow" : colour(bg);
       if (t === "CODE" || t === "KBD" || t === "TT" || t === "SAMP") n.mono = true;
       if (/^pre/.test(sty(el, "whiteSpace"))) n.pre = true;
       return n;
     }
+    // colour("rgb(253, 230, 138)") -> "yellow" (Writer's highlight) or the colour as six hex digits, for w:shd
+    function colour(c) {
+      var m = /rgba?\x28\s*(\d+),\s*(\d+),\s*(\d+)/.exec(c), h = "";
+      if (m) h = [m[1], m[2], m[3]].map(function (v) { return ("0" + (+v).toString(16)).slice(-2); }).join("");
+      else if ((m = /^#([0-9a-f]{6})$/i.exec(c))) h = m[1];
+      else if ((m = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(c))) h = m[1] + m[1] + m[2] + m[2] + m[3] + m[3];
+      h = h.toLowerCase();
+      return !h || h === "fde68a" || h === "ffff00" || /^yellow$/i.test(c) ? "yellow" : h.toUpperCase();
+    }
     function rpr(o) {
       var r = (o.link ? "<w:rStyle w:val=\x22Hyperlink\x22\x2F>" : "") + (o.mono ? "<w:rFonts w:ascii=\x22Courier New\x22 w:hAnsi=\x22Courier New\x22 w:cs=\x22Courier New\x22\x2F>" : "") +
-        (o.b ? "<w:b\x2F>" : "") + (o.i ? "<w:i\x2F>" : "") + (o.s ? "<w:strike\x2F>" : "") + (o.h ? "<w:highlight w:val=\x22yellow\x22\x2F>" : "") +
-        (o.u ? "<w:u w:val=\x22single\x22\x2F>" : "") + (o.v ? "<w:vertAlign w:val=\x22" + o.v + "\x22\x2F>" : "");
+        (o.b ? "<w:b\x2F>" : "") + (o.i ? "<w:i\x2F>" : "") + (o.s ? "<w:strike\x2F>" : "") + (o.h === "yellow" || o.h === true ? "<w:highlight w:val=\x22yellow\x22\x2F>" : "") +
+        (o.u ? "<w:u w:val=\x22single\x22\x2F>" : "") + (o.h && o.h !== "yellow" && o.h !== true ? "<w:shd w:val=\x22clear\x22 w:color=\x22auto\x22 w:fill=\x22" + o.h + "\x22\x2F>" : "") + (o.v ? "<w:vertAlign w:val=\x22" + o.v + "\x22\x2F>" : "");
       return r ? "<w:rPr>" + r + "<\x2Fw:rPr>" : "";
     }
     function textRuns(t, o, acc) {
@@ -44193,7 +44432,8 @@ Lantern.RFB = (function () {
       var bin = atob(m[3].replace(/\s+/g, "")), b = new Uint8Array(bin.length), i;
       for (i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
       var ext = m[2].toLowerCase() === "jpg" ? "jpeg" : m[2].toLowerCase(), nat = size(b, m[1].toLowerCase()) || [300, 200];
-      var w = parseInt(el.getAttribute("width"), 10) || nat[0], h = parseInt(el.getAttribute("height"), 10) || Math.round(w * nat[1] / Math.max(1, nat[0]));
+      var aw = parseInt(el.getAttribute("width"), 10), ah = parseInt(el.getAttribute("height"), 10);
+      var w = aw || (ah ? Math.round(ah * nat[0] / Math.max(1, nat[1])) : nat[0]), h = ah || Math.round(w * nat[1] / Math.max(1, nat[0]));
       var max = Math.round(width / 15);
       if (w > max) { h = Math.round(h * max / w); w = max; }
       var nm = "image" + (media.length + 1) + "." + ext, id = rel("image", "media\x2F" + nm);
@@ -44206,6 +44446,9 @@ Lantern.RFB = (function () {
         "<pic:blipFill><a:blip r:embed=\x22" + id + "\x22\x2F><a:stretch><a:fillRect\x2F><\x2Fa:stretch><\x2Fpic:blipFill><pic:spPr><a:xfrm><a:off x=\x220\x22 y=\x220\x22\x2F><a:ext cx=\x22" + cx + "\x22 cy=\x22" + cy + "\x22\x2F><\x2Fa:xfrm>" +
         "<a:prstGeom prst=\x22rect\x22><a:avLst\x2F><\x2Fa:prstGeom><\x2Fpic:spPr><\x2Fpic:pic><\x2Fa:graphicData><\x2Fa:graphic><\x2Fwp:inline><\x2Fw:drawing><\x2Fw:r>", text: true });
     }
+    // a bookmark's name as Word allows it: a letter or _ first, then letters, digits and _, 40 at most
+    var marks = 0;
+    function mark(n) { n = String(n).replace(/[^A-Za-z0-9_]/g, "_"); if (!/^[A-Za-z_]/.test(n)) n = "_" + n; return n.slice(0, 40); }
     // inline content (text, looks, links, breaks, pictures) -> runs
     function inl(n, o, acc) {
       for (var c = n.firstChild; c; c = c.nextSibling) {
@@ -44216,10 +44459,13 @@ Lantern.RFB = (function () {
         if (t === "IMG") { picture(c, acc); continue; }
         if (t === "SCRIPT" || t === "STYLE") continue;
         if (t === "A" && !o.link) {
-          var h = (c.getAttribute("href") || "").replace(/^\s+|\s+$/g, ""), sub = [];
-          inl(c, h ? (function () { var k = look(c, o); k.link = true; return k; })() : look(c, o), sub);
-          if (/^(https?:|mailto:)/i.test(h)) acc.push({ xml: "<w:hyperlink r:id=\x22" + rel("hyperlink", h, true) + "\x22 w:history=\x221\x22>" + sub.map(function (s) { return s.xml; }).join("") + "<\x2Fw:hyperlink>", text: true });
-          else if (/^#./.test(h)) acc.push({ xml: "<w:hyperlink w:anchor=\x22" + x(h.slice(1)) + "\x22 w:history=\x221\x22>" + sub.map(function (s) { return s.xml; }).join("") + "<\x2Fw:hyperlink>", text: true });
+          var h = (c.getAttribute("href") || "").replace(/^\s+|\s+$/g, ""), sub = [], bm = c.getAttribute("id") || c.getAttribute("name");
+          if (/^www\./i.test(h)) h = "http:\x2F\x2F" + h;
+          var usable = /^(https?:|mailto:)/i.test(h) || /^#./.test(h);
+          inl(c, usable ? (function () { var k = look(c, o); k.link = true; return k; })() : look(c, o), sub);
+          if (bm) { var bi = ++marks; acc.push({ xml: "<w:bookmarkStart w:id=\x22" + bi + "\x22 w:name=\x22" + x(mark(bm)) + "\x22\x2F><w:bookmarkEnd w:id=\x22" + bi + "\x22\x2F>" }); }
+          if (/^(https?:|mailto:)/i.test(h)) acc.push({ xml: "<w:hyperlink r:id=\x22" + rel("hyperlink", h.replace(/[^\x21-\x7e]/g, function (ch) { try { return encodeURIComponent(ch); } catch (e) { return ""; } }), true) + "\x22 w:history=\x221\x22>" + sub.map(function (s) { return s.xml; }).join("") + "<\x2Fw:hyperlink>", text: true });
+          else if (/^#./.test(h)) acc.push({ xml: "<w:hyperlink w:anchor=\x22" + x(mark(h.slice(1))) + "\x22 w:history=\x221\x22>" + sub.map(function (s) { return s.xml; }).join("") + "<\x2Fw:hyperlink>", text: true });
           else Array.prototype.push.apply(acc, sub);
           continue;
         }
@@ -44232,10 +44478,11 @@ Lantern.RFB = (function () {
       // a <br> at the end of a block makes no line in a page (the browser adds one to keep an empty line open)
       while (acc.length && acc[acc.length - 1].br) { acc.pop(); if (acc.length) break; }
       var p = (ps.style ? "<w:pStyle w:val=\x22" + ps.style + "\x22\x2F>" : "") + (ps.num ? "<w:numPr><w:ilvl w:val=\x22" + ps.lvl + "\x22\x2F><w:numId w:val=\x22" + ps.num + "\x22\x2F><\x2Fw:numPr>" : "") +
-        (ps.hr ? "<w:pBdr><w:bottom w:val=\x22single\x22 w:sz=\x226\x22 w:space=\x221\x22 w:color=\x22auto\x22\x2F><\x2Fw:pBdr>" : "") +
+        (ps.hr ? "<w:pBdr><w:bottom w:val=\x22single\x22 w:sz=\x226\x22 w:space=\x221\x22 w:color=\x22auto\x22\x2F><\x2Fw:pBdr>" : "") + (ps.rtl ? "<w:bidi\x2F>" : "") +
         (ps.ind ? "<w:ind w:left=\x22" + ps.ind + "\x22\x2F>" : "") + (ps.jc ? "<w:jc w:val=\x22" + ps.jc + "\x22\x2F>" : "");
       out.push("<w:p>" + (p ? "<w:pPr>" + p + "<\x2Fw:pPr>" : "") + acc.map(function (a) { return a.xml; }).join("") + "<\x2Fw:p>");
     }
+    function rtl(el, ctx) { var d = el.getAttribute && (el.getAttribute("dir") || sty(el, "direction")); return d ? /^rtl$/i.test(d) : !!ctx.rtl; }
     function jc(el, ctx) {
       var a = sty(el, "textAlign") || el.getAttribute("align") || ctx.jc || "";
       return /center/.test(a) ? "center" : /right|end/.test(a) ? "right" : /justify/.test(a) ? "both" : "";
@@ -44245,7 +44492,7 @@ Lantern.RFB = (function () {
       var acc = [], first = true;
       function flush() {
         var has = acc.some(function (a) { return a.text; }) || acc.filter(function (a) { return a.br; }).length > 1;
-        if (has || (ctx.keepEmpty && acc.length)) { para(acc, { style: ctx.style || (ctx.inList ? "ListParagraph" : ""), num: first ? ctx.num : 0, lvl: ctx.lvl, ind: !first && ctx.num ? 720 * (ctx.lvl + 1) : ctx.ind, jc: ctx.jc }); if (ctx.num) first = false; }
+        if (has || (ctx.keepEmpty && acc.some(function (a) { return !a.space; }))) { para(acc, { style: ctx.style || (ctx.inList ? "ListParagraph" : ""), num: first ? ctx.num : 0, lvl: ctx.lvl, ind: !first && ctx.num ? 720 * (ctx.lvl + 1) : ctx.ind, jc: ctx.jc, rtl: ctx.rtl }); if (ctx.num) first = false; }
         acc = [];
       }
       for (var c = el.firstChild; c; c = c.nextSibling) {
@@ -44258,7 +44505,7 @@ Lantern.RFB = (function () {
         if (!acc.some(function (a) { return a.text; }) && acc.length === 1 && acc[0].br) acc = [];
         flush();
         // a list item's second paragraph sits under its first, without a number of its own
-        var sub = { style: ctx.style, lvl: ctx.lvl, ind: !first && ctx.num ? 720 * (ctx.lvl + 1) : ctx.ind, jc: jc(c, ctx), o: ctx.o, num: first ? ctx.num : 0, inList: ctx.inList }, m;
+        var sub = { style: ctx.style, lvl: ctx.lvl, ind: !first && ctx.num ? 720 * (ctx.lvl + 1) : ctx.ind, jc: jc(c, ctx), rtl: rtl(c, ctx), o: ctx.o, num: first ? ctx.num : 0, inList: ctx.inList }, m;
         if ((m = /^H([1-6])$/.exec(t))) { sub.style = "Heading" + Math.min(4, +m[1]); sub.o = look(c, ctx.o); sub.keepEmpty = true; blocks(c, sub); }
         else if (t === "P" || t === "DIV" || t === "LI" || t === "DT" || t === "DD" || t === "CENTER" || t === "SECTION" || t === "ARTICLE" || t === "HEADER" || t === "FOOTER" || t === "MAIN" || t === "NAV" || t === "ASIDE" || t === "FIGURE" || t === "FIGCAPTION" || t === "ADDRESS" || t === "DETAILS" || t === "SUMMARY") {
           if (t === "CENTER") sub.jc = "center";
@@ -44281,7 +44528,11 @@ Lantern.RFB = (function () {
     }
     function list(el, lvl, ctx) {
       var num = 1;
-      if (el.tagName === "OL") { num = 2 + nums.length; nums.push({ lvl: lvl, start: parseInt(el.getAttribute("start"), 10) || 1 }); }
+      if (el.tagName === "OL") {
+        var st = parseInt(el.getAttribute("start"), 10), ty = el.getAttribute("type") || "";
+        num = 2 + nums.length;
+        nums.push({ lvl: lvl, start: isNaN(st) ? 1 : Math.max(0, st), fmt: { a: "lowerLetter", A: "upperLetter", i: "lowerRoman", I: "upperRoman", "1": "decimal" }[ty] || "" });
+      }
       for (var c = el.firstChild; c; c = c.nextSibling) {
         if (c.nodeType !== 1) { if (c.nodeType === 3 && c.nodeValue.replace(/\s/g, "")) { var tw = c.ownerDocument.createElement("span"); tw.appendChild(c.ownerDocument.createTextNode(c.nodeValue)); blocks(tw, { o: ctx.o, num: num, lvl: lvl, inList: true }); } continue; }
         if (c.tagName === "UL" || c.tagName === "OL") { list(c, Math.min(8, lvl + 1), ctx); continue; }
@@ -44322,7 +44573,8 @@ Lantern.RFB = (function () {
             out.push("<w:tc>" + pr(cell.cs, cell.rs > 1 ? "<w:vMerge w:val=\x22restart\x22\x2F>" : ""));
             var n0 = out.length, th = cell.td.tagName === "TH", oo = look(cell.td, ctx.o);
             if (th) oo.b = true;
-            blocks(cell.td, { o: oo, jc: jc(cell.td, {}) });
+            blocks(cell.td, { o: oo, jc: jc(cell.td, {}), rtl: rtl(cell.td, ctx) });
+            if (/<\x2Fw:tbl>$/.test(out[out.length - 1])) out.push("<w:p\x2F>");
             if (out.length === n0) out.push("<w:p\x2F>");
             out.push("<\x2Fw:tc>");
             col += cell.cs; k++;
@@ -44387,18 +44639,21 @@ Lantern.RFB = (function () {
       "<\x2Fw:tblBorders><\x2Fw:tblPr><\x2Fw:style><\x2Fw:styles>";
   }
   function numbering(nums) {
+    // Word's usual cycle by level (1. a. i.) for a list with no type of its own
     var BUL = ["\u2022", "\u25e6", "\u25aa"], FMT = ["decimal", "lowerLetter", "lowerRoman"], a = "", b = "", i;
-    function lvl(i, fmt, txt) {
-      return "<w:lvl w:ilvl=\x22" + i + "\x22><w:start w:val=\x221\x22\x2F><w:numFmt w:val=\x22" + fmt + "\x22\x2F><w:lvlText w:val=\x22" + txt + "\x22\x2F><w:lvlJc w:val=\x22left\x22\x2F>" +
+    function lvl(i, fmt, txt, start) {
+      return "<w:lvl w:ilvl=\x22" + i + "\x22><w:start w:val=\x22" + (start == null ? 1 : start) + "\x22\x2F><w:numFmt w:val=\x22" + fmt + "\x22\x2F><w:lvlText w:val=\x22" + txt + "\x22\x2F><w:lvlJc w:val=\x22left\x22\x2F>" +
         "<w:pPr><w:ind w:left=\x22" + (720 * (i + 1)) + "\x22 w:hanging=\x22360\x22\x2F><\x2Fw:pPr><\x2Fw:lvl>";
     }
-    for (i = 0; i < 9; i++) { a += lvl(i, "bullet", BUL[i % 3]); b += lvl(i, FMT[i % 3], "%" + (i + 1) + "."); }
-    var out = HEAD + "<w:numbering xmlns:w=\x22" + W + "\x22><w:abstractNum w:abstractNumId=\x220\x22><w:multiLevelType w:val=\x22hybridMultilevel\x22\x2F>" + a + "<\x2Fw:abstractNum>" +
-      "<w:abstractNum w:abstractNumId=\x221\x22><w:multiLevelType w:val=\x22hybridMultilevel\x22\x2F>" + b + "<\x2Fw:abstractNum><w:num w:numId=\x221\x22><w:abstractNumId w:val=\x220\x22\x2F><\x2Fw:num>";
+    for (i = 0; i < 9; i++) a += lvl(i, "bullet", BUL[i % 3]);
+    var out = HEAD + "<w:numbering xmlns:w=\x22" + W + "\x22><w:abstractNum w:abstractNumId=\x220\x22><w:multiLevelType w:val=\x22hybridMultilevel\x22\x2F>" + a + "<\x2Fw:abstractNum>", nn = "";
     nums.forEach(function (n, k) {
-      out += "<w:num w:numId=\x22" + (k + 2) + "\x22><w:abstractNumId w:val=\x221\x22\x2F><w:lvlOverride w:ilvl=\x22" + n.lvl + "\x22><w:startOverride w:val=\x22" + n.start + "\x22\x2F><\x2Fw:lvlOverride><\x2Fw:num>";
+      b = "";
+      for (i = 0; i < 9; i++) b += lvl(i, i === n.lvl && n.fmt ? n.fmt : FMT[i % 3], "%" + (i + 1) + ".", i === n.lvl ? n.start : 1);
+      out += "<w:abstractNum w:abstractNumId=\x22" + (k + 1) + "\x22><w:multiLevelType w:val=\x22hybridMultilevel\x22\x2F>" + b + "<\x2Fw:abstractNum>";
+      nn += "<w:num w:numId=\x22" + (k + 2) + "\x22><w:abstractNumId w:val=\x22" + (k + 1) + "\x22\x2F><\x2Fw:num>";
     });
-    return out + "<\x2Fw:numbering>";
+    return out + "<w:num w:numId=\x221\x22><w:abstractNumId w:val=\x220\x22\x2F><\x2Fw:num>" + nn + "<\x2Fw:numbering>";
   }
   // write(title, html, paper) -> {bytes (the .docx), notes (what was left out)}
   function write(title, html, paper) {
