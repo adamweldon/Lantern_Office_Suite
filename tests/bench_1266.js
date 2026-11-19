@@ -58,20 +58,22 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var prompt = act.prompt("Write a short procedure for changing the oil in a lawn mower engine, as a document I can print.");
   var ex = prompt.slice(prompt.indexOf("For example:\nMAKE DOC:")), lines = ex.split("\n").slice(1, ex.split("\n").indexOf("END") + 1);
   ok("the question gets MAKE DOC's instructions with the example", /MAKE DOC: <title>/.test(prompt) && lines[0] === "MAKE DOC: Changing the compressor oil" && lines[lines.length - 1] === "END", lines);
-  ok("the example's first heading is the one its steps go under, right above step 1", lines[1] === "## Steps" && /^1\. /.test(lines[2]), lines);
-  ok("...what follows the steps has a heading of its own, so a document of its shape has two", lines.filter(function (l) { return /^## /.test(l); }).join("|") === "## Steps|## Afterwards", lines);
+  // (1.24.28: "## You need" and its list went in before "## Steps"; tests/bench_1267.js says why. What 1.24.27 did holds.)
+  var at = lines.indexOf("## Steps");
+  ok("the heading the example's steps go under is right above step 1", at > 0 && /^1\. /.test(lines[at + 1]), lines);
+  ok("...what follows the steps has a heading of its own", lines.slice(at + 1).some(function (l) { return l === "## Afterwards"; }), lines);
   ok("...no “Before you start” to put the steps under", !/Before you start/.test(ex));
   // (the first review of 1.24.27: copied whole for a compressor, the example had no step to cut the power or let the air out)
-  ok("...its first step makes the machine safe: switched off and unplugged so it cannot start, the air let out, cooled", lines[2] === "1. Switch off and unplug the compressor so it cannot start, let all the air out of the tank, and let it cool.", lines[2]);
+  ok("...its first step makes the machine safe: switched off and unplugged so it cannot start, the air let out, cooled", lines[at + 1] === "1. Switch off and unplug the compressor so it cannot start, let all the air out of the tank, and let it cool.", lines[at + 1]);
   ok("...and no figure a model would copy into another machine's procedure (no 30 minutes, no 1.8 litres of ISO VG 100; only the step numbers)",
     !/30 minutes|1\.8|ISO VG|litre/.test(ex) && lines.every(function (l) { return !/\d/.test(l.replace(/^\d+\. /, "")); }), lines);
   var made = act.build(lines.join("\n"), "Write a procedure");
-  ok("...it is a document Lantern makes as it is: two headings, three steps, bold kept", made && made.ok !== false && L.aiDoc.doc({ title: "x", lines: lines.slice(1, -1), closed: true }).parts.headings === 2 &&
-    L.aiDoc.doc({ title: "x", lines: lines.slice(1, -1), closed: true }).parts.items === 3 && /<b>Never<\/b>/.test(L.aiDoc.doc({ title: "x", lines: lines.slice(1, -1), closed: true }).html));
+  ok("...it is a document Lantern makes as it is: its headings, its steps, bold kept", made && made.ok !== false && L.aiDoc.doc({ title: "x", lines: lines.slice(1, -1), closed: true }).parts.headings >= 2 &&
+    L.aiDoc.doc({ title: "x", lines: lines.slice(1, -1), closed: true }).parts.items >= 3 && /<b>Never<\/b>/.test(L.aiDoc.doc({ title: "x", lines: lines.slice(1, -1), closed: true }).html));
   // the 2B's way, kept: the example's first heading, then every step of the job under it. With the new example that
   // heading is right for them, and the rest of the example after them is a second heading.
   var steps = (R["2b"].rows.filter(function (r) { return r.id === "make-doc-oil-change"; })[0].reply.match(/^\d+\. .+$/mg) || []);
-  var copied = "MAKE DOC: Changing the oil in a lawn mower engine\n" + lines[1] + "\n" + steps.join("\n") + "\n" + lines[lines.length - 3] + "\n" + "Check the level again after a short run.\nEND";
+  var copied = "MAKE DOC: Changing the oil in a lawn mower engine\n" + lines[at] + "\n" + steps.join("\n") + "\n" + lines[lines.length - 3] + "\n" + "Check the level again after a short run.\nEND";
   var g2 = grade("make-doc-oil-change", copied);
   ok("the 2B's steps written the way it writes them, under the new example's headings, pass the question (a stand-in, not the 2B)", g2.pass, [g2.why, copied]);
   ok("the bench's own ideal reply still passes", grade("make-doc-oil-change", item("make-doc-oil-change").ideal).pass);
