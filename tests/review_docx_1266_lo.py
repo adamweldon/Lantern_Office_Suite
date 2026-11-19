@@ -4,14 +4,21 @@
 #   - opened in LibreOffice (as text and as HTML) and looked for what the review says must be there or not,
 #   - read by python-docx for its styles, tables and highlighted words.
 # What a machine lacks (LibreOffice, python-docx, the validator) is said as SKIP, not failed.
-# Usage: python3 tests/review_docx_1266_lo.py [-v]
+# --second: the second review (tests/fixtures/review2_docx_1266.json) instead.
+# Usage: python3 tests/review_docx_1266_lo.py [-v] [--second]
 import json, os, re, shutil, subprocess, sys, tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-R = json.load(open(os.path.join(ROOT, "tests", "fixtures", "review_docx_1266.json"), encoding="utf-8"))
+SECOND = "--second" in sys.argv
+FIX = os.path.join(ROOT, "tests", "fixtures", "review2_docx_1266.json" if SECOND else "review_docx_1266.json")
+R = json.load(open(FIX, encoding="utf-8"))
 VERBOSE = "-v" in sys.argv
 VALIDATOR = "/mnt/skills/public/docx/scripts/office/validate.py"
 # left as they are, with the reason (the same as tests/review_docx_1266.js)
 KEEP = {
+} if SECOND else {
+    "typed-ol-nested": "Writer's page shows a numbered list inside another 1., 2. (the second review saw it on the page: no style of its own), so a Word file's lettered level comes in as <ol type=\"a\"> and Writer's plain one is saved 1., 2.; this case expected Word's 1. a. i. cycle for a plain list",
+    "hand-deep-list-mixed": "Writer's page shows a numbered list inside another 1., 2. (the second review saw it on the page: no style of its own), so a Word file's lettered level comes in as <ol type=\"a\"> and Writer's plain one is saved 1., 2.; this case expected Word's 1. a. i. cycle for a plain list",
+    "roundtrip-lo-html": "Writer's page shows a numbered list inside another 1., 2. (the second review saw it on the page: no style of its own), so a Word file's lettered level comes in as <ol type=\"a\"> and Writer's plain one is saved 1., 2.; this case expected Word's 1. a. i. cycle for a plain list",
     "hand-link-odd": "Word's bookmark names hold letters, digits and _ only: #section-2 is written as #section_2, with its bookmark",
 }
 tmp = tempfile.mkdtemp(prefix="docx_review_")
@@ -25,9 +32,9 @@ var w = dom.window; w.alert = function () {}; w.scrollTo = function () {}; w.HTM
 w.HTMLCanvasElement.prototype.getContext = function () { return null; }; w.fetch = function () { return Promise.reject(new Error("offline")); };
 w.eval(js);
 var cases = JSON.parse(fs.readFileSync(%(json)r, "utf8")).write;
-cases.forEach(function (c) { fs.writeFileSync(path.join(%(tmp)r, c.id + ".docx"), Buffer.from(w.Lantern.docx.write(c.title || c.id, c.html, c.paper || null).bytes)); });
+cases.forEach(function (c) { try { fs.writeFileSync(path.join(%(tmp)r, c.id + ".docx"), Buffer.from(w.Lantern.docx.write(c.title || c.id, c.html, c.paper || null).bytes)); } catch (e) { console.error(c.id + ": " + e.message); } });
 console.log(cases.length);
-""" % {"root": ROOT, "json": os.path.join(ROOT, "tests", "fixtures", "review_docx_1266.json"), "tmp": tmp}
+""" % {"root": ROOT, "json": FIX, "tmp": tmp}
 open(os.path.join(tmp, "w.js"), "w").write(js)
 subprocess.run(["node", os.path.join(tmp, "w.js")], cwd=ROOT, check=True, capture_output=True, env=dict(os.environ, NODE_PATH=os.path.join(ROOT, "node_modules")))
 fails, passes, kept, skips = 0, 0, [], set()
@@ -52,6 +59,8 @@ except Exception:
 if not os.path.exists(VALIDATOR): skips.add("the OOXML schema validator")
 for c in cases:
     e, bad, f = c["expect"], [], os.path.join(tmp, c["id"] + ".docx")
+    if not os.path.exists(f):
+        result(c["id"], ["Lantern made no file"]); continue
     if e.get("valid") and os.path.exists(VALIDATOR):
         r = subprocess.run([sys.executable, "validate.py", f], cwd=os.path.dirname(VALIDATOR), capture_output=True, text=True, timeout=300)
         if "All validations PASSED" not in r.stdout + r.stderr: bad.append("not valid OOXML: " + (r.stdout + r.stderr)[-300:])
@@ -89,5 +98,5 @@ for c in cases:
     result(c["id"], bad)
 shutil.rmtree(tmp, ignore_errors=True)
 if skips: print("SKIP  " + ", ".join(sorted(skips)) + " not on this machine")
-print(("%d FAILED" % fails) if fails else "ALL DOCX REVIEW CHECKS WITH LIBREOFFICE PASS", "(%d agree, %d kept as they are)" % (passes, len(kept)))
+print(("%d FAILED" % fails) if fails else ("ALL SECOND DOCX REVIEW CHECKS WITH LIBREOFFICE PASS" if SECOND else "ALL DOCX REVIEW CHECKS WITH LIBREOFFICE PASS"), "(%d agree, %d kept as they are)" % (passes, len(kept)))
 sys.exit(1 if fails else 0)

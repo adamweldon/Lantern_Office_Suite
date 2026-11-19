@@ -140,7 +140,7 @@ function orderErrors(xml) {
   ok("...highlight, double strike, a w:b turned off", /<span style="background-color:#fde68a">Highlighted<\/span> and <s>double struck<\/s> and not bold\./.test(fh));
   ok("...a text box's words after its paragraph, once (not its fallback copy too)", /<p>Before the box\.<\/p><p>Text in the box\.<\/p><ol>/.test(fh) && (fh.match(/Text in the box/g) || []).length === 1, fh);
   ok("...Word's numbering: a level below, carried on after a paragraph (start 3), a restart, bullets, numId 0 no list",
-    fh.indexOf("<ol><li>One<ol><li>One a</li></ol></li><li>Two</li></ol><p>A paragraph between.</p><ol start=\"3\"><li>Three, carried on</li></ol><ol><li>From one again</li></ol><ul><li>Dot</li></ul><p>Not a list (numId 0)</p>") > 0, fh);
+    fh.indexOf("<ol><li>One<ol type=\"a\"><li>One a</li></ol></li><li>Two</li></ol><p>A paragraph between.</p><ol start=\"3\"><li>Three, carried on</li></ol><ol><li>From one again</li></ol><ul><li>Dot</li></ul><p>Not a list (numId 0)</p>") > 0, fh);
   ok("...a table: heading row as th (its bold not doubled), a cell down two, a cell across two with two lines",
     fh.indexOf("<table><tr><th>A</th><th>B</th><th>C</th></tr><tr><td rowspan=\"2\">down two</td><td colspan=\"2\">across two<br>second line</td></tr><tr><td>b3</td><td>c3</td></tr></table>") > 0, fh);
   ok("...an inline and a floating picture with their alt text and sizes, a divider, justified text",
@@ -153,7 +153,7 @@ function orderErrors(xml) {
   r = rd("libreoffice.docx");
   var lh = strip(r.html);
   ok("LibreOffice's save: lists as they were (ids sharing a definition count on; a restart and a start of 4 kept)",
-    lh.indexOf("<ol><li>Switch off</li><li>Lock<ol><li>padlock</li><li>tag</li></ol></li><li>Test</li></ol><p>Between.</p><ol start=\"4\"><li>Four</li><li>Five</li></ol>") > 0 &&
+    lh.indexOf("<ol><li>Switch off</li><li>Lock<ol type=\"a\"><li>padlock</li><li>tag</li></ol></li><li>Test</li></ol><p>Between.</p><ol start=\"4\"><li>Four</li><li>Five</li></ol>") > 0 &&
     lh.indexOf("<ul><li>Wear glasses</li><li>Gloves<ul><li>nitrile</li><li>leather</li></ul></li><li>Boots</li></ul>") > 0, lh);
   ok("...the table, the quote, the indent, the code, the picture, the alignments", lh.indexOf("<tr><td>Bolt &amp; nut</td><td>25 N\u00b7m</td><td rowspan=\"2\">both</td></tr><tr><td colspan=\"2\">wide cell</td></tr>") > 0 &&
     lh.indexOf("<blockquote>A quote.</blockquote><blockquote style=\"margin: 0 0 0 40px; border: none; padding: 0px;\"><p>Indented.</p></blockquote><pre>code  line 1\n    indented</pre><hr>") > 0 &&

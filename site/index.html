@@ -43766,7 +43766,7 @@ Lantern.RFB = (function () {
     v = el.getAttribute((pre || "w") + ":" + a);
     return v == null ? el.getAttribute(a) : v;
   }
-  function child(el, n) { var k = kids(el); for (var i = 0; i < k.length; i++) if (name(k[i]) === n) return k[i]; return null; }
+  function child(el, n) { if (!el) return null; var k = kids(el); for (var i = 0; i < k.length; i++) if (name(k[i]) === n) return k[i]; return null; }
   function on(el) { if (!el) return null; var v = attr(el, "val"); return !(v === "0" || v === "false" || v === "off" || v === "none"); }
   function parse(t) {
     var x = new DOMParser().parseFromString(t, "application/xml");
@@ -43799,10 +43799,11 @@ Lantern.RFB = (function () {
     var kind = /spreadsheetml/.test(ct) && /^xl\x2F/i.test(main) ? "xlsx" : /presentationml/.test(ct) && /^ppt\x2F/i.test(main) ? "pptx" : "docx";
     if (kind !== "docx") return { kind: kind, zip: z };
     if (!z.has(main)) throw new Error("this zip file has no Word document in it");
-    var mr = rels(main), st = {}, num = { nums: {}, abs: {} }, defP = "Normal";
+    var mr = rels(main), st = {}, num = { nums: {}, abs: {} }, defP = "Normal", defSz = 22;
     function jcOf(pp) { var v = pp && child(pp, "jc") ? attr(child(pp, "jc"), "val") : ""; return v === "center" ? "center" : v === "right" || v === "end" ? "right" : v === "both" || v === "distribute" ? "justify" : v === "left" || v === "start" ? "left" : ""; }
     function leftOf(pp) { var ind = pp && child(pp, "ind"), v = ind && (attr(ind, "left") || attr(ind, "start")); return v ? parseInt(v, 10) || 0 : null; }
     var sx = byType(mr, "styles") && xml(byType(mr, "styles"));
+    if (sx) { var dd = child(child(child(child(sx.documentElement, "docDefaults"), "rPrDefault"), "rPr"), "sz"); if (dd) defSz = parseInt(attr(dd, "val"), 10) || 22; }
     if (sx) kids(sx.documentElement).forEach(function (s) {
       if (name(s) !== "style") return;
       var pp = child(s, "pPr"), rp = child(s, "rPr"), np = pp && child(pp, "numPr"), ol = pp && child(pp, "outlineLvl"), bd = pp && child(pp, "pBdr");
@@ -43812,12 +43813,12 @@ Lantern.RFB = (function () {
         rtl: pp && child(pp, "bidi") ? on(child(pp, "bidi")) : null, hr: bd && child(bd, "bottom") ? true : null,
         numId: np && child(np, "numId") ? attr(child(np, "numId"), "val") : null, ilvl: np && child(np, "ilvl") ? parseInt(attr(child(np, "ilvl"), "val"), 10) : 0,
         b: rp ? on(child(rp, "b")) : null, i: rp ? on(child(rp, "i")) : null, u: rp ? on(child(rp, "u")) : null, s: rp ? on(child(rp, "strike")) : null,
-        hide: rp ? on(child(rp, "vanish")) : null };
+        hide: rp ? on(child(rp, "vanish")) : null, caps: rp ? on(child(rp, "caps")) : null, sz: rp && child(rp, "sz") ? parseInt(attr(child(rp, "sz"), "val"), 10) || null : null };
     });
     // a numbering level: its format (decimal, lowerLetter, bullet ...), start, text ("%1.%2") and indent
     function level(l) {
       return { fmt: attr(child(l, "numFmt"), "val") || "decimal", start: parseInt(attr(child(l, "start"), "val") || "1", 10), text: attr(child(l, "lvlText"), "val"),
-        left: leftOf(child(l, "pPr")) };
+        left: leftOf(child(l, "pPr")), legal: child(l, "isLgl") ? on(child(l, "isLgl")) : false };
     }
     var nx = byType(mr, "numbering") && xml(byType(mr, "numbering"));
     if (nx) kids(nx.documentElement).forEach(function (e) {
@@ -43837,16 +43838,16 @@ Lantern.RFB = (function () {
     });
     // style(id) -> what a paragraph or run style means, following basedOn
     function style(id) {
-      var out = { head: 0, quote: false, pre: false, numId: null, ilvl: 0, left: null, jc: null, rtl: null, hr: null, b: null, i: null, u: null, s: null, hide: null }, seen = 0, s;
+      var out = { head: 0, quote: false, pre: false, numId: null, ilvl: 0, left: null, jc: null, rtl: null, hr: null, b: null, i: null, u: null, s: null, hide: null, caps: null, sz: null }, seen = 0, s;
       while (id && (s = st[id]) && seen++ < 12) {
         var m = /^heading\s*(\d)$/.exec(s.name);
         if (!out.head && m) out.head = Math.min(4, parseInt(m[1], 10));
         if (!out.head && s.name === "title") out.head = 1;
         if (!out.head && s.outline != null && s.outline >= 0 && s.outline < 9) out.head = Math.min(4, s.outline + 1);
-        if (/^(quote|intense quote|block text)$/.test(s.name)) out.quote = true;
+        if (/^(quote|intense quote|block text|block quotation|quotations)$/.test(s.name)) out.quote = true;
         if (/^(code|html preformatted|source code|preformatted text|macro text)$/.test(s.name)) out.pre = true;
         if (out.numId == null && s.numId != null) { out.numId = s.numId; out.ilvl = s.ilvl; }
-        ["left", "jc", "rtl", "hr", "b", "i", "u", "s", "hide"].forEach(function (k) { if (out[k] == null && s[k] != null) out[k] = s[k]; });
+        ["left", "jc", "rtl", "hr", "b", "i", "u", "s", "hide", "caps", "sz"].forEach(function (k) { if (out[k] == null && s[k] != null) out[k] = s[k]; });
         id = s.based;
       }
       return out;
@@ -43867,12 +43868,16 @@ Lantern.RFB = (function () {
       if (!n || numId === "0") return null;
       var lv = levels(n.abs), l = n.lvls[ilvl] || lv.lvls[ilvl] || lv.lvls["0"] || { fmt: "decimal", start: 1, text: "%1." };
       if (l.fmt === "none" && !/%/.test(l.text || "")) return null;
-      var ov = n.starts[ilvl] != null, fmts = [];
-      for (var k = 0; k < 9; k++) { var x = n.lvls[k] || lv.lvls[k]; fmts.push(x ? x.fmt : "decimal"); }
+      var ov = n.starts[ilvl] != null, fmts = [], compound = false;
+      for (var k = 0; k < 9; k++) {
+        var x = n.lvls[k] || lv.lvls[k];
+        fmts.push(x ? (l.legal ? "decimal" : x.fmt) : "decimal");   // Legal numbering (isLgl): every level's number in figures
+        if (x && x.fmt !== "bullet" && ((x.text || "").match(/%[1-9]/g) || []).length > 1) compound = true;
+      }
       return { tag: l.fmt === "bullet" ? "ul" : "ol", fmt: l.fmt, start: ov ? n.starts[ilvl] : l.start, text: l.text == null ? "%" + (ilvl + 1) + "." : l.text,
-        left: l.left, abs: "a" + lv.id, restart: ov, fmts: fmts };
+        left: l.left, abs: "a" + lv.id, restart: ov, fmts: fmts, compound: compound };
     }
-    return { kind: "docx", zip: z, main: main, xml: xml, rels: rels, byType: byType, style: style, list: list, defP: defP, jcOf: jcOf, leftOf: leftOf };
+    return { kind: "docx", zip: z, main: main, xml: xml, rels: rels, byType: byType, style: style, list: list, defP: defP, defSz: defSz, jcOf: jcOf, leftOf: leftOf };
   }
   D.parts = parts;
   D.kids = kids;
@@ -43916,13 +43921,16 @@ Lantern.RFB = (function () {
     0x25CA, 0x2329, 0xAE, 0xA9, 0x2122, 0x2211, 0x239B, 0x239C, 0x239D, 0x23A1, 0x23A2, 0x23A3, 0x23A7, 0x23A8, 0x23A9, 0x23AA,
     0, 0x232A, 0x222B, 0x2320, 0x23AE, 0x2321, 0x239E, 0x239F, 0x23A0, 0x23A4, 0x23A5, 0x23A6, 0x23AB, 0x23AC, 0x23AD];
   // Wingdings: the marks Word's lists and forms use
-  var WING = { 0x4A: 0x263A, 0x4C: 0x2639, 0x6E: 0x25A0, 0x6F: 0x25A1, 0x71: 0x2751, 0x76: 0x2756, 0xA7: 0x25AA, 0xA8: 0x25FB, 0xD8: 0x27A2,
-    0xE8: 0x2794, 0xFB: 0x2717, 0xFC: 0x2713, 0xFD: 0x2612, 0xFE: 0x2611 };
+  var WING = { 0x21: 0x270F, 0x22: 0x2702, 0x28: 0x260E, 0x29: 0x2706, 0x2A: 0x2709, 0x45: 0x261C, 0x46: 0x261E, 0x4A: 0x263A, 0x4C: 0x2639, 0x6C: 0x25CF,
+    0x6E: 0x25A0, 0x6F: 0x25A1, 0x71: 0x2751, 0x76: 0x2756, 0xA7: 0x25AA, 0xA8: 0x25FB, 0xD8: 0x27A2, 0xE8: 0x2794, 0xFB: 0x2717, 0xFC: 0x2713, 0xFD: 0x2612, 0xFE: 0x2611 };
+  // Wingdings 2: its ticks, crosses and boxes
+  var WING2 = { 0x4F: 0x2717, 0x50: 0x2713, 0x51: 0x2612, 0x52: 0x2611, 0x53: 0x2612, 0x54: 0x2612, 0xA3: 0x2610 };
   // symbol("Symbol", 0xF057) -> "\u03a9"; null for a code it does not know
   D.symbol = function (font, code) {
     var c = code >= 0xF000 && code <= 0xF0FF ? code - 0xF000 : code, f = String(font || "").toLowerCase(), u = 0;
     if (f === "symbol") u = c >= 0x20 && c < 0x80 ? SYM[c - 0x20] : c >= 0xA0 && c <= 0xFE ? SYM2[c - 0xA0] : 0;
     else if (f === "wingdings") u = WING[c] || 0;
+    else if (f === "wingdings 2") u = WING2[c] || 0;
     return u ? String.fromCharCode(u) : null;
   };
   function roman(n) {
@@ -43949,7 +43957,12 @@ Lantern.RFB = (function () {
     function wrap(t) { return /^[\w.\u0370-\u03ff]+$/.test(t.replace(/<[^>]+>/g, "")) ? t : "(" + t + ")"; }
     if (n === "t") return esc(el.textContent);
     if (n === "r") return k.map(m).join("");
-    if (n === "f") return wrap(part("num")) + "\x2F" + wrap(part("den"));
+    if (n === "f") {
+      var fp = child(el, "fPr"), ty = fp && child(fp, "type") ? child(fp, "type").getAttribute("m:val") || child(fp, "type").getAttribute("val") : "";
+      return ty === "noBar" ? part("num") + " " + part("den") : wrap(part("num")) + "\x2F" + wrap(part("den"));   // noBar: a binomial, not a division
+    }
+    if (n === "acc") { var ap = child(el, "accPr"), ac = ap && child(ap, "chr") ? child(ap, "chr").getAttribute("m:val") || child(ap, "chr").getAttribute("val") : "\u0302"; return part("e") + ac; }
+    if (n === "bar") return part("e") + "\u0305";
     if (n === "sSup") return part("e") + "<sup>" + part("sup") + "<\x2Fsup>";
     if (n === "sSub") return part("e") + "<sub>" + part("sub") + "<\x2Fsub>";
     if (n === "sSubSup") return part("e") + "<sub>" + part("sub") + "<\x2Fsub><sup>" + part("sup") + "<\x2Fsup>";
@@ -43966,7 +43979,7 @@ Lantern.RFB = (function () {
       var lo = part("sub"), hi = part("sup");
       return chr + (lo ? "<sub>" + lo + "<\x2Fsub>" : "") + (hi ? "<sup>" + hi + "<\x2Fsup>" : "") + " " + part("e");
     }
-    if (n === "func") return part("fName") + " " + part("e");
+    if (n === "func") return part("fName") + part("e");
     if (n === "limLow") return part("e") + "<sub>" + part("lim") + "<\x2Fsub>";
     if (n === "limUpp") return part("e") + "<sup>" + part("lim") + "<\x2Fsup>";
     if (n === "eqArr") return k.filter(function (c) { return name(c) === "e"; }).map(m).join("; ");
@@ -44018,7 +44031,7 @@ Lantern.RFB = (function () {
     var P = D.parts(bytes);
     if (P.kind === "xlsx") throw new Error("this is an Excel workbook (.xlsx), not a Word document; Writer opens Word files (.docx)");
     if (P.kind === "pptx") throw new Error("this is a PowerPoint presentation (.pptx), not a Word document; Writer opens Word files (.docx)");
-    var doc = P.xml(P.main), rels = P.rels(P.main), notes = {}, fld = [], dels = 0, pics = 0, foot = [], notesOf = {};
+    var doc = P.xml(P.main), rels = P.rels(P.main), notes = {}, fld = [], dels = 0, pics = 0, foot = [], notesOf = {}, autoNote = 0, mark = null;
     function note(t) { notes[t] = 1; }
     var body = child(doc.documentElement, "body");
     if (!body) throw new Error("this Word file has no body");
@@ -44028,7 +44041,8 @@ Lantern.RFB = (function () {
       if (!r || r.external || linked) { note("pictures linked from outside the file are not shown"); return ""; }
       var ext = (r.target.match(/\.([a-z0-9]+)$/i) || [])[1], mm = ext && MIME[ext.toLowerCase()];
       if (!mm) { note("pictures in " + String(ext || "an unknown").toUpperCase() + " format (Writer shows PNG, JPEG and GIF) are left out"); return ""; }
-      var bb = P.zip.bytes(r.target);
+      var bb;
+      try { bb = P.zip.bytes(r.target); } catch (e) { note("a picture Lantern could not open is left out (" + e.message + ")"); return ""; }
       if (!bb) return "";
       pics++;
       var w = cx ? Math.min(624, Math.max(8, Math.round(cx / 9525))) : 0;
@@ -44055,18 +44069,22 @@ Lantern.RFB = (function () {
         var rp = child(r, "rPr"), rs = rp && child(rp, "rStyle") ? P.style(attr(child(rp, "rStyle"), "val")) : {};
         function pick(k, tag) { var e = rp && child(rp, tag); if (e) return on(e); if (rs[k] != null) return rs[k]; return ctx.head || ps.quote || ps.pre ? false : ps[k] || false; }
         var hide = rp && child(rp, "vanish") ? on(child(rp, "vanish")) : rs.hide != null ? rs.hide : ps.hide;
-        var va = rp && child(rp, "vertAlign") ? attr(child(rp, "vertAlign"), "val") : "", pos = rp && child(rp, "position") ? parseInt(attr(child(rp, "position"), "val"), 10) || 0 : 0, small = !!(rp && child(rp, "sz"));
+        var va = rp && child(rp, "vertAlign") ? attr(child(rp, "vertAlign"), "val") : "", pos = rp && child(rp, "position") ? parseInt(attr(child(rp, "position"), "val"), 10) || 0 : 0, small = !!(rp && child(rp, "sz")) && (parseInt(attr(child(rp, "sz"), "val"), 10) || 99) < (ps.sz || P.defSz) * 0.9;
         var hl = rp && child(rp, "highlight") && on(child(rp, "highlight")) ? "#fde68a" : "", sh = rp && child(rp, "shd") && attr(child(rp, "shd"), "fill");
         if (!hl && sh && /^[0-9a-f]{6}$/i.test(sh) && !/^ffffff$/i.test(sh)) hl = "#" + sh.toLowerCase();
-        var fonts = rp && child(rp, "rFonts"), sym = fonts && /^(symbol|wingdings)$/i.test(attr(fonts, "ascii") || attr(fonts, "hAnsi") || "") ? (attr(fonts, "ascii") || attr(fonts, "hAnsi")) : "";
+        var fonts = rp && child(rp, "rFonts"), sym = fonts && /^(symbol|wingdings|wingdings 2)$/i.test(attr(fonts, "ascii") || attr(fonts, "hAnsi") || "") ? (attr(fonts, "ascii") || attr(fonts, "hAnsi")) : "";
         var look = { a: href || "", b: pick("b", "b"), i: pick("i", "i"), u: !href && pick("u", "u"), s: pick("s", "strike") || !!(rp && on(child(rp, "dstrike"))),
           v: va === "superscript" || (!va && pos > 0 && small) ? "sup" : va === "subscript" || (!va && pos < 0 && small) ? "sub" : "", h: hl };
-        var custom = false;
+        var custom = false, caps = rp && child(rp, "caps") ? on(child(rp, "caps")) : rs.caps != null ? rs.caps : ps.caps;
         kids(r).forEach(function (c) {
           var n = name(c);
           if (n === "fldChar") {
             var ty = attr(c, "fldCharType");
-            if (ty === "begin") fld.push({ instr: true, code: "" });
+            if (ty === "begin") {
+              var cb = child(child(c, "ffData"), "checkBox");
+              if (cb && !hiddenField()) add(on(child(cb, "checked") || child(cb, "default")) && (child(cb, "checked") || child(cb, "default")) ? "\u2612" : "\u2610", look);
+              fld.push({ instr: true, code: "" });
+            }
             else if (ty === "separate" && fld.length) fld[fld.length - 1].instr = false;
             else if (ty === "end") fld.pop();
             return;
@@ -44077,6 +44095,8 @@ Lantern.RFB = (function () {
           if (n === "t") {
             var t = c.textContent;
             if (sym) t = t.replace(/[\x20-\xff\uf020-\uf0ff]/g, function (ch) { return D.symbol(sym, ch.charCodeAt(0)) || ch; });
+            if (caps) t = t.toUpperCase();
+            if (mark != null) { foot[mark].mark = t; mark = null; }
             add(esc(t).replace(/  /g, " \u00a0"), look);
           } else if (n === "tab" || n === "ptab") add("<span style=\x22white-space:pre\x22>\t<\x2Fspan>", look);
           else if (n === "br" || n === "cr") {
@@ -44091,13 +44111,14 @@ Lantern.RFB = (function () {
             if (!ch) note("a symbol from the " + (attr(c, "font") || "symbol") + " font is shown as \u25a1");
             add(esc(ch || "\u25a1"), look);
           } else if (n === "footnoteReference" || n === "endnoteReference") {
-            var kind = n === "footnoteReference" ? "footnotes" : "endnotes", f = noteParas(kind, attr(c, "id")), saved = fld, txt = [];
+            var kind = n === "footnoteReference" ? "footnotes" : "endnotes", f = noteParas(kind, attr(c, "id")), saved = fld, txt = [], tabs = [];
             custom = /^(1|true|on)$/.test(attr(c, "customMarkFollows") || "");
             fld = [];
-            if (f) kids(f).forEach(function (k) { var o = []; block(k, o); o.forEach(function (b) { if (b.html) txt.push(b.html); }); });
+            if (f) kids(f).forEach(function (k) { var o = []; block(k, o); o.forEach(function (b) { if (b.tag === "table") tabs.push(tableHtml(b)); else if (b.html) txt.push(b.html); }); });
             fld = saved;
-            foot.push(txt.join(" ").replace(/^\s+/, ""));
-            if (!custom) add("<sup>[" + foot.length + "]<\x2Fsup>", PLAIN);
+            // a note with its own mark (*) is not counted: the next ordinary one is still [1]
+            foot.push({ n: custom ? 0 : ++autoNote, html: txt.join(" ").replace(/^\s+/, ""), tables: tabs.join("") });
+            if (custom) mark = foot.length - 1; else add("<sup>[" + autoNote + "]<\x2Fsup>", PLAIN);
           } else if (n === "footnoteRef" || n === "endnoteRef") return;
           else if (n === "drawing" || n === "pict" || n === "object") drawing(c, look);
           else if (n === "AlternateContent") { var cc = child(c, "Choice") || child(c, "Fallback"); if (cc) kids(cc).forEach(function (k) { if (name(k) === "drawing" || name(k) === "pict") drawing(k, look); }); }
@@ -44109,10 +44130,11 @@ Lantern.RFB = (function () {
       function drawing(c, look) {
         var done = false, i, ext = all(c, "extent")[0], pr = all(c, "docPr")[0];
         var alt = pr ? pr.getAttribute("descr") || pr.getAttribute("title") || "" : "";
-        all(c, "blip").forEach(function (bl) {
-          if (done) return;
+        var blips = all(c, "blip");
+        blips.forEach(function (bl) {
           var rid = attr(bl, "embed", "r"), lk = attr(bl, "link", "r");
-          if (rid || lk) { add(picture(rid || lk, ext ? parseInt(ext.getAttribute("cx"), 10) : 0, 0, alt, !rid), look); done = true; }
+          // one picture: its size from the drawing; pictures of a group: their own size
+          if (rid || lk) { add(picture(rid || lk, blips.length === 1 && ext ? parseInt(ext.getAttribute("cx"), 10) : 0, 0, alt, !rid), look); done = true; }
         });
         all(c, "imagedata").forEach(function (im) { if (done) return; var r2 = attr(im, "id", "r"); if (r2) { add(picture(r2, 0, 0, alt), look); done = true; } });
         // every text box in the drawing (a group can hold several), each once
@@ -44155,7 +44177,12 @@ Lantern.RFB = (function () {
       if (/<br>(<\x2F[a-z]+>)*$/.test(html)) html += "<br>";
       return { html: html, extra: extra };
     }
-    function link(code) { var m = /HYPERLINK\s+(?:\\l\s+)?\x22([^\x22]+)\x22/.exec(code || ""); if (!m) return ""; var h = /\\l/.test(code) ? "#" + m[1] : m[1]; return /^(https?:|mailto:|#)/i.test(h) ? h : ""; }
+    function link(code) {
+      if (!/^\s*HYPERLINK\b/i.test(code || "")) return "";
+      var m = /HYPERLINK\s+(?:\x22([^\x22]*)\x22|([^\s\\\x22]+))/i.exec(code), l = /\\l\s+\x22([^\x22]+)\x22/.exec(code);
+      var url = m ? m[1] || m[2] || "" : "", an = l ? l[1] : "", h = url ? url + (an ? "#" + an : "") : an ? "#" + an : "";
+      return /^(https?:|mailto:|#)/i.test(h) ? h : "";
+    }
     // a paragraph -> a block {tag, align, rtl, left, indent, html, list, num, join}
     function para(p, out) {
       var pp = child(p, "pPr"), sid = pp && child(pp, "pStyle") ? attr(child(pp, "pStyle"), "val") : null, s = P.style(sid || P.defP);
@@ -44168,23 +44195,28 @@ Lantern.RFB = (function () {
       var r = inline(p, { pstyle: s, head: head });
       var left = P.leftOf(pp), al = P.jcOf(pp) || (s.quote ? "" : s.jc) || "", rtl = pp && child(pp, "bidi") ? on(child(pp, "bidi")) : s.rtl;
       if (left == null) left = li && li.left != null ? li.left : s.left || 0;
+      // in a right-to-left paragraph Word's left and right are its start and end
+      if (rtl) al = al === "left" ? "right" : al === "right" ? "left" : al;
+      var cap = pp && child(pp, "framePr") && /^(drop|margin)$/.test(attr(child(pp, "framePr"), "dropCap") || "");
       var hr = !r.html && ((pp && child(pp, "pBdr") && child(child(pp, "pBdr"), "bottom")) || s.hr);
       if (hideMark && !r.html) { r.extra.forEach(function (k) { block(k, out); }); return; }   // a hidden paragraph: gone, as in print
       if (gone) dels++;
       // a numbered heading keeps its number ("1.2 Scope"); a heading put in a list by hand stays a list item
-      var headNum = head && li && li.tag === "ol" && (!direct || /%[1-9][^%]*%[1-9]/.test(li.text || "")) ? li : null;
+      var headNum = li && li.tag === "ol" && ((head && (!direct || /%[1-9][^%]*%[1-9]/.test(li.text || ""))) || (!head && li.compound)) ? li : null;
       if (head && li && !headNum && !direct) li = null;
       // a list's type is written only where it is not Word's usual one for its level (1. a. i.), as Lantern writes a list without one
-      var cyc = ["decimal", "lowerLetter", "lowerRoman"][ilvl % 3];
-      var info = li && !headNum ? { tag: li.tag, type: li.fmt === cyc ? "" : TYPE[li.fmt] || (li.fmt === "decimal" ? "1" : ""), start: li.start, num: li.abs, id: numId, restart: li.restart, lvl: Math.min(8, ilvl), pos: left } : null;
+      // a list's type is written where it is not 1, 2, 3 (Writer shows a list in a list 1, 2, 3 as well)
+      var info = li && !headNum ? { tag: li.tag, type: TYPE[li.fmt] || "", start: li.start, num: li.abs, id: numId, restart: li.restart, lvl: Math.min(8, ilvl), pos: left } : null;
       out.push({ tag: hr ? "hr" : head ? "h" + head : s.quote ? "blockquote" : s.pre ? "pre" : "p", align: al === "left" ? "" : al, rtl: !!rtl, left: left,
-        indent: !info && !head && !s.quote && left >= 360 ? Math.min(6, Math.round(left / 720) || 1) : 0, html: r.html, list: info,
-        num: headNum ? { li: headNum, id: numId, lvl: Math.min(8, ilvl) } : null, join: !!gone });
+        indent: headNum && !head ? Math.min(6, ilvl) : !info && !head && !s.quote && left >= 360 ? Math.min(6, Math.round(left / 720) || 1) : 0, html: r.html, list: info,
+        num: headNum ? { li: headNum, id: numId, lvl: Math.min(8, ilvl) } : null, join: !!gone || !!cap });
       r.extra.forEach(function (k) { block(k, out); });
     }
     function table(tbl) {
       var rows = [];
-      function rowsOf(el) { kids(el).forEach(function (k) { var n = name(k); if (n === "tr") rows.push(k); else if (n === "sdt" || n === "customXml" || n === "ins") rowsOf(child(k, "sdtContent") || k); }); }
+      var marks = [];
+      function bm(k) { var n = attr(k, "name"); if (n && n !== "_GoBack") marks.push(n); }
+      function rowsOf(el) { kids(el).forEach(function (k) { var n = name(k); if (n === "tr") rows.push(k); else if (n === "bookmarkStart") bm(k); else if (n === "sdt" || n === "customXml" || n === "ins") rowsOf(child(k, "sdtContent") || k); }); }
       rowsOf(tbl);
       var grid = [];
       rows.forEach(function (tr) {
@@ -44196,11 +44228,12 @@ Lantern.RFB = (function () {
           kids(el).forEach(function (tc) {
             var n = name(tc);
             if (n === "sdt" || n === "customXml") { cellsOf(child(tc, "sdtContent") || tc); return; }
+            if (n === "bookmarkStart") { bm(tc); return; }
             if (n !== "tc") return;
             var pr = child(tc, "tcPr"), sp = pr && child(pr, "gridSpan") ? parseInt(attr(child(pr, "gridSpan"), "val"), 10) || 1 : 1;
             var vm = pr && child(pr, "vMerge"), vmv = vm ? attr(vm, "val") || "continue" : "", bl = [];
             if (vmv !== "continue") kids(tc).forEach(function (k) { block(k, bl); });
-            cells.push({ col: col, span: sp, vm: vmv, blocks: bl, th: th });
+            cells.push({ col: col, span: sp, vm: vmv, blocks: bl, th: th, marks: marks.splice(0) });
             col += sp;
           });
         }
@@ -44239,9 +44272,15 @@ Lantern.RFB = (function () {
       for (i = blocks.length - 2; i >= 0; i--) if (blocks[i].join && blocks[i].html != null && blocks[i + 1].html != null && blocks[i + 1].tag !== "table") {
         blocks[i + 1].html = blocks[i].html + blocks[i + 1].html; blocks.splice(i, 1);
       }
-      function closeTo(pos) { while (stack.length && stack[stack.length - 1].pos > pos + 90) out.push("<\x2Fli><\x2F" + stack.pop().tag + ">"); }
+      function closeAll() { while (stack.length) out.push("<\x2Fli><\x2F" + stack.pop().tag + ">"); }
+      // where an item sits against the list item above it: within one list by its level, between lists by indent
+      function cmp(x, top) {
+        if (x.num === top.num) return x.lvl - top.lvl;
+        var d = x.pos - top.pos;
+        return Math.abs(d) > 90 ? d : x.lvl - top.lvl;
+      }
       blocks.forEach(function (b) {
-        if (b.tag === "table") { closeTo(-1e9); out.push(tableHtml(b)); return; }
+        if (b.tag === "table") { closeAll(); out.push(tableHtml(b)); return; }
         if (b.num) {
           var hc = count({ num: b.num.li.abs, lvl: b.num.lvl, start: b.num.li.start, restart: b.num.li.restart, id: b.num.id }), lvl = b.num.lvl;
           var txt = String(b.num.li.text || "").replace(/%([1-9])/g, function (all, d) {
@@ -44253,7 +44292,7 @@ Lantern.RFB = (function () {
         // an indented paragraph with no number of its own, under a list item, is that item's next paragraph
         if (!b.list && stack.length && b.tag === "p" && b.left >= 360) { out.push("<p" + attrs(b) + ">" + (b.html || "<br>") + "<\x2Fp>"); return; }
         if (!b.list) {
-          closeTo(-1e9);
+          closeAll();
           if (b.tag === "hr") out.push("<hr>");
           else if (b.tag === "pre") {
             var code = b.html.replace(/<br>/g, "\n").replace(/<span style=\x22white-space:pre\x22>\t<\x2Fspan>/g, "\t").replace(/ \u00a0/g, "  ");
@@ -44263,18 +44302,18 @@ Lantern.RFB = (function () {
           else out.push("<" + b.tag + attrs(b) + ">" + (b.html || "<br>") + "<\x2F" + b.tag + ">");
           return;
         }
-        var x = b.list, c = count(x), pos = x.pos != null ? x.pos : 720 * (x.lvl + 1);
-        closeTo(pos);
-        var top = stack[stack.length - 1], same = top && Math.abs(top.pos - pos) <= 90;
+        var x = b.list, c = count(x), pos = x.pos != null ? x.pos : 720 * (x.lvl + 1), me = { num: x.num, lvl: x.lvl, pos: pos };
+        while (stack.length && cmp(me, stack[stack.length - 1]) < 0) out.push("<\x2Fli><\x2F" + stack.pop().tag + ">");
+        var top = stack[stack.length - 1], same = top && cmp(me, top) === 0;
         if (same && (top.tag !== x.tag || top.num !== x.num || top.type !== x.type || c.again)) { out.push("<\x2Fli><\x2F" + stack.pop().tag + ">"); top = stack[stack.length - 1]; same = false; }
         if (same) out.push("<\x2Fli><li>");
         else {
-          out.push("<" + x.tag + (x.tag === "ol" && x.type ? " type=\x22" + x.type + "\x22" : "") + (x.tag === "ol" && c.n !== 1 ? " start=\x22" + c.n + "\x22" : "") + "><li>");
-          stack.push({ tag: x.tag, pos: pos, num: x.num, type: x.type });
+          out.push("<" + x.tag + (x.tag === "ol" && x.type ? " type=\x22" + x.type + "\x22" : "") + (x.tag === "ol" && c.n !== 1 ? " start=\x22" + c.n + "\x22" : "") + (b.rtl ? " dir=\x22rtl\x22" : "") + "><li>");
+          stack.push({ tag: x.tag, pos: pos, num: x.num, lvl: x.lvl, type: x.type });
         }
         out.push(b.tag === "p" || b.tag === "blockquote" ? b.html || "<br>" : "<" + b.tag + attrs(b) + ">" + b.html + "<\x2F" + b.tag + ">");
       });
-      closeTo(-1e9);
+      closeAll();
       return out.join("");
     }
     // a cell: plain paragraphs joined by line breaks (as Writer's own cells are), lists and tables as they are
@@ -44291,11 +44330,13 @@ Lantern.RFB = (function () {
     }
     function tableHtml(t) {
       var g = t.grid;
+      // a continued merge stands for the cell above it; with none above (its row deleted) it is a cell of its own
+      g.forEach(function (cells, r) { cells.forEach(function (c) { if (c.vm === "continue" && !(r && g[r - 1].some(function (x) { return x.col === c.col && (x.vm === "restart" || x.vm === "continue" && !x.lone); }))) c.lone = true; }); });
       return "<table>" + g.map(function (cells, r) {
-        return "<tr>" + cells.filter(function (c) { return c.vm !== "continue"; }).map(function (c) {
+        return "<tr>" + cells.filter(function (c) { return c.vm !== "continue" || c.lone; }).map(function (c) {
           var rs = 1;
           if (c.vm === "restart") for (var k = r + 1; k < g.length; k++) { var below = g[k].filter(function (x) { return x.col === c.col; })[0]; if (below && below.vm === "continue") rs++; else break; }
-          var tg = c.th ? "th" : "td", h = c.fill ? "&nbsp;" : cellHtml(c.blocks);
+          var tg = c.th ? "th" : "td", h = (c.marks || []).map(function (n) { return "<a id=\x22" + esc(n) + "\x22><\x2Fa>"; }).join("") + (c.fill ? "&nbsp;" : cellHtml(c.blocks));
           if (c.th) h = h.replace(/<\x2F?b>/g, "");
           return "<" + tg + (c.span > 1 ? " colspan=\x22" + c.span + "\x22" : "") + (rs > 1 ? " rowspan=\x22" + rs + "\x22" : "") + ">" + h + "<\x2F" + tg + ">";
         }).join("") + "<\x2Ftr>";
@@ -44305,7 +44346,7 @@ Lantern.RFB = (function () {
     kids(body).forEach(function (k) { block(k, blocks); });
     var html = assemble(blocks, false);
     if (foot.length) {
-      html += "<p><b>Notes<\x2Fb><\x2Fp>" + foot.map(function (t, i) { return "<p>[" + (i + 1) + "] " + t + "<\x2Fp>"; }).join("");
+      html += "<p><b>Notes<\x2Fb><\x2Fp>" + foot.map(function (t) { return "<p>" + (t.n ? "[" + t.n + "] " : t.mark ? esc(t.mark) + " " : "") + t.html + "<\x2Fp>" + t.tables; }).join("");
       note("footnotes and endnotes are at the end, numbered [1], [2] ...");
     }
     if (dels) note("tracked changes are shown accepted: " + dels + " deletion" + (dels === 1 ? " is" : "s are") + " left out, insertions are kept");
@@ -44387,7 +44428,8 @@ Lantern.RFB = (function () {
       var n = {}, k;
       for (k in o) n[k] = o[k];
       var t = el.tagName, fw = sty(el, "fontWeight"), td = sty(el, "textDecoration") || sty(el, "textDecorationLine"), bg = sty(el, "backgroundColor"), va = sty(el, "verticalAlign");
-      if (t === "B" || t === "STRONG" || /^(bold|bolder|[6-9]00)$/.test(fw)) n.b = true;
+      if (t === "B" || t === "STRONG" || /^(bold|bolder|[6-9]00)$/.test(fw)) { n.b = true; n.nb = false; }
+      else if (/^(normal|lighter|[1-4]00)$/.test(fw)) { n.b = false; n.nb = true; }
       if (t === "I" || t === "EM" || t === "CITE" || t === "DFN" || t === "VAR" || sty(el, "fontStyle") === "italic") n.i = true;
       if (t === "U" || t === "INS" || /underline/.test(td)) n.u = true;
       if (t === "S" || t === "STRIKE" || t === "DEL" || /line-through/.test(td)) n.s = true;
@@ -44409,27 +44451,37 @@ Lantern.RFB = (function () {
     }
     function rpr(o) {
       var r = (o.link ? "<w:rStyle w:val=\x22Hyperlink\x22\x2F>" : "") + (o.mono ? "<w:rFonts w:ascii=\x22Courier New\x22 w:hAnsi=\x22Courier New\x22 w:cs=\x22Courier New\x22\x2F>" : "") +
-        (o.b ? "<w:b\x2F>" : "") + (o.i ? "<w:i\x2F>" : "") + (o.s ? "<w:strike\x2F>" : "") + (o.h === "yellow" || o.h === true ? "<w:highlight w:val=\x22yellow\x22\x2F>" : "") +
+        (o.b ? "<w:b\x2F>" : o.nb ? "<w:b w:val=\x220\x22\x2F><w:bCs w:val=\x220\x22\x2F>" : "") + (o.i ? "<w:i\x2F>" : "") + (o.s ? "<w:strike\x2F>" : "") + (o.h === "yellow" || o.h === true ? "<w:highlight w:val=\x22yellow\x22\x2F>" : "") +
         (o.u ? "<w:u w:val=\x22single\x22\x2F>" : "") + (o.h && o.h !== "yellow" && o.h !== true ? "<w:shd w:val=\x22clear\x22 w:color=\x22auto\x22 w:fill=\x22" + o.h + "\x22\x2F>" : "") + (o.v ? "<w:vertAlign w:val=\x22" + o.v + "\x22\x2F>" : "");
       return r ? "<w:rPr>" + r + "<\x2Fw:rPr>" : "";
     }
-    function textRuns(t, o, acc) {
-      if (!o.pre) t = t.replace(/[ \n\r\f\t]+/g, " ");
-      t = t.replace(/\u00a0/g, " ").replace(/\u200b/g, "");
-      if (!t) return;
+    // run(text, look, flags) -> {xml, raw, o, ...flags}: the text as runs, tabs and line breaks as Word's
+    function run(t, o, f) {
       var bits = t.split(/(\t|\n)/), r = "";
       for (var i = 0; i < bits.length; i++) {
         if (bits[i] === "\t") r += "<w:tab\x2F>";
         else if (bits[i] === "\n") r += "<w:br\x2F>";
         else if (bits[i]) r += "<w:t xml:space=\x22preserve\x22>" + x(bits[i]) + "<\x2Fw:t>";
       }
+      return { xml: r ? "<w:r>" + rpr(o) + r + "<\x2Fw:r>" : "", raw: o.pre ? null : t, o: o, text: f.text, space: f.space };
+    }
+    function textRuns(t, o, acc) {
+      if (!o.pre) t = t.replace(/[ \n\r\f\t]+/g, " ");
+      t = t.replace(/\u00a0/g, " ").replace(/\u200b/g, "");
+      if (!t) return;
       // a run of spaces only is kept between words, not at a paragraph's ends (HTML shows none there)
-      if (r) acc.push({ xml: "<w:r>" + rpr(o) + r + "<\x2Fw:r>", text: o.pre || /\S/.test(t), space: !o.pre && !/\S/.test(t) });
+      if (t) acc.push(run(t, o, { text: o.pre || /\S/.test(t), space: !o.pre && !/\S/.test(t) }));
     }
     function picture(el, acc) {
       var m = /^data:(image\x2F(png|jpe?g|gif|bmp));base64,([\s\S]*)$/i.exec(el.getAttribute("src") || "");
       if (!m) { notes["pictures that are not PNG, JPEG, GIF or BMP are left out"] = 1; return; }
-      var bin = atob(m[3].replace(/\s+/g, "")), b = new Uint8Array(bin.length), i;
+      var d64 = m[3];
+      try { d64 = decodeURIComponent(d64); } catch (e) { }
+      d64 = d64.replace(/[^A-Za-z0-9+\x2F]/g, "");
+      while (d64.length % 4) d64 += "=";
+      var bin;
+      try { bin = atob(d64); } catch (e) { notes["a picture whose data could not be read is left out"] = 1; return; }
+      var b = new Uint8Array(bin.length), i;
       for (i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
       var ext = m[2].toLowerCase() === "jpg" ? "jpeg" : m[2].toLowerCase(), nat = size(b, m[1].toLowerCase()) || [300, 200];
       var aw = parseInt(el.getAttribute("width"), 10), ah = parseInt(el.getAttribute("height"), 10);
@@ -44475,17 +44527,21 @@ Lantern.RFB = (function () {
     function para(acc, ps) {
       while (acc.length && acc[0].space) acc.shift();
       while (acc.length && acc[acc.length - 1].space) acc.pop();
+      if (acc.length && acc[0].raw != null) acc[0] = run(acc[0].raw.replace(/^ +/, ""), acc[0].o, acc[0]);
+      var la = acc[acc.length - 1];
+      if (la && la.raw != null) acc[acc.length - 1] = run(la.raw.replace(/ +$/, ""), la.o, la);
       // a <br> at the end of a block makes no line in a page (the browser adds one to keep an empty line open)
       while (acc.length && acc[acc.length - 1].br) { acc.pop(); if (acc.length) break; }
+      var jv = ps.rtl ? (ps.jc === "right" ? "left" : ps.jc === "left" ? "right" : ps.jc) : ps.jc;
       var p = (ps.style ? "<w:pStyle w:val=\x22" + ps.style + "\x22\x2F>" : "") + (ps.num ? "<w:numPr><w:ilvl w:val=\x22" + ps.lvl + "\x22\x2F><w:numId w:val=\x22" + ps.num + "\x22\x2F><\x2Fw:numPr>" : "") +
         (ps.hr ? "<w:pBdr><w:bottom w:val=\x22single\x22 w:sz=\x226\x22 w:space=\x221\x22 w:color=\x22auto\x22\x2F><\x2Fw:pBdr>" : "") + (ps.rtl ? "<w:bidi\x2F>" : "") +
-        (ps.ind ? "<w:ind w:left=\x22" + ps.ind + "\x22\x2F>" : "") + (ps.jc ? "<w:jc w:val=\x22" + ps.jc + "\x22\x2F>" : "");
+        (ps.ind ? "<w:ind w:left=\x22" + ps.ind + "\x22\x2F>" : "") + (jv ? "<w:jc w:val=\x22" + jv + "\x22\x2F>" : "");
       out.push("<w:p>" + (p ? "<w:pPr>" + p + "<\x2Fw:pPr>" : "") + acc.map(function (a) { return a.xml; }).join("") + "<\x2Fw:p>");
     }
     function rtl(el, ctx) { var d = el.getAttribute && (el.getAttribute("dir") || sty(el, "direction")); return d ? /^rtl$/i.test(d) : !!ctx.rtl; }
     function jc(el, ctx) {
       var a = sty(el, "textAlign") || el.getAttribute("align") || ctx.jc || "";
-      return /center/.test(a) ? "center" : /right|end/.test(a) ? "right" : /justify/.test(a) ? "both" : "";
+      return /center/.test(a) ? "center" : /right|end/.test(a) ? "right" : /justify/.test(a) ? "both" : /left|start/.test(a) && rtl(el, ctx) ? "left" : "";
     }
     // blocks(el, ctx): ctx = {style, lvl, ind, jc, o (run look), out}
     function blocks(el, ctx) {
@@ -44504,6 +44560,7 @@ Lantern.RFB = (function () {
         if (INLINE.test(t)) { if (t === "A") { var one = c.ownerDocument.createElement("span"); one.appendChild(c.cloneNode(true)); inl(one, ctx.o, acc); } else inl(c, look(c, ctx.o), acc); continue; }
         if (!acc.some(function (a) { return a.text; }) && acc.length === 1 && acc[0].br) acc = [];
         flush();
+        if (t === "TABLE" && ctx.num && first) { para([], { style: "ListParagraph", num: ctx.num, lvl: ctx.lvl, rtl: ctx.rtl }); first = false; }
         // a list item's second paragraph sits under its first, without a number of its own
         var sub = { style: ctx.style, lvl: ctx.lvl, ind: !first && ctx.num ? 720 * (ctx.lvl + 1) : ctx.ind, jc: jc(c, ctx), rtl: rtl(c, ctx), o: ctx.o, num: first ? ctx.num : 0, inList: ctx.inList }, m;
         if ((m = /^H([1-6])$/.exec(t))) { sub.style = "Heading" + Math.min(4, +m[1]); sub.o = look(c, ctx.o); sub.keepEmpty = true; blocks(c, sub); }
@@ -44536,7 +44593,8 @@ Lantern.RFB = (function () {
       for (var c = el.firstChild; c; c = c.nextSibling) {
         if (c.nodeType !== 1) { if (c.nodeType === 3 && c.nodeValue.replace(/\s/g, "")) { var tw = c.ownerDocument.createElement("span"); tw.appendChild(c.ownerDocument.createTextNode(c.nodeValue)); blocks(tw, { o: ctx.o, num: num, lvl: lvl, inList: true }); } continue; }
         if (c.tagName === "UL" || c.tagName === "OL") { list(c, Math.min(8, lvl + 1), ctx); continue; }
-        blocks(c, { o: look(c, ctx.o), num: num, lvl: lvl, inList: true, jc: jc(c, {}), keepEmpty: true });
+        var lr = { rtl: rtl(el, ctx) };
+        blocks(c, { o: look(c, ctx.o), num: num, lvl: lvl, inList: true, jc: jc(c, lr), rtl: rtl(c, lr), keepEmpty: true });
       }
     }
     function table(el, ctx) {
@@ -44639,8 +44697,8 @@ Lantern.RFB = (function () {
       "<\x2Fw:tblBorders><\x2Fw:tblPr><\x2Fw:style><\x2Fw:styles>";
   }
   function numbering(nums) {
-    // Word's usual cycle by level (1. a. i.) for a list with no type of its own
-    var BUL = ["\u2022", "\u25e6", "\u25aa"], FMT = ["decimal", "lowerLetter", "lowerRoman"], a = "", b = "", i;
+    // a numbered list with no type of its own is 1, 2, 3 at every level, as Writer's page shows it
+    var BUL = ["\u2022", "\u25e6", "\u25aa"], FMT = ["decimal", "decimal", "decimal"], a = "", b = "", i;
     function lvl(i, fmt, txt, start) {
       return "<w:lvl w:ilvl=\x22" + i + "\x22><w:start w:val=\x22" + (start == null ? 1 : start) + "\x22\x2F><w:numFmt w:val=\x22" + fmt + "\x22\x2F><w:lvlText w:val=\x22" + txt + "\x22\x2F><w:lvlJc w:val=\x22left\x22\x2F>" +
         "<w:pPr><w:ind w:left=\x22" + (720 * (i + 1)) + "\x22 w:hanging=\x22360\x22\x2F><\x2Fw:pPr><\x2Fw:lvl>";

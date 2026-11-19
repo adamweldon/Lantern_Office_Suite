@@ -6,16 +6,18 @@
 // what the HTML meant. Every case is checked here against Lantern's reading and writing, except the few KEEP lists
 // with the reason each is left as it is. What needs LibreOffice, python-docx or the OOXML schema is checked by
 // tests/review_docx_1266_lo.py (run in the session; it says SKIP where those are missing).
-// Usage: node tests/review_docx_1266.js [inner.html] [-v]
+// The second review (tests/fixtures/review2_docx_1266.json, tests/fixtures/docx/review2/: 60 Word files and 45 Writer
+// documents of another reviewer's own, made after the first review's mends) is replayed the same way with --second.
+// Usage: node tests/review_docx_1266.js [inner.html] [-v] [--second]
 "use strict";
 var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
 var fs = require("fs"), path = require("path");
-var args = process.argv.slice(2), VERBOSE = args.indexOf("-v") >= 0;
-args = args.filter(function (a) { return a !== "-v"; });
+var args = process.argv.slice(2), VERBOSE = args.indexOf("-v") >= 0, SECOND = args.indexOf("--second") >= 0;
+args = args.filter(function (a) { return a !== "-v" && a !== "--second"; });
 var inner = fs.readFileSync(args[0] || path.join(__dirname, "..", "src", "lantern.inner.html"), "utf8");
 var js = inner.match(/<script>\n([\s\S]*?)\n<\/script>/)[1];
 var FX = path.join(__dirname, "fixtures", "docx");
-var R = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review_docx_1266.json"), "utf8"));
+var R = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", SECOND ? "review2_docx_1266.json" : "review_docx_1266.json"), "utf8"));
 var vc = new VirtualConsole(), errs = [];
 vc.on("jsdomError", function (e) { if (!/Not implemented/.test(String(e.message))) errs.push(String(e.message).slice(0, 200)); });
 var dom = new JSDOM("<!DOCTYPE html><html><head></head><body></body></html>",
@@ -26,7 +28,10 @@ w.HTMLElement.prototype.scrollIntoView = function () {};
 w.HTMLCanvasElement.prototype.getContext = function () { return null; };
 w.fetch = function () { return Promise.reject(new Error("offline")); };
 // Left as they are, with the reason (the case still runs; it is reported, not failed)
-var KEEP = {
+var KEEP = SECOND ? {
+  "hand2-ol-types-nested": "the read back is the HTML that was written, <ol type=\"i\"> and all; the case expected the innermost type left out, as the reader did when the case was made (it left out a type that was Word's usual one for its level; since this review it writes every type but 1, 2, 3, because Writer's page shows a list in a list 1, 2, 3)"
+} : {
+  "lo-lists": "Writer's page shows a numbered list inside another 1., 2. (the second review saw it on the page: no style of its own), so a Word file's lettered level comes in as <ol type=\"a\"> and Writer's plain one is saved 1., 2.; this case expected Word's 1. a. i. cycle for a plain list",
   "hand-link-odd": "Word's bookmark names hold letters, digits and _ only, so a link to #section-2 is written as #section_2, and the bookmark it goes to the same way: the link still works in Word, and reads back as #section_2",
   "hostile-deep-sdt": "3,000 content controls one inside another are read (\u201cdeep inside\u201d, \u201cafter\u201d) at once, not refused: nothing hangs, which is what the case asked of a refusal"
 };
@@ -76,6 +81,7 @@ R.write.forEach(function (c) {
   var e = c.expect, bad = [], out, back, xml = "";
   try {
     out = L.docx.write(c.title || c.id, c.html, c.paper || null);
+    if (e.valid && !out.bytes.length) bad.push("no file made");
     var z = L.zip.read(out.bytes); xml = z.text("word/document.xml");
     back = L.docx.read(out.bytes, (c.title || c.id) + ".docx");
   } catch (er) { bad.push("failed: " + er.message); }
@@ -97,5 +103,5 @@ function record(name, bad, info) {
   console.log("FAIL  " + name + ": " + bad.join("; ").slice(0, 900) + (VERBOSE ? "\n      " + info : ""));
 }
 if (errs.length) { fails++; console.log("FAIL  page errors", errs); }
-console.log((fails ? fails + " FAILED" : "ALL DOCX REVIEW CHECKS PASS") + " (" + passes + " agree, " + kept.length + " kept as they are)");
+console.log((fails ? fails + " FAILED" : SECOND ? "ALL SECOND DOCX REVIEW CHECKS PASS" : "ALL DOCX REVIEW CHECKS PASS") + " (" + passes + " agree, " + kept.length + " kept as they are)");
 process.exit(fails ? 1 : 0);
