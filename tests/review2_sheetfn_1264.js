@@ -32,7 +32,10 @@ var KEEP = [
   // -2^2 is -4 in Lantern, as in mathematics (Excel gives 4); the AI's sums and the calculator use the same engine
   [/^=\s*-\s*[A-Z0-9.]+\s*\^/, "-x^2 is -(x^2), as in mathematics"],
   // 2^3^2 is 2^9 = 512, as in mathematics (Excel works left to right: 64)
-  [/\^[^\^]*\^/, "a power of a power is worked from the right, as in mathematics"]
+  [/\^[^\^]*\^/, "a power of a power is worked from the right, as in mathematics"],
+  // (1.24.28, the third Excel review) 0^0 is #NUM! in Excel: "Office returns #NUM! for POWER(0,0)" (Microsoft's notes on
+  // ISO 29500, MS-OI29500 2.1.1018); LibreOffice, this review's oracle, gives 1
+  [/^=\s*0\s*\^\s*0\s*$/, "0^0 is #NUM!, as in Excel (LibreOffice gives 1)"]
 ];
 // typed in a cell, and kept as typed text: 1/2 or 9/8 with no year (Excel makes a date of it, 2 January; a person
 // writing a half or a ratio would not mean one)

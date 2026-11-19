@@ -302,6 +302,19 @@ w.eval(js);
   var imp = { title: "i", cells: { C2: "1", C3: "2", C4: "3", C5: "7", J5: "=@C2:C5*2" } }, wi = X.write(imp, L.sheetDocs.compute(imp.cells)), zi = L.zip.read(wi.bytes).text("xl\x2Fworksheets\x2Fsheet1.xml");
   ok("...and saved again as Excel had it, a plain formula (Excel's own 14, not an array formula's 2)", /<c r="J5"><f>C2:C5\*2<\/f><v>14<\/v>/.test(zi), zi.slice(zi.indexOf('r="J5"') - 5, zi.indexOf('r="J5"') + 80));
 
+  // --- the third review's mends (1.24.28; tests/review3_xlsx_1268.py replays the review itself) ---
+  var c3 = { A2: "North", A3: "South", A4: "North", B2: "Widget", B3: "Gadget", B4: "Bolt", C2: "5", C4: "7", K2: "10", K3: "30", K4: "20",
+    P1: "=SUM(ROW(A2:A11))", P2: "=INDEX(B2:B4,SMALL(IF(A2:A4=\"North\",ROW(A2:A4)-1),2))", P3: "=SUMPRODUCT(--ISBLANK(C2:C4))", P4: "=SUM(LARGE(K2:K4,{1,2}))",
+    P5: "=ADDRESS(2,2,1,1,\"Jan\")", P6: "=0^0", P7: "=LOG(10,1)", P8: "=ACOSH(1)" };
+  var v3 = L.sheetDocs.compute(c3);
+  ok("ROW of a range is a list; ISBLANK of each cell of one; LARGE given a list of k; ADDRESS names its sheet; 0^0 and LOG to base 1 as Excel's errors; ACOSH",
+    v3.P1 === 65 && v3.P2 === "Bolt" && v3.P3 === 1 && v3.P4 === 50 && v3.P5 === "Jan!$B$2" && v3.P6 === "#NUM!" && v3.P7 === "#DIV/0!" && v3.P8 === 0, [v3.P1, v3.P2, v3.P3, v3.P4, v3.P5, v3.P6, v3.P7, v3.P8]);
+  ok("5.3.2026 is 5 March (dots are day first); (-100) is not a number; (5%) is -5%", L.formula.dayOf("5.3.2026") === 46086 && L.formula.textNum("(-100)", true) === null && L.formula.textNum("(5%)", true) === -0.05,
+    [L.formula.dayOf("5.3.2026"), L.formula.textNum("(-100)", true)]);
+  var w4 = X.write({ title: "t", cells: { A1: "(5%)", B1: "=MID(\"abcd\",2)", B2: "=LEN()", B3: "=@(C2:C9)*D2:D9" } }, {}), z4 = L.zip.read(w4.bytes).text("xl\x2Fworksheets\x2Fsheet1.xml"), b4 = X.read(w4.bytes, "t.xlsx").sheets[0];
+  ok("the writer: (5%) with a per cent's look in brackets; MID(x,2) as MID(x,2,1); LEN() refused; @( ) as _xlfn.SINGLE( ) in an array formula",
+    b4.fmt.A1.nf === "0%_);(0%)" && /MID\(&quot;abcd&quot;,2,1\)/.test(z4) && has(w4.notes, /LEN with nothing in its brackets/) && /<f t="array" ref="B3">_xlfn.SINGLE\(\(C2:C9\)\)\*D2:D9<\/f>/.test(z4), [b4.fmt.A1, w4.notes, z4.slice(z4.indexOf('r="B3"'), z4.indexOf('r="B3"') + 120)]);
+
   if (errs.length) { fails++; console.log("FAIL page errors", errs.slice(0, 3)); }
   console.log(fails ? fails + " XLSX FAILURES (" + passes + " passed)" : "ALL XLSX CHECKS PASS (" + passes + " passed)");
   process.exit(fails ? 1 : 0);
