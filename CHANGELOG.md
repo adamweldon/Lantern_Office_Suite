@@ -104,7 +104,7 @@ a Pixel 5 (typed with Writer's buttons and Tab, Shift+Tab, a table's cells,
 Esc; Save .txt, Save .html in the browser and in LibreOffice, Save .pdf
 through pdftotext, Save .docx in LibreOffice); both reviews replayed; the Word
 file reviews of 1.24.26 replayed, their lettered-level cases agreeing now. npm
-test (ALL CHECKS PASS).
+test (ALL CHECKS PASS, 117 suites).
 
 **Not tested.** Microsoft Word and Google Docs themselves (LibreOffice and the
 reviewers' files written in their form stood in); a phone's own browser;
