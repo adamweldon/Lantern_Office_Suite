@@ -88,6 +88,13 @@ tried by a reviewer:
   charts kept (all said now); the look MAX(IF(dates)) carries. Excel itself
   has not opened a save (QUESTIONS 1); GAMMA in a sheet is Adam's to choose
   (QUESTIONS 2).
+- From the 1.24.28 runs: the 4B passes the oil change; the 0.8B copied the
+  example whole and stopped without END, the 2B's list ran on until cut
+  off. Lantern knows whether a reply ended or was cut off: a MAKE DOC the
+  model ended without END could be closed as written (a rule to be tried by
+  a reviewer). The Excel question failed by each model's own sheet; watch
+  it. [B2] read as the cell B2 in MAKE SHEET (`wip-2026-11-19-bench1268`):
+  have a reviewer try it with 1.24.29.
 - **Next: .pptx in Slides** (1.24.29). Adam's ITW deck is ITW's training
   material: test with it in the session, never commit it.
 
