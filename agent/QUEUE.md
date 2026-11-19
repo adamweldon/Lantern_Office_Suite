@@ -43,6 +43,16 @@ tried by a reviewer:
   with `--second`). Left: headers and footers, comments, fonts and colours,
   page breaks (Writer has none), .odt and .rtf; DOCX_READ past the size
   gate (split it); Adam's QUESTIONS 0 (Word itself; lists in lists).
+- Small, from the 1.24.26 bench: the 2B fails make-doc-oil-change the same
+  way on six versions and four processors: it copies MAKE DOC's example
+  heading "## Before you start" and writes every step of the job under it
+  (no "## Steps"), so the heading is wrong for most of the list. The
+  example is what a small model writes (CLAUDE.md): try an example whose
+  first heading is still right when every step is put under it, or send
+  the document back once with the line to add ("## Steps" above the first
+  step that is not getting ready). Replay the 2B's rows
+  (`tests/fixtures/bench_run_1247_2b.json`, `bench_run_1253_2b.json`, and
+  the 1.24.26 log's) and have a reviewer try it first.
 - **Next: .xlsx in Sheets** (1.24.27): open and save, formulas kept as
   formulas (Adam had to type his back in after a .csv), Excel's number
   formats (already kept per cell as codes), bold, alignment, column widths,
