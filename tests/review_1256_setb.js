@@ -35,8 +35,10 @@ setTimeout(function () {
   function item(id) { return QB.filter(function (x) { return x.id === id; })[0]; }
   ok("boot clean; the review is here: 147 questions looked at, 52 findings, 292 replies", errs.length === 0 && F.findings.length === 147 &&
     F.findings.filter(function (f) { return f.severity; }).length === 52 && F.make.length + F.puzzle.length + F.safety.length + F.sums.length === 292, errs);
-  ok("every question of set B was looked at", QB.every(function (x) { return F.findings.some(function (f) { return f.id === x.id || (x.id === "atacama-continent-b" && f.id === "gobi-continent-b"); }); }),
-    QB.filter(function (x) { return !F.findings.some(function (f) { return f.id === x.id; }); }).map(function (x) { return x.id; }));
+  // (make-doc-word-b came in 1.24.26, after this review; tests/docx.js and tests/bench_set_b.js check it)
+  var LATER = { "make-doc-word-b": 1 };
+  ok("every question of set B was looked at (but those added since)", QB.every(function (x) { return LATER[x.id] || F.findings.some(function (f) { return f.id === x.id || (x.id === "atacama-continent-b" && f.id === "gobi-continent-b"); }); }),
+    QB.filter(function (x) { return !LATER[x.id] && !F.findings.some(function (f) { return f.id === x.id || (x.id === "atacama-continent-b" && f.id === "gobi-continent-b"); }); }).map(function (x) { return x.id; }));
   ok("every finding has its response: mended, or left with its reason", F.findings.filter(function (f) { return f.severity; }).every(function (f) {
     return /^(mended|left as it is)/.test(F.responses[f.id] || ""); }), F.findings.filter(function (f) { return f.severity && !F.responses[f.id]; }).map(function (f) { return f.id; }));
   ok("...the two graders that passed wrong answers are both mended", F.findings.filter(function (f) { return f.severity === "grader passes wrong"; }).every(function (f) { return /^mended/.test(F.responses[f.id]); }));
