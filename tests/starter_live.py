@@ -117,14 +117,21 @@ def wait_ready(secs, watch_progress=False):
             if msg != last:
                 say("  status:", msg, "| AI:", json.dumps(st.get("ai")))
                 last = msg
+            busy = False
             for j in st.get("jobs", []):
-                if j.get("state") == "running" and j.get("total", 0) > 0 and 0 < j.get("bytes", 0) < j["total"]:
+                # (1.24.28) a download of a known size, not yet done, is what the corner button counts from ("0%", "37%").
+                # GitHub's computers fetch the 0.8B in about a second, so the check looked every 2 seconds and missed it
+                # on two runs of 1.24.27 (the starter itself was unchanged); it looks four times a second while one runs.
+                if j.get("state") == "running" and j.get("total", 0) > 0 and 0 <= j.get("bytes", 0) < j["total"]:
                     seen_progress = True
+                busy = busy or j.get("state") in ("queued", "running")
             if st.get("ai", {}).get("state") == "ready":
                 return st, seen_progress
             failed = [j for j in st.get("jobs", []) if j.get("state") == "failed"]
             if failed:
                 return st, seen_progress
+            time.sleep(0.25 if busy or not st.get("jobs") else 2)
+            continue
         time.sleep(2)
     return st, seen_progress
 
@@ -208,7 +215,7 @@ def main():
         ok("an unknown choice is refused", c == 400, (c, b[:200]))
         c, b = post("/lantern-setup/stop", {}, headers={"Origin": "https://example.com"})
         time.sleep(1)
-        ok("another site's page may not stop Lantern", c == 403 and proc.poll() is None, (c, proc.poll()))
+        ok("another site's page may not stop Lantern", c == 403 and proc.poll() is None, (c, proc.poll(), b[:200]))
     stop(proc)
 
     # 2. the second double-click, on the copy it left: everything is there, no downloads
