@@ -58,6 +58,9 @@ var L = w.Lantern;
   // (the first review: past z a level's letters went aa, ab on the page and in .txt and .pdf, aa, bb in Word)
   ok("marks: a level's letters past z as Word's (aa, bb, zz, aaa), Roman to 3999, the number past that and at 0 or less, the bullet signs", !badM.length, badM);
   ok("...a list's own type=\"a\" or \"A\" past z as a browser draws it (aa, ab: CSS cannot tell its a from A)", LL.mark("a", 28, true) === "ab." && LL.mark("a", 27, true) === "aa." && LL.mark("A", 28, true) === "AB.");
+  ok("start(): as a browser reads a start (\" 4\", \"+3\", \"1e3\" is 1, -2), and none past what a browser counts or with no number",
+    LL.start(" 4") === 4 && LL.start("+3") === 3 && LL.start("1e3") === 1 && LL.start("-2") === -2 && LL.start("2147483647") === 2147483647 && LL.start("2147483648") === null &&
+    LL.start("12345678901") === null && LL.start("x") === null && LL.start(null) === null && LL.start("") === null);
   ok("own(): a list with a type of its own", LL.own(frag("<ol type=\"a\"><li>x</li></ol>").firstChild) && !LL.own(frag("<ol><li>x</li></ol>").firstChild));
 
   // --- the CSS ---
@@ -86,6 +89,12 @@ var L = w.Lantern;
   ok("...white space as a browser shows it (an imported page's line breaks and tabs), a tab Writer keeps kept, <pre> as it is",
     L.writerText("<ol>\n  <li>Isolate\n\tthe   supply\n    <ol>\n      <li>Open</li>\n    </ol>\n  </li>\n</ol>\n<p>Name:<span style=\"white-space:pre\">\t</span>value</p><pre>a  b\n  c</pre>", true) ===
     "1. Isolate the supply\n    a. Open\nName:\tvalue\na  b\n  c\n", L.writerText("<ol>\n  <li>Isolate\n\tthe   supply\n    <ol>\n      <li>Open</li>\n    </ol>\n  </li>\n</ol>\n<p>Name:<span style=\"white-space:pre\">\t</span>value</p><pre>a  b\n  c</pre>", true));
+  // (the second review: a list in a cell carried its level's indent into the cell's line; a start past a browser's)
+  ok("...a list in a cell in a list item, and a list in a list in a cell: one line of the cell, no level's indent",
+    L.writerText("<ol><li>Readings<table><tr><td>Pump</td><td><ol><li>Drain</li><li>Refill</li></ol></td></tr></table></li></ol>", true) === "1. Readings\nPump\ta. Drain b. Refill\n" &&
+    L.writerText("<table><tr><td>Job</td><td><ol><li>Drain<ol><li>Open the tap</li></ol></li><li>Refill</li></ol></td></tr></table>", true) === "Job\t1. Drain a. Open the tap 2. Refill\n",
+    [L.writerText("<ol><li>Readings<table><tr><td>Pump</td><td><ol><li>Drain</li><li>Refill</li></ol></td></tr></table></li></ol>", true), L.writerText("<table><tr><td>Job</td><td><ol><li>Drain<ol><li>Open the tap</li></ol></li><li>Refill</li></ol></td></tr></table>", true)]);
+  ok("...a start past what a browser counts is no start, as on the page", L.writerText("<ol start=\"2147483648\"><li>x</li><li>y</li></ol>", true) === "1. x\n2. y\n");
   ok("...a list that begins a level in keeps its first line's indent", L.writerText("<ol><ol><li>Only item</li></ol></ol>", true) === "    a. Only item\n", L.writerText("<ol><ol><li>Only item</li></ol></ol>", true));
   ok("...own styles (I, A from 2)", L.writerText("<ol type=\"I\"><li>Part<ol type=\"A\" start=\"2\"><li>Bravo</li></ol></li><li>Two</li></ol>", true) === "I. Part\n    B. Bravo\nII. Two\n");
   ok("...and the counts (Stats) read the text as before, every item - ", L.writerText(chrome) === "Steps\n- one\n- two\n- three\n- two b\n- four\nAfter.\n", L.writerText(chrome));
@@ -101,6 +110,9 @@ var L = w.Lantern;
   ok("paste keeps an <ol>'s type (1, a, A, i, I) and start (read as a browser reads it: 3x is 3), nothing else", cl === "<ol type=\"a\" start=\"3\"><li>c</li></ol><ol start=\"3\"><li>y</li></ol><ol type=\"I\" start=\"-2\"><li>z</li></ol><ul><li>s</li></ul>", cl);
   // (the first review: Google Docs and many sites give a list's style as CSS; starts a browser honours)
   var cl2 = L.writerClean("<ol style=\"list-style-type: lower-alpha\"><li>Note</li></ol><ol><li style=\"list-style-type:upper-alpha\">E<ol><li style=\"list-style-type:decimal\">Iso</li></ol><ol><li style=\"list-style-type:lower-alpha\">x</li></ol></li></ol><ol style=\"list-style-type:decimal\"><li>d</li></ol><ol start=\" 4\"><li>f</li></ol><ol start=\"+3\"><li>t</li></ol><ol start=\"1e3\"><li>e</li></ol>");
+  var cl3 = L.writerClean("<ol type=\"A\" style=\"list-style-type: lower-roman\"><li>first</li></ol><ol start=\"12345678901\"><li>x</li></ol><ol><li>p<ol type=\"a\"><li>q</li></ol></li></ol>");
+  ok("paste: a style given as CSS over a type (as a browser shows it); a start past a browser's is none; a type that is its level's own style left to the level",
+    cl3 === "<ol type=\"i\"><li>first</li></ol><ol><li>x</li></ol><ol><li>p<ol><li>q</li></ol></li></ol>", cl3);
   ok("paste: a style given as CSS is the list's type where its level would not show it anyway; starts as a browser reads them",
     cl2 === "<ol type=\"a\"><li>Note</li></ol><ol type=\"A\"><li>E<ol type=\"1\"><li>Iso</li></ol><ol><li>x</li></ol></li></ol><ol><li>d</li></ol><ol start=\"4\"><li>f</li></ol><ol start=\"3\"><li>t</li></ol><ol start=\"1\"><li>e</li></ol>", cl2);
 
@@ -160,7 +172,7 @@ var L = w.Lantern;
     sh.data.indexOf("body :is(ol,ul,menu) :is(ol,ul,menu) ol:not([type]){list-style-type:lower-roman;}") > 0, sh && sh.data.slice(0, 400));
   // (the first review: LibreOffice reads no CSS, and showed the saved file 1. 1. 1.)
   ok("...and each list in a list says its style (type=\"a\", type=\"i\"), for a program that reads no CSS; the first level as it was",
-    sh && sh.data.indexOf("<ol><li>one</li><ol type=\"a\"><li>two</li><ol type=\"i\"><li>three</li></ol><li>two b</li></ol><li>four</li></ol>") > 0, sh && sh.data.slice(sh.data.indexOf("<body"), sh.data.indexOf("<body") + 300));
+    sh && sh.data.indexOf("<ol><li>one</li><ol type=\"a\" style=\"list-style-type:lower-alpha;list-style-type:lp-word-alpha\"><li>two</li><ol type=\"i\"><li>three</li></ol><li>two b</li></ol><li>four</li></ol>") > 0, sh && sh.data.slice(sh.data.indexOf("<body"), sh.data.indexOf("<body") + 300));
 
   ok("no page errors", !errs.length, errs);
   console.log(fails ? fails + " FAILED (" + passes + " passed)" : "ALL WRITER LIST CHECKS PASS (" + passes + " passed)");

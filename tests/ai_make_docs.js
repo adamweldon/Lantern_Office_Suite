@@ -74,6 +74,23 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   ok("doc: a document indented all through is not a list of sub-points; a., b. with no numbered step above stay lines; a paragraph's a. stays a line",
     dh(["  1. One.", "  2. Two.", "  - Dot"]) === "<ol><li>One.</li><li>Two.</li></ol>\n<ul><li>Dot</li></ul>" && dh(["a. First point.", "b. Second point."]) === "<p>a. First point.</p>\n<p>b. Second point.</p>" &&
     dh(["- Gloves", "a. not a sub-step under a bullet"]) === "<ul><li>Gloves</li></ul>\n<p>a. not a sub-step under a bullet</p>", [dh(["  1. One.", "  2. Two.", "  - Dot"])]);
+  // (the second review: a sub-point of another kind replaced the item's sub-list, and its lines were lost)
+  ok("doc: three levels, lettered then bullets, nothing lost", dh(["1. Check the tyres:", "   a. Pressure", "      - Front", "      - Rear", "   b. Tread depth", "2. Check the oil."]) ===
+    "<ol><li>Check the tyres:<ol><li>Pressure<ul><li>Front</li><li>Rear</li></ul></li><li>Tread depth</li></ol></li><li>Check the oil.</li></ol>",
+    dh(["1. Check the tyres:", "   a. Pressure", "      - Front", "      - Rear", "   b. Tread depth", "2. Check the oil."]));
+  ok("doc: bullets and then a. under one step: both lists under it, in order", dh(["1. Clear the room.", "   - Move the furniture.", "   - Cover it.", "   a. Take down pictures.", "2. Wash the walls."]) ===
+    "<ol><li>Clear the room.<ul><li>Move the furniture.</li><li>Cover it.</li></ul><ol><li>Take down pictures.</li></ol></li><li>Wash the walls.</li></ol>",
+    dh(["1. Clear the room.", "   - Move the furniture.", "   - Cover it.", "   a. Take down pictures.", "2. Wash the walls."]));
+  ok("doc: numbered sub-steps three levels deep, each at its level", dh(["1. Unpack.", "   1. Remove the tape.", "      1. Check the tray.", "   2. Keep the box.", "2. Plug it in."]) ===
+    "<ol><li>Unpack.<ol><li>Remove the tape.<ol><li>Check the tray.</li></ol></li><li>Keep the box.</li></ol></li><li>Plug it in.</li></ol>");
+  ok("doc: i., ii., iii. under a step are its sub-points; a lettered list goes on to i. after h.", dh(["1. Check for leaks at:", "   i. the inlet", "   ii. the outlet", "   iii. the seal", "2. Listen."]) ===
+    "<ol><li>Check for leaks at:<ol><li>the inlet</li><li>the outlet</li><li>the seal</li></ol></li><li>Listen.</li></ol>" &&
+    dh(["1. Parts:", "a. one", "b. two", "c. three", "d. four", "e. five", "f. six", "g. seven", "h. eight", "i. nine", "2. Done."]).indexOf("<li>eight</li><li>nine</li></ol></li><li>Done.") > 0 &&
+    dh(["1. Parts:", "a. one", "   i. first", "   ii. second", "b. two"]) === "<ol><li>Parts:<ol><li>one<ol><li>first</li><li>second</li></ol></li><li>two</li></ol></li></ol>");
+  ok("doc: \u201ce. g.\u201d is a line, not a sub-point; + is a bullet; a., b. under questions are their options",
+    dh(["1. Find the voltage.", "e. g. a torch needs 3 V.", "2. Choose the size."]) === "<ol><li>Find the voltage.</li></ol>\n<p>e. g. a torch needs 3 V.</p>\n<ol start=\"2\"><li>Choose the size.</li></ol>" &&
+    dh(["* Bread", "+ Eggs"]) === "<ul><li>Bread</li><li>Eggs</li></ul>" &&
+    dh(["1. What gas?", "a) Oxygen", "b) Carbon dioxide", "2. What is water?", "a) Hydrogen and oxygen"]) === "<ol><li>What gas?<ol><li>Oxygen</li><li>Carbon dioxide</li></ol></li><li>What is water?<ol><li>Hydrogen and oxygen</li></ol></li></ol>");
   ok("doc: sub-points count as list items", L.aiDoc.doc(block(["1. Make it safe.", "   a. Switch off.", "2. Drain."])).parts.items === 3);
   ok("doc: text is escaped, not markup", /&lt;script&gt;/.test(L.aiDoc.doc(block(["<script>alert(1)</script> is not run, and this line is long enough to count."])).html));
   ok("doc: too short, empty and cut off are problems", /only 3 words/.test(L.aiDoc.doc(block(["Hello there friend."])).problems[0]) &&

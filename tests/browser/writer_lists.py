@@ -62,6 +62,27 @@ try:
             tab2 = pg.evaluate("() => document.querySelector('.page').textContent"); shown_t = pg.evaluate(STYLES % ".page ol")
             ok(label + ": Tab in a list item: a sub-item (a.), the page keeps the keys", tab1 == "Drain:decimal | Into a:" + ALPHA and foc and "Into a pan now" in tab2, [tab1, foc, tab2])
             ok(label + ": Shift+Tab takes it back a level (2.)", "Refill it" in tab2 and shown_t == "Drain:decimal | Into a:" + ALPHA and pg.evaluate("() => { var li = Array.prototype.filter.call(document.querySelectorAll('.page li'), function (l) { return /Refill/.test(l.textContent); })[0]; var n = 0; for (var p = li.parentNode; p && p.className.indexOf('page') < 0; p = p.parentNode) if (/^(OL|UL)$/.test(p.tagName)) n++; return n; }") == 1, [tab2, shown_t])
+            # (the second review) Shift+Tab on a first-level item does nothing; Tab in the middle of an item's words, in a
+            # paragraph, types a tab; in a table cell it goes to the next cell; Esc lets the next Tab leave the page
+            def fresh(h):
+                pg.evaluate("h => { var L = window.Lantern; var id = L.writerDocs.create('Tab2', h); L.writerDocs.open(id); }", h); pg.wait_for_timeout(300)
+            def caret_after(t):
+                pg.evaluate("""t => { var pe = document.querySelector('.page'); pe.focus(); var tw = document.createTreeWalker(pe, NodeFilter.SHOW_TEXT), n, r = document.createRange();
+                  while ((n = tw.nextNode())) if (n.nodeValue.indexOf(t) >= 0) { r.setStart(n, n.nodeValue.indexOf(t) + t.length); break; } r.collapse(true); var s = getSelection(); s.removeAllRanges(); s.addRange(r); }""", t)
+            fresh("<ol><li>Drain the oil</li><li>Change the filter</li><li>Refill</li></ol>"); caret_after("Change"); pg.keyboard.press("Shift+Tab")
+            ok(label + ": Shift+Tab on a first-level item does nothing (it took its number away)", pg.evaluate("() => document.querySelector('.page').innerHTML") == "<ol><li>Drain the oil</li><li>Change the filter</li><li>Refill</li></ol>", pg.evaluate("() => document.querySelector('.page').innerHTML"))
+            fresh("<ol><li>Lamp</li><li>Voltage 230 V</li></ol>"); caret_after("Voltage"); pg.keyboard.press("Tab")
+            h1 = pg.evaluate("() => document.querySelector('.page').innerHTML")
+            fresh("<p>Name: Anna</p>"); caret_after("Name:"); pg.keyboard.press("Tab"); pg.keyboard.type("x")
+            h2 = pg.evaluate("() => document.querySelector('.page').innerHTML"); f2 = pg.evaluate("() => document.activeElement === document.querySelector('.page')")
+            ok(label + ": Tab in the middle of an item's words, or in a paragraph, types a tab and the page keeps the keys",
+               re.search(r'<li>Voltage<span style="white-space: ?pre;?">\t</span> 230 V</li>', h1) and re.search(r'Name:<span style="white-space: ?pre;?">\t</span>x', h2) and f2, [h1, h2, f2])
+            fresh("<table><tr><td>Volts</td><td>Amps</td></tr><tr><td>230</td><td>5</td></tr></table>"); caret_after("Volts"); pg.keyboard.press("Tab"); pg.keyboard.type("!")
+            pg.keyboard.press("Tab"); pg.keyboard.type("?")
+            h3 = pg.evaluate("() => document.querySelector('.page').innerHTML")
+            ok(label + ": Tab in a table cell goes to the next cell, and on to the next row", "Amps!" in h3 and "230?" in h3, h3)
+            pg.keyboard.press("Escape"); pg.keyboard.press("Tab")
+            ok(label + ": Esc, then Tab leaves the page", pg.evaluate("() => document.activeElement !== document.querySelector('.page')"))
             # a document with bullets, own styles and a start, made in the page
             pg.evaluate("""() => { var L = window.Lantern; var id = L.writerDocs.create('Kit', '<h1>Kit</h1><ol><li>Tools<ul><li>Hand<ul><li>Wrench<ul><li>13 mm</li></ul></li></ul></li></ul></li><li>Parts<ol type="A" start="2"><li>Bolts<ol><li>M8</li></ol></li></ol></li></ol>'); L.writerDocs.open(id); }""")
             pg.wait_for_timeout(500)
