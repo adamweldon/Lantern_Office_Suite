@@ -52,15 +52,19 @@ var L = w.Lantern;
   ok("a list in a table in a list counts the list around the table, as the page's CSS does", types("<ol><li>x<table><tr><td><ol><li>y</li></ol></td></tr></table></li></ol>") === "1,a");
 
   // --- the marks ---
-  var M = [["1", 1, "1."], ["1", 12, "12."], ["a", 1, "a."], ["a", 26, "z."], ["a", 27, "aa."], ["a", 28, "ab."], ["A", 28, "AB."], ["a", 703, "aaa."], ["i", 4, "iv."], ["i", 9, "ix."], ["i", 14, "xiv."],
+  var M = [["1", 1, "1."], ["1", 12, "12."], ["a", 1, "a."], ["a", 26, "z."], ["a", 27, "aa."], ["a", 28, "bb."], ["a", 52, "zz."], ["a", 53, "aaa."], ["A", 28, "AB."], ["i", 4, "iv."], ["i", 9, "ix."], ["i", 14, "xiv."],
     ["I", 1999, "MCMXCIX."], ["i", 3999, "mmmcmxcix."], ["i", 4000, "4000."], ["a", 0, "0."], ["i", 0, "0."], ["1", 0, "0."], ["a", -2, "-2."], ["disc", 3, "•"], ["circle", 1, "◦"], ["square", 1, "▪"]];
   var badM = M.filter(function (m) { return LL.mark(m[0], m[1]) !== m[2]; }).map(function (m) { return m.concat(LL.mark(m[0], m[1])); });
-  ok("marks as the browser draws them: letters past z (aa, ab), Roman to 3999, the number past that and at 0 or less, the bullet signs", !badM.length, badM);
+  // (the first review: past z a level's letters went aa, ab on the page and in .txt and .pdf, aa, bb in Word)
+  ok("marks: a level's letters past z as Word's (aa, bb, zz, aaa), Roman to 3999, the number past that and at 0 or less, the bullet signs", !badM.length, badM);
+  ok("...a list's own type=\"a\" or \"A\" past z as a browser draws it (aa, ab: CSS cannot tell its a from A)", LL.mark("a", 28, true) === "ab." && LL.mark("a", 27, true) === "aa." && LL.mark("A", 28, true) === "AB.");
+  ok("own(): a list with a type of its own", LL.own(frag("<ol type=\"a\"><li>x</li></ol>").firstChild) && !LL.own(frag("<ol><li>x</li></ol>").firstChild));
 
   // --- the CSS ---
   var css = LL.css(".page"), rules = css.split("\n");
-  ok("the CSS: 24 rules, each level's numbered and bulleted style, with and without :is()", rules.length === 24 &&
-    rules.indexOf(".page ol ol:not([type]){list-style-type:lower-alpha;}") >= 0 && rules.indexOf(".page ol ol ol:not([type]){list-style-type:lower-roman;}") >= 0 &&
+  ok("the CSS: Word's letters as a counter style, then 24 rules, each level's numbered and bulleted style, with and without :is()", rules.length === 25 &&
+    rules[0] === "@counter-style lp-word-alpha{system:symbolic;symbols:a b c d e f g h i j k l m n o p q r s t u v w x y z;}" &&
+    rules.indexOf(".page ol ol:not([type]){list-style-type:lower-alpha;list-style-type:lp-word-alpha;}") >= 0 && rules.indexOf(".page ol ol ol:not([type]){list-style-type:lower-roman;}") >= 0 &&
     rules.indexOf(".page ol ol ol ol:not([type]){list-style-type:decimal;}") >= 0 &&
     rules.indexOf(".page :is(ol,ul,menu) :is(ol,ul,menu) ol:not([type]){list-style-type:lower-roman;}") >= 0 &&
     rules.indexOf(".page :is(ol,ul,menu) ul:not([type]){list-style-type:circle;}") >= 0 && rules.indexOf(".page :is(ol,ul,menu) :is(ol,ul,menu) :is(ol,ul,menu) ul:not([type]){list-style-type:disc;}") >= 0, rules.slice(0, 6));
@@ -75,6 +79,12 @@ var L = w.Lantern;
   ok("...a list with words after it in the item: the words after it, in order", L.writerText("<ol><li>Lock<ol><li>pad</li></ol>then test</li></ol>", true) === "1. Lock\n    a. pad\nthen test\n", L.writerText("<ol><li>Lock<ol><li>pad</li></ol>then test</li></ol>", true));
   ok("...own styles (I, A from 2)", L.writerText("<ol type=\"I\"><li>Part<ol type=\"A\" start=\"2\"><li>Bravo</li></ol></li><li>Two</li></ol>", true) === "I. Part\n    B. Bravo\nII. Two\n");
   ok("...and the counts (Stats) read the text as before, every item - ", L.writerText(chrome) === "Steps\n- one\n- two\n- three\n- two b\n- four\nAfter.\n", L.writerText(chrome));
+  // (the first review: levels 8 and 9 had one indent)
+  var deep12 = "", k2; for (k2 = 1; k2 <= 12; k2++) deep12 += "<ol><li>L" + k2; for (k2 = 0; k2 < 12; k2++) deep12 += "</li></ol>";
+  var t12 = L.writerText(deep12, true).split("\n");
+  ok("...nine levels nine indents (0 to 32 spaces), and a deeper list as the ninth", t12.slice(0, 12).map(function (l) { return l.search(/\S/) + l.trim().split(" ")[0]; }).join(",") === "01.,4a.,8i.,121.,16a.,20i.,241.,28a.,32i.,32i.,32i.,32i.", t12);
+  var parts30 = "<ol><li>Parts<ol>", own30 = "<ol type=\"a\">"; for (k2 = 1; k2 <= 30; k2++) { parts30 += "<li>Part " + k2 + "</li>"; own30 += "<li>P" + k2 + "</li>"; } parts30 += "</ol></li></ol>"; own30 += "</ol>";
+  ok("...a level's letters past z as Word's (aa, bb); a list's own type=\"a\" as a browser's (aa, ab)", /\n    bb\. Part 28\n/.test(L.writerText(parts30, true)) && /\nab\. P28\n/.test(L.writerText(own30, true)), [L.writerText(parts30, true).slice(-60), L.writerText(own30, true).slice(-30)]);
 
   // --- paste and import keep a numbered list's own style and start ---
   var cl = L.writerClean("<ol type=\"a\" start=\"3\" onclick=\"x()\" style=\"color:red\"><li>c</li></ol><ol type=\"disc\" start=\"3x\"><li>y</li></ol><ol start=\"-2\" type=\"I\"><li>z</li></ol><ul type=\"square\"><li>s</li></ul>");
@@ -86,6 +96,7 @@ var L = w.Lantern;
   ok("PDF: the list a browser's Indent more puts straight inside another is kept, a level in, 1. a. i.", pb.join("|") === "0:1.one|1:a.two|2:i.three|1:b.two b|0:2.four", pb);
   var pb2 = pdfBlocks(inli + "<ol type=\"A\" start=\"2\"><li>Bee</li></ol>");
   ok("...a start, a value and an own style kept (they were 1, 2, 3 from 1); bullets by level", pb2.join("|") === "0:3.Isolate|1:a.Open|2:▪key|0:7.Seven|0:8.Eight|0:•Rags|0:B.Bee", pb2);
+  ok("...a level's letters past z as Word's", pdfBlocks(parts30)[28] === "1:bb.Part 28" && pdfBlocks(own30)[27] === "0:ab.P28", [pdfBlocks(parts30)[28], pdfBlocks(own30)[27]]);
   var pdf = L.pdf.fromHtml("t", "<ul><li>a<ul><li>b<ul><li>c</li></ul></li></ul></li></ul>"), pdfText = "";
   if (pdf && pdf.arrayBuffer) { var ab = await pdf.arrayBuffer(); pdfText = Buffer.from(ab).toString("latin1"); }
   else if (pdf && pdf._buffer) pdfText = Buffer.from(pdf._buffer).toString("latin1");
@@ -124,15 +135,18 @@ var L = w.Lantern;
   var id = L.writerDocs.create("Steps", chrome);
   L.writerDocs.open(id); await sleep(40);
   var styleText = Array.prototype.map.call(d.querySelectorAll("style"), function (s) { return s.textContent; }).join("\n");
-  ok("the rules are in the page's styles (STYLES), where Writer's page is", styleText.indexOf(".page ol ol:not([type]){list-style-type:lower-alpha;}") >= 0 &&
+  ok("the rules are in the page's styles (STYLES), where Writer's page is", styleText.indexOf(".page ol ol:not([type]){list-style-type:lower-alpha;list-style-type:lp-word-alpha;}") >= 0 &&
     styleText.indexOf(".page :is(ol,ul,menu) ul:not([type]){list-style-type:circle;}") >= 0);
   btn(d, "Save .txt").click(); await sleep(10);
   var st = saved[saved.length - 1];
   ok("Writer's Save .txt: the numbers as the page shows them", st && st.name === "Steps.txt" && st.data === "Steps\n1. one\n    a. two\n        i. three\n    b. two b\n2. four\nAfter.\n", st && st.data);
   btn(d, "Save .html").click(); await sleep(10);
   var sh = saved[saved.length - 1];
-  ok("Writer's Save .html: the file carries the rules, so a browser shows 1. a. i. too", sh && /\.html$/.test(sh.name) && sh.data.indexOf("body ol ol:not([type]){list-style-type:lower-alpha;}") > 0 &&
+  ok("Writer's Save .html: the file carries the rules, so a browser shows 1. a. i. too", sh && /\.html$/.test(sh.name) && sh.data.indexOf("body ol ol:not([type]){list-style-type:lower-alpha;list-style-type:lp-word-alpha;}") > 0 &&
     sh.data.indexOf("body :is(ol,ul,menu) :is(ol,ul,menu) ol:not([type]){list-style-type:lower-roman;}") > 0, sh && sh.data.slice(0, 400));
+  // (the first review: LibreOffice reads no CSS, and showed the saved file 1. 1. 1.)
+  ok("...and each list in a list says its style (type=\"a\", type=\"i\"), for a program that reads no CSS; the first level as it was",
+    sh && sh.data.indexOf("<ol><li>one</li><ol type=\"a\"><li>two</li><ol type=\"i\"><li>three</li></ol><li>two b</li></ol><li>four</li></ol>") > 0, sh && sh.data.slice(sh.data.indexOf("<body"), sh.data.indexOf("<body") + 300));
 
   ok("no page errors", !errs.length, errs);
   console.log(fails ? fails + " FAILED (" + passes + " passed)" : "ALL WRITER LIST CHECKS PASS (" + passes + " passed)");

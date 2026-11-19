@@ -60,6 +60,21 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   ok("doc: headings, numbered steps, bullets, a table with a header row, paragraphs, bold", /<h2>Before you start<\/h2>/.test(dd.html) && /<ol><li>Drain the oil.<\/li><li>Refill it.<\/li><\/ol>/.test(dd.html) &&
     /<ul><li>Gloves<\/li><\/ul>/.test(dd.html) && /<table><tr><th>Part<\/th><th>Torque<\/th><\/tr><tr><td>Head bolt<\/td><td>25 Nm<\/td><\/tr><\/table>/.test(dd.html) &&
     /<p>Switch off the <b>main<\/b> breaker and wait.<\/p>/.test(dd.html) && dd.parts.headings === 1 && dd.parts.items === 3 && dd.parts.rows === 2 && !dd.problems.length, dd);
+  // (1.24.27, the review of the lists change) the model's numbers and sub-points kept
+  function dh(lines) { return L.aiDoc.doc(block(lines)).html; }
+  ok("doc: a list goes on from the number the model wrote after a note between steps (a second step 1 before)",
+    dh(["1. Switch off.", "2. Drain the oil.", "Note: hot oil burns.", "3. Refill.", "4. Check the dipstick."]) === "<ol><li>Switch off.</li><li>Drain the oil.</li></ol>\n<p>Note: hot oil burns.</p>\n<ol start=\"3\"><li>Refill.</li><li>Check the dipstick.</li></ol>");
+  ok("doc: points indented under a step are a list inside it, and the steps after it go on (they began at 1 again)",
+    dh(["1. Get ready:", "   - Gloves", "   - A drain pan", "2. Pull the lead off.", "3. Drain."]) === "<ol><li>Get ready:<ul><li>Gloves</li><li>A drain pan</li></ul></li><li>Pull the lead off.</li><li>Drain.</li></ol>");
+  ok("doc: a., b. under a numbered step are its sub-steps, indented or not", dh(["1. Make it safe.", "   a. Switch off.", "   b. Pull the lead off.", "2. Drain."]) ===
+    "<ol><li>Make it safe.<ol><li>Switch off.</li><li>Pull the lead off.</li></ol></li><li>Drain.</li></ol>" && dh(["1. Make it safe.", "a. Switch off.", "b. Pull the lead off.", "2. Drain."]) ===
+    "<ol><li>Make it safe.<ol><li>Switch off.</li><li>Pull the lead off.</li></ol></li><li>Drain.</li></ol>");
+  ok("doc: numbered sub-steps indented under a step stay its sub-steps (a., b. on the page), the step after them keeps its number",
+    dh(["1. Make it safe.", "    1. Switch off.", "    2. Pull the lead off.", "2. Drain.", "3. Refill."]) === "<ol><li>Make it safe.<ol><li>Switch off.</li><li>Pull the lead off.</li></ol></li><li>Drain.</li><li>Refill.</li></ol>");
+  ok("doc: a document indented all through is not a list of sub-points; a., b. with no numbered step above stay lines; a paragraph's a. stays a line",
+    dh(["  1. One.", "  2. Two.", "  - Dot"]) === "<ol><li>One.</li><li>Two.</li></ol>\n<ul><li>Dot</li></ul>" && dh(["a. First point.", "b. Second point."]) === "<p>a. First point.</p>\n<p>b. Second point.</p>" &&
+    dh(["- Gloves", "a. not a sub-step under a bullet"]) === "<ul><li>Gloves</li></ul>\n<p>a. not a sub-step under a bullet</p>", [dh(["  1. One.", "  2. Two.", "  - Dot"])]);
+  ok("doc: sub-points count as list items", L.aiDoc.doc(block(["1. Make it safe.", "   a. Switch off.", "2. Drain."])).parts.items === 3);
   ok("doc: text is escaped, not markup", /&lt;script&gt;/.test(L.aiDoc.doc(block(["<script>alert(1)</script> is not run, and this line is long enough to count."])).html));
   ok("doc: too short, empty and cut off are problems", /only 3 words/.test(L.aiDoc.doc(block(["Hello there friend."])).problems[0]) &&
     /empty/.test(L.aiDoc.doc(block([])).problems[0]) && /cut off/.test(L.aiDoc.doc(block(["One two three four five six seven eight nine ten eleven twelve thirteen."], false)).problems.join()));

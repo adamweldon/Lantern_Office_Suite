@@ -61,6 +61,8 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   ok("the example's first heading is the one its steps go under, right above step 1", lines[1] === "## Steps" && /^1\. /.test(lines[2]), lines);
   ok("...what follows the steps has a heading of its own, so a document of its shape has two", lines.filter(function (l) { return /^## /.test(l); }).join("|") === "## Steps|## Afterwards", lines);
   ok("...no “Before you start” to put the steps under", !/Before you start/.test(ex));
+  // (the first review of 1.24.27: copied whole for a compressor, the example had no step to cut the power or let the air out)
+  ok("...its first step makes the machine safe: switched off and unplugged so it cannot start, the air let out, cooled", lines[2] === "1. Switch off and unplug the compressor so it cannot start, let all the air out of the tank, and let it cool.", lines[2]);
   ok("...and no figure a model would copy into another machine's procedure (no 30 minutes, no 1.8 litres of ISO VG 100; only the step numbers)",
     !/30 minutes|1\.8|ISO VG|litre/.test(ex) && lines.every(function (l) { return !/\d/.test(l.replace(/^\d+\. /, "")); }), lines);
   var made = act.build(lines.join("\n"), "Write a procedure");

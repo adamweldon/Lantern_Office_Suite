@@ -12,6 +12,8 @@ OUT = sys.argv[1] if len(sys.argv) > 1 else tempfile.gettempdir()
 PORT = 8133
 URL = "http://127.0.0.1:%d/index.html#writer" % PORT
 fails = []
+# a level's letters: Word's (aa, bb past z) as a counter style where the browser has @counter-style, lower-alpha before
+ALPHA = "lp-word-alpha"
 def ok(name, cond, info=""):
     print(("PASS  " if cond else "FAIL  ") + name + ("" if cond else "  " + str(info)[:700]))
     if not cond: fails.append(name)
@@ -45,8 +47,21 @@ try:
             pg.wait_for_timeout(300)
             html = pg.evaluate("() => document.querySelector('.page').innerHTML")
             shown = pg.evaluate(STYLES % ".page ol, .page ul")
-            ok(label + ": typed with 1. List and Indent more: 1. a. i. 1. on the page", shown == "Isolat:decimal | Open t:lower-alpha | One lo:lower-roman | Your o:decimal", [shown, html])
+            ok(label + ": typed with 1. List and Indent more: 1. a. i. 1. on the page", shown == "Isolat:decimal | Open t:" + ALPHA + " | One lo:lower-roman | Your o:decimal", [shown, html])
             pg.screenshot(path=os.path.join(OUT, "writer_lists_%s.png" % label))
+            # Tab in a list item makes it a sub-item and Shift+Tab takes it back, as in Word and Google Docs (1.24.27;
+            # Tab left the page and the words typed next were lost)
+            pg.evaluate("() => { var L = window.Lantern; var id = L.writerDocs.create('Tab', '<p>x</p>'); L.writerDocs.open(id); }")
+            pg.wait_for_timeout(400)
+            pg.evaluate("() => { var pe = document.querySelector('.page'); pe.focus(); var r = document.createRange(); r.selectNodeContents(pe); var s = getSelection(); s.removeAllRanges(); s.addRange(r); }")
+            pg.keyboard.press("Delete")
+            pg.locator("button", has_text="1. List").first.click()
+            pg.keyboard.type("Drain"); pg.keyboard.press("Enter"); pg.keyboard.type("Into a pan"); pg.keyboard.press("Tab"); pg.keyboard.type(" now")
+            tab1 = pg.evaluate(STYLES % ".page ol"); foc = pg.evaluate("() => document.activeElement === document.querySelector('.page')")
+            pg.keyboard.press("Enter"); pg.keyboard.type("Refill"); pg.keyboard.press("Shift+Tab"); pg.keyboard.type(" it")
+            tab2 = pg.evaluate("() => document.querySelector('.page').textContent"); shown_t = pg.evaluate(STYLES % ".page ol")
+            ok(label + ": Tab in a list item: a sub-item (a.), the page keeps the keys", tab1 == "Drain:decimal | Into a:" + ALPHA and foc and "Into a pan now" in tab2, [tab1, foc, tab2])
+            ok(label + ": Shift+Tab takes it back a level (2.)", "Refill it" in tab2 and shown_t == "Drain:decimal | Into a:" + ALPHA and pg.evaluate("() => { var li = Array.prototype.filter.call(document.querySelectorAll('.page li'), function (l) { return /Refill/.test(l.textContent); })[0]; var n = 0; for (var p = li.parentNode; p && p.className.indexOf('page') < 0; p = p.parentNode) if (/^(OL|UL)$/.test(p.tagName)) n++; return n; }") == 1, [tab2, shown_t])
             # a document with bullets, own styles and a start, made in the page
             pg.evaluate("""() => { var L = window.Lantern; var id = L.writerDocs.create('Kit', '<h1>Kit</h1><ol><li>Tools<ul><li>Hand<ul><li>Wrench<ul><li>13 mm</li></ul></li></ul></li></ul></li><li>Parts<ol type="A" start="2"><li>Bolts<ol><li>M8</li></ol></li></ol></li></ol>'); L.writerDocs.open(id); }""")
             pg.wait_for_timeout(500)
@@ -64,6 +79,7 @@ try:
                 p2 = ctx.new_page(); p2.goto("file://" + files["Save .html"])
                 shown3 = p2.evaluate(STYLES % "ol, ul"); p2.close()
                 ok("Save .html opened in the browser: the same styles", shown3 == shown2, shown3)
+
                 if shutil.which("pdftotext"):
                     pt = subprocess.run(["pdftotext", "-layout", files["Save .pdf"], "-"], capture_output=True, text=True).stdout
                     ok("Save .pdf: 1., 2., B., i. (the bullets drawn)", re.search(r"1\.\s+Tools", pt) and re.search(r"2\.\s+Parts", pt) and re.search(r"B\.\s+Bolts", pt) and re.search(r"i\.\s+M8", pt) and "?" not in pt, pt)
@@ -72,6 +88,18 @@ try:
                     subprocess.run(["soffice", "--headless", "--convert-to", "txt:Text (encoded):UTF8", "--outdir", tmp, files["Save .docx"]], capture_output=True, timeout=180)
                     lt = open(os.path.join(tmp, "kit.txt"), encoding="utf-8", errors="replace").read().replace("﻿", "")
                     ok("Save .docx in LibreOffice: 1., bullets by level, B., i.", re.search(r"1\.\s+Tools", lt) and "◦ Hand" in lt and "▪ Wrench" in lt and "• 13 mm" in lt and re.search(r"B\.\s+Bolts", lt) and re.search(r"i\.\s+M8", lt), lt)
+                    # Save .html of a numbered list in a list, in LibreOffice, which reads no CSS (the first review: it showed
+                    # 1. 1. 1.): each list in a list says its style in the file. (LibreOffice gives a level one style for
+                    # the whole list, so a list with bullets and numbers at one level is not tried here.)
+                    pg.evaluate("""() => { var L = window.Lantern; var id = L.writerDocs.create('Typed', '<ol><li>Isolate</li><ol><li>Open the disconnect</li><ol><li>Fit your padlock</li><li>One lock each</li></ol><li>Tag it</li></ol><li>Test</li></ol>'); L.writerDocs.open(id); }""")
+                    pg.wait_for_timeout(400)
+                    hd = os.path.join(tmp, "h"); os.makedirs(hd, exist_ok=True)
+                    with pg.expect_download() as dl:
+                        pg.locator("button", has_text="Save .html").first.click()
+                    hf = os.path.join(hd, "typed.html"); dl.value.save_as(hf)
+                    subprocess.run(["soffice", "--headless", "--convert-to", "txt:Text (encoded):UTF8", "--outdir", hd, hf], capture_output=True, timeout=180)
+                    ht = open(os.path.join(hd, "typed.txt"), encoding="utf-8", errors="replace").read().replace("\ufeff", "")
+                    ok("Save .html in LibreOffice (which reads no CSS): 1. a. i. from the lists' own types", re.search(r"1\.\s+Isolate", ht) and re.search(r"a\.\s+Open the disconnect", ht) and re.search(r"ii\.\s+One lock each", ht) and re.search(r"b\.\s+Tag it", ht), ht)
                 else: print("SKIP  LibreOffice not on this machine")
             ok(label + ": no page errors", not errs, errs)
             ctx.close()

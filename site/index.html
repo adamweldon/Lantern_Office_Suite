@@ -308,8 +308,11 @@ Lantern.today = function () {
 // its Word file all ask here, so they agree.
 //   level(el)    -> 0 for a list in no list, 1 inside one ... (at most 8)
 //   type(el)     -> an <ol>'s "1" | "a" | "A" | "i" | "I"; a <ul>'s "disc" | "circle" | "square"
-//   mark(t, n)   -> "1." "b." "iv." for a number, the sign for a bullet
+//   own(el)      -> true when the list has a type="..." of its own
+//   mark(t, n, own) -> "1." "b." "iv." for a number, the sign for a bullet
 //   css(scope)   -> CSS rules that show lists so inside scope (".page")
+// Past z a level's letters go aa, bb, cc as Word's do (a list's own type="a"
+// goes aa, ab, as a browser draws it: CSS cannot tell its a from A).
 Lantern.lists = (function () {
   var OL = ["1", "a", "i"], UL = ["disc", "circle", "square"], OWN = { "1": 1, a: 1, A: 1, i: 1, I: 1 };
   var CSS = { "1": "decimal", a: "lower-alpha", A: "upper-alpha", i: "lower-roman", I: "upper-roman" };
@@ -326,34 +329,43 @@ Lantern.lists = (function () {
     own = String(own || "").toLowerCase();
     return SIGN[own] ? own : UL[d % 3];
   }
-  // letters as the browser counts them (z, aa, ab), Roman to 3999; past those, and at 0 or less, the number
-  function letters(n) { var s = ""; while (n > 0) { n--; s = String.fromCharCode(97 + n % 26) + s; n = Math.floor(n / 26); } return s; }
+  function own(el) { return !!(el.getAttribute && el.getAttribute("type") != null); }
+  // letters as a browser counts them (z, aa, ab), or as Word does (z, aa, bb: word); Roman to 3999; past those,
+  // and at 0 or less, the number
+  function letters(n, word) {
+    var s = "";
+    if (word) { s = String.fromCharCode(97 + (n - 1) % 26); return new Array(Math.floor((n - 1) / 26) + 2).join(s); }
+    while (n > 0) { n--; s = String.fromCharCode(97 + n % 26) + s; n = Math.floor(n / 26); }
+    return s;
+  }
   function roman(n) {
     var V = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1], R = ["m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"], s = "", i;
     for (i = 0; i < V.length; i++) while (n >= V[i]) { s += R[i]; n -= V[i]; }
     return s;
   }
-  function mark(t, n) {
+  function mark(t, n, isOwn) {
     if (SIGN[t]) return SIGN[t];
     var s = String(n);
-    if ((t === "a" || t === "A") && n > 0) s = letters(n);
+    if ((t === "a" || t === "A") && n > 0) s = letters(n, t === "a" && !isOwn);
     else if ((t === "i" || t === "I") && n > 0 && n < 4000) s = roman(n);
     return (t === "A" || t === "I" ? s.toUpperCase() : s) + ".";
   }
   // a rule for each level; the :is() rules count bullets and numbers both, and a browser too old for
   // :is() keeps the rules that count numbered lists only
+  // a browser without @counter-style keeps lower-alpha (z, aa, ab)
   function css(scope) {
-    var out = [], d, k, a, b;
+    var out = ["@counter-style lp-word-alpha{system:symbolic;symbols:" + "abcdefghijklmnopqrstuvwxyz".split("").join(" ") + ";}"], d, k, a, b;
+    function rule(t) { return t === "a" ? "list-style-type:lower-alpha;list-style-type:lp-word-alpha;" : "list-style-type:" + CSS[t] + ";"; }
     for (d = 1; d <= 8; d++) {
       a = ""; b = "";
       for (k = 0; k < d; k++) { a += "ol "; b += ":is(ol,ul,menu) "; }
-      out.push(scope + " " + a + "ol:not([type]){list-style-type:" + CSS[OL[d % 3]] + ";}");
-      out.push(scope + " " + b + "ol:not([type]){list-style-type:" + CSS[OL[d % 3]] + ";}");
+      out.push(scope + " " + a + "ol:not([type]){" + rule(OL[d % 3]) + "}");
+      out.push(scope + " " + b + "ol:not([type]){" + rule(OL[d % 3]) + "}");
       out.push(scope + " " + b + "ul:not([type]){list-style-type:" + UL[d % 3] + ";}");
     }
     return out.join("\n");
   }
-  return { level: level, type: type, mark: mark, css: css };
+  return { level: level, type: type, own: own, mark: mark, css: css };
 })();
 // ===========================================================================
 // MODULE: CORE - END
@@ -1822,8 +1834,8 @@ Lantern.formula = (function () {
         v = parseInt(list.getAttribute("start"), 10); n = isNaN(v) ? 0 : v - 1;
         for (c = list.firstChild; c; c = c.nextSibling) if (c.nodeType === 1 && c.tagName === "LI") { v = parseInt(c.getAttribute("value"), 10); n = isNaN(v) ? n + 1 : v; if (c === li) break; }
       }
-      var pad = new Array(4 * Math.max(0, LL.level(li) - 1) + 1).join(" ");
-      li.insertBefore(body.ownerDocument.createTextNode(pad + (/^[1aAiI]$/.test(t) ? LL.mark(t, n) : "-") + " "), li.firstChild);
+      var pad = new Array(4 * (list && /^(?:OL|UL|MENU)$/.test(list.tagName) ? LL.level(list) : 0) + 1).join(" ");
+      li.insertBefore(body.ownerDocument.createTextNode(pad + (/^[1aAiI]$/.test(t) ? LL.mark(t, n, LL.own(list)) : "-") + " "), li.firstChild);
     });
     // a list inside an item starts on a line of its own: one that ends the item goes after it, one with words
     // after it gets a line break before it
@@ -1984,13 +1996,21 @@ Lantern.formula = (function () {
   // exportHtml(): the title once (a document that starts with it as its
   // heading had it twice), and tables with their lines
   function exportHtml() {
-    var inner = cleanHtml(), first = /^\s*<h1[^>]*>([\s\S]*?)<\x2Fh1>/i.exec(inner);
+    var inner = typedLists(cleanHtml()), first = /^\s*<h1[^>]*>([\s\S]*?)<\x2Fh1>/i.exec(inner);
     var sameTitle = first && first[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() === String(doc.title || "").trim();
     var body = (sameTitle || !doc.title ? "" : "<h1>" + Lantern.esc(doc.title) + "</h1>") + inner;
     var html = "<!DOCTYPE html><html><head><meta charset='utf-8'><title>" +
       Lantern.esc(doc.title || "Untitled") + "</title><style>table{border-collapse:collapse}td,th{border:1px solid #999;padding:4px 8px}" + (Lantern.lists ? "\n" + Lantern.lists.css("body") : "") + "</style></head><body style='max-width:720px;margin:24px auto;" +
       "font-family:Georgia,serif;line-height:1.6;padding:0 16px'>" + body + "</body></html>";
     Lantern.download((doc.title || "document") + ".html", html, "text/html");
+  }
+  // a list in a list with no style of its own is given its level's (type="a"), so a program that reads no CSS
+  // (LibreOffice, Word) shows 1. a. i. too; the page's CSS goes in the file as well
+  function typedLists(html) {
+    if (!Lantern.lists || !window.DOMParser || !/<(?:ol|ul)[\s>]/i.test(html)) return html;
+    var body = new DOMParser().parseFromString("<!DOCTYPE html><body>" + html, "text/html").body;
+    Array.prototype.forEach.call(body.querySelectorAll("ol, ul"), function (l) { if (Lantern.lists.level(l) > 0 && !Lantern.lists.own(l)) l.setAttribute("type", Lantern.lists.type(l)); });
+    return body.innerHTML;
   }
   function exportTxt() {
     Lantern.download((doc.title || "document") + ".txt", writerText(cleanHtml(), true));
@@ -2038,6 +2058,17 @@ Lantern.formula = (function () {
     // new lines are paragraphs (typing in a new document made bare text and divs)
     try { document.execCommand("defaultParagraphSeparator", false, "p"); } catch (e) { /* old browser */ }
     // a paste keeps the words and the structure, not the source's styling
+    // Tab in a list item makes it a sub-item and Shift+Tab takes it back, as in Word and Google Docs (Tab left the
+    // page, and the words typed next went nowhere); elsewhere Tab still moves on from the page
+    page.addEventListener("keydown", function (e) {
+      if (e.key !== "Tab" || e.ctrlKey || e.altKey || e.metaKey) return;
+      var sel = window.getSelection && window.getSelection(), n = sel && sel.rangeCount ? sel.getRangeAt(0).startContainer : null;
+      while (n && n !== page && n.nodeName !== "LI") n = n.parentNode;
+      if (!n || n === page) return;
+      e.preventDefault();
+      exec(e.shiftKey ? "outdent" : "indent");
+      scheduleSave();
+    });
     page.addEventListener("paste", function (e) {
       var cd = e.clipboardData, h = cd && cd.getData && cd.getData("text/html");
       if (!h) return;
@@ -43316,7 +43347,7 @@ Lantern.RFB = (function () {
             n = tag === "ol" && !isNaN(v) ? v : n + 1;
             var inner = [], subs = [];
             Array.prototype.forEach.call(li.childNodes, function (c) { if (c.nodeType === 1 && /^(ul|ol)$/i.test(c.tagName)) subs.push(c); else inner.push(c); });
-            out.push({ kind: "li", runs: runs({ childNodes: inner }, false, false, []), mark: LL ? LL.mark(lt, n) : tag === "ol" ? n + "." : "\u2022", depth: depth });
+            out.push({ kind: "li", runs: runs({ childNodes: inner }, false, false, []), mark: LL ? LL.mark(lt, n, LL.own(k)) : tag === "ol" ? n + "." : "\u2022", depth: depth });
             subs.forEach(function (sl) { walk({ childNodes: [sl] }, depth + 1); });
           });
         } else if (tag === "table") {
@@ -50015,14 +50046,21 @@ Lantern.RFB = (function () {
   function inline(t) { return esc(t).replace(/\*\*([^*]+)\*\*/g, "<b>$1<\u002Fb>"); }
   // doc(block) -> {html, text, check (what the writing checker reads), parts,
   // words, problems}
+  // (1.24.27) A list goes on from the number the model wrote ("3." after a note between steps was a second step 1),
+  // and an item's sub-points -- lines indented under it, or a., b. under a numbered step -- are a list inside it,
+  // a, b, c as Writer shows a list in a list (they closed the list, and the steps after them began at 1 again).
   function doc(block) {
     var html = [], text = [], chk = [], problems = [], list = null, table = null, parts = { headings: 0, paragraphs: 0, items: 0, rows: 0 };
+    function open(tag, n) { return "<" + tag + (tag === "ol" && n > 1 ? " start=\x22" + n + "\x22" : "") + ">"; }
+    function render(l) {
+      return open(l.tag, l.start) + l.items.map(function (it) { return "<li>" + it.h + (it.sub ? render(it.sub) : "") + "<\u002Fli>"; }).join("") + "<\u002F" + l.tag + ">";
+    }
     function close() {
-      if (list) { html.push("<" + list.tag + ">" + list.items.join("") + "<\u002F" + list.tag + ">"); list = null; }
+      if (list) { html.push(render(list)); list = null; }
       if (table) { html.push("<table>" + table.join("") + "<\u002Ftable>"); table = null; }
     }
     block.lines.forEach(function (raw) {
-      var line = raw.replace(/^\s+|\s+$/g, ""), m;
+      var line = raw.replace(/^\s+|\s+$/g, ""), m, ind = raw.replace(/\t/g, "    ").search(/\S/);
       if (!line || /^\x60\x60\x60/.test(line) || /^[-=_*]{3,}$/.test(line)) return;
       if ((m = /^(#{1,4})\s+(.+)$/.exec(line))) {
         close();
@@ -50030,11 +50068,20 @@ Lantern.RFB = (function () {
         html.push("<h" + lv + ">" + inline(m[2].replace(/\*\*/g, "")) + "<\u002Fh" + lv + ">"); text.push(m[2].replace(/\*\*/g, "")); parts.headings++;
         return;
       }
-      if ((m = /^(\d{1,2})[.\x29]\s+(.+)$/.exec(line)) || (m = /^[-*\u2022]\s+(.+)$/.exec(line))) {
-        var ord = /^\d/.test(line), item = ord ? m[2] : m[1];
+      var lt = list && list.tag === "ol" && list.items.length ? /^([a-z])[.\x29]\s+(.+)$/.exec(line) : null;
+      if ((m = /^(\d{1,2})[.\x29]\s+(.+)$/.exec(line)) || (m = /^[-*\u2022]\s+(.+)$/.exec(line)) || (m = lt)) {
+        var ord = !/^[-*\u2022]/.test(line), item = m.length > 2 ? m[2] : m[1], n = /^\d/.test(line) ? +m[1] : lt ? m[1].charCodeAt(0) - 96 : 1;
         if (table) close();
-        if (!list || list.tag !== (ord ? "ol" : "ul")) { close(); list = { tag: ord ? "ol" : "ul", items: [] }; }
-        list.items.push("<li>" + inline(item) + "<\u002Fli>"); text.push(item.replace(/\*\*/g, "")); parts.items++;
+        var last = list && list.items.length ? list.items[list.items.length - 1] : null;
+        // a sub-point: indented under an item (further than the list's first item), or a., b. under a numbered step
+        if (last && (lt || ind >= list.ind + 2)) {
+          if (!last.sub || last.sub.tag !== (ord ? "ol" : "ul")) last.sub = { tag: ord ? "ol" : "ul", items: [], start: n };
+          last.sub.items.push({ h: inline(item) });
+        } else {
+          if (!list || list.tag !== (ord ? "ol" : "ul")) { close(); list = { tag: ord ? "ol" : "ul", items: [], start: n, ind: ind }; }
+          list.items.push({ h: inline(item) });
+        }
+        text.push(item.replace(/\*\*/g, "")); parts.items++;
         // the writing checker reads a list item as a sentence of its own
         chk.push(item.replace(/\*\*/g, "") + (/[.!?:;\x29]$/.test(item) ? "" : "."));
         return;
@@ -50135,7 +50182,7 @@ Lantern.RFB = (function () {
       "For example:",
       "MAKE DOC: Changing the compressor oil",
       "## Steps",
-      "1. Switch off the compressor and let it cool.",
+      "1. Switch off and unplug the compressor so it cannot start, let all the air out of the tank, and let it cool.",
       "2. Drain the old oil into a pan.",
       "3. Refill to the mark with the oil its maker names.",
       "## Afterwards",

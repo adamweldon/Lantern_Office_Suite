@@ -3,6 +3,10 @@
 # Hand-written in the form the named program writes (no rsids or paraIds; nobody's name). How sure the form is of the
 # program is said in each case of the JSON. The lo_*.docx files are real LibreOffice saves (soffice --convert-to) of
 # the .fodt files written here; pydocx_*.docx are python-docx's own template.
+# Not made here (kept as made): lo_abc_list.html and lo_toolbar_list.html are LibreOffice's own HTML export of the two
+# .fodt files (soffice --convert-to html); lantern_typed_numbered.docx and .html are Writer's Save .docx and Save .html
+# of a list typed with Writer's buttons in Chromium (case page-typed-numbered-indent); lo_resave_of_lantern_typed.docx is
+# LibreOffice's resave of that .docx (soffice --convert-to 'docx:MS Word 2007 XML').
 import io, os, subprocess, sys, zipfile
 D = os.path.dirname(os.path.abspath(__file__))
 W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
