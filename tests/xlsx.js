@@ -122,13 +122,14 @@ w.eval(js);
   ok("written: the parts of a workbook", ["[Content_Types].xml", "_rels\x2F.rels", "xl\x2Fworkbook.xml", "xl\x2F_rels\x2Fworkbook.xml.rels", "xl\x2Fworksheets\x2Fsheet1.xml", "xl\x2Fstyles.xml", "xl\x2FsharedStrings.xml", "docProps\x2Fcore.xml", "docProps\x2Fapp.xml"].every(function (p) { return z.has(p); }), z.names);
   ok("...read back: every cell as it was", JSON.stringify(b.cells) === JSON.stringify(src.cells), { a: src.cells, b: b.cells });
   ok("...its paper: A4 sideways, half an inch, 80%", b.paper.size === "a4" && b.paper.orient === "l" && b.paper.margin === 0.5 && b.paper.scale === 80, b.paper);
-  ok("...its looks, widths, merged cells and frozen row", JSON.stringify(b.fmt) === JSON.stringify(src.fmt) && b.widths.A === 15.285156 && b.widths.H === 9.140625 && b.merges.join() === "C1:E1" && b.freeze === 1, [b.fmt, b.widths]);
+  ok("...its looks, widths, merged cells and frozen row", JSON.stringify(b.fmt) === JSON.stringify(src.fmt) && b.widths.A === 15.28515625 && b.widths.H === 9.140625 && b.merges.join() === "C1:E1" && b.freeze === 1, [b.fmt, b.widths]);
   ok("...no notes either way (Excel has every function, reads every formula)", !out.notes.length && !back.notes.length, [out.notes, back.notes]);
   var sx = z.text("xl\x2Fworksheets\x2Fsheet1.xml"), wx = z.text("xl\x2Fworkbook.xml");
   ok("...the formulas with Lantern's values saved beside them, CONCAT as Excel writes it", /<c r="G4"><f>D4\*F4<\/f><v>90<\/v><\/c>/.test(sx) && /<f>_xlfn.CONCAT\(A3,&quot;|<f>_xlfn.CONCAT\(A3," and ",A4\)<\/f><v>Hall and Kitchen<\/v>/.test(sx) && /<c r="C8"><f>-2\^2<\/f><v>4<\/v>/.test(sx), sx.slice(0, 2000));
   ok("...TRUE, #N/A and '00123 as Excel's own kinds of cell", /<c r="D8" t="b"><v>1<\/v><\/c>/.test(sx) && /<c r="E8" t="e"><v>#N\/A<\/v><\/c>/.test(sx) && /<c r="F8" s="\d+" t="s">/.test(sx));
+  // (1.24.29, the second grid reviewer) a width written whole, as Excel writes it (15.28515625, not 15.285156)
   ok("...Excel asked to work the formulas out when it opens the file; the frozen pane, the widths, the merge", /fullCalcOnLoad="1"/.test(wx) && /<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"\/>/.test(sx) &&
-    /<col min="1" max="1" width="15.285156" customWidth="1"\/>/.test(sx) && /<mergeCells count="1"><mergeCell ref="C1:E1"\/><\/mergeCells>/.test(sx));
+    /<col min="1" max="1" width="15.28515625" customWidth="1"\/>/.test(sx) && /<mergeCells count="1"><mergeCell ref="C1:E1"\/><\/mergeCells>/.test(sx));
   ok("...the parts of a sheet in the order Excel's schema wants", /<dimension[^>]*\/><sheetViews>.*<\/sheetViews><sheetFormatPr[^>]*\/><cols>.*<\/cols><sheetData>.*<\/sheetData><mergeCells.*<\/mergeCells><pageMargins[^>]*\/><pageSetup paperSize="9" scale="80" orientation="landscape"\/><\/worksheet>$/.test(sx), sx.slice(-300));
   // a sheet of Lantern's own
   var mine = { title: "Lantern's own: 1/2", cells: { A1: "Volts", B1: "=VOLTS(2,3)", A2: "Left", B2: "=17%5", A3: "$3.50", B3: "=A3*2", A4: "12%", A5: "=pi*2", A6: "2026-11-17", A7: "=(1+2" }, fmt: { A1: { b: 1 } } };

@@ -2650,6 +2650,7 @@ Lantern.formula = (function () {
                   }
                   else if (typeof x === "number" && !((x === 0 || x === 1) && isLogical(k))) arr.push(x);
                   if (typeof cells[k] === "string" && /^=\s*SUBTOTAL\s*\x28/i.test(cells[k])) subs.push([rows.length, row.length]);
+                  if (typeof cells[k] === "string" && /^=\s*AGGREGATE\s*\x28/i.test(cells[k])) (arr.aggs = arr.aggs || []).push([rows.length, row.length]);
                   row.push(x == null ? null : x);
                 }
                 if (hid && hid[String(r + 1)]) hidRows.push(rows.length);
@@ -2695,6 +2696,8 @@ Lantern.formula = (function () {
   Lantern.sheetDocs = {
     list: function () { return col.all().map(function (d) { return { id: d.id, title: d.title || "" }; }); },
     values: function (id) { var d = col.get(id); return d ? computeAll(d.cells || {}, bookOf(d), d.hidden) : null; },
+    // (1.24.29, SHEET_ROWS) a sheet of the workbook kept after its formulas follow rows put in on another
+    save: function (d) { if (d && d.id) col.put(d); },
     // (1.24.28) more: an Excel file's {fmt, widths, merges, freeze, rows}
     create: function (title, cells, more) {
       var d = { id: Lantern.uid(), title: title || "", cells: cells || {} };
@@ -2899,6 +2902,8 @@ Lantern.formula = (function () {
 
   function commit(move) {
     var v = fbar.value;
+    // (1.24.29, the second grid reviewer) a + or - before a cell's name begins a formula, as in Excel (+B2 is =+B2)
+    if (/^[+\-]/.test(v) && /[A-Za-z]{1,2}[0-9]/.test(v) && Lantern.formula && Lantern.formula.textNum && Lantern.formula.textNum(v, true) === null) v = "=" + v;
     if ((doc.cells[sel] == null ? "" : String(doc.cells[sel])) !== v) each(changeHooks, doc);
     if (v === "") delete doc.cells[sel];
     else doc.cells[sel] = v;
@@ -2930,7 +2935,7 @@ Lantern.formula = (function () {
   function spanLive() { var at = fbar.selectionStart == null ? fbar.value.length : fbar.selectionStart; return !!ptSpan && fbar.value === ptSpan.v && at === ptSpan.at + ptSpan.len; }
   function pointing() {
     var v = fbar.value, at = fbar.selectionStart == null ? v.length : fbar.selectionStart;
-    return v.charAt(0) === "=" && (/[=+\-*\x2F^\x28,:<>&%]\s*$/.test(v.slice(0, at)) || spanLive());
+    return /^[=+\-]/.test(v) && (/[=+\-*\x2F^\x28,:<>&%]\s*$/.test(v.slice(0, at)) || spanLive());
   }
   function pointAt(ref) {
     var v = fbar.value, at = fbar.selectionStart == null ? v.length : fbar.selectionStart, cut = 0;
@@ -3109,6 +3114,8 @@ Lantern.formula = (function () {
           onPaint: function (fn) { paintHooks.push(fn); },
           keep: function () { if (dirty) commit(); },
           typing: function () { return dirty; },
+          // (1.24.29) a formula being written with the cursor where a cell's name may go (a press on a cell points)
+          pointing: function () { return dirty && pointing(); },
           // (1.24.29, SHEET_EDIT) a drag while a formula is written: its range in place of the reference just put in
           point: function (text) { if (dirty && spanLive()) pointAt(text); },
           bar: function () { return fbar; },
@@ -3133,6 +3140,8 @@ Lantern.formula = (function () {
     }
     // (1.24.25) a hook that changes how cells look (SHEET_FORMAT) is seen from the first paint
     if (showHooks.length || paintHooks.length) repaint();
+    // (1.24.29, the second grid reviewer) a sheet opened from the list takes the keys at once, as Excel's grid does
+    try { gridwrap.focus({ preventScroll: true }); } catch (e) { /* old browser */ }
   }
 
   function libView() {
@@ -37937,9 +37946,13 @@ Lantern.RFB = (function () {
       if (!names[fn] || how < 0 || how > 7) throw err("#VALUE!", "AGGREGATE takes 1 to 19, then 0 to 7");
       // (1.24.29) how 1, 3, 5 and 7 leave the sheet's hidden rows out, as in Excel
       var skipHid = [1, 3, 5, 7].indexOf(how) >= 0;
+      // (the second grid reviewer) and how 0 to 3 leave out the cells that are themselves SUBTOTAL or AGGREGATE
+      var skipNest = how <= 3;
       rest = rest.map(function (r) {
-        if (!skipHid || !isRange(r) || !r.hidRows || !r.hidRows.length || !r.cells) return r;
-        var cells = r.cells.map(function (row, i) { return r.hidRows.indexOf(i) >= 0 ? row.map(function () { return null; }) : row; }), y = [];
+        var nest = skipNest && isRange(r) && r.cells && ((r.subtotals || []).length || (r.aggs || []).length);
+        if (!(skipHid && isRange(r) && r.hidRows && r.hidRows.length && r.cells) && !nest) return r;
+        var cells = r.cells.map(function (row, i) { return skipHid && r.hidRows && r.hidRows.indexOf(i) >= 0 ? row.map(function () { return null; }) : row.slice(); }), y = [];
+        if (nest) (r.subtotals || []).concat(r.aggs || []).forEach(function (q) { if (cells[q[0]]) cells[q[0]][q[1]] = null; });
         cells.forEach(function (row) { row.forEach(function (c) { if (typeof c === "number") y.push(c); else if (!y.err && isErr(c)) y.err = c; }); });
         y.cells = cells; y.r0 = r.r0; y.c0 = r.c0;
         return y;
@@ -38636,11 +38649,19 @@ Lantern.RFB = (function () {
       var ch = f.charAt(i);
       if (q) { out += ch; if (ch === q) q = null; i++; continue; }
       if (ch === "\x22") { q = ch; out += ch; i++; continue; }
+      // (1.24.29, the second grid reviewer) a sheet's name in single quotes ('Q1 2026'!B6) is a name, not cells
+      if (ch === "\x27") {
+        var e1 = i + 1;
+        while (e1 < f.length) { if (f.charAt(e1) === "\x27") { if (f.charAt(e1 + 1) === "\x27") { e1 += 2; continue; } break; } e1++; }
+        if (f.charAt(e1 + 1) === "!") { out += f.slice(i, e1 + 2); i = e1 + 2; continue; }
+      }
       var prev = i ? f.charAt(i - 1) : "";
       if (!/[A-Za-z0-9_.$]/.test(prev)) {
         var rest = f.slice(i), m = REFAT.exec(rest), w = !m && COLAT.exec(rest), h = !m && !w && ROWAT.exec(rest);
+        // the sheet written before it (x.sheet), so a formula follows its own sheet's rows only
+        var sm = out.charAt(out.length - 1) === "!" ? /(?:\x27((?:[^\x27]|\x27\x27)+)\x27|([A-Za-z_][A-Za-z0-9_.]*(?::[A-Za-z_][A-Za-z0-9_.]*)?))!$/.exec(out) : null, sheetOf = sm ? (sm[1] ? sm[1].replace(/\x27\x27/g, "\x27") : sm[2]) : null;
         if (m) {
-          var x = { c1: cnum(m[2]), r1: +m[4] - 1, ac1: !!m[1], ar1: !!m[3], two: !!m[6],
+          var x = { sheet: sheetOf, c1: cnum(m[2]), r1: +m[4] - 1, ac1: !!m[1], ar1: !!m[3], two: !!m[6],
             c2: m[6] ? cnum(m[6]) : null, r2: m[6] ? +m[8] - 1 : null, ac2: !!m[5], ar2: !!m[7] }, t;
           // a range written from its far corner (B5:A1) is read from its near one, each end keeping its $
           if (x.two && x.c1 > x.c2) { t = x.c1; x.c1 = x.c2; x.c2 = t; t = x.ac1; x.ac1 = x.ac2; x.ac2 = t; }
@@ -38648,8 +38669,8 @@ Lantern.RFB = (function () {
           out += fn(x, m[0]);
           i += m[0].length; continue;
         }
-        if (w) { out += fn({ whole: "col", c1: cnum(w[2]), ac1: !!w[1], c2: cnum(w[4]), ac2: !!w[3] }, w[0]); i += w[0].length; continue; }
-        if (h && +h[2] >= 1 && +h[4] >= 1) { out += fn({ whole: "row", r1: +h[2] - 1, ar1: !!h[1], r2: +h[4] - 1, ar2: !!h[3] }, h[0]); i += h[0].length; continue; }
+        if (w) { out += fn({ sheet: sheetOf, whole: "col", c1: cnum(w[2]), ac1: !!w[1], c2: cnum(w[4]), ac2: !!w[3] }, w[0]); i += w[0].length; continue; }
+        if (h && +h[2] >= 1 && +h[4] >= 1) { out += fn({ sheet: sheetOf, whole: "row", r1: +h[2] - 1, ar1: !!h[1], r2: +h[4] - 1, ar2: !!h[3] }, h[0]); i += h[0].length; continue; }
       }
       out += ch; i++;
     }
@@ -38681,7 +38702,11 @@ Lantern.RFB = (function () {
   // (1.24.29) band [lo, hi]: only the cells of those columns (kind "row") or rows were shifted, as Insert and Delete
   // with "Shift cells down" (right, up, left) do; a reference reaching outside the band is left as it was, and a
   // whole row or column too, as in Excel (LibreOffice's insertCells and removeRange the same)
-  function move(f, kind, at, n, band) {
+  // (1.24.29, the second grid reviewer) sheet: the name of the sheet the rows are in; a reference to another sheet
+  // (=Jan!B6 on Summary) stays as written, and with only, a formula on another sheet moves its references to this one
+  // (Summary's =Jan!B6 when rows go in on Jan), as Excel moves them
+  function sameSheet(a, b) { return !!a && !!b && String(a).toUpperCase() === String(b).toUpperCase(); }
+  function move(f, kind, at, n, band, sheet, only) {
     if (typeof f !== "string" || f.charAt(0) !== "=") return f;
     var row = kind === "row";
     function one(i) { if (n > 0) return i >= at ? i + n : i; if (i >= at && i < at - n) return null; return i >= at - n ? i + n : i; }
@@ -38696,6 +38721,7 @@ Lantern.RFB = (function () {
     var edge = row ? LASTROW : COLS - 1;
     function fits(sp) { if (!sp) return null; if (sp[0] > edge) return null; return [sp[0], Math.min(sp[1], edge)]; }
     return eachRef(f, function (x, text) {
+      if (only ? !sameSheet(x.sheet, sheet) : x.sheet && !sameSheet(x.sheet, sheet)) return text;
       if (band) {
         if (x.whole) return text;
         var o0 = row ? x.c1 : x.r1, o1 = x.two ? (row ? x.c2 : x.r2) : o0;
@@ -38839,7 +38865,11 @@ Lantern.RFB = (function () {
       gw.scrollTop = st; gw.scrollLeft = sl;
     }
     // ---- undo and redo: the cells (and their looks, and the rows) as they were before each change -----------
-    function state() { return JSON.stringify({ cells: doc.cells, fmt: doc.fmt || null, rows: doc.rows || null, freeze: doc.freeze || null, merges: doc.merges || null, widths: doc.widths || null, heights: doc.heights || null, hidden: doc.hidden || null }); }
+    function siblings() { var SD = L.sheetDocs, b = doc.book && SD && SD.book ? SD.book(doc) : null; return b && b.docs ? b.docs.filter(function (d) { return d.id !== doc.id; }) : []; }
+    function state() {
+      var o = {}; siblings().forEach(function (d) { o[d.id] = d.cells || {}; });
+      return JSON.stringify({ cells: doc.cells, fmt: doc.fmt || null, rows: doc.rows || null, freeze: doc.freeze || null, merges: doc.merges || null, widths: doc.widths || null, heights: doc.heights || null, hidden: doc.hidden || null, others: o });
+    }
     // any change to the sheet but the paste of a cut lets the cut be, as in Excel (the cells it named may have moved)
     function snap() { var s = state(); if (undo[undo.length - 1] !== s) undo.push(s); if (undo.length > 100) undo.shift(); st.redo = []; if (!moving) endCut(); }
     function endCut() { if (clip && clip.cut) { clip = { text: clip.text, dead: true }; say(""); } }
@@ -38853,6 +38883,7 @@ Lantern.RFB = (function () {
       if (o.widths) doc.widths = o.widths; else delete doc.widths;
       if (o.heights) doc.heights = o.heights; else delete doc.heights;
       if (o.hidden) doc.hidden = o.hidden; else delete doc.hidden;
+      if (o.others && L.sheetDocs && L.sheetDocs.save) siblings().forEach(function (d) { if (o.others[d.id] && JSON.stringify(o.others[d.id]) !== JSON.stringify(d.cells || {})) { d.cells = o.others[d.id]; L.sheetDocs.save(d); } });
       api.put();
       if ((o.rows || 0) > api.rows()) api.setRows(o.rows);
       api.refresh(); keepRange();
@@ -38897,7 +38928,7 @@ Lantern.RFB = (function () {
       function inS(c, r) { return c >= S.c0 && c <= S.c1 && r >= S.r0 && r <= S.r1; }
       function inD(c, r) { return c >= D.c0 && c <= D.c1 && r >= D.r0 && r <= D.r1 && !inS(c, r); }
       return eachRef(f, function (x, text) {
-        if (x.whole) return text;
+        if (x.whole || (x.sheet && !sameSheet(x.sheet, doc.book && doc.book.sheet))) return text;   // another sheet's cells
         if (!x.two) return inS(x.c1, x.r1) ? write(x.c1 + dc, x.r1 + dr, x.ac1, x.ar1) : inD(x.c1, x.r1) ? "#REF!" : text;
         if (inS(x.c1, x.r1) && inS(x.c2, x.r2)) return write(x.c1 + dc, x.r1 + dr, x.ac1, x.ar1) + ":" + write(x.c2 + dc, x.r2 + dr, x.ac2, x.ar2);
         return inD(x.c1, x.r1) && inD(x.c2, x.r2) ? "#REF!" : text;
@@ -39017,6 +39048,11 @@ Lantern.RFB = (function () {
     H.mousedown = function (e) {
       var ref = cellOf(e), hd = !ref && headOf(e);
       if (e.button) return;   // the right button: the menu (SHEET_MENU) decides
+      // (the second grid reviewer) a press is a new press: the click that ends it is swallowed only after a drag
+      dragged = false;
+      // typed text that is not a formula pointing goes into its cell first, as a click elsewhere does in Excel, and the
+      // press then selects or drags (it did nothing, and a Delete meant for the new range emptied the typed cell)
+      if ((ref || hd) && api.typing() && !(api.pointing && api.pointing())) api.keep();
       // (these run before SHEET's own: a cell pressed while a formula is written goes into it there, after this)
       if (ref && api.typing()) { pt = { from: ref, wait: true }; return; }
       if ((!ref && !hd) || api.typing()) return;
@@ -39061,10 +39097,11 @@ Lantern.RFB = (function () {
     };
     H.mouseup = function () { down = null; hdrag = null; pt = null; };
     H.click = function (e) {
-      var ref = cellOf(e);
-      if (!ref && headOf(e)) { e.stopPropagation(); dragged = false; return; }
+      var ref = cellOf(e), was = dragged;
+      dragged = false;
+      if (!ref && headOf(e)) { e.stopPropagation(); return; }
       if (!ref) return;
-      if (dragged) { dragged = false; e.stopPropagation(); api.gridwrap.focus(); return; }
+      if (was) { e.stopPropagation(); api.gridwrap.focus(); return; }
       if (rangeMode && !api.typing()) { e.stopPropagation(); extendTo(ref); api.gridwrap.focus(); }
     };
     // ---- keys -----------------------------------------------------------------------------------------------
@@ -39089,6 +39126,8 @@ Lantern.RFB = (function () {
       if ((L.sheetEdit.keyHooks || []).some(function (fn) { try { return fn(e); } catch (e2) { return false; } })) handled = true;
       else if (/^Arrow/.test(k) && (e.shiftKey || ctrl)) {
         var dc = k === "ArrowRight" ? 1 : k === "ArrowLeft" ? -1 : 0, dr = k === "ArrowDown" ? 1 : k === "ArrowUp" ? -1 : 0;
+        // (the second grid reviewer) from a merged cell alone, Shift+arrow starts at its far edge (the first press did nothing)
+        if (e.shiftKey && !ctrl && anchor === focus) { var Rm = rect(); p = { c: dc > 0 ? Rm.c1 : dc < 0 ? Rm.c0 : p.c, r: dr > 0 ? Rm.r1 : dr < 0 ? Rm.r0 : p.r }; }
         var to = ctrl ? edge(e.shiftKey ? focus : active, dc, dr) : refOf(Math.max(0, Math.min(COLS - 1, p.c + dc)), Math.max(0, Math.min(api.rows() - 1, p.r + dr)));
         // (1.24.29, the grid review) Shift+arrow goes on past hidden rows and columns to the next shown one, as in Excel
         if (!ctrl && doc.hidden) {
@@ -39111,7 +39150,7 @@ Lantern.RFB = (function () {
       }
       else if (k === " " && (e.shiftKey || ctrl) && !(e.shiftKey && ctrl)) { var Rs = rect(); if (e.shiftKey) lines("row", Rs.r0, Rs.r1, true); else lines("col", Rs.c0, Rs.c1, true); }
       else if (k === " " && e.shiftKey && ctrl) lines("all", 0, 0, true);
-      else if ((k === "Delete" || k === "Backspace") && isRange()) clearSel();
+      else if (k === "Delete" && isRange()) clearSel();   // (the second grid reviewer) Backspace: the active cell only, as in Excel
       else if (k === "Escape" && (rangeMode || (clip && clip.cut))) { if (rangeMode) setMode(false); endCut(); }
       else if ((k === "Enter" || k === "Tab") && isRange() && !ctrl && !e.altKey) step(k, e.shiftKey);
       else handled = false;
@@ -39195,7 +39234,7 @@ Lantern.RFB = (function () {
     S.within = function (ref) { var p = parse(ref), R = rect(); return !!p && p.c >= R.c0 && p.c <= R.c1 && p.r >= R.r0 && p.r <= R.r1; };
   }
   (L.sheetEditHooks = L.sheetEditHooks || []).push(mount);
-  L.sheetEdit = { shift: shift, move: move, parseTSV: parseTSV, toTSV: toTSV, eachRef: eachRef };
+  L.sheetEdit = { shift: shift, move: move, parseTSV: parseTSV, toTSV: toTSV, eachRef: eachRef, sameSheet: sameSheet };
 })();
 // ===========================================================================
 // MODULE: SHEET_EDIT - END
@@ -39463,8 +39502,20 @@ Lantern.RFB = (function () {
   // at); (1.24.29) with band [lo, hi], only the cells of columns (rows) lo to hi shifted down (right), or up (left)
   // over the cells taken out -- Excel's Insert and Delete with "Shift cells ..."
   function insert(doc, kind, at, n, band) {
-    var S = L.sheetEdit, row = kind === "row", cells = {}, fmt = {}, k, p, keys = {};
+    var S = L.sheetEdit, row = kind === "row", cells = {}, fmt = {}, k, p, keys = {}, own = doc.book && doc.book.sheet ? doc.book.sheet : null;
     function inBand(q) { var o = row ? q.c : q.r; return !band || (o >= band[0] && o <= band[1]); }
+    // (1.24.29, the second grid reviewer) the workbook's other sheets: a formula there naming this sheet (=Jan!B6 on
+    // Summary) follows the rows put in or taken out here, as in Excel (it stayed, and showed another cell's value)
+    var SD = L.sheetDocs, bk = own && SD && SD.book && SD.save ? SD.book(doc) : null;
+    if (bk && bk.docs) bk.docs.forEach(function (d) {
+      if (d.id === doc.id || !d.cells) return;
+      var changed = false;
+      for (var k2 in d.cells) {
+        var v2 = d.cells[k2];
+        if (typeof v2 === "string" && v2.charAt(0) === "=" && v2.indexOf("!") > 0) { var m2 = S.move(v2, kind, at, n, band, own, true); if (m2 !== v2) { d.cells[k2] = m2; changed = true; } }
+      }
+      if (changed) SD.save(d);
+    });
     for (k in doc.cells) keys[k] = 1;
     for (k in doc.fmt || {}) keys[k] = 1;   // a cell with a look and nothing typed moves with its row too
     for (k in keys) {
@@ -39474,7 +39525,7 @@ Lantern.RFB = (function () {
       j = mv && i >= at ? i + n : i;
       if (j < 0 || (!row && j >= COLS)) continue;
       var nk = row ? refOf(p.c, j) : refOf(j, p.r);
-      if (k in doc.cells) cells[nk] = S.move(doc.cells[k], kind, at, n, band);
+      if (k in doc.cells) cells[nk] = S.move(doc.cells[k], kind, at, n, band, own);
       if (doc.fmt && doc.fmt[k]) fmt[nk] = doc.fmt[k];
     }
     // rows (columns) put in take the looks of the row above (the column to the left), as Excel's do
@@ -39713,7 +39764,7 @@ Lantern.RFB = (function () {
   function px(w) { return Math.max(8, Math.round(Math.round(w * 7) * SCALE)); }
   // the width Excel's Column Width box shows (8.43) for a width in the file (9.140625), and back
   function chars(w) { return Math.max(0, Math.round((Math.round(w * 7) - 5) / 7 * 100) / 100); }
-  function fileWidth(c) { return c <= 0 ? 0 : Math.floor((c * 7 + 5) / 7 * 256) / 256; }
+  function fileWidth(c) { return c <= 0 ? 0 : Math.floor((Math.round(c * 7) + 5) / 7 * 256) / 256; }
   function parse(ref) { var m = /^([A-Z])([0-9]+)$/.exec(ref); return m ? { c: m[1].charCodeAt(0) - 65, r: +m[2] - 1 } : null; }
   function refOf(c, r) { return String.fromCharCode(65 + c) + (r + 1); }
   function box(m) {
@@ -47072,7 +47123,7 @@ Lantern.RFB = (function () {
         r = attr(row, "r") ? +attr(row, "r") : r + 1;
         var ht = parseFloat(attr(row, "ht") || "");
         if (r <= MAXR && (yes(attr(row, "hidden")) || (ht === 0 && yes(attr(row, "customHeight"))))) hidden[String(r)] = 1;
-        else if (r <= MAXR && ht > 0 && yes(attr(row, "customHeight"))) heights[String(r)] = ht;
+        if (r <= MAXR && ht > 0 && yes(attr(row, "customHeight"))) heights[String(r)] = ht;   // a hidden row's too
         var c = 0;
         kids(row, "c").forEach(function (ce) {
           var p = attr(ce, "r") ? at(attr(ce, "r")) : { c: c, r: r - 1 };
@@ -47798,7 +47849,7 @@ Lantern.RFB = (function () {
       Object.keys(hidden).forEach(function (c) { if (/^[A-Z]{1,2}$/.test(c)) colKeys[c] = 1; });
       Object.keys(colKeys).map(function (c) { return { c: colNum(c), w: widths[c] > 0 ? +widths[c] : 9.140625, own: widths[c] > 0, hid: !!hidden[c] }; })
         .sort(function (a, b) { return a.c - b.c; }).forEach(function (o) {
-          cols += "<col min=\x22" + (o.c + 1) + "\x22 max=\x22" + (o.c + 1) + "\x22 width=\x22" + Math.round(Math.min(255, o.w) * 1e6) / 1e6 + "\x22" + (o.hid ? " hidden=\x221\x22" : "") + (o.own ? " customWidth=\x221\x22" : "") + "\x2F>";
+          cols += "<col min=\x22" + (o.c + 1) + "\x22 max=\x22" + (o.c + 1) + "\x22 width=\x22" + Math.round(Math.min(255, o.w) * 1e8) / 1e8 + "\x22" + (o.hid ? " hidden=\x221\x22" : "") + (o.own ? " customWidth=\x221\x22" : "") + "\x2F>";
         });
       var merges = (doc.merges || []).filter(function (m) { return /^[A-Z]{1,2}[0-9]{1,5}:[A-Z]{1,2}[0-9]{1,5}$/.test(m); });
       var pane = doc.freeze ? "<pane ySplit=\x221\x22 topLeftCell=\x22A2\x22 activePane=\x22bottomLeft\x22 state=\x22frozen\x22\x2F><selection pane=\x22bottomLeft\x22 activeCell=\x22A2\x22 sqref=\x22A2\x22\x2F>" : "";
