@@ -124,6 +124,10 @@ def run_step(pg, st, state):
         f.fill(str(st[1])); pg.wait_for_timeout(50)
     elif op == "ok":
         pg.locator(".lp-cdlg button[type=submit]").click(); pg.wait_for_timeout(250)
+        # (main session, 1.24.29) a merge that leaves values out asks first, as Excel does (F13): the cases that merge
+        # such cells answer OK to it, as one answers Excel's own question
+        if not state.get("ask_only") and pg.evaluate("() => { var w = document.querySelector('.lp-cdlg [role=alert]'); return !!w && w.style.display !== 'none'; }"):
+            pg.locator(".lp-cdlg button[type=submit]").click(); pg.wait_for_timeout(250)
     elif op == "cancel":
         pg.locator(".lp-cdlg button", has_text="Cancel").click(); pg.wait_for_timeout(150)
     elif op == "key":
@@ -424,7 +428,7 @@ def main():
             for case in todo:
                 pg = page_for(case.get("dev", "laptop"))
                 st = pg._st; st["errs"][:] = []; st["dialogs"][:] = []
-                state = {"errs": st["errs"], "dialogs": st["dialogs"], "files": {}, "phone": pg._phone, "mem": {}}
+                state = {"errs": st["errs"], "dialogs": st["dialogs"], "files": {}, "phone": pg._phone, "mem": {}, "ask_only": bool(case["expect"].get("warned_before"))}
                 try:
                     # a fresh page for every case (a goto to the same address with a hash would not reload it), and
                     # an empty store, so no case sees another's sheets, undo steps or selection

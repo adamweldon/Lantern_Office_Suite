@@ -126,6 +126,13 @@ People will act on what Lantern says with nobody to ask. So:
   2026-11-16). Take text only from the public domain or CC0;
   facts and figures from anywhere, in your own words. No song lyrics, and no
   melody first published after 1928.
+- **Excel's names mean what they mean in Excel** (Adam, 2026-11-20: "Excel
+  functions should all match excel for compatibility"). A function Excel
+  has (GAMMA, POWER, CONVERT and its unit names) works in Lantern as it
+  does in Excel, in a sheet and in Chat alike; a function of Lantern's own
+  takes a name Excel does not use (LORE for the Lorentz factor, POWERW for
+  watts). Check a new function's name against Excel's list before adding
+  it.
 - **Numbers the AI can use.** A table or formula a person needs is better as a
   formula function or a lesson the AI can reach (LESSON:, LOOKUP:) than as
   prose only.

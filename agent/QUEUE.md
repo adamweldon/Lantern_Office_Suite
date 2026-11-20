@@ -76,26 +76,36 @@ tried by a reviewer:
   `tests/xlsx.js`, `tests/xlsx_lo.py`, `tests/browser/sheet_xlsx.py`; two
   reviews replayed by `tests/review_xlsx_1268.py` and
   `tests/review2_xlsx_1268.py`). Adam's House file is in the session only
-  (his home's rooms and a Windows user name). Left, from the reviews:
-  a spill (a list put into the cells below its formula, #SPILL! when they
-  are full; an Excel array over several cells kept current); hiding rows
-  (SUBTOTAL 101-111 and AGGREGATE count Excel's hidden rows here; said);
-  columns past Z; TRUE and FALSE as values of their own (=A2=1 of a TRUE,
-  CONCAT of TRUE, =TRUE>1); LET and LAMBDA; MMULT, TREND, LINEST, SKEW, KURT,
-  ISLOGICAL, TYPE, SORTBY, TAKE, DROP, VSTACK, HSTACK, GAMMA.INV; Excel's
-  CONVERT unit names on saving (Lantern's lb is Excel's lbm; Lantern reads
-  lbm and ozm); conditional formatting, data validation, comments and
-  charts kept (all said now); the look MAX(IF(dates)) carries. Excel itself
-  has not opened a save (QUESTIONS 1); GAMMA in a sheet is Adam's to choose
-  (QUESTIONS 2).
+  (his home's rooms and a Windows user name). Adam, 2026-11-20: the saves
+  open in Excel without asking to repair. Left, from the reviews: a spill
+  (a list put into the cells below its formula, #SPILL! when they are
+  full; an Excel array over several cells kept current); columns past Z
+  (Insert column with Z in use refuses, and says so); TRUE and FALSE as
+  values of their own (=A2=1 of a TRUE, CONCAT of TRUE, =TRUE>1,
+  IF(FALSE,1)); LET and LAMBDA; MMULT, TREND, LINEST, SKEW, KURT,
+  ISLOGICAL, TYPE, SORTBY, TAKE, DROP, VSTACK, HSTACK, GAMMA.INV;
+  conditional formatting, data validation, comments and charts kept (all
+  said now); the look MAX(IF(dates)) carries.
+- The grid like Excel's: **done in 1.24.29** (Adam, 2026-11-20: drag to
+  select, a right-click menu with Excel's options; GAMMA is Excel's, LORE
+  the Lorentz factor; "Excel functions should all match excel"). Drag and
+  header selection, SHEET_MENU's menus and dialogs, hidden rows and
+  heights kept in .xlsx, CONVERT_EXCEL; three reviews replayed by
+  `tests/review_grid_1269.py`, `tests/review_excelnames_1269.js` and
+  `tests/review_makesheet_1269.js`. Left: Insert Copied Cells; Paste
+  Special; multi-area (Ctrl+click) selection; auto-scroll while dragging
+  past the edge; Excel's own last digits of GAMMA near 171 and of the
+  light-year, parsec, atomic mass unit and electron volt in CONVERT; a
+  MAKE SHEET row whose own formula reads row 2's cell by a typo
+  (=[B2]*[C3] in row 3) is read as written, as =B2*C3 is.
 - From the 1.24.28 runs: the 4B passes the oil change; the 0.8B copied the
   example whole and stopped without END, the 2B's list ran on until cut
   off. Lantern knows whether a reply ended or was cut off: a MAKE DOC the
   model ended without END could be closed as written (a rule to be tried by
   a reviewer). The Excel question failed by each model's own sheet; watch
-  it. [B2] read as the cell B2 in MAKE SHEET (`wip-2026-11-19-bench1268`):
-  have a reviewer try it with 1.24.29.
-- **Next: .pptx in Slides** (1.24.29). Adam's ITW deck is ITW's training
+  it. [B2] read as the cell B2 in MAKE SHEET: in 1.24.29, mended after its
+  review (inside the table only, and where no header can be meant).
+- **Next: .pptx in Slides** (1.24.30). Adam's ITW deck is ITW's training
   material: test with it in the session, never commit it.
 
 0. **The Health lessons' sources (1.24.22, Adam).** Every lesson names the
@@ -106,8 +116,8 @@ tried by a reviewer:
    "Some practical steps here are not in these sources" where they are
    many); WHO's 2005 diarrhoea manual and the Sphere 2018 PDF, which no
    checker could open; the same for the Food tile's lessons and the other
-   tiles' (a lesson's `sources`, any tile); a trained reader (QUESTIONS 13);
-   the medicines (QUESTIONS 14). Check again when a named guideline is
+   tiles' (a lesson's `sources`, any tile); a trained reader (QUESTIONS 11);
+   the medicines (QUESTIONS 12). Check again when a named guideline is
    replaced (the NHS hypothermia page was past its review date).
 
 1. **The one-link starter: what 1.24.19 leaves** (`tools/starter`,
@@ -125,11 +135,11 @@ tried by a reviewer:
    the icons made without PowerShell, the Windows build not stripped,
    another Lantern or program on 8080 handled. **Still flagged** on Adam's
    home laptop with Windows's own protection (Bearfoos.A!ml: the copy of
-   itself and its icons). Adam: no signing for now (QUESTIONS 5). The free
+   itself and its icons). Adam: no signing for now (QUESTIONS 3). The free
    thing left to try: a starter that does not copy itself (its icons to the
    kit's Start Lantern), and the kit's downloads in the starter itself (Go),
    not the setup run hidden through PowerShell. Left:
-   - Adam's first real double-click (QUESTIONS 4): what SmartScreen and
+   - Adam's first real double-click (QUESTIONS 2): what SmartScreen and
      Gatekeeper show, how the corner button looks to him;
    - the page under the starter in a real browser (Playwright on the Linux
      job: the corner button, the list, Add, Stop), not only jsdom;
@@ -137,7 +147,7 @@ tried by a reviewer:
      run without `--plan small`, perhaps by hand: 3 GB more);
    - an offer's download for real (the library's 12 GB is too big for a
      run; the shelves' 5 GB perhaps);
-   - signing (QUESTIONS 5); a Mac icon in the Dock/Applications after the
+   - signing (QUESTIONS 3); a Mac icon in the Dock/Applications after the
      first run; Windows on ARM and an Intel Mac, built but not run;
    - an update: the starter could offer a newer Lantern.zip when the release
      has one (today it sets up the newest once, and Lantern.zip is laid over
@@ -261,7 +271,7 @@ tried by a reviewer:
      checks stay.
    - **Commands for constructions Lantern knows** (a sunset sky, a road to
      the horizon, a parallel bank of resistors, a note from the chord):
-     this is Adam's "words for things" (QUESTIONS 7); waits on his answer
+     this is Adam's "words for things" (QUESTIONS 5); waits on his answer
      there for drawings, not for circuits or music.
    - **State-tracking tools: already there.** `die-four-moves` has TURN:
      Die and passes; the brief's `die-four-moves-alone` is the same puzzle
