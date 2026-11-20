@@ -13,7 +13,6 @@ KEEP = {
     "r2-shift-click-point": "Point mode in a formula takes a press (a cell) and a drag (a range); Shift+click to stretch it is not there yet (low; in the queue).",
     "r2-ctrl-click-point": "the same for Ctrl+click adding a second reference (low).",
     "r2-arrow-point": "the arrows do not point in a formula; the draft does not claim it (low).",
-    "r2-col-letter-point": "a column letter pressed while a formula is written does not put in C:C (low).",
     "r2-f4": "F4 does not cycle $ in a formula; the draft does not claim it (low).",
     "r6-12-5": "Column Width 12.5 is snapped to whole pixels as Excel snaps it (88 + 5 = 93, 13.28515625 in the file, by the formula of the file format's standard); the reviewer expected 92 pixels or 13.28125 -- which Excel writes could not be checked here (no Excel) (none seen).",
     "menu-cell-in-rows": "a right-click on a cell inside whole rows selected shows the cell menu, its Insert and Delete acting on the rows; the reviewer has Excel showing the row menu there, the first reviewer could not judge it (low).",

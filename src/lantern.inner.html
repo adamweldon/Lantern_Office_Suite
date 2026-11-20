@@ -2619,7 +2619,7 @@ Lantern.formula = (function () {
             // a range is its numbers (what SUM and AVERAGE take), and (1.24.24)
             // .cells, its rows of values as they are -- text, null for an empty
             // cell, "" for a formula that gives "" -- with .r0/.c0 its top-left
-            // (VLOOKUP, COUNTIF, ROW) and .subtotals the cells that are SUBTOTALs
+            // (VLOOKUP, COUNTIF, ROW) and .subtotals the cells with a SUBTOTAL or AGGREGATE in them
             range: function (a, b) { return range(a, b, cx.errOk); }
           };
         try {
@@ -2649,8 +2649,9 @@ Lantern.formula = (function () {
                     if (!arr.err) arr.err = x;
                   }
                   else if (typeof x === "number" && !((x === 0 || x === 1) && isLogical(k))) arr.push(x);
-                  if (typeof cells[k] === "string" && /^=\s*SUBTOTAL\s*\x28/i.test(cells[k])) subs.push([rows.length, row.length]);
-                  if (typeof cells[k] === "string" && /^=\s*AGGREGATE\s*\x28/i.test(cells[k])) (arr.aggs = arr.aggs || []).push([rows.length, row.length]);
+                  // (the fifth reviewer) a SUBTOTAL or an AGGREGATE anywhere in the formula (=ROUND(SUBTOTAL(9,B2:B3),0)):
+                  // SUBTOTAL, and AGGREGATE's options 0 to 3, pass over both, as Excel's do
+                  if (typeof cells[k] === "string" && cells[k].charAt(0) === "=" && /\b(SUBTOTAL|AGGREGATE)\s*\x28/i.test(cells[k])) subs.push([rows.length, row.length]);
                   row.push(x == null ? null : x);
                 }
                 if (hid && hid[String(r + 1)]) hidRows.push(rows.length);
@@ -2903,7 +2904,8 @@ Lantern.formula = (function () {
   function commit(move) {
     var v = fbar.value;
     // (1.24.29, the second grid reviewer) a + or - before a cell's name begins a formula, as in Excel (+B2 is =+B2)
-    if (/^[+\-]/.test(v) && /[A-Za-z]{1,2}[0-9]/.test(v) && Lantern.formula && Lantern.formula.textNum && Lantern.formula.textNum(v, true) === null) v = "=" + v;
+    // (the fifth reviewer) and before a function or a cell with $ (+PI()*2, +$B$2); "- buy milk" stays a note
+    if (/^[+\-]\s*(\$?[A-Za-z]{1,2}\$?[0-9]|[A-Za-z_][A-Za-z0-9_.]*\x28|\x28)/.test(v) && Lantern.formula && Lantern.formula.textNum && Lantern.formula.textNum(v, true) === null) v = "=" + v;
     if ((doc.cells[sel] == null ? "" : String(doc.cells[sel])) !== v) each(changeHooks, doc);
     if (v === "") delete doc.cells[sel];
     else doc.cells[sel] = v;
@@ -3118,6 +3120,8 @@ Lantern.formula = (function () {
           pointing: function () { return dirty && pointing(); },
           // (1.24.29, SHEET_EDIT) a drag while a formula is written: its range in place of the reference just put in
           point: function (text) { if (dirty && spanLive()) pointAt(text); },
+          // (the fifth reviewer) a row number or column letter pressed while pointing: 5:5 or C:C, as in Excel
+          pointIn: function (text) { if (dirty && pointing()) pointAt(text); },
           bar: function () { return fbar; },
           rows: function () { return ROWS; },
           setRows: function (n) {
@@ -35398,7 +35402,9 @@ Lantern.RFB = (function () {
   // "1,500" -> 1500; "$1.50" -> 1.50; "12%" stays text (the model should
   // write 0.12); anything else stays as written.
   function cellValue(t) {
-    t = String(t).replace(/^\s+|\s+$/g, "").replace(/^\*\*(.*)\*\*$/, "$1");
+    t = String(t).replace(/^\s+|\s+$/g, "");
+    var bm = /^\*\*([\s\S]*)\*\*$/.exec(t);
+    if (bm && /[^*]/.test(bm[1])) t = bm[1];   // bold, but not a rating of ***** (the fifth reviewer)
     // (1.24.29, the third reviewer) spaces go, but not inside quotes: =B2&" x "&A2 keeps " x "
     if (/^=/.test(t)) return t.split("\x22").map(function (p, q) { return q % 2 ? p : p.replace(/\s+/g, ""); }).join("\x22");
     var m = /^[\$\u20ac\u00a3\u20a6]?\s*(-?\d{1,3}(,\d{3})+(\.\d+)?|-?\d+(\.\d+)?)$/.exec(t);
@@ -35422,7 +35428,7 @@ Lantern.RFB = (function () {
     var rows = [], problems = [];
     // (1.24.29, the third reviewer) a row begun with | where the header row is not (a markdown table's are) has an
     // empty first cell: "| Total | =SUM([C3PO])" is the total row of a table whose first column is empty there
-    var md = block.lines.length && /^\s*\|/.test(block.lines[0]), headN = 0;
+    var md = block.lines.length && /^\s*\|/.test(block.lines[0]) && /\|\s*$/.test(block.lines[0]), headN = 0;
     block.lines.forEach(function (line) {
       if (/^\|?\s*:?-{2,}/.test(line)) return;   // a markdown rule line
       var t = (md ? line.replace(/^\s*\|/, "") : line.replace(/^\s+/, "")).replace(/\|\s*$/, "");
@@ -35432,7 +35438,7 @@ Lantern.RFB = (function () {
       if (!md && rows.length && /^\|/.test(t) && cells.length > headN) cells = cells.slice(1);
       if (!rows.length) headN = cells.length;
       // **bold** written round a cell is its look, not its content (**=SUM([Cost])** is a total)
-      rows.push(cells.map(function (x) { return x.replace(/^\s+|\s+$/g, "").replace(/^\*\*([\s\S]+)\*\*$/, "$1"); }));
+      rows.push(cells.map(function (x) { x = x.replace(/^\s+|\s+$/g, ""); var bm = /^\*\*([\s\S]+)\*\*$/.exec(x); return bm && /[^*]/.test(bm[1]) ? bm[1] : x; }));
     });
     if (!rows.length) return { problems: ["the table is empty: one row a line, cells split by |"], plan: null };
     var ncol = Math.max.apply(null, rows.map(function (r) { return r.length; }));
@@ -35483,8 +35489,12 @@ Lantern.RFB = (function () {
       });
     }
     var cellHeads = heads.some(function (h) { return /^\$?[a-z]{1,2}\$?[0-9]{1,4}$/.test(h); });
-    var SUMMARY = /^\s*=\s*(SUM|AVERAGE|AVG|MIN|MAX|COUNT|COUNTA|MEDIAN)\s*\x28\s*\x5B/i;
-    var AGG = /\b(SUM|AVERAGE|AVG|MIN|MAX|COUNT|COUNTA|COUNTBLANK|MEDIAN|MODE|PRODUCT|STDEV|STDEVP|VAR|VARP|SUMPRODUCT|COUNTIF|COUNTIFS|SUMIF|SUMIFS|AVERAGEIF|AVERAGEIFS|LARGE|SMALL|RANK|RANK\.EQ)\s*\x28/gi;
+    // a summary row of a column: the aggregate alone (=SUM([Cost])), not a line worked from one (=SUM([Cost])*0.2, VAT)
+    var SUMMARY = /^\s*=\s*(SUM|AVERAGE|AVG|MIN|MAX|COUNT|COUNTA|MEDIAN)\s*\x28\s*\x5B[^\x5D]+\x5D\s*\x29\s*$/i;
+    // (the fifth reviewer) functions that take several columns as this row's cells (=AVERAGE([Test 1],[Test 2])); the
+    // rest (SUMIF, COUNTIFS, RANK, CORREL, PERCENTILE ...) take each named column whole
+    var ROWWISE = /^(SUM|AVERAGE|AVG|MIN|MAX|PRODUCT|MEDIAN|COUNT|COUNTA)$/i;
+    var AGG = /\b(STDEV\.S|STDEV\.P|VAR\.S|VAR\.P|PERCENTILE\.INC|PERCENTILE\.EXC|QUARTILE\.INC|QUARTILE\.EXC|RANK\.EQ|RANK\.AVG|MODE\.SNGL|SUMPRODUCT|COUNTBLANK|COUNTIFS|COUNTIF|SUMIFS|SUMIF|AVERAGEIFS|AVERAGEIF|MAXIFS|MINIFS|PERCENTILE|QUARTILE|CORREL|PEARSON|SLOPE|INTERCEPT|FORECAST|MEDIAN|STDEVP|STDEV|VARP|VAR|MODE|PRODUCT|LARGE|SMALL|RANK|MATCH|INDEX|COUNTA|COUNT|SUM|AVERAGE|AVG|MIN|MAX)\s*\x28/gi;
     // aggregates(s, fn): each call of a function that takes a range, its arguments (brackets inside kept whole) given to
     // fn(name, args) and written back as fn returns them
     function aggregates(s, fn) {
@@ -35545,19 +35555,59 @@ Lantern.RFB = (function () {
         var last = i, first = 2;
         while (last > 1 && rows[last - 1] && SUMMARY.test(String(rows[last - 1][j] || ""))) last--;
         if (last < 2) last = i;
-        for (var r = last - 1; r >= 1; r--) if (rows[r] && /^\s*=\s*SUM\s*\x28\s*\x5B/i.test(String(rows[r][k] || "")) && colOf(String(rows[r][k]).replace(/^[^\x5B]*\x5B|\x5D[\s\S]*$/g, "")) === k) { first = r + 1; break; }
+        // (the fifth reviewer) an earlier total of the column, by name (=SUM([Cost])) or plainly (=SUM(D2:D4)): when only
+        // lines worked out from it lie between (VAT, a discount), the total starts at it (subtotal + VAT); when typed
+        // rows lie between (February's under January's total), after it (February's own)
+        var L0 = colName(k), PLAIN = new RegExp("^\\s*=\\s*SUM\\s*\\x28\\s*\\$?" + L0 + "\\$?[0-9]+\\s*:\\s*\\$?" + L0 + "\\$?[0-9]+\\s*\\x29\\s*$", "i");
+        for (var r = last - 1; r >= 1; r--) {
+          var cr0 = String(rows[r] && rows[r][k] || "");
+          if ((SUMMARY.test(cr0) && /^\s*=\s*SUM/i.test(cr0) && colOf(cr0.replace(/^[^\x5B]*\x5B|\x5D[\s\S]*$/g, "")) === k) || PLAIN.test(cr0)) {
+            // a Subtotal, or one with a line worked from it below (Tax, VAT), is the bill so far: Shipping typed under
+            // it is added to it. Only typed rows under a total that is not a subtotal are a new section (Feb's rows)
+            var typed = false, worked = false, sub = (rows[r] || []).some(function (x) { return /\bsub\s*-?\s*total/i.test(String(x || "")); });
+            for (var r2 = r + 1; r2 < last; r2++) { var c2 = String(rows[r2] && rows[r2][k] || ""); if (c2 !== "" && !/^\s*=/.test(c2)) typed = true; else if (/^\s*=/.test(c2)) worked = true; }
+            first = typed && !worked && !sub ? r + 2 : r + 1;
+            break;
+          }
+        }
         return colName(k) + first + ":" + colName(k) + last;
+      }
+      // (the fifth reviewer) a column named in a row of the data (=RANK([Score],[Score]) beside a score, a share of the
+      // total =[Cost]/SUM([Cost]), written in each row) is the whole column, as Excel reads [Score] in a table: from row 2 down to the last
+      // row of the data, above any total. Under a heading of a running total (So far, To date, Running, Cumulative)
+      // it is the rows down to this one, and Lantern says so
+      function dataRange(name, k) {
+        if (k === j || i < 1 || rows[i] == null || rows[i][k] == null || String(rows[i][k]) === "") return null;
+        // a row of the data: the same formula is in the row above or below it (a total or a count stands alone)
+        function same(r) { return r >= 1 && rows[r] && rows[r][j] != null && String(rows[r][j]).replace(/\s+/g, "") === String(raw0).replace(/\s+/g, ""); }
+        if (!same(i - 1) && !same(i + 1)) return null;
+        if (/so\s*far|to\s*date|running|cumulative/i.test(String(rows[0][j] || ""))) {
+          if (!took["run" + k]) { took["run" + k] = 1; said.push("read [" + name + "] under \u201c" + rows[0][j] + "\u201d as the rows down to each one"); }
+          return colName(k) + "$2:" + colName(k) + (i + 1);
+        }
+        var end = i;
+        for (var r3 = i + 1; r3 < rows.length; r3++) {
+          var c3 = String(rows[r3] && rows[r3][k] || "");
+          if (c3 === "" || /^\s*=\s*(SUM|AVERAGE|AVG|MIN|MAX|COUNT|COUNTA|MEDIAN|SUBTOTAL)\s*\x28/i.test(c3)) break;
+          end = r3;
+        }
+        return colName(k) + "$2:" + colName(k) + "$" + (end + 1);
       }
       f = aggregates(f, function (fn, args) {
         // several columns named in one call are this row's cells (=AVERAGE([Test 1],[Test 2]), =MAX([P1],[P2],[P3])),
         // but SUMPRODUCT's are its columns
         var named = args.filter(function (a) { var m = /^\s*\x5B([^\x5D]+)\x5D\s*$/.exec(a); return m && colOf(m[1]) >= 0; }).length;
-        if (named > 1 && !/^SUMPRODUCT$/i.test(fn)) return args;
+        if (named > 1 && ROWWISE.test(fn)) return args;
         return args.map(function (a, n) {
-          if (/^RANK/i.test(fn) && n === 0) return a;
+          // RANK's and MATCH's first value is this row's (=RANK([Score],[Score]), =MATCH([Item],[Item],0))
+          if (/^(RANK|MATCH)/i.test(fn) && n === 0) return a;
+          // and a criterion is this row's value (=COUNTIF([Item],[Item]): how often this row's item comes)
+          if (/^(COUNTIF|SUMIF|AVERAGEIF)$/i.test(fn) ? n === 1 : /^COUNTIFS$/i.test(fn) ? n % 2 === 1 : /^(SUMIFS|AVERAGEIFS|MAXIFS|MINIFS)$/i.test(fn) ? n >= 2 && n % 2 === 0 : false) return a;
           return outside(a, function (part) { return part.replace(/\x5B([^\x5D]+)\x5D/g, function (m, name) {
             var k = colOf(name);
             if (k < 0) return m;   // a cell's name, or no column: read below
+            var dr = dataRange(name, k);
+            if (dr) return dr;
             if (i < 2) { problems.push(here + " (" + raw + ") adds up [" + name + "] above it, but there are no rows above it"); return m; }
             return columnRange(name, k);
           }); });
@@ -35574,7 +35624,8 @@ Lantern.RFB = (function () {
       var two = rows[1] && rows[1][j] != null ? String(rows[1][j]).replace(/\s+/g, "") : "";
       if (i >= 2 && rowsRead.length && rowsRead.every(function (r) { return r === 2; }) && two === String(raw0).replace(/\s+/g, "") && !firstCopy[colName(j)]) {
         firstCopy[colName(j)] = 1;
-        var mine = f.replace(/(^|[^A-Za-z0-9$])([A-Z])2(?![0-9])/g, function (m, pre, c) { return pre + c + (i + 1); });
+        var movedC = [], mine = f.replace(/(^|[^A-Za-z0-9$])([A-Z])2(?![0-9])/g, function (m, pre, c) { movedC.push(c.charCodeAt(0) - 65); return pre + c + (i + 1); });
+        if (!movedC.some(function (q) { return q === j || rows[i][q] == null || String(rows[i][q]) === ""; }))
         problems.push(here + " (" + raw0 + ") is row 2\u2019s formula copied down, and still uses row 2\u2019s cells: for row " + (i + 1) + " write " + mine + ", and the same for each row below it");
       }
       named++;
@@ -35592,7 +35643,7 @@ Lantern.RFB = (function () {
     });
     var values = L.sheetDocs && L.sheetDocs.compute ? L.sheetDocs.compute(cells) : {};
     // (the fourth reviewer) functions that work with text: =UPPER(A2), =LEN(A2), =LEFT(A2,1), =COUNTA(A2:A6)
-    var TEXTFN = /\b(UPPER|LOWER|PROPER|LEFT|RIGHT|MID|LEN|TRIM|CLEAN|CONCAT|CONCATENATE|TEXTJOIN|TEXT|SUBSTITUTE|REPLACE|REPT|FIND|SEARCH|EXACT|VALUE|CODE|CHAR|COUNTA|COUNTBLANK|COUNTIF|COUNTIFS|ISTEXT|ISNUMBER|ISBLANK|T|N)\s*\x28/i;
+    var TEXTFN = /\b(UPPER|LOWER|PROPER|LEFT|RIGHT|MID|LEN|TRIM|CLEAN|CONCAT|CONCATENATE|TEXTJOIN|TEXT|SUBSTITUTE|REPLACE|REPT|FIND|SEARCH|EXACT|VALUE|CODE|CHAR|COUNTA|COUNTBLANK|COUNTIF|COUNTIFS|ISTEXT|ISNUMBER|ISBLANK|T|N|VLOOKUP|HLOOKUP|XLOOKUP|LOOKUP|INDEX|CHOOSE)\s*\x28|^=\s*\$?[A-Z]{1,2}\$?[0-9]{1,4}\s*$/i;
     formulas.forEach(function (ref) {
       var v = values[ref], f = cells[ref];
       if (f.indexOf("[") >= 0) return;   // a column it names that is not there: said above
@@ -35610,12 +35661,19 @@ Lantern.RFB = (function () {
     // (1.24.29, the third and fourth reviewers) a formula copied down unchanged (=B2*C2 in rows 3 and 4 too, =[B2]*[$B$5])
     // still uses the row it came from: back, with this row's own line, once a column. And a running total that adds
     // to its own column two rows up (=D2+B4-C4 under =D2+B3-C3): its line, the row above's
+    // (the fifth reviewer) both ends of a range (=SUM(B2:D2) is =SUM(B3:D3) in row 3, not =SUM(B2:D3)), in either case
+    // (=b2*c2), and not a line that would read its own cell (a second total of one sum, =C2 for the rate above) or a
+    // cell left empty (=B2*D2 where D2 holds the one rate)
+    function up(s) { return String(s).split("\x22").map(function (p, q) { return q % 2 ? p : p.toUpperCase(); }).join("\x22"); }
     formulas.forEach(function (ref) {
-      var c = ref.charAt(0), row = +ref.slice(1), above = c + (row - 1), f = cells[ref], g = cells[above];
+      var c = ref.charAt(0), row = +ref.slice(1), above = c + (row - 1), f = up(cells[ref]), g = cells[above];
       if (row < 3 || firstCopy[c] || typeof g !== "string" || g.charAt(0) !== "=") return;
-      var rel = (f.match(/(^|[^A-Za-z0-9_$])\$?[A-Z]([0-9]{1,3})(?![0-9\x28:])/g) || []).map(function (t) { return +/([0-9]+)$/.exec(t)[1]; });
+      g = up(g);
+      var REL = /(^|[^A-Za-z0-9_$])(\$?[A-Z])([0-9]{1,3})(?![0-9\x28])/g, rel = [];
+      f.replace(REL, function (m, pre, cl, r) { rel.push(+r); return m; });
       if (f === g && rel.length && rel.every(function (r) { return r < row; })) {
-        var src = Math.max.apply(null, rel), fix = f.replace(/(^|[^A-Za-z0-9_$])(\$?[A-Z])([0-9]{1,3})(?![0-9\x28:])/g, function (m, pre, cl, r) { return pre + cl + (+r + row - src); });
+        var src = Math.max.apply(null, rel), moved = [], fix = f.replace(REL, function (m, pre, cl, r) { var nr = +r + row - src; moved.push(cl.replace("$", "") + nr); return pre + cl + nr; });
+        if (refsIn(fix.slice(1)).some(function (y) { return y.ref === ref; }) || moved.some(function (q) { return cells[q] == null || cells[q] === ""; })) return;
         firstCopy[c] = 1;
         problems.push(ref + " (" + f + ") is the formula of row " + (row - 1) + " copied down unchanged, and uses row " + src + " instead of its own: for row " + row + " write " + fix + ", and the same for each row below it");
         return;
@@ -35647,7 +35705,7 @@ Lantern.RFB = (function () {
         var fix = x.f.replace(/(^|[^A-Za-z_])([A-Z])(\d{1,3})(?![\d\x28])/g, function (m, pre, c2, r2) { return pre + c2 + (+r2 - x.off); });
         // (the fourth reviewer) VAT, a tip or the pay under a total reads the total on purpose (=D5*0.2 under
         // =SUM(D2:D4)): not a slip, and the line it would be told to write reads its own cell
-        if (refsIn(fix.slice(1)).some(function (y) { return y.ref === x.ref; }) || refsIn(x.f.slice(1)).some(function (y) { return /^=\s*(SUM|AVERAGE|MIN|MAX|COUNT)\s*\x28/i.test(String(cells[y.ref] || "")); })) return;
+        if (refsIn(fix.slice(1)).some(function (y) { return y.ref === x.ref; }) || refsIn(x.f.slice(1)).some(function (y) { return /^=/.test(String(cells[y.ref] || "")); })) return;
         problems.push(x.ref + " (" + x.f + ") uses row " + (x.row + x.off) + ", but the rows around it use their own row: write " + fix + " (or name the columns, like =[Qty]*[Price], and Lantern picks the row)");
       });
     });
@@ -38656,10 +38714,12 @@ Lantern.RFB = (function () {
         if (f.charAt(e1 + 1) === "!") { out += f.slice(i, e1 + 2); i = e1 + 2; continue; }
       }
       var prev = i ? f.charAt(i - 1) : "";
-      if (!/[A-Za-z0-9_.$]/.test(prev)) {
+      // (the fifth reviewer) a letter of any alphabet before it makes it part of a name: Mar\u00e7o26!B6 and \u041b\u0438\u0441\u04422!B6
+      // are sheets (o26 was moved as a cell, and the sheet's name broken)
+      if (!/[A-Za-z0-9_.$\u00c0-\uffff]/.test(prev)) {
         var rest = f.slice(i), m = REFAT.exec(rest), w = !m && COLAT.exec(rest), h = !m && !w && ROWAT.exec(rest);
         // the sheet written before it (x.sheet), so a formula follows its own sheet's rows only
-        var sm = out.charAt(out.length - 1) === "!" ? /(?:\x27((?:[^\x27]|\x27\x27)+)\x27|([A-Za-z_][A-Za-z0-9_.]*(?::[A-Za-z_][A-Za-z0-9_.]*)?))!$/.exec(out) : null, sheetOf = sm ? (sm[1] ? sm[1].replace(/\x27\x27/g, "\x27") : sm[2]) : null;
+        var sm = out.charAt(out.length - 1) === "!" ? /(?:\x27((?:[^\x27]|\x27\x27)+)\x27|([A-Za-z_\u00c0-\uffff][A-Za-z0-9_.\u00c0-\uffff]*(?::[A-Za-z_\u00c0-\uffff][A-Za-z0-9_.\u00c0-\uffff]*)?))!$/.exec(out) : null, sheetOf = sm ? (sm[1] ? sm[1].replace(/\x27\x27/g, "\x27") : sm[2]) : null;
         if (m) {
           var x = { sheet: sheetOf, c1: cnum(m[2]), r1: +m[4] - 1, ac1: !!m[1], ar1: !!m[3], two: !!m[6],
             c2: m[6] ? cnum(m[6]) : null, r2: m[6] ? +m[8] - 1 : null, ac2: !!m[5], ar2: !!m[7] }, t;
@@ -38797,11 +38857,24 @@ Lantern.RFB = (function () {
   ].join("")));
   (document.head || document.documentElement).appendChild(css);
   var clip = null;   // what this page copied last: {text, raws, fmts, r0, c0, cut}
-  var stacks = {};   // each sheet's undo and redo, kept while the page is open
+  // each workbook's undo and redo (a sheet's own when it has no workbook), kept while the page is open. (1.24.29, the
+  // fifth grid reviewer) One list for the workbook, as Excel keeps: Ctrl+Z takes back the last change on any of its
+  // sheets, and shows that sheet. Each entry is {id: the sheet, s: how it was, others: cells of other sheets changed
+  // with it -- [{id, ref, before, after}], the formulas there that followed rows put in here}. (Each sheet kept its
+  // own list, with all the other sheets in every entry: one Ctrl+Z took back typing on one sheet and the rows'
+  // move on another, and typing on another sheet went with a row taken out.)
+  var stacks = {};
+  function keyOf(d) { return d && d.book && d.book.id != null ? "book:" + d.book.id : d ? d.id : null; }
+  // otherChanged(doc, list): the other sheets' cells changed by the change just made on doc (whose state before it is
+  // the top of the list), so taking it back takes them back too -- each only while it is as the change left it
+  function otherChanged(doc, list) {
+    var stk = stacks[keyOf(doc)], top = stk && stk.undo[stk.undo.length - 1];
+    if (top && top.id === doc.id && list && list.length) top.others = (top.others || []).concat(list);
+  }
   function mount(api) {
     if (!api || !api.onSelect || !api.tds || !api.beforeChange) return;
     var doc = api.doc, host = api.gridwrap.parentNode, tds = api.tds;
-    var st = stacks[doc.id] = stacks[doc.id] || { undo: [], redo: [] }, undo = st.undo;
+    var st = stacks[keyOf(doc)] = stacks[keyOf(doc)] || { undo: [], redo: [] }, undo = st.undo;
     // anchor and focus are the range's corners (where it began, and the end that moves); active is the cell typing
     // goes into -- the corner where it began, but Ctrl+A and Enter inside a range leave it where it is
     var anchor = api.selected(), focus = anchor, active = anchor, extending = false, rangeMode = false, moving = false;
@@ -38866,30 +38939,64 @@ Lantern.RFB = (function () {
     }
     // ---- undo and redo: the cells (and their looks, and the rows) as they were before each change -----------
     function siblings() { var SD = L.sheetDocs, b = doc.book && SD && SD.book ? SD.book(doc) : null; return b && b.docs ? b.docs.filter(function (d) { return d.id !== doc.id; }) : []; }
-    function state() {
-      var o = {}; siblings().forEach(function (d) { o[d.id] = d.cells || {}; });
-      return JSON.stringify({ cells: doc.cells, fmt: doc.fmt || null, rows: doc.rows || null, freeze: doc.freeze || null, merges: doc.merges || null, widths: doc.widths || null, heights: doc.heights || null, hidden: doc.hidden || null, others: o });
-    }
+    function stateOf(d) { return JSON.stringify({ cells: d.cells, fmt: d.fmt || null, rows: d.rows || null, freeze: d.freeze || null, merges: d.merges || null, widths: d.widths || null, heights: d.heights || null, hidden: d.hidden || null }); }
+    function state() { return stateOf(doc); }
+    function sheetById(id) { if (id === doc.id) return doc; var hit = null; siblings().forEach(function (d) { if (d.id === id) hit = d; }); return hit; }
     // any change to the sheet but the paste of a cut lets the cut be, as in Excel (the cells it named may have moved)
-    function snap() { var s = state(); if (undo[undo.length - 1] !== s) undo.push(s); if (undo.length > 100) undo.shift(); st.redo = []; if (!moving) endCut(); }
+    function snap() { var s = state(), top = undo[undo.length - 1]; if (!top || top.id !== doc.id || top.s !== s) undo.push({ id: doc.id, s: s }); if (undo.length > 100) undo.shift(); st.redo = []; if (!moving) endCut(); }
     function endCut() { if (clip && clip.cut) { clip = { text: clip.text, dead: true }; say(""); } }
     api.beforeChange(function () { snap(); });
     if (api.onTyped) api.onTyped(function () { endCut(); });   // Enter on a cell, changed or not
-    function restore(s) {
+    function putState(d, s) {
       var o = JSON.parse(s);
-      doc.cells = o.cells || {}; if (o.fmt) doc.fmt = o.fmt; else delete doc.fmt;
-      if (o.freeze) doc.freeze = o.freeze; else delete doc.freeze;
-      if (o.merges) doc.merges = o.merges; else delete doc.merges;
-      if (o.widths) doc.widths = o.widths; else delete doc.widths;
-      if (o.heights) doc.heights = o.heights; else delete doc.heights;
-      if (o.hidden) doc.hidden = o.hidden; else delete doc.hidden;
-      if (o.others && L.sheetDocs && L.sheetDocs.save) siblings().forEach(function (d) { if (o.others[d.id] && JSON.stringify(o.others[d.id]) !== JSON.stringify(d.cells || {})) { d.cells = o.others[d.id]; L.sheetDocs.save(d); } });
+      d.cells = o.cells || {}; if (o.fmt) d.fmt = o.fmt; else delete d.fmt;
+      if (o.freeze) d.freeze = o.freeze; else delete d.freeze;
+      if (o.merges) d.merges = o.merges; else delete d.merges;
+      if (o.widths) d.widths = o.widths; else delete d.widths;
+      if (o.heights) d.heights = o.heights; else delete d.heights;
+      if (o.hidden) d.hidden = o.hidden; else delete d.hidden;
+      if (o.rows && d !== doc) d.rows = o.rows;
+      return o;
+    }
+    function restore(s) {
+      var o = putState(doc, s);
       api.put();
       if ((o.rows || 0) > api.rows()) api.setRows(o.rows);
       api.refresh(); keepRange();
     }
-    function doUndo() { api.keep(); endCut(); if (!undo.length) return false; st.redo.push(state()); restore(undo.pop()); return true; }
-    function doRedo() { endCut(); if (!st.redo.length) return false; undo.push(state()); restore(st.redo.pop()); return true; }
+    // the other sheets' cells that changed with an entry, back (or on again), each only while it is as it was left
+    function sideApply(list, back) {
+      var saved = {}, got = {};
+      (list || []).forEach(function (c) {
+        // one copy of each sheet for all its cells (each reading of the workbook gives new copies of its sheets)
+        var d = got[c.id] || (got[c.id] = sheetById(c.id));
+        if (!d) return;
+        d.cells = d.cells || {};
+        var now = d.cells[c.ref] == null ? null : d.cells[c.ref], from = back ? c.after : c.before, to = back ? c.before : c.after;
+        if (now !== (from == null ? null : from)) return;
+        if (to == null) delete d.cells[c.ref]; else d.cells[c.ref] = to;
+        saved[d.id] = d;
+      });
+      for (var id in saved) { if (id === doc.id) { api.put(); api.refresh(); } else if (L.sheetDocs && L.sheetDocs.save) L.sheetDocs.save(saved[id]); }
+    }
+    // turn(from, to, back): the last entry of one list taken back (or done again) and its opposite put on the other.
+    // An entry of another sheet of the workbook is put back there, and that sheet shown, as Excel shows it
+    function turn(from, to, back) {
+      var e = from.pop();
+      while (e && !sheetById(e.id)) e = from.pop();   // a sheet taken out of the workbook since
+      if (!e) return false;
+      var d = sheetById(e.id);
+      to.push({ id: d.id, s: stateOf(d), others: e.others });
+      if (d === doc) { restore(e.s); sideApply(e.others, back); return true; }
+      putState(d, e.s); sideApply(e.others, back);
+      if (L.sheetDocs && L.sheetDocs.save) L.sheetDocs.save(d);
+      api.refresh();
+      if (L.sheetDocs && L.sheetDocs.open) L.sheetDocs.open(d.id);
+      else say((back ? "Took back" : "Did again") + " a change on the sheet \u201c" + (d.book && d.book.sheet || d.title || "") + "\u201d.");
+      return true;
+    }
+    function doUndo() { api.keep(); endCut(); return turn(undo, st.redo, true); }
+    function doRedo() { endCut(); return turn(st.redo, undo, false); }
     // after a change the range stays selected, and the active cell where it was
     function keepRange() { extending = true; try { api.select(active); } finally { extending = false; } paintRange(); }
     function done() { api.put(); api.refresh(); keepRange(); }
@@ -39036,7 +39143,7 @@ Lantern.RFB = (function () {
     // (1.24.29) Adam: "clicking and dragging across cells should select a range like excel does". The press is the
     // grid's own (no text selected, nothing dragged away); a row number or column letter pressed selects the row
     // (column), and a drag across them more; while a formula is written, a drag over cells puts in their range
-    var down = null, dragged = false, H = {}, hdrag = null, pt = null;
+    var down = null, dragged = false, H = {}, hdrag = null, pt = null, hpt = null;
     function cellOf(e) { var t = e.target; return t && t.getAttribute && api.table.contains(t) ? t.getAttribute("data-ref") : null; }
     // headOf(e): the row number, column letter or corner pressed -- {kind: "row" | "col" | "all", at}
     function headOf(e) {
@@ -39055,6 +39162,14 @@ Lantern.RFB = (function () {
       if ((ref || hd) && api.typing() && !(api.pointing && api.pointing())) api.keep();
       // (these run before SHEET's own: a cell pressed while a formula is written goes into it there, after this)
       if (ref && api.typing()) { pt = { from: ref, wait: true }; return; }
+      // (the fifth reviewer) a row number or a column letter pressed while a formula points: the whole row (5:5) or
+      // column (C:C) goes in, and a drag along the numbers or letters makes it 5:7 or C:E, as in Excel
+      if (hd && hd.kind !== "all" && api.typing() && api.pointing && api.pointing() && api.pointIn) {
+        e.preventDefault();
+        api.pointIn(hd.kind === "row" ? (hd.at + 1) + ":" + (hd.at + 1) : cname(hd.at) + ":" + cname(hd.at));
+        hpt = { kind: hd.kind, at: hd.at };
+        return;
+      }
       if ((!ref && !hd) || api.typing()) return;
       e.preventDefault();
       // (the grid review) the press does not move the focus by itself now: the grid takes the keys from here
@@ -39071,7 +39186,15 @@ Lantern.RFB = (function () {
     };
     H.mouseover = function (e) {
       var ref = cellOf(e);
-      if (!e.buttons) { down = null; hdrag = null; pt = null; return; }
+      if (!e.buttons) { down = null; hdrag = null; pt = null; hpt = null; return; }
+      if (hpt) {
+        var hp = headOf(e);
+        if (hp && hp.kind === hpt.kind && api.point) {
+          var lo = Math.min(hp.at, hpt.at), hi = Math.max(hp.at, hpt.at);
+          api.point(hpt.kind === "row" ? (lo + 1) + ":" + (hi + 1) : cname(lo) + ":" + cname(hi));
+        }
+        return;
+      }
       if (pt && pt.wait) {
         // SHEET put the cell's name into the formula where the cursor was; a drag from there makes it a range (in its
         // place, SHEET's point(); a second drag replaces the first range, as in Excel)
@@ -39095,7 +39218,7 @@ Lantern.RFB = (function () {
       if (!dragged) api.select(down);
       dragged = true; extendTo(ref);
     };
-    H.mouseup = function () { down = null; hdrag = null; pt = null; };
+    H.mouseup = function () { down = null; hdrag = null; pt = null; hpt = null; };
     H.click = function (e) {
       var ref = cellOf(e), was = dragged;
       dragged = false;
@@ -39234,7 +39357,7 @@ Lantern.RFB = (function () {
     S.within = function (ref) { var p = parse(ref), R = rect(); return !!p && p.c >= R.c0 && p.c <= R.c1 && p.r >= R.r0 && p.r <= R.r1; };
   }
   (L.sheetEditHooks = L.sheetEditHooks || []).push(mount);
-  L.sheetEdit = { shift: shift, move: move, parseTSV: parseTSV, toTSV: toTSV, eachRef: eachRef, sameSheet: sameSheet };
+  L.sheetEdit = { shift: shift, move: move, parseTSV: parseTSV, toTSV: toTSV, eachRef: eachRef, sameSheet: sameSheet, otherChanged: otherChanged };
 })();
 // ===========================================================================
 // MODULE: SHEET_EDIT - END
@@ -39506,16 +39629,18 @@ Lantern.RFB = (function () {
     function inBand(q) { var o = row ? q.c : q.r; return !band || (o >= band[0] && o <= band[1]); }
     // (1.24.29, the second grid reviewer) the workbook's other sheets: a formula there naming this sheet (=Jan!B6 on
     // Summary) follows the rows put in or taken out here, as in Excel (it stayed, and showed another cell's value)
-    var SD = L.sheetDocs, bk = own && SD && SD.book && SD.save ? SD.book(doc) : null;
+    var SD = L.sheetDocs, bk = own && SD && SD.book && SD.save ? SD.book(doc) : null, side = [];
     if (bk && bk.docs) bk.docs.forEach(function (d) {
       if (d.id === doc.id || !d.cells) return;
       var changed = false;
       for (var k2 in d.cells) {
         var v2 = d.cells[k2];
-        if (typeof v2 === "string" && v2.charAt(0) === "=" && v2.indexOf("!") > 0) { var m2 = S.move(v2, kind, at, n, band, own, true); if (m2 !== v2) { d.cells[k2] = m2; changed = true; } }
+        if (typeof v2 === "string" && v2.charAt(0) === "=" && v2.indexOf("!") > 0) { var m2 = S.move(v2, kind, at, n, band, own, true); if (m2 !== v2) { d.cells[k2] = m2; changed = true; side.push({ id: d.id, ref: k2, before: v2, after: m2 }); } }
       }
       if (changed) SD.save(d);
     });
+    // (the fifth grid reviewer) Ctrl+Z takes them back with the rows, and nothing else on those sheets
+    if (side.length && S.otherChanged) S.otherChanged(doc, side);
     for (k in doc.cells) keys[k] = 1;
     for (k in doc.fmt || {}) keys[k] = 1;   // a cell with a look and nothing typed moves with its row too
     for (k in keys) {
@@ -47475,14 +47600,20 @@ Lantern.RFB = (function () {
   // an hour "h") written as Excel's ("lbm", "Mg", "hr"), so Excel works out the same answer; {why} when that cannot be
   // done: a unit in a cell (B1 holding "lb": Excel would show #N/A; what to write there is said), or one Excel has no name
   // for ("bar"). A unit made by a formula ("l"&"b") is left as it is
-  function fixConvert(s, cells) {
+  // (the fifth reviewer) values: the sheet's worked-out values, so a unit a formula gives (B1 =IF(C1="metric","kg","lb"))
+  // is read as Excel would read it; texts joined in the formula ("l"&"b") are the text they make
+  function fixConvert(s, cells, values) {
     var X = L.convertExcel, C = L.convert, why = null, edits = [];
     if (!X || !X.toExcel || !/CONVERT\s*\x28/i.test(s)) return { f: s, why: null };
     convertCalls(s).forEach(function (args) {
       function unitOf(a) {
         var t = a.text.replace(/^\s+|\s+$/g, ""), q = /^\x22([^\x22]*)\x22$/.exec(t), r = /^\$?([A-Z])\$?([0-9]{1,4})$/i.exec(t);
         if (q) return { lit: true, u: q[1], a: a };
-        if (r && cells) { var k = (r[1] + r[2]).toUpperCase(); return { ref: k, u: String(cells[k] == null ? "" : cells[k]), a: a }; }
+        if (/^\x22[^\x22]*\x22(\s*&\s*\x22[^\x22]*\x22)+$/.test(t)) return { joined: t, u: t.replace(/\x22\s*&\s*\x22/g, "").slice(1, -1), a: a };
+        if (r && cells) {
+          var k = (r[1] + r[2]).toUpperCase(), c0 = cells[k], byF = typeof c0 === "string" && c0.charAt(0) === "=";
+          return { ref: k, byF: byF, u: String(byF ? (values && values[k] != null ? values[k] : "") : c0 == null ? "" : c0), a: a };
+        }
         return null;
       }
       var u1 = unitOf(args[1]), u2 = unitOf(args[2]);
@@ -47497,7 +47628,9 @@ Lantern.RFB = (function () {
       [[u1, t[0]], [u2, t[1]]].forEach(function (p) {
         if (p[0].u === p[1]) return;
         if (p[0].lit) edits.push({ s: p[0].a.s, e: p[0].a.e, text: p[0].a.text.replace(/\x22[^\x22]*\x22/, function () { return "\x22" + p[1] + "\x22"; }) });
-        else if (!why) why = "CONVERT\u2019s unit \u201c" + p[0].u + "\u201d in " + p[0].ref + " is \u201c" + p[1] + "\u201d in Excel; written so there, the formula can be saved as it is";
+        else if (!why) why = p[0].joined ? "CONVERT\u2019s unit \u201c" + p[0].u + "\u201d (made by " + p[0].joined + ") is \u201c" + p[1] + "\u201d in Excel; written so, the formula can be saved as it is"
+          : p[0].byF ? p[0].ref + " gives CONVERT the unit \u201c" + p[0].u + "\u201d, which is \u201c" + p[1] + "\u201d in Excel (Excel would show #N/A); with " + p[0].ref + " giving \u201c" + p[1] + "\u201d, the formula can be saved as it is"
+          : "CONVERT\u2019s unit \u201c" + p[0].u + "\u201d in " + p[0].ref + " is \u201c" + p[1] + "\u201d in Excel; written so there, the formula can be saved as it is";
       });
     });
     edits.sort(function (a, b) { return b.s - a.s; }).forEach(function (e) { s = s.slice(0, e.s) + e.text + s.slice(e.e); });
@@ -47792,10 +47925,11 @@ Lantern.RFB = (function () {
         if (raw == null || raw === "") { var s0 = styleOf(f, code, false); return "<c r=\x22" + k + "\x22" + (s0 ? " s=\x22" + s0 + "\x22" : "") + "\x2F>"; }
         raw = String(raw);
         if (raw.charAt(0) === "=" && raw.length > 1) {
-          var fc = fixConvert(raw, cells), ef = excelFormula(fc.f.slice(1)), why = null;
+          var fc = fixConvert(raw, cells, values), ef = excelFormula(fc.f.slice(1)), why = null;
           if (ef.ok) {
             var miss = ef.sheets.filter(function (n) { return !upNames[String(n).toUpperCase()]; });
-            if (ef.clash.length) why = ef.clash.map(function (fn) { return CLASH[fn]; }).join("; ");
+            // (the fifth reviewer) CONVERT's note names the unit Excel lacks ("bar"), as fixConvert words it
+            if (ef.clash.length) why = ef.clash.map(function (fn) { return fn === "CONVERT units" && fc.why ? fc.why : CLASH[fn]; }).join("; ");
             else if (miss.length) why = "it uses the sheet \u201c" + miss[0] + "\u201d, which is not in this file";
             else if (fc.why) why = fc.why;
             else if (ef.table) why = "it names an Excel table, which this file does not have";

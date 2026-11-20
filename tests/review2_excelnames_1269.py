@@ -3,7 +3,6 @@
 import os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KEEP = {
-    "q22": "a unit made by a formula (\"l\"&\"b\") is left as written on saving, and Excel shows #N/A there; Lantern reads only units written whole, in quotes or in a cell (rare).",
     "R11": "Lantern keeps TRUE and FALSE as 1 and 0, so ROMAN(1999,TRUE) is form 1; Excel's TRUE is the classic form (LibreOffice does as Lantern). TRUE and FALSE as values of their own are in the queue.",
     "R12": "the same: ROMAN(1999,FALSE) is form 0 here, Excel's simplified form 4.",
 }
