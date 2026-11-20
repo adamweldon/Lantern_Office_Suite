@@ -15,12 +15,25 @@ KEEP = {
     "R34": "the same for Insert column.",
 }
 VERBOSE = "-v" in sys.argv
-r = subprocess.run([sys.executable, os.path.join(ROOT, "tests", "fixtures", "grid_1269", "replay.py")], cwd=ROOT, capture_output=True, text=True, timeout=3600)
-out = r.stdout
+# the cases in two halves at once, each in its own Chromium on its own port (a case opens a fresh page: the whole run
+# took about half an hour in one)
+HERE = os.path.join(ROOT, "tests", "fixtures", "grid_1269")
+sys.path.insert(0, HERE)
+import cases as CASES
+ids = [c["id"] for c in CASES.CASES]
+procs = [subprocess.Popen([sys.executable, os.path.join(HERE, "replay.py"), "--only", ",".join(ids[k::2]), "--port", str(8269 + k)], cwd=ROOT,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for k in range(2)]
+outs = [p.communicate(timeout=3600) for p in procs]
+out = "\n".join(o[0] for o in outs)
+class R: pass
+r = R(); r.stderr = "\n".join(o[1] for o in outs)
+sums = [re.search(r"^(\d+) cases: (\d+) AGREE, (\d+) DISAGREE", o[0], re.M) for o in outs]
+if all(sums): out += "\n%d cases: %d AGREE, %d DISAGREE\n" % tuple(sum(int(m.group(i)) for m in sums) for i in (1, 2, 3))
 if VERBOSE: print(out)
 agree = re.findall(r"^AGREE\s+(\S+)", out, re.M)
 dis = re.findall(r"^DISAGREE\s+(\S+)", out, re.M)
-total = re.search(r"^(\d+) cases: (\d+) AGREE, (\d+) DISAGREE", out, re.M)
+total = re.findall(r"^(\d+) cases: (\d+) AGREE, (\d+) DISAGREE", out, re.M)
+total = re.match(r"(\d+) cases: (\d+) AGREE, (\d+) DISAGREE", "%s cases: %s AGREE, %s DISAGREE" % total[-1]) if len(total) == 3 else None
 fails = []
 if not total: fails.append("the replay did not finish: " + (r.stderr or out)[-1500:])
 else:

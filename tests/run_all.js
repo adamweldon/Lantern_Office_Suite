@@ -52,7 +52,7 @@ var steps = [
   ["The second review of Excel files replayed: 560 cases of another reviewer's own, made after the first's mends (a guard of 156 ordinary formulas, lists given to functions, other sheets, spilling formulas, typed dates, merged cells, Excel's grammar), every one agreeing but those kept (1.24.28)", "python3", ["tests/review2_xlsx_1268.py"], /ALL SECOND REVIEW 1.24.28 \(EXCEL\) CHECKS PASS/],
   ["The third review of Excel files replayed: 628 cases of a third reviewer's own on the second round's rules (a guard of 252 everyday formulas, 84 plain-formula files for Excel's @, lists given to functions, typed values), every one agreeing but those kept (1.24.28)", "python3", ["tests/review3_xlsx_1268.py"], /ALL THIRD REVIEW 1.24.28 \(EXCEL\) CHECKS PASS/],
   ["The small models' run of 1.24.28 replayed: the 4B passes the oil change under the example that begins with what is needed; the 0.8B copied it whole and the 2B's list ran on; the Excel question failed by each model's own sheet; the 4B's =[B2]*[C2] read as the cells (1.24.29)", "node", ["tests/bench_1268.js"], /ALL BENCH 1.24.28 REPLAY CHECKS PASS/],
-  ["The review of the grid like Excel's, replayed in Chromium: 304 cases of a reviewer's own (drags over cells and headers, every right-click menu and dialog, Insert and Delete shifting cells set beside LibreOffice, merged cells, hidden rows and SUBTOTAL over them, .xlsx both ways, undo, a phone's long press), every one agreeing but those kept with their reasons (1.24.29)", "python3", ["tests/review_grid_1269.py"], /ALL GRID REVIEW 1.24.29 CHECKS PASS/],
+  ["The review of the grid like Excel's, replayed in Chromium: 304 cases of a reviewer's own (drags over cells and headers, every right-click menu and dialog, Insert and Delete shifting cells set beside LibreOffice, merged cells, hidden rows and SUBTOTAL over them, .xlsx both ways, undo, a phone's long press), every one agreeing but those kept with their reasons (1.24.29)", "python3", ["tests/review_grid_1269.py"], /ALL GRID REVIEW 1.24.29 CHECKS PASS/, 3000000],
   ["The review of Excel's names replayed: 1,015 cases of a reviewer's own (GAMMA and LORE, CONVERT with Excel's units in a sheet and in Chat, Save .xlsx, the 254 function names Lantern shares with Excel), every one agreeing but those kept with their reasons (1.24.29)", "python3", ["tests/review_excelnames_1269.py"], /ALL EXCEL NAMES REVIEW 1.24.29 CHECKS PASS/],
   ["The review of MAKE SHEET's [B2] replayed: 169 replies of a reviewer's own (column names, cells in brackets, headers like C3PO and Q4 sales, rows copied down), every one agreeing but the one kept with its reason (1.24.29)", "python3", ["tests/review_makesheet_1269.py"], /ALL MAKE SHEET CELLS REVIEW 1.24.29 CHECKS PASS/],
   ["The small models' run of 1.24.27 replayed: all three wrote the oil change under one heading, the 4B's one new failed row; MAKE DOC's example begins with what is needed (1.24.28)", "node", ["tests/bench_1267.js"], /ALL BENCH 1.24.27 REPLAY CHECKS PASS/],
@@ -133,7 +133,7 @@ var steps = [
 ];
 var failed = 0;
 steps.forEach(function (s) {
-  var r = cp.spawnSync(s[1], s[2], { cwd: root, encoding: "utf8", timeout: 300000 });
+  var r = cp.spawnSync(s[1], s[2], { cwd: root, encoding: "utf8", timeout: s[4] || 300000 });   // (1.24.29) a long replay names its own time
   var out = (r.stdout || "") + (r.stderr || "");
   var ok = s[3].test(out) && r.status === 0;
   if (!ok) failed++;
