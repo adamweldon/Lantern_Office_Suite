@@ -2567,12 +2567,13 @@ Lantern.formula = (function () {
   // (1.24.28, the first Excel review) computeAll(cells, book): book(name) -> the cells of another sheet of the same
   // workbook, or null; book.self, this sheet's own name; book.order, the sheets' names in the workbook's order (for
   // Jan:Mar!B2). A formula on one sheet can then use the cells of another, as in Excel (=Jan!B6, =SUM(Rates!B2:B9))
-  function computeAll(cells, book) {
-    var me = sheetEval(cells, book, { evals: {} });
+  // (1.24.29) hid: the sheet's hidden rows and columns ({"5": 1}), which SUBTOTAL 101-111 and AGGREGATE leave out
+  function computeAll(cells, book, hid) {
+    var me = sheetEval(cells, book, { evals: {} }, hid);
     for (var k in cells) me.val(k);
     return me.out;
   }
-  function sheetEval(cells, book, shared) {
+  function sheetEval(cells, book, shared, hid) {
     var out = {}, visiting = {}, lastRow = ROWS, lg = {}, ev = null;
     function other(name) {
       var key = String(name).toUpperCase();
@@ -2630,7 +2631,7 @@ Lantern.formula = (function () {
       out[ref] = n === null ? raw : n; return out[ref];
     }
             function range(a, b, errOk) {
-              var A = parseRef(a), B = parseRef(b), arr = [], rows = [], subs = [];
+              var A = parseRef(a), B = parseRef(b), arr = [], rows = [], subs = [], hidRows = [];
               var r0 = Math.min(A.r, B.r), r1 = Math.min(Math.max(A.r, B.r), lastRow - 1), c0 = Math.min(A.c, B.c), c1 = Math.min(Math.max(A.c, B.c), COLS - 1);
               for (var r = r0; r <= r1; r++) {
                 var row = [];
@@ -2648,9 +2649,11 @@ Lantern.formula = (function () {
                   if (typeof cells[k] === "string" && /^=\s*SUBTOTAL\s*\x28/i.test(cells[k])) subs.push([rows.length, row.length]);
                   row.push(x == null ? null : x);
                 }
+                if (hid && hid[String(r + 1)]) hidRows.push(rows.length);
                 rows.push(row);
               }
               arr.cells = rows; arr.r0 = r0; arr.c0 = c0; arr.subtotals = subs;
+              if (hidRows.length) arr.hidRows = hidRows;
               return arr;
             }
     // fval(ref): a cell as a formula sees it -- (1.24.24) text typed in it
@@ -2688,18 +2691,18 @@ Lantern.formula = (function () {
   // computed values, create a sheet from {A1: raw} cells.
   Lantern.sheetDocs = {
     list: function () { return col.all().map(function (d) { return { id: d.id, title: d.title || "" }; }); },
-    values: function (id) { var d = col.get(id); return d ? computeAll(d.cells || {}, bookOf(d)) : null; },
+    values: function (id) { var d = col.get(id); return d ? computeAll(d.cells || {}, bookOf(d), d.hidden) : null; },
     // (1.24.28) more: an Excel file's {fmt, widths, merges, freeze, rows}
     create: function (title, cells, more) {
       var d = { id: Lantern.uid(), title: title || "", cells: cells || {} };
-      ["fmt", "widths", "merges", "freeze", "rows", "paper", "book", "arrays"].forEach(function (k) { if (more && more[k] != null && !(typeof more[k] === "object" && !Object.keys(more[k]).length)) d[k] = more[k]; });
+      ["fmt", "widths", "merges", "freeze", "rows", "paper", "book", "arrays", "heights", "hidden"].forEach(function (k) { if (more && more[k] != null && !(typeof more[k] === "object" && !Object.keys(more[k]).length)) d[k] = more[k]; });
       return col.put(d).id;
     },
     // (1.24.28) book: a function (name -> cells of that sheet) or {name: cells}; self, this sheet's own name there
-    compute: function (cells, book, self) {
+    compute: function (cells, book, self, hid) {
       if (book && typeof book === "object") { var m = book, f = function (n) { var u = String(n).toUpperCase(); for (var k in m) if (k.toUpperCase() === u) return m[k]; return null; }; f.order = Object.keys(m); book = f; }
       if (book && self != null) book.self = self;
-      return computeAll(cells || {}, book || null);
+      return computeAll(cells || {}, book || null, hid);
     },
     // (1.24.28) the other sheets of a sheet's workbook ({sheet, at, docs} for Save .xlsx), and what a cell's answer
     // is to the grid: "date", "time" (a date and time), "clock" (a time of day or hours), or null
@@ -2848,7 +2851,7 @@ Lantern.formula = (function () {
     return Lantern.fmtNum(v);
   }
   function repaint() {
-    var out = computeAll(doc.cells, bookOf(doc));
+    var out = computeAll(doc.cells, bookOf(doc), doc.hidden);
     var union = {};
     var k;
     for (k in shown) union[k] = 1;
@@ -3028,7 +3031,7 @@ Lantern.formula = (function () {
     function rangeVals(spec) {
       var m = /^([A-Z][0-9]{1,4})(?::([A-Z][0-9]{1,4}))?$/.exec(String(spec || "").toUpperCase().replace(/\s/g, ""));
       if (!m) return null;
-      var out = computeAll(doc.cells);
+      var out = computeAll(doc.cells, bookOf(doc), doc.hidden);
       var A = parseRef(m[1]), B = parseRef(m[2] || m[1]), arr = [];
       for (var r = Math.min(A.r, B.r); r <= Math.max(A.r, B.r); r++)
         for (var c = Math.min(A.c, B.c); c <= Math.max(A.c, B.c); c++)
@@ -36526,13 +36529,15 @@ Lantern.RFB = (function () {
     return Number((f(q) * s).toPrecision(15));
   }
   // SUBTOTAL(how, range...): 1 AVERAGE, 2 COUNT, 3 COUNTA, 4 MAX, 5 MIN, 6 PRODUCT, 7 STDEV, 8 STDEVP, 9 SUM,
-  // 10 VAR, 11 VARP (101 to 111 the same: Sheets has no hidden rows)
+  // 10 VAR, 11 VARP; (1.24.29) 101 to 111 the same with the sheet's hidden rows left out, as in Excel
   F.SUBTOTAL = function (a, ctx) {
     // the cells in its ranges that are themselves SUBTOTALs are left out, as in Excel (a grand total over subtotals)
     var k = Math.floor(N(a[0])), rest = a.slice(1).map(function (x) {
-      if (!isRange(x) || !x.subtotals || !x.subtotals.length) return x;
+      var hid = k > 100 && isRange(x) && x.hidRows && x.hidRows.length && x.cells;
+      if (!isRange(x) || ((!x.subtotals || !x.subtotals.length) && !hid)) return x;
       var cells = x.cells.map(function (r) { return r.slice(); }), y = [];
-      x.subtotals.forEach(function (q) { cells[q[0]][q[1]] = null; });
+      (x.subtotals || []).forEach(function (q) { cells[q[0]][q[1]] = null; });
+      if (hid) x.hidRows.forEach(function (ri) { cells[ri] = cells[ri].map(function () { return null; }); });
       cells.forEach(function (r) { r.forEach(function (c) { if (typeof c === "number") y.push(c); }); });
       y.cells = cells; return y;
     }), v = nums(rest);
@@ -37605,6 +37610,15 @@ Lantern.RFB = (function () {
       var fn = whole(a[0]), how = whole(a[1]), skipErr = [2, 3, 6, 7].indexOf(how) >= 0, rest = a.slice(2), k;
       var names = [null, "AVERAGE", "COUNT", "COUNTA", "MAX", "MIN", "PRODUCT", "STDEV.S", "STDEV.P", "SUM", "VAR.S", "VAR.P", "MEDIAN", "MODE.SNGL", "LARGE", "SMALL", "PERCENTILE.INC", "QUARTILE.INC", "PERCENTILE.EXC", "QUARTILE.EXC"];
       if (!names[fn] || how < 0 || how > 7) throw err("#VALUE!", "AGGREGATE takes 1 to 19, then 0 to 7");
+      // (1.24.29) how 1, 3, 5 and 7 leave the sheet's hidden rows out, as in Excel
+      var skipHid = [1, 3, 5, 7].indexOf(how) >= 0;
+      rest = rest.map(function (r) {
+        if (!skipHid || !isRange(r) || !r.hidRows || !r.hidRows.length || !r.cells) return r;
+        var cells = r.cells.map(function (row, i) { return r.hidRows.indexOf(i) >= 0 ? row.map(function () { return null; }) : row; }), y = [];
+        cells.forEach(function (row) { row.forEach(function (c) { if (typeof c === "number") y.push(c); else if (!y.err && isErr(c)) y.err = c; }); });
+        y.cells = cells; y.r0 = r.r0; y.c0 = r.c0;
+        return y;
+      });
       var ranges = fn >= 14 ? [rest[0]] : rest, v = [];
       ranges.forEach(function (r) {
         if (isRange(r)) { if (r.err && !skipErr) throw err(r.err, r.err); for (var i = 0; i < r.length; i++) v.push(r[i]); }
@@ -38307,7 +38321,10 @@ Lantern.RFB = (function () {
   }
   // move(f, kind, at, n): rows (kind "row") or columns put in at index at (n above 0) or taken out (n below 0):
   // every reference past them moves, $ or not; a reference to a cell taken out is #REF!; a range loses what went
-  function move(f, kind, at, n) {
+  // (1.24.29) band [lo, hi]: only the cells of those columns (kind "row") or rows were shifted, as Insert and Delete
+  // with "Shift cells down" (right, up, left) do; a reference reaching outside the band is left as it was, and a
+  // whole row or column too, as in Excel (LibreOffice's insertCells and removeRange the same)
+  function move(f, kind, at, n, band) {
     if (typeof f !== "string" || f.charAt(0) !== "=") return f;
     var row = kind === "row";
     function one(i) { if (n > 0) return i >= at ? i + n : i; if (i >= at && i < at - n) return null; return i >= at - n ? i + n : i; }
@@ -38322,6 +38339,11 @@ Lantern.RFB = (function () {
     var edge = row ? LASTROW : COLS - 1;
     function fits(sp) { if (!sp) return null; if (sp[0] > edge) return null; return [sp[0], Math.min(sp[1], edge)]; }
     return eachRef(f, function (x, text) {
+      if (band) {
+        if (x.whole) return text;
+        var o0 = row ? x.c1 : x.r1, o1 = x.two ? (row ? x.c2 : x.r2) : o0;
+        if (o0 < band[0] || o1 > band[1]) return text;
+      }
       if (x.whole === "row") {
         if (!row) return text;
         var sr = fits(span(x.r1, x.r2));
@@ -38381,6 +38403,10 @@ Lantern.RFB = (function () {
   var css = document.createElement("style");
   css.appendChild(document.createTextNode([
     ".grid td.rsel{background:#e3f0e6;}.grid td.sel.rsel{background:#f2f7ff;}",
+    // (1.24.29) a press and a drag select cells, never the text in them (a second drag over text the first had
+    // selected dragged the text instead); the row numbers and column letters of the range shaded, as in Excel
+    ".grid{-webkit-user-select:none;-moz-user-select:none;user-select:none;-webkit-touch-callout:none;}",
+    ".grid th.hon{background:#d3e6d8;}.grid th.hsel{background:var(--accent);color:#fff;}",
     ".lp-editbar{display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:4px 12px;border-bottom:1px solid var(--line);}",
     ".lp-editbar button,.lp-editbar select{padding:4px 8px;min-height:32px;font-size:13px;}",
     ".lp-editbar .on{background:var(--accent);color:#fff;}.lp-editbar .gap{width:6px;}",
@@ -38413,30 +38439,47 @@ Lantern.RFB = (function () {
       return R;
     }
     function isRange() { return anchor !== focus; }
-    var painted = [];
+    var painted = [], heads = [];
     function paintRange() {
       painted.forEach(function (k) { if (tds()[k]) tds()[k].classList.remove("rsel"); });
       painted = [];
+      heads.forEach(function (th) { th.classList.remove("hon"); th.classList.remove("hsel"); });
+      heads = [];
+      var R = rect(), r, c;
       if (isRange()) {
-        var R = rect();
-        for (var r = R.r0; r <= R.r1; r++) for (var c = R.c0; c <= R.c1; c++) { var k = refOf(c, r); if (tds()[k]) { tds()[k].classList.add("rsel"); painted.push(k); } }
+        for (r = R.r0; r <= R.r1; r++) for (c = R.c0; c <= R.c1; c++) { var k = refOf(c, r); if (tds()[k]) { tds()[k].classList.add("rsel"); painted.push(k); } }
         if (nameEl) nameEl.textContent = refOf(R.c0, R.r0) + ":" + refOf(R.c1, R.r1);
       }
+      // (1.24.29) the row numbers and column letters of what is selected are shaded; a whole row's (column's) number
+      // (letter) in full, as Excel shows a row clicked by its number
+      var hr = api.table.tHead && api.table.tHead.rows[0], rowsAll = R.c0 === 0 && R.c1 === COLS - 1, colsAll = R.r0 === 0 && R.r1 >= api.rows() - 1;
+      for (r = R.r0; r <= R.r1; r++) { var td = tds()[refOf(0, r)], th = td && td.parentNode && td.parentNode.firstChild; if (th && th.tagName === "TH") { th.classList.add(rowsAll ? "hsel" : "hon"); heads.push(th); } }
+      for (c = R.c0; c <= R.c1; c++) { var ch = hr && hr.cells[c + 1]; if (ch) { ch.classList.add(colsAll ? "hsel" : "hon"); heads.push(ch); } }
     }
     // the active cell (the one typing goes into, Excel's white cell) is where the range began; its far end moves
     api.onSelect(function (ref) { if (!extending) { anchor = ref; focus = ref; active = ref; if (rangeMode) setMode(false, true); } paintRange(); });
     api.onPaint(function () { paintRange(); });
-    function extendTo(ref) {
+    function extendTo(ref, still) {
       if (!tds()[ref]) return;
       focus = ref;
       // the moving end is the far corner of the range as merged cells widen it, so the next arrow goes on past them
       var R = rect(), a = parse(anchor), fr = refOf(a.c <= R.c0 ? R.c1 : R.c0, a.r <= R.r0 ? R.r1 : R.r0);
       if (tds()[fr]) focus = fr;
       paintRange();
-      if (tds()[ref].scrollIntoView) tds()[ref].scrollIntoView({ block: "nearest", inline: "nearest" });
+      if (!still && tds()[ref].scrollIntoView) tds()[ref].scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+    // lines(kind, a, b): whole rows (kind "row") or columns a to b selected, the active cell in a's first cell; "all"
+    // the whole sheet. Where the sheet was scrolled to stays (Excel does not jump to A1 for a column chosen)
+    function lines(kind, a, b, keepActive) {
+      var gw = api.gridwrap, st = gw.scrollTop, sl = gw.scrollLeft, last = api.rows() - 1;
+      if (!keepActive) { if (kind === "col") api.select(refOf(a, 0)); else if (kind === "row") api.select(refOf(0, a)); else api.select("A1"); }
+      anchor = kind === "col" ? refOf(a, 0) : kind === "row" ? refOf(0, a) : "A1";
+      focus = kind === "col" ? refOf(b, last) : kind === "row" ? refOf(COLS - 1, b) : refOf(COLS - 1, last);
+      paintRange();
+      gw.scrollTop = st; gw.scrollLeft = sl;
     }
     // ---- undo and redo: the cells (and their looks, and the rows) as they were before each change -----------
-    function state() { return JSON.stringify({ cells: doc.cells, fmt: doc.fmt || null, rows: doc.rows || null, freeze: doc.freeze || null, merges: doc.merges || null, widths: doc.widths || null }); }
+    function state() { return JSON.stringify({ cells: doc.cells, fmt: doc.fmt || null, rows: doc.rows || null, freeze: doc.freeze || null, merges: doc.merges || null, widths: doc.widths || null, heights: doc.heights || null, hidden: doc.hidden || null }); }
     // any change to the sheet but the paste of a cut lets the cut be, as in Excel (the cells it named may have moved)
     function snap() { var s = state(); if (undo[undo.length - 1] !== s) undo.push(s); if (undo.length > 100) undo.shift(); st.redo = []; if (!moving) endCut(); }
     function endCut() { if (clip && clip.cut) { clip = { text: clip.text, dead: true }; say(""); } }
@@ -38448,6 +38491,8 @@ Lantern.RFB = (function () {
       if (o.freeze) doc.freeze = o.freeze; else delete doc.freeze;
       if (o.merges) doc.merges = o.merges; else delete doc.merges;
       if (o.widths) doc.widths = o.widths; else delete doc.widths;
+      if (o.heights) doc.heights = o.heights; else delete doc.heights;
+      if (o.hidden) doc.hidden = o.hidden; else delete doc.hidden;
       api.put();
       if ((o.rows || 0) > api.rows()) api.setRows(o.rows);
       api.refresh(); keepRange();
@@ -38597,30 +38642,63 @@ Lantern.RFB = (function () {
     function say(t) { if (note) { note.textContent = t; note.style.display = t ? "" : "none"; } return false; }
     // ---- mouse: drag over cells, Shift+click; the click after a drag does not reselect ------------------------
     // (the listeners are on the app's own element, bound once; each sheet opened puts its own handlers there)
-    var down = null, dragged = false, H = {};
+    // (1.24.29) Adam: "clicking and dragging across cells should select a range like excel does". The press is the
+    // grid's own (no text selected, nothing dragged away); a row number or column letter pressed selects the row
+    // (column), and a drag across them more; while a formula is written, a drag over cells puts in their range
+    var down = null, dragged = false, H = {}, hdrag = null, pt = null;
     function cellOf(e) { var t = e.target; return t && t.getAttribute && api.table.contains(t) ? t.getAttribute("data-ref") : null; }
+    // headOf(e): the row number, column letter or corner pressed -- {kind: "row" | "col" | "all", at}
+    function headOf(e) {
+      var t = e.target;
+      if (!t || t.tagName !== "TH" || !api.table.contains(t)) return null;
+      var tx = t.textContent;
+      return /^[A-Z]$/.test(tx) ? { kind: "col", at: tx.charCodeAt(0) - 65 } : /^[0-9]+$/.test(tx) ? { kind: "row", at: +tx - 1 } : { kind: "all", at: 0 };
+    }
     H.mousedown = function (e) {
-      var ref = cellOf(e);
-      if (!ref || api.typing()) return;
-      if (e.shiftKey) { e.preventDefault(); extendTo(ref); dragged = true; return; }
+      var ref = cellOf(e), hd = !ref && headOf(e);
+      if (e.button) return;   // the right button: the menu (SHEET_MENU) decides
+      // (these run before SHEET's own: a cell pressed while a formula is written goes into it there, after this)
+      if (ref && api.typing()) { pt = { from: ref, wait: true }; return; }
+      if ((!ref && !hd) || api.typing()) return;
+      e.preventDefault();
+      if (hd) {
+        var a0 = parse(anchor);
+        if (e.shiftKey && hd.kind !== "all") { hdrag = { kind: hd.kind, at: hd.kind === "row" ? a0.r : a0.c }; lines(hd.kind, hdrag.at, hd.at, true); }
+        else { hdrag = hd; lines(hd.kind, hd.at, hd.at); }
+        dragged = true; api.gridwrap.focus();
+        return;
+      }
+      if (e.shiftKey) { extendTo(ref); dragged = true; api.gridwrap.focus(); return; }
       down = ref; dragged = false;
     };
     H.mouseover = function (e) {
       var ref = cellOf(e);
-      if (!down || !ref || !e.buttons || (!dragged && ref === down)) return;
+      if (!e.buttons) { down = null; hdrag = null; pt = null; return; }
+      if (pt && pt.wait) {
+        // SHEET put the cell's name into the formula where the cursor was; a drag from there makes it a range
+        var fb0 = api.bar && api.bar(), at = fb0 ? (fb0.selectionStart == null ? fb0.value.length : fb0.selectionStart) - pt.from.length : -1;
+        pt = at >= 0 && fb0.value.substr(at, pt.from.length) === pt.from ? { from: pt.from, at: at, len: pt.from.length } : null;
+      }
+      if (pt && ref) {
+        var fb = api.bar(), p = parse(pt.from), q = parse(ref);
+        var t = ref === pt.from ? ref : refOf(Math.min(p.c, q.c), Math.min(p.r, q.r)) + ":" + refOf(Math.max(p.c, q.c), Math.max(p.r, q.r));
+        fb.value = fb.value.slice(0, pt.at) + t + fb.value.slice(pt.at + pt.len); pt.len = t.length;
+        try { fb.setSelectionRange(pt.at + t.length, pt.at + t.length); } catch (e2) { /* old browser */ }
+        return;
+      }
+      if (hdrag && hdrag.kind !== "all") {
+        var hd = headOf(e), w = hd && hd.kind === hdrag.kind ? hd.at : ref ? (hdrag.kind === "row" ? parse(ref).r : parse(ref).c) : null;
+        if (w != null) lines(hdrag.kind, hdrag.at, w, true);
+        return;
+      }
+      if (!down || !ref || (!dragged && ref === down)) return;
       if (!dragged) api.select(down);
       dragged = true; extendTo(ref);
     };
-    H.mouseup = function () { down = null; };
+    H.mouseup = function () { down = null; hdrag = null; pt = null; };
     H.click = function (e) {
-      var ref = cellOf(e), th = e.target;
-      if (!ref && th && th.tagName === "TH" && api.table.contains(th) && !api.typing()) {
-        var tx = th.textContent;
-        if (/^[A-Z]$/.test(tx)) { api.select(tx + "1"); extendTo(tx + api.rows()); }
-        else if (/^[0-9]+$/.test(tx)) { api.select("A" + tx); extendTo(colName(COLS - 1) + tx); }
-        api.gridwrap.focus();
-        return;
-      }
+      var ref = cellOf(e);
+      if (!ref && headOf(e)) { e.stopPropagation(); dragged = false; return; }
       if (!ref) return;
       if (dragged) { dragged = false; e.stopPropagation(); api.gridwrap.focus(); return; }
       if (rangeMode && !api.typing()) { e.stopPropagation(); extendTo(ref); api.gridwrap.focus(); }
@@ -38661,6 +38739,8 @@ Lantern.RFB = (function () {
         else { anchor = "A1"; focus = refOf(COLS - 1, api.rows() - 1); }
         keepRange();   // the active cell stays where it is, as in Excel
       }
+      else if (k === " " && (e.shiftKey || ctrl) && !(e.shiftKey && ctrl)) { var Rs = rect(); if (e.shiftKey) lines("row", Rs.r0, Rs.r1, true); else lines("col", Rs.c0, Rs.c1, true); }
+      else if (k === " " && e.shiftKey && ctrl) lines("all", 0, 0, true);
       else if ((k === "Delete" || k === "Backspace") && isRange()) clearSel();
       else if (k === "Escape" && (rangeMode || (clip && clip.cut))) { if (rangeMode) setMode(false); endCut(); }
       else if ((k === "Enter" || k === "Tab") && isRange() && !ctrl && !e.altKey) step(k, e.shiftKey);
@@ -38699,15 +38779,18 @@ Lantern.RFB = (function () {
     // every other button ends Select range first, so a tap after Copy chooses where to paste, not a bigger range
     function btn(text, title, fn) { return L.el("button", { type: "button", text: text, title: title, "aria-label": title, onclick: function () { if (rangeMode && text !== "Select range") setMode(false, true); fn(); if (api.gridwrap.focus) api.gridwrap.focus(); } }); }
     var sys = navigator.clipboard;
+    // the Copy, Cut and Paste buttons (and the menu's): the system's clipboard too where the browser lets a page use it
+    function toClip(cut) { var t = copy(cut); try { if (sys && sys.writeText) sys.writeText(t); } catch (e2) { /* the page's own copy still pastes here */ } }
+    function fromClip() {
+      var own = function () { if (clip) paste(null); else say("Copy something first, or press Ctrl+V to paste from another program."); };
+      try { if (sys && sys.readText) sys.readText().then(function (t) { if (!paste(t)) own(); }, own); else own(); } catch (e2) { own(); }
+    }
     var row = L.el("div", { "class": "lp-editbar", role: "toolbar", "aria-label": "Editing" }, [
       modeBtn = btn("Select range", "Select a range: tap the first cell, then this, then the last", function () { setMode(!rangeMode); }),
       btn("\u21b6", "Undo (Ctrl+Z)", doUndo), btn("\u21b7", "Redo (Ctrl+Y)", doRedo), L.el("span", { "class": "gap" }),
-      btn("Copy", "Copy (Ctrl+C)", function () { var t = copy(false); try { if (sys && sys.writeText) sys.writeText(t); } catch (e2) { /* the page's own copy still pastes here */ } }),
-      btn("Cut", "Cut (Ctrl+X)", function () { var t = copy(true); try { if (sys && sys.writeText) sys.writeText(t); } catch (e2) { /* as above */ } }),
-      btn("Paste", "Paste (Ctrl+V)", function () {
-        var own = function () { if (clip) paste(null); else say("Copy something first, or press Ctrl+V to paste from another program."); };
-        try { if (sys && sys.readText) sys.readText().then(function (t) { if (!paste(t)) own(); }, own); else own(); } catch (e2) { own(); }
-      }),
+      btn("Copy", "Copy (Ctrl+C)", function () { toClip(false); }),
+      btn("Cut", "Cut (Ctrl+X)", function () { toClip(true); }),
+      btn("Paste", "Paste (Ctrl+V)", fromClip),
       L.el("span", { "class": "gap" }),
       btn("Fill \u2193", "Fill down (Ctrl+D): the top row copied down the range", function () { fill(true); }),
       btn("Fill \u2192", "Fill right (Ctrl+R): the left column copied across the range", function () { fill(false); })
@@ -38737,6 +38820,9 @@ Lantern.RFB = (function () {
       row.addEventListener(t, function (e) { if (rangeMode && modeBtn && e.target !== row && !modeBtn.contains(e.target)) setMode(false, true); }, true);
     });
     S.snap = snap; S.done = done; S.say = say; S.bar = row; S.undo = doUndo; S.redo = doRedo; S.copy = copy; S.paste = paste; S.fill = fill;
+    // (1.24.29, for SHEET_MENU) the clipboard as the buttons use it; Clear Contents; whole rows or columns selected
+    S.toClip = toClip; S.fromClip = fromClip; S.clear = clearSel; S.lines = lines;
+    S.within = function (ref) { var p = parse(ref), R = rect(); return !!p && p.c >= R.c0 && p.c <= R.c1 && p.r >= R.r0 && p.r <= R.r1; };
   }
   (L.sheetEditHooks = L.sheetEditHooks || []).push(mount);
   L.sheetEdit = { shift: shift, move: move, parseTSV: parseTSV, toTSV: toTSV, eachRef: eachRef };
@@ -38913,6 +38999,22 @@ Lantern.RFB = (function () {
       });
       S.done();
     }
+    // (1.24.29, SHEET_MENU's Format Cells) several looks at once, one step to undo; also(), more in the same step
+    S.looks = function (o, also) {
+      api.keep(); S.snap();
+      doc.fmt = doc.fmt || {};
+      eachSel(function (k) {
+        var f = doc.fmt[k] || {};
+        for (var key in o) { if (o[key] == null || o[key] === "" || o[key] === false) delete f[key]; else f[key] = o[key]; }
+        if ("nf" in o) delete f.nfT;
+        // General takes away a look typed with the number too, as the format list does
+        if (o.nf === "") { var raw = doc.cells[k], n = typedCode(raw) && L.formula && L.formula.textNum ? L.formula.textNum(raw, true) : null; if (typeof n === "number") doc.cells[k] = String(+n.toPrecision(15)); }
+        if (Object.keys(f).length) doc.fmt[k] = f; else delete doc.fmt[k];
+      });
+      if (also) also();
+      S.done();
+    };
+    S.lookNow = function () { var f = fmtOf(doc, firstKey()) || {}; return { nf: firstCode(), b: !!f.b, i: !!f.i, al: f.al || "" }; };
     // the active cell (Excel's white cell in the range) decides: bold on unless it is bold already; its format shows
     function firstKey() { if (S.active) return S.active(); var R = S.range(); return String.fromCharCode(65 + R.c0) + (R.r0 + 1); }
     function toggle(key) { var f = fmtOf(doc, firstKey()); set(key, !(f && f[key]) ? 1 : null); }
@@ -38987,25 +39089,28 @@ Lantern.RFB = (function () {
   function colName(c) { return String.fromCharCode(65 + c); }
   function refOf(c, r) { return colName(c) + (r + 1); }
   function parse(ref) { var m = /^([A-Z])([0-9]+)$/.exec(ref); return m ? { c: m[1].charCodeAt(0) - 65, r: +m[2] - 1 } : null; }
-  // insert(doc, kind, at, n): n rows (kind "row") or columns put in before index at (n below 0: taken out from at)
-  function insert(doc, kind, at, n) {
+  // insert(doc, kind, at, n, band): n rows (kind "row") or columns put in before index at (n below 0: taken out from
+  // at); (1.24.29) with band [lo, hi], only the cells of columns (rows) lo to hi shifted down (right), or up (left)
+  // over the cells taken out -- Excel's Insert and Delete with "Shift cells ..."
+  function insert(doc, kind, at, n, band) {
     var S = L.sheetEdit, row = kind === "row", cells = {}, fmt = {}, k, p, keys = {};
+    function inBand(q) { var o = row ? q.c : q.r; return !band || (o >= band[0] && o <= band[1]); }
     for (k in doc.cells) keys[k] = 1;
     for (k in doc.fmt || {}) keys[k] = 1;   // a cell with a look and nothing typed moves with its row too
     for (k in keys) {
       p = parse(k); if (!p) continue;
-      var i = row ? p.r : p.c, j;
-      if (n < 0 && i >= at && i < at - n) continue;
-      j = i >= at ? i + n : i;
+      var i = row ? p.r : p.c, j, mv = inBand(p);
+      if (mv && n < 0 && i >= at && i < at - n) continue;
+      j = mv && i >= at ? i + n : i;
       if (j < 0 || (!row && j >= COLS)) continue;
       var nk = row ? refOf(p.c, j) : refOf(j, p.r);
-      if (k in doc.cells) cells[nk] = S.move(doc.cells[k], kind, at, n);
+      if (k in doc.cells) cells[nk] = S.move(doc.cells[k], kind, at, n, band);
       if (doc.fmt && doc.fmt[k]) fmt[nk] = doc.fmt[k];
     }
     // rows (columns) put in take the looks of the row above (the column to the left), as Excel's do
     if (n > 0 && at > 0 && doc.fmt) {
       for (k in doc.fmt) {
-        p = parse(k); if (!p || (row ? p.r : p.c) !== at - 1) continue;
+        p = parse(k); if (!p || (row ? p.r : p.c) !== at - 1 || !inBand(p)) continue;
         for (var t = 0; t < n; t++) fmt[row ? refOf(p.c, at + t) : refOf(at + t, p.r)] = JSON.parse(JSON.stringify(doc.fmt[k]));
       }
     }
@@ -39017,6 +39122,8 @@ Lantern.RFB = (function () {
       doc.merges.forEach(function (m) {
         var a = m.split(":"), p0 = parse(a[0]), p1 = parse(a[1] || a[0]);
         if (!p0 || !p1) return;
+        // cells shifted: a merged cell outside the band stays (one across its edge is refused before, as Excel does)
+        if (band && !(inBand(p0) && inBand(p1))) { ms.push(m); return; }
         var lo = row ? p0.r : p0.c, hi = row ? p1.r : p1.c, nl, nh;
         if (n > 0) { nl = lo >= at ? lo + n : lo; nh = hi >= at ? hi + n : hi; }
         else {
@@ -39031,6 +39138,31 @@ Lantern.RFB = (function () {
         ms.push(refOf(c0, r0) + ":" + refOf(c1, r1));
       });
       if (ms.length) doc.merges = ms; else delete doc.merges;
+    }
+    if (band) return;
+    // (1.24.29) a row's height and a hidden row (column) move with it; a row put in takes the height above, as in Excel
+    if (row && doc.heights) {
+      var hs = {};
+      for (k in doc.heights) {
+        var ri = +k - 1, rj;
+        if (!(ri >= 0)) continue;
+        if (n < 0 && ri >= at && ri < at - n) continue;
+        rj = ri >= at ? ri + n : ri;
+        if (rj >= 0) hs[String(rj + 1)] = doc.heights[k];
+      }
+      if (n > 0 && at > 0 && doc.heights[String(at)]) for (var t3 = 0; t3 < n; t3++) hs[String(at + t3 + 1)] = doc.heights[String(at)];
+      doc.heights = hs;
+    }
+    if (doc.hidden) {
+      var hid = {};
+      for (k in doc.hidden) {
+        var isRow = /^[0-9]+$/.test(k), hi0 = isRow ? +k - 1 : k.charCodeAt(0) - 65, hj;
+        if (isRow !== row) { hid[k] = 1; continue; }
+        if (n < 0 && hi0 >= at && hi0 < at - n) continue;
+        hj = hi0 >= at ? hi0 + n : hi0;
+        if (hj >= 0 && (row || hj < COLS)) hid[row ? String(hj + 1) : colName(hj)] = 1;
+      }
+      if (Object.keys(hid).length) doc.hidden = hid; else delete doc.hidden;
     }
     // a column's width moves with it; one put in takes the width of the column to its left, as in Excel
     if (!row && doc.widths) {
@@ -39197,6 +39329,10 @@ Lantern.RFB = (function () {
 // (["C1:E1"]). A merged cell shows across the cells it covers, and they are
 // passed over: an arrow into one goes to the merged cell, and on from it
 // past the cells it covers, as in Excel.
+// (1.24.29) A row's height (doc.heights {"5": 30}, Excel's points; drawn at
+// two pixels a point, as the grid's rows are 30 pixels for Excel's 15) and
+// hidden rows and columns (doc.hidden {"5": 1, "C": 1}): a double line by
+// the number (letter) after them, and an arrow passes over them.
 (function () {
   var L = window.Lantern;
   if (!L || !L.el) return;
@@ -39207,6 +39343,15 @@ Lantern.RFB = (function () {
   function box(m) {
     var a = String(m).split(":"), p = parse(a[0]), q = parse(a[1] || a[0]);
     return p && q ? { c0: Math.min(p.c, q.c), r0: Math.min(p.r, q.r), c1: Math.max(p.c, q.c), r1: Math.max(p.r, q.r), top: refOf(Math.min(p.c, q.c), Math.min(p.r, q.r)) } : null;
+  }
+  // walk(i, step, n, hidden): from i, the first index not hidden going by step (then the other way); null if none
+  function walk(i, step, n, hidden) {
+    var j = i;
+    while (j >= 0 && j < n && hidden(j)) j += step;
+    if (j >= 0 && j < n) return j;
+    j = i;
+    while (j >= 0 && j < n && hidden(j)) j -= step;
+    return j >= 0 && j < n ? j : null;
   }
   function mergeAt(doc, ref) {
     var p = parse(ref), list = doc && doc.merges || [];
@@ -39236,6 +39381,15 @@ Lantern.RFB = (function () {
         if (!p || !(w > 0)) continue;
         css += ".gridwrap>.grid tr>:nth-child(" + (p.c + 2) + "){width:" + px(w) + "px;min-width:" + px(w) + "px;max-width:" + px(w) + "px;}";
       }
+      var G = ".gridwrap>.grid";
+      for (k in doc.heights || {}) {
+        var h = +doc.heights[k];
+        if (/^[0-9]+$/.test(k) && h > 0) css += G + ">tbody>tr:nth-child(" + k + ")>*{height:" + Math.round(h * 2) + "px;" + (h < 12 ? "line-height:1;padding-top:0;padding-bottom:0;font-size:" + Math.max(6, Math.round(h * 1.4)) + "px;" : "") + "}";
+      }
+      for (k in doc.hidden || {}) {
+        if (/^[0-9]+$/.test(k)) css += G + ">tbody>tr:nth-child(" + k + "){display:none;}" + G + ">tbody>tr:nth-child(" + (+k + 1) + ")>th{border-top:3px double #6b7280;}";
+        else if (/^[A-Z]$/.test(k)) { var nc = k.charCodeAt(0) - 63; css += G + " tr>:nth-child(" + nc + "){display:none;}" + G + ">thead th:nth-child(" + (nc + 1) + "){border-left:3px double #6b7280;}"; }
+      }
       if (style.textContent !== css) style.textContent = css;
       spans.forEach(function (td) { td.colSpan = 1; td.rowSpan = 1; td.style.display = ""; td.style.maxWidth = ""; td.style.minWidth = ""; td.style.width = ""; td.classList.remove("lp-merged"); });
       spans = [];
@@ -39258,6 +39412,17 @@ Lantern.RFB = (function () {
     // (the second Excel review: a click inside the merged cell it is on stays on it, as in Excel)
     if (api.onSelect && api.select) api.onSelect(function (ref) {
       if (busy) { last = ref; return; }
+      // (1.24.29) a hidden row or column is passed over the way the arrow went (down or right when that cannot be told)
+      var hp = parse(ref), hd = doc.hidden;
+      if (hp && hd && (hd[String(hp.r + 1)] || hd[String.fromCharCode(65 + hp.c)])) {
+        var q0 = last && parse(last), sc = q0 && hp.c < q0.c ? -1 : 1, sr = q0 && hp.r < q0.r ? -1 : 1, rows = api.rows ? api.rows() : 100;
+        var c = walk(hp.c, sc, 26, function (i) { return hd[String.fromCharCode(65 + i)]; }), r = walk(hp.r, sr, rows, function (i) { return hd[String(i + 1)]; });
+        if (c == null || r == null) { last = ref; return; }   // everything that way hidden: stay
+        busy = true;
+        try { api.select(refOf(c, r)); } finally { busy = false; }
+        last = refOf(c, r);
+        return;
+      }
       var b = mergeAt(doc, ref);
       if (b && ref !== b.top) {
         var p = parse(ref), q = last && parse(last), to = b.top;
@@ -39278,6 +39443,331 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: SHEET_LAYOUT - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SHEET_MENU - START
+// Depends: SHEET (Lantern.sheetEditHooks: table, gridwrap, keep, rows,
+//          setRows, tds), SHEET_EDIT (Lantern.sheetEdit: range, within,
+//          select, lines, active, toClip, fromClip, clear, snap, done, say,
+//          keyHooks), SHEET_ROWS (sheetEdit.rowAct, Lantern.sheetRows.insert),
+//          SHEET_FORMAT (sheetEdit.looks, lookNow; Lantern.sheetFormat.codes)
+//          -- all feature-detected
+// Exports: Lantern.sheetMenu = {open(what, ref or index), items(), pick(text),
+//          close()} -- the open sheet's menu, for tests
+// ===========================================================================
+// (1.24.29) Adam: "right clicking should give a dropdown with the same
+// options excel does (example left clicking a numbered row highlights the
+// row right clicking should then give options to insert a row with same
+// excel like behavior)". A right-click on a cell, a row number or a column
+// letter (a long press on a phone; the menu key or Shift+F10 in the grid)
+// opens Excel's menu for it. A cell outside the selection, or a row or
+// column not selected whole, is selected first, as in Excel. Cell: Cut,
+// Copy, Paste, Insert... and Delete... (shift the cells down or right, up
+// or left, or whole rows or columns -- Excel's dialog), Clear Contents,
+// Sort, Format Cells... Row number or column letter: Insert and Delete (as
+// many as are selected, every formula following), Clear Contents, Format
+// Cells..., Row Height... or Column Width..., Hide, Unhide. Ctrl+1, Ctrl++
+// and Ctrl+- as in Excel.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.el) return;
+  var COLS = 26;
+  function colName(c) { return String.fromCharCode(65 + c); }
+  function refOf(c, r) { return colName(c) + (r + 1); }
+  function parse(ref) { var m = /^([A-Z])([0-9]+)$/.exec(ref || ""); return m ? { c: m[1].charCodeAt(0) - 65, r: +m[2] - 1 } : null; }
+  function box(m) { var a = String(m).split(":"), p = parse(a[0]), q = parse(a[1] || a[0]); return p && q ? { c0: Math.min(p.c, q.c), r0: Math.min(p.r, q.r), c1: Math.max(p.c, q.c), r1: Math.max(p.r, q.r) } : null; }
+  var css = document.createElement("style");
+  css.appendChild(document.createTextNode([
+    ".lp-cmenu{position:fixed;z-index:1000;min-width:220px;background:#fff;border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,.18);padding:4px 0;font-size:14px;}",
+    ".lp-cmenu button{display:flex;justify-content:space-between;gap:24px;width:100%;border:0;border-radius:0;background:none;padding:6px 14px;text-align:left;font:inherit;color:inherit;cursor:pointer;min-height:34px;}",
+    ".lp-cmenu button:hover,.lp-cmenu button:focus{background:#e3f0e6;outline:none;}.lp-cmenu button[disabled]{color:#9ca3af;cursor:default;background:none;}",
+    ".lp-cmenu .k{color:#6b7280;font-size:12px;}.lp-cmenu hr{border:0;border-top:1px solid var(--line);margin:4px 0;}",
+    ".lp-cdlg{position:fixed;top:0;left:0;right:0;bottom:0;z-index:1001;background:rgba(0,0,0,.25);display:flex;align-items:center;justify-content:center;}",
+    ".lp-cdlg form{background:#fff;border-radius:8px;padding:16px 18px;min-width:260px;max-width:92vw;box-shadow:0 10px 30px rgba(0,0,0,.25);display:grid;gap:10px;font-size:14px;}",
+    ".lp-cdlg h3{font-size:16px;}.lp-cdlg label{display:flex;align-items:center;gap:8px;}.lp-cdlg .bt{display:flex;justify-content:flex-end;gap:8px;margin-top:4px;}",
+    ".lp-cdlg button{min-height:34px;padding:4px 16px;}.lp-cdlg .hint{color:#6b7280;font-size:12.5px;}"
+  ].join("")));
+  (document.head || document.documentElement).appendChild(css);
+  // ---- the menu: a list of buttons by the pointer; arrows, Enter and Escape as in a menu ----------------------
+  var shown = null;   // {el, back}
+  function close() {
+    if (!shown) return;
+    var m = shown; shown = null;
+    if (m.el.parentNode) m.el.parentNode.removeChild(m.el);
+    if (m.back && m.back.focus && document.documentElement.contains(m.back)) m.back.focus();
+  }
+  function show(items, x, y, back) {
+    close();
+    var el = L.el("div", { "class": "lp-cmenu", role: "menu" });
+    items.forEach(function (it) {
+      if (!it) { el.appendChild(L.el("hr", {})); return; }
+      var b = L.el("button", { type: "button", role: "menuitem" }, [L.el("span", { text: it.t }), it.k ? L.el("span", { "class": "k", text: it.k }) : null]);
+      if (it.off) b.disabled = true;
+      b.addEventListener("click", function () { if (it.off) return; close(); it.fn(); });
+      el.appendChild(b);
+    });
+    el.addEventListener("keydown", function (e) {
+      var bs = [].slice.call(el.querySelectorAll("button:not([disabled])")), i = bs.indexOf(document.activeElement);
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") { i = e.key === "ArrowDown" ? (i + 1) % bs.length : (i <= 0 ? bs.length : i) - 1; if (bs[i]) bs[i].focus(); }
+      else if (e.key === "Home" || e.key === "End") { if (bs.length) bs[e.key === "Home" ? 0 : bs.length - 1].focus(); }
+      else if (e.key === "Escape" || e.key === "Tab") close();
+      else return;
+      e.preventDefault(); e.stopPropagation();
+    });
+    document.body.appendChild(el);
+    shown = { el: el, back: back, at: Date.now() };
+    var w = el.offsetWidth || 220, h = el.offsetHeight || 300, W = window.innerWidth || 800, H = window.innerHeight || 600;
+    el.style.left = Math.max(4, Math.min(x, W - w - 4)) + "px";
+    el.style.top = Math.max(4, y + h > H - 4 ? y - h : y) + "px";
+    var first = el.querySelector("button:not([disabled])");
+    if (first && first.focus) first.focus();
+  }
+  ["mousedown", "touchstart"].forEach(function (t) { document.addEventListener(t, function (e) { if (shown && !shown.el.contains(e.target)) close(); }, true); });
+  window.addEventListener("resize", function () { close(); });
+  // (a scroll the right-click itself made, bringing the cell into view, comes just after the menu: not that one)
+  document.addEventListener("scroll", function (e) { if (shown && Date.now() - shown.at > 400 && !shown.el.contains(e.target)) close(); }, true);
+  // ---- a small dialog: OK (Enter) and Cancel (Escape) -----------------------------------------------------------
+  function dialog(title, body, ok, first, back) {
+    close();
+    var wrap = L.el("div", { "class": "lp-cdlg" }), okB = L.el("button", { type: "submit", text: "OK" }), noB = L.el("button", { type: "button", text: "Cancel" });
+    var form = L.el("form", { role: "dialog", "aria-modal": "true", "aria-label": title }, [L.el("h3", { text: title })].concat(body).concat([L.el("div", { "class": "bt" }, [okB, noB])]));
+    function shut() { if (wrap.parentNode) wrap.parentNode.removeChild(wrap); if (back && back.focus) back.focus(); }
+    form.addEventListener("submit", function (e) { e.preventDefault(); if (ok() !== false) shut(); });
+    noB.addEventListener("click", shut);
+    wrap.addEventListener("keydown", function (e) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); shut(); } });
+    wrap.addEventListener("mousedown", function (e) { if (e.target === wrap) shut(); });
+    wrap.appendChild(form);
+    document.body.appendChild(wrap);
+    if (first && first.focus) first.focus(); else okB.focus();
+    return wrap;
+  }
+  function radio(name, value, text, on) { var i = L.el("input", { type: "radio", name: name, value: value }); i.checked = !!on; return L.el("label", {}, [i, L.el("span", { text: text })]); }
+  function tick(text, on, off) { var i = L.el("input", { type: "checkbox" }); i.checked = !!on; if (off) i.disabled = true; return { box: i, el: L.el("label", {}, [i, L.el("span", { text: text })]) }; }
+  var cur = null;   // the open sheet's: {open, items, pick}
+  function mount(api) {
+    var S = L.sheetEdit;
+    if (!api || !api.table || !api.gridwrap || !S || !S.range || !S.lines || !S.within || !S.snap || !S.done) return;
+    var doc = api.doc, host = api.gridwrap.parentNode, last = [];
+    function R() { return S.range(); }
+    function wholeRows() { var r = R(); return r.c0 === 0 && r.c1 === COLS - 1; }
+    function wholeCols() { var r = R(); return r.r0 === 0 && r.r1 >= api.rows() - 1; }
+    function act(what) { if (S.rowAct) S.rowAct(what); }
+    // what(e): the cell, row number, column letter or corner under the pointer
+    function what(t) {
+      if (!t || !api.table.contains(t)) return null;
+      var ref = t.getAttribute && t.getAttribute("data-ref");
+      if (ref) return { kind: "cell", ref: ref };
+      if (t.tagName !== "TH") return null;
+      var tx = t.textContent;
+      return /^[A-Z]$/.test(tx) ? { kind: "col", at: tx.charCodeAt(0) - 65 } : /^[0-9]+$/.test(tx) ? { kind: "row", at: +tx - 1 } : { kind: "all" };
+    }
+    // ---- Insert and Delete ------------------------------------------------------------------------------------------
+    // shiftCells(dir): the selected cells put in ("down", "right") or taken out ("up", "left"), the cells beside them
+    // moved and every formula following them, as Excel's "Shift cells ..."
+    function shiftCells(dir) {
+      var Rs = R(), down = dir === "down" || dir === "up", ins = dir === "down" || dir === "right", I = L.sheetRows && L.sheetRows.insert;
+      if (!I) return;
+      var kind = down ? "row" : "col", at = down ? Rs.r0 : Rs.c0, n = down ? Rs.r1 - Rs.r0 + 1 : Rs.c1 - Rs.c0 + 1, band = down ? [Rs.c0, Rs.c1] : [Rs.r0, Rs.r1];
+      // a merged cell across the edge of what moves: Excel will not move part of one
+      var bad = (doc.merges || []).filter(function (m) {
+        var b = box(m); if (!b) return false;
+        var lo = down ? b.c0 : b.r0, hi = down ? b.c1 : b.r1, far = down ? b.r1 : b.c1;
+        return far >= at && lo <= band[1] && hi >= band[0] && (lo < band[0] || hi > band[1]);
+      });
+      if (bad.length) return S.say("The merged cell " + bad[0] + " lies across the edge of the cells that would move: Excel will not move part of a merged cell either. Unmerge it (Format Cells), or " + (ins ? "insert" : "delete") + " whole " + (down ? "rows" : "columns") + ".");
+      api.keep();
+      if (ins) {
+        var used = -1;
+        for (var k in doc.cells) { var p = parse(k), o = p && (down ? p.c : p.r); if (p && o >= band[0] && o <= band[1] && doc.cells[k] !== "") used = Math.max(used, down ? p.r : p.c); }
+        if (down && used + n >= (api.MAXROWS || 2000)) return S.say("The sheet is full below these cells: none can go in.");
+        if (!down && used + n >= COLS) return S.say("Columns up to Z are in use in these rows: no cells can go in without losing what is in " + colName(COLS - 1) + ".");
+        S.snap(); I(doc, kind, at, n, band);
+        if (down && used + n >= api.rows() && api.setRows) api.setRows(used + n + 1);
+      } else { S.snap(); I(doc, kind, at, -n, band); }
+      S.done();
+    }
+    // Excel's Insert... and Delete...: shift the cells, or whole rows or columns; whole rows (columns) selected go straight in
+    function insDel(ins) {
+      if (wholeRows()) return act(ins ? "rowAbove" : "rowDel");
+      if (wholeCols()) return act(ins ? "colLeft" : "colDel");
+      // the choice Excel starts with: across for a selection taller than it is wide, else up and down
+      var nm = "lp-sh" + String(Math.random()).slice(2, 8), Rs = R(), tall = Rs.r1 - Rs.r0 > Rs.c1 - Rs.c0;
+      var opts = ins ? [["right", "Shift cells right"], ["down", "Shift cells down"]] : [["left", "Shift cells left"], ["up", "Shift cells up"]];
+      var els = opts.map(function (o, i) { return radio(nm, o[0], o[1], tall ? i === 0 : i === 1); })
+        .concat([radio(nm, "row", "Entire row"), radio(nm, "col", "Entire column")]);
+      dialog(ins ? "Insert" : "Delete", els, function () {
+        var v = ""; els.forEach(function (l) { var i = l.querySelector("input"); if (i.checked) v = i.value; });
+        if (v === "row") act(ins ? "rowAbove" : "rowDel");
+        else if (v === "col") act(ins ? "colLeft" : "colDel");
+        else if (v) shiftCells(v);
+      }, els[0].querySelector("input:checked") || els[0].querySelector("input"), api.gridwrap);
+    }
+    // ---- Hide, Unhide, Row Height, Column Width (doc.hidden {"5": 1, "C": 1}; doc.heights in Excel's points) ----------
+    function lineKeys(kind) { var Rs = R(), out = []; for (var i = kind === "row" ? Rs.r0 : Rs.c0; i <= (kind === "row" ? Rs.r1 : Rs.c1); i++) out.push(kind === "row" ? String(i + 1) : colName(i)); return out; }
+    function hide(kind, on) {
+      api.keep(); S.snap();
+      var keys = lineKeys(kind), n = 0;
+      doc.hidden = doc.hidden || {};
+      keys.forEach(function (k) {
+        if (on && !doc.hidden[k]) { doc.hidden[k] = 1; n++; }
+        if (!on && doc.hidden[k]) { delete doc.hidden[k]; n++; }
+      });
+      if (!Object.keys(doc.hidden).length) delete doc.hidden;
+      S.done();
+      if (!on && !n) S.say("Nothing is hidden here: select the " + (kind === "row" ? "rows" : "columns") + " on both sides of the hidden ones (drag across their " + (kind === "row" ? "numbers" : "letters") + ", or Ctrl+A for all), then Unhide.");
+    }
+    function size(kind) {
+      var row = kind === "row", keys = lineKeys(kind), map = row ? doc.heights : doc.widths, had = map && map[keys[0]] != null;
+      var now = had ? +map[keys[0]] : row ? 15 : 8.43;
+      var inp = L.el("input", { type: "number", min: "0", max: row ? "409" : "255", step: "any", value: String(now), style: "width:110px;", "aria-label": row ? "Row height" : "Column width" });
+      dialog(row ? "Row Height" : "Column Width", [L.el("label", {}, [L.el("span", { text: row ? "Row height:" : "Column width:" }), inp]),
+        L.el("div", { "class": "hint", text: row ? "In points, as in Excel (15 is the usual height). 0 hides the row." : "In characters, as in Excel (8.43 is Excel\u2019s usual width). 0 hides the column." })], function () {
+        var v = parseFloat(inp.value);
+        if (!(v >= 0) || v > (row ? 409 : 255)) { inp.focus(); return false; }
+        if (v === now && !had) return true;   // the usual size left as it was
+        api.keep(); S.snap();
+        keys.forEach(function (k) {
+          if (v === 0) { doc.hidden = doc.hidden || {}; doc.hidden[k] = 1; return; }
+          if (row) { doc.heights = doc.heights || {}; if (v === 15) delete doc.heights[k]; else doc.heights[k] = v; }
+          else { doc.widths = doc.widths || {}; doc.widths[k] = v; }
+        });
+        if (doc.heights && !Object.keys(doc.heights).length) delete doc.heights;
+        S.done();
+      }, inp, api.gridwrap);
+      try { inp.select(); } catch (e) { /* old browser */ }
+    }
+    // ---- Format Cells: the number format, bold, italic, alignment, and merged cells (Excel's Alignment tab) --------
+    function format() {
+      if (!S.looks || !S.lookNow) return;
+      var now = S.lookNow(), codes = (L.sheetFormat && L.sheetFormat.codes) || [["", "General"]], Rs = R();
+      var known = codes.some(function (c) { return c[0] === now.nf; });
+      var pick = L.el("select", { "aria-label": "Number format" }, codes.map(function (c) { return L.el("option", { value: c[0], text: c[1] }); }).concat([L.el("option", { value: "*", text: "Your own format code" })]));
+      var own = L.el("input", { type: "text", value: known ? "" : now.nf, placeholder: "#,##0.00   0.0%   d mmm yyyy", "aria-label": "Format code", style: "font-family:ui-monospace,Consolas,monospace;" });
+      pick.value = known ? now.nf : "*";
+      function seen() { own.style.display = pick.value === "*" ? "" : "none"; }
+      seen(); pick.addEventListener("change", function () { seen(); if (pick.value === "*") own.focus(); });
+      var al = L.el("select", { "aria-label": "Horizontal alignment" }, [["", "General"], ["left", "Left"], ["center", "Centre"], ["right", "Right"]].map(function (o) { return L.el("option", { value: o[0], text: o[1] }); }));
+      al.value = now.al || "";
+      var exact = (doc.merges || []).some(function (m) { var b = box(m); return b && b.c0 === Rs.c0 && b.r0 === Rs.r0 && b.c1 === Rs.c1 && b.r1 === Rs.r1; });
+      var b = tick("Bold", now.b), it = tick("Italic", now.i), mg = tick("Merge cells", exact, !exact && Rs.c0 === Rs.c1 && Rs.r0 === Rs.r1);
+      dialog("Format Cells", [L.el("label", {}, [L.el("span", { text: "Number:" }), pick]), own, L.el("label", {}, [L.el("span", { text: "Horizontal:" }), al]), b.el, it.el, mg.el], function () {
+        var nf = pick.value === "*" ? own.value.replace(/^\s+|\s+$/g, "") : pick.value, lost = 0;
+        S.looks({ nf: nf, b: b.box.checked ? 1 : null, i: it.box.checked ? 1 : null, al: al.value || null }, function () {
+          if (mg.box.checked === exact) return;
+          // merged: the merged cells inside go, and only the top-left cell's value is kept, as in Excel; unmerged: those inside go
+          doc.merges = (doc.merges || []).filter(function (m) { var q = box(m); return !q || q.c0 > Rs.c1 || q.c1 < Rs.c0 || q.r0 > Rs.r1 || q.r1 < Rs.r0; });
+          if (mg.box.checked) {
+            for (var r = Rs.r0; r <= Rs.r1; r++) for (var c = Rs.c0; c <= Rs.c1; c++) { var k = refOf(c, r); if ((r !== Rs.r0 || c !== Rs.c0) && doc.cells[k] != null && doc.cells[k] !== "") { delete doc.cells[k]; lost++; } }
+            doc.merges.push(refOf(Rs.c0, Rs.r0) + ":" + refOf(Rs.c1, Rs.r1));
+          }
+          if (!doc.merges.length) delete doc.merges;
+        });
+        if (lost) S.say("Merged: only the top-left cell\u2019s value is kept, as in Excel (" + lost + " other" + (lost > 1 ? "s" : "") + " gone; Undo brings " + (lost > 1 ? "them" : "it") + " back).");
+      }, pick, api.gridwrap);
+    }
+    // ---- the menus ---------------------------------------------------------------------------------------------------
+    function items(kind) {
+      var rowsSel = kind === "row" || (kind !== "col" && wholeRows()), colsSel = kind === "col" || (kind !== "row" && !rowsSel && wholeCols());
+      var list = [
+        { t: "Cut", k: "Ctrl+X", fn: function () { S.toClip(true); }, off: !S.toClip },
+        { t: "Copy", k: "Ctrl+C", fn: function () { S.toClip(false); }, off: !S.toClip },
+        { t: "Paste", k: "Ctrl+V", fn: function () { S.fromClip(); }, off: !S.fromClip }, null];
+      if (rowsSel || colsSel) list.push({ t: "Insert", k: "Ctrl++", fn: function () { act(rowsSel ? "rowAbove" : "colLeft"); }, off: !S.rowAct },
+        { t: "Delete", k: "Ctrl+-", fn: function () { act(rowsSel ? "rowDel" : "colDel"); }, off: !S.rowAct });
+      else list.push({ t: "Insert\u2026", k: "Ctrl++", fn: function () { insDel(true); }, off: !S.rowAct }, { t: "Delete\u2026", k: "Ctrl+-", fn: function () { insDel(false); }, off: !S.rowAct });
+      list.push({ t: "Clear Contents", k: "Delete", fn: function () { if (S.clear) S.clear(); }, off: !S.clear });
+      if (kind !== "row" && kind !== "col") list.push(null, { t: "Sort A to Z", fn: function () { act("az"); }, off: !S.rowAct }, { t: "Sort Z to A", fn: function () { act("za"); }, off: !S.rowAct });
+      list.push(null, { t: "Format Cells\u2026", k: "Ctrl+1", fn: format, off: !S.looks });
+      if (kind === "row" || kind === "col") list.push({ t: kind === "row" ? "Row Height\u2026" : "Column Width\u2026", fn: function () { size(kind); } },
+        { t: "Hide", fn: function () { hide(kind, true); } }, { t: "Unhide", fn: function () { hide(kind, false); } });
+      return list;
+    }
+    // open(w, x, y): the menu for what was right-clicked, chosen first as Excel chooses it
+    function open(w, x, y) {
+      api.keep();
+      var Rs = R();
+      if (w.kind === "cell") { if (!S.within(w.ref)) S.select(w.ref); }
+      else if (w.kind === "row") { if (!(wholeRows() && w.at >= Rs.r0 && w.at <= Rs.r1)) S.lines("row", w.at, w.at); }
+      else if (w.kind === "col") { if (!(wholeCols() && w.at >= Rs.c0 && w.at <= Rs.c1)) S.lines("col", w.at, w.at); }
+      else S.lines("all", 0, 0);
+      if (x == null) {
+        // from the keyboard: under the active cell
+        var td = api.tds()[S.active ? S.active() : refOf(Rs.c0, Rs.r0)], rc = td && td.getBoundingClientRect ? td.getBoundingClientRect() : { left: 40, bottom: 80 };
+        x = rc.left + 8; y = rc.bottom;
+      }
+      last = items(w.kind === "all" ? "cell" : w.kind);
+      show(last, x, y, api.gridwrap);
+    }
+    var H = {}, longAt = 0, press = null;
+    H.contextmenu = function (e) {
+      var w = what(e.target);
+      if (!w && e.target === api.gridwrap) w = { kind: "cell", ref: S.active ? S.active() : "A1", key: true };
+      if (!w) return;
+      e.preventDefault();
+      if (Date.now() - longAt < 1000) return;   // a long press opened it already
+      open(w, w.key ? null : e.clientX, w.key ? null : e.clientY);
+    };
+    // a long press on a phone (Safari has no contextmenu for it); the lift after it does not choose an item
+    H.touchstart = function (e) {
+      if (press) clearTimeout(press.t);
+      press = null;
+      var w = e.touches && e.touches.length === 1 && what(e.target);
+      if (!w) return;
+      var t0 = e.touches[0];
+      press = { x: t0.clientX, y: t0.clientY, t: setTimeout(function () { longAt = Date.now(); press.done = true; open(w, press.x, press.y + 12); }, 550) };
+    };
+    H.touchmove = function (e) { var t0 = e.touches && e.touches[0]; if (press && !press.done && t0 && Math.abs(t0.clientX - press.x) + Math.abs(t0.clientY - press.y) > 10) { clearTimeout(press.t); press = null; } };
+    H.touchend = function (e) { if (press) { clearTimeout(press.t); if (press.done && e.cancelable) e.preventDefault(); press = null; } };
+    host.__lpMenu = H;
+    if (!host.__lpMenuBound) {
+      host.__lpMenuBound = 1;
+      ["contextmenu", "touchstart", "touchmove", "touchend"].forEach(function (t) {
+        host.addEventListener(t, function (e) { var h = host.__lpMenu; if (h && h[t]) h[t](e); }, t === "touchend" ? { passive: false } : t === "contextmenu" ? false : { passive: true });
+      });
+    }
+    // Ctrl+1 Format Cells, Ctrl++ Insert, Ctrl+- Delete (Ctrl+Alt with = and -, as in Google Sheets, too)
+    (S.keyHooks = S.keyHooks || []).push(function (e) {
+      if (!(e.ctrlKey || e.metaKey)) return false;
+      var k = e.key;
+      if (k === "1" && !e.altKey && !e.shiftKey) { format(); return true; }
+      if (k === "+" || (k === "=" && (e.shiftKey || e.altKey))) { insDel(true); return true; }
+      if ((k === "-" || k === "_") && (!e.shiftKey || e.altKey)) { insDel(false); return true; }
+      return false;
+    });
+    cur = {
+      open: function (kind, at) { var w = kind === "cell" ? { kind: "cell", ref: at } : { kind: kind, at: typeof at === "string" ? (kind === "row" ? +at - 1 : at.charCodeAt(0) - 65) : at }; open(w, 60, 60); },
+      items: function () { return shown ? last.filter(function (i) { return i; }).map(function (i) { return i.t + (i.off ? " (off)" : ""); }) : []; },
+      pick: function (text) { var it = last.filter(function (i) { return i && i.t === text && !i.off; })[0]; if (!it) return false; close(); it.fn(); return true; }
+    };
+  }
+  (L.sheetEditHooks = L.sheetEditHooks || []).push(mount);
+  L.sheetMenu = {
+    open: function (kind, at) { if (cur) cur.open(kind, at); },
+    items: function () { return cur ? cur.items() : []; },
+    pick: function (text) { return cur ? cur.pick(text) : false; },
+    close: close
+  };
+  if (L.guide && L.guide.append) L.guide.append("sheet", [
+    ["Right-click menus, like Excel\u2019s", "<p>Right-click a cell, a row number or a column letter (on a phone: press and hold) " +
+      "for Excel\u2019s menu. A row number clicked selects the row; drag down the numbers (or across the letters) for more; " +
+      "<b>Shift+Space</b> selects the rows of the selection, <b>Ctrl+Space</b> its columns, the corner above row 1 the whole sheet.</p><ul>" +
+      "<li><b>Insert</b> on a row number puts in as many rows as are selected, above them; on a column letter, columns to the left. " +
+      "<b>Delete</b> takes them out. Every formula follows, as in Excel: <code>=SUM(B2:B9)</code> over a row put in at 5 becomes " +
+      "<code>=SUM(B2:B10)</code>; a formula that used a cell taken out shows <code>#REF!</code>.</li>" +
+      "<li><b>Insert\u2026</b> and <b>Delete\u2026</b> on cells ask, as Excel does: shift the cells right or down (left or up), " +
+      "or the entire row or column. Only the cells in the selected columns (rows) move, and the formulas that use them follow. " +
+      "<b>Ctrl++</b> and <b>Ctrl+-</b> do the same from the keyboard.</li>" +
+      "<li><b>Clear Contents</b> empties the cells and keeps their looks; <b>Sort A to Z</b>, <b>Z to A</b>.</li>" +
+      "<li><b>Format Cells\u2026</b> (<b>Ctrl+1</b>): the number format, bold, italic, alignment, and <b>Merge cells</b> " +
+      "(only the top-left cell\u2019s value is kept, as in Excel).</li>" +
+      "<li><b>Row Height\u2026</b> (points, as Excel\u2019s: 15 is usual) and <b>Column Width\u2026</b> (characters: 8.43 is Excel\u2019s usual).</li>" +
+      "<li><b>Hide</b> hides the selected rows or columns; a double line by the numbers (letters) shows where. To show them, " +
+      "drag across the numbers on both sides and choose <b>Unhide</b> (or <b>Ctrl+A</b>, then Unhide). " +
+      "<code>SUBTOTAL(109,\u2026)</code> and the other 101 to 111 leave hidden rows out, as in Excel, and an Excel file keeps them hidden.</li></ul>"]
+  ]);
+})();
+// ===========================================================================
+// MODULE: SHEET_MENU - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: AI_PUZZLE - START
@@ -46150,7 +46640,7 @@ Lantern.RFB = (function () {
       out.forEach(function (o) {
         var cached = o.cached, got = {}, diff = [];
         if (!Object.keys(cached).length) return;
-        try { got = LS.compute(o.cells, bookMap, o.name); } catch (e) { got = {}; }
+        try { got = LS.compute(o.cells, bookMap, o.name, o.hidden); } catch (e) { got = {}; }
         Object.keys(cached).forEach(function (ref) {
           if (calls(o.cells[ref]).some(function (fn) { return VOLATILE[fn]; })) return;
           var want = cached[ref], have = got[ref], same;
@@ -46172,7 +46662,8 @@ Lantern.RFB = (function () {
 
     function sheet(name, path, index, note) {
       var ws = parse(z.text(path), "sheet \u201c" + name + "\u201d"), srels = rels(path);
-      var cells = {}, fmt = {}, widths = {}, merges = [], freeze = 0, used = 0, shared = {}, cached = {}, look = false, wrap = false, cut = { c: 0, r: 0 }, hid = false, arrays = {};
+      var cells = {}, fmt = {}, widths = {}, merges = [], freeze = 0, used = 0, shared = {}, cached = {}, look = false, wrap = false, cut = { c: 0, r: 0 }, arrays = {};
+      var hidden = {}, heights = {};   // (1.24.29) kept: {"5": 1, "D": 1} and {"5": 30} (Excel's points)
       var view = kid(kid(ws, "sheetViews"), "sheetView"), pane = kid(view, "pane");
       if (pane && /^frozen/.test(attr(pane, "state") || "")) {
         var ys = +(attr(pane, "ySplit") || 0), xs = +(attr(pane, "xSplit") || 0);
@@ -46184,14 +46675,16 @@ Lantern.RFB = (function () {
       if (dw > 0) for (var ci = 0; ci < MAXC; ci++) widths[colName(ci)] = dw;
       kids(kid(ws, "cols"), "col").forEach(function (c) {
         var a = +attr(c, "min"), b = +attr(c, "max"), w = parseFloat(attr(c, "width") || "");
-        if (yes(attr(c, "hidden"))) hid = true;
+        if (yes(attr(c, "hidden")) && a >= 1 && b >= a) for (var hi = a; hi <= Math.min(b, MAXC); hi++) hidden[colName(hi - 1)] = 1;
         if (!(a >= 1) || !(b >= a) || !(w > 0)) return;
         for (var i = a; i <= Math.min(b, MAXC); i++) widths[colName(i - 1)] = w;
       });
       var r = 0;
       kids(kid(ws, "sheetData"), "row").forEach(function (row) {
         r = attr(row, "r") ? +attr(row, "r") : r + 1;
-        if (yes(attr(row, "hidden"))) hid = true;
+        var ht = parseFloat(attr(row, "ht") || "");
+        if (r <= MAXR && (yes(attr(row, "hidden")) || (ht === 0 && yes(attr(row, "customHeight"))))) hidden[String(r)] = 1;
+        else if (r <= MAXR && ht > 0 && yes(attr(row, "customHeight"))) heights[String(r)] = ht;
         var c = 0;
         kids(row, "c").forEach(function (ce) {
           var p = attr(ce, "r") ? at(attr(ce, "r")) : { c: c, r: r - 1 };
@@ -46277,8 +46770,9 @@ Lantern.RFB = (function () {
       if (cut.r) note(cut.r + " cell" + (cut.r > 1 ? "s" : "") + " past row " + MAXR + " " + (cut.r > 1 ? "are" : "is") + " left out: a sheet has up to " + MAXR + " rows");
       if (look) note("Colours, borders, fonts and font sizes are not kept: Sheets keeps bold, italic, alignment, number formats, column widths and merged cells");
       if (wrap) note("Text wrapped in its cell shows on one line");
-      if (hid) note("Hidden rows and columns are shown" + (Object.keys(cells).some(function (k) { return /SUBTOTAL\s*\x28\s*1\d\d|AGGREGATE\s*\x28/i.test(cells[k]); }) ?
-        ": a SUBTOTAL or AGGREGATE that leaves hidden rows out in Excel counts them here, and in the file Save .xlsx makes" : ""));
+      var hk = Object.keys(hidden), hr0 = hk.filter(function (k) { return /^[0-9]/.test(k); }).sort(function (a, b) { return a - b; }), hc0 = hk.filter(function (k) { return /^[A-Z]/.test(k); }).sort();
+      if (hk.length) note("Hidden rows and columns stay hidden (" + (hr0.length ? (hr0.length > 1 ? "rows " : "row ") + hr0.slice(0, 8).join(", ") + (hr0.length > 8 ? " \u2026" : "") : "") + (hr0.length && hc0.length ? "; " : "") +
+        (hc0.length ? (hc0.length > 1 ? "columns " : "column ") + hc0.join(", ") : "") + "): to show them, select across them and right-click a row number or column letter, then Unhide");
       if (kid(ws, "autoFilter")) note("The filter buttons on the headings (AutoFilter) are not kept; every row is shown");
       // the comments' cells and words, so that they can be found again
       var said0 = [];
@@ -46304,7 +46798,7 @@ Lantern.RFB = (function () {
         paper = { size: size, orient: attr(ps, "orientation") === "landscape" ? "l" : "p", margin: [0.25, 0.5, 0.75, 1].reduce(function (a, b) { return Math.abs(b - lm) < Math.abs(a - lm) ? b : a; }),
           scale: Math.max(25, Math.min(400, +(attr(ps, "scale") || 100) || 100)), show: (window.innerWidth || 1000) < 700 ? 0 : 1 };
       }
-      return { name: name, cells: cells, fmt: fmt, widths: widths, merges: merges, freeze: freeze, rows: Math.max(100, used), paper: paper, arrays: arrays, cached: cached };
+      return { name: name, cells: cells, fmt: fmt, widths: widths, merges: merges, freeze: freeze, rows: Math.max(100, used), paper: paper, arrays: arrays, cached: cached, hidden: hidden, heights: heights };
     }
     // implicitAt(f) -> {f, changed}: (1.24.28, the second Excel review) a plain formula (not an array formula) that
     // names a range where one value belongs -- beside a sign (=C2:C9*2), as a function's one value (LEN(A2:A9)), or
@@ -46851,14 +47345,20 @@ Lantern.RFB = (function () {
         var s = styleOf(f, code, q);
         return "<c r=\x22" + k + "\x22" + (s ? " s=\x22" + s + "\x22" : "") + (t ? " t=\x22" + t + "\x22" : "") + (spill ? " cm=\x221\x22" : "") + ">" + body + "<\x2Fc>";
       }
+      // (1.24.29) a row's height and a hidden row, as Excel writes them (a row with nothing in it too)
+      var hidden = doc.hidden || {}, heights = doc.heights || {};
+      Object.keys(hidden).concat(Object.keys(heights)).forEach(function (k) { if (/^[0-9]{1,5}$/.test(k) && +k >= 1 && !rows[+k]) rows[+k] = []; });
       var data = Object.keys(rows).map(Number).sort(function (a, b) { return a - b; }).map(function (r) {
-        return "<row r=\x22" + r + "\x22>" + rows[r].sort(function (a, b) { return a.c - b.c; }).map(function (o) { return cell(o.k); }).join("") + "<\x2Frow>";
+        var ht = +heights[String(r)], ra = (ht > 0 ? " ht=\x22" + Math.round(Math.min(409, ht) * 100) / 100 + "\x22 customHeight=\x221\x22" : "") + (hidden[String(r)] ? " hidden=\x221\x22" : "");
+        return "<row r=\x22" + r + "\x22" + ra + ">" + rows[r].sort(function (a, b) { return a.c - b.c; }).map(function (o) { return cell(o.k); }).join("") + "<\x2Frow>";
       }).join("");
-      // columns, merged cells, the frozen top row
-      var cols = "", widths = doc.widths || {};
-      Object.keys(widths).filter(function (c) { return /^[A-Z]{1,2}$/.test(c) && widths[c] > 0; }).map(function (c) { return { c: colNum(c), w: +widths[c] }; })
+      // columns (their widths, and hidden ones), merged cells, the frozen top row
+      var cols = "", widths = doc.widths || {}, colKeys = {};
+      Object.keys(widths).forEach(function (c) { if (/^[A-Z]{1,2}$/.test(c) && widths[c] > 0) colKeys[c] = 1; });
+      Object.keys(hidden).forEach(function (c) { if (/^[A-Z]{1,2}$/.test(c)) colKeys[c] = 1; });
+      Object.keys(colKeys).map(function (c) { return { c: colNum(c), w: widths[c] > 0 ? +widths[c] : 9.140625, own: widths[c] > 0, hid: !!hidden[c] }; })
         .sort(function (a, b) { return a.c - b.c; }).forEach(function (o) {
-          cols += "<col min=\x22" + (o.c + 1) + "\x22 max=\x22" + (o.c + 1) + "\x22 width=\x22" + Math.round(Math.min(255, o.w) * 1e6) / 1e6 + "\x22 customWidth=\x221\x22\x2F>";
+          cols += "<col min=\x22" + (o.c + 1) + "\x22 max=\x22" + (o.c + 1) + "\x22 width=\x22" + Math.round(Math.min(255, o.w) * 1e6) / 1e6 + "\x22" + (o.hid ? " hidden=\x221\x22" : "") + (o.own ? " customWidth=\x221\x22" : "") + "\x2F>";
         });
       var merges = (doc.merges || []).filter(function (m) { return /^[A-Z]{1,2}[0-9]{1,5}:[A-Z]{1,2}[0-9]{1,5}$/.test(m); });
       var pane = doc.freeze ? "<pane ySplit=\x221\x22 topLeftCell=\x22A2\x22 activePane=\x22bottomLeft\x22 state=\x22frozen\x22\x2F><selection pane=\x22bottomLeft\x22 activeCell=\x22A2\x22 sqref=\x22A2\x22\x2F>" : "";
@@ -46996,7 +47496,7 @@ Lantern.RFB = (function () {
       var items = docs.map(function (d) {
         var b = LS && LS.book ? LS.book(d) : null;
         return { doc: d, name: d.book ? d.book.sheet : null, active: d.id === doc.id,
-          values: LS && LS.compute ? LS.compute(d.cells || {}, b) : {},
+          values: LS && LS.compute ? LS.compute(d.cells || {}, b, null, d.hidden) : {},
           logical: LS && LS.logical ? function (raw) { return LS.logical(raw, d.cells || {}); } : null,
           carried: SF && SF.carried ? function (raw, kind) { return SF.carried(d, raw, kind); } : null,
           kind: LS && LS.kind ? function (ref) { return LS.kind(d.cells || {}, ref); } : null };
@@ -47030,7 +47530,7 @@ Lantern.RFB = (function () {
       var first = null, bookId = L.uid ? L.uid() : String(Date.now());
       res.sheets.forEach(function (s, i) {
         // the workbook it came from, and the sheet's own name in it (Save .xlsx, and =Jan!B6 from another sheet)
-        var id = L.sheetDocs.create(s.title, s.cells, { fmt: s.fmt, widths: s.widths, merges: s.merges, freeze: s.freeze, rows: s.rows, paper: s.paper, arrays: s.arrays,
+        var id = L.sheetDocs.create(s.title, s.cells, { fmt: s.fmt, widths: s.widths, merges: s.merges, freeze: s.freeze, rows: s.rows, paper: s.paper, arrays: s.arrays, heights: s.heights, hidden: s.hidden,
           book: { id: bookId, name: res.title, sheet: s.name, at: i } });
         if (!first) first = id;
       });

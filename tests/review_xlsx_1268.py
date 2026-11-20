@@ -11,8 +11,7 @@
 import os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KEEP = {
-    "read-hidden-rows": "Sheets shows the rows Excel hid (a sheet here cannot hide a row), so SUBTOTAL(109) and AGGREGATE count them; the note says so and names each cell. Hiding rows in the grid is in the queue.",
-    "round-hidden": "the same, saved: the rows are shown in the file too, so Excel's totals are the ones Lantern showed.",
+    "read-hidden-rows-said": "the review asked for a note naming B13 and B14, where Lantern's totals differed because it showed the rows Excel hid; from 1.24.29 they stay hidden and SUBTOTAL(109) and AGGREGATE leave them out as Excel does, so nothing differs to name (read-hidden-rows and round-hidden agree).",
     "read-wide": "Sheets has the columns A to Z: the cells past Z are left out, and the note says how many and names each total that used them.",
     "round-wide": "the same, saved; Save .xlsx names each formula that reaches past Z.",
     "read-booleans": "Lantern keeps TRUE and FALSE as 1 and 0 (it has no yes-or-no type of its own), so =A2=1 of a TRUE is TRUE here; the note names the cell.",

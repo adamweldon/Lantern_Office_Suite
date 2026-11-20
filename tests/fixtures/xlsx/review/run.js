@@ -64,10 +64,11 @@ async function importFile(name, buf) {
   var note = d.querySelector(".lp-xlsx-note");
   return { made: made, note: note ? note.textContent : null, alerts: alerts.slice() };
 }
-function sheetOut(s) { return { name: s.name, title: s.title, cells: s.cells, fmt: s.fmt, widths: s.widths, merges: s.merges, freeze: s.freeze, rows: s.rows, paper: s.paper }; }
+function sheetOut(s) { return { name: s.name, title: s.title, cells: s.cells, fmt: s.fmt, widths: s.widths, merges: s.merges, freeze: s.freeze, rows: s.rows, paper: s.paper, hidden: s.hidden, heights: s.heights }; }
 function save(id, sheet) {
   var t0 = Date.now();
-  var vals = L.sheetDocs.compute(sheet.cells);
+  // (main session, 1.24.29) the hidden rows kept, as Save .xlsx keeps them
+  var vals = L.sheetDocs.compute(sheet.cells, null, null, sheet.hidden);
   var r = X.write(sheet, vals, function (raw) { return L.sheetDocs.logical(raw, sheet.cells); }, function (raw) { return L.sheetFormat.carried(sheet, raw); });
   fs.writeFileSync(path.join(OUT, id + ".xlsx"), Buffer.from(r.bytes));
   return { notes: plain(r.notes), values: plain(vals), file: id + ".xlsx", ms: Date.now() - t0 };
@@ -87,7 +88,8 @@ var RUN = {
     // (main session, after the review) each sheet worked out with the workbook's other sheets, as the grid does from
     // 1.24.28 (=Jan!B6 finds Jan); the review's own run worked each out alone
     var bookMap = {}; r.sheets.forEach(function (s) { bookMap[s.name] = s.cells; });
-    g.values = r.sheets.map(function (s) { return plain(L.sheetDocs.compute(s.cells, bookMap, s.name)); });
+    // (main session, 1.24.29) and with its hidden rows, which the grid keeps hidden from 1.24.29 (SUBTOTAL 109 leaves them out)
+    g.values = r.sheets.map(function (s) { return plain(L.sheetDocs.compute(s.cells, bookMap, s.name, s.hidden)); });
     var ex = c.expected || {};
     if (ex.shown || ex.grid || ex.values) {
       var im = await importFile(inp.file, buf);
@@ -150,7 +152,7 @@ var RUN = {
     var r = X.read(u8(buf), inp.file), k = inp.sheet || 0, s = r.sheets[k];
     // (main session, after the review) the sheet as Import file keeps it from 1.24.28: its own name in the workbook
     // (book.sheet) and its array formulas (arrays)
-    var sheet = { title: s.title, cells: s.cells, fmt: s.fmt, widths: s.widths, merges: s.merges, freeze: s.freeze, paper: s.paper, arrays: s.arrays, book: { id: "review", name: r.title, sheet: s.name, at: k } };
+    var sheet = { title: s.title, cells: s.cells, fmt: s.fmt, widths: s.widths, merges: s.merges, freeze: s.freeze, paper: s.paper, arrays: s.arrays, hidden: s.hidden, heights: s.heights, book: { id: "review", name: r.title, sheet: s.name, at: k } };
     var o = save(c.id, sheet);
     return { read_notes: plain(r.notes), notes: o.notes, values: o.values, file: o.file, cells: plain(s.cells), fmt: plain(s.fmt), sheet_name: s.name, title: s.title };
   },
