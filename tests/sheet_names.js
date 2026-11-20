@@ -36,7 +36,8 @@ ok("a name that is no column goes back once, with the columns there are", !r.ok 
 r = sheet(["Item | Cost", "Total | =SUM([Cost])"]);
 ok("a total with no rows above it goes back", !r.ok && /adds up \[Cost\] above it, but there are no rows above it/.test(r.problems[0]), r.problems);
 r = sheet(["Item | Qty | Price | Cost", "Bread | 2 | 1.50 | =B2*C2", "Milk | 1 | 0.99 | =B2*C2", "Eggs | 12 | 0.25 | =B4*C4", "Jam | 1 | 3 | =B5*C5", "Total | | | =SUM(D2:D5)"]);
-ok("a row copied down and not changed goes back, with the formula to write", !r.ok && /D3 \(=B2\*C2\) uses row 2, but the rows around it use their own row: write =B3\*C3/.test(r.problems[0]), r.problems);
+// (1.24.29) said as the row above's formula copied down unchanged (the check for that, plain or by name, comes first)
+ok("a row copied down and not changed goes back, with the formula to write", !r.ok && /D3 \(=B2\*C2\) is the formula of row 2 copied down unchanged, and uses row 2 instead of its own: for row 3 write =B3\*C3/.test(r.problems[0]), r.problems);
 r = sheet(["Month | Sales | Change", "Jan | 10 |", "Feb | 12 | =B3-B2", "Mar | 15 | =B4-B3", "Apr | 11 | =B5-B4"]);
 ok("...while a column that looks at the row above on purpose (a change from last month) is left alone", r.ok, r.problems);
 r = sheet(["X | Y", "1 | =LOG10(A2)", "2 | =LOG10(A3)", "3 | =LOG10(A3)", "4 | =LOG10(A5)"]);

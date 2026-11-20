@@ -132,8 +132,9 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     [run1("=CONVERT(5,\x22US gallon\x22,\x22liter\x22)")]);
   ok("...the imperial gallon is 4.54609 litres, not the US one; the US fluid ounce 29.57 ml", Math.abs(run1("=CONVERT(2,\x22imperial gallons\x22,\x22l\x22)") - 9.09218) < 1e-9 &&
     Math.abs(run1("=CONVERT(1,\x22fl oz\x22,\x22ml\x22)") - 29.5735295625) < 1e-6 && Math.abs(run1("=CONVERT(1,\x22oz\x22,\x22g\x22)") - 28.349523) < 1e-6);
-  ok("...and a unit Lantern does not know is said to be unknown, with the units to write", /does not know the unit \u201cbarrel\u201d: write one of liter, ml/.test(run1("=CONVERT(3,\x22barrel\x22,\x22l\x22)")) &&
-    /not in the same category/.test(run1("=CONVERT(3,\x22kg\x22,\x22l\x22)")));
+  // (1.24.29) "barrel" is Excel's US oil barrel of 42 gallons now (CONVERT is Excel's): another unknown unit is asked
+  ok("...and a unit Lantern does not know is said to be unknown, with the units to write (a barrel is Excel's oil barrel, 158.99 litres)", /does not know the unit \u201chogshead\u201d: write one of liter, ml/.test(run1("=CONVERT(3,\x22hogshead\x22,\x22l\x22)")) &&
+    /not in the same category/.test(run1("=CONVERT(3,\x22kg\x22,\x22l\x22)")) && Math.abs(run1("=CONVERT(3,\x22barrel\x22,\x22l\x22)") - 476.961884784) < 1e-6, [run1("=CONVERT(3,\x22hogshead\x22,\x22l\x22)"), run1("=CONVERT(3,\x22barrel\x22,\x22l\x22)")]);
   ok("the bench\u2019s own sum still gives 18.93", Math.abs(L.aiBench.grade(item("gallons-litres-b"), "=CONVERT(5,\x22US gallon\x22,\x22liter\x22)\nANSWER: {result} litres", {}).value - 18.92705892) < 1e-6);
 
   // --- the brass band's 435 bars -------------------------------------------------------------------------------------
@@ -213,35 +214,54 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     if (typeof v !== "number") return /error|\bERR\b/i.test(String(e));
     return ns.some(function (x) { return Math.abs(v - x) < 1e-6 * Math.max(1, Math.abs(x)); });
   }
+  // (1.24.29, Adam 2026-11-20: "Excel functions should all match excel") CONVERT's names that are Excel's mean Excel's
+  // units in Chat too: "ton" the short ton of 2,000 lb ("tons" the same), "cal" 4.1868 J, "oz" the US fluid ounce, "pt"
+  // the US pint, "tsp" the US teaspoon, metric prefixes on Excel's metric units (ML a megalitre, Mm a megametre, kwh,
+  // cm3). Each case of these reviews that moved so is here with Excel's answer, and is no longer counted either way
+  var EXCEL1269 = { "=CONVERT(1,\"pt\",\"l\")": 0.473176473, "=CONVERT(1,\"imperial ton\",\"tons\")": 1.12, "=CONVERT(1,\"ML\",\"l\")": 1e6,
+    "=CONVERT(1,\"cal\",\"J\")": 4.1868, "=CONVERT(1,\"kwh\",\"J\")": 3.6e6, "=CONVERT(1,\"ton\",\"lb\")": 2000, "=CONVERT(2,\"tons\",\"kg\")": 1814.36948,
+    "=CONVERT(1,\"kcal\",\"kJ\")": 4.1868, "=CONVERT(1000,\"joules\",\"cal\")": 1000 / 4.1868, "=CONVERT(1,\"fl oz\",\"oz\")": 1,
+    "=CONVERT(1,\"imperial pint\",\"oz\")": 0.56826125 / 0.0295735295625, "=CONVERT(1,\"short ton\",\"tons\")": 1, "=CONVERT(1,\"ton\",\"kg\")": 907.18474,
+    "=CONVERT(1,\"tons\",\"lb\")": 2000, "=CONVERT(1,\"long ton\",\"tons\")": 1.12, "=CONVERT(1,\"Mm\",\"km\")": 1000, "=CONVERT(1,\"ML\",\"L\")": 1e6,
+    "=CONVERT(1,\"pt\",\"ml\")": 473.176473, "=CONVERT(1,\"imperial ton\",\"ton\")": 1.12, "=CONVERT(1,\"US ton\",\"ton\")": 1, "=CONVERT(5,\"cm3\",\"ml\")": 5,
+    "=CONVERT(1,\"tsp\",\"ml\")": 4.92892159375 }, excelSeen = 0, excelOff = [];
+  function excel1269(c, st) {
+    if (!(c.input in EXCEL1269)) return false;
+    excelSeen++;
+    var x = EXCEL1269[c.input];
+    if (!st.ok || Math.abs(st.value - x) > 1e-6 * Math.max(1, Math.abs(x))) excelOff.push([c.input, st.ok ? st.value : st.err]);
+    return true;
+  }
   var RV2 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review2_1257.json"), "utf8")), moved2 = [], worse2 = 0, n3 = 0, right3 = 0;
   RV2.cases.forEach(function (c) {
     if (c.rule !== 1) return;
     var st = L.assist.run(c.input).steps[0], good = asSaid(c.expected, st.ok ? st.value : "error");
-    n3++; if (good) right3++;
+    n3++; if (excel1269(c, st)) return; if (good) right3++;
     if ((good ? "as said" : "differs") !== c.now) moved2.push([c.input, c.now, st.ok ? st.value : st.err]);
     if (!good && c.on_1_24_16 === "as said") worse2++;
   });
-  ok("the second review\u2019s " + n3 + " unit names come out as recorded (" + right3 + " as it said), and none that was right on 1.24.16 is wrong now", n3 === 146 && right3 === 137 && !moved2.length && worse2 === 0, [n3, right3, worse2, moved2]);
+  ok("the second review\u2019s " + n3 + " unit names come out as recorded (" + right3 + " as it said), and none that was right on 1.24.16 is wrong now", n3 === 146 && right3 === 135 && !moved2.length && worse2 === 0, [n3, right3, worse2, moved2]);
 
   // --- the third review (fixtures/review3_1257.json): its unit names replayed, and the history it found wrong -----------
   var RV3 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review3_1257.json"), "utf8")), moved3 = [], worse3 = 0, n4 = 0, right4 = 0;
   RV3.cases.forEach(function (c) {
     if (c.rule !== 1) return;
     var st = L.assist.run(c.input).steps[0], good = asSaid(c.expected, st.ok ? st.value : "error");
-    n4++; if (good) right4++;
+    n4++; if (excel1269(c, st)) return; if (good) right4++;
     if ((good ? "as said" : "differs") !== c.now) moved3.push([c.input, c.now, st.ok ? st.value : st.err]);
     if (!good && c.on_1_24_16 === "as said") worse3++;
   });
-  ok("the third review\u2019s " + n4 + " unit names come out as recorded (" + right4 + " as it said), and none that was right on 1.24.16 is wrong now", n4 === 229 && right4 === 219 && !moved3.length && worse3 === 0, [n4, right4, worse3, moved3]);
+  ok("the third review\u2019s " + n4 + " unit names come out as recorded (" + right4 + " as it said), and none that was right on 1.24.16 is wrong now", n4 === 229 && right4 === 209 && !moved3.length && worse3 === 0, [n4, right4, worse3, moved3]);
   var RV4 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "review4_1257.json"), "utf8")), moved4 = [], worse4 = 0, n5 = 0, right5 = 0;
   RV4.cases.forEach(function (c) {
     if (c.rule !== "units") return;
     var st = L.assist.run(c.input).steps[0], good = asSaid(c.expected, st.ok ? st.value : "error");
-    n5++; if (good) right5++;
+    n5++; if (excel1269(c, st)) return; if (good) right5++;
     if ((good ? "as said" : "differs") !== c.now) moved4.push([c.input, c.now, st.ok ? st.value : st.err]);
     if (!good && c.on_1_24_16 === "as said") worse4++;
   });
-  ok("the fourth review\u2019s " + n5 + " unit names come out as recorded (" + right5 + " as it said), and none that was right on 1.24.16 is wrong now", n5 === 225 && right5 === 214 && !moved4.length && worse4 === 0, [n5, right5, worse4, moved4]);
+  ok("the fourth review\u2019s " + n5 + " unit names come out as recorded (" + right5 + " as it said), and none that was right on 1.24.16 is wrong now", n5 === 225 && right5 === 204 && !moved4.length && worse4 === 0, [n5, right5, worse4, moved4]);
+  ok("the 26 cases of these reviews (22 inputs, some in two) that moved with Excel's names in 1.24.29 give Excel's answers", excelSeen === 26 && !excelOff.length, [excelSeen, excelOff]);
   function cv(e) { var st = L.assist.run(e).steps[0]; return st.ok ? Math.round(st.value * 1e6) / 1e6 : "error"; }
   ok("Lantern\u2019s own names are not plain: pint_us beside an imperial gallon is the US pint (9.6076), gallon_imp to gallon_us 1.20095",
     cv("=CONVERT(1,\x22imperial gallon\x22,\x22pint_us\x22)") === 9.607599 && cv("=CONVERT(1,\x22gallon_imp\x22,\x22gallon_us\x22)") === 1.200950, [cv("=CONVERT(1,\x22imperial gallon\x22,\x22pint_us\x22)"), cv("=CONVERT(1,\x22gallon_imp\x22,\x22gallon_us\x22)")]);

@@ -11,6 +11,7 @@
 import os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KEEP = {
+    "ctrl-plain-copied": "a plain =B2*C2 copied down unchanged into rows 3 and 4 is sent back with the line for row 3 (=B3*C3): the second reviewer found such sheets accepted with wrong totals (its B010, B035); the first reviewer's control case had them made as written (low).",
     "back-one-row-typo": "row 3's =[B2]*[C3] (row 2's quantity by a typo) is read as written, as =B2*C3 written plainly is; a formula may well use another row's cell (a rate, the row above), and nothing tells the typo apart (the reviewer's own note: medium, a judgment call).",
 }
 VERBOSE = "-v" in sys.argv
