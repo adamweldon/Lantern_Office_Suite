@@ -151,7 +151,9 @@ w.eval(js);
   function tdOf(ref) { return d.querySelector("td[data-ref=" + ref + "]"); }
   ok("...the title across C1:E1, D1 and E1 passed over", tdOf("C1").colSpan === 3 && tdOf("D1").style.display === "none" && tdOf("E1").style.display === "none" && tdOf("C1").textContent === "Paint for two rooms", [tdOf("C1").colSpan, tdOf("D1").style.display]);
   var css = (d.getElementById("lp-sheet-widths") || {}).textContent || "";
-  ok("...column A 112 pixels wide (15.29 characters), F 92", /nth-child\(2\)\{width:112px/.test(css) && /nth-child\(7\)\{width:92px/.test(css), css);
+  // (1.24.29, the grid review) Excel's widths drawn in proportion to the grid's own columns (88 pixels for Excel's 64):
+  // A, 15.29 in the file (107 of Excel's pixels), is 147; F (87) is 120
+  ok("...column A 147 pixels wide (15.29 in the file), F 120, in proportion to the grid's 88 for Excel's 64", /nth-child\(2\)\{width:147px/.test(css) && /nth-child\(7\)\{width:120px/.test(css), css);
   ok("...G4 shows 90, worked out by the sheet", tdOf("G4").textContent === "90", tdOf("G4").textContent);
   ok("...C8 shows 4 (=-2^2), A10 64", tdOf("C8").textContent === "4" && tdOf("A10").textContent === "64", [tdOf("C8").textContent, tdOf("A10").textContent]);
   var grid = d.querySelector(".gridwrap"), name = function () { return d.querySelector(".cellname").textContent; };
