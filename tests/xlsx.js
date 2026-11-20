@@ -263,7 +263,7 @@ w.eval(js);
     /<c r="C5"[^>]*t="e"><v>#REF!<\/v>/.test(sx) && has(wr.notes, /^Saved as the value Lantern worked out.*C5 \(it uses the sheet “Other”/), [wr.notes, sx.slice(sx.indexOf('r="C3"') - 5, sx.indexOf('r="C3"') + 200)]);
   ok("CONVERT saved with Excel's units: lb as lbm, an hour as hr; ton is Excel's short ton here too; bar, which Excel has not, saved as the value and said",
     /<c r="E1"[^>]*><f>CONVERT\(2,&quot;lbm&quot;,&quot;kg&quot;\)<\/f><v>0\.90718474<\/v>/.test(sx) && /<c r="E2"[^>]*><f>CONVERT\(3,&quot;hr&quot;,&quot;mn&quot;\)<\/f><v>180<\/v>/.test(sx) &&
-    /<c r="E4"[^>]*><f>CONVERT\(1,&quot;ton&quot;,&quot;kg&quot;\)<\/f><v>907\.18474<\/v>/.test(sx) && /<c r="E3"[^>]*><v>14\.5037/.test(sx) && !/<c r="E3"[^>]*><f>/.test(sx) && has(wr.notes, /E3 \(a unit of CONVERT that Excel does not have/),
+    /<c r="E4"[^>]*><f>CONVERT\(1,&quot;ton&quot;,&quot;kg&quot;\)<\/f><v>907\.18474<\/v>/.test(sx) && /<c r="E3"[^>]*><v>14\.5037/.test(sx) && !/<c r="E3"[^>]*><f>/.test(sx) && has(wr.notes, /E3 \(a unit of CONVERT \(\u201cbar\u201d, \u201cpsi\u201d\) that Excel does not have/),
     [wr.notes, sx.slice(sx.indexOf('r="E1"') - 5, sx.indexOf('r="E1"') + 420)]);
   ok("NETWORKDAYS.INTL without _xlfn., in capitals; a column past Z said; a text over 32,767 characters cut, and said",
     /<f>NETWORKDAYS\.INTL\(A1,A2,1\)<\/f>/.test(sx) && has(wr.notes, /past Z \(C7\)/) && has(wr.notes, /32,767 characters.*D1/) && z1.text("xl\x2FsharedStrings.xml").indexOf(new Array(32768).join("x") + "<") > 0, wr.notes);

@@ -40,7 +40,8 @@ try:
                 wA: t('A3').getBoundingClientRect().width, wB: t('B3').getBoundingClientRect().width, g4: t('G4').textContent, c8: t('C8').textContent,
                 f3: t('F3').textContent, b3: t('B3').textContent, a8: t('A8').textContent, bold: getComputedStyle(t('A2')).fontWeight }; }""")
             ok(label + ": the title across C1:E1, centred; D1 passed over", g["c1"] == 3 and g["d1"] == "none" and g["title"] == "Paint for two rooms" and g["align"] == "center", g)
-            ok(label + ": column A as wide as Excel has it (112 px); B as Sheets' own", abs(g["wA"] - 112) <= 2 and g["wB"] >= 88, g)
+            # (1.24.29) widths in proportion to the grid's columns: Excel's 112 px (107 of text) are 107 x 88/64 = 147 here
+            ok(label + ": column A as wide as Excel has it (112 px in Excel, 147 on the grid); B as Sheets' own", abs(g["wA"] - 147) <= 2 and g["wB"] >= 88, g)
             ok(label + ": G4 shows 90 (not 9000%), C8 4, F3 100%, B3 15.0 ft, A8 a date, the headings bold", g["g4"] == "90" and g["c8"] == "4" and g["f3"] == "100%" and g["b3"] == "15.0 ft" and g["a8"] == "11/17/2026" and int(g["bold"]) >= 600, g)
             pg.screenshot(path=os.path.join(OUT, "xlsx_import_%s.png" % label))
             # the arrows pass over what the merge covers
