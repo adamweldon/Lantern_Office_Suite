@@ -137,6 +137,32 @@ echo "Lantern ${VER:-?} files: $SITE"
 echo "  (to update: extract a newer Lantern.zip over the Lantern folder and replace the files)"
 if [ -f "$DIR/site/index.html" ] && [ "$SITE" != "$DIR/site" ]; then echo "  (kit/site is a second copy and is not used; it can be deleted)"; fi
 [ -n "$MMPROJ" ] && echo "Vision: $(basename "$MMPROJ") (the AI can look at the pictures it makes)"
+# (1.24.30) Another Lantern at this address? Adam's laptop, 2026-11-20: the desktop Lantern (the one-link starter)
+# was still running at 127.0.0.1:8080 when Start Lantern was started from a USB stick. The desktop Lantern is asked to
+# stop (its downloads carry on when it is next opened); another program, the next free address. Not when the desktop
+# Lantern itself starts the AI behind it (LANTERN_UI). Never through a proxy: the address is this computer's own.
+port_busy() {
+  if command -v curl >/dev/null 2>&1; then curl --noproxy "*" -s -o /dev/null --connect-timeout 1 -m 2 "http://127.0.0.1:$1/"; PB=$?; [ "$PB" -ne 7 ]; return $?; fi
+  if command -v python3 >/dev/null 2>&1; then python3 -c "import socket,sys; s=socket.socket(); s.settimeout(0.5); sys.exit(0 if s.connect_ex(('127.0.0.1', int(sys.argv[1]))) == 0 else 1)" "$1"; return $?; fi
+  return 1
+}
+if [ -z "${LANTERN_UI:-}" ] && command -v curl >/dev/null 2>&1 && port_busy "$PORT"; then
+  if curl --noproxy "*" -s -m 3 "http://127.0.0.1:$PORT/lantern-setup/status" 2>/dev/null | grep -q '"starter"'; then
+    for k in 1 2 3; do
+      port_busy "$PORT" || break
+      curl --noproxy "*" -s -m 3 -X POST -H 'Content-Type: application/json' -d '{}' "http://127.0.0.1:$PORT/lantern-setup/stop" > /dev/null 2>&1
+      for i in $(seq 1 40); do port_busy "$PORT" || break; sleep 0.25; done
+    done
+    port_busy "$PORT" || echo "The desktop Lantern was running at http://127.0.0.1:$PORT/ and has been asked to stop (its downloads carry on when it is next opened)."
+  fi
+  if port_busy "$PORT"; then
+    NEWPORT=""
+    for q in 8083 8084 8085 8086 8087 8088 8089 8091 8092 8093; do port_busy "$q" || { NEWPORT=$q; break; }; done
+    if [ -z "$NEWPORT" ]; then echo "Another program has http://127.0.0.1:$PORT/ and Lantern's spare addresses too. Close it, then start Lantern again."; exit 1; fi
+    echo "Another program has http://127.0.0.1:$PORT/, so Lantern uses http://127.0.0.1:$NEWPORT/ instead."
+    PORT=$NEWPORT
+  fi
+fi
 echo "Open http://127.0.0.1:$PORT/ (this window must stay open; Ctrl+C stops it)"
 if [ "$HOST" = 0.0.0.0 ]; then
   if [ "$OS" = mac ]; then IPS=$(ipconfig getifaddr en0 2>/dev/null; ipconfig getifaddr en1 2>/dev/null)

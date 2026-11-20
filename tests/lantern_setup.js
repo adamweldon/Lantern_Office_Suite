@@ -129,10 +129,20 @@ function boot(url, starter) {
     jobs: [job("engine", "The AI engine (llama.cpp)", "running", 0, 5e7, -1)], message: "Getting the AI engine (llama.cpp): 0%." }, ai: "Qwen3.5-35B-A3B-Q4_K_M.gguf" };
   var B5 = boot("http://127.0.0.1:8080/", st5), d5 = B5.w.document;
   await sleep(400);
-  ok("the AI answering in this page: the corner does not say the engine is being got", B5.w.Lantern.ai.server.state === "ready" && d5.querySelector(".ls-pill") && !/engine/.test(d5.querySelector(".ls-pill").textContent) && /Lantern on this computer/.test(d5.querySelector(".ls-pill").textContent),
+  ok("the AI answering in this page while the starter has none: two Lanterns at one address, said in the corner", B5.w.Lantern.ai.server.state === "ready" && d5.querySelector(".ls-pill") && !/engine/.test(d5.querySelector(".ls-pill").textContent) && /Two Lanterns are answering at this address/.test(d5.querySelector(".ls-pill").textContent),
     [B5.w.Lantern.ai.server.state, d5.querySelector(".ls-pill") && d5.querySelector(".ls-pill").textContent]);
-  ok("...nor Chat's sentence that the AI is still arriving", B5.w.Lantern.aiWaitNote() === "", B5.w.Lantern.aiWaitNote());
-  ok("...nor the list", (d5.querySelector(".ls-pill").onclick(), !/AI engine/.test(d5.querySelector(".ls-box").textContent)), d5.querySelector(".ls-box").textContent.slice(0, 300));
+  ok("...not Chat's sentence that the AI is still arriving", B5.w.Lantern.aiWaitNote() === "", B5.w.Lantern.aiWaitNote());
+  d5.querySelector(".ls-pill").onclick();
+  ok("...and the list says what is happening and what to do, without the engine's download", /Two Lanterns at one address/.test(d5.querySelector(".ls-box").textContent) && /Stop the desktop one below/.test(d5.querySelector(".ls-box").textContent) && !/AI engine/.test(d5.querySelector(".ls-box").textContent), d5.querySelector(".ls-box").textContent.slice(0, 400));
+  d5.querySelector(".ls-stop").onclick(); d5.querySelector(".ls-stop").onclick();
+  await sleep(200);
+  ok("...whose Stop asks the desktop Lantern to stop", B5.posts.some(function (p) { return p[0] === "stop"; }), B5.posts);
+  // the starter's own AI is ready and its engine's job is still listed as running: not said to be got
+  var st5b = { st: { v: 1, starter: "1.24.19", lantern: "1.24.30", busy: true, freeGB: 80, offers: [], watch: 8082, ai: { state: "ready", model: "Qwen3.5-4B-Q4_K_M" },
+    jobs: [job("engine", "The AI engine (llama.cpp)", "running", 0, 5e7, -1)], message: "Getting the AI engine (llama.cpp): 0%." }, ai: "Qwen3.5-4B-Q4_K_M.gguf" };
+  var B5b = boot("http://127.0.0.1:8080/", st5b), d5b = B5b.w.document;
+  await sleep(400);
+  ok("the starter's own AI ready: the corner does not say its engine is being got", d5b.querySelector(".ls-pill") && !/engine/.test(d5b.querySelector(".ls-pill").textContent) && /Lantern on this computer/.test(d5b.querySelector(".ls-pill").textContent), d5b.querySelector(".ls-pill") && d5b.querySelector(".ls-pill").textContent);
   var st6 = { st: { v: 1, starter: "1.24.19", lantern: "1.24.30", busy: true, freeGB: 80, offers: [], watch: 8082, ai: { state: "downloading" },
     jobs: [job("engine", "The AI engine (llama.cpp)", "running", 0, 5e7, -1)], message: "Getting the AI engine (llama.cpp): 0%." } };
   var B6 = boot("http://127.0.0.1:8080/", st6), d6 = B6.w.document, now0 = Date.now();

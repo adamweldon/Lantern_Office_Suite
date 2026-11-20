@@ -130,6 +130,24 @@ for %%s in ("%SITE%") do echo Lantern !LVER! files: %%~fs
 echo   ^(to update: extract a newer Lantern.zip over the Lantern folder and replace the files^)
 if defined OLDSITE echo   ^(kit\site is a second copy and is not used; it can be deleted^)
 if defined MMPROJ echo Vision: !MMPROJ! ^(the AI can look at the pictures it makes^)
+rem (1.24.30) Another Lantern at this address? Adam's laptop, 2026-11-20: the desktop
+rem Lantern was still running at 127.0.0.1:8080 when Start Lantern was started from the
+rem stick; on Windows both took the address, and the page showed the desktop one's
+rem downloads beside this one's AI. The desktop Lantern is asked to stop; another
+rem program, the next free address. Not when the desktop Lantern itself starts the AI
+rem behind it ^(LANTERN_UI^).
+set "PORTSAY=FREE"
+if not defined LANTERN_UI if exist "%DIR%lantern-port.ps1" for /f "usebackq delims=" %%r in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%DIR%lantern-port.ps1" -Port %PORT%`) do set "PORTSAY=%%r"
+if "!PORTSAY!"=="STOPPED" echo The desktop Lantern was running at http://127.0.0.1:%PORT%/ and has been asked to stop ^(its downloads carry on when it is next opened^).
+if "!PORTSAY!"=="NONE" (
+  echo Another program has http://127.0.0.1:%PORT%/ and Lantern's spare addresses too. Close it, then start Lantern again.
+  if not defined LANTERN_NO_PAUSE pause
+  exit /b 1
+)
+if "!PORTSAY:~0,5!"=="PORT=" (
+  echo Another program has http://127.0.0.1:%PORT%/, so Lantern uses http://127.0.0.1:!PORTSAY:~5!/ instead.
+  set "PORT=!PORTSAY:~5!"
+)
 echo Open http://127.0.0.1:%PORT%/  ^(keep this window open; close it to stop^)
 if "%HOST%"=="0.0.0.0" (
   for /f "tokens=2 delims=:" %%i in ('ipconfig ^| findstr /C:"IPv4"') do (

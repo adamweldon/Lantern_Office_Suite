@@ -84,8 +84,9 @@ function Fetch($url, $dest) {
   UI "GET $(Split-Path -Leaf $dest)"; UI "FROM $url $dest.part"
   $part = "$dest.part"
   if ($Curl) {
-    # curl shows progress and resumes a download that was interrupted.
-    & $Curl.Path -L --fail --retry 5 --retry-delay 3 -C - -o $part $url
+    # curl shows progress and resumes a download that was interrupted; (1.24.30) one that sends nothing for 2 minutes
+    # (a firewall holding it) breaks off and is tried again, rather than waiting for good.
+    & $Curl.Path -L --fail --retry 5 --retry-delay 3 --speed-limit 1024 --speed-time 120 -C - -o $part $url
     if ($LASTEXITCODE -ne 0) { throw "download failed (curl $LASTEXITCODE): $url" }
   } else {
     Invoke-WebRequest -Uri $url -OutFile $part -UseBasicParsing

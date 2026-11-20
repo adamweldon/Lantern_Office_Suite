@@ -5,9 +5,11 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -257,3 +259,21 @@ func freeGB(path string) float64 {
 }
 
 var _ = os.Getenv
+
+// listenTCP: Lantern's address for Lantern alone (1.24.30, Adam's laptop: the desktop Lantern held 127.0.0.1:8080 when
+// Start Lantern was started from a USB stick, and its llama-server, which asks for SO_REUSEADDR, took the address too;
+// the two answered in turns). With SO_EXCLUSIVEADDRUSE no other program can bind it beside this one.
+func listenTCP(addr string) (net.Listener, error) {
+	lc := net.ListenConfig{Control: func(network, address string, c syscall.RawConn) error {
+		var serr error
+		if err := c.Control(func(fd uintptr) {
+			serr = syscall.SetsockoptInt(syscall.Handle(fd), syscall.SOL_SOCKET, soExclusiveAddrUse, 1)
+		}); err != nil {
+			return err
+		}
+		return serr
+	}}
+	return lc.Listen(context.Background(), "tcp", addr)
+}
+
+const soExclusiveAddrUse = ^4 // SO_EXCLUSIVEADDRUSE: (int)(~SO_REUSEADDR)

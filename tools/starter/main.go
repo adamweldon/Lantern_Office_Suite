@@ -37,7 +37,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -64,6 +63,7 @@ var (
 	flagZip       = flag.String("zip", "", "Lantern.zip to install from: a path or an address (default: the newest release; env LANTERN_ZIP)")
 	flagPort      = flag.Int("port", 8080, "the address Lantern is served on (127.0.0.1:port)")
 	flagEngine    = flag.Int("engine-port", 8090, "the port the AI engine listens on, behind this one")
+	flagStall     = flag.Duration("stall", 5*time.Minute, "a download that does not move for this long is stopped and tried again")
 	flagWatch     = flag.Int("watch-port", 8082, "Lantern Watch's status port (the kit's model-loading watcher)")
 	flagNoBrowser = flag.Bool("no-browser", false, "do not open the browser")
 	flagNoIcons   = flag.Bool("no-shortcuts", false, "make no desktop or menu icon")
@@ -257,11 +257,11 @@ func main() {
 	log.Printf("Lantern starter %s: Lantern %s in %s", starterVersion, siteVersion(s.site), root)
 	s.memMB = memMB()
 
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", *flagPort))
+	ln, err := listenTCP(fmt.Sprintf("127.0.0.1:%d", *flagPort))
 	// another program (not a Lantern) has the address: the next spare one, unless one was asked for
 	for i := 0; err != nil && !portSet && i < len(spare); i++ {
 		var e2 error
-		if ln, e2 = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", spare[i])); e2 == nil {
+		if ln, e2 = listenTCP(fmt.Sprintf("127.0.0.1:%d", spare[i])); e2 == nil {
 			log.Printf("127.0.0.1:%d is taken by another program: Lantern is at 127.0.0.1:%d", *flagPort, spare[i])
 			*flagPort, err = spare[i], nil
 		}
@@ -772,6 +772,10 @@ func (s *Starter) runSetup(j *Job) error {
 	defer tick.Stop()
 	finished := make(chan error, 1)
 	go func() { <-done; <-done; finished <- cmd.Wait() }()
+	// (1.24.30, Adam's laptop: the engine's download sat at 0% for good, the job "running", so the desktop Lantern stayed
+	// busy, never stopped, and its corner said "Getting the AI engine (llama.cpp): 0%" for hours) -- a download whose
+	// bytes have not moved for a while is stopped, and tried again in a minute like a dropped connection
+	lastB, lastAt := int64(-1), time.Now()
 	for {
 		select {
 		case err := <-finished:
@@ -785,6 +789,16 @@ func (s *Starter) runSetup(j *Job) error {
 			return nil
 		case <-tick.C:
 			s.measure(j)
+			s.mu.Lock()
+			b, tot, part := j.Bytes, j.Total, j.part
+			s.mu.Unlock()
+			if b != lastB {
+				lastB, lastAt = b, time.Now()
+			} else if part != "" && (tot <= 0 || b < tot) && time.Since(lastAt) > *flagStall {
+				killTree(cmd)
+				<-finished
+				return fmt.Errorf("the download did not move for %s", flagStall.Round(time.Second))
+			}
 		case <-s.quit:
 			killTree(cmd)
 			return errors.New("Lantern was stopped")
@@ -1212,6 +1226,11 @@ func (s *Starter) messageLocked(st Status) string {
 		}
 		return "Getting " + strings.ToLower(run.Name[:1]) + run.Name[1:] + pct + "."
 	case waiting:
+		for _, j := range s.jobs {
+			if j.State == "waiting" && strings.Contains(j.Err, "did not move") {
+				return "A download stopped moving: Lantern tries again every minute."
+			}
+		}
 		return "No internet just now: Lantern tries again every minute."
 	case st.AI.State == "starting":
 		return "Lantern's AI is starting."

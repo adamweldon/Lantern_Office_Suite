@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -172,3 +173,6 @@ func freeGB(path string) float64 {
 	}
 	return float64(st.Bavail) * float64(st.Bsize) / 1e9
 }
+
+// listenTCP: Lantern's address (a second program cannot bind it here: no SO_REUSEPORT is asked for)
+func listenTCP(addr string) (net.Listener, error) { return net.Listen("tcp", addr) }
