@@ -108,7 +108,15 @@ tried by a reviewer:
   a reviewer). The Excel question failed by each model's own sheet; watch
   it. [B2] read as the cell B2 in MAKE SHEET: in 1.24.29, mended after its
   review (inside the table only, and where no header can be meant).
-- **Next: .pptx in Slides** (1.24.30). Adam's ITW deck is ITW's training
+- Adam's lift station: **done in 1.24.30** (2026-11-20: "The AI needs help
+  breaking this down"). MAKE CONTROL's alternating relay, MAKE PIPING and
+  MAKE LEVELS (AI_PUMP_STATION), a question in parts made one at a time
+  (AI_PARTS); make-liftstation on the bench. Left: three or more pumps
+  taking turns (a triplex alternator); a low-level alarm float wired as
+  such; a dry-well station's suction valves; the levels from the well's
+  size, the pump's rate and its starts an hour (the cycle volume) -- a
+  formula to check against a source before it goes in.
+- **Next: .pptx in Slides** (1.24.31). Adam's ITW deck is ITW's training
   material: test with it in the session, never commit it.
 
 0. **The Health lessons' sources (1.24.22, Adam).** Every lesson names the
