@@ -18,7 +18,8 @@ KEEP = {
     "read-fn-text": "the same root: CONCAT(\"A\",1,TRUE) joins 1, not TRUE; the note names the cell.",
     "order-compare": "the same root: =1<2<3 and =TRUE>1 (rare).",
     "read-crosssheet-said": "the review asked for a note naming Summary!B2, which showed #REF!; it is now worked out from the workbook's other sheets, as Excel does, so there is nothing to say (read-crosssheet agrees).",
-    "write-newer-functions": "C28 is Lantern's GAMMA, the Lorentz factor: saved as its value and said, since Excel's GAMMA is the gamma function (the review's own write-gamma-name-clash agrees).",
+    "write-gamma-name-clash": "Adam, 2026-11-20: an Excel function's name means what it means in Excel. From 1.24.29 GAMMA is the gamma function here too (the Lorentz factor is LORE), so =GAMMA(B1) is Excel's GAMMA in both and there is no clash to name; LibreOffice works out the same as Lantern.",
+    "grammar-name-clash": "the same: GAMMA is no longer Lantern's own (LORE is, and is named so).",
     "grammar-lantern-names": "the review expected POW and CEIL named as Lantern's own; since the second review they are written as Excel's POWER and CEILING(x,1), which work out the same in Excel, and the note says so.",
     "grammar-let": "Lantern has no LET; an Excel file's LET keeps its _xlpm. names when it is read and saved again.",
 }

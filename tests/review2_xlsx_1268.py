@@ -14,7 +14,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KEEP = {
     "spill-shown": "Sheets does not spill a list into the cells below (=SORT(C2:C9) shows its first value; another function takes the whole list): a spill, with #SPILL!, is in the queue.",
     "arrays-edit": "the same: an Excel array formula over D2:D5 is kept in D2, and D3:D5 keep the values Excel saved (said on opening) until the spill is done.",
-    "gamma-typed": "=GAMMA() typed in a sheet is Lantern's Lorentz factor, as the physics lessons and the AI use it; Excel's is GAMMAFN here. Which a sheet should mean is Adam's to say (QUESTIONS); saved, it is the value, and said.",
+    "gamma-read": "Adam, 2026-11-20 (QUESTIONS 2 answered): GAMMA is Excel's gamma function in Lantern too, and the Lorentz factor is LORE. An Excel file's GAMMA is read as GAMMA, not GAMMAFN (1.24.28's name for it, which still works); the values are Excel's (gamma-value-* agree).",
+    "gamma-typed-save": "the same: =GAMMA(0.5) typed is Excel's gamma function, so it is saved as the formula _xlfn.GAMMA(0.5), as Excel writes it, with nothing to say (gamma-typed agrees).",
+    "grammar-21": "the same: GAMMA(5) is Excel's own, no clash.",
     "datef-sumtimes": "16:00 + 10:00 shows 26:00 here, a length of time; Excel carries h:mm and shows 2:00. Lantern's is the more useful (low, Excel only).",
     "notdate-10": "17.11.2026 is a date here, as a person writing it means and Excel in most of Europe reads it; Excel in US English keeps it as text (low).",
     "notdate-11": "the same for 17/11/2026 (a day over 12 says which is the day).",

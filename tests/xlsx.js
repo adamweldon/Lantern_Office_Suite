@@ -241,20 +241,27 @@ w.eval(js);
   // the writer
   function xml(bytes, part) { return L.zip.text ? L.zip.text(L.zip.read(bytes), part) : L.zip.read(bytes).text(part); }
   var zr = function (bytes) { return L.zip.read(bytes); };
-  var wd = { title: "Mends", cells: { A1: "2026-11-17", A2: "=A1+30", A3: "3:30 PM", A4: "17 Nov 2026", B1: "1", B2: "2", B3: "3", B4: "4", C1: "=SUM(B1:B4*B1:B4)", C2: "=UNIQUE(B1:B4)", C3: "=GAMMA(0.5*299792458)",
-    C4: "=GAMMAFN(5)", C5: "=Other!A1", C6: "=networkdays.intl(A1,A2,1)", C7: "=AB1+1", D1: new Array(33001).join("x") } };
+  var wd = { title: "Mends", cells: { A1: "2026-11-17", A2: "=A1+30", A3: "3:30 PM", A4: "17 Nov 2026", B1: "1", B2: "2", B3: "3", B4: "4", C1: "=SUM(B1:B4*B1:B4)", C2: "=UNIQUE(B1:B4)", C3: "=LORE(0.5*299792458)",
+    C4: "=GAMMAFN(5)", C5: "=Other!A1", C6: "=networkdays.intl(A1,A2,1)", C7: "=AB1+1", D1: new Array(33001).join("x"),
+    // (1.24.29) CONVERT's units as Excel names them: lb is lbm, an hour h is hr; bar Excel has not
+    E1: "=CONVERT(2,\"lb\",\"kg\")", E2: "=CONVERT(3,\"h\",\"min\")", E3: "=CONVERT(1,\"bar\",\"psi\")", E4: "=CONVERT(1,\"ton\",\"kg\")", E5: "=GAMMA(5)" } };
   var wr = X.write(wd, L.sheetDocs.compute(wd.cells)), z1 = zr(wr.bytes), sx = z1.text("xl\x2Fworksheets\x2Fsheet1.xml"), st = z1.text("xl\x2Fstyles.xml");
   var wback = X.read(wr.bytes, "m.xlsx"), wsb = wback.sheets[0];
   ok("typed dates and times saved as Excel's numbers with the look they were typed in; a formula's date with a date's look",
     /<c r="A1" s="\d+"><v>46343<\/v>/.test(sx) && /<c r="A2" s="\d+"><f>A1\+30<\/f><v>46373<\/v>/.test(sx) && wsb.fmt.A1.nf === "yyyy-mm-dd" && wsb.fmt.A2.nf === "yyyy-mm-dd" &&
     wsb.fmt.A3.nf === "h:mm AM\x2FPM" && wsb.fmt.A4.nf === "dd mmm yyyy" && wsb.cells.A3 === "0.645833333333333", [wsb.cells.A1, wsb.cells.A3, wsb.fmt]);
-  ok("Excel's GAMMA read back as GAMMAFN, and said", wsb.cells.C4 === "=GAMMAFN(5)" && has(wback.notes, /GAMMA \(the gamma function\) is written GAMMAFN/), [wsb.cells.C4, wback.notes]);
+  // (1.24.29, Adam 2026-11-20: Excel's function names mean what they mean in Excel) GAMMAFN, 1.24.28's name, saved as GAMMA and read back as GAMMA
+  ok("Excel's GAMMA read back as GAMMA, said nowhere", wsb.cells.C4 === "=GAMMA(5)" && wsb.cells.E5 === "=GAMMA(5)" && !has(wback.notes, /GAMMAFN/), [wsb.cells.C4, wback.notes]);
   ok("an array formula: t=\"array\"; a spilling one with cm=\"1\" and the metadata part Excel 365 writes",
     /<c r="C1"[^>]*><f t="array" ref="C1">SUM\(B1:B4\*B1:B4\)<\/f>/.test(sx) && /<c r="C2"[^>]* cm="1"><f t="array" ref="C2">_xlfn.UNIQUE\(B1:B4\)<\/f>/.test(sx) && z1.has("xl\x2Fmetadata.xml") &&
     /sheetMetadata\+xml/.test(z1.text("[Content_Types].xml")) && /sheetMetadata/.test(z1.text("xl\x2F_rels\x2Fworkbook.xml.rels")), sx.slice(sx.indexOf('r="C1"') - 5, sx.indexOf('r="C1"') + 300));
-  ok("GAMMA (the Lorentz factor) saved as its value and said; GAMMAFN as Excel's _xlfn.GAMMA; a sheet not in the file: the value, and said",
-    /<c r="C3"[^>]*><v>1\.1547/.test(sx) && /<f>_xlfn.GAMMA\(5\)<\/f>/.test(sx) && /<c r="C5"[^>]*t="e"><v>#REF!<\/v>/.test(sx) &&
-    has(wr.notes, /^Saved as the value Lantern worked out.*C3 \(Excel’s GAMMA is the gamma function.*C5 \(it uses the sheet “Other”/), wr.notes);
+  ok("LORE (the Lorentz factor, Lantern's own) kept with its value; GAMMAFN and GAMMA as Excel's _xlfn.GAMMA; a sheet not in the file: the value, and said",
+    /<c r="C3"[^>]*><f>LORE\(0\.5\*299792458\)<\/f><v>1\.1547/.test(sx) && /<c r="C4"[^>]*><f>_xlfn.GAMMA\(5\)<\/f>/.test(sx) && /<c r="E5"[^>]*><f>_xlfn.GAMMA\(5\)<\/f><v>24<\/v>/.test(sx) &&
+    /<c r="C5"[^>]*t="e"><v>#REF!<\/v>/.test(sx) && has(wr.notes, /^Saved as the value Lantern worked out.*C5 \(it uses the sheet “Other”/), [wr.notes, sx.slice(sx.indexOf('r="C3"') - 5, sx.indexOf('r="C3"') + 200)]);
+  ok("CONVERT saved with Excel's units: lb as lbm, an hour as hr; ton is Excel's short ton here too; bar, which Excel has not, saved as the value and said",
+    /<c r="E1"[^>]*><f>CONVERT\(2,&quot;lbm&quot;,&quot;kg&quot;\)<\/f><v>0\.90718474<\/v>/.test(sx) && /<c r="E2"[^>]*><f>CONVERT\(3,&quot;hr&quot;,&quot;mn&quot;\)<\/f><v>180<\/v>/.test(sx) &&
+    /<c r="E4"[^>]*><f>CONVERT\(1,&quot;ton&quot;,&quot;kg&quot;\)<\/f><v>907\.18474<\/v>/.test(sx) && /<c r="E3"[^>]*><v>14\.5037/.test(sx) && !/<c r="E3"[^>]*><f>/.test(sx) && has(wr.notes, /E3 \(a unit of CONVERT that Excel does not have/),
+    [wr.notes, sx.slice(sx.indexOf('r="E1"') - 5, sx.indexOf('r="E1"') + 420)]);
   ok("NETWORKDAYS.INTL without _xlfn., in capitals; a column past Z said; a text over 32,767 characters cut, and said",
     /<f>NETWORKDAYS\.INTL\(A1,A2,1\)<\/f>/.test(sx) && has(wr.notes, /past Z \(C7\)/) && has(wr.notes, /32,767 characters.*D1/) && z1.text("xl\x2FsharedStrings.xml").indexOf(new Array(32768).join("x") + "<") > 0, wr.notes);
   // a workbook's sheets saved together
