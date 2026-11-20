@@ -111,11 +111,17 @@ tried by a reviewer:
 - Adam's lift station: **done in 1.24.30** (2026-11-20: "The AI needs help
   breaking this down"). MAKE CONTROL's alternating relay, MAKE PIPING and
   MAKE LEVELS (AI_PUMP_STATION), a question in parts made one at a time
-  (AI_PARTS); make-liftstation on the bench. Left: three or more pumps
-  taking turns (a triplex alternator); a low-level alarm float wired as
-  such; a dry-well station's suction valves; the levels from the well's
+  (AI_PARTS); make-liftstation on the bench; three reviews (1,230 cases).
+  Left: three or more pumps taking turns (a triplex alternator); an
+  alternator on pressure switches (duplex compressors); a fill's wiring
+  (NC floats) offered when a question says fill; a dry-well station's
+  suction valves; a basement sump's own piping; the levels from the well's
   size, the pump's rate and its starts an hour (the cycle volume) -- a
   formula to check against a source before it goes in.
+- Two Lanterns at one address: **done in 1.24.30** (Adam, 2026-11-20: the
+  corner said "Getting the AI engine (llama.cpp): 0%" under Start Lantern).
+  The starter's fixes (exclusive address on Windows, a stalled download
+  stopped) reach Get-Lantern.exe only through a release from `main`.
 - **Next: .pptx in Slides** (1.24.31). Adam's ITW deck is ITW's training
   material: test with it in the session, never commit it.
 
