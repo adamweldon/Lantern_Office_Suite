@@ -83,7 +83,8 @@ function seq(list, seen) { var i = 0; return function (msgs) { if (seen) seen.pu
     kind("Write an Arduino sketch that blinks the LED on pin 13 every half second without using delay().") === "CODE" &&
     kind("Make a short slide deck, 4 to 6 slides, for a toolbox talk on ladder safety.") === "SLIDES" &&
     kind("Write a Python script that reads a CSV file called readings.csv and prints the average of its temp column.") === "CODE" &&
-    kind("Draw a circuit with an LED and write the Arduino code for it") === "SCHEMATIC");
+    // (1.24.30) two things asked for, made one at a time (AI_PARTS): the first, the LED circuit, whose own instructions name MAKE ELECTRONICS
+    kind("Draw a circuit with an LED and write the Arduino code for it") === "ELECTRONICS");
   ok("a tool that fits only by the verb gives way to the one the words name: draw the power wheel",
     kind("Draw the Ohm’s law power wheel for a lesson: P, V, I and R, each with its three formulas.") === "WHEEL" && kind("Draw a house with a red roof") === "DRAWING");
   ok("after a verb that moves a thing somewhere, the place named last: on flash cards, into slides, in my planner",

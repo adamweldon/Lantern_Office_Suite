@@ -21236,6 +21236,10 @@ Lantern.RFB = (function () {
     var lastValue = null, questioned = false, stillDoubt = null, looked = false, sources = null, detail = false, nudged = false, showed = false, steered = false, pointed = false, madeShown = null, blockAsked = false,
       puzzleRuns = 0, pzFixed = false, puzzled = false, helped = false, cmdRuns = 0, canMore = false, pzSelf = false, needHelped = false, lastSteps = null, docAsked = false,
       needLooked = "", moreLk = null;
+    // (1.24.30) a question asking for several things Lantern makes (AI_PARTS): made one at a time
+    var PARTS = window.Lantern.aiParts, askParts = null;
+    try { askParts = PARTS && PARTS.split && !opts.noParts ? PARTS.split(q) : null; } catch (e) { askParts = null; }
+    if (askParts) rec.parts = askParts.map(function (p) { return { text: p.text, kind: p.kind }; });
     prevQ = history ? currentQ : "";
     currentQ = q;
     rec.self = A.aboutSelf(q); rec.noLibrary = A.noLibrary(q); rec.contextual = A.dependsOnContext(q, history);
@@ -21339,7 +21343,7 @@ Lantern.RFB = (function () {
     said += "\n" + msgs.filter(function (m) { return m.role === "assistant"; }).map(function (m) {
       return (textOf(m.content).match(/^[ \t*]*MAKE [A-Za-z][\s\S]*?^[ \t]*END\b/gm) || []).join("\n"); }).join("\n");
     var rounds;
-    for (rounds = 0; rounds < 6; rounds++) {   // tools or library, answer, one correction
+    for (rounds = 0; rounds < 6 + (askParts ? 3 * (askParts.length - 1) : 0); rounds++) {   // tools or library, answer, one correction (and three more for each part after the first)
       var sent = C.trimHistory(msgs), OWNK = window.Lantern.chatOwn;
       if (OWNK) sent = sent.map(OWNK.message);   // "Not in my library" -> "say so, then your own knowledge, said"
       var reply = await call(sent, opts.max_tokens ? { max_tokens: opts.max_tokens } : undefined);
@@ -21412,7 +21416,7 @@ Lantern.RFB = (function () {
         // one that could be drawn.
         if (made.plan) madeShown = made;
         else if (questioned && madeShown) { note("The corrected block could not be made either; here is what Lantern could make of the first one."); made = madeShown; }
-        rec.made = made;
+        if (!askParts || !askParts.cur) rec.made = made;
         if (!made.ok && !questioned) {
           questioned = true;
           note("Lantern checked the MAKE " + made.block.kind + " block: " + made.problems.join("; ") + ". Asking the AI again\u2026");
@@ -21421,6 +21425,24 @@ Lantern.RFB = (function () {
           continue;
         }
         show(function () { return window.Lantern.aiAct.view(made); });
+        // (1.24.30) the next part of a question that asks for several things, with its own instructions; a block of
+        // it already written in this reply is built now
+        if (askParts && (made.ok || questioned)) {
+          var np = PARTS.next(askParts, made, shown), more = null, m2 = null;
+          (rec.mades = rec.mades || []).push(made);
+          while (np && (more = PARTS.inReply(askParts, shown)) && (m2 = window.Lantern.aiAct.build(more.text, q)) && m2.ok) {
+            (function (mm) { show(function () { return window.Lantern.aiAct.view(mm); }); })(m2);
+            rec.mades.push(m2);
+            np = PARTS.next(askParts, m2, shown); m2 = null;
+          }
+          if (np && m2 && !m2.ok) {
+            questioned = true; madeShown = m2.plan ? m2 : null; blockAsked = false;
+            note("Lantern checked the MAKE " + m2.block.kind + " block: " + m2.problems.join("; ") + ". Asking the AI again\u2026");
+            msgs.push({ role: "user", content: window.Lantern.aiAct.fixText ? window.Lantern.aiAct.fixText(m2, q) : "Lantern checked your MAKE " + m2.block.kind + " block: " + m2.problems.join("; ") + ".\nReply with the corrected block only (MAKE ... END)." });
+            continue;
+          }
+          if (np) { note(np.note); msgs.push({ role: "user", content: np.prompt }); questioned = false; madeShown = null; blockAsked = false; continue; }
+        }
         var png = made.ok && !showed && !opts.headless && made.png && Lantern.ai && Lantern.ai.canSee && Lantern.ai.canSee() ? made.png() : null;
         if (png) {
           showed = true;
@@ -21434,6 +21456,9 @@ Lantern.RFB = (function () {
       // Lantern.chatNoBlock -- MUSIC_CHAT, 1.22.0: the 35B said Lantern could
       // not make an orchestra's file, after writing the parts out in prose):
       // what to write goes back, once a question.
+      // (1.24.30) a later part of the question answered with prose: its block asked for, once
+      var pAgain = askParts && askParts.cur && PARTS.again ? PARTS.again(askParts, shown) : null;
+      if (pAgain) { note(pAgain.note); msgs.push({ role: "user", content: pAgain.prompt }); continue; }
       var NB = window.Lantern.chatNoBlock || [], nbr = null;
       for (var nbi = 0; nbi < NB.length && !nbr && !blockAsked && !parsed.exprText; nbi++) { try { nbr = NB[nbi](q, shown, { msgs: msgs, chat: true, noPuzzle: puzzleOff }); } catch (e) { nbr = null; } }
       if (nbr && nbr.prompt) {
@@ -30762,11 +30787,15 @@ Lantern.RFB = (function () {
   // prompt(question) -> lines for Chat's instructions: only the actions the
   // question is about, so a small model's prompt stays short.
   function prompt(q) {
-    var acts = relevant(q);
+    // (1.24.30) a question asking for several things (AI_PARTS): the first one's tool, and the list of them all
+    var PT = window.Lantern.aiParts, parts = null;
+    try { parts = PT && PT.split ? PT.split(q) : null; } catch (e) { parts = null; }
+    var acts = parts ? parts[0].acts.slice(0, 1) : relevant(q), aq = parts ? parts[0].ask : q;
     if (!acts.length) return "";
     var out = ["Lantern can also MAKE things in its apps. Reply with ONE block like this (Lantern lays it out and checks it;",
       "you never give pixel positions). Put a short sentence before the block if you like."];
-    acts.forEach(function (a) { out.push(""); out = out.concat(typeof a.promptFor === "function" ? a.promptFor(q) : a.prompt); });
+    if (parts) out.push(PT.line(parts));
+    acts.forEach(function (a) { out.push(""); out = out.concat(typeof a.promptFor === "function" ? a.promptFor(aq) : a.prompt); });
     return out.join("\n");
   }
   // build(text, question) -> the first MAKE block, built and checked, or null.
@@ -30999,6 +31028,30 @@ Lantern.RFB = (function () {
     }
     if (!made) { made = fromReply(out.text, q); if (made) out.inReply = true; }
     out.made = made;
+    // (1.24.30) a question asking for several things (AI_PARTS): the next ones, as Chat asks for them -- each its
+    // own instructions, one correction, and its block asked for once when prose comes back. out.made stays the first
+    var PT = window.Lantern.aiParts, parts = null;
+    try { parts = PT && PT.split && made ? PT.split(q) : null; } catch (e) { parts = null; }
+    if (parts) {
+      out.parts = [{ kind: parts[0].kind, ok: !!made.ok, made: made }];
+      var last = out.text, np = PT.next(parts, made, last), guard = 0;
+      while (np && guard++ < 6) {
+        var mr = PT.inReply(parts, last), mp = mr ? build(mr.text, q) : null, tp = last;
+        if (!mp) {
+          msgs.push({ role: "assistant", content: once(last) });
+          msgs.push({ role: "user", content: np.prompt });
+          tp = await call(msgs); out.rounds++;
+          mp = build(tp, q);
+          var pa = !mp ? PT.again(parts, tp) : null;
+          if (pa) { msgs.push({ role: "assistant", content: once(tp) }); msgs.push({ role: "user", content: pa.prompt }); tp = await call(msgs); out.rounds++; mp = build(tp, q); }
+          if (mp && !mp.ok) { msgs.push({ role: "assistant", content: mp.trimmed || tp }); msgs.push({ role: "user", content: fixText(mp, q) }); var tf = await call(msgs); out.rounds++; var mf = build(tf, q); if (mf) { mp = mf; tp = tf; } }
+        }
+        out.parts.push({ kind: np.part.kind, ok: !!(mp && mp.ok), made: mp });
+        if (!mp) { np = parts.filter(function (x) { return !x.done; }).length ? PT.next(parts, null, tp) : null; last = tp; continue; }
+        last = tp;
+        np = PT.next(parts, mp, tp);
+      }
+    }
     return out;
   }
   // view(res) -> what Chat shows: the preview, any problems left, and the
@@ -33519,6 +33572,18 @@ Lantern.RFB = (function () {
 // wires: no rung can join L1 to L2 through contacts alone (a short), every
 // coil and light sits between the rails, every contact belongs to a coil
 // that is drawn. Under the drawing Lantern says what each rung does.
+// (1.24.30, Adam's lift station) An alternating relay -- "alternator AR M1
+// M2", the line the 35B wrote as "alternating AR M1 M2" -- makes two pumps
+// take turns, the duplex control of a lift station or a sump. The AI names
+// the floats by what each is for ("off", "lead on", "lag on", "high level
+// alarm"); Lantern wires the one usual circuit: a lead call relay pulled in
+// by the lead float and held in until the off float opens, the alternating
+// relay fed by it (it changes over each time the call drops out), each pump
+// on the call while the alternating relay has it leading, a lag call that
+// starts both, and the alarm light or horn on the alarm float. It says what
+// it added and what it moved (floats written on M1, an alarm light written
+// on the alternating relay). A rung may now have branches of several
+// contacts side by side ((CR1 and AR) or CR2).
 (function () {
   var L = window.Lantern;
   if (!L) return;
@@ -33528,16 +33593,17 @@ Lantern.RFB = (function () {
     pressure: "pressure ps", float: "float level fs", temp: "temperature temp thermostat ts", overload: "overload overloads ol",
     coil: "coil contactor starter relay cr k", timer: "timer tr ton delay", lamp: "lamp light pilot indicator bulb lt pl", solenoid: "solenoid sol",
     horn: "horn buzzer alarm bell siren", fuse: "fuse fu", interlock: "interlock", supply: "supply transformer power",
+    alternator: "alternator alternating alternate alternation duplexer",
     implied: "motor mtr rail rails l1 l2 neutral", note: "note text label", mode: "mode", part: "part", pipe: "wire connect line"
   };
   var ROLE = {};
   Object.keys(ROLES).forEach(function (r) { ROLES[r].split(" ").forEach(function (w) { ROLE[w] = r; }); });
-  var SWITCHY = /^(stop|start|button|estop|switch|limit|pressure|float|temp|overload)$/, OUTPUT = /^(coil|timer|lamp|solenoid|horn)$/;
+  var SWITCHY = /^(stop|start|button|estop|switch|limit|pressure|float|temp|overload)$/, OUTPUT = /^(coil|timer|lamp|solenoid|horn|alternator)$/;
   var PFX = { stop: "PB", start: "PB", button: "PB", estop: "PB", switch: "SS", limit: "LS", pressure: "PS", float: "FS", temp: "TS", overload: "OL",
-    starter: "M", relay: "CR", coil: "CR", timer: "TR", lamp: "LT", solenoid: "SOL", horn: "AH", fuse: "FU" };
+    starter: "M", relay: "CR", coil: "CR", timer: "TR", lamp: "LT", solenoid: "SOL", horn: "AH", fuse: "FU", alternator: "AR" };
   var IDRE = /^[A-Za-z]{1,3}\d{1,3}[A-Za-z]?$/;
   var NOTYET = /^(jog|jogging|hand-off-auto|hoa|reversing-drum|drum|plc|vfd|drive|soft-start|star-delta|wye-delta|counter|sequencer)$/i;
-  var DRAWS = "stop, start, button, switch, limit, pressure, float, temp, overload, coil, timer, lamp, solenoid, horn, estop, fuse, interlock";
+  var DRAWS = "stop, start, button, switch, limit, pressure, float, temp, overload, coil, timer, lamp, solenoid, horn, estop, fuse, interlock, alternator";
   var COLOURS = { red: "R", green: "G", amber: "A", yellow: "A", orange: "A", white: "W", blue: "B", clear: "W" };
   function words(line) {
     var out = [], re = /\x22([^\x22]*)\x22|\u201c([^\u201d]*)\u201d|(\S+)/g, m;
@@ -33554,13 +33620,23 @@ Lantern.RFB = (function () {
       .replace(/\b(float|level)[- ]switch\b/gi, "float").replace(/\b(temperature|temp)[- ]switch\b/gi, "temp").replace(/\b(selector|toggle|maintained)[- ]switch\b/gi, "switch")
       .replace(/\boverload[- ](relay|contact|contacts)\b/gi, "overload").replace(/\bsolenoid[- ]valve\b/gi, "solenoid").replace(/\b(time[- ]delay[- ]relay|timer[- ]relay|on[- ]delay[- ]timer|time[- ]delay)\b/gi, "timer")
       .replace(/\bnormally[- ]open\b/gi, "no").replace(/\bnormally[- ]closed\b/gi, "nc").replace(/\bholding[- ]contact\b|\bseal[- ]?in[- ]contact\b|\bseal[- ]?in\b/gi, "seal")
-      .replace(/\bhand[- ]off[- ]auto\b/gi, "hoa");
+      .replace(/\bhand[- ]off[- ]auto\b/gi, "hoa").replace(/\balternat(?:ing|or|ion)[- ](?:relay|switch|controller)s?\b/gi, "alternator");
   }
   // asks(question): a control circuit (not air, oil, a program or electronics)?
-  var ASK = /\b(control circuits?|control wiring|motor starters?|starters?|contactors?|relay logic|relays?|ladder diagrams?|seal[- ]?in|holding contact|latch(es|ing)?|start[- \x2F]stop|stop[- \x2F]start|pilot lights?|interlock\w*|overloads?|three[- ]wire control|two[- ]wire control|hard[- ]?wired)\b/i;
+  var ASK = /\b(control circuits?|control wiring|motor starters?|starters?|contactors?|relay logic|relays?|ladder diagrams?|seal[- ]?in|holding contact|latch(es|ing)?|start[- \x2F]stop|stop[- \x2F]start|pilot lights?|interlock\w*|overloads?|three[- ]wire control|two[- ]wire control|hard[- ]?wired|alternators?|alternating|duplex (pump )?control|lead[- \x2F]lag|(lift|pump|lifting|sewage) station control|pump control (panel|circuit|wiring))\b|\bduplex\b[^.?!]{0,30}\b(pumps?|stations?)\b|\bcontrols?\b[^.?!]{0,40}\b(lift|pump|pumping|lifting|sewage) stations?\b/i;
   var NOT_ASK = /\b(pneumatic|hydraulic|compressed air|air cylinder|plc|program|programs|code|structured text|transistor|arduino|microcontroller|led|leds|resistor|diode|mosfet|555|op[- ]?amp|breadboard)\b/i;
   function asks(q) { q = String(q || ""); return ASK.test(q) && !NOT_ASK.test(q); }
-  var CTRL_HEAD = /^(stop|start|coil|contactor|starter|relay|overload|lamp|estop|interlock|timer|solenoid|horn)$/;
+  var CTRL_HEAD = /^(stop|start|coil|contactor|starter|relay|overload|lamp|estop|interlock|timer|solenoid|horn|alternator|alternating)$/;
+  // (1.24.30) what a float in a pump's well is for, by its label: "off", "lead on", "lag on", "high level alarm"; a
+  // low-level alarm ("low") is left as written
+  function floatJob(t) {
+    t = String(t || "").toLowerCase();
+    if (/\balarm|high[\s-]*high|hi[\s-]*hi|overflow|flood|high[\s-]*(level|water)/.test(t) && !/\b(start|on|lead|lag)\b/.test(t)) return /\b(low|lo)\b/.test(t) && !/\bhigh|\bhi\b/.test(t) ? "low" : "alarm";
+    if (/\blag\b|\bsecond\b|\b2nd\b|\bboth\b|\bstandby\b|\bassist\b/.test(t)) return "lag";
+    if (/\b(off|stop|stops|low|lo|shut|lowest|bottom)\b/.test(t)) return "off";
+    if (/\b(lead|start|starts|on|high|hi|first|1st|run|call|top)\b/.test(t)) return "lead";
+    return null;
+  }
   // isControl(block, question): MAKE CONTROL, or the device lines of one in
   // a MAKE SCHEMATIC block (no part or wire lines, no cylinder or valve)
   function isControl(b, q) {
@@ -33612,7 +33688,8 @@ Lantern.RFB = (function () {
         if (COLOURS[lw]) { it.a.colour = COLOURS[lw]; it.a.colourName = lw; return; }
         if (/^(or)$/.test(lw)) { it.a.or = true; return; }
         if (/^seal$/.test(lw)) return;
-        if (IDRE.test(t) && !/^\d/.test(t)) {
+        // (1.24.30) a tag of capitals alone is a device's too (AR, the alternating relay the 35B wrote)
+        if ((IDRE.test(t) && !/^\d/.test(t)) || (/^[A-Z]{2,3}$/.test(t) && !/^(NO|NC|ON|OFF|AND|OR|THE|LED|AC|DC|VAC|VDC)$/.test(t))) {
           var id = t.toUpperCase();
           if (!it.id && role !== "interlock") it.id = id; else { it.refs.push({ id: id, nc: !!pend }); pend = null; }
           return;
@@ -33637,12 +33714,24 @@ Lantern.RFB = (function () {
     pr.items.forEach(function (it) {
       if (it.id && dev[it.id]) {
         var d = dev[it.id];
+        // (1.24.30) "alternator AR M1 M2" and "coil AR" are one alternating relay (the 35B wrote both)
+        if ((d.role === "alternator") !== (it.role === "alternator") && OUTPUT.test(d.role) && OUTPUT.test(it.role)) {
+          if (it.role === "alternator") { d.role = d.kind = "alternator"; d.refs = it.refs.concat(d.refs); if (it.label) d.label = it.label; }
+          else if (!d.label) d.label = it.label;
+          return;
+        }
         if ((OUTPUT.test(d.role) && OUTPUT.test(it.role)) || d.role === it.role) { it.refs.forEach(function (r) { d.refs.push(r); }); if (!d.label) d.label = it.label; return; }
         problems.push(it.id + " is written as a " + d.role + " and a " + it.role + ": give each device its own ID (a contact of " + it.id + " is written by naming " + it.id + " on the line of what it switches)"); return;
       }
       if (it.id) { dev[it.id] = it; used[it.id] = 1; }
       items.push(it);
     });
+    // (1.24.30) a coil called the alternating relay, where no alternator line is, is one (the 35B's second block:
+    // coil CR1 "alternating relay", with nothing switching it)
+    if (!items.some(function (it) { return it.role === "alternator"; })) {
+      var altC = items.filter(function (it) { return it.role === "coil" && /\balternat/i.test(it.label || ""); });
+      if (altC.length === 1) { altC[0].role = altC[0].kind = "alternator"; changed.push((altC[0].id || "the coil") + " (" + altC[0].label + ") is drawn as an alternating relay: it changes over each time it is fed and let go"); }
+    }
     items.forEach(function (it) {
       if (!it.id && it.role !== "interlock") { it.id = nid(PFX[it.kind] || PFX[it.role] || "X"); dev[it.id] = it; }
       if (it.kind === "coil") it.kind = /^(M|K|MS)\d/.test(it.id) ? "starter" : "relay";   // a coil's tag says what it is: M1 a starter, CR1 a relay
@@ -33661,6 +33750,62 @@ Lantern.RFB = (function () {
         added.push("the " + (kind === "starter" ? "starter coil " : kind === "relay" ? "relay coil " : kind + " ") + r.id + " that " + it.id + " switches");
       });
     });
+    var duplex = null, alts = items.filter(function (it) { return it.role === "alternator"; });
+    if (alts.length > 1) problems.push("one alternating relay takes turns between two pumps: write one alternator line, like: alternator AR M1 M2");
+    else if (alts.length === 1) duplex = takeTurns(alts[0]);
+    function takeTurns(a) {
+      // the two pumps: the coils it names, or else the circuit's two motor starters
+      var pumps = a.refs.map(function (r) { return r.id; }).filter(function (id) { return dev[id] && dev[id].role === "coil"; });
+      if (pumps.length !== 2) { var st = outs.filter(function (o) { return o.role === "coil" && o.kind === "starter"; }).map(function (o) { return o.id; }); if (st.length === 2) pumps = st; }
+      if (pumps.length !== 2) { problems.push("alternator " + a.id + ": name the two pump starters it takes turns between, and write a coil for each, like: alternator " + a.id + " M1 M2, coil M1 \x22pump 1 starter\x22, coil M2 \x22pump 2 starter\x22"); return null; }
+      a.refs = []; a.pumps = pumps;
+      var fl = {}, odd = [], twice = [];
+      items.filter(function (it) { return it.role === "float"; }).forEach(function (f) {
+        var k = floatJob(f.label);
+        if (k === "low") return;   // a low-level alarm: as written
+        if (!k) { odd.push(f.id); return; }
+        if (fl[k]) { twice.push(k); return; }
+        fl[k] = f;
+      });
+      var WRITE = "float FS1 \x22off\x22, float FS2 \x22lead on\x22, float FS3 \x22lag on\x22, float FS4 \x22high level alarm\x22";
+      if (odd.length) problems.push("with an alternating relay, say what each float is for -- " + odd.join(" and ") + " " + (odd.length > 1 ? "do" : "does") + " not -- like: " + WRITE);
+      if (twice.length) problems.push("two floats for one job (" + twice.join(", ") + "): one float each for off, lead on, lag on and the alarm, like: " + WRITE);
+      if (!odd.length && !twice.length && (!fl.off || !fl.lead)) problems.push("the pumps need " + (!fl.off && !fl.lead ? "a float to start them and one to stop them" : !fl.off ? "a float to stop them" : "a float to start them") + ", like: " + WRITE);
+      if (odd.length || twice.length || !fl.off || !fl.lead) return null;
+      var onPump = [];
+      ["off", "lead", "lag", "alarm"].forEach(function (k) { var f = fl[k]; if (!f) return; f.used = true; if (f.refs.some(function (r) { return pumps.indexOf(r.id) >= 0 || r.id === a.id; })) onPump.push(f.id); f.refs = []; });
+      var cA = { role: "coil", kind: "relay", id: nid("CR"), label: "lead call", nc: false, refs: [], a: {}, made: true, call: fl.lead };
+      dev[cA.id] = cA; items.push(cA);
+      var cB = null;
+      if (fl.lag) { cB = { role: "coil", kind: "relay", id: nid("CR"), label: "lag call", nc: false, refs: [], a: {}, made: true, call: fl.lag }; dev[cB.id] = cB; items.push(cB); }
+      // the rungs in the order they work: the calls and the alternating relay first
+      var rest = outs.filter(function (o) { return o !== a; });
+      outs.length = 0;
+      [cA, a].concat(cB ? [cB] : [], rest).forEach(function (o) { outs.push(o); });
+      made = 0;
+      added.push("the lead call relay " + cA.id + ": " + fl.lead.id + " (" + fl.lead.label + ") pulls it in, and its own contact holds it in until " + fl.off.id + " (" + fl.off.label + ") opens",
+        a.id + " (alternating relay) fed by " + cA.id + ": it changes over each time " + cA.id + " drops out, so " + pumps[0] + " and " + pumps[1] + " take turns to lead",
+        pumps[0] + " on " + cA.id + " while " + a.id + " has " + pumps[0] + " leading, " + pumps[1] + " on " + cA.id + " while it has " + pumps[1] + " leading");
+      if (cB) added.push("the lag call relay " + cB.id + ": " + fl.lag.id + " (" + fl.lag.label + ") pulls it in until " + fl.off.id + " opens, and it runs both pumps");
+      else { var fsN = 1; while (used["FS" + fsN]) fsN++; changed.push("There is no lag float, so one pump runs at a time; a lag float above the lead one (float FS" + fsN + " \x22lag on\x22) would start the other too when one cannot keep up"); }
+      if (onPump.length) changed.push("The floats " + list(onPump.sort(), "and") + " call the pumps through " + cA.id + (cB ? " and " + cB.id : "") + " and the alternating relay " + a.id + ", not straight");
+      // the alarm: the lights and horns that say alarm or high level are on the alarm float (not on the alternating relay)
+      var alarms = [];
+      if (fl.alarm) {
+        alarms = outs.filter(function (o) { return /^(lamp|horn)$/.test(o.role) && (/\balarm|high[\s-]*(level|water)|flood|overflow/i.test(o.label || "") || o.refs.some(function (r) { return r.id === fl.alarm.id; })); });
+        alarms.forEach(function (o) {
+          var other = o.refs.filter(function (r) { return r.id !== fl.alarm.id; }).map(function (r) { return r.id; });
+          if (other.length) changed.push(o.id + " (" + o.label + ") is lit by the alarm float " + fl.alarm.id + ", not by " + list(other, "and"));
+          o.refs = [];
+        });
+        if (!alarms.length) {
+          var lt = { role: "lamp", kind: "lamp", id: nid("LT"), label: "high level alarm", nc: false, refs: [], a: { colour: "R", colourName: "red" }, made: true };
+          dev[lt.id] = lt; items.push(lt); outs.push(lt); alarms = [lt];
+          added.push("the high level alarm light " + lt.id + " on " + fl.alarm.id);
+        }
+      }
+      return { a: a, pumps: pumps, cA: cA, cB: cB, fl: fl, alarms: alarms };
+    }
     if (!outs.length) problems.push("there is no coil or light: add one, like: coil M1 \x22motor starter\x22");
     if (outs.length > 12) problems.push("keep it to 12 rungs (coils, timers, lights, solenoids) or fewer");
     var R = {};
@@ -33668,8 +33813,23 @@ Lantern.RFB = (function () {
     var feed = [];
     // which output a switch acts on: named, or the only one that fits
     function only(f) { var c = outs.filter(f); return c.length === 1 ? c[0].id : ""; }
-    var coils = function (o) { return o.role === "coil" || o.role === "timer"; };
-    items.filter(function (it) { return SWITCHY.test(it.role) || it.role === "fuse"; }).forEach(function (it) {
+    var coils = function (o) { return o.role === "coil" || o.role === "timer" || o.role === "alternator"; };
+    // the duplex wiring's own contacts and floats
+    function fe(f) { return { id: f.id, kind: "float", nc: false, label: f.label }; }
+    function ct(id, nc) { return { id: id, kind: "contact", of: id, nc: !!nc, label: "" }; }
+    if (duplex) {
+      var D = duplex;
+      R[D.cA.id].stops.push(fe(D.fl.off)); R[D.cA.id].starts.push(fe(D.fl.lead));
+      if (D.cB) { R[D.cB.id].stops.push(fe(D.fl.off)); R[D.cB.id].starts.push(fe(D.fl.lag)); }
+      R[D.a.id].series.push(ct(D.cA.id));
+      D.pumps.forEach(function (p, i) {
+        var lead = [ct(D.cA.id), ct(D.a.id, i === 0)];
+        if (D.cB) R[p].branches = [lead, [ct(D.cB.id)]];
+        else R[p].series = lead.concat(R[p].series);
+      });
+      D.alarms.forEach(function (o) { R[o.id].series.push(fe(D.fl.alarm)); });
+    }
+    items.filter(function (it) { return (SWITCHY.test(it.role) || it.role === "fuse") && !it.used; }).forEach(function (it) {
       var targets = it.refs.filter(function (r) { return isOut(r.id); }).map(function (r) { return r.id; });
       it.refs.filter(function (r) { return !isOut(r.id) && dev[r.id]; }).forEach(function (r) { problems.push(it.id + " names " + r.id + ", which is a switch, not a coil or light: name what " + it.id + " switches, like: " + it.role + " " + it.id + " " + (outs[0] ? outs[0].id : "M1")); });
       if (it.role === "fuse" || it.role === "estop") {
@@ -33730,7 +33890,7 @@ Lantern.RFB = (function () {
       var r = R[o.id];
       if (r.starts.length && coils(o)) {
         r.seal = true;
-        added.push(o.id + "\u2019s holding contact across " + r.starts.map(function (s) { return s.id; }).join(" and ") + ", so " + o.id + " stays on when " + (r.starts.length > 1 ? "they are" : r.starts[0].id + " is") + " let go");
+        if (!o.call) added.push(o.id + "\u2019s holding contact across " + r.starts.map(function (s) { return s.id; }).join(" and ") + ", so " + o.id + " stays on when " + (r.starts.length > 1 ? "they are" : r.starts[0].id + " is") + " let go");
         if (!r.stops.length && !feed.some(function (f) { return f.role === "stop"; })) {
           var sid = nid("PB"); r.stops.push({ id: sid, kind: "pb", nc: true, label: "stop" });
           added.push("a stop " + sid + " for " + o.id + " (a circuit that holds itself in needs one)");
@@ -33740,7 +33900,7 @@ Lantern.RFB = (function () {
         var oid = nid("OL"); r.after.push({ id: oid, kind: "ol", nc: true, label: "" });
         added.push("the overload contact " + oid + " in " + o.id + "\u2019s rung (a motor starter always has one)");
       }
-      if (coils(o) && !r.starts.length && !r.series.length && !r.stops.length && !o.made) problems.push(o.id + " has nothing switching it, so it would be on whenever there is power: add what turns it on, like: start PB2 " + o.id + ", or a contact of another coil on its line: coil " + o.id + " " + (o.id === "M1" ? "CR1" : "M1"));
+      if (coils(o) && !r.starts.length && !r.series.length && !r.stops.length && !r.branches && !o.made) problems.push(o.id + " has nothing switching it, so it would be on whenever there is power: add what turns it on, like: start PB2 " + o.id + ", or a contact of another coil on its line: coil " + o.id + " " + (o.id === "M1" ? "CR1" : "M1"));
     });
     // every contact belongs to a coil that is drawn and switched
     outs.forEach(function (o) {
@@ -33756,6 +33916,7 @@ Lantern.RFB = (function () {
   // steps(c): what each rung does, said under the drawing and to the AI
   function cond(e, dev) {
     var d = dev[e.id] || {}, nm = e.id + (d.label ? " (" + d.label + ")" : e.label ? " (" + e.label + ")" : "");
+    if (e.kind === "contact" && dev[e.of] && dev[e.of].role === "alternator" && dev[e.of].pumps) return e.of + " has " + dev[e.of].pumps[e.nc ? 0 : 1] + " leading";
     if (e.kind === "contact") return e.of + (e.timed ? (e.nc ? " has not timed out" : " has timed out" + (dev[e.of] && dev[e.of].label ? " (" + dev[e.of].label + ")" : "")) : e.nc ? " is off" : " is on");
     if (e.kind === "pb") return nm + (e.nc ? " is not pressed" : " is pressed");
     if (e.kind === "ol") return "the overload " + e.id + " has not tripped";
@@ -33768,6 +33929,16 @@ Lantern.RFB = (function () {
     c.rungs.forEach(function (r) {
       var o = r.out, nm = o.id + (o.label || o.a && o.a.colourName ? " (" + [o.label, o.a && o.a.colourName].filter(function (x) { return x; }).join(", ") + ")" : ""), conds = r.series.map(function (e) { return cond(e, c.dev); });
       var on = o.role === "lamp" ? " lights" : o.role === "timer" ? " starts timing" : " is on";
+      if (o.role === "alternator" && o.pumps) {
+        out.push(nm + " is fed while " + list(conds, "and") + ", and changes over each time it is let go: " + o.pumps[0] + " and " + o.pumps[1] + " take turns to lead");
+        return;
+      }
+      if (r.seal && !r.starts.every(function (e) { return e.kind === "pb"; })) {
+        var hold = r.stops.map(function (e) { return cond(e, c.dev); }).concat(conds, r.after.map(function (e) { return cond(e, c.dev); }));
+        out.push("When " + list(r.starts.map(function (e) { var d = c.dev[e.id] || e; return e.id + (d.label ? " (" + d.label + ")" : ""); }), "or") + " makes, " + nm + " pulls in, and its own contact holds it in" +
+          (hold.length ? " while " + list(hold, "and") : ""));
+        return;
+      }
       if (r.seal) {
         var drop = c.feed.filter(function (f) { return f.role !== "fuse"; }).map(function (f) { return f.id + " (" + f.label + ", in L1)"; }).concat(r.stops.map(function (e) { var d = c.dev[e.id] || e; return e.id + (d.label ? " (" + d.label + ")" : ""); }), r.after.map(function (e) { return e.id + " (overload)"; }));
         out.push("Press " + list(r.starts.map(function (e) { var d = c.dev[e.id] || e; return e.id + (d.label ? " (" + d.label + ")" : ""); }), "or") + ": " + nm + " pulls in and its own contact holds it in" +
@@ -33775,6 +33946,11 @@ Lantern.RFB = (function () {
         return;
       }
       var all = r.stops.map(function (e) { return cond(e, c.dev); }).concat(conds, r.starts.map(function (e) { return cond(e, c.dev); }), r.after.map(function (e) { return cond(e, c.dev); }));
+      if (r.branches) {
+        var either = r.branches.map(function (b) { return list(b.map(function (e) { return cond(e, c.dev); }), "and"); });
+        out.push(nm + on + " while either " + either.join(", or ") + (all.length ? "; and " + list(all, "and") : ""));
+        return;
+      }
       out.push(nm + on + (all.length ? " while " + list(all, "and") : " whenever there is power"));
     });
     return out;
@@ -33789,13 +33965,13 @@ Lantern.RFB = (function () {
     function node() { return "n" + (++nn); }
     function put(e, x, y, a, b) {
       var sym = e.kind === "pb" ? "button" : e.kind === "ol" ? "overload" : e.kind === "estop" ? "button" : e.kind === "fuse" ? "fuse" : e.kind === "contact" ? "contact" :
-        e.kind === "switch" ? "toggle" : /^(limit|pressure|float|temp)$/.test(e.kind) ? e.kind : e.kind === "timer" ? "coil" : e.kind;
+        e.kind === "switch" ? "toggle" : /^(limit|pressure|float|temp)$/.test(e.kind) ? e.kind : e.kind === "timer" || e.kind === "alternator" ? "coil" : e.kind;
       var r = S[sym](x, y, INK, { nc: e.nc, timed: e.timed, id: e.id, colour: e.colour, mushroom: e.kind === "estop" });
       shapes.push(r.g);
-      var load = /^(coil|timer|lamp|solenoid|horn)$/.test(e.kind);
+      var load = /^(coil|timer|lamp|solenoid|horn|alternator)$/.test(e.kind);
       els.push({ id: e.id, kind: e.kind, of: e.of || "", nc: !!e.nc, load: load, a: a, b: b, x: x, y: y });
       // the tag above (inside a coil); in a branch below the rung's line, under it, clear of the labels above
-      if (!(/^(coil|timer)$/.test(e.kind) && String(e.id).length <= 4)) shapes.push({ t: "text", c: INK, x: x, y: e.under ? y + 30 : y - (e.kind === "estop" ? 40 : 34), s: e.id, fs: 12 });
+      if (!(/^(coil|timer|alternator)$/.test(e.kind) && String(e.id).length <= 4)) shapes.push({ t: "text", c: INK, x: x, y: e.under ? y + 30 : y - (e.kind === "estop" ? 40 : 34), s: e.id, fs: 12 });
       var d = c.dev[e.id], lab = e.kind === "contact" ? "" : (d && d.label) || e.label || "";
       if (lab) shapes.push({ t: "text", c: NOTE, x: x, y: y + (e.under ? 46 : 30), s: lab.length > 14 ? lab.slice(0, 13) + "\u2026" : lab, fs: 11 });
       return r.ports;
@@ -33805,10 +33981,11 @@ Lantern.RFB = (function () {
     // the conditions of each rung, measured
     var rows = c.rungs.map(function (r) {
       // starts side by side with the holding contact (or with each other); one start alone is in series
-      var grp = r.seal || r.starts.length > 1 ? r.starts.map(function (s) { return [s]; }).concat(r.seal ? [[{ id: r.out.id, kind: "contact", of: r.out.id, nc: false }]] : []) : [];
+      var grp = r.branches ? r.branches : r.seal || r.starts.length > 1 ? r.starts.map(function (s) { return [s]; }).concat(r.seal ? [[{ id: r.out.id, kind: "contact", of: r.out.id, nc: false }]] : []) : [];
       if (!grp.length && r.starts.length) r.series = r.starts.concat(r.series);
-      var w = width(r.stops) + (grp.length ? SLOT + 20 : 0) + width(r.series);
-      return { r: r, grp: grp, w: w, h: Math.max(1, grp.length) };
+      var gl = grp.length ? Math.max.apply(null, grp.map(function (b) { return b.length; })) : 0;
+      var w = width(r.stops) + (grp.length ? gl * SLOT + 20 : 0) + width(r.series);
+      return { r: r, grp: grp, gl: gl, w: w, h: Math.max(1, grp.length) };
     });
     var xl = c.feed.length ? X1 + width(c.feed) + 40 : X1;   // where the rungs start: L1, or after the fuse and stops in L1
     var condW = Math.max.apply(null, rows.map(function (x) { return x.w; }).concat([SLOT])), xo = xl + condW + 70;
@@ -33849,11 +34026,16 @@ Lantern.RFB = (function () {
         });
       }
       series(r.stops);
-      if (row.grp.length) {   // the starts and the holding contact, side by side
-        var gs = x, ge = x + SLOT + 20, end = node();
+      if (row.grp.length) {   // the starts and the holding contact (or a branch's contacts in a row), side by side
+        var gs = x, ge = x + row.gl * SLOT + 20, end = node();
         row.grp.forEach(function (br, k) {
-          var by = yy + BR * k, p = put(k ? { id: br[0].id, kind: br[0].kind, of: br[0].of, nc: br[0].nc, label: br[0].label, under: true } : br[0], gs + 10 + SLOT / 2, by, at, end);
-          wire([[gs, by], p.a]); wire([[p.b[0], by], [ge, by]]);
+          var by = yy + BR * k, bx = gs, bat = at;
+          br.forEach(function (e0, j) {
+            var nx = j === br.length - 1 ? end : node();
+            var p = put(k ? { id: e0.id, kind: e0.kind, of: e0.of, nc: e0.nc, label: e0.label, under: true } : e0, gs + 10 + SLOT / 2 + j * SLOT, by, bat, nx);
+            wire([[bx, by], p.a]); bx = p.b[0]; bat = nx;
+          });
+          wire([[bx, by], [ge, by]]);
           if (k) { wire([[gs, yy + BR * (k - 1)], [gs, by]]); wire([[ge, yy + BR * (k - 1)], [ge, by]]); }
         });
         dots.push([gs, yy], [ge, yy]);
@@ -33876,10 +34058,10 @@ Lantern.RFB = (function () {
     // where each coil's contacts are, by rung: NO, and NC
     rows.forEach(function (row, i) {
       var id = row.r.out.id;
-      if (row.r.out.role !== "coil" && row.r.out.role !== "timer") return;
+      if (row.r.out.role !== "coil" && row.r.out.role !== "timer" && row.r.out.role !== "alternator") return;
       var no = [], nc = [];
       rows.forEach(function (o, j) {
-        var all = o.r.series.concat(o.grp.length ? o.grp.map(function (b) { return b[0]; }) : []);
+        var all = o.r.series.concat.apply(o.r.series, o.grp.length ? o.grp : []);
         all.forEach(function (e) { if (e.kind === "contact" && e.of === id) (e.nc ? nc : no).push(j + 1); });
       });
       var t = (no.length ? "NO " + no.join(", ") : "") + (nc.length ? (no.length ? "  " : "") + "NC " + nc.join(", ") : "");
@@ -33928,7 +34110,7 @@ Lantern.RFB = (function () {
       var r = grey ? { text: String(n), problems: [] } : nt ? nt(n) : { text: String(n), problems: [] };
       r.problems.forEach(function (p) { problems.push(p); });
       shown.push(r.text.slice(0, 150));
-      wrap(r.text.slice(0, grey ? 500 : 150), grey ? 120 : 80).forEach(function (part) {
+      wrap(r.text.slice(0, grey ? 900 : 150), grey ? 120 : 80).forEach(function (part) {
         lay.shapes.push({ t: "text", c: grey ? GREY : NOTE, x: Math.max(cx, part.length * fs * 0.28 + 16), y: y, s: part, fs: fs }); y += grey ? 18 : 24;
       });
     });
@@ -33947,15 +34129,16 @@ Lantern.RFB = (function () {
     var shown = notesUnder(lay, (c.notes || []).slice(0, 8), late, false);
     notesUnder(lay, c.steps, late, true);
     var said = (c.added.length ? "Lantern added " + c.added.join("; ") : "") + (c.changed.length ? (c.added.length ? ". " : "") + c.changed.join(". ") : "");
-    if (said) notesUnder(lay, [said], late, true);
+    // (1.24.30) what was added, and each change, a paragraph of its own (one was cut at 500 characters)
+    if (said) notesUnder(lay, [c.added.length ? "Lantern added " + c.added.join("; ") : ""].concat(c.changed).filter(function (x) { return x; }), late, true);
     function el(e) { return { id: e.id, kind: e.kind, of: e.of || "", nc: !!e.nc, timed: !!e.timed }; }
     var plan = { mode: "control", parts: lay.els.filter(function (e) { return e.id; }).map(function (e) { return { id: e.id, type: e.load ? (e.kind === "lamp" ? "lamp" : "coil") : e.kind === "contact" ? "contact" : "switch", kind: e.kind, label: "" }; }),
       wires: [], loop: true, notes: shown,
       circuit: { rails: [c.supply || ""], feed: c.feed.map(function (f) { return { id: f.id, kind: f.role }; }),
         rungs: c.rungs.map(function (r, i) { return { n: i + 1, out: { id: r.out.id, kind: r.out.role, type: r.out.kind, label: r.out.label || "" }, stops: r.stops.map(el), starts: r.starts.map(el), seal: r.seal,
-          series: r.series.map(el), after: r.after.map(el) }; }), steps: c.steps, added: c.added, changed: c.changed, verified: true } };
+          series: r.series.map(el), after: r.after.map(el), branches: r.branches ? r.branches.map(function (b) { return b.map(el); }) : null }; }), steps: c.steps, added: c.added, changed: c.changed, verified: true } };
     // wires for anything that reads the plan as a graph: each device joined to the rung's output
-    c.rungs.forEach(function (r) { r.stops.concat(r.starts, r.series, r.after).forEach(function (e) { plan.wires.push([e.id, r.out.id]); }); });
+    c.rungs.forEach(function (r) { r.stops.concat.apply(r.stops.concat(r.starts, r.series, r.after), r.branches || []).forEach(function (e) { plan.wires.push([e.id, r.out.id]); }); });
     var summary = c.rungs.length + " rung" + (c.rungs.length === 1 ? "" : "s") + " between " + (/\bdc\b/i.test(c.supply || "") ? "+ and 0 V" : "L1 and L2") + "; wired by Lantern. " + c.steps.join(". ") + (said ? ". " + said : "");
     return L.aiDraw.result(lay.shapes, plan, summary, block.title, late);
   }
@@ -33995,7 +34178,30 @@ Lantern.RFB = (function () {
     "coil M1 \x22pump starter\x22",
     "lamp LT1 M1 \x22pump on\x22 green",
     "END"]);
-  window.Lantern.aiControl = { isControl: isControl, parse: parse, circuit: circuit, layout: layout, verify: verify, build: build, PROMPT: PROMPT, HINT: HINT, asks: asks };
+  // (1.24.30) a pump station's control (two pumps taking turns, floats, an alternating relay): the two lines for it,
+  // and its own example -- the usual duplex, which is what such a question asks for
+  var PUMPS = /\b(alternat\w*|duplex|lead[- \x2F]lag|lift(ing)? stations?|pump(ing)? stations?|sewage stations?|two pumps|2 pumps|wet wells?|sump pumps)\b/i;
+  var PROMPT_PUMPS = PROMPT.slice(0, PROMPT.indexOf("END")).concat(cols([
+    "alternator AR M1 M2               an alternating relay: the pumps M1 and M2 take turns to lead",
+    "float FS1 \x22off\x22                  a float, named by what it is for: \x22off\x22, \x22lead on\x22, \x22lag on\x22, \x22high level alarm\x22.",
+    "                                  With an alternator, Lantern wires the floats, the call relays and the pumps itself"], 31), [
+    "END",
+    PROMPT[PROMPT.indexOf("END") + 1], PROMPT[PROMPT.indexOf("END") + 2],
+    "MAKE CONTROL: Duplex pump station",
+    "supply \x22120 V AC\x22",
+    "float FS1 \x22off\x22",
+    "float FS2 \x22lead on\x22",
+    "float FS3 \x22lag on\x22",
+    "float FS4 \x22high level alarm\x22",
+    "alternator AR M1 M2",
+    "coil M1 \x22pump 1 starter\x22",
+    "coil M2 \x22pump 2 starter\x22",
+    "lamp LT1 M1 \x22pump 1 run\x22 green",
+    "lamp LT2 M2 \x22pump 2 run\x22 green",
+    "lamp LT3 FS4 \x22high level\x22 red",
+    "END"]);
+  function promptOf(q) { return PUMPS.test(String(q || "")) ? PROMPT_PUMPS : PROMPT; }
+  window.Lantern.aiControl = { isControl: isControl, parse: parse, circuit: circuit, layout: layout, verify: verify, build: build, PROMPT: PROMPT, PROMPT_PUMPS: PROMPT_PUMPS, HINT: HINT, asks: asks, floatJob: floatJob, promptOf: promptOf };
 
   var act = (window.Lantern.aiActions || []).filter(function (a) { return a.id === "schematic"; })[0];
   if (!act) return;
@@ -34013,7 +34219,7 @@ Lantern.RFB = (function () {
     return typeof hintBefore === "function" ? hintBefore(block, made, q) : null;
   };
   var pfBefore = act.promptFor;
-  act.promptFor = function (q) { return asks(q) ? PROMPT : typeof pfBefore === "function" ? pfBefore(q) : act.prompt; };
+  act.promptFor = function (q) { return asks(q) ? promptOf(q) : typeof pfBefore === "function" ? pfBefore(q) : act.prompt; };
   // a control question is a schematic question even with no "draw" in it
   var matchBefore = act.match;
   act.match = function (q) { return matchBefore.call(act, q) || asks(q) && /\b(draw|sketch|show|make|diagram|wiring|circuit|wire)\b/i.test(String(q || "")); };
@@ -34022,6 +34228,418 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: AI_CONTROL - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_PUMP_STATION - START
+// Depends: AI_ACTIONS (Lantern.aiActions), AI_DRAW (Lantern.aiDraw.result),
+//          AI_SCHEMATIC and AI_DRAW's actions (their match, narrowed here)
+//          -- feature-detected
+// Exports: Lantern.aiPumpStation = {floatJob(label), heightOf(text),
+//          piping: {parse, plan, build}, levels: {parse, plan, build},
+//          asksPiping(q), asksLevels(q)}; adds the PIPING and LEVELS actions
+// ===========================================================================
+// (1.24.30, Adam's lift station.) "create a diagram for a typical 2 pump lift
+// station control with alternating relay. Then create a plumbing schematic
+// for the same and a drawing showing float level positioning": the 35B said
+// it could not draw, and described all three. The control is MAKE CONTROL's
+// (its alternating relay); the other two are drawn here, correct by
+// construction, as the control is. The AI says what the station has:
+//     MAKE PIPING: Lift station              MAKE LEVELS: Wet well
+//     well "wet well"                        well "wet well" 10 ft
+//     inlet "8 in gravity sewer"             pump P1 P2
+//     pump P1 "pump 1"                       float FS1 "off" 2 ft
+//     pump P2 "pump 2"                       float FS2 "lead on" 3.5 ft
+//     header "4 in force main"               float FS3 "lag on" 4.5 ft
+//     vent                                   float FS4 "high level alarm" 5.5 ft
+//     END                                    inlet "inlet invert" 6.5 ft
+//                                            END
+// PIPING draws the wet well, the inlet coming in and the pumps on its floor;
+// each pump's discharge rises and runs out to a valve vault beside the well,
+// through its check valve and then its shutoff valve, and joins the header
+// that leaves as the force main; an inverted J vent on the well. As the
+// Recommended Standards for Wastewater Facilities (the Ten States Standards,
+// 2014) have it: a shutoff and a check valve on each pump's discharge, the
+// check valve between the shutoff valve and the pump (42.52); a submersible
+// station's valves in a chamber of their own (44.4); an inverted J tube for
+// the air (42.64). A valve left out is added and said.
+// LEVELS draws the well in section with each float on its cable at its
+// level -- off, lead on, lag on, high level alarm, from the bottom up -- a
+// dashed line across the well with its name and height, and the inlet at
+// its invert. Heights given are drawn to scale; with none, the order is
+// drawn and said to be not to scale. Floats out of order go back with what
+// to write; floats closer than 300 mm (12 in) are said (Ontario's Design
+// Guidelines for Sewage Works, 2008, 7.2.5, has them at least 300 mm
+// apart), and so is an alarm above the inlet's invert (the inlet sewer
+// fills before it sounds). The off level is the pump maker's minimum
+// submergence, which Lantern does not know: it says so.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var ACTS = window.Lantern.aiActions = window.Lantern.aiActions || [];
+  var INK = "#1b2430", NOTE = "#334155", GREY = "#64748b", PIPE = "#334155", WATER = "#2563eb", CONC = "#cbd5e1", EARTH = "#8b7355";
+  function words(line) {
+    var out = [], re = /\x22([^\x22]*)\x22|\u201c([^\u201d]*)\u201d|(\S+)/g, m;
+    while ((m = re.exec(line))) out.push(m[1] != null ? { q: m[1] } : m[2] != null ? { q: m[2] } : { w: m[3] });
+    return out;
+  }
+  var IDRE = /^[A-Za-z]{1,3}\d{1,3}$/;
+  // what a float is for, by its label (as MAKE CONTROL reads it)
+  function floatJob(t) {
+    if (L.aiControl && L.aiControl.floatJob) return L.aiControl.floatJob(t);
+    t = String(t || "").toLowerCase();
+    if (/\balarm|high[\s-]*high|overflow|flood|high[\s-]*(level|water)/.test(t) && !/\b(start|on|lead|lag)\b/.test(t)) return /\blow\b/.test(t) && !/\bhigh/.test(t) ? "low" : "alarm";
+    if (/\blag\b|\bsecond\b|\b2nd\b|\bboth\b|\bstandby\b/.test(t)) return "lag";
+    if (/\b(off|stop|low|shut)\b/.test(t)) return "off";
+    if (/\b(lead|start|on|high|first|run|call)\b/.test(t)) return "lead";
+    return null;
+  }
+  var JOB_ORDER = { off: 1, lead: 2, lag: 3, alarm: 4 }, JOB_NAME = { off: "off", lead: "lead on", lag: "lag on", alarm: "high level alarm" };
+  // heightOf("3.5 ft") -> {m: metres, text: "3.5 ft"} or null
+  var UNIT = { ft: 0.3048, feet: 0.3048, foot: 0.3048, "\x27": 0.3048, in: 0.0254, inch: 0.0254, inches: 0.0254, "\x22": 0.0254, m: 1, metre: 1, metres: 1, meter: 1, meters: 1, cm: 0.01, mm: 0.001 };
+  function heightOf(t) {
+    var m = /(-?\d+(?:\.\d+)?)\s*(ft|feet|foot|\x27|inches|inch|in|\x22|metres|meters|metre|meter|m|cm|mm)(?![a-z])/i.exec(String(t || ""));
+    if (!m) return null;
+    return { m: parseFloat(m[1]) * UNIT[m[2].toLowerCase()], text: m[1] + " " + m[2].toLowerCase().replace(/^(feet|foot|\x27)$/, "ft").replace(/^(inches|inch|\x22)$/, "in").replace(/^(metres|meters|metre|meter)$/, "m") };
+  }
+  function list(xs, word) { return xs.length <= 1 ? xs.join("") : xs.slice(0, -1).join(", ") + " " + word + " " + xs[xs.length - 1]; }
+  function T(x, y, s, fs, c) { return { t: "text", c: c || INK, x: x, y: y, s: s, fs: fs || 12 }; }
+  function P(c, w, pts, d) { var o = { t: "path", c: c, w: w, pts: pts }; if (d) o.d = d; return o; }
+  // text set from its left edge (the painter centres text)
+  function TL(x, y, s, fs, c) { fs = fs || 12; return T(x + String(s).length * fs * 0.3, y, s, fs, c); }
+  function TR(x, y, s, fs, c) { fs = fs || 12; return T(x - String(s).length * fs * 0.3, y, s, fs, c); }
+  function wrap(t, n) {
+    var out = [], cur = "";
+    String(t).split(" ").forEach(function (w) { if (cur && (cur + " " + w).length > n) { out.push(cur); cur = w; } else cur = cur ? cur + " " + w : w; });
+    if (cur) out.push(cur);
+    return out;
+  }
+  function notes(shapes, y, cx, lines, grey) {
+    lines.forEach(function (n) { wrap(String(n).slice(0, 900), grey ? 110 : 80).forEach(function (part) { shapes.push(T(Math.max(cx, part.length * (grey ? 12 : 14) * 0.28 + 16), y, part, grey ? 12 : 14, grey ? GREY : NOTE)); y += grey ? 18 : 22; }); });
+    return y;
+  }
+  // a valve on a pipe running left to right, the pipe masked under it
+  function mask(x, y) { return { t: "rect", c: "#ffffff", w: 1, x: x - 16, y: y - 12, rw: 32, rh: 24, f: true }; }
+  function checkSym(x, y) { return [mask(x, y), { t: "tri", c: INK, w: 2, pts: [[x - 12, y - 10], [x - 12, y + 10], [x + 7, y]], f: true }, P(INK, 3, [[x + 9, y - 11], [x + 9, y + 11]])]; }
+  function shutSym(x, y, kind) {
+    var s = [mask(x, y), { t: "tri", c: INK, w: 2, pts: [[x - 14, y - 10], [x - 14, y + 10], [x, y]], f: false }, { t: "tri", c: INK, w: 2, pts: [[x + 14, y - 10], [x + 14, y + 10], [x, y]], f: false }];
+    if (/plug/.test(kind)) s.push({ t: "rect", c: INK, w: 1, x: x - 3, y: y - 5, rw: 6, rh: 10, f: true });
+    else if (/ball/.test(kind)) s.push({ t: "circle", c: INK, w: 2, cx: x, cy: y, r: 5, f: true });
+    else if (/butterfly/.test(kind)) s.push(P(INK, 2, [[x, y - 10], [x, y + 10]]));
+    return s;
+  }
+
+  // ---- PIPING -------------------------------------------------------------------------------------
+  var PROLES = { well: "well wetwell sump pit basin tank", inlet: "inlet influent inflow sewer gravity incoming",
+    pump: "pump pumps submersible", check: "check cv nrv non-return nonreturn", valve: "valve gate plug ball butterfly isolation isolating shutoff shut-off gv pv bv",
+    header: "header main forcemain rising discharge outlet manifold", vent: "vent", vault: "vault valvebox",
+    float: "float floats level", note: "note text label", implied: "pipe pipes piping elbow riser" };
+  var PROLE = {};
+  Object.keys(PROLES).forEach(function (r) { PROLES[r].split(" ").forEach(function (w) { PROLE[w] = r; }); });
+  var PDRAWS = "well, inlet, pump, check, valve, header, vent, vault";
+  function ptidy(line) {
+    return String(line).split(/(\x22[^\x22]*\x22|\u201c[^\u201d]*\u201d)/).map(function (part, k) {
+      return k % 2 ? part : part.replace(/\bwet[- ]well\b/gi, "well").replace(/\bvalve[- ](vault|chamber|pit|box)\b/gi, "vault").replace(/\bforce[- ]main\b/gi, "header")
+        .replace(/\b(check|non[- ]return)[- ]valve\b/gi, "check").replace(/\b(gate|plug|ball|butterfly)[- ]valve\b/gi, "valve $1").replace(/\b(isolation|isolating|shut[- ]?off)[- ]valve\b/gi, "valve")
+        .replace(/\b(gravity[- ]sewer|inlet[- ]pipe|influent[- ]pipe|incoming[- ]sewer)\b/gi, "inlet").replace(/\b(vent[- ]pipe|air[- ]vent)\b/gi, "vent").replace(/\bdischarge[- ](header|main|pipe)\b/gi, "header");
+    }).join("");
+  }
+  function parsePiping(b) {
+    var items = [], notes0 = [], problems = [], floats = 0;
+    (b.lines || []).forEach(function (line) {
+      var ws = words(ptidy(line)), w0 = ws[0] && ws[0].w ? ws[0].w.toLowerCase().replace(/[:.,;]+$/, "") : "", role = PROLE[w0] || "";
+      if (role === "note") { notes0.push(line.replace(/^\s*\S+\s*/, "")); return; }
+      if (role === "implied") return;
+      if (role === "float") { floats++; return; }
+      if (!role) { problems.push("\u201c" + line + "\u201d is not a part Lantern draws in a pump station\u2019s piping (it draws: " + PDRAWS + "; the floats go in MAKE LEVELS, the wiring in MAKE CONTROL)"); return; }
+      var it = { role: role, id: "", label: "", refs: [], kind: role === "valve" && w0 !== "valve" ? w0 : "", line: line };
+      ws.slice(1).forEach(function (x) {
+        if (x.q != null) { it.label = it.label ? it.label + " " + x.q : x.q; return; }
+        var t = x.w.replace(/[.,;:]+$/, ""), lw = t.toLowerCase();
+        if (role === "valve" && /^(gate|plug|ball|butterfly|eccentric)$/.test(lw)) { it.kind = lw; return; }
+        if (IDRE.test(t)) { if (!it.id && role !== "inlet" && role !== "header") it.id = t.toUpperCase(); else it.refs.push(t.toUpperCase()); return; }
+        if (/^\d+$/.test(t) && role === "pump" && !it.count) { it.count = +t; return; }
+        it.label = it.label ? it.label + " " + t : t;
+      });
+      if (role === "valve" && !it.kind) { var km = /\b(gate|plug|ball|butterfly|eccentric)\b/i.exec(it.label); it.kind = km ? km[1].toLowerCase() : ""; }
+      items.push(it);
+    });
+    return { items: items, notes: notes0, problems: problems, floats: floats };
+  }
+  function planPiping(pr) {
+    var problems = pr.problems.slice(), added = [], said = [], used = {}, n = {};
+    pr.items.forEach(function (it) { if (it.id) used[it.id] = 1; });
+    function nid(p) { n[p] = n[p] || 0; var id; do { id = p + (++n[p]); } while (used[id]); used[id] = 1; return id; }
+    var pumps = [];
+    pr.items.filter(function (it) { return it.role === "pump"; }).forEach(function (it) {
+      // "pump P1 P2", "pumps 2": several on one line
+      var ids = [it.id].concat(it.refs).filter(function (x) { return x; });
+      if (!ids.length && it.count) for (var k = 0; k < it.count; k++) ids.push("");
+      if (!ids.length) ids = [""];
+      ids.forEach(function (id, k) { pumps.push({ id: id || nid("P"), label: ids.length > 1 ? "" : it.label, check: null, valve: null }); });
+    });
+    if (!pumps.length) problems.push("there is no pump: add one line for each, like: pump P1 \x22pump 1\x22");
+    if (pumps.length > 4) problems.push("keep it to 4 pumps or fewer");
+    var byId = {};
+    pumps.forEach(function (p) { if (byId[p.id]) problems.push("two pumps are called " + p.id + ": give each its own name, like: pump P2"); byId[p.id] = p; });
+    ["check", "valve"].forEach(function (role) {
+      var vs = pr.items.filter(function (it) { return it.role === role; }), loose = [];
+      vs.forEach(function (v) {
+        if (v.id && byId[v.id] && !v.refs.length) { v.refs = [v.id]; v.id = ""; }   // check P1: the pump it is on
+        var on = v.refs.filter(function (r) { return byId[r]; });
+        if (v.refs.length && !on.length && !v.refs.every(function (r) { return /^(CV|V|GV|PV|BV)\d/.test(r); })) { problems.push((v.id || role) + " names " + v.refs.join(" and ") + ", which is not a pump here: name the pump it is on, like: " + role + " " + (v.id || (role === "check" ? "CV1" : "V1")) + " " + (pumps[0] ? pumps[0].id : "P1")); return; }
+        if (!on.length) { loose.push(v); return; }
+        if (byId[on[0]][role]) { problems.push(on[0] + " has two " + (role === "check" ? "check valves" : "shutoff valves") + " (" + byId[on[0]][role].id + " and " + (v.id || "another") + "): one each"); return; }
+        byId[on[0]][role] = { id: v.id || nid(role === "check" ? "CV" : "V"), kind: v.kind, label: v.label };
+      });
+      loose.forEach(function (v) {
+        var p = pumps.filter(function (x) { return !x[role]; })[0];
+        if (!p) { problems.push((v.id || role) + " is one " + (role === "check" ? "check valve" : "shutoff valve") + " more than there are pumps: one on each pump\u2019s discharge, like: " + role + " " + (v.id || "V1") + " " + (pumps[0] ? pumps[0].id : "P1")); return; }
+        p[role] = { id: v.id || nid(role === "check" ? "CV" : "V"), kind: v.kind, label: v.label };
+        said.push((v.id || "the " + role) + " is on " + p.id + "\u2019s discharge");
+      });
+    });
+    var addC = [], addV = [];
+    pumps.forEach(function (p) {
+      if (!p.check) { p.check = { id: nid("CV"), kind: "", label: "", made: true }; addC.push(p.check.id + " on " + p.id); }
+      if (!p.valve) { p.valve = { id: nid("V"), kind: "", label: "", made: true }; addV.push(p.valve.id + " on " + p.id); }
+    });
+    if (addC.length) added.push("the check valve" + (addC.length > 1 ? "s " : " ") + list(addC, "and") + " (each pump needs one, so the force main does not run back into the well when it stops)");
+    if (addV.length) added.push("the shutoff valve" + (addV.length > 1 ? "s " : " ") + list(addV, "and") + " (each pump needs one, to take its check valve or the pump out while the other runs)");
+    function one(role) { return pr.items.filter(function (it) { return it.role === role; }); }
+    var wells = one("well"), inlets = one("inlet"), headers = one("header"), vents = one("vent"), vaults = one("vault");
+    if (wells.length > 1) problems.push("one wet well: write one well line");
+    if (headers.length > 1) problems.push("the pumps join one header, the force main: write one header line");
+    var well = wells[0] || { label: "wet well", made: true }, header = headers[0] || { label: "force main", made: true };
+    if (!wells.length) added.push("the wet well");
+    if (!headers.length) added.push("the header and force main the pumps join");
+    if (!inlets.length) added.push("the inlet");
+    if (!vents.length) added.push("an inverted J vent (a covered wet well needs a way for air in and out)");
+    if (pr.floats) said.push("the floats are drawn by MAKE LEVELS");
+    return { pumps: pumps, well: well, inlets: inlets.length ? inlets.slice(0, 2) : [{ label: "inlet", made: true }], header: header, vent: vents[0] || { label: "vent", made: true },
+      vault: vaults[0] || { label: "valve vault", made: !vaults.length }, problems: problems, added: added, said: said, notes: pr.notes };
+  }
+  function layoutPiping(c, title) {
+    var S = [], n = c.pumps.length, SP = 150, WX0 = 250, WW = Math.max(300, n * SP + 40), WX1 = WX0 + WW, G = 170, FL = G + 330 + n * 20;
+    var VX0 = WX1 + 60, VX1 = VX0 + 270, VB = G + 70 + n * 42, HX = VX0 + 215;
+    if (title) S.push(T((40 + VX1 + 160) / 2, 36, title, 18));
+    // the ground, the well and the vault
+    S.push(P(EARTH, 2, [[30, G], [VX1 + 170, G]]));
+    for (var gx = 40; gx < VX1 + 170; gx += 26) if (!(gx > WX0 - 14 && gx < WX1 + 14) && !(gx > VX0 - 12 && gx < VX1 + 12)) S.push(P(EARTH, 1, [[gx, G + 2], [gx - 10, G + 12]]));
+    S.push({ t: "rect", c: CONC, w: 1, x: WX0 - 12, y: G - 12, rw: WW + 24, rh: 12, f: true }, { t: "rect", c: INK, w: 2, x: WX0 - 12, y: G - 12, rw: WW + 24, rh: 12, f: false });
+    S.push(P(INK, 6, [[WX0, G], [WX0, FL], [WX1, FL], [WX1, G]]));
+    S.push({ t: "rect", c: CONC, w: 1, x: VX0 - 10, y: G - 12, rw: VX1 - VX0 + 20, rh: 12, f: true }, { t: "rect", c: INK, w: 2, x: VX0 - 10, y: G - 12, rw: VX1 - VX0 + 20, rh: 12, f: false });
+    S.push(P(INK, 5, [[VX0, G], [VX0, VB], [VX1, VB], [VX1, G]]));
+    S.push(T((WX0 + WX1) / 2, FL + 26, c.well.label || "wet well", 13, NOTE), T((VX0 + VX1) / 2, VB + 22, c.vault.label || "valve vault", 13, NOTE));
+    // the inlet(s), on the left wall
+    c.inlets.forEach(function (it, k) {
+      var y = G + 110 + k * 60;
+      S.push(P(PIPE, 9, [[30, y], [WX0 - 3, y]]), { t: "tri", c: WATER, w: 1, pts: [[WX0 + 4, y - 9], [WX0 + 4, y + 9], [WX0 + 20, y]], f: true });
+      S.push(TL(24, y - 18, "inlet" + (it.label && !/^inlet$/i.test(it.label) ? ": " + it.label : ""), 12, NOTE));
+    });
+    // the vent: an inverted J through the slab
+    var vx = WX0 + 34;
+    S.push(P(PIPE, 6, [[vx, G - 12], [vx, G - 82]]), { t: "curve", c: PIPE, w: 6, pts: [[vx, G - 82], [vx + 16, G - 104], [vx + 32, G - 82]] }, P(PIPE, 6, [[vx + 32, G - 82], [vx + 32, G - 66]]));
+    S.push(TL(vx + 44, G - 74, c.vent.label && !/^vent$/i.test(c.vent.label) ? "vent: " + c.vent.label : "vent", 12, NOTE));
+    // each pump, its riser, its run into the vault through its check valve and then its shutoff valve
+    var ys = [];
+    c.pumps.forEach(function (p, i) {
+      var cx = WX0 + WW * (i + 1) / (n + 1), py = FL - 34, y = G + 48 + i * 42;
+      ys.push(y);
+      S.push({ t: "rect", c: INK, w: 2, x: cx - 30, y: FL - 10, rw: 60, rh: 10, f: true }, { t: "circle", c: "#e2e8f0", w: 2, cx: cx, cy: py, r: 22, f: true }, { t: "circle", c: INK, w: 3, cx: cx, cy: py, r: 22, f: false });
+      S.push(T(cx, py + 1, p.id, 12));
+      if (p.label) S.push(TR(cx - 28, py, p.label, 11, NOTE));
+      S.push(P(PIPE, 5, [[cx + 14, py - 17], [cx + 14, y], [HX, y]]));
+      S.push({ t: "circle", c: PIPE, w: 1, cx: HX, cy: y, r: 4.5, f: true });
+      var cvx = VX0 + 62, svx = VX0 + 140;
+      checkSym(cvx, y).forEach(function (s) { S.push(s); });
+      shutSym(svx, y, p.valve.kind || "").forEach(function (s) { S.push(s); });
+      S.push(T(cvx, y - 19, p.check.id, 11), T(svx, y - 19, p.valve.id + (p.valve.kind ? " " + p.valve.kind : ""), 11));
+    });
+    // the header down the vault, and out as the force main
+    var yl = ys[ys.length - 1] + 30;
+    S.push(P(PIPE, 6, [[HX, ys[0]], [HX, yl], [VX1 + 150, yl]]), { t: "tri", c: WATER, w: 1, pts: [[VX1 + 150, yl - 9], [VX1 + 150, yl + 9], [VX1 + 166, yl]], f: true });
+    S.push(TR(VX1 + 160, yl - 18, c.header.label || "force main", 12, NOTE));
+    // a key to the valves
+    var ky = Math.max(FL, VB) + 62;
+    checkSym(WX0 + 10, ky).forEach(function (s) { S.push(s); });
+    S.push(TL(WX0 + 34, ky, "check valve: lets the water out to the force main, never back", 12, NOTE));
+    shutSym(WX0 + 10, ky + 30, "").forEach(function (s) { S.push(s); });
+    S.push(TL(WX0 + 34, ky + 30, "shutoff valve (gate; a plug valve has a bar, a ball valve a dot)", 12, NOTE));
+    return { shapes: S, bottom: ky + 56, left: 30, right: VX1 + 170 };
+  }
+  function buildPiping(block) {
+    var pr = parsePiping(block), c = planPiping(pr);
+    if (c.problems.length) return { problems: c.problems, plan: null };
+    if (!L.aiDraw || !L.aiDraw.result) return { problems: ["Lantern\u2019s drawing parts are missing"], plan: null };
+    var lay = layoutPiping(c, block.title), cx = (lay.left + lay.right) / 2;
+    var how = c.pumps.map(function (p) { return p.id + " to " + p.check.id + " then " + p.valve.id; });
+    var steps = ["Each pump lifts the water up its own pipe and out to the valve vault: " + list(how, "and") + ", then into the header and away along the " + (c.header.label || "force main") + ".",
+      "The check valve sits between the pump and the shutoff valve, and the valves are in a vault of their own, out of the wet well (Recommended Standards for Wastewater Facilities, 2014: 42.52, 44.4)."];
+    var y = notes(lay.shapes, lay.bottom + 10, cx, c.notes.slice(0, 6), false);
+    var said = (c.added.length ? "Lantern added " + c.added.join("; ") + "." : "") + (c.said.length ? (c.added.length ? " " : "") + c.said.join("; ") + "." : "");
+    notes(lay.shapes, y + 6, cx, steps.concat(said ? [said] : []), true);
+    var plan = { mode: "piping", pumps: c.pumps.map(function (p) { return { id: p.id, label: p.label, check: p.check.id, valve: p.valve.id, valveKind: p.valve.kind || "" }; }),
+      well: c.well.label, header: c.header.label, inlets: c.inlets.map(function (x) { return x.label; }), vent: c.vent.label, added: c.added, notes: c.notes, order: ["pump", "check", "shutoff", "header"] };
+    return L.aiDraw.result(lay.shapes, plan, c.pumps.length + " pump" + (c.pumps.length === 1 ? "" : "s") + "; piped by Lantern. " + steps.join(" ") + (said ? " " + said : ""), block.title, []);
+  }
+
+  // ---- LEVELS -------------------------------------------------------------------------------------
+  var LROLES = { well: "well wetwell sump pit basin tank", pump: "pump pumps submersible", float: "float floats level switch",
+    inlet: "inlet influent inflow sewer invert", note: "note text label", job: "off stop lead lag alarm start" };
+  var LROLE = {};
+  Object.keys(LROLES).forEach(function (r) { LROLES[r].split(" ").forEach(function (w) { LROLE[w] = r; }); });
+  function parseLevels(b) {
+    var items = [], notes0 = [], problems = [];
+    (b.lines || []).forEach(function (line) {
+      var ws = words(ptidy(line).replace(/\bfloat[- ]switch\b/gi, "float")), w0 = ws[0] && ws[0].w ? ws[0].w.toLowerCase().replace(/[:.,;]+$/, "") : "", role = LROLE[w0] || "";
+      if (role === "note") { notes0.push(line.replace(/^\s*\S+\s*/, "")); return; }
+      if (!role) { problems.push("\u201c" + line + "\u201d is not a line of MAKE LEVELS (it takes: well, pump, float, inlet, note)"); return; }
+      var it = { role: role === "job" ? "float" : role, id: "", label: role === "job" ? w0 : "", refs: [], h: heightOf(line.replace(/\x22[^\x22]*\x22|\u201c[^\u201d]*\u201d/g, " ")), line: line, count: 0 };
+      ws.slice(1).forEach(function (x) {
+        if (x.q != null) { it.label = it.label ? it.label + " " + x.q : x.q; return; }
+        var t = x.w.replace(/[.,;:]+$/, "");
+        if (IDRE.test(t)) { if (!it.id) it.id = t.toUpperCase(); else it.refs.push(t.toUpperCase()); return; }
+        if (/^\d+$/.test(t) && it.role === "pump" && !it.count) it.count = +t;
+      });
+      items.push(it);
+    });
+    return { items: items, notes: notes0, problems: problems };
+  }
+  function planLevels(pr) {
+    var problems = pr.problems.slice(), said = [], fl = [], n = {}, used = {};
+    pr.items.forEach(function (it) { if (it.id) used[it.id] = 1; });
+    function nid(p) { n[p] = n[p] || 0; var id; do { id = p + (++n[p]); } while (used[id]); used[id] = 1; return id; }
+    var pumpN = 0;
+    pr.items.filter(function (it) { return it.role === "pump"; }).forEach(function (it) { pumpN += it.count || Math.max(1, (it.id ? 1 : 0) + it.refs.length); });
+    var WRITE = "float FS1 \x22off\x22 2 ft, float FS2 \x22lead on\x22 3.5 ft, float FS3 \x22lag on\x22 4.5 ft, float FS4 \x22high level alarm\x22 5.5 ft";
+    var seen = {};
+    pr.items.filter(function (it) { return it.role === "float"; }).forEach(function (it) {
+      var job = floatJob(it.label);
+      if (!job || job === "low") { problems.push((it.id || "a float") + (it.label ? " (\u201c" + it.label + "\u201d)" : "") + ": say what it is for, and its height above the floor if known, like: " + WRITE); return; }
+      if (seen[job]) { problems.push("two floats for " + JOB_NAME[job] + " (" + seen[job].id + " and " + (it.id || "another") + "): one float each, like: " + WRITE); return; }
+      var f = { id: it.id || nid("FS"), job: job, label: it.label || JOB_NAME[job], h: it.h };
+      seen[job] = f; fl.push(f);
+    });
+    if (!fl.length) problems.push("there are no floats: one line for each, from the bottom up, like: " + WRITE);
+    var withH = fl.filter(function (f) { return f.h; });
+    if (withH.length && withH.length < fl.length) problems.push("give every float its height above the floor, or none (" + list(fl.filter(function (f) { return !f.h; }).map(function (f) { return f.id; }), "and") + " " + (fl.length - withH.length > 1 ? "have" : "has") + " none): like " + WRITE);
+    fl.sort(function (a, b) { return JOB_ORDER[a.job] - JOB_ORDER[b.job]; });
+    var scaled = withH.length === fl.length && fl.length > 0;
+    if (scaled) for (var i = 1; i < fl.length; i++) {
+      var a = fl[i - 1], b = fl[i];
+      if (b.h.m <= a.h.m) problems.push(b.id + " (" + b.label + ") at " + b.h.text + " is not above " + a.id + " (" + a.label + ") at " + a.h.text + ": from the bottom up the floats are off, lead on, lag on, high level alarm -- give " + b.id + " a height above " + a.h.text);
+      else if (b.h.m - a.h.m < 0.3 - 1e-9) said.push(a.id + " and " + b.id + " are " + Math.round((b.h.m - a.h.m) * 1000) + " mm (" + Math.round((b.h.m - a.h.m) / 0.0254 * 10) / 10 + " in) apart; Ontario\u2019s design guidelines keep floats at least 300 mm (12 in) apart");
+    }
+    var inl = pr.items.filter(function (it) { return it.role === "inlet"; })[0] || null, wl = pr.items.filter(function (it) { return it.role === "well"; })[0] || null;
+    var alarm = fl.filter(function (f) { return f.job === "alarm"; })[0];
+    if (scaled && inl && inl.h && alarm && alarm.h.m >= inl.h.m) said.push("the alarm (" + alarm.h.text + ") is at or above the inlet\u2019s invert (" + inl.h.text + "): the inlet sewer fills before it sounds");
+    if (scaled && wl && wl.h && fl[fl.length - 1].h.m >= wl.h.m) problems.push("the floats go higher than the well (" + wl.h.text + ") is deep");
+    if (!seen.off || !seen.lead) said.push("a well whose pumps start and stop on floats has an off float and a lead (on) float at least");
+    return { floats: fl, scaled: scaled, pumps: Math.max(1, Math.min(4, pumpN || 2)), pumpsGiven: pumpN, inlet: inl, well: wl, problems: problems, said: said, notes: pr.notes };
+  }
+  function layoutLevels(c, title) {
+    var S = [], WX0 = 190, WX1 = 520, G = 110, FL = 590, n = c.floats.length;
+    if (title) S.push(T(400, 36, title, 18));
+    // heights to the drawing: to scale (the top of the well 15% above the highest level), or evenly in order
+    var top = c.scaled ? Math.max.apply(null, c.floats.map(function (f) { return f.h.m; }).concat(c.inlet && c.inlet.h ? [c.inlet.h.m] : [], c.well && c.well.h ? [c.well.h.m / 1.15] : [])) * 1.15 : 1;
+    function Y(m) { return FL - (FL - G - 20) * m / top; }
+    c.floats.forEach(function (f, i) { f.y = c.scaled ? Y(f.h.m) : FL - 120 - i * ((FL - G - 240) / Math.max(1, n - 1)); });
+    if (!c.scaled && n === 1) c.floats[0].y = FL - 200;
+    S.push(P(EARTH, 2, [[40, G], [WX0 - 12, G]]), P(EARTH, 2, [[WX1 + 12, G], [760, G]]));
+    S.push({ t: "rect", c: CONC, w: 1, x: WX0 - 12, y: G - 12, rw: WX1 - WX0 + 24, rh: 12, f: true }, { t: "rect", c: INK, w: 2, x: WX0 - 12, y: G - 12, rw: WX1 - WX0 + 24, rh: 12, f: false });
+    S.push(P(INK, 6, [[WX0, G], [WX0, FL], [WX1, FL], [WX1, G]]));
+    S.push(T((WX0 + WX1) / 2, FL + 22, (c.well && c.well.label ? c.well.label : "wet well") + " floor" + (c.scaled ? " (0)" : ""), 12, NOTE));
+    // the pumps on the floor, to the right; the floats hang to the left, clear of them
+    for (var k = 0; k < c.pumps; k++) {
+      var px = WX1 - 50 - (c.pumps - 1 - k) * 70;
+      S.push({ t: "rect", c: INK, w: 2, x: px - 24, y: FL - 8, rw: 48, rh: 8, f: true }, { t: "circle", c: "#e2e8f0", w: 2, cx: px, cy: FL - 28, r: 18, f: true }, { t: "circle", c: INK, w: 3, cx: px, cy: FL - 28, r: 18, f: false }, T(px, FL - 27, "P" + (k + 1), 11));
+    }
+    // the inlet at its invert (its bottom), on the left wall
+    if (c.inlet) {
+      var iy = c.scaled && c.inlet.h ? Y(c.inlet.h.m) : n ? Math.max(G + 40, c.floats[n - 1].y - 55) : G + 60;
+      S.push({ t: "rect", c: "#94a3b8", w: 1, x: 40, y: iy - 22, rw: WX0 - 43, rh: 22, f: true }, P(INK, 2, [[40, iy - 22], [WX0 - 3, iy - 22]]), P(INK, 2, [[40, iy], [WX0 - 3, iy]]));
+      S.push(P(GREY, 1, [[WX0, iy], [WX1, iy]], [3, 5]), TL(40, iy + 14, "inlet invert" + (c.inlet.h ? " " + c.inlet.h.text : ""), 11, NOTE));
+    }
+    // each float: its cable from the bracket under the slab, the float, and its level across the well
+    c.floats.forEach(function (f, i) {
+      var fx = WX0 + 36 + i * 30, col = f.job === "alarm" ? "#dc2626" : f.job === "off" ? "#16a34a" : "#f59e0b";
+      S.push(P(GREY, 1, [[fx, G + 6], [fx, f.y - 12]]), { t: "circle", c: col, w: 2, cx: fx, cy: f.y - 4, r: 8, f: true });
+      S.push(P(col, 2, [[WX0 + 4, f.y], [WX1 + 14, f.y]], [9, 6]));
+      S.push(TL(WX1 + 22, f.y, f.id + "  " + f.label + (f.h ? "  " + f.h.text : ""), 12, INK));
+    });
+    S.push(P(INK, 3, [[WX0, G + 6], [WX0 + 36 + Math.max(0, n - 1) * 30 + 10, G + 6]]));
+    return { shapes: S, bottom: FL + 34, left: 40, right: 760 };
+  }
+  function buildLevels(block) {
+    var pr = parseLevels(block), c = planLevels(pr);
+    if (c.problems.length) return { problems: c.problems, plan: null };
+    if (!L.aiDraw || !L.aiDraw.result) return { problems: ["Lantern\u2019s drawing parts are missing"], plan: null };
+    var lay = layoutLevels(c, block.title), cx = (lay.left + lay.right) / 2;
+    var order = c.floats.map(function (f) { return f.id + " " + f.label + (f.h ? " at " + f.h.text : ""); });
+    var steps = ["From the bottom up: " + list(order, "and") + (c.inlet ? "; the inlet\u2019s invert" + (c.inlet.h ? " at " + c.inlet.h.text : "") + " above them" : "") + ".",
+      "The water rises to the lead float and one pump starts; it pumps down to the off float and stops" + (c.floats.some(function (f) { return f.job === "lag"; }) ? "; if the water still rises, the lag float starts the other pump too" : "") +
+      (c.floats.some(function (f) { return f.job === "alarm"; }) ? "; the high level alarm sounds above them all" : "") + ".",
+      "Set the off level by the pump maker\u2019s minimum submergence, and the lead float above it by how many starts an hour the pump may make; Lantern does not know them." + (c.scaled ? "" : " Not to scale: give each float its height above the floor (float FS2 \x22lead on\x22 3.5 ft) to draw it to scale.")];
+    var y = notes(lay.shapes, lay.bottom + 10, cx, c.notes.slice(0, 6), false);
+    notes(lay.shapes, y + 6, cx, steps.concat(c.said.length ? ["Lantern notes: " + c.said.join("; ") + "."] : []), true);
+    var plan = { mode: "levels", scaled: c.scaled, floats: c.floats.map(function (f) { return { id: f.id, job: f.job, label: f.label, height: f.h ? f.h.text : null, m: f.h ? f.h.m : null }; }),
+      inlet: c.inlet ? { height: c.inlet.h ? c.inlet.h.text : null } : null, pumps: c.pumps, notes: c.notes, said: c.said };
+    return L.aiDraw.result(lay.shapes, plan, c.floats.length + " float" + (c.floats.length === 1 ? "" : "s") + "; set by Lantern. " + steps.join(" ") + (c.said.length ? " Lantern notes: " + c.said.join("; ") + "." : ""), block.title, []);
+  }
+
+  // ---- the actions --------------------------------------------------------------------------------
+  var STATION = /\b(pump(ing|s)?|lift(ing)?|sewage|wastewater|sewer|wet[- ]?well|sump|stations?|force main|cistern|tank|reservoir)\b/i;
+  var SHOW = /\b(draw|sketch|show|make|create|design|diagram|schematic|drawing|layout|plan|section|elevation|picture)\b/i;
+  function asksPiping(q) { q = String(q || ""); return /\b(plumbing|piping|pipe ?work|pipe layout|valve layout|pipes and valves)\b/i.test(q) && STATION.test(q) && SHOW.test(q); }
+  function asksLevels(q) {
+    q = String(q || "");
+    return (/\bfloats?\b[^.?!]{0,60}\b(levels?|position\w*|setting\w*|elevations?|heights?|placement|arrangement)\b|\b(levels?|elevations?|heights?)\b[^.?!]{0,40}\bfloats?\b|\bwet[- ]?well\b[^.?!]{0,40}\b(levels?|section|elevation)\b|\bpump(ing)? (on|off|start|stop) levels?\b/i.test(q)) && SHOW.test(q);
+  }
+  var PIPING_PROMPT = ["MAKE PIPING: <title>   -- a pump station\u2019s piping (a lift station, a sump), drawn by Lantern: the wet well, the pumps,",
+    "each pump\u2019s check valve and then its shutoff valve in a valve vault, the header to the force main, the inlet and the vent.",
+    "well \x22wet well\x22                 the wet well",
+    "inlet \x228 in gravity sewer\x22      the pipe coming in",
+    "pump P1 \x22pump 1\x22                one line for each pump",
+    "check CV1 P1                    a check valve on P1 (Lantern adds any left out, between the pump and the shutoff valve)",
+    "valve V1 P1 plug                a shutoff valve on P1: gate, plug or ball (added if left out)",
+    "header \x224 in force main\x22        the pipe the pumps join, leaving the station",
+    "vent                            the wet well\u2019s vent (an inverted J)",
+    "END",
+    "Never draw pipes or give positions: Lantern pipes each pump through its own valves and checks the drawing."];
+  var LEVELS_PROMPT = ["MAKE LEVELS: <title>   -- a wet well in section with its float switches at their levels, drawn by Lantern.",
+    "well \x22wet well\x22 10 ft           the well (its depth, if known)",
+    "pump P1 P2                      the pumps on its floor",
+    "float FS1 \x22off\x22 2 ft            each float: what it is for (off, lead on, lag on, high level alarm) and its height",
+    "float FS2 \x22lead on\x22 3.5 ft        above the floor, if known (leave every height out to have the order drawn)",
+    "inlet \x22inlet invert\x22 6.5 ft     the bottom of the pipe coming in",
+    "END"];
+  function prompt(lines) { return lines; }
+  var piping = { id: "piping", kind: "PIPING", kinds: ["PIPING", "PLUMBING", "PIPEWORK", "PIPING DIAGRAM", "PLUMBING SCHEMATIC", "PIPING SCHEMATIC", "PUMP STATION PIPING"], title: "a pump station\u2019s piping",
+    match: function (q) { return asksPiping(q); }, prompt: prompt(PIPING_PROMPT), build: function (block) { return buildPiping(block); },
+    fixHint: function () { return ["Lantern reads a MAKE PIPING block line by line, like this:"].concat(PIPING_PROMPT.slice(2, 9)); } };
+  var levels = { id: "levels", kind: "LEVELS", kinds: ["LEVELS", "FLOAT LEVELS", "FLOATS", "WET WELL", "WET WELL LEVELS"], title: "a wet well\u2019s float levels",
+    match: function (q) { return asksLevels(q); }, prompt: prompt(LEVELS_PROMPT), build: function (block) { return buildLevels(block); },
+    fixHint: function () { return ["Lantern reads a MAKE LEVELS block line by line, like this:"].concat(LEVELS_PROMPT.slice(1, 6)); } };
+  ACTS.push(piping, levels);
+  // the electrical schematic is not the plumbing one, and a picture on the grid is neither
+  var sch = ACTS.filter(function (a) { return a.id === "schematic"; })[0];
+  if (sch && sch.match) {
+    var schBefore = sch.match;
+    sch.match = function (q) {
+      var t = String(q || "");
+      var elec = /\b(circuit|wiring|wired|electrical|control|relay|relays|ladder|contactor|starter)\b/i.test(t);
+      if (/\b(plumbing|piping|pipe ?work)\b/i.test(t) && !elec) return false;
+      if (asksLevels(t) && !elec) return false;
+      return schBefore.call(sch, q);
+    };
+  }
+  var pic = ACTS.filter(function (a) { return a.id === "drawing"; })[0];
+  if (pic && pic.match) { var picBefore = pic.match; pic.match = function (q) { return !asksPiping(q) && !asksLevels(q) && picBefore.call(pic, q); }; }
+  window.Lantern.aiPumpStation = { floatJob: floatJob, heightOf: heightOf, asksPiping: asksPiping, asksLevels: asksLevels,
+    piping: { parse: parsePiping, plan: planPiping, build: buildPiping, PROMPT: PIPING_PROMPT }, levels: { parse: parseLevels, plan: planLevels, build: buildLevels, PROMPT: LEVELS_PROMPT } };
+})();
+// ===========================================================================
+// MODULE: AI_PUMP_STATION - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: AI_ELECTRONICS - START
@@ -69592,6 +70210,10 @@ Lantern.RFB = (function () {
   // kinds(question) -> the names of the blocks the question asks for, the
   // one named first alone when there is one
   function kinds(q) {
+    // (1.24.30) a question asking for several things: the first part's block (AI_PARTS)
+    var PT = L.aiParts, pp = null;
+    try { pp = PT && PT.split ? PT.split(q) : null; } catch (e) { pp = null; }
+    if (pp) return [pp[0].kind];
     var A = L.aiAct, acts = A.relevant(q).filter(function (a) { return a && a.kind; });
     acts = acts.map(function (a) { return { kind: nameOf(a, q), match: function (t) { return a.match(t); } }; });
     if (acts.length < 2) return acts.map(function (a) { return a.kind; });
@@ -69645,10 +70267,12 @@ Lantern.RFB = (function () {
     var ks = kinds(q);
     if (!ks.length) return null;
     if (ks.indexOf("CODE") >= 0 && codeLike(reply)) return null;
-    var first = ks.map(function (k) { return "MAKE " + k + ": <a short title>"; });
-    return { kind: ks[0], kinds: ks,
+    var first = ks.map(function (k) { return "MAKE " + k + ": <a short title>"; }), PT = L.aiParts, pp = null;
+    try { pp = PT && PT.split ? PT.split(q) : null; } catch (e) { pp = null; }
+    var several = pp ? "Lantern can make all " + pp.length + " things the question asks for, one at a time (" + pp.map(function (p) { return "MAKE " + p.kind; }).join(", then ") + "); this is the first. " : "";
+    return { kind: ks[0], kinds: ks, parts: pp ? pp.length : 0,
       note: "The AI explained instead of writing a MAKE " + ks.join(" or MAKE ") + " block; Lantern asked for the block itself\u2026",
-      prompt: "Lantern found no MAKE block in your reply, so nothing was made. Do not explain and do not think aloud. " +
+      prompt: "Lantern found no MAKE block in your reply, so nothing was made. Do not explain and do not think aloud. " + several +
         "Reply with ONLY the block, as the instructions above describe it. Its first line is:\n" + first.join("\nor\n") + "\nthen its lines, then END." };
   }
   window.Lantern.aiNoBlock = noBlock;
@@ -69656,6 +70280,164 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: AI_NO_BLOCK - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: AI_PARTS - START
+// Depends: AI_ACTIONS (Lantern.aiAct.relevant) -- feature-detected; read by AI_ACTIONS (prompt), AI_NO_BLOCK (kinds)
+//          and ASSIST_CHAT (the turn)
+// Exports: Lantern.aiParts = {split(question) -> [{text, ask, acts, kind}] | null, line(parts), first(parts),
+//          next(parts, made, reply) -> {prompt, note, at} | null, again(parts, reply) -> {prompt, note} | null,
+//          promptOf(part)}
+// ===========================================================================
+// A question that asks for several things Lantern makes is made one thing
+// at a time (1.24.30, Adam's lift station: "create a diagram for a typical
+// 2 pump lift station control with alternating relay. Then create a
+// plumbing schematic for the same and a drawing showing float level
+// positioning" -- three drawings, and the 35B wrote none; Adam: "The AI
+// needs help breaking this down"). split() reads the parts: sentences,
+// "then", and "and a ..." where what follows asks for another kind of
+// thing; a part that says "for the same" or "of it" is read with the parts
+// before it ("a plumbing schematic for the same" is the lift station's). A
+// piece that asks for nothing Lantern makes is a detail of the part before
+// it, and parts of one kind side by side are one part, so "a circuit with a
+// battery and a lamp" stays one. With two or more, the instructions carry
+// only the first part's tool and the list of all of them; when its block is
+// made, Lantern asks for the next with that part's own instructions, and so
+// on. A part answered with prose instead of its block is asked for once.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var VERB = /^\s*(?:(?:please|now|then|also|and|ok|okay)[\s,]+)*(draw|sketch|make|create|build|design|write|draft|compose|generate|produce|prepare|plot|lay\s+out|show)\b/i;
+  var BACK = /\b(the same|for it|of it|for this|of this|for that|of that|for them|of them|these|those|the station|the system|the circuit)\b/i;
+  // a thing to make, named in a piece that does not begin with a verb ("and a drawing showing ..."); without one,
+  // "and the oil returns to the tank" is part of the sentence before it
+  var THING = /\b(drawings?|diagrams?|schematics?|sketch(es)?|pictures?|tables?|sheets?|spreadsheets?|charts?|plans?|lists?|decks?|slides?|programs?|code|songs?|cards?|maps?|layouts?|sections?|elevations?|documents?|docs?|letters?|circuits?|ladders?|piping|plumbing|wiring)\b/i;
+  // the picture already asked for ("and show the total on the picture"): a detail of it, not a second picture
+  var SAME_PIC = /\b(on|in|to|onto) (the|that|this) (picture|drawing|diagram|schematic|sketch)\b|\b(the|that|this) (picture|drawing|diagram|schematic)\b/i;
+  // the pieces of a question: its sentences, then "then", then "and a/an/the ..."
+  function pieces(q) {
+    var out = [];
+    String(q || "").replace(/\s+/g, " ").replace(/([.!?;])\s+(?=\S)/g, "$1\u0001").split("\u0001").forEach(function (s) {
+      var bits = s.replace(/,?\s+(?:and\s+)?then\s+/gi, "\u0001").replace(/,?\s+and\s+(?=(?:also\s+)?(?:a|an|the|another|one|draw|sketch|make|create|build|design|write|draft|plot)\s)/gi, "\u0002").split(/(?=[\u0001\u0002])/);
+      bits.forEach(function (p, k) {
+        var joined = p.charAt(0) === "\u0002";
+        p = p.replace(/^[\u0001\u0002]/, "").replace(/^[\s,]+|[\s,.;]+$/g, "").replace(/^(?:and\s+)?(?:then|also)\s+/i, "");
+        if (!p) return;
+        // "and ..." with no verb and nothing to make in it stays in the sentence
+        if (joined && k && out.length && !VERB.test(p) && !THING.test(p)) { out[out.length - 1] += " and " + p; return; }
+        out.push(p);
+      });
+    });
+    return out;
+  }
+  // the block's name as the instructions for this part give it (MAKE CONTROL for a control circuit)
+  function nameOf(a, q) {
+    var ls = null, m;
+    try { ls = typeof a.promptFor === "function" ? a.promptFor(q) : a.prompt; } catch (e) { ls = null; }
+    m = /^\s*MAKE\s+([A-Z][A-Z0-9]*)\s*:/m.exec([].concat(ls || []).join("\n"));
+    return m ? m[1] : a.kind;
+  }
+  var cache = { q: null, parts: null };
+  function split(q) {
+    q = String(q || "");
+    if (cache.q === q) return copy(cache.parts);
+    var A = L.aiAct, out = [], ctx = "", verb = "";
+    if (!A || !A.relevant) return null;
+    pieces(q).forEach(function (s) {
+      var vm = VERB.exec(s);
+      if (vm) verb = vm[1];
+      var ask = vm || !verb ? s : verb + " " + s, acts = [], back = false;
+      try { acts = A.relevant(ask); } catch (e) { acts = []; }
+      // "a plumbing schematic for the same": read with what came before, and only a tool the part itself brings
+      if (!acts.length && ctx && BACK.test(s)) {
+        var before = [];
+        try { before = A.relevant(ctx).map(function (a) { return a.id; }); acts = A.relevant(ctx + " " + ask).filter(function (a) { return before.indexOf(a.id) < 0; }); } catch (e) { acts = []; }
+        if (acts.length) { ask = ask + " (" + ctx.replace(/^\s+/, "") + ")"; back = true; }
+      }
+      // a picture of what was asked for already is a detail of it
+      if (acts.length && out.length && SAME_PIC.test(s) && acts.every(function (a) { return a.id === "drawing"; })) acts = [];
+      if (!acts.length) { if (out.length) { out[out.length - 1].text += ", " + s; out[out.length - 1].ask += ", " + s; } ctx += " " + s; return; }
+      var kind = nameOf(acts[0], ask);
+      if (out.length && out[out.length - 1].kind === kind) { out[out.length - 1].text += ", " + s; out[out.length - 1].ask += ", " + s; }
+      else out.push({ text: s, ask: ask, acts: acts, kind: kind, back: back });
+      ctx += " " + s;
+    });
+    var r = out.length >= 2 && out.length <= 5 ? out : null;
+    if (r) r.forEach(function (p, i) { p.n = i + 1; });
+    cache = { q: q, parts: r };
+    return copy(r);
+  }
+  // a fresh list each time: a turn marks its parts done
+  function copy(r) { return r ? r.map(function (p) { return { text: p.text, ask: p.ask, acts: p.acts, kind: p.kind, n: p.n, back: p.back }; }) : null; }
+  function ord(n) { return ["first", "second", "third", "fourth", "fifth"][n - 1] || n + "th"; }
+  // the line the instructions carry: what the question asks for, and that the first comes first
+  function line(parts) {
+    return "This question asks for " + parts.length + " things, and Lantern makes them one at a time: " +
+      parts.map(function (p) { return p.n + ". " + p.text + " (MAKE " + p.kind + ")"; }).join("; ") +
+      ". Now write ONLY the first one\u2019s block, MAKE " + parts[0].kind + "; Lantern asks for the next when it is made.";
+  }
+  function promptOf(p) {
+    var out = [];
+    p.acts.slice(0, 1).forEach(function (a) { var ls = null; try { ls = typeof a.promptFor === "function" ? a.promptFor(p.ask) : a.prompt; } catch (e) { ls = a.prompt; } out = out.concat(ls || []); });
+    return out;
+  }
+  // which part a reply's blocks answer, by kind
+  function kindsIn(reply) {
+    var A = L.aiAct, ks = [];
+    try { (A && A.find ? A.find(String(reply || "")) : []).forEach(function (b) { var k = String(b.kind || "").toUpperCase(); if (k) ks.push(k); }); } catch (e) { ks = []; }
+    return ks;
+  }
+  function belongs(p, k) {
+    if (k === p.kind) return true;
+    return p.acts.some(function (a) { return (a.kinds || [a.kind]).indexOf(k) >= 0 && nameOf(a, p.ask) === p.kind; });
+  }
+  // next(parts, made, reply): the part just made is done; the request for the next one not done, or null
+  function next(parts, made, reply) {
+    if (!parts) return null;
+    parts.cur = parts.cur || 0;
+    var k = made && made.block ? String(made.block.kind || "").toUpperCase() : "";
+    var hit = -1;
+    parts.forEach(function (p, i) { if (hit < 0 && !p.done && belongs(p, k)) hit = i; });
+    if (hit < 0) hit = parts.cur;
+    parts[hit].done = true; parts[hit].made = made;
+    // blocks of later parts written in the same reply count as written (Chat builds them as it builds any)
+    var rest = parts.filter(function (p) { return !p.done; });
+    if (!rest.length) return null;
+    var p = rest[0];
+    parts.cur = parts.indexOf(p);
+    var doneList = parts.filter(function (x) { return x.done; }).map(function (x) { return "MAKE " + x.kind; });
+    return { at: parts.cur, part: p,
+      note: "Lantern made " + list(doneList) + "; now the " + ord(p.n) + " of the " + parts.length + " things asked for: " + p.text + "\u2026",
+      prompt: "Lantern made your MAKE " + parts[hit].kind + " block. The question also asks for: " + p.text +
+        (p.back ? " (\u201cthe same\u201d is what the question asked for first: " + parts[0].text + ")" : "") + ". That is the " + ord(p.n) + " of " + parts.length +
+        ". Reply with ONLY its block -- no explanation, no other block. Lantern reads it like this:\n" + promptOf(p).join("\n") };
+  }
+  function list(xs) { return xs.length <= 1 ? xs.join("") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1]; }
+  // again(parts, reply): the part asked for was answered with prose -- asked for once more, with its first line
+  function again(parts, reply) {
+    if (!parts || !parts.cur) return null;
+    var p = parts[parts.cur];
+    if (!p || p.done || p.asked) return null;
+    if (kindsIn(reply).some(function (k) { return belongs(p, k); })) return null;
+    p.asked = true;
+    return { note: "The AI wrote no MAKE " + p.kind + " block for the " + ord(p.n) + " part; Lantern asked for it\u2026",
+      prompt: "Lantern found no MAKE " + p.kind + " block in your reply, so the " + ord(p.n) + " part (" + p.text + ") was not made. Do not explain. " +
+        "Reply with ONLY the block. Its first line is:\nMAKE " + p.kind + ": <a short title>\nthen its lines, then END." };
+  }
+  // inReply(parts, reply): the first block in the reply for the part now asked for (all three written at once)
+  function inReply(parts, reply) {
+    var A = L.aiAct, p = parts && parts[parts.cur || 0], bs = [];
+    if (!p || p.done || !A || !A.find) return null;
+    try { bs = A.find(String(reply || "")); } catch (e) { bs = []; }
+    for (var i = 0; i < bs.length; i++) {
+      if (belongs(p, String(bs[i].kind || "").toUpperCase())) return { text: "MAKE " + bs[i].kind + ": " + (bs[i].title || "") + "\n" + (bs[i].lines || []).join("\n") + "\nEND", kind: bs[i].kind };
+    }
+    return null;
+  }
+  window.Lantern.aiParts = { inReply: inReply, split: split, pieces: pieces, line: line, first: function (parts) { return parts && parts[0]; }, next: next, again: again, promptOf: promptOf };
+})();
+// ===========================================================================
+// MODULE: AI_PARTS - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: AI_PUZZLE_ASK - START
