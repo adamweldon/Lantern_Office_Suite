@@ -1,0 +1,127 @@
+// cases_d.js -- D: splitting (AI_PARTS). One-thing questions across Lantern's tools that use "and", "plus", "as well
+// as", numbers ("1 ft 6 in", "2.5 m", "step 1."), colons and ordinals must NOT split; questions that ask for several
+// things must, into the right kinds, in order, each part's text its own. And the guard: of all the bench questions
+// in both sets, only make-liftstation and make-liftstation-b may split.
+"use strict";
+var H = require("./lib.js");
+function one(id, harm, q, why) {
+  return { id: id, harm: harm, input: { question: q }, right: "One thing: not split. " + (why || ""),
+    run: function () { var p = H.split(q); return p ? "split into " + p.join(" | ") + ": " + H.L().aiParts.split(q).map(function (x) { return "{" + x.text + "}"; }).join(" ") : ""; } };
+}
+// kinds: the parts' kinds in order; texts (optional): regexes each part's text must match; notIn: a regex no part's text
+// may match
+function many(id, harm, q, kinds, why, notIn) {
+  return { id: id, harm: harm, input: { question: q }, right: "Split into " + kinds.join(" | ") + ". " + (why || ""),
+    run: function () {
+      var p = H.L().aiParts.split(q), k = p ? p.map(function (x) { return x.kind; }) : null;
+      if (!k || k.join("|") !== kinds.join("|")) return (k ? "split into " + k.join(" | ") : "not split") + (p ? " " + p.map(function (x) { return "{" + x.text + "}"; }).join(" ") : " (relevant: " + H.L().aiAct.relevant(q).map(function (a) { return a.id; }).join(", ") + ")");
+      if (notIn) { var bad = p.filter(function (x) { return notIn.test(x.text); }); if (bad.length) return "a part's text carries the next part's word: " + bad.map(function (x) { return "{" + x.text + "}"; }).join(" "); }
+      return "";
+    } };
+}
+var cases = [
+  one("D-01", "high", "Draw a circuit with a 9 V battery and a 470 ohm resistor and a red LED"),
+  one("D-02", "high", "Make a spreadsheet of monthly costs with rent, food and power, plus a total row"),
+  one("D-03", "high", "Draw a ladder diagram for a motor starter with start and stop buttons and an overload, plus a run light"),
+  one("D-04", "high", "Write a song in C major with a verse and a chorus, then a bridge"),
+  one("D-05", "high", "Draw a picture of a house with a red roof and a tree, plus a sun in the corner"),
+  one("D-06", "medium", "Make flash cards for the first 3 elements of the periodic table: hydrogen, helium and lithium"),
+  one("D-07", "high", "Draw a hydraulic circuit with a pump, a relief valve and a double-acting cylinder as well as a 4/3 valve"),
+  one("D-08", "high", "Draw the control circuit: a stop button, a start button and a motor starter"),
+  one("D-09", "high", "Draw a wet well section with floats at 1 ft 6 in, 2 ft 6 in and 3 ft 6 in for a lift station"),
+  one("D-10", "high", "Draw the float levels for a lift station: off at 2.5 m, lead on at 3 m and alarm at 3.5 m"),
+  one("D-11", "medium", "Make a slide deck about pump stations with 5 slides: intro, wet well, pumps, controls and maintenance"),
+  one("D-12", "high", "Draw a pneumatic circuit with a 5/2 valve and a cylinder, then add a flow control on the exhaust"),
+  one("D-13", "medium", "Make a spreadsheet: step 1. list the pumps, step 2. add their flow, step 3. total it"),
+  one("D-14", "high", "Write an Arduino program that reads a float switch and turns on a pump, and also lights an LED"),
+  one("D-15", "high", "Draw a forward reverse motor control circuit with interlocks and pilot lights as well as an overload"),
+  one("D-16", "high", "Draw a schematic of a lift station control with two pumps and an alternating relay plus a high level alarm"),
+  one("D-17", "high", "Draw the plumbing for a duplex lift station with check valves and gate valves, plus an air release valve on the force main"),
+  one("D-18", "high", "Draw a piping diagram of a duplex lift station: wet well, two pumps, check valves, plug valves and the force main"),
+  one("D-19", "medium", "Make a table of float settings: off 2 ft, lead 3 ft, lag 4 ft and alarm 5 ft"),
+  one("D-20", "high", "Draw a lift station's control circuit with an alternating relay. Explain how it works.", "'Explain' is a detail."),
+  one("D-21", "high", "Draw a lift station's float levels. Use 2 ft for the off float and 3.5 ft for lead on.", "'Use ...' is a detail."),
+  one("D-22", "medium", "Draw a sump pump circuit and its float switch wiring"),
+  one("D-23", "high", "Draw a circuit diagram of a 2 pump lift station with floats, an alternating relay, and lights"),
+  one("D-24", "medium", "Make a song with 3 verses: the first verse in C, the second in G, and the third in D", "Ordinals of verses."),
+  one("D-25", "medium", "Draw a circuit for a 12 V lamp with a switch, then calculate the current"),
+  one("D-26", "medium", "Draw a hydraulic press circuit with a 3,000 psi relief valve and a cylinder plus a pressure gauge"),
+  one("D-27", "high", "Draw the control circuit for a duplex lift station with lead and lag floats and a high level alarm"),
+  one("D-28", "medium", "Draw the float positions for a lift station, as well as the pump on and off levels"),
+  one("D-29", "medium", "Draw a lift station control: 1. lead pump, 2. lag pump, 3. alarm"),
+  one("D-30", "medium", "Draw the wet well levels for a lift station: 1st float off at 2 ft, 2nd float lead on at 3 ft, 3rd float alarm at 4 ft"),
+  one("D-31", "medium", "Draw the control for a 2 pump lift station (alternating relay), with a run light and an hour meter for each pump"),
+  one("D-32", "medium", "Make a spreadsheet of the first quarter's sales and its total"),
+  one("D-33", "medium", "Draw a map of the farm with the well, the barn and the pond"),
+  one("D-34", "medium", "Make a calendar for planting: tomatoes in May and beans in June"),
+  one("D-35", "medium", "Write a song: first verse about rain, second about sun"),
+  one("D-36", "medium", "Draw a circuit of 2 resistors in parallel plus a 9 V battery and calculate the total resistance"),
+  one("D-37", "high", "Draw the piping and valves of a lift station"),
+  one("D-38", "high", "Draw a wet well section and show the float switches for a lift station"),
+  one("D-39", "medium", "Draw a ladder diagram, step 1. stop button, step 2. start button"),
+  one("D-40", "medium", "Draw the control circuit for a two pump lift station and label the floats"),
+  one("D-41", "high", "Create a plumbing schematic for a duplex lift station with the wet well and the valve vault"),
+  one("D-42", "medium", "Draw a sketch of a pump and a tank"),
+  one("D-43", "high", "Draw a lift station control circuit with 2 pumps and 4 floats: off, lead, lag and alarm"),
+  one("D-44", "high", "Draw the plumbing for a 2 pump lift station: 6 in check valves, 6 in plug valves and a 6 in force main"),
+  one("D-45", "high", "Draw the float levels: off at 1'-6\", lead at 2'-6\" and alarm at 4'-0\" for a duplex lift station"),
+  one("D-46", "medium", "Draw a duplex lift station control with an alternating relay and explain the sequence of operation, step 1. lead pump starts, step 2. lag pump starts"),
+  one("D-47", "high", "Draw a section through the wet well showing the floats and the pumps for a lift station"),
+  one("D-48", "medium", "Draw the control circuit for a lift station with an alternating relay and then write a sequence of operation"),
+  one("D-49", "medium", "Draw the wiring diagram for the float switches and the alternating relay in a lift station panel"),
+  one("D-50", "medium", "Make a spreadsheet of pump run hours and a chart of them"),
+  { id: "D-51", harm: "low", input: { question: "Draw the control circuit for a duplex lift station with lead and lag floats and a high level alarm" },
+    right: "One control circuit: the instructions offer MAKE CONTROL only (rule 5). 'floats and a high level alarm' is not a request for the float levels drawing; offering MAKE LEVELS beside it invites a small model to write the wrong block.",
+    run: function () { var t = H.L().aiAct.prompt(this.input.question); return /MAKE LEVELS/.test(t) ? "the instructions offer MAKE CONTROL and MAKE LEVELS" : ""; } },
+  { id: "D-52", harm: "low", input: { question: "Draw a 2.5 m deep wet well for a lift station with the floats and the inlet" },
+    right: "A wet well with its floats: MAKE LEVELS is offered (it draws exactly this), not only the picture on the grid.",
+    run: function () { var r = H.L().aiAct.relevant(this.input.question).map(function (a) { return a.id; }); return r.indexOf("levels") >= 0 ? "" : "offered: " + r.join(", "); } },
+
+  many("D-60", "high", H.ADAM_Q, ["CONTROL", "PIPING", "LEVELS"], "Adam's question."),
+  many("D-61", "high", "Draw the control circuit for a duplex lift station, and draw the float levels in its wet well", ["CONTROL", "LEVELS"]),
+  many("D-62", "high", "1) draw the control circuit for a duplex pump station 2) draw its piping 3) draw the float levels", ["CONTROL", "PIPING", "LEVELS"]),
+  many("D-63", "low", "First, draw the control for a two pump lift station; second, its piping; third, the float positions.", ["CONTROL", "PIPING", "LEVELS"],
+    "Each part's text its own: not 'draw the control ..., second' and 'its piping, third' (the next part's ordinal is sent to the model as part of this one).", /,\s*(second|third)$/i),
+  many("D-64", "high", "I need three drawings: the control circuit of a duplex lift station, the plumbing, and the float levels.", ["CONTROL", "PIPING", "LEVELS"]),
+  many("D-65", "high", "Draw a 2 pump lift station: the control, the plumbing and the float positions", ["CONTROL", "PIPING", "LEVELS"]),
+  many("D-66", "high", "Draw the plumbing schematic and the float level drawing for a duplex lift station", ["PIPING", "LEVELS"]),
+  many("D-67", "high", "Show the float level positioning and the piping for a duplex lift station", ["LEVELS", "PIPING"]),
+  many("D-68", "high", "Create a plumbing schematic and a control diagram for a duplex lift station", ["PIPING", "CONTROL"]),
+  many("D-69", "medium", "Write an Arduino program for a sump pump with a float switch, and draw its ladder diagram", ["CODE", "CONTROL"]),
+  many("D-70", "medium", "Make a spreadsheet of pump run hours, then make slides about it", ["SHEET", "SLIDES"]),
+  many("D-71", "high", "Draw the ladder diagram for a duplex lift station with an alternating relay as well as a drawing of its float levels", ["CONTROL", "LEVELS"]),
+  many("D-72", "high", "Draw the control for a duplex sewage station plus its plumbing", ["CONTROL", "PIPING"]),
+  many("D-73", "high", "Draw a duplex lift station control circuit. Draw its piping. Draw the float level positions.", ["CONTROL", "PIPING", "LEVELS"]),
+  many("D-74", "medium", "Can you draw me the control circuit for a two pump lift station with an alternating relay, then the plumbing for the same, and then where the floats go?", ["CONTROL", "PIPING", "LEVELS"],
+    "'where the floats go' is the float levels drawing (asksLevels reads exactly these words); it is not a detail of the piping."),
+  many("D-75", "high", "a) the control circuit for a duplex lift station b) its plumbing c) its float levels", ["CONTROL", "PIPING", "LEVELS"]),
+  many("D-76", "medium", "Make a table of the float heights for a duplex lift station and draw the float levels", ["SHEET", "LEVELS"],
+    "A table and a drawing: two things. Folding the drawing into the table's part loses it."),
+  { id: "D-77", harm: "medium", input: { question: "Make a spreadsheet of float levels and a chart of the pump cycles" },
+    right: "A chart of a spreadsheet's numbers is the spreadsheet's (one SHEET, not split), or a second SHEET -- never a MAKE SCHEMATIC (an electrical drawing) for 'a chart of the pump cycles'.",
+    run: function () { var p = H.L().aiParts.split(this.input.question); if (!p) return ""; return p.every(function (x) { return x.kind === "SHEET"; }) ? "" : "split into " + p.map(function (x) { return x.kind + "{" + x.text + "}"; }).join(" | "); } },
+  many("D-78", "high", "Draw the control circuit and the plumbing schematic for a lift station", ["CONTROL", "PIPING"]),
+  many("D-79", "high", "Draw a duplex lift station: control circuit with alternating relay, then piping and valves, then float levels", ["CONTROL", "PIPING", "LEVELS"]),
+  many("D-80", "medium", "Write a program in Python that prints the float levels and draw the float levels for a lift station", ["CODE", "LEVELS"]),
+  many("D-81", "high", "Draw a lift station control and plumbing", ["CONTROL", "PIPING"]),
+  many("D-82", "high", "Draw a duplex lift station float level drawing with off, lead on, lag on and high level alarm floats, and a plumbing schematic with check valves", ["LEVELS", "PIPING"]),
+  many("D-83", "medium", "Draw the control circuit for a lift station with an alternating relay, then the plumbing for the same, then where the floats go", ["CONTROL", "PIPING", "LEVELS"], "Same as D-74 without 'and'."),
+  many("D-84", "medium", "Draw the control circuit for a lift station with an alternating relay, then the plumbing, and show where the floats should be set", ["CONTROL", "PIPING", "LEVELS"]),
+  many("D-85", "high", "Draw the control circuit for a duplex lift station. Then show the float positions.", ["CONTROL", "LEVELS"]),
+  many("D-86", "medium", "Draw the control circuit for a duplex lift station. Then show where the floats hang in the wet well.", ["CONTROL", "LEVELS"]),
+  many("D-87", "high", "Draw the ladder diagram for a duplex lift station and a section of the wet well with the floats", ["CONTROL", "LEVELS"]),
+  many("D-88", "high", "Draw the plumbing for a duplex lift station and then the control circuit for it", ["PIPING", "CONTROL"]),
+  many("D-89", "low", "Draw the piping for a duplex lift station. Next, draw its control circuit with an alternating relay. Finally, draw the float positions.", ["PIPING", "CONTROL", "LEVELS"],
+    "Each part's text its own: not '..., Next' and '..., Finally'.", /,\s*(next|finally)$/i),
+  many("D-90", "medium", "Draw the control for a duplex sewage lift station, the force main and valves, and the float settings", ["CONTROL", "PIPING", "LEVELS"],
+    "'the force main and valves' is the piping (asksPiping reads these words), not a detail of the control circuit."),
+  many("D-91", "low", "Draw a control circuit for a motor with a start button and a stop button. Then draw a control circuit for a conveyor with a limit switch.", ["CONTROL", "CONTROL"],
+    "Two circuits of one kind asked for one after the other: made one at a time, or the second said not made. (1.24.29 did the same: only one is ever asked for; nothing says the conveyor's was not made.)"),
+  { id: "D-95", harm: "high", input: { question: "every question of aiBenchQuestions" }, right: "Only make-liftstation may split.",
+    run: function () { var bad = (H.L().aiBenchQuestions || []).filter(function (b) { return b.id !== "make-liftstation" && H.split(b.q); }).map(function (b) { return b.id + " -> " + H.split(b.q).join("|"); }); return bad.join("; "); } },
+  { id: "D-96", harm: "high", input: { question: "every question of aiBenchQuestionsB" }, right: "Only make-liftstation-b may split.",
+    run: function () { var bad = (H.L().aiBenchQuestionsB || []).filter(function (b) { return b.id !== "make-liftstation-b" && H.split(b.q); }).map(function (b) { return b.id + " -> " + H.split(b.q).join("|"); }); return bad.join("; "); } },
+  { id: "D-97", harm: "high", input: { question: "make-liftstation and make-liftstation-b" }, right: "Both split CONTROL | PIPING | LEVELS.",
+    run: function () { var all = (H.L().aiBenchQuestions || []).concat(H.L().aiBenchQuestionsB || []).filter(function (b) { return /^make-liftstation/.test(b.id); }); var bad = all.filter(function (b) { return (H.split(b.q) || []).join("|") !== "CONTROL|PIPING|LEVELS"; }); return all.length === 2 && !bad.length ? "" : "found " + all.length + "; " + bad.map(function (b) { return b.id + " -> " + H.split(b.q); }).join("; "); } }
+];
+module.exports = cases;
