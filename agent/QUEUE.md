@@ -90,11 +90,14 @@ tried by a reviewer:
   select, a right-click menu with Excel's options; GAMMA is Excel's, LORE
   the Lorentz factor; "Excel functions should all match excel"). Drag and
   header selection, SHEET_MENU's menus and dialogs, hidden rows and
-  heights kept in .xlsx, CONVERT_EXCEL; three reviews replayed by
-  `tests/review_grid_1269.py`, `tests/review_excelnames_1269.js` and
-  `tests/review_makesheet_1269.js`. Left: Insert Copied Cells; Paste
-  Special; multi-area (Ctrl+click) selection; auto-scroll while dragging
-  past the edge; Excel's own last digits of GAMMA near 171 and of the
+  heights kept in .xlsx, CONVERT_EXCEL, one undo list for the workbook;
+  seven reviews replayed by `tests/review_grid_1269.py`,
+  `review2_grid_1269.py`, `review_excelnames_1269.py`,
+  `review2_excelnames_1269.py`, `review_makesheet_1269.py`,
+  `review2_makesheet_1269.py` and `review3_1269.py`. Left: Insert Copied
+  and Cut Cells; Paste Special; multi-area (Ctrl+click) selection; Point
+  mode's Shift+click, Ctrl+click, arrows and F4; auto-scroll while
+  dragging past the edge; Excel's own last digits of GAMMA near 171 and of the
   light-year, parsec, atomic mass unit and electron volt in CONVERT; a
   MAKE SHEET row whose own formula reads row 2's cell by a typo
   (=[B2]*[C3] in row 3) is read as written, as =B2*C3 is.
