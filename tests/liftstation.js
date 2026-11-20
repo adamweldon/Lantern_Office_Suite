@@ -124,9 +124,10 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   ok("...“pumps 2”, checks with no pump named go to the pumps in turn, a gate valve named on P2", pumps2.ok && JSON.stringify(pumps2.plan.pumps.map(function (p) { return [p.id, p.check, p.valve, p.valveKind]; })) === JSON.stringify([["P1", "CV1", "V1", ""], ["P2", "CV2", "GV1", "gate"]]), pumps2.plan || pumps2.problems);
   function pprobs(lines) { var m = act.build(blk("PIPING", "S", lines), "pump station piping"); return m.ok ? [] : m.problems; }
   ok("...what cannot be drawn goes back: a part it does not draw, a check on no pump, one valve too many, two checks on a pump",
-    /“flange F1” is not a part Lantern draws in a pump station’s piping \(it draws: well, inlet, pump, check, valve, header, vent, vault/.test(pprobs(["pump P1", "flange F1"]).join("|")) &&
+    /“flange F1” is not a part Lantern draws in a pump station’s piping \(it draws: well, inlet, pump, check, valve, header, force main, vent, vault/.test(pprobs(["pump P1", "flange F1"]).join("|")) &&
     /CV1 names P9, which is not a pump here: name the pump it is on, like: check CV1 P1/.test(pprobs(["pump P1", "check CV1 P9"]).join("|")) &&
-    /CV2 is one check valve more than there are pumps/.test(pprobs(["pump P1", "check CV1", "check CV2"]).join("|")) &&
+    // (the first review) a check valve more than the pumps is the force main's, and said
+    /CV2 is on the force main, after the vault/.test(act.build(blk("PIPING", "S", ["pump P1", "check CV1", "check CV2"]), "pump station piping").summary) &&
     /P1 has two check valves \(CV1 and CV2\)/.test(pprobs(["pump P1", "pump P2", "check CV1 P1", "check CV2 P1"]).join("|")), [pprobs(["pump P1", "flange F1"]), pprobs(["pump P1", "check CV1 P9"])]);
   ok("...floats in a PIPING block are said to belong to MAKE LEVELS", /the floats are drawn by MAKE LEVELS/.test(act.build(blk("PIPING", "S", ["pump P1", "float FS1 \x22off\x22"]), "pump station piping").summary));
 

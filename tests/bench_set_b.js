@@ -188,7 +188,7 @@ function goodB(last) {
   ok("none of set B's ids or questions is set A's, each is marked set b, and no id repeats", QB.every(function (x) { return !idsA[x.id] && !qA[x.q] && x.set === "b"; }) &&
     QB.length === QB.map(function (x) { return x.id; }).filter(function (id, i, a) { return a.indexOf(id) === i; }).length,
     QB.filter(function (x) { return idsA[x.id] || qA[x.q] || x.set !== "b"; }).map(function (x) { return x.id; }));
-  ok("set A is as it was: no question in it is marked set b", QA.every(function (x) { return !x.set; }) && QA.length === 149, QA.length);   // 148 from 1.24.26 (a Word file), 149 from 1.24.28 (an Excel file)
+  ok("set A is as it was: no question in it is marked set b", QA.every(function (x) { return !x.set; }) && QA.length === 150, QA.length);   // 148 from 1.24.26 (a Word file), 149 from 1.24.28 (an Excel file), 150 from 1.24.30 (Adam\u2019s lift station)
   ok("the shelves, the documents and the lessons set B asks for are ones Lantern knows", QB.filter(function (x) { return x.shelf; }).every(function (x) { return /^(medicine|repair|travel|words)$/.test(x.shelf); }) &&
     ["health_burns", "health_bleeding", "health_diarrhoea", "health_bites", "food_milk", "food_safe", "food_thrift", "hus_chickens"].every(function (k) { return L.suite.entries().some(function (e) { return e.id === k; }); }));
 
@@ -251,16 +251,16 @@ function goodB(last) {
     } });
   var rep = await L.aiBench.run({ set: "b", skip: ["chat", "fact"] });
   var bad = rep.rows.filter(function (r) { return !r.pass; }).map(function (r) { return r.id + ": " + r.why; });
-  ok("a model that answers well passes every question of set B but the conversations and the library (99 from 1.24.28)", rep.set === "b" && rep.rows.length === 99 && !bad.length &&
+  ok("a model that answers well passes every question of set B but the conversations and the library (99 from 1.24.28, 100 from 1.24.30)", rep.set === "b" && rep.rows.length === 100 && !bad.length &&
     rep.rows.every(function (r) { return /-b(-alone)?$/.test(r.id) || /^(chat|doc|suite|health|food|code)-b-/.test(r.id); }), bad);
-  ok("...the things it made among them: 32, every one built and checked", rep.summary.byCat.make.pass === 32, rep.summary.byCat.make);
+  ok("...the things it made among them: 33, every one built and checked", rep.summary.byCat.make.pass === 33, rep.summary.byCat.make);
   ok("...and the puzzles, with Lantern\u2019s tools and without", rep.summary.byCat.reason.pass === 10 && rep.summary.byCat.alone.pass === 6, [rep.summary.byCat.reason, rep.summary.byCat.alone]);
   mode = "bad";
   var rb = await L.aiBench.run({ set: "b", quick: true, skip: ["chat", "fact"] });
   ok("a model that answers 42 fails set B\u2019s sums, unknowns and things to make", rb.set === "b" && rb.summary.byCat.tool.pass === 0 && rb.summary.byCat.multi.pass === 0 &&
     rb.summary.byCat.unknown.pass === 0 && rb.summary.byCat.make.pass === 0, rb.summary.byCat);
   mode = "perfect";
-  ok("the summary line names set B", /^Lantern Bench set B full: 93\/93/.test("Lantern Bench " + (rep.set === "b" ? "set B " : "") + (rep.quick ? "quick" : "full") + ": " + rep.summary.pass + "/" + rep.summary.n));
+  ok("the summary line names set B", /^Lantern Bench set B full: 94\/94/.test("Lantern Bench " + (rep.set === "b" ? "set B " : "") + (rep.quick ? "quick" : "full") + ": " + rep.summary.pass + "/" + rep.summary.n));
 
   // --- the graders catch what they are for -------------------------------------------------------------------------
   function item(id) { return QB.filter(function (x) { return x.id === id; })[0]; }
