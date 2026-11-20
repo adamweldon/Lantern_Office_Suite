@@ -72,7 +72,7 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   ok("...the alternating relay AR fed by it, and the pumps on it in turn (M1 while AR is off, M2 while it is on)", r1.AR && r1.AR.out.kind === "alternator" && ids(r1.AR.series) === "CR1" &&
     ids(r1.M1.series) === "CR1,AR/,SS1" && ids(r1.M2.series) === "CR1,AR" && ids(r1.M1.after) === "OL1/" && ids(r1.M2.after) === "OL2/", [r1.AR, r1.M1, r1.M2]);
   ok("...the alarm light on the alarm float, not on AR, and said", ids(r1.LT3.series) === "FS3" && /LT3 \(alarm\) is lit by the alarm float FS3, not by AR/.test(b1.summary), b1.summary);
-  ok("...the floats written on M1 said to call the pumps through CR1 and AR, and no lag float said", /The floats FS1, FS2 and FS3 call the pumps through CR1 and the alternating relay AR, not straight/.test(b1.summary) &&
+  ok("...the floats written on M1 said to call the pumps through CR1 and AR (the alarm float FS3 none), and no lag float said", /The floats FS1 and FS2 call the pumps through CR1 and the alternating relay AR, not straight/.test(b1.summary) && /FS3 is the alarm float: it sets off the alarm and runs no pump/.test(b1.summary) &&
     /There is no lag float, so one pump runs at a time/.test(b1.summary), b1.summary);
   ok("...what each rung does: the call, the change-over, the pumps taking turns", /When FS1 \(start high\) makes, CR1 \(lead call\) pulls in, and its own contact holds it in while FS2 \(stop low\) is made/.test(b1.summary) &&
     /AR \(alternating relay\) is fed while CR1 is on, and changes over each time it is let go: M1 and M2 take turns to lead/.test(b1.summary) && /M1 \(pump 1 starter\) is on while CR1 is on, AR has M1 leading/.test(b1.summary), b1.summary);

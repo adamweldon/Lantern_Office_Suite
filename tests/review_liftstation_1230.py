@@ -20,6 +20,10 @@ KEEP = {
     "C-plan-and-sheet": "'a sheet of the seed costs' does not bring the sheet tool, as on 1.24.29; the planting plan is made, and the question is answered as one thing.",
     "C-guard-bench-A": "make-liftstation, Adam's own question of three drawings, is split by design and graded part by part; every other question of set A is left whole.",
     "C-guard-bench-B": "make-liftstation-b, its twin in set B, is split by design; every other question of set B is left whole.",
+    # after the second review's mends
+    "A-plain-simplex-floats": "the second review showed that an off float and an on float in series stop the pump as soon as the water falls below the on float (short-cycling); the on float now starts it and the off float stops it, held in between, and said. The case guards that nothing changed from 1.24.29.",
+    "A-plain-duplex-fixed": "the same for each of two pumps on fixed lead and lag floats: each starts on its own float and holds in until the off float opens, said.",
+    "B-pipe-1": "the replay asks this one-pump block of 'a 2 pump lift station'; Lantern now adds P2 with its valves when the question names more pumps than the block, and says so (a simplex question draws one pump: the second review's C-pp-simplex).",
 }
 RUNS = [
     ("cases", ["node", os.path.join(FX, "replay.js")], 351, 900),
