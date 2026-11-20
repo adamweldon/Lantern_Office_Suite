@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.24.29 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.24.30 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0, or the
 // Zero-Clause BSD licence, 0BSD, if you prefer: LICENSE).
@@ -195,7 +195,7 @@
 //          Lantern.lists = {level(el), type(el), mark(type, n), css(scope)}
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.24.29",
+  version: "1.24.30",
   apps: {},
   order: []
 };
@@ -26619,6 +26619,16 @@ Lantern.RFB = (function () {
       if (!mk.ok) { out.why = "Lantern still questions it: " + (mk.problems[0] || ""); return out; }
       var w = "";
       try { w = item.check ? item.check(mk.plan) || "" : ""; } catch (e) { w = "check failed: " + ((e && e.message) || e); }
+      // (1.24.30) a question asking for several things (AI_PARTS): each later part made, and as asked
+      if (!w && item.parts) {
+        out.parts = (res.parts || []).map(function (x) { return x.kind + (x.ok ? "" : " (not made)"); }).join(", ");
+        item.parts.slice(1).forEach(function (k) {
+          if (w) return;
+          var got = (res.parts || []).filter(function (x) { return x.kind === k && x.ok && x.made && x.made.plan; })[0];
+          if (!got) { w = "the MAKE " + k + " part was not made"; return; }
+          try { w = item.partCheck && item.partCheck[k] ? item.partCheck[k](got.made.plan) || "" : ""; } catch (e) { w = "check failed: " + ((e && e.message) || e); }
+        });
+      }
       out.pass = !w; out.why = w;
       return out;
     }
@@ -36395,7 +36405,7 @@ Lantern.RFB = (function () {
 // MODULE: AI_MAKE_BENCH_DATA - START
 // Depends: AI_BENCH_DATA (Lantern.aiBenchQuestions, created here if absent),
 //          AI_ACTIONS -- the bench runs these only when AI_ACTIONS is there
-// Exports: (none) -- adds 12 "make" questions to Lantern Bench
+// Exports: (none) -- adds the "make" questions to Lantern Bench
 // ===========================================================================
 // Things the AI is asked to make. A question passes when the model writes a
 // MAKE block of the right kind, Lantern's checks pass (after at most one
@@ -36546,6 +36556,29 @@ Lantern.RFB = (function () {
         return c.rungs.some(function (x) { return x.out.kind === "lamp" && x.series.some(function (e) { return e.kind === "contact" && e.of === id && !e.nc; }); }) ? "" :
           "no pilot light on while the motor runs (a lamp through " + id + "\u2019s open contact)";
       } },
+    // (1.24.30) Adam's own question, as he asked it on his laptop: three drawings in one question (AI_PARTS makes
+    // them one at a time). It passes when the control has the alternating relay taking the two pumps in turn, and
+    // the piping and the float levels are made too (parts and partCheck, read by AI_BENCH's grade)
+    { id: "make-liftstation", kind: "SCHEMATIC", parts: ["CONTROL", "PIPING", "LEVELS"],
+      ideal: "MAKE CONTROL: Duplex lift station\nfloat FS1 \x22off\x22\nfloat FS2 \x22lead on\x22\nfloat FS3 \x22high level alarm\x22\nalternator AR M1 M2\ncoil M1 \x22pump 1 starter\x22\ncoil M2 \x22pump 2 starter\x22\nEND\n\n" +
+        "MAKE PIPING: Lift station\npump P1\npump P2\nEND\n\nMAKE LEVELS: Wet well\npump P1 P2\nfloat FS1 \x22off\x22\nfloat FS2 \x22lead on\x22\nfloat FS3 \x22high level alarm\x22\nEND",
+      q: "create a diagram for a typical 2 pump lift station control with alternating relay. Then create a plumbing schematic for the same and a drawing showing float level positioning",
+      check: function (p) {
+        if (p.mode !== "control") return "not a control circuit (rungs between L1 and L2)";
+        var c = p.circuit;
+        if (!c || !c.verified) return "not checked as a control circuit";
+        var ar = c.rungs.filter(function (x) { return x.out.kind === "alternator"; })[0];
+        if (!ar) return "no alternating relay";
+        var pumps = c.rungs.filter(function (x) { return x.out.type === "starter" && [].concat.apply(x.series, x.branches || []).some(function (e) { return e.kind === "contact" && e.of === ar.out.id; }); });
+        if (pumps.length !== 2) return "the two pumps are not taken in turn by the alternating relay";
+        return c.rungs.some(function (x) { return x.seal && x.starts.some(function (e) { return e.kind === "float"; }); }) ? "" : "no float starts the pumps";
+      },
+      partCheck: {
+        PIPING: function (p) { return p.mode === "piping" && p.pumps.length === 2 && p.pumps.every(function (x) { return x.check && x.valve; }) ? "" : "the piping is not two pumps, each with its check and shutoff valve"; },
+        LEVELS: function (p) {
+          var j = (p.floats || []).map(function (f) { return f.job; });
+          return p.mode === "levels" && j.indexOf("off") >= 0 && j.indexOf("lead") > j.indexOf("off") ? "" : "the float levels do not have the off float under the lead float";
+        } } },
     // (1.18.0) electronics: a pin switching a relay -- the transistor's base
     // resistor and the diode across the coil are what such a circuit always
     // needs, and what a model forgets; Lantern adds them, and the bench

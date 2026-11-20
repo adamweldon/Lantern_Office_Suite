@@ -167,7 +167,7 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
     !PT.split("Draw a hydraulic circuit: a pump takes oil from a tank and feeds a cylinder through a valve, and the oil returns to the tank.") &&
     !PT.split("Draw a parallel circuit: a 12 V battery with 4, 6 and 12 ohm resistors in parallel, and show the total resistance on the picture") &&
     !PT.split("Draw a circuit with a 9 V battery and a lamp. Show the current.") && !PT.split("Draw a lamp circuit and a battery") &&
-    (L.aiBenchQuestions || []).concat(L.aiBenchQuestionsB || []).every(function (q) { return !PT.split(q.q); }));
+    (L.aiBenchQuestions || []).concat(L.aiBenchQuestionsB || []).every(function (q) { return !PT.split(q.q) === !q.parts; }));
   var two = PT.split("Write an Arduino sketch that blinks an LED and draw the circuit for it");
   ok("two different things are two parts: a sketch and its circuit", two && two.map(function (p) { return p.kind; }).join(",") === "CODE,SCHEMATIC", two && two.map(function (p) { return p.kind; }));
 
@@ -195,6 +195,9 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   ok("the bench's path: the block asked for, then each part, and all three made; out.made is the first", out.made && out.made.block.kind === "CONTROL" && out.made.ok &&
     JSON.stringify((out.parts || []).map(function (p) { return [p.kind, p.ok]; })) === JSON.stringify([["CONTROL", true], ["PIPING", true], ["LEVELS", true]]) && out.rounds === 4, [out.rounds, out.parts && out.parts.map(function (p) { return [p.kind, p.ok]; })]);
 
+  var bq = L.aiBenchQuestions.filter(function (q) { return q.id === "make-liftstation"; })[0], bo = await act.solve(bq.q, seq([bq.ideal]));
+  ok("the bench has Adam's question; its model answer (all three blocks in one reply) passes, and a missing part fails it", bq && L.aiBench.grade(bq, bo.text, bo).pass &&
+    /the MAKE LEVELS part was not made/.test(L.aiBench.grade(bq, "x", { made: bo.made, parts: bo.parts.slice(0, 2) }).why), bq && L.aiBench.grade(bq, bo.text, bo));
   // --- without the new modules ----------------------------------------------------------------------------
   var o2 = load(["AI_PARTS", "AI_PUMP_STATION"]), L2 = o2.L;
   await sleep(80);
