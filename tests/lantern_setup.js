@@ -122,6 +122,28 @@ function boot(url, starter) {
   await sleep(300);
   ok("...nor on the website (it never asks there)", !B4.w.Lantern.lanternSetup.active() && B4.asked.indexOf("/lantern-setup/status") < 0);
 
+  // (1.24.30, Adam: the corner said "Getting the AI engine (llama.cpp): 0%." while the AI was loaded and working) --
+  // the engine and the first model are not "being got" once the AI works in the page, and a download that does not move
+  // says so after 3 minutes
+  var st5 = { st: { v: 1, starter: "1.24.19", lantern: "1.24.30", busy: true, freeGB: 80, offers: [], watch: 8082, ai: { state: "downloading" },
+    jobs: [job("engine", "The AI engine (llama.cpp)", "running", 0, 5e7, -1)], message: "Getting the AI engine (llama.cpp): 0%." }, ai: "Qwen3.5-35B-A3B-Q4_K_M.gguf" };
+  var B5 = boot("http://127.0.0.1:8080/", st5), d5 = B5.w.document;
+  await sleep(400);
+  ok("the AI answering in this page: the corner does not say the engine is being got", B5.w.Lantern.ai.server.state === "ready" && d5.querySelector(".ls-pill") && !/engine/.test(d5.querySelector(".ls-pill").textContent) && /Lantern on this computer/.test(d5.querySelector(".ls-pill").textContent),
+    [B5.w.Lantern.ai.server.state, d5.querySelector(".ls-pill") && d5.querySelector(".ls-pill").textContent]);
+  ok("...nor Chat's sentence that the AI is still arriving", B5.w.Lantern.aiWaitNote() === "", B5.w.Lantern.aiWaitNote());
+  ok("...nor the list", (d5.querySelector(".ls-pill").onclick(), !/AI engine/.test(d5.querySelector(".ls-box").textContent)), d5.querySelector(".ls-box").textContent.slice(0, 300));
+  var st6 = { st: { v: 1, starter: "1.24.19", lantern: "1.24.30", busy: true, freeGB: 80, offers: [], watch: 8082, ai: { state: "downloading" },
+    jobs: [job("engine", "The AI engine (llama.cpp)", "running", 0, 5e7, -1)], message: "Getting the AI engine (llama.cpp): 0%." } };
+  var B6 = boot("http://127.0.0.1:8080/", st6), d6 = B6.w.document, now0 = Date.now();
+  await sleep(300);
+  ok("no AI yet: the engine being got, as before", /Getting the AI engine \(llama\.cpp\): 0%/.test(d6.querySelector(".ls-pill").textContent), d6.querySelector(".ls-pill").textContent);
+  B6.w.Date.now = function () { return now0 + 4 * 60000; };
+  await sleep(2300);
+  ok("...and when its bytes have not moved for minutes, the corner says so", /Getting the AI engine \(llama\.cpp\): no data for [3-5] min/.test(d6.querySelector(".ls-pill").textContent), d6.querySelector(".ls-pill").textContent);
+  d6.querySelector(".ls-pill").onclick();
+  ok("...and the list says why it may be", /no data for [3-5] min: the download is not moving/.test(d6.querySelector(".ls-box").textContent), d6.querySelector(".ls-box").textContent.slice(0, 400));
+
   console.log(fails ? fails + " LANTERN SETUP FAILURES (" + passes + " passed)" : "ALL LANTERN SETUP CHECKS PASS (" + passes + ")");
   process.exit(fails ? 1 : 0);
 })();

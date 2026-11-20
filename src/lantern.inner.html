@@ -26006,7 +26006,7 @@ Lantern.RFB = (function () {
 (function () {
   var L = window.Lantern;
   if (!L) return;
-  var S = { on: false, last: null, timer: null, ui: null, open: false, aiWas: "", modelWas: "", stopAsk: false, gone: false };
+  var S = { on: false, last: null, timer: null, ui: null, open: false, aiWas: "", modelWas: "", stopAsk: false, gone: false, prog: {} };
   function local() { return /^https?:$/.test(location.protocol) && /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname); }
   function get(k, d) { try { var v = L.store.get(k, d); return v == null ? d : v; } catch (e) { return d; } }
   function put(k, v) { try { L.store.set(k, v); } catch (e) { /* storage blocked: only the once-only list shows again */ } }
@@ -26024,7 +26024,8 @@ Lantern.RFB = (function () {
     if (j.state === "queued") return "next" + (j.gb ? " (" + j.gb + " GB)" : "");
     if (j.state === "waiting") return "waiting for the internet: Lantern tries again every minute";
     if (j.state === "failed") return "stopped: " + String(j.error || "").split(" | ").slice(-1)[0];
-    var bits = [];
+    var bits = [], still = stillFor(j);
+    if (still >= 3) return (j.total > 0 ? pct(j) + "% of " + gb(j.total) + " \u00b7 " : "") + "no data for " + still + " min: the download is not moving (the internet, or a firewall or antivirus holding it); Lantern carries on when it can";
     if (j.total > 0) bits.push(pct(j) + "% of " + gb(j.total));
     if (j.rate > 0) bits.push(Math.round(j.rate / 1e5) / 10 + " MB/s");
     if (j.leftMs >= 0) bits.push(left(j.leftMs));
@@ -26055,11 +26056,31 @@ Lantern.RFB = (function () {
     u.box = mk("div", "ls-box"); u.veil.appendChild(u.box);
     document.body.appendChild(u.pill); document.body.appendChild(u.veil);
   }
+  // (1.24.30, Adam: "the notifier for the AI loading is still in the bottom left corner even though the AI is loaded and
+  // working already") -- the corner said the starter's own line, "Getting the AI engine (llama.cpp): 0%", while the AI
+  // answered in this page. Now the page words it from the downloads: the engine and the first model are not "being got"
+  // once the AI works here (the starter's, or the page's own server), and a download whose bytes have not moved for 3
+  // minutes says so, not a percentage that never changes
+  function pageAI() { var A = L.ai; return !!(A && A.server && A.server.state === "ready"); }
+  function aiWorks(st) { return !!((st.ai && st.ai.state === "ready") || pageAI()); }
+  function stillFor(j) {
+    var now = Date.now(), k = j.id || j.name, p = S.prog[k];
+    if (!p || p.b !== j.bytes) { S.prog[k] = { b: j.bytes, t: now }; return 0; }
+    return Math.floor((now - p.t) / 60000);
+  }
+  function shown(st) { var w = aiWorks(st); return (st.jobs || []).filter(function (j) { return !(w && (j.id === "engine" || j.id === "0.8b") && j.state !== "done"); }); }
   // pillText(st) -> the one line in the corner
   function pillText(st) {
-    var run = (st.jobs || []).filter(function (j) { return j.state === "running"; })[0];
-    if (st.message && (run || st.busy)) return st.message;
-    if (st.ai && st.ai.state === "starting") return "Lantern\u2019s AI is starting\u2026";
+    var w = aiWorks(st), mine = shown(st), run = mine.filter(function (j) { return j.state === "running"; })[0], still;
+    if (run && !run.name) return st.message || "Lantern is getting what it needs\u2026";
+    if (run) {
+      still = stillFor(run);
+      return (w ? "The AI works \u2713 \u00b7 " : "") + "Getting " + run.name.charAt(0).toLowerCase() + run.name.slice(1) +
+        (still >= 3 ? ": no data for " + still + " min" : run.total > 0 ? ": " + pct(run) + "%" + (run.leftMs >= 0 ? ", " + left(run.leftMs) : "") : "") + ".";
+    }
+    if (mine.some(function (j) { return j.state === "waiting"; })) return (w ? "The AI works \u2713 \u00b7 " : "") + "No internet just now: Lantern tries again every minute.";
+    if (!w && st.message && st.busy) return st.message;
+    if (st.ai && st.ai.state === "starting" && !w) return "Lantern\u2019s AI is starting\u2026";
     if ((st.offers || []).length) return "Lantern on this computer \u2014 more to add";
     return "Lantern on this computer \u2713";
   }
@@ -26079,7 +26100,7 @@ Lantern.RFB = (function () {
     var ai = st.ai || {};
     b.appendChild(mk("p", "ls-sub", ai.state === "ready" ? "The AI works now" + (ai.model ? " (" + ai.model.replace(/-Q\d.*$|-UD-.*$/, "") + ")" : "") + (ai.next ? "; " + ai.next.charAt(0).toLowerCase() + ai.next.slice(1) + " is coming, and takes over when it is in." : ".") :
       ai.state === "starting" ? "The AI is starting." : "The AI comes as soon as its first model is in; Chat says so meanwhile."));
-    (st.jobs || []).forEach(function (j) {
+    shown(st).forEach(function (j) {
       var row = mk("div", "ls-job");
       row.appendChild(mk("b", "", j.name));
       if (j.why) row.appendChild(mk("span", "ls-sub", " \u2014 " + j.why));
@@ -26150,7 +26171,7 @@ Lantern.RFB = (function () {
   // starter
   function aiNote() {
     var st = S.last;
-    if (!S.on || !st || (st.ai && st.ai.state === "ready")) return "";
+    if (!S.on || !st || (st.ai && st.ai.state === "ready") || pageAI()) return "";
     var run = (st.jobs || []).filter(function (j) { return j.state === "running" && (j.id === "engine" || j.id === "0.8b"); })[0];
     var bits = st.ai && st.ai.state === "starting" ? "it is starting now (a minute or two)" :
       run ? (run.total > 0 ? pct(run) + "% downloaded" + (run.leftMs >= 0 ? ", " + left(run.leftMs) : "") : "downloading") :
