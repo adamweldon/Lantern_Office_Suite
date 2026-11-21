@@ -91,9 +91,27 @@ function loose(h) { return h.replace(/<\x2F?u>/g, "").replace(/<(\x2F?)th>/g, "<
   var ids = (pres.match(/<p:sldId id=\x22(\d+)\x22/g) || []).map(function (s) { return +s.replace(/\D/g, ""); });
   ok("...seven slides with ids from 256, wide (16:9), notes on the one that has them", ids.length === 7 && ids[0] === 256 && ids.every(function (v, i) { return !i || v > ids[i - 1]; }) &&
     /<p:sldSz cx=\x2212192000\x22 cy=\x226858000\x22\x2F>/.test(pres) && names.indexOf("ppt\x2FnotesSlides\x2FnotesSlide2.xml") >= 0 && names.filter(function (n) { return /notesSlide\d+\.xml$/.test(n); }).length === 1);
-  ok("...the deck's colours are the file's theme: text, background and titles", /<a:dk1><a:srgbClr val=\x221B2430\x22\x2F>/.test(th) && /<a:lt1><a:srgbClr val=\x22FAFAF7\x22\x2F>/.test(th) && /<a:accent1><a:srgbClr val=\x22C2410C\x22\x2F>/.test(th));
+  ok("...the deck's colours are the file's theme: text, background and titles (a light deck: Dark 1 its text, Light 1 its background)", /<a:dk1><a:srgbClr val=\x221B2430\x22\x2F>/.test(th) && /<a:lt1><a:srgbClr val=\x22FAFAF7\x22\x2F>/.test(th) && /<a:accent1><a:srgbClr val=\x22C2410C\x22\x2F>/.test(th));
   var night = L.zip.read(P.write({ title: "", slides: [{ h: "Hi", body: "" }] }).bytes).text("ppt\x2Ftheme\x2Ftheme1.xml");
-  ok("...and a deck with no theme chosen has Slides' own (Night: light text on near-black, orange titles)", /<a:dk1><a:srgbClr val=\x22FFFFFF\x22\x2F>/.test(night) && /<a:lt1><a:srgbClr val=\x220B0F14\x22\x2F>/.test(night) && /<a:accent1><a:srgbClr val=\x22C2410C\x22\x2F>/.test(night));
+  var nightM = L.zip.read(P.write({ title: "", slides: [{ h: "Hi", body: "" }] }).bytes).text("ppt\x2FslideMasters\x2FslideMaster1.xml");
+  ok("...and a deck with no theme chosen has Slides' own (Night): Dark 1 its near-black and Light 1 its white, the background mapped to Dark 1, as PowerPoint's dark themes are (the first review: a table added in PowerPoint read white on pale)",
+    /<a:dk1><a:srgbClr val=\x220B0F14\x22\x2F>/.test(night) && /<a:lt1><a:srgbClr val=\x22FFFFFF\x22\x2F>/.test(night) && /<a:accent1><a:srgbClr val=\x22C2410C\x22\x2F>/.test(night) && /<p:clrMap bg1=\x22dk1\x22 tx1=\x22lt1\x22/.test(nightM));
+  // every Slides theme read on its own background, through the master's colour map: text 4.5:1, titles and links 3:1
+  function lum(h) { var c = [0, 2, 4].map(function (i) { var v = parseInt(h.substr(i, 2), 16) / 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; }
+  function con(a, b) { var x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }
+  var poor = [];
+  [null, { name: "Chalkboard", bg: "#143222", fg: "#f8fafc", accent: "#fbbf24" }, { name: "Paper", bg: "#fafaf7", fg: "#1b2430", accent: "#c2410c" }, { name: "Ocean", bg: "#082f49", fg: "#e0f2fe", accent: "#38bdf8" }, { name: "Sunset", bg: "#431407", fg: "#ffedd5", accent: "#fb923c" }].forEach(function (t) {
+    var zz = L.zip.read(P.write({ title: "", theme: t, slides: [{ h: "Hi", body: "" }] }).bytes), thx = zz.text("ppt\x2Ftheme\x2Ftheme1.xml"), mx = zz.text("ppt\x2FslideMasters\x2FslideMaster1.xml");
+    function col(n) { return (new RegExp("<a:" + n + "><a:srgbClr val=\x22([0-9A-F]{6})\x22").exec(thx) || [])[1]; }
+    function map(n) { return (new RegExp(n + "=\x22([a-z0-9]+)\x22").exec(/<p:clrMap [^>]*>/.exec(mx)[0]) || [])[1]; }
+    var bg = col(map("bg1")), tx = col(map("tx1")), nm = t ? t.name : "Night", want = t ? t.bg.slice(1).toUpperCase() : "0B0F14";
+    if (bg !== want) poor.push(nm + ": background " + bg);
+    if (con(tx, bg) < 4.5) poor.push(nm + ": text " + con(tx, bg).toFixed(1));
+    if (con(col("accent1"), bg) < 3) poor.push(nm + ": titles " + con(col("accent1"), bg).toFixed(1));
+    if (con(col("hlink"), bg) < 3) poor.push(nm + ": links " + con(col("hlink"), bg).toFixed(1));
+    if (lum(col("dk1")) > lum(col("lt1"))) poor.push(nm + ": Dark 1 lighter than Light 1");
+  });
+  ok("...each of Slides' five themes: its background is the slide's, and text, titles and links read on it (through the colour map)", !poor.length, poor);
   var s3 = Z.text("ppt\x2Fslides\x2Fslide3.xml"), s5 = Z.text("ppt\x2Fslides\x2Fslide5.xml");
   ok("...a picture beside the text keeps its shape (8 by 6), and a picture alone is across the content box", /<p:pic>/.test(s3) && /<p:pic>/.test(s5) && (function () {
     var m = /<p:pic>[\s\S]*?<a:ext cx=\x22(\d+)\x22 cy=\x22(\d+)\x22/.exec(s3); return m && Math.abs(+m[1] / +m[2] - 8 / 6) < 0.01;

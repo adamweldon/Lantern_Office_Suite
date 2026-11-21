@@ -98,6 +98,18 @@ try:
             ok(label + ": the EMF's green circle is drawn where it is in the drawing", em and em[0] and em[0][3] > 120 and em[0][3] > em[0][2] + 40 and em[0][3] > em[0][4] + 40, em)
             ok(label + ": slide 2's picture is both, side by side as on the slide (8 by 3 inches: 1,200 by 450), the red square on the right", em and em[1] and em[1][0] == 1200 and abs(em[1][1] - 450) <= 2 and em[1][2] > 150 and em[1][3] < 80, em)
             pg.screenshot(path=os.path.join(OUT, "pptx_emf_%s.png" % label))
+            # a photo turned a quarter, and one cropped to its middle half, in PowerPoint (the first review's d06_pictures.pptx)
+            pg.evaluate("() => { var o = document.querySelector('.guide-overlay'); if (o) o.parentNode.removeChild(o); location.hash = 'home'; }"); pg.wait_for_timeout(300)
+            pg.evaluate("() => { location.hash = 'slides'; }"); pg.wait_for_timeout(700)
+            with pg.expect_file_chooser() as fc:
+                pg.locator("button", has_text="Open .pptx").first.click()
+            fc.value.set_files(os.path.join(ROOT, "tests", "fixtures", "pptx_review1_1233", "decks", "d06_pictures.pptx"))
+            pg.wait_for_timeout(2500)
+            dlg = pg.evaluate("() => { var d = document.querySelector('.guide-overlay[aria-label=\"PowerPoint file\"]'); return d ? d.textContent : ''; }")
+            tc = pg.evaluate("""() => new Promise(function (res) { var d = window.Lantern.store.collection('slides.docs').all().filter(function (x) { return x.title === 'd06_pictures'; })[0], out = [], n = 0;
+              if (!d) return res(null);
+              [11, 12].forEach(function (k, j) { var im = new Image(); im.onload = function () { out[j] = [im.width, im.height]; if (++n === 2) res(out); }; im.onerror = function () { out[j] = null; if (++n === 2) res(out); }; im.src = (d.slides[k] || {}).img || ''; }); })""")
+            ok(label + ": a photo turned in PowerPoint comes in upright as PowerPoint shows it (portrait), a cropped one in its frame's shape (2:1: the middle half stretched to it), and nothing said of either", tc and tc[0] and tc[0][1] > tc[0][0] and tc[1] and abs(tc[1][0] / tc[1][1] - 2) < 0.02 and "turned, flipped or cropped" not in dlg, [tc, dlg[-300:]])
             ok(label + ": no errors in the page", not errs, errs)
             ctx.close()
         br.close()

@@ -105,7 +105,7 @@ def g_empty(): return "<a:p>" + GPP % (0, 0, 0, 0, "<a:buNone/>") + '<a:r><a:rPr
 def google():
     W, H = 9144000, 5143500
     bodylvls = "".join('<a:lvl%dpPr marL="%d" marR="0" lvl="%d" indent="-342900" algn="l" rtl="0"><a:lnSpc><a:spcPct val="115000"/></a:lnSpc><a:spcBef><a:spcPts val="0"/></a:spcBef><a:spcAft><a:spcPts val="0"/></a:spcAft><a:buClr><a:schemeClr val="dk2"/></a:buClr><a:buSzPts val="1800"/><a:buFont typeface="Arial"/><a:buChar char="%s"/><a:defRPr sz="1800"/></a:lvl%dpPr>'
-                       % (k + 1, 457200 * (k + 1), k, "●○■"[k % 3], k + 1) for k in range(9))
+                       % (k + 1, 457200 * (k + 1), k, "\u25cf\u25cb\u25a0"[k % 3], k + 1) for k in range(9))
     titlelvls = '<a:lvl1pPr lvl="0" algn="l" rtl="0"><a:spcBef><a:spcPts val="0"/></a:spcBef><a:buClr><a:schemeClr val="dk2"/></a:buClr><a:buSzPts val="2800"/><a:buNone/><a:defRPr sz="2800"/></a:lvl1pPr>'
     master = (HEAD + '<p:sldMaster %s><p:cSld><p:bg><p:bgPr><a:solidFill><a:schemeClr val="lt1"/></a:solidFill></p:bgPr></p:bg><p:spTree>%s' % (NS, GRP)
               + sp(5, "Google Shape;5;n", ("title", None, None), (311700, 445025, 8520600, 572700), [])
@@ -146,13 +146,13 @@ def google():
     S.append(dict(layout=2, rels=[("rId3", "hyperlink", "https://example.org/site-map", 1)],
                   xml=slide_([sp(61, "Google Shape;61;p14", ("title", None, None), (311700, 445025, 8520600, 572700), [gp(["Site rules"])]),
                               sp(62, "Google Shape;62;p14", ("body", 1, None), (311700, 1152475, 8520600, 3416400),
-                                 [gp([{"t": "Hard hat"}, {"t": " at all times", "b": 0}], 0, "●"), gp([{"t": "Even in the "}, {"t": "office", "b": 1}, {"t": " corridor"}], 1, "○"),
-                                  gp(["Sign in at the gate"], 0, "●"), gp(["See the ", {"t": "site map", "link": "rId3"}], 0, "●"), g_empty()])], 2),
+                                 [gp([{"t": "Hard hat"}, {"t": " at all times", "b": 0}], 0, "\u25cf"), gp([{"t": "Even in the "}, {"t": "office", "b": 1}, {"t": " corridor"}], 1, "\u25cb"),
+                                  gp(["Sign in at the gate"], 0, "\u25cf"), gp(["See the ", {"t": "site map", "link": "rId3"}], 0, "\u25cf"), g_empty()])], 2),
                   notes=notes(2, [gp(["Stress the hard hat rule."])])))
     # 3 TITLE_AND_TWO_COLUMNS
     S.append(dict(layout=3, xml=slide_([sp(66, "Google Shape;66;p15", ("title", None, None), (311700, 445025, 8520600, 572700), [gp(["Allowed and not allowed"])]),
-                                         sp(67, "Google Shape;67;p15", ("body", 1, None), (311700, 1152475, 3999900, 3416400), [gp(["Phones in the canteen"], 0, "●"), gp(["Radios on site"], 0, "●")]),
-                                         sp(68, "Google Shape;68;p15", ("body", 2, None), (4832400, 1152475, 3999900, 3416400), [gp(["Phones on the scaffold"], 0, "●"), gp(["Smoking"], 0, "●")])], 3)))
+                                         sp(67, "Google Shape;67;p15", ("body", 1, None), (311700, 1152475, 3999900, 3416400), [gp(["Phones in the canteen"], 0, "\u25cf"), gp(["Radios on site"], 0, "\u25cf")]),
+                                         sp(68, "Google Shape;68;p15", ("body", 2, None), (4832400, 1152475, 3999900, 3416400), [gp(["Phones on the scaffold"], 0, "\u25cf"), gp(["Smoking"], 0, "\u25cf")])], 3)))
     # 4 SECTION_HEADER
     S.append(dict(layout=4, xml=slide_([sp(71, "Google Shape;71;p16", ("title", None, None), (311700, 2150850, 8520600, 841800), [gp(["Part two: emergencies"])])], 4)))
     # 5 TITLE_AND_BODY with plain paragraphs (bullets off by hand) and a text box Google wrote
@@ -168,22 +168,22 @@ def google():
 # ---- Keynote: 1920 by 1080, its own layout names, placeholders placed by the layout only, its bullets in the master ----
 def keynote():
     W, H = 24384000, 13716000
-    body = "".join('<a:lvl%dpPr marL="%d" indent="-457200" defTabSz="825500"><a:spcBef><a:spcPts val="4500"/></a:spcBef><a:buSzPct val="145000"/><a:buChar char="•"/><a:defRPr sz="4400"/></a:lvl%dpPr>' % (k + 1, 914400 + 457200 * k, k + 1) for k in range(9))
+    body = "".join('<a:lvl%dpPr marL="%d" indent="-457200" defTabSz="825500"><a:spcBef><a:spcPts val="4500"/></a:spcBef><a:buSzPct val="145000"/><a:buChar char="\u2022"/><a:defRPr sz="4400"/></a:lvl%dpPr>' % (k + 1, 914400 + 457200 * k, k + 1) for k in range(9))
     master = (HEAD + '<p:sldMaster %s><p:cSld><p:bg><p:bgPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill></p:bgPr></p:bg><p:spTree>%s' % (NS, GRP)
               + sp(2, "Title Text", ("title", None, None), (1689100, 1625600, 21005800, 2286000), [])
-              + sp(3, "Body Level One…", ("body", 1, None), (1689100, 4013200, 21005800, 8128000), [])
+              + sp(3, "Body Level One\u2026", ("body", 1, None), (1689100, 4013200, 21005800, 8128000), [])
               + sp(4, "Slide Number", ("sldNum", 2, "quarter"), (11887200, 12471400, 609600, 584200), [])
               + '</p:spTree></p:cSld><p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>'
               + '<!--LAYOUTS--><p:txStyles><p:titleStyle><a:lvl1pPr algn="ctr"><a:buSzTx/><a:buNone/><a:defRPr sz="9600"/></a:lvl1pPr></p:titleStyle><p:bodyStyle>%s</p:bodyStyle><p:otherStyle><a:lvl1pPr algn="ctr"><a:defRPr sz="3600"/></a:lvl1pPr></p:otherStyle></p:txStyles></p:sldMaster>' % body)
     def layout(name, shapes):
         return HEAD + '<p:sldLayout %s type="tx"><p:cSld name="%s"><p:spTree>%s%s</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>' % (NS, name, GRP, "".join(shapes))
     none = '<a:lstStyle><a:lvl1pPr marL="0" indent="0" algn="ctr"><a:spcBef><a:spcPts val="0"/></a:spcBef><a:buSzTx/><a:buNone/><a:defRPr sz="4400"/></a:lvl1pPr></a:lstStyle>'
-    L1 = layout("Title &amp; Subtitle", [sp(10, "Title Text", ("ctrTitle", None, None), (1689100, 3429000, 21005800, 4775200), []), sp(11, "Body Level One…", ("body", 13, "quarter"), (1689100, 8318500, 21005800, 1371600), []).replace("<a:lstStyle/>", none)])
-    L2 = layout("Title &amp; Bullets", [sp(12, "Title Text", ("title", None, None), None, []), sp(13, "Body Level One…", ("body", 1, None), None, [])])
+    L1 = layout("Title &amp; Subtitle", [sp(10, "Title Text", ("ctrTitle", None, None), (1689100, 3429000, 21005800, 4775200), []), sp(11, "Body Level One\u2026", ("body", 13, "quarter"), (1689100, 8318500, 21005800, 1371600), []).replace("<a:lstStyle/>", none)])
+    L2 = layout("Title &amp; Bullets", [sp(12, "Title Text", ("title", None, None), None, []), sp(13, "Body Level One\u2026", ("body", 1, None), None, [])])
     L3 = layout("Title, Bullets &amp; Photo", [sp(14, "Title Text", ("title", None, None), (1689100, 1625600, 21005800, 2286000), []),
-                                               sp(15, "Body Level One…", ("body", 1, None), (1689100, 4013200, 10363200, 8128000), []),
+                                               sp(15, "Body Level One\u2026", ("body", 1, None), (1689100, 4013200, 10363200, 8128000), []),
                                                '<p:sp><p:nvSpPr><p:cNvPr id="16" name="Image"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="pic" sz="half" idx="21"/></p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="12395200" y="4013200"/><a:ext cx="10299700" cy="8128000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:sp>'])
-    L4 = layout("Statement", [sp(17, "Body Level One…", ("body", 13, "half"), (1689100, 4775200, 21005800, 4165600), []).replace("<a:lstStyle/>", none)])
+    L4 = layout("Statement", [sp(17, "Body Level One\u2026", ("body", 13, "half"), (1689100, 4775200, 21005800, 4165600), []).replace("<a:lstStyle/>", none)])
     nm = (HEAD + '<p:notesMaster %s><p:cSld><p:spTree>%s' % (NS, GRP) + sp(2, "Shape 1", ("sldImg", None, None), (1143000, 685800, 4572000, 3429000), []) + sp(3, "Shape 2", ("body", 1, "quarter"), (914400, 4343400, 5029200, 4114800), [])
           + '</p:spTree></p:cSld><p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>'
           + '<p:notesStyle><a:lvl1pPr defTabSz="457200"><a:defRPr sz="1200"/></a:lvl1pPr></p:notesStyle></p:notesMaster>')
@@ -195,14 +195,14 @@ def keynote():
                 + '<p:sp><p:nvSpPr><p:cNvPr id="3" name="Shape %d"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body" sz="quarter" idx="1"/></p:nvPr></p:nvSpPr><p:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/>%s</p:txBody></p:sp>' % (n, "".join(kp(t) for t in text.split("\n")))
                 + '</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:notes>')
     S = []
-    S.append(dict(layout=1, xml=slide_([sp(119, "Title 1", ("ctrTitle", None, None), None, [kp("Solar panel basics")]), sp(120, "Body Level One…", ("body", 13, "quarter"), None, [kp("For the community workshop")])]),
+    S.append(dict(layout=1, xml=slide_([sp(119, "Title 1", ("ctrTitle", None, None), None, [kp("Solar panel basics")]), sp(120, "Body Level One\u2026", ("body", 13, "quarter"), None, [kp("For the community workshop")])]),
                   notes=notes(1, "Welcome everyone.")))
-    S.append(dict(layout=2, xml=slide_([sp(122, "Title 2", ("title", None, None), None, [kp("What a panel needs")]), sp(123, "Body Level One…", ("body", 1, None), None, [kp("Sunlight"), kp("Facing south in the north"), kp("No shade at noon", 1), kp("A clean surface")])]),
+    S.append(dict(layout=2, xml=slide_([sp(122, "Title 2", ("title", None, None), None, [kp("What a panel needs")]), sp(123, "Body Level One\u2026", ("body", 1, None), None, [kp("Sunlight"), kp("Facing south in the north"), kp("No shade at noon", 1), kp("A clean surface")])]),
                   notes=notes(2, "Show the panel.\nPoint at the cells.")))
     S.append(dict(layout=3, media={"photo1.jpeg": img(320, 240, (230, 180, 40), "JPEG")}, rels=[("rId2", "image", "../media/photo1.jpeg", 0)],
-                  xml=slide_([sp(125, "Title 3", ("title", None, None), None, [kp("The inverter")]), sp(126, "Body Level One…", ("body", 1, None), None, [kp("Turns DC into AC"), kp("Keep it ventilated")]),
+                  xml=slide_([sp(125, "Title 3", ("title", None, None), None, [kp("The inverter")]), sp(126, "Body Level One\u2026", ("body", 1, None), None, [kp("Turns DC into AC"), kp("Keep it ventilated")]),
                               '<p:pic><p:nvPicPr><p:cNvPr id="127" name="inverter.jpeg"/><p:cNvPicPr><a:picLocks noGrp="1" noChangeAspect="1"/></p:cNvPicPr><p:nvPr><p:ph type="pic" sz="half" idx="21"/></p:nvPr></p:nvPicPr><p:blipFill><a:blip r:embed="rId2"><a:extLst/></a:blip><a:srcRect/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>'])))
-    S.append(dict(layout=4, xml=slide_([sp(130, "Body Level One…", ("body", 13, "half"), None, [kp("Never open the DC isolator under load")])])))
+    S.append(dict(layout=4, xml=slide_([sp(130, "Body Level One\u2026", ("body", 13, "half"), None, [kp("Never open the DC isolator under load")])])))
     return build((W, H), master, [L1, L2, L3, L4], S, notes_master=nm, core_title="Solar panel basics", app="Keynote")
 
 # ---- Strict: d01's parts in the ISO/IEC 29500 Strict names ----------------------------------------------------------
@@ -268,4 +268,17 @@ def main(out, OUT):
     if r: out("w_impress.odp", r)
     out("w_keynote.key", write_zip([("Index/Document.iwa", b"\0\x01\x02"), ("Metadata/Properties.plist", b"<plist/>"), ("Metadata/DocumentIdentifier", b"0A1B")]))
     out("w_empty.pptx", b"")
+    # a .pptx with a password to open is not a zip: it is a compound file holding EncryptionInfo and EncryptedPackage
+    def dirent(name, typ, start, size):
+        n = name.encode("utf-16-le") + b"\0\0"
+        return n + bytes(64 - len(n)) + bytes([len(n), 0, typ, 1]) + bytes([0xFF] * 12) + bytes(16) + bytes(4) + bytes(16) + start.to_bytes(4, "little") + size.to_bytes(8, "little")
+    hdr = bytes([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]) + bytes(16) + bytes([0x3E, 0, 3, 0, 0xFE, 0xFF, 9, 0, 6, 0]) + bytes(10) + (1).to_bytes(4, "little") + (1).to_bytes(4, "little") + bytes(4) + (4096).to_bytes(4, "little") + (0xFFFFFFFE).to_bytes(4, "little") + bytes(4) + (0xFFFFFFFE).to_bytes(4, "little") + bytes(4) + (0).to_bytes(4, "little") + bytes([0xFF] * (436 - 4))
+    hdr = hdr[:512]
+    fat = (0xFFFFFFFD).to_bytes(4, "little") + (0xFFFFFFFE).to_bytes(4, "little") + bytes([0xFF] * (512 - 8))
+    dirs = dirent("Root Entry", 5, 0xFFFFFFFE, 0) + dirent("EncryptionInfo", 2, 0, 0) + dirent("EncryptedPackage", 2, 0, 0) + bytes(128)
+    out("w_locked.pptx", hdr + fat + dirs)
+    out("d20_stored.pptx", patch(d02, store=True))
+    odp = open(os.path.join(OUT, "w_impress.odp"), "rb").read() if os.path.exists(os.path.join(OUT, "w_impress.odp")) else None
+    r = lo_convert(odp, "talk.odp", "pptx:Impress Office Open XML") if odp else None
+    if r: out("d13_lo_from_odp.pptx", r)
     out("w_pdf.pptx", b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n")

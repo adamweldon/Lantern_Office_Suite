@@ -175,6 +175,11 @@ def d05():
     para_set(s.placeholders[1].text_frame, ["Hours are rising", "Plan the service"])
     cd = CategoryChartData(); cd.categories = ["Pump 1", "Pump 2"]; cd.add_series("Hours", (120, 118))
     into_ph(s, 2, s.shapes.add_chart(XL_CHART_TYPE.BAR_CLUSTERED, Inches(4.65), Inches(1.6), Inches(4.0), Inches(4.5), cd))
+    import datetime
+    s = slide(p, 5, "Readings by month")
+    cd = CategoryChartData(); cd.categories = [datetime.date(2025, 1, 1), datetime.date(2025, 2, 1), datetime.date(2025, 3, 1)]; cd.add_series("Level", (1.2, 1.4, 1.1))
+    cd.categories.number_format = "mmm yyyy" if hasattr(cd.categories, "number_format") else None
+    s.shapes.add_chart(XL_CHART_TYPE.LINE, Inches(1), Inches(1.8), Inches(8), Inches(4.5), cd)
     out("d05_charts.pptx", save(p))
 
 # --- d06: pictures ----------------------------------------------------------------------------------------------------
@@ -195,6 +200,10 @@ def d06():
     sh = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1), Inches(2), Inches(6), Inches(3)); sh.text_frame.text = "Our new pump"
     s = slide(p, 8, "Photo to come"); s.placeholders[2].text = "Add the photo of the panel here"                                  # 10 an empty picture box
     s = slide(p, 5, "A BMP screenshot"); s.shapes.add_picture(io.BytesIO(img(40, 30, (10, 200, 200), "BMP")), Inches(1), Inches(1.8), Inches(6), Inches(4.5))  # 11
+    s = slide(p, 5, "Turned in PowerPoint")                                                                                 # 12
+    pic = s.shapes.add_picture(io.BytesIO(img(300, 200, (120, 60, 0))), Inches(2.5), Inches(2), Inches(4.5), Inches(3)); pic.rotation = 90
+    s = slide(p, 5, "Cropped in PowerPoint")                                                                                # 13
+    pic = s.shapes.add_picture(io.BytesIO(img(400, 200, (0, 60, 120))), Inches(1), Inches(2), Inches(6), Inches(3)); pic.crop_left = 0.25; pic.crop_right = 0.25
     data = save(p)
     z = zipfile.ZipFile(io.BytesIO(data))
     def target(n, ext):
@@ -244,6 +253,12 @@ def d07():
     s = slide(p, 5, "Notes under a picture")  # 7: a caption box under a picture, a box beside it
     s.shapes.add_picture(io.BytesIO(PNG), Inches(1), Inches(1.8), Inches(5), Inches(3.75))
     tbox(s, 1, 5.7, 5, 0.6, ["Figure 1: the wet well"]); tbox(s, 7, 1.8, 5, 2, ["Floats hang at three heights"])
+    s = slide(p, 5, "Three steps, not quite level")   # 8
+    for x, y, t in [(0.8, 2.3, "1. Isolate"), (4.9, 2.0, "2. Lock"), (9.0, 2.15, "3. Test")]: tbox(s, x, y, 3.5, 1, [t])
+    s = slide(p, 6)                           # 9: a photo and its caption grouped together, on a slide with a title in a text box
+    tbox(s, 0.8, 0.4, 10, 0.8, ["The wet well"])
+    g = s.shapes.add_group_shape()
+    g.shapes.add_picture(io.BytesIO(PNG), Inches(1), Inches(1.6), Inches(6), Inches(4.5)); tb = g.shapes.add_textbox(Inches(1), Inches(6.2), Inches(6), Inches(0.5)); tb.text_frame.text = "Float switches on the left wall"
     data = save(p)
     # slide 3's group: moved and halved (its children are drawn at half size, from (1 in, 1 in) to (5 in, 5.6 in) -> (1 in, 2 in) to (3 in, 4.3 in))
     def grp(x):

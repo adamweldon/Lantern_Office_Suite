@@ -50674,14 +50674,16 @@ Lantern.RFB = (function () {
       var e = cands[i];
       if (!e) continue;
       if (child(e, "buNone")) return null;
-      var an = child(e, "buAutoNum");
-      if (an) return { tag: "ol", start: num(an.getAttribute("startAt"), 1) };
+      var an = child(e, "buAutoNum"), ty = an ? an.getAttribute("type") || "" : "";
+      if (an) return { tag: "ol", start: num(an.getAttribute("startAt"), 1), type: /^alphaLc/.test(ty) ? "a" : /^alphaUc/.test(ty) ? "A" : /^romanLc/.test(ty) ? "i" : /^romanUc/.test(ty) ? "I" : "" };
       if (child(e, "buChar") || child(e, "buBlip")) return { tag: "ul" };
     }
     return null;
   }
   function runHtml(r, rels) {
-    var rp = child(r, "rPr"), t = esc((child(r, "t") || r).textContent || "").replace(/\x0b/g, "<br>");
+    var rp = child(r, "rPr"), raw = (child(r, "t") || r).textContent || "";
+    if (rp && rp.getAttribute("cap") === "all") raw = raw.toUpperCase();   // (the first review) All Caps shows capitals
+    var t = esc(raw).replace(/\x0b/g, "<br>");
     if (!t) return "";
     if (rp) {
       var on = function (a) { var v = rp.getAttribute(a); return v === "1" || v === "true"; };
@@ -50713,22 +50715,27 @@ Lantern.RFB = (function () {
       // runs side by side with the same look are one: <b>a<\x2Fb><b>b<\x2Fb> is <b>ab<\x2Fb>
       html = html.replace(/<\x2F(b|i|u|s|sup|sub)><\1>/g, "");
       var bu = text ? bulletOf(pPr, lvl, chain || []) : null;
-      out.push({ lvl: lvl, bullet: bu ? bu.tag : null, start: bu && bu.start, html: text ? html.replace(/^(\s|<br>)+|(\s|<br>)+$/g, "") : "", text: text });
+      out.push({ lvl: lvl, bullet: bu ? bu.tag : null, start: bu && bu.start, otype: bu && bu.type || "", rtl: !!(pPr && /^(1|true)$/.test(pPr.getAttribute("rtl") || "")),
+        html: text ? html.replace(/^(\s|<br>)+|(\s|<br>)+$/g, "") : "", text: text });
     });
     return out;
   }
   // parasHtml(paras): bullets and numbers as lists, nested by level
   function parasHtml(ps) {
-    var out = "", st = [];
-    function closeTo(d) { while (st.length > d) out += "<\x2Fli><\x2F" + st.pop() + ">"; }
+    var out = "", st = [], kinds = [];
+    function closeTo(d) { while (st.length > d) { out += "<\x2Fli><\x2F" + st.pop() + ">"; kinds.pop(); } }
     ps.forEach(function (p) {
       if (!p.text) return;
-      if (!p.bullet) { closeTo(0); out += "<p>" + p.html + "<\x2Fp>"; return; }
+      var dir = p.rtl ? " dir=\x22rtl\x22" : "", kind = p.bullet + ":" + (p.otype || "");
+      if (!p.bullet) { closeTo(0); out += "<p" + dir + ">" + p.html + "<\x2Fp>"; return; }
       var d = Math.min(p.lvl, st.length) + 1;
       closeTo(d);
-      if (st.length === d && st[d - 1] !== p.bullet) closeTo(d - 1);
-      if (st.length === d) out += "<\x2Fli><li>" + p.html;
-      else { out += "<" + p.bullet + (p.bullet === "ol" && p.start > 1 ? " start=\x22" + p.start + "\x22" : "") + "><li>" + p.html; st.push(p.bullet); }
+      if (st.length === d && kinds[d - 1] !== kind) closeTo(d - 1);
+      if (st.length === d) out += "<\x2Fli><li" + dir + ">" + p.html;
+      else {
+        out += "<" + p.bullet + (p.bullet === "ol" && p.otype ? " type=\x22" + p.otype + "\x22" : "") + (p.bullet === "ol" && p.start > 1 ? " start=\x22" + p.start + "\x22" : "") + "><li" + dir + ">" + p.html;
+        st.push(p.bullet); kinds.push(kind);
+      }
     });
     closeTo(0);
     return out;
@@ -50763,31 +50770,31 @@ Lantern.RFB = (function () {
     if (/font-style\s*:\s*italic/i.test(css)) o.i = 1;
     if (/text-decoration[^;]*underline/i.test(css)) o.u = 1;
     if (/text-decoration[^;]*line-through/i.test(css)) o.s = 1;
-    if (t === "a" && /^(https?:|mailto:)/i.test(el.getAttribute("href") || "")) o.href = el.getAttribute("href");
+    if (t === "a" && /^(https?:|mailto:)/i.test(el.getAttribute("href") || "")) o.href = String(el.getAttribute("href")).replace(/\s/g, function (c) { return c === " " ? "%20" : ""; });   // (the first review) a space is not a URL's
     return o;
   }
   // draw(html) -> {paras: [{lvl, list, start, head, cont, runs: [{t | br, b, i, u, s, sup, sub, href}]}], tables: [{rows}], lost}
   function draw(html) {
     var doc = new DOMParser().parseFromString("<!DOCTYPE html><html><body>" + String(html || "") + "<\x2Fbody><\x2Fhtml>", "text\x2Fhtml");
     var out = [], tables = [], lost = {}, cur = null;
-    function para(o) { cur = { lvl: Math.min(8, o.lvl || 0), list: o.list || null, start: o.start || 0, head: !!o.head, cont: !!o.cont, runs: [] }; out.push(cur); return cur; }
+    function para(o) { cur = { lvl: Math.min(8, o.lvl || 0), list: o.list || null, start: o.start || 0, otype: o.otype || "", head: !!o.head, cont: !!o.cont, under: o.under || null, runs: [] }; out.push(cur); return cur; }
     function text(t, st, cx) {
       t = t.replace(/[\s\u00a0]+/g, " ");
-      if (!cur) { if (!/\S/.test(t)) return; para({ lvl: cx.lvl, cont: cx.li }); }
+      if (!cur) { if (!/\S/.test(t)) return; para({ lvl: cx.lvl, cont: cx.li, under: cx.under }); }
       var r = { t: t }, k;
       for (k in st) r[k] = st[k];
       cur.runs.push(r);
     }
     function list(el, tag, st, cx) {
-      var first = true, start = tag === "ol" ? num(el.getAttribute("start"), 1) : 0, d = Math.min(8, cx.depth);
+      var first = true, start = tag === "ol" ? num(el.getAttribute("start"), 1) : 0, d = Math.min(8, cx.depth), oty = tag === "ol" ? (el.getAttribute("type") || "").replace(/[^aAiI]/g, "").charAt(0) : "";
       for (var c = el.firstChild; c; c = c.nextSibling) {
         if (c.nodeType === 3) { if (/\S/.test(c.data)) { cur = null; text(c.data, st, { lvl: d, li: true }); cur = null; } continue; }
         if (c.nodeType !== 1) continue;
         var t = c.tagName.toLowerCase();
-        if (t === "ul" || t === "ol") { cur = null; list(c, t, st, { lvl: d, depth: cx.depth + 1, li: true }); cur = null; continue; }
-        para({ lvl: d, list: tag, start: first && start > 1 ? start : 0 });
+        if (t === "ul" || t === "ol") { cur = null; list(c, t, st, { lvl: d, depth: cx.depth + 1, li: true, under: tag }); cur = null; continue; }
+        para({ lvl: d, list: tag, start: first && start > 1 ? start : 0, otype: oty });
         first = false;
-        walk(c, st, { lvl: d, depth: cx.depth + 1, li: true });
+        walk(c, st, { lvl: d, depth: cx.depth + 1, li: true, under: tag });
         cur = null;
       }
     }
@@ -50796,9 +50803,11 @@ Lantern.RFB = (function () {
         if (c.nodeType === 3) { text(c.data, st, cx); continue; }
         if (c.nodeType !== 1) continue;
         var t = c.tagName.toLowerCase();
-        if (t === "br") { if (!cur) para({ lvl: cx.lvl, cont: cx.li }); cur.runs.push({ br: 1 }); continue; }
+        if (t === "br") { if (!cur) para({ lvl: cx.lvl, cont: cx.li, under: cx.under }); cur.runs.push({ br: 1 }); continue; }
+        // (the first review) a block of code keeps its lines
+        if (t === "pre") { cur = null; para({ lvl: cx.lvl, cont: cx.li, under: cx.under }); String(c.textContent || "").replace(/\r/g, "").replace(/\n+$/, "").split("\n").forEach(function (ln, i) { if (i) cur.runs.push({ br: 1 }); if (ln) cur.runs.push({ t: ln.replace(/\t/g, "    ") }); }); cur = null; continue; }
         if (t === "ul" || t === "ol") { cur = null; list(c, t, st, cx); cur = null; continue; }
-        if (t === "table") { cur = null; tables.push(tableOf(c)); continue; }
+        if (t === "table") { cur = null; var cap = c.querySelector ? c.querySelector("caption") : null; if (cap && /\S/.test(cap.textContent)) { para({ lvl: cx.lvl, head: 1 }); text(cap.textContent, { b: 1 }, cx); cur = null; } tables.push(tableOf(c)); continue; }
         if (/^(img|svg|canvas|video|audio|iframe|object|embed|picture)$/.test(t)) { lost.pictures = (lost.pictures || 0) + 1; continue; }
         if (/^(script|style|template|head|title|meta|link)$/.test(t)) continue;
         if (t === "hr") { cur = null; continue; }
@@ -50851,8 +50860,11 @@ Lantern.RFB = (function () {
   // room for "10."); any other paragraph without one
   function parXml(p, link, o) {
     var pp = "";
-    if (p.list === "ol") pp = E("a:pPr", { marL: 457200 * (p.lvl + 1), lvl: p.lvl || null, indent: -457200 }, E("a:buFont", { typeface: "+mj-lt" }) + E("a:buAutoNum", { type: "arabicPeriod", startAt: p.start > 1 ? p.start : null }));
+    var NUM = { a: "alphaLcPeriod", A: "alphaUcPeriod", i: "romanLcPeriod", I: "romanUcPeriod" };
+    if (p.list === "ol") pp = E("a:pPr", { marL: 457200 * (p.lvl + 1), lvl: p.lvl || null, indent: -457200 }, E("a:buFont", { typeface: "+mj-lt" }) + E("a:buAutoNum", { type: NUM[p.otype] || "arabicPeriod", startAt: p.start > 1 ? p.start : null }));
     else if (p.list === "ul") pp = p.lvl ? E("a:pPr", { lvl: p.lvl }) : "";
+    // (the first review) a list item's second paragraph sits under its text: past a number's room, or at its level's margin
+    else if (p.cont) pp = E("a:pPr", p.under === "ol" ? { marL: 457200 * (p.lvl + 1), lvl: p.lvl || null, indent: 0 } : { lvl: p.lvl || null, indent: 0 }, E("a:buNone"));
     else if (!(o && o.plain)) pp = E("a:pPr", p.lvl ? { lvl: p.lvl, indent: 0 } : { marL: 0, indent: 0 }, E("a:buNone"));
     var runs = p.runs.map(function (r) { if (p.head && !r.br) { var c = {}, k; for (k in r) c[k] = r[k]; c.b = 1; r = c; } return runXml(r, link, o); }).join("");
     return E("a:p", null, pp + runs + rPr({}, null, o, "a:endParaRPr"));
@@ -50865,7 +50877,9 @@ Lantern.RFB = (function () {
       var c = 0;
       row.forEach(function (cell) {
         while (grid[ri][c]) c++;
-        for (i = 0; i < cell.rowspan && ri + i < t.rows.length; i++) for (j = 0; j < cell.colspan; j++) { grid[ri + i] = grid[ri + i] || []; grid[ri + i][c + j] = { cell: cell, top: i === 0 && j === 0, h: j > 0, v: i > 0 }; }
+        // (the first review) a cell joined over more rows than the table has is joined over the rows there are
+        var rsn = Math.min(cell.rowspan, t.rows.length - ri);
+        for (i = 0; i < rsn; i++) for (j = 0; j < cell.colspan; j++) { grid[ri + i] = grid[ri + i] || []; grid[ri + i][c + j] = { cell: cell, top: i === 0 && j === 0, h: j > 0, v: i > 0, rs: rsn }; }
         c += cell.colspan;
       });
     });
@@ -50879,7 +50893,7 @@ Lantern.RFB = (function () {
       for (var c = 0; c < cols; c++) {
         var g = r[c], cell = g && g.cell;
         var body = cell && g.top && cell.runs.length ? E("a:p", null, cell.runs.map(function (run) { var q = run; if (cell.th && !run.br) { q = {}; for (var k in run) q[k] = run[k]; q.b = 1; } return runXml(q, link, o); }).join("")) : E("a:p", null, rPr({}, null, o, "a:endParaRPr"));
-        cells += E("a:tc", g ? { gridSpan: g.top && cell.colspan > 1 ? cell.colspan : null, rowSpan: g.top && cell.rowspan > 1 ? cell.rowspan : null, hMerge: g.h ? 1 : null, vMerge: g.v ? 1 : null } : null,
+        cells += E("a:tc", g ? { gridSpan: g.top && cell.colspan > 1 ? cell.colspan : null, rowSpan: g.top && g.rs > 1 ? g.rs : null, hMerge: g.h ? 1 : null, vMerge: g.v ? 1 : null } : null,
           E("a:txBody", null, E("a:bodyPr") + E("a:lstStyle") + body) + tcPr);
       }
       return E("a:tr", { h: rh }, cells);
@@ -50965,9 +50979,30 @@ Lantern.RFB = (function () {
     return "slides " + u.slice(0, -1).join(", ") + " and " + u[u.length - 1];
   }
 
+  // what a file that is not a .pptx is, in UTF-16 names a compound file (an old Office file) holds (the first review)
+  function u16(b, w) { var n = w.length, i, k; outer: for (i = 0; i + n * 2 <= b.length; i++) { for (k = 0; k < n; k++) if (b[i + k * 2] !== w.charCodeAt(k) || b[i + k * 2 + 1] !== 0) continue outer; return true; } return false; }
+  function notZip(b) {
+    if (!b || !b.length) return "the file is empty (0 bytes): a copy that did not finish";
+    if (b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) return "this is a PDF, not a PowerPoint presentation: Lantern does not make slides from a PDF";
+    if (b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0) {
+      if (u16(b, "EncryptedPackage")) return "this PowerPoint file is locked with a password: open it in PowerPoint, take the password off (File, Info, Protect Presentation) and save it, then open it here";
+      if (u16(b, "PowerPoint Document")) return "this is an old PowerPoint file (.ppt): save it as .pptx in PowerPoint or LibreOffice Impress, then open that here";
+    }
+    return null;
+  }
   function read(bytes, fileName) {
-    var z = L.zip.read(bytes), cache = {};
-    function xml(n) { if (!n) return null; if (!(n in cache)) { var t = z.text(n); cache[n] = t == null ? null : parse(t); } return cache[n]; }
+    var nz = notZip(bytes);
+    if (nz) throw new Error(nz);
+    var z = L.zip.read(bytes), cache = {}, broken = [];
+    if (z.has("mimetype") && /opendocument\.presentation/.test(z.text("mimetype") || "")) throw new Error("this is an OpenDocument presentation (.odp, from LibreOffice Impress): save it there as PowerPoint (.pptx), then open that here");
+    if (!z.has("[Content_Types].xml") && z.names.some(function (n) { return /^Index\x2F|^index\.apxl|\.iwa$/.test(n); })) throw new Error("this is a Keynote presentation: in Keynote, File, Export To, PowerPoint, then open that here");
+    // (the first review) a part that is not readable XML is read as missing -- a slide said as unreadable, notes or a
+    // layout left out -- except the presentation itself, the list of slides
+    function xml(n) {
+      if (!n) return null;
+      if (!(n in cache)) { var t = z.text(n); try { cache[n] = t == null ? null : parse(t); } catch (e) { cache[n] = null; broken.push(n); } }
+      return cache[n];
+    }
     // rels("ppt/slides/slide1.xml") -> {rId: {type, target, external}}
     function rels(n) {
       var rn = n.replace(/([^\x2F]*)$/, "_rels\x2F$1.rels"), x = xml(rn), out = {};
@@ -50987,10 +51022,10 @@ Lantern.RFB = (function () {
       else throw new Error("this zip file has no PowerPoint presentation in it");
     }
     var px = xml(main);
-    if (!px) throw new Error("this zip file has no PowerPoint presentation in it");
+    if (!px) throw new Error(broken.indexOf(main) >= 0 ? "the file is damaged: its list of slides is not readable XML" : "this zip file has no PowerPoint presentation in it");
     var pr = rels(main), root = px.documentElement, sz = child(root, "sldSz");
     var W = sz ? num(sz.getAttribute("cx"), 9144000) : 9144000, H = sz ? num(sz.getAttribute("cy"), 6858000) : 6858000;
-    var miss = {}, slides = [];
+    var miss = {}, slides = [], hadTitle;
     function lose(kind, slide, n) { var m = miss[kind] = miss[kind] || { n: 0, on: [], what: {} }; m.n += n || 1; if (slide) m.on.push(slide); return m; }
 
     // a layout's or master's placeholders: [{type, idx, el}]
@@ -51039,6 +51074,7 @@ Lantern.RFB = (function () {
       var lph = placeholders(layout), mph = placeholders(master), styles = txStyles(master);
       if (x.documentElement.getAttribute("show") === "0") lose("hidden", no);
       var items = [], pics = [], titleEl = null;
+      hadTitle = false;
       function chainFor(sp, ph) {
         var c = [path(sp, "txBody", "lstStyle")];
         if (ph) {
@@ -51054,7 +51090,7 @@ Lantern.RFB = (function () {
         return tf ? tf(b) : b;
       }
       // a picture: kept if it is the largest a browser shows
-      function picture(embed, b, ole) {
+      function picture(embed, b, ole, look) {
         var r = sr[embed];
         if (!r || r.external || !z.has(r.target)) { lose("linked", no); return; }
         var ext = (r.target.match(/\.([a-z0-9]+)$/i) || ["", ""])[1].toLowerCase(), data = z.bytes(r.target), mime = MIME[ext] || sniff(data), url = null;
@@ -51066,7 +51102,7 @@ Lantern.RFB = (function () {
         }
         if (!mime) { var m = lose(ole ? "ole" : "unshown", no); m.fmt = m.fmt || {}; m.fmt[ext.toUpperCase() || "?"] = 1; if (ole) m.what[ole] = 1; return; }
         if (ole) lose("oleShown", no).what[ole] = 1;
-        pics.push({ area: b.w * b.h, url: url || "data:" + mime + ";base64," + b64(data), b: b });
+        pics.push({ area: b.w * b.h, url: url || "data:" + mime + ";base64," + b64(data), b: b, look: look || null });
       }
       function walk(parent, tf) {
         kids(parent).forEach(function (el) {
@@ -51089,7 +51125,7 @@ Lantern.RFB = (function () {
             var b = placeOf(el, ph, tf), tx = child(el, "txBody"), ps = tx ? paras(tx, chainFor(el, ph), sr) : [];
             var fill = path(el, "spPr", "blipFill");
             if (fill && child(fill, "blip")) picture(rid(child(fill, "blip"), "embed"), b);
-            if (!ps.some(function (p) { return p.text; })) { if (!ph && !fill) lose("shapes", no); return; }
+            if (!ps.some(function (p) { return p.text; })) { if (ph && KIND[ph.type] === "title") hadTitle = true; if (!ph && !fill) lose("shapes", no); return; }
             var it = { ps: ps, b: b, ph: ph };
             if (ph && KIND[ph.type] === "title" && !titleEl) titleEl = it;
             items.push(it);
@@ -51098,8 +51134,13 @@ Lantern.RFB = (function () {
           if (n === "pic") {
             var nvp = path(el, "nvPicPr", "nvPr");
             if (nvp && (child(nvp, "videoFile") || child(nvp, "audioFile") || child(nvp, "quickTimeFile") || below(nvp, "media").length)) { lose("media", no); return; }
-            var bl = path(el, "blipFill", "blip");
-            if (bl) picture(rid(bl, "embed"), placeOf(el, phOf(el), tf));
+            var bl = path(el, "blipFill", "blip"), xf = path(el, "spPr", "xfrm"), src = path(el, "blipFill", "srcRect"), lk = null;
+            // (the first review) turned, flipped or cropped in PowerPoint: kept with the picture, for Slides to show it so
+            var rot = xf ? num(xf.getAttribute("rot"), 0) / 60000 : 0, fh = xf && /^(1|true)$/.test(xf.getAttribute("flipH") || ""), fv = xf && /^(1|true)$/.test(xf.getAttribute("flipV") || "");
+            var cr = src ? { l: num(src.getAttribute("l"), 0) / 1e5, t: num(src.getAttribute("t"), 0) / 1e5, r: num(src.getAttribute("r"), 0) / 1e5, b: num(src.getAttribute("b"), 0) / 1e5 } : null;
+            if (cr && !(cr.l || cr.t || cr.r || cr.b)) cr = null;
+            if (rot % 360 || fh || fv || cr) { lk = { rot: rot % 360, flipH: !!fh, flipV: !!fv, crop: cr }; lose("turned", no); }
+            if (bl) picture(rid(bl, "embed"), placeOf(el, phOf(el), tf), null, lk);
             return;
           }
           if (n === "graphicFrame") {
@@ -51132,11 +51173,27 @@ Lantern.RFB = (function () {
       if (child(path(x.documentElement, "cSld"), "bg") && below(child(path(x.documentElement, "cSld"), "bg"), "blip").length) lose("background", no);
       if (byType(sr, "comments") || byType(sr, "comment")) lose("comments", no);
 
-      // reading order: the title, then top to bottom, and left to right along a line
-      var tol = H / 24;
-      items.sort(function (a, c) { var ya = Math.round(a.b.y / tol), yc = Math.round(c.b.y / tol); return ya !== yc ? ya - yc : a.b.x - c.b.x; });
+      // reading order (the first review: boxes side by side with uneven tops, and a heading over each column, were read
+      // across): the slide cut where no box crosses -- into columns where the gap between them is wider than any gap
+      // between rows (a heading stays with its points), else into rows -- each part read the same way; boxes that
+      // cannot be cut apart, top to bottom and left to right along a line
+      function cut(list) {
+        if (list.length < 2) return list;
+        function gap(lo, sz) {   // -> [width, where] of the widest gap no box crosses, or null
+          var sp = list.map(function (it) { var m = Math.min(it.b[sz] * 0.05, H * 0.005); return [it.b[lo] + m, it.b[lo] + it.b[sz] - m]; }).sort(function (a, c) { return a[0] - c[0]; });
+          var end = sp[0][1], g = null;
+          for (var i = 1; i < sp.length; i++) { if (sp[i][0] > end && (!g || sp[i][0] - end > g[0])) g = [sp[i][0] - end, (sp[i][0] + end) / 2]; end = Math.max(end, sp[i][1]); }
+          return g;
+        }
+        var v = gap("x", "w"), r = gap("y", "h"), byX = !!v && (!r || v[0] > r[0] * 1.2), g = byX ? v : r, k = byX ? "x" : "y", z2 = byX ? "w" : "h";
+        // boxes that overlap both ways: on one line (sharing more than half the shorter's height) left to right, else top first
+        if (!g) return list.slice().sort(function (a, c) { var ov = Math.min(a.b.y + a.b.h, c.b.y + c.b.h) - Math.max(a.b.y, c.b.y); return ov > 0.5 * Math.min(a.b.h, c.b.h) ? a.b.x - c.b.x : a.b.y - c.b.y || a.b.x - c.b.x; });
+        var A = list.filter(function (it) { return it.b[k] + it.b[z2] / 2 < g[1]; }), B = list.filter(function (it) { return A.indexOf(it) < 0; });
+        return A.length && B.length ? cut(A).concat(cut(B)) : list;
+      }
+      items = cut(items);
       var texts = items.filter(function (it) { return it.ps; });
-      if (!titleEl && texts.length) {
+      if (!titleEl && !hadTitle && texts.length) {
         var first = texts[0], lines = first.ps.filter(function (p) { return p.text; });
         var short = lines.length === 1 && lines[0].text.length <= 80 && !lines[0].bullet;
         var only = items.length === 1;
@@ -51150,20 +51207,33 @@ Lantern.RFB = (function () {
       var order = pics.slice();
       pics.sort(function (a, c) { return c.area - a.area; });
       if (pics.length) s.img = pics[0].url;
-      if (pics.length > 1) { lose("pictures", no, pics.length - 1); s.pics = order.map(function (p) { return { url: p.url, x: p.b.x, y: p.b.y, w: p.b.w, h: p.b.h }; }); }
+      if (pics.length > 1) lose("pictures", no, pics.length - 1);
+      if (pics.length > 1 || (pics.length && pics[0].look)) s.pics = order.map(function (p) { var o = { url: p.url, x: p.b.x, y: p.b.y, w: p.b.w, h: p.b.h }; if (p.look) o.look = p.look; return o; });
       var notes = byType(sr, "notesSlide"), nx = notes && xml(notes);
+      if (notes && !nx && broken.indexOf(notes) >= 0) lose("notesBroken", no);
       if (nx) {
         var nt = [];
         below(nx.documentElement, "sp").forEach(function (sp) {
           var ph = phOf(sp);
           if (!ph || ph.type !== "body") return;
-          paras(child(sp, "txBody"), [], {}).forEach(function (p) { if (p.text) nt.push((p.bullet ? "- " : "") + p.text); });
+          // (the first review) a blank line between paragraphs, and a line break in one, kept: a trainer's pause
+          kids(child(sp, "txBody")).filter(function (e) { return name(e) === "p"; }).forEach(function (p) {
+            var t = "", pp = child(p, "pPr");
+            kids(p).forEach(function (r) { var n = name(r); if (n === "r" || n === "fld") t += (child(r, "t") || r).textContent || ""; else if (n === "br") t += "\n"; });
+            t = t.replace(/\x0b/g, "\n").replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/^ +| +$/g, "");
+            nt.push(t && pp && (child(pp, "buChar") || child(pp, "buAutoNum")) ? "- " + t : t);
+          });
         });
-        if (nt.length) s.notes = nt.join("\n");
+        while (nt.length && !nt[nt.length - 1]) nt.pop();
+        while (nt.length && !nt[0]) nt.shift();
+        var nj = nt.join("\n").replace(/\n{3,}/g, "\n\n");
+        if (nj) s.notes = nj;
       }
       slides.push(s);
     });
     if (!slides.length) throw new Error(ids.length ? "none of its slides could be read" : "the presentation has no slides");
+    var secs = below(root, "section").map(function (e) { return e.getAttribute("name") || ""; }).filter(String);
+    var lostParts = broken.filter(function (n) { return !/^ppt\x2F(slides|notesSlides)\x2F/.test(n); });
 
     var out = [];
     function said(kind, text) { var m = miss[kind]; if (m) out.push(text(m) + (m.on.length ? " (" + onSlides(m.on) + ")" : "")); }
@@ -51188,11 +51258,15 @@ Lantern.RFB = (function () {
     said("background", function (m) { return "background pictures"; });
     said("other", function (m) { return many(m.n, "object", "objects") + " of a kind Lantern does not read"; });
     said("broken", function (m) { return many(m.n, "slide", "slides") + " that could not be read, left out"; });
+    said("notesBroken", function (m) { return "speaker notes that could not be read"; });
+    if (lostParts.length) out.push("parts of the file that could not be read (" + lostParts.join(", ") + "): " + (lostParts.some(function (n) { return /slide(Layout|Master)/.test(n); }) ? "bullets and places their layout gives may be missing" : "left out"));
+    if (secs.length) out.push("the deck\u2019s sections (" + secs.join(", ") + "): Slides has none; the slides are in their order");
+    said("turned", function (m) { return "pictures turned, flipped or cropped in PowerPoint, kept as stored"; });
     said("hidden", function (m) { return "slides hidden in PowerPoint are shown here, in their places"; });
     said("titled", function (m) { return "a slide with no title box takes its short first line as its title"; });
     out.push("the layout: where each box and picture sat, fonts, sizes and colours, drawn shapes and lines" + (miss.shapes ? " (" + onSlides(miss.shapes.on) + ")" : "") +
       ", the slide master\u2019s designs and logos, transitions and animations. Each slide is a title, its text and one picture, in Lantern\u2019s colours");
-    return { title: deckTitle || (fileName ? String(fileName).replace(/^.*[\\\x2F]/, "").replace(/\.pptx?$/i, "") : "") || slides[0].h || "Presentation", slides: slides, notes: out, size: { cx: W, cy: H } };
+    return { title: deckTitle || (fileName ? String(fileName).replace(/^.*[\\\x2F]/, "").replace(/\.(pptx|pptm|ppsx|ppsm|potx|potm|ppt)$/i, "") : "") || slides[0].h || "Presentation", slides: slides, notes: out, size: { cx: W, cy: H } };
   }
 
   // gunzip(bytes) -> what a gzip file (an .emz picture) holds, or null
@@ -51212,7 +51286,23 @@ Lantern.RFB = (function () {
     if (!cx) return "";
     var e = X.esc, sers = below(cx.documentElement, "ser");
     if (!sers.length) return "";
-    function pts(el) { var o = {}; below(el, "pt").forEach(function (p) { var v = child(p, "v"); o[p.getAttribute("idx")] = v ? v.textContent : ""; }); return o; }
+    // (the first review) as the chart shows them: a number formatted 0% as a percentage, a date as a date (Jan 2025)
+    var MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    function shown(v, f) {
+      var n = parseFloat(v);
+      if (f == null || v === "" || isNaN(n) || !/^\s*-?[\d.]+(e[-+]?\d+)?\s*$/i.test(v)) return v;
+      if (/%/.test(f)) return String(Math.round(n * 1e4) / 100) + "%";
+      if (/(^|[^"\\])[dmy]/i.test(f.replace(/\[[^\]]*\]|"[^"]*"/g, "")) && !/0\.0|#/.test(f) && n > 0 && n < 2958466) {
+        var d = new Date(Date.UTC(1899, 11, 30) + Math.round(n * 864e5)), y = d.getUTCFullYear(), m = d.getUTCMonth(), dd = d.getUTCDate();
+        return /mmm/i.test(f) ? MON[m] + (/y/i.test(f) ? " " + y : "") + (/d/i.test(f) ? " " + dd : "") : y + "-" + (m < 9 ? "0" : "") + (m + 1) + "-" + (dd < 10 ? "0" : "") + dd;
+      }
+      return v;
+    }
+    function pts(el) {
+      var o = {}, fc = el ? below(el, "formatCode")[0] : null, f = fc ? fc.textContent : null;
+      below(el, "pt").forEach(function (p) { var v = child(p, "v"); o[p.getAttribute("idx")] = shown(v ? v.textContent : "", p.getAttribute("formatCode") || f); });
+      return o;
+    }
     var cols = sers.map(function (s) {
       var tx = child(s, "tx"), nm = tx ? below(tx, "v").concat(below(tx, "t")).map(function (v) { return v.textContent; }).join("") : "";
       return { name: nm, cats: pts(child(s, "cat") || child(s, "xVal")), vals: pts(child(s, "val") || child(s, "yVal")) };
@@ -51298,7 +51388,10 @@ Lantern.RFB = (function () {
   // the theme: the deck's background as Background 1, its text as Text 1, its title colour as Accent 1
   function theme(c, nm) {
     var sys = function (n, v) { return E("a:" + n, null, E("a:srgbClr", { val: v })); };
-    var clr = E("a:clrScheme", { name: nm }, sys("dk1", c.fg) + sys("lt1", c.bg) + sys("dk2", c.fg) + sys("lt2", c.bg) + sys("accent1", c.accent) + sys("accent2", "ED7D31") + sys("accent3", "A5A5A5") +
+    // (the first review) Dark 1 is the darker of the deck's two colours and Light 1 the lighter, as in PowerPoint's own themes:
+    // a dark deck maps its background to Dark 1 (clrMap), so a table or shape added in PowerPoint reads on it
+    var dk = c.dark ? c.bg : c.fg, lt = c.dark ? c.fg : c.bg;
+    var clr = E("a:clrScheme", { name: nm }, sys("dk1", dk) + sys("lt1", lt) + sys("dk2", dk) + sys("lt2", lt) + sys("accent1", c.accent) + sys("accent2", "ED7D31") + sys("accent3", "A5A5A5") +
       sys("accent4", "FFC000") + sys("accent5", "5B9BD5") + sys("accent6", "70AD47") + sys("hlink", c.link) + sys("folHlink", c.link));
     var face = function (n) { return E("a:" + n, null, E("a:latin", { typeface: "Georgia" }) + E("a:ea", { typeface: "" }) + E("a:cs", { typeface: "" })); };
     var solid = E("a:solidFill", null, E("a:schemeClr", { val: "phClr" })), ln = function (w) { return E("a:ln", { w: w, cap: "flat", cmpd: "sng", algn: "ctr" }, solid + E("a:prstDash", { val: "solid" }) + E("a:miter", { lim: 800000 })); };
@@ -51307,8 +51400,9 @@ Lantern.RFB = (function () {
       E("a:fmtScheme", { name: "Lantern" }, E("a:fillStyleLst", null, solid + solid + solid) + E("a:lnStyleLst", null, ln(6350) + ln(12700) + ln(19050)) +
         E("a:effectStyleLst", null, eff + eff + eff) + E("a:bgFillStyleLst", null, solid + solid + solid))) + E("a:objectDefaults") + E("a:extraClrSchemeLst"));
   }
+  var DARKMAP = { bg1: "dk1", tx1: "lt1", bg2: "dk2", tx2: "lt2", accent1: "accent1", accent2: "accent2", accent3: "accent3", accent4: "accent4", accent5: "accent5", accent6: "accent6", hlink: "hlink", folHlink: "folHlink" };
   var MAP = { bg1: "lt1", tx1: "dk1", bg2: "lt2", tx2: "dk2", accent1: "accent1", accent2: "accent2", accent3: "accent3", accent4: "accent4", accent5: "accent5", accent6: "accent6", hlink: "hlink", folHlink: "folHlink" };
-  function master() {
+  function master(c) {
     var lv = "", SZ = [2400, 2000, 1800, 1600, 1600, 1600, 1600, 1600, 1600];
     for (var i = 0; i < 9; i++) lv += E("a:lvl" + (i + 1) + "pPr", { marL: 228600 + 457200 * i, indent: -228600, algn: "l", defTabSz: 914400 },
       E("a:lnSpc", null, E("a:spcPct", { val: 100000 })) + E("a:spcBef", null, E("a:spcPts", { val: i ? 500 : 1000 })) + E("a:buFont", { typeface: "Arial" }) + E("a:buChar", { "char": "\u2022" }) + defR(SZ[i], "tx1", "+mn"));
@@ -51317,7 +51411,7 @@ Lantern.RFB = (function () {
     var tree = GRP + ph(2, "Title Placeholder 1", { type: "title" }, TB, E("a:p", null, E("a:r", null, E("a:rPr", { lang: "en-US" }) + E("a:t", null, "Title"))), E("a:bodyPr", { anchor: "b" }, E("a:normAutofit"))) +
       ph(3, "Text Placeholder 2", { type: "body", idx: 1 }, BB, E("a:p", null, E("a:r", null, E("a:rPr", { lang: "en-US" }) + E("a:t", null, "Text"))), E("a:bodyPr", null, E("a:normAutofit")));
     return root("p:sldMaster", E("p:cSld", null, E("p:bg", null, E("p:bgPr", null, E("a:solidFill", null, E("a:schemeClr", { val: "bg1" })) + E("a:effectLst"))) + E("p:spTree", null, tree)) +
-      E("p:clrMap", MAP) + E("p:sldLayoutIdLst", null, E("p:sldLayoutId", { id: 2147483649, "r:id": "rId1" })) +
+      E("p:clrMap", c && c.dark ? DARKMAP : MAP) + E("p:sldLayoutIdLst", null, E("p:sldLayoutId", { id: 2147483649, "r:id": "rId1" })) +
       E("p:txStyles", null, E("p:titleStyle", null, title) + E("p:bodyStyle", null, lv) + E("p:otherStyle", null, other)));
   }
   function layout() {
@@ -51370,10 +51464,30 @@ Lantern.RFB = (function () {
     return { x: area.x + (area.w - w) / 2, y: area.y + (area.h - h) / 2, w: w, h: h };
   }
 
+  // fitTo(paras, box, title) -> {scale, red}: the text's size (fontScale) that fits its
+  // box, as PowerPoint stores them when it shrinks text to fit (the first review: PowerPoint shrinks only when the text is
+  // edited, and drew 15 points at 24 pt running off the slide). Georgia's letters average half an em, a line is 1.2 em.
+  var SZ = [24, 20, 18, 16, 16, 16, 16, 16, 16];
+  function fitTo(paras, box, title) {
+    var avail = (box.h - 91440) / 12700;
+    function need(sc, red) {
+      return paras.reduce(function (h, p, i) {
+        var sz = (title ? 40 : SZ[p.lvl || 0]) * sc, marL = title ? 0 : p.list === "ol" ? 457200 * ((p.lvl || 0) + 1) : p.list === "ul" || p.cont ? 228600 + 457200 * (p.lvl || 0) : 0;
+        var usable = Math.max(36, (box.w - 182880 - marL) / 12700), chars = 0, brs = 0;
+        p.runs.forEach(function (r) { if (r.br) brs++; else chars += (r.t || "").length; });
+        return h + (Math.max(1, Math.ceil(chars * 0.5 * sz / usable)) + brs) * sz * 1.2 * (title ? 0.9 : 1) * (1 - red) + (i && !title ? (p.lvl ? 5 : 10) * sc : 0);
+      }, 0);
+    }
+    // the size alone: a reader that does not cut line spacing still sees it fit (the first review's own check)
+    for (var k = 0; k <= 30; k++) { var sc = 1 - k * 0.025; if (need(sc, 0) <= avail) return { scale: sc, red: 0 }; }
+    return { scale: 0.25, red: 0 };
+  }
+  function autofit(f) { return f.scale < 1 ? E("a:normAutofit", { fontScale: Math.round(f.scale * 100000), lnSpcReduction: f.red ? Math.round(f.red * 100000) : null }) : E("a:normAutofit"); }
   function write(deck) {
     var d = deck || {}, th = d.theme || NIGHT, notes = {}, media = [], exts = {};
     var c = { bg: hex(th.bg, "0B0F14"), fg: hex(th.fg, "FFFFFF"), accent: hex(th.accent, "C2410C") };
-    c.link = dark(c.bg) ? "7DD3FC" : "1D4ED8";   // a link that reads on the deck's background
+    c.dark = dark(c.bg);
+    c.link = c.dark ? "7DD3FC" : "1D4ED8";   // a link that reads on the deck's background
     var slides = (d.slides && d.slides.length ? d.slides : [{ h: d.title || "", body: "" }]), files = [], ct = [], hasNotes = slides.some(function (s) { return s.notes && String(s.notes).replace(/\s+/g, ""); });
     function note(k, n) { notes[k] = notes[k] || []; notes[k].push(n); }
     slides.forEach(function (s, i) {
@@ -51385,13 +51499,18 @@ Lantern.RFB = (function () {
       if (pic && pic.why) { note("pic:" + pic.why, n); pic = null; }
       var text = dr.paras.length > 0, area = BB, textBox = BB;
       if (pic && (text || dr.tables.length)) { textBox = { x: BB.x, y: BB.y, w: Math.round(BB.w * 0.56), h: BB.h }; area = { x: BB.x + textBox.w + 228600, y: BB.y, w: BB.w - textBox.w - 228600, h: BB.h }; }
-      tree += ph(id++, "Title " + (id - 2), { type: "title" }, null, E("a:p", null, s.h ? E("a:r", null, E("a:rPr", { lang: "en-US", dirty: "0" }) + E("a:t", null, x(String(s.h).replace(/\s+/g, " ")))) : E("a:endParaRPr", { lang: "en-US" })));
+      var hT = String(s.h || "").replace(/\s+/g, " "), fT = fitTo([{ runs: [{ t: hT }] }], TB, true);
+      if (fT.scale < 0.6) note("title", n);
+      tree += ph(id++, "Title " + (id - 2), { type: "title" }, null, E("a:p", null, s.h ? E("a:r", null, E("a:rPr", { lang: "en-US", dirty: "0" }) + E("a:t", null, x(hT))) : E("a:endParaRPr", { lang: "en-US" })),
+        fT.scale < 1 ? E("a:bodyPr", null, autofit(fT)) : null);
       // the text, then any tables under it, sharing the content box by their lines
       var lines = dr.paras.reduce(function (a, p) { return a + 1 + p.runs.filter(function (r) { return r.br; }).length + Math.floor(p.runs.reduce(function (t, r) { return t + (r.t ? r.t.length : 0); }, 0) / (textBox.w > 8e6 ? 70 : 38)); }, 0);
       var rows = dr.tables.reduce(function (a, t) { return a + t.rows.length; }, 0), tTop = textBox.y;
       if (text) {
         var tb = dr.tables.length ? { x: textBox.x, y: textBox.y, w: textBox.w, h: Math.min(textBox.h * 0.6, Math.max(457200, lines * 420000 + 91440)) } : (textBox !== BB ? textBox : null);
-        tree += ph(id++, "Content " + (id - 2), { idx: 1 }, tb, dr.paras.map(function (p) { return P.parXml(p, link, { lang: "en-US" }); }).join(""), E("a:bodyPr", null, E("a:normAutofit")));
+        var fB = fitTo(dr.paras, tb || BB, false);
+        if (fB.scale < 0.6) note("small", n);
+        tree += ph(id++, "Content " + (id - 2), { idx: 1 }, tb, dr.paras.map(function (p) { return P.parXml(p, link, { lang: "en-US" }); }).join(""), E("a:bodyPr", null, autofit(fB)));
         if (tb && dr.tables.length) tTop = tb.y + tb.h + 91440;
       }
       dr.tables.forEach(function (t) {
@@ -51432,7 +51551,7 @@ Lantern.RFB = (function () {
       { name: "_rels\x2F.rels", data: rels([{ id: "rId1", type: "officeDocument", target: "ppt\x2Fpresentation.xml" }, { id: "rId2", type: PR + "\x2Fmetadata\x2Fcore-properties", target: "docProps\x2Fcore.xml" }, { id: "rId3", type: "extended-properties", target: "docProps\x2Fapp.xml" }]) },
       { name: "ppt\x2Fpresentation.xml", data: pres },
       { name: "ppt\x2F_rels\x2Fpresentation.xml.rels", data: rels(prl) },
-      { name: "ppt\x2FslideMasters\x2FslideMaster1.xml", data: master() },
+      { name: "ppt\x2FslideMasters\x2FslideMaster1.xml", data: master(c) },
       { name: "ppt\x2FslideMasters\x2F_rels\x2FslideMaster1.xml.rels", data: rels([{ id: "rId1", type: "slideLayout", target: "..\x2FslideLayouts\x2FslideLayout1.xml" }, { id: "rId2", type: "theme", target: "..\x2Ftheme\x2Ftheme1.xml" }]) },
       { name: "ppt\x2FslideLayouts\x2FslideLayout1.xml", data: layout() },
       { name: "ppt\x2FslideLayouts\x2F_rels\x2FslideLayout1.xml.rels", data: rels([{ id: "rId1", type: "slideMaster", target: "..\x2FslideMasters\x2FslideMaster1.xml" }]) },
@@ -51446,7 +51565,7 @@ Lantern.RFB = (function () {
     ]);
     if (hasNotes) files.push({ name: "ppt\x2FnotesMasters\x2FnotesMaster1.xml", data: notesMaster() },
       { name: "ppt\x2FnotesMasters\x2F_rels\x2FnotesMaster1.xml.rels", data: rels([{ id: "rId1", type: "theme", target: "..\x2Ftheme\x2Ftheme2.xml" }]) },
-      { name: "ppt\x2Ftheme\x2Ftheme2.xml", data: theme({ bg: "FFFFFF", fg: "000000", accent: c.accent, link: "1D4ED8" }, "Notes") });
+      { name: "ppt\x2Ftheme\x2Ftheme2.xml", data: theme({ bg: "FFFFFF", fg: "000000", accent: c.accent, link: "1D4ED8", dark: false }, "Notes") });
     media.forEach(function (m) { files.push({ name: "ppt\x2Fmedia\x2F" + m.name, data: m.bytes }); });
     ct = ct.concat([["\x2Fppt\x2Fpresentation.xml", "presentationml.presentation.main+xml"], ["\x2Fppt\x2FslideMasters\x2FslideMaster1.xml", "presentationml.slideMaster+xml"],
       ["\x2Fppt\x2FslideLayouts\x2FslideLayout1.xml", "presentationml.slideLayout+xml"], ["\x2Fppt\x2Ftheme\x2Ftheme1.xml", "theme+xml"], ["\x2Fppt\x2FpresProps.xml", "presentationml.presProps+xml"],
@@ -51461,6 +51580,8 @@ Lantern.RFB = (function () {
     Object.keys(notes).forEach(function (k) {
       if (k === "inline") said.push("pictures inside a slide\u2019s text (" + on(notes[k]) + "): a slide\u2019s own picture is saved, not one in its text");
       else if (k === "nested") said.push("a table inside a table\u2019s cell (" + on(notes[k]) + ")");
+      else if (k === "small") said.push("more text than fits well (" + on(notes[k]) + "): saved shrunk to fit, smaller than 60% of its size; split the slide if that is too small to read");
+      else if (k === "title") said.push("a title too long for its box (" + on(notes[k]) + "): saved shrunk to fit; shorten it if that is too small");
       else if (k === "long") said.push("more text and tables than fit (" + on(notes[k]) + "): PowerPoint shrinks the text to fit when it is edited; split the slide if it is too small");
       else said.push("the picture on " + on(notes[k]) + ": " + k.replace(/^pic:/, ""));
     });
@@ -51521,15 +51642,28 @@ Lantern.RFB = (function () {
   // together(s, done): a slide's pictures put into one, each where it sat on the slide (a slide in Slides holds one)
   function together(s, done) {
     var P = s.pics, x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, left = P.length, ims = [];
-    P.forEach(function (p) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x + p.w); y1 = Math.max(y1, p.y + p.h); });
+    // each where it sat, turned, flipped and cropped as PowerPoint shows it (the first review)
+    P.forEach(function (p) {
+      var a = (p.look && p.look.rot || 0) * Math.PI / 180, bw = Math.abs(p.w * Math.cos(a)) + Math.abs(p.h * Math.sin(a)), bh = Math.abs(p.w * Math.sin(a)) + Math.abs(p.h * Math.cos(a));
+      var cx = p.x + p.w / 2, cy = p.y + p.h / 2;
+      x0 = Math.min(x0, cx - bw / 2); y0 = Math.min(y0, cy - bh / 2); x1 = Math.max(x1, cx + bw / 2); y1 = Math.max(y1, cy + bh / 2);
+    });
     var k = Math.min(1200 / Math.max(1, x1 - x0), 1200 / Math.max(1, y1 - y0));
     function fin() {
       var c = document.createElement("canvas"); c.width = Math.max(1, Math.round((x1 - x0) * k)); c.height = Math.max(1, Math.round((y1 - y0) * k));
       var x = c.getContext("2d");
       x.fillStyle = "#ffffff"; x.fillRect(0, 0, c.width, c.height);
       var n = 0;
-      ims.forEach(function (im, i) { if (!im) return; var p = P[i]; try { x.drawImage(im, (p.x - x0) * k, (p.y - y0) * k, p.w * k, p.h * k); n++; } catch (e) { } });
-      if (n > 1) { try { s.img = c.toDataURL("image\x2Fjpeg", 0.85); s.together = true; } catch (e) { } }
+      ims.forEach(function (im, i) {
+        if (!im) return;
+        var p = P[i], lk = p.look || {}, cr = lk.crop || { l: 0, t: 0, r: 0, b: 0 };
+        var sx = im.width * cr.l, sy = im.height * cr.t, sw = Math.max(1, im.width * (1 - cr.l - cr.r)), sh = Math.max(1, im.height * (1 - cr.t - cr.b));
+        try {
+          x.save(); x.translate((p.x + p.w / 2 - x0) * k, (p.y + p.h / 2 - y0) * k); x.rotate((lk.rot || 0) * Math.PI / 180); x.scale(lk.flipH ? -1 : 1, lk.flipV ? -1 : 1);
+          x.drawImage(im, sx, sy, sw, sh, -p.w * k / 2, -p.h * k / 2, p.w * k, p.h * k); x.restore(); n++;
+        } catch (e) { }
+      });
+      if (n > 1 || (n === 1 && P.length === 1)) { try { s.img = c.toDataURL("image\x2Fjpeg", 0.85); s.together = n > 1; s.looked = P.some(function (p) { return p.look; }); } catch (e) { } }
       delete s.pics;
       done();
     }
@@ -51545,10 +51679,10 @@ Lantern.RFB = (function () {
   function shrink(slides, done) {
     var cv = document.createElement("canvas"), ok = false;
     try { ok = !!(window.Image && cv.getContext && cv.getContext("2d")); } catch (e) { ok = false; }
-    var many = ok ? slides.filter(function (s) { return s.pics && s.pics.length > 1; }) : [], waiting = many.length;
+    var many = ok ? slides.filter(function (s) { return s.pics && s.pics.length; }) : [], waiting = many.length;
     if (waiting) { many.forEach(function (s) { together(s, function () { if (--waiting === 0) shrink(slides, done); }); }); return; }
     slides.forEach(function (s) { delete s.pics; });
-    var todo = slides.filter(function (s) { return s.img && !s.together; });
+    var todo = slides.filter(function (s) { return s.img && !s.together && !s.looked; });
     if (!ok || !todo.length) { done(); return; }
     var left = todo.length;
     function one() { if (--left === 0) done(); }
@@ -51575,8 +51709,10 @@ Lantern.RFB = (function () {
       try { res = L.pptx.read(new Uint8Array(r.result), file.name); }
       catch (e) { window.alert("Lantern could not open \u201c" + file.name + "\u201d: " + e.message + "."); return; }
       shrink(res.slides, function () {
-        var notes = res.notes.slice(), lost = res.slides.filter(function (s) { return s.lost; }).length, tog = [];
-        res.slides.forEach(function (s, i) { if (s.together) tog.push(i + 1); delete s.lost; delete s.together; });
+        var notes = res.notes.slice(), lost = res.slides.filter(function (s) { return s.lost; }).length, tog = [], looked = 0;
+        res.slides.forEach(function (s, i) { if (s.together) tog.push(i + 1); if (s.looked) looked++; delete s.lost; delete s.together; delete s.looked; });
+        // turned, flipped and cropped as PowerPoint shows them: nothing to say
+        if (looked) notes = notes.filter(function (t) { return !/^pictures turned, flipped or cropped/.test(t); });
         // pictures put together: said so, in place of "kept its largest"
         if (tog.length) notes = notes.filter(function (t) { return !/^\d+ more pictures?: /.test(t); }).concat(["the pictures on " + (tog.length === 1 ? "slide " + tog[0] : "slides " + tog.slice(0, -1).join(", ") + " and " + tog[tog.length - 1]) +
           " put together into one picture each, as they sat on the slide (a slide in Slides holds one picture)"]);
@@ -51605,7 +51741,7 @@ Lantern.RFB = (function () {
   var LT = L.slideLibTools = L.slideLibTools || [];
   LT.push({ label: "Open .pptx", title: "Open a PowerPoint file (.pptx) as a new deck", run: function (api) {
     var inp = document.createElement("input");
-    inp.type = "file"; inp.accept = ".pptx,application\x2Fvnd.openxmlformats-officedocument.presentationml.presentation"; inp.style.display = "none";
+    inp.type = "file"; inp.accept = ".pptx,.ppsx,.potx,.pptm,.ppsm,.potm,application\x2Fvnd.openxmlformats-officedocument.presentationml.presentation,application\x2Fvnd.openxmlformats-officedocument.presentationml.slideshow,application\x2Fvnd.openxmlformats-officedocument.presentationml.template";   // a show and a template too (the first review) inp.style.display = "none";
     inp.onchange = function () { var f = inp.files && inp.files[0]; if (inp.parentNode) inp.parentNode.removeChild(inp); if (f) open(f, api); };
     document.body.appendChild(inp);
     inp.click();
