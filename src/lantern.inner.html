@@ -25551,6 +25551,8 @@ Lantern.RFB = (function () {
     var u = data.usage || {};
     AI.lastUsage = { completion: u.completion_tokens || null, prompt: u.prompt_tokens || null };
     AI.lastFinish = data.choices && data.choices[0] ? data.choices[0].finish_reason || null : null;
+    // (1.24.33) the reply with its finish, so a block the model ended itself without END is read as ended (AI_ACTIONS)
+    AI.lastReply = data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content || "" : null;
     if (data.choices && data.choices[0] && data.choices[0].message) return data.choices[0].message.content || "";
     if (data.message && data.message.content) return data.message.content; // Ollama native /api/chat
     throw new Error("Unrecognised server reply shape");
@@ -25603,7 +25605,7 @@ Lantern.RFB = (function () {
       return Promise.resolve(AI.detect()).then(function () { return AI.complete(messages, again); }, function () { return AI.complete(messages, again); });
     }
     var r = AI.resolve(), t0 = Date.now(), dev = AI.engines.device;
-    AI.lastUsage = null; AI.lastFinish = null; AI.lastGuard = null; AI.lastRead = [];
+    AI.lastUsage = null; AI.lastFinish = null; AI.lastReply = null; AI.lastGuard = null; AI.lastRead = [];
     var g = opts.noGuard ? null : AI.guard(opts.question != null ? opts.question : AI.questionOf(messages));
     if (g) {
       AI.lastGuard = g.id;
@@ -26432,6 +26434,7 @@ Lantern.RFB = (function () {
       AI.lastUsage = { completion: u.completion_tokens || null, prompt: u.prompt_tokens || null };
       AI.lastFinish = res && res.choices && res.choices[0] ? res.choices[0].finish_reason || null : null;
       var c = res && res.choices && res.choices[0] && res.choices[0].message;
+      AI.lastReply = c ? c.content || "" : null;
       return (c && c.content) || "";
     } finally { st.busy = false; }
   }
@@ -30897,6 +30900,13 @@ Lantern.RFB = (function () {
   function build(text, q) {
     var bs = find(text);
     if (!bs.length) return null;
+    // (1.24.33) a block the model ended itself: since 1.24.32 a reply held to its block may stop without END, and the
+    // small models' run of 1.24.32 had whole ones (an oil change of three steps, a deck of one card) questioned as "cut
+    // off before END". The server says how the reply ended: "stop" (the model's own end) closes the last block; "length"
+    // (out of tokens), or a reply that is not the one the server gave last, leaves it as it was.
+    var lb = bs[bs.length - 1], AIx = window.Lantern.ai;
+    function tail(t) { return String(t).replace(/\s+$/, "").slice(-200); }
+    if (lb && !lb.closed && AIx && AIx.lastFinish === "stop" && typeof AIx.lastReply === "string" && tail(AIx.lastReply) === tail(text)) { lb.closed = true; lb.endedBy = "stop"; }
     var b = bs[0];
     if (b.action && typeof b.action.join === "function") {
       var same = bs.filter(function (x) { return x.action === b.action; }), j = null;

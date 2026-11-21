@@ -25558,6 +25558,8 @@ Lantern.RFB = (function () {
     var u = data.usage || {};
     AI.lastUsage = { completion: u.completion_tokens || null, prompt: u.prompt_tokens || null };
     AI.lastFinish = data.choices && data.choices[0] ? data.choices[0].finish_reason || null : null;
+    // (1.24.33) the reply with its finish, so a block the model ended itself without END is read as ended (AI_ACTIONS)
+    AI.lastReply = data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content || "" : null;
     if (data.choices && data.choices[0] && data.choices[0].message) return data.choices[0].message.content || "";
     if (data.message && data.message.content) return data.message.content; // Ollama native /api/chat
     throw new Error("Unrecognised server reply shape");
@@ -25610,7 +25612,7 @@ Lantern.RFB = (function () {
       return Promise.resolve(AI.detect()).then(function () { return AI.complete(messages, again); }, function () { return AI.complete(messages, again); });
     }
     var r = AI.resolve(), t0 = Date.now(), dev = AI.engines.device;
-    AI.lastUsage = null; AI.lastFinish = null; AI.lastGuard = null; AI.lastRead = [];
+    AI.lastUsage = null; AI.lastFinish = null; AI.lastReply = null; AI.lastGuard = null; AI.lastRead = [];
     var g = opts.noGuard ? null : AI.guard(opts.question != null ? opts.question : AI.questionOf(messages));
     if (g) {
       AI.lastGuard = g.id;
@@ -26439,6 +26441,7 @@ Lantern.RFB = (function () {
       AI.lastUsage = { completion: u.completion_tokens || null, prompt: u.prompt_tokens || null };
       AI.lastFinish = res && res.choices && res.choices[0] ? res.choices[0].finish_reason || null : null;
       var c = res && res.choices && res.choices[0] && res.choices[0].message;
+      AI.lastReply = c ? c.content || "" : null;
       return (c && c.content) || "";
     } finally { st.busy = false; }
   }
@@ -30904,6 +30907,13 @@ Lantern.RFB = (function () {
   function build(text, q) {
     var bs = find(text);
     if (!bs.length) return null;
+    // (1.24.33) a block the model ended itself: since 1.24.32 a reply held to its block may stop without END, and the
+    // small models' run of 1.24.32 had whole ones (an oil change of three steps, a deck of one card) questioned as "cut
+    // off before END". The server says how the reply ended: "stop" (the model's own end) closes the last block; "length"
+    // (out of tokens), or a reply that is not the one the server gave last, leaves it as it was.
+    var lb = bs[bs.length - 1], AIx = window.Lantern.ai;
+    function tail(t) { return String(t).replace(/\s+$/, "").slice(-200); }
+    if (lb && !lb.closed && AIx && AIx.lastFinish === "stop" && typeof AIx.lastReply === "string" && tail(AIx.lastReply) === tail(text)) { lb.closed = true; lb.endedBy = "stop"; }
     var b = bs[0];
     if (b.action && typeof b.action.join === "function") {
       var same = bs.filter(function (x) { return x.action === b.action; }), j = null;
@@ -51052,7 +51062,7 @@ Lantern.RFB = (function () {
         if (!mime && /^(emf|emz)$/.test(ext) && L.emf && L.emf.draw) {
           var eb = ext === "emz" ? gunzip(data) : data, dr = null;
           try { dr = eb && L.emf.draw(eb, 1600); } catch (e) { dr = null; }
-          if (dr) { url = dr.url; mime = "image\x2Fpng"; if (!ole) lose("emfDrawn", no); if (Object.keys(dr.left).length) lose("emfPart", no); }
+          if (dr) { url = dr.url; mime = "image\x2Fpng"; lose(ole ? "oleEmf" : "emfDrawn", no); if (Object.keys(dr.left).length) lose("emfPart", no); }
         }
         if (!mime) { var m = lose(ole ? "ole" : "unshown", no); m.fmt = m.fmt || {}; m.fmt[ext.toUpperCase() || "?"] = 1; if (ole) m.what[ole] = 1; return; }
         if (ole) lose("oleShown", no).what[ole] = 1;
@@ -51163,7 +51173,7 @@ Lantern.RFB = (function () {
     function kinds(m) { var f = Object.keys(m.fmt || {}), emf = f.filter(function (k) { return /^EM[FZ]$/.test(k); }), other = f.filter(function (k) { return !/^EM[FZ]$/.test(k); });
       return [emf.length ? emf.join(" or ") + " that Lantern could not draw" + (L.emf ? "" : " (it has no EMF drawing here)") : "", other.length ? other.join(" or ") + ", which no browser shows" : ""].filter(String).join(", and in "); }
     said("ole", function (m) { return many(m.n, "object", "objects") + " made in another program (" + Object.keys(m.what).join(", ") + ") " + (Object.keys(m.fmt || {}).length ? "whose pictures are in " + kinds(m) : "with no picture of its own") + ": open the file in PowerPoint or LibreOffice to see them"; });
-    said("oleShown", function (m) { return "objects made in another program (" + Object.keys(m.what).join(", ") + ") kept as pictures: they cannot be edited here"; });
+    said("oleShown", function (m) { return "objects made in another program (" + Object.keys(m.what).join(", ") + ") kept as pictures" + (miss.oleEmf ? ", drawn by Lantern from their EMF (no browser draws EMF): look at them beside the original;" : ":") + " they cannot be edited here"; });
     said("unshown", function (m) { return many(m.n, "picture", "pictures") + " in " + kinds(m); });
     said("emfDrawn", function (m) { return many(m.n, "picture", "pictures") + " in EMF drawn by Lantern (no browser draws EMF): look at " + (m.n === 1 ? "it" : "them") + " beside the original"; });
     said("emfPart", function (m) { return "parts of EMF pictures Lantern does not draw yet"; });
@@ -51618,10 +51628,11 @@ Lantern.RFB = (function () {
       "their levels, bold, italic, underline, links), its tables as tables, its picture beside the text, and its speaker notes as notes. " +
       "The deck\u2019s theme (its colours in Slides) is the file\u2019s theme, so choosing a theme in PowerPoint afterwards recolours it.<\x2Fp>" +
       "<p><b>Open .pptx<\x2Fb>, in the list of decks, opens a PowerPoint file as a new deck: each slide\u2019s title, its text in reading order, " +
-      "its tables, its charts as tables of their numbers, its SmartArt as lists of its words, its largest picture and its notes. A slide " +
-      "in Lantern holds one picture; the others, pictures no browser shows (EMF and WMF: Visio drawings and old clip art), video and sound, " +
-      "and where each box sat, fonts and animations are not kept, and a note says which, on which slides. An old .ppt file must be saved " +
-      "as .pptx in PowerPoint or LibreOffice first.<\x2Fp>"]
+      "its tables, its charts as tables of their numbers, its SmartArt as lists of its words, its pictures and its notes. A slide in " +
+      "Lantern holds one picture, so a slide\u2019s several pictures are put together into one, each where it sat. Pictures in EMF (Visio " +
+      "drawings, older Office pictures), which no browser draws, are drawn by Lantern: look at them beside the original. Pictures in WMF, " +
+      "video and sound, and where each box sat, fonts and animations are not kept, and a note says which, on which slides. An old .ppt " +
+      "file must be saved as .pptx in PowerPoint or LibreOffice first.<\x2Fp>"]
   ]);
 })();
 // ===========================================================================

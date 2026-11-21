@@ -186,6 +186,14 @@ var OLD_IDEAL = "MAKE CONTROL: Duplex lift station\nfloat FS1 \x22off\x22\nfloat
   ok("...the replies of 1.24.31 that ran to their limit, cut at a whole line, are each a place the model may now stop", CHECKED.filter(function (c) { return c.samples.length && c.samples.every(function (s) { return s.want; }) && c.samples.some(function (s) { return s.text.length > 400; }); }).length >= 5);
   var ne = act.build("MAKE STATION: Lift station\npumps 2\nfloats off lead lag alarm", Q);
   ok("...and a block that stops without END is read whole (a station, two pumps, four floats)", ne && ne.ok && ne.plan && ne.plan.mode === "station", ne && ne.problems);
+  // (1.24.33) 1.24.32's run: whole replies that stopped without END were questioned as "cut off before END"
+  // (tests/fixtures/bench_run_1.24.32_0.8b.json); the server's finish says which ended themselves
+  var R32 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "bench_run_1.24.32_0.8b.json"), "utf8"));
+  var oil = R32.filter(function (r) { return r.id === "make-doc-oil-change"; })[0], AIx = L.ai;
+  function asIf(fin, rep) { var a = AIx.lastFinish, b = AIx.lastReply; AIx.lastFinish = fin; AIx.lastReply = rep; try { return act.build(oil.reply, oil.question || ""); } finally { AIx.lastFinish = a; AIx.lastReply = b; } }
+  var mStop = asIf("stop", oil.reply), mLen = asIf("length", oil.reply), mOther = asIf("stop", "MAKE DOC: another reply\nEND"), mNone = asIf(null, null);
+  ok("(1.24.33) a reply the model ended itself without END (1.24.32's 0.8B: an oil change in three steps) is read whole, not \u201ccut off\u201d", mStop && mStop.ok && !/cut off/.test((mStop.problems || []).join()), mStop && mStop.problems);
+  ok("...one the server cut at its length, or not the reply the server gave last, or with no finish known, is still cut off", [mLen, mOther, mNone].every(function (m) { return m && /cut off before END/.test((m.problems || []).join()); }));
   ok("...a control block's other names hold to CONTROL's lines; SCHEMATIC and ELECTRONICS take any line but END itself (the third review's F-26)", (function () {
     var tail = function (k) { return (act.grammarFor(k) || "").split("\n").slice(1).join("\n"); }, c = tail("CONTROL");
     return tail("LADDER DIAGRAM") === c && tail("CONTROL CIRCUIT") === c && /^line ::= \(\[\^E\\n\]/m.test(act.grammarFor("SCHEMATIC")) && /^line ::= \(\[\^E\\n\]/m.test(act.grammarFor("ELECTRONICS")) && !/^first ::=/m.test(act.grammarFor("SCHEMATIC"));
