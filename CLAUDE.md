@@ -217,7 +217,11 @@ change nothing outside them (found 2026-11-08: an empty version commit on
 top of the work started no run, and nor did commits already pushed to a
 `wip-` branch; a session cannot start one by hand, the dispatch is
 refused). Push a version branch with a commit of its own that changes a
-watched file.
+watched file, and wait until its run is listed (`gh run list ... --limit 3`)
+before pushing the same commit to a `wip-` branch: lantern-1.24.32 and its
+wip branch, pushed a second apart on 2026-11-21, started no run at all (not
+even the Starter), and a commit of the branch's own pushed after started
+it.
 
 ```sh
 gh run list --repo adamweldon/Lantern_Office_Suite --workflow "Lantern Bench" --limit 6
