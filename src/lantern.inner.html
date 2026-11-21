@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.24.32 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.24.33 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0, or the
 // Zero-Clause BSD licence, 0BSD, if you prefer: LICENSE).
@@ -188,7 +188,7 @@
 //          Lantern.lists = {level(el), type(el), mark(type, n), css(scope)}
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.24.32",
+  version: "1.24.33",
   apps: {},
   order: []
 };
@@ -7710,6 +7710,7 @@ Lantern.drawShapes = (function () {
       "h2{font-size:6vmin;margin:0;color:" + th.accent + ";line-height:1.15;}" +
       ".b{font-size:3.2vmin;line-height:1.55;}.b ul,.b ol{padding-left:1.2em;}" +
       "img{max-width:80%;max-height:50vh;object-fit:contain;border-radius:8px;align-self:flex-start;}" +
+      "table{border-collapse:collapse;font-size:.9em;}th,td{border:1px solid currentColor;padding:.15em .6em;text-align:left;vertical-align:top;}" +   // (1.24.33) a table from a PowerPoint file
       "@media print{section{page-break-after:always;border:none;min-height:96vh;}}" +
       "</style></head><body>";
     for (var i = 0; i < d.slides.length; i++) {
@@ -50300,6 +50301,1327 @@ Lantern.RFB = (function () {
 // MODULE: GUIDE_SHEET_XLSX - END
 // ===========================================================================
 // ===========================================================================
+// MODULE: EMF_DRAW - START
+// Depends: CORE (window.Lantern) -- feature-detected; a browser's canvas
+// Exports: Lantern.emf = {info(bytes) -> {w, h} | null, draw(bytes, max) ->
+//          {url, w, h, left: {what: count}} | null}
+// ===========================================================================
+// An EMF picture (Windows' Enhanced Metafile: what Visio, older Office and
+// many drawing programs put in a PowerPoint or Word file) drawn on a canvas
+// and given back as a PNG a browser shows (1.24.33). No browser draws EMF
+// itself. Its records are played as Windows plays them: the window and
+// viewport, the world transform, saved and restored states, pens, brushes
+// and fonts, lines, polygons, curves, rectangles and ellipses, paths, clips,
+// text, and bitmaps. An EMF+ picture carries the same drawing as plain
+// records beside its own, and those are drawn; what is not played is
+// counted and said.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var SIG = 0x464d4520;
+  function info(b) {
+    if (!b || b.length < 88) return null;
+    var v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    if (v.getUint32(0, true) !== 1 || v.getUint32(40, true) !== SIG) return null;
+    var fl = v.getInt32(24, true), ft = v.getInt32(28, true), fr = v.getInt32(32, true), fb = v.getInt32(36, true);
+    var dw = v.getInt32(72, true), dh = v.getInt32(76, true), mw = v.getInt32(80, true), mh = v.getInt32(84, true);
+    // the picture's frame (hundredths of a millimetre) in the reference device's pixels
+    var px = mw > 0 ? dw / (mw * 100) : 96 / 2540, py = mh > 0 ? dh / (mh * 100) : 96 / 2540;
+    var box = { l: fl * px, t: ft * py, w: (fr - fl) * px, h: (fb - ft) * py };
+    if (!(box.w > 0 && box.h > 0)) {
+      var bl = v.getInt32(8, true), bt = v.getInt32(12, true), br = v.getInt32(16, true), bb = v.getInt32(20, true);
+      box = { l: bl, t: bt, w: br - bl + 1, h: bb - bt + 1 };
+    }
+    if (!(box.w > 1 && box.h > 1)) return null;
+    return { w: box.w, h: box.h, box: box, handles: v.getUint16(56, true) };
+  }
+  function rgb(c) { return "rgb(" + (c & 255) + "," + (c >> 8 & 255) + "," + (c >> 16 & 255) + ")"; }
+  function mul(a, b) { return [a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1], a[0] * b[2] + a[2] * b[3], a[1] * b[2] + a[3] * b[3], a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5]]; }
+  var STOCK = { 0: { k: "brush", c: 0xffffff }, 1: { k: "brush", c: 0xc0c0c0 }, 2: { k: "brush", c: 0x808080 }, 3: { k: "brush", c: 0x404040 }, 4: { k: "brush", c: 0 }, 5: { k: "brush", none: true },
+    6: { k: "pen", c: 0xffffff, w: 0 }, 7: { k: "pen", c: 0, w: 0 }, 8: { k: "pen", none: true }, 10: { k: "font", h: -12, face: "monospace" }, 11: { k: "font", h: -12, face: "sans-serif" },
+    12: { k: "font", h: -12, face: "sans-serif" }, 13: { k: "font", h: -16, face: "sans-serif" }, 14: { k: "font", h: -12, face: "sans-serif" }, 16: { k: "font", h: -12, face: "monospace" }, 17: { k: "font", h: -12, face: "sans-serif" } };
+  // a DIB (BITMAPINFOHEADER and its bits) as a canvas, or null
+  function dib(b, offBmi, cbBmi, offBits, cbBits) {
+    if (!cbBmi || !cbBits) return null;
+    var v = new DataView(b.buffer, b.byteOffset, b.byteLength), hs = v.getUint32(offBmi, true);
+    var w = v.getInt32(offBmi + 4, true), h = v.getInt32(offBmi + 8, true), bpp = v.getUint16(offBmi + 14, true), comp = v.getUint32(offBmi + 16, true);
+    var used = hs >= 36 ? v.getUint32(offBmi + 32, true) : 0;
+    if (!(w > 0) || !h || Math.abs(h) * w > 2.5e7 || (comp !== 0 && comp !== 3) || [1, 4, 8, 16, 24, 32].indexOf(bpp) < 0) return null;
+    var up = h > 0; h = Math.abs(h);
+    var pal = [], np = bpp <= 8 ? (used || 1 << bpp) : 0, po = offBmi + hs + (comp === 3 && hs === 40 ? 12 : 0);
+    for (var i = 0; i < np && po + i * 4 + 3 < b.length; i++) pal.push([b[po + i * 4 + 2], b[po + i * 4 + 1], b[po + i * 4]]);
+    var c = document.createElement("canvas"); c.width = w; c.height = h;
+    var x = c.getContext("2d"); if (!x) return null;
+    var im = x.createImageData(w, h), d = im.data, stride = Math.floor((w * bpp + 31) / 32) * 4;
+    for (var r = 0; r < h; r++) {
+      var row = offBits + (up ? h - 1 - r : r) * stride;
+      for (var k = 0; k < w; k++) {
+        var o = (r * w + k) * 4, R = 0, G = 0, B = 0, A = 255, p;
+        if (bpp === 24) { p = row + k * 3; B = b[p]; G = b[p + 1]; R = b[p + 2]; }
+        else if (bpp === 32) { p = row + k * 4; B = b[p]; G = b[p + 1]; R = b[p + 2]; }
+        else if (bpp === 16) { p = b[row + k * 2] | b[row + k * 2 + 1] << 8; R = (p >> 10 & 31) * 255 / 31; G = (p >> 5 & 31) * 255 / 31; B = (p & 31) * 255 / 31; }
+        else { var bit = k * bpp, by = b[row + (bit >> 3)], idx = bpp === 8 ? by : bpp === 4 ? (bit & 7 ? by & 15 : by >> 4) : (by >> (7 - (bit & 7))) & 1, q = pal[idx] || [0, 0, 0]; R = q[0]; G = q[1]; B = q[2]; }
+        d[o] = R; d[o + 1] = G; d[o + 2] = B; d[o + 3] = A;
+      }
+    }
+    x.putImageData(im, 0, 0);
+    return c;
+  }
+  function draw(b, max) {
+    var hd = info(b);
+    if (!hd) return null;
+    var cv = document.createElement("canvas"), ctx = null;
+    try { ctx = cv.getContext("2d"); } catch (e) { ctx = null; }
+    if (!ctx) return null;
+    var s = Math.min(4, (max || 1600) / Math.max(hd.w, hd.h));
+    cv.width = Math.max(1, Math.round(hd.w * s)); cv.height = Math.max(1, Math.round(hd.h * s));
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, cv.width, cv.height);
+    var v = new DataView(b.buffer, b.byteOffset, b.byteLength), left = {}, objs = {};
+    var C = [s, 0, 0, s, -hd.box.l * s, -hd.box.t * s];
+    var st = { world: [1, 0, 0, 1, 0, 0], wo: [0, 0], we: [1, 1], vo: [0, 0], ve: [1, 1], map: 1, pen: STOCK[7], brush: STOCK[0], font: STOCK[13], tc: 0, bk: 0xffffff, bkm: 2, align: 0, fill: "evenodd", cur: [0, 0] };
+    var stack = [], path = null, cp = null;
+    function copy(o) { var n = {}, k; for (k in o) n[k] = o[k]; return n; }
+    function M() {
+      var D = st.map === 7 || st.map === 8 ? [st.ve[0] / (st.we[0] || 1), 0, 0, st.ve[1] / (st.we[1] || 1), 0, 0] : st.map === 1 ? [1, 0, 0, 1, 0, 0] : null;
+      if (!D) { var u = { 2: 0.1, 3: 0.01, 4: 0.254, 5: 0.0254, 6: 1 / 14.4 }[st.map] || 1, k = 96 / 25.4 * u; D = [k, 0, 0, -k, 0, 0]; }
+      D[4] = st.vo[0] - st.wo[0] * D[0]; D[5] = st.vo[1] - st.wo[1] * D[3];
+      return mul(C, mul(D, st.world));
+    }
+    function setT() { var m = M(); ctx.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]); return m; }
+    function scaleOf(m) { return Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])) || 1; }
+    // the mix with what is there (SETROP2): as it is, nothing, or laid over (XOR, NOT XOR, NOT: drawn as a difference,
+    // which is XOR exactly for black and white)
+    function mixed(c, paint) {
+      var r = st.rop2 || 13;
+      if (r === 11) return;
+      if (r === 7 || r === 9 || r === 6) { ctx.save(); ctx.globalCompositeOperation = "difference"; paint(r === 6 ? 0xffffff : r === 9 ? ~c & 0xffffff : c); ctx.restore(); return; }
+      paint(c);
+    }
+    function strokeIt(m) {
+      var p = st.pen;
+      if (!p || p.none) return;
+      mixed(p.c, function (c) { strokeWith(m, p, c); });
+    }
+    function strokeWith(m, p, c) {
+      ctx.strokeStyle = rgb(c);
+      ctx.lineWidth = p.w > 0 ? p.w : 1 / scaleOf(m);
+      ctx.lineJoin = p.join || "round"; ctx.lineCap = p.cap || "round";
+      if (ctx.setLineDash) ctx.setLineDash(p.dash ? p.dash.map(function (d) { return d * Math.max(ctx.lineWidth, 1 / scaleOf(m)); }) : []);
+      ctx.stroke();
+    }
+    function fillIt() { var br = st.brush; if (!br || br.none) return; mixed(br.c, function (c) { ctx.fillStyle = (st.rop2 || 13) === 13 && br.pat ? br.pat : rgb(c); ctx.fill(st.fill); }); }
+    function pts(off, n, w16) { var a = []; for (var i = 0; i < n; i++) a.push(w16 ? [v.getInt16(off + i * 4, true), v.getInt16(off + i * 4 + 2, true)] : [v.getInt32(off + i * 8, true), v.getInt32(off + i * 8 + 4, true)]); return a; }
+    // a figure: into the path when one is open, else drawn
+    function figure(list, close, filled, bez, cont) {
+      if (!list.length) return;
+      if (path) {
+        if (!cont || !cp) { cp = { pts: [], bez: [] }; path.push(cp); cp.start = cont ? st.cur.slice() : list[0]; if (!cont) list = list.slice(1); }
+        list.forEach(function (p, i) { cp.pts.push(p); cp.bez.push(bez); });
+        if (close) { cp.closed = true; cp = null; }
+        st.cur = list.length ? list[list.length - 1].slice() : st.cur;
+        return;
+      }
+      var m = setT();
+      ctx.beginPath();
+      var start = cont ? st.cur : list[0], rest = cont ? list : list.slice(1);
+      ctx.moveTo(start[0], start[1]);
+      if (bez) for (var i = 0; i + 2 < rest.length; i += 3) ctx.bezierCurveTo(rest[i][0], rest[i][1], rest[i + 1][0], rest[i + 1][1], rest[i + 2][0], rest[i + 2][1]);
+      else rest.forEach(function (p) { ctx.lineTo(p[0], p[1]); });
+      if (close) ctx.closePath();
+      if (filled) fillIt();
+      strokeIt(m);
+      st.cur = list[list.length - 1].slice();
+    }
+    function playPath() {
+      ctx.beginPath();
+      (path || []).forEach(function (f) {
+        ctx.moveTo(f.start[0], f.start[1]);
+        for (var i = 0; i < f.pts.length; i++) {
+          if (f.bez[i] && i + 2 < f.pts.length) { ctx.bezierCurveTo(f.pts[i][0], f.pts[i][1], f.pts[i + 1][0], f.pts[i + 1][1], f.pts[i + 2][0], f.pts[i + 2][1]); i += 2; }
+          else ctx.lineTo(f.pts[i][0], f.pts[i][1]);
+        }
+        if (f.closed) ctx.closePath();
+      });
+    }
+    // xor(x, y, w, h, colour): the colour laid over what is there bit by bit, as Windows does it (twice is nothing)
+    function xor(x, y, w, h, c) {
+      var m = M();
+      if (Math.abs(m[1]) > 1e-9 || Math.abs(m[2]) > 1e-9) { left.rop = (left.rop || 0) + 1; return; }
+      var x0 = Math.round(Math.min(m[0] * x + m[4], m[0] * (x + w) + m[4])), x1 = Math.round(Math.max(m[0] * x + m[4], m[0] * (x + w) + m[4]));
+      var y0 = Math.round(Math.min(m[3] * y + m[5], m[3] * (y + h) + m[5])), y1 = Math.round(Math.max(m[3] * y + m[5], m[3] * (y + h) + m[5]));
+      x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(cv.width, x1); y1 = Math.min(cv.height, y1);
+      if (x1 <= x0 || y1 <= y0) return;
+      var im = ctx.getImageData(x0, y0, x1 - x0, y1 - y0), d = im.data;
+      for (var i = 0; i < d.length; i += 4) { d[i] ^= c & 255; d[i + 1] ^= c >> 8 & 255; d[i + 2] ^= c >> 16 & 255; }
+      ctx.putImageData(im, x0, y0);
+    }
+    function rectRec(o) { return [v.getInt32(o, true), v.getInt32(o + 4, true), v.getInt32(o + 8, true), v.getInt32(o + 12, true)]; }
+    function shape(kind, r, rr) {
+      var m = setT();
+      ctx.beginPath();
+      if (kind === "ellipse") { if (ctx.ellipse) ctx.ellipse((r[0] + r[2]) / 2, (r[1] + r[3]) / 2, Math.abs(r[2] - r[0]) / 2, Math.abs(r[3] - r[1]) / 2, 0, 0, Math.PI * 2); else ctx.rect(r[0], r[1], r[2] - r[0], r[3] - r[1]); }
+      else if (kind === "round" && rr && ctx.quadraticCurveTo) {
+        var x0 = r[0], y0 = r[1], x1 = r[2], y1 = r[3], rx = Math.min(rr[0] / 2, (x1 - x0) / 2), ry = Math.min(rr[1] / 2, (y1 - y0) / 2);
+        ctx.moveTo(x0 + rx, y0); ctx.lineTo(x1 - rx, y0); ctx.quadraticCurveTo(x1, y0, x1, y0 + ry); ctx.lineTo(x1, y1 - ry); ctx.quadraticCurveTo(x1, y1, x1 - rx, y1);
+        ctx.lineTo(x0 + rx, y1); ctx.quadraticCurveTo(x0, y1, x0, y1 - ry); ctx.lineTo(x0, y0 + ry); ctx.quadraticCurveTo(x0, y0, x0 + rx, y0); ctx.closePath();
+      } else ctx.rect(r[0], r[1], r[2] - r[0], r[3] - r[1]);
+      fillIt(); strokeIt(m);
+    }
+    function text(o, wide) {
+      var rx = v.getInt32(o + 36, true), ry = v.getInt32(o + 40, true), n = v.getUint32(o + 44, true), off = v.getUint32(o + 48, true), opt = v.getUint32(o + 52, true), str = "";
+      if (!n || n > 8192) return;
+      for (var i = 0; i < n; i++) str += String.fromCharCode(wide ? v.getUint16(o + off + i * 2, true) : b[o + off + i]);
+      if (opt & 0x10) { left.glyphs = (left.glyphs || 0) + 1; return; }   // glyph indices, not characters
+      var m = M(), f = st.font || STOCK[13], sc = Math.sqrt(m[2] * m[2] + m[3] * m[3]) || 1, px = Math.abs(f.h || 12) * sc * (f.h > 0 ? 0.8 : 1);
+      if (st.align & 1) { rx = st.cur[0]; ry = st.cur[1]; }
+      var X = m[0] * rx + m[2] * ry + m[4], Y = m[1] * rx + m[3] * ry + m[5];
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.save();
+      ctx.translate(X, Y);
+      var ang = -(f.esc || 0) / 10 * Math.PI / 180;
+      if (m[3] < 0) ang = -ang;
+      if (ang) ctx.rotate(ang);
+      ctx.font = (f.i ? "italic " : "") + (f.weight >= 600 ? "bold " : "") + Math.max(1, px).toFixed(2) + "px " + (f.face ? "\x22" + f.face + "\x22, " : "") + "Arial, sans-serif";
+      var a = st.align & 6, vb = st.align & 24;
+      ctx.textAlign = a === 6 ? "center" : a === 2 ? "right" : "left";
+      ctx.textBaseline = vb === 24 ? "alphabetic" : vb === 8 ? "bottom" : "top";
+      if (st.bkm === 2 && !(opt & 0)) { /* opaque background: Visio rarely asks for it */ }
+      ctx.fillStyle = rgb(st.tc);
+      ctx.fillText(str, 0, 0);
+      if (f.u) { var w = ctx.measureText(str).width, x0 = ctx.textAlign === "center" ? -w / 2 : ctx.textAlign === "right" ? -w : 0; ctx.fillRect(x0, vb === 24 ? px * 0.1 : px * 0.95, w, Math.max(1, px / 15)); }
+      ctx.restore();
+      if (st.align & 1) st.cur = [rx + ctx.measureText(str).width / sc, ry];
+    }
+    var o = 0, n = 0, done = false, drawn = 0, DRAWS = ",2,3,4,5,6,7,8,42,43,44,54,62,63,64,76,77,81,83,84,85,86,87,88,89,90,91,";
+    while (o + 8 <= b.length && !done && n++ < 500000) {
+      var t = v.getUint32(o, true), sz = v.getUint32(o + 4, true);
+      if (sz < 8 || o + sz > b.length) break;
+      if (DRAWS.indexOf("," + t + ",") >= 0) drawn++;
+      try {
+        switch (t) {
+          case 14: done = true; break;
+          case 9: st.we = [v.getInt32(o + 8, true), v.getInt32(o + 12, true)]; break;
+          case 10: st.wo = [v.getInt32(o + 8, true), v.getInt32(o + 12, true)]; break;
+          case 11: st.ve = [v.getInt32(o + 8, true), v.getInt32(o + 12, true)]; break;
+          case 12: st.vo = [v.getInt32(o + 8, true), v.getInt32(o + 12, true)]; break;
+          case 17: st.map = v.getUint32(o + 8, true); break;
+          case 18: st.bkm = v.getUint32(o + 8, true); break;
+          case 19: st.fill = v.getUint32(o + 8, true) === 2 ? "nonzero" : "evenodd"; break;
+          case 22: st.align = v.getUint32(o + 8, true); break;
+          case 24: st.tc = v.getUint32(o + 8, true); break;
+          case 25: st.bk = v.getUint32(o + 8, true); break;
+          case 27: st.cur = [v.getInt32(o + 8, true), v.getInt32(o + 12, true)]; if (path) cp = null; break;
+          case 54: figure([st.cur.slice(), [v.getInt32(o + 8, true), v.getInt32(o + 12, true)]], false, false, false); break;
+          case 33: stack.push(copy(st)); ctx.save(); break;
+          case 34: var k = v.getInt32(o + 8, true), back = k < 0 ? -k : stack.length - k; for (; back > 0 && stack.length; back--) { st = stack.pop(); ctx.restore(); } break;
+          case 35: st.world = [v.getFloat32(o + 8, true), v.getFloat32(o + 12, true), v.getFloat32(o + 16, true), v.getFloat32(o + 20, true), v.getFloat32(o + 24, true), v.getFloat32(o + 28, true)]; break;
+          case 36:
+            var X6 = [v.getFloat32(o + 8, true), v.getFloat32(o + 12, true), v.getFloat32(o + 16, true), v.getFloat32(o + 20, true), v.getFloat32(o + 24, true), v.getFloat32(o + 28, true)], md = v.getUint32(o + 32, true);
+            st.world = md === 1 ? [1, 0, 0, 1, 0, 0] : md === 2 ? mul(st.world, X6) : md === 3 ? mul(X6, st.world) : md === 4 ? X6 : st.world;
+            break;
+          case 37: var h = v.getUint32(o + 8, true), ob = h & 0x80000000 ? STOCK[h & 0x7fffffff] : objs[h]; if (ob) st[ob.k] = ob; break;
+          case 40: delete objs[v.getUint32(o + 8, true)]; break;
+          case 38: objs[v.getUint32(o + 8, true)] = { k: "pen", none: (v.getUint32(o + 12, true) & 15) === 5, w: v.getInt32(o + 16, true), c: v.getUint32(o + 24, true), dash: { 1: [4, 2], 2: [1, 2], 3: [4, 2, 1, 2], 4: [4, 2, 1, 2, 1, 2] }[v.getUint32(o + 12, true) & 15] }; break;
+          case 95:
+            var ps = v.getUint32(o + 28, true);
+            objs[v.getUint32(o + 8, true)] = { k: "pen", none: (ps & 15) === 5, w: v.getUint32(o + 32, true), c: v.getUint32(o + 40, true), dash: { 1: [4, 2], 2: [1, 2], 3: [4, 2, 1, 2], 4: [4, 2, 1, 2, 1, 2] }[ps & 15],
+              cap: { 0: "round", 0x100: "square", 0x200: "butt" }[ps & 0xf00], join: { 0: "round", 0x1000: "bevel", 0x2000: "miter" }[ps & 0xf000] };
+            break;
+          case 39: var bs = v.getUint32(o + 12, true); objs[v.getUint32(o + 8, true)] = { k: "brush", none: bs === 1, c: v.getUint32(o + 16, true) }; break;
+          case 94: case 93:
+            var pc = dib(b, o + v.getUint32(o + 16, true), v.getUint32(o + 20, true), o + v.getUint32(o + 24, true), v.getUint32(o + 28, true)), pat = null;
+            try { pat = pc ? ctx.createPattern(pc, "repeat") : null; } catch (e) { pat = null; }
+            // its colour, where one is needed (laid over what is there), the pattern's middle pixel
+            var pcol = 0x808080;
+            try { if (pc) { var pd = pc.getContext("2d").getImageData(pc.width >> 1, pc.height >> 1, 1, 1).data; pcol = pd[0] | pd[1] << 8 | pd[2] << 16; } } catch (e) { }
+            objs[v.getUint32(o + 8, true)] = { k: "brush", c: pcol, pat: pat };
+            break;
+          case 82:
+            var lf = o + 12, face = "";
+            for (var fi = 0; fi < 32; fi++) { var ch = v.getUint16(lf + 28 + fi * 2, true); if (!ch) break; face += String.fromCharCode(ch); }
+            objs[v.getUint32(o + 8, true)] = { k: "font", h: v.getInt32(lf, true), esc: v.getInt32(lf + 8, true), weight: v.getInt32(lf + 16, true), i: !!b[lf + 20], u: !!b[lf + 21], face: face.replace(/[\x22\\]/g, "") };
+            break;
+          case 3: case 4: case 2: case 5: case 6:
+            var np = v.getUint32(o + 24, true), P = pts(o + 28, np, false);
+            figure(P, t === 3, t === 3, t === 2 || t === 5, t === 5 || t === 6); break;
+          case 86: case 87: case 85: case 88: case 89:
+            var n16 = v.getUint32(o + 24, true), P16 = pts(o + 28, n16, true);
+            figure(P16, t === 86, t === 86, t === 85 || t === 88, t === 88 || t === 89); break;
+          case 7: case 8: case 90: case 91:
+            var npoly = v.getUint32(o + 24, true), tot = v.getUint32(o + 28, true), w16 = t >= 90, base = o + 32 + npoly * 4, at = 0;
+            if (t === 8 || t === 91) {
+              if (path) { for (var q = 0; q < npoly; q++) { var c1 = v.getUint32(o + 32 + q * 4, true); figure(pts(base + at * (w16 ? 4 : 8), c1, w16), true, true, false); at += c1; } }
+              else {
+                var m2 = setT(); ctx.beginPath();
+                for (q = 0; q < npoly; q++) { var c2 = v.getUint32(o + 32 + q * 4, true), pp = pts(base + at * (w16 ? 4 : 8), c2, w16); at += c2; pp.forEach(function (p, i) { if (i) ctx.lineTo(p[0], p[1]); else ctx.moveTo(p[0], p[1]); }); ctx.closePath(); }
+                fillIt(); strokeIt(m2);
+              }
+            } else for (q = 0; q < npoly; q++) { var c3 = v.getUint32(o + 32 + q * 4, true); figure(pts(base + at * (w16 ? 4 : 8), c3, w16), false, false, false); at += c3; }
+            if (tot < 0) left.bad = 1;
+            break;
+          case 43: shape("rect", rectRec(o + 8)); break;
+          case 42: shape("ellipse", rectRec(o + 8)); break;
+          case 44: shape("round", rectRec(o + 8), [v.getInt32(o + 24, true), v.getInt32(o + 28, true)]); break;
+          case 59: path = []; cp = null; break;
+          case 60: break;
+          case 61: if (cp) { cp.closed = true; cp = null; } break;
+          case 68: path = null; cp = null; break;
+          case 62: case 63: case 64: var m3 = setT(); playPath(); if (t !== 64) fillIt(); if (t !== 62) strokeIt(m3); path = null; cp = null; break;
+          case 67: setT(); playPath(); ctx.clip(st.fill); path = null; cp = null; break;
+          case 30: var cr = rectRec(o + 8); setT(); ctx.beginPath(); ctx.rect(cr[0], cr[1], cr[2] - cr[0], cr[3] - cr[1]); ctx.clip(); break;
+          case 84: case 83: text(o, t === 84); break;
+          case 76: case 77: case 81:
+            var bx, by, bw, bh, img;
+            if (t === 81) { bx = v.getInt32(o + 24, true); by = v.getInt32(o + 28, true); bw = v.getInt32(o + 72, true); bh = v.getInt32(o + 76, true); img = dib(b, o + v.getUint32(o + 48, true), v.getUint32(o + 52, true), o + v.getUint32(o + 56, true), v.getUint32(o + 60, true)); }
+            else { bx = v.getInt32(o + 24, true); by = v.getInt32(o + 28, true); bw = v.getInt32(o + 32, true); bh = v.getInt32(o + 36, true); img = dib(b, o + v.getUint32(o + 84, true), v.getUint32(o + 88, true), o + v.getUint32(o + 92, true), v.getUint32(o + 96, true));
+              if (t === 77 && sz >= 108) { bw = v.getInt32(o + 100, true) ? bw : bw; } }
+            setT();
+            // the raster operation: a picture copied, or (with no picture) the brush painted, black, white, or the
+            // brush or white laid over what is there (XOR, drawn as a difference); the destination left as it is
+            var rop = t === 81 ? v.getUint32(o + 68, true) : v.getUint32(o + 40, true), br2 = st.brush;
+            if (img) { if (rop !== 0xaa0029) ctx.drawImage(img, bx, by, bw, bh); }
+            else if (rop === 0xf00021 && br2 && !br2.none) { ctx.fillStyle = br2.pat || rgb(br2.c); ctx.fillRect(bx, by, bw, bh); }
+            else if (rop === 0x000042 || rop === 0xff0062) { ctx.fillStyle = rop === 0x42 ? "#000" : "#fff"; ctx.fillRect(bx, by, bw, bh); }
+            else if ((rop === 0x5a0049 && br2 && !br2.none) || rop === 0x550009) xor(bx, by, bw, bh, rop === 0x550009 ? 0xffffff : br2.c);
+            else if (rop !== 0xaa0029) left.rop = (left.rop || 0) + 1;
+            break;
+          case 20: st.rop2 = v.getUint32(o + 8, true); break;
+          case 1: case 13: case 16: case 21: case 23: case 57: case 58: case 70: case 98: case 75: case 48: case 49: case 50: case 52: break;
+          default: left[t] = (left[t] || 0) + 1;
+        }
+      } catch (e) { left.broken = (left.broken || 0) + 1; }
+      o += sz;
+    }
+    if (!drawn) return null;   // nothing in it Lantern draws: not a picture to show
+    var url;
+    try { url = cv.toDataURL("image\x2Fpng"); } catch (e) { return null; }
+    return { url: url, w: cv.width, h: cv.height, left: left };
+  }
+  L.emf = { info: info, draw: draw };
+})();
+// ===========================================================================
+// MODULE: EMF_DRAW - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: PPTX_TEXT - START
+// Depends: CORE (window.Lantern) -- feature-detected
+// Exports: Lantern.pptx.xmlOf = {kids, name, child, path, below, rid, num,
+//          esc, x, E}; Lantern.pptx.paras(txBody, chain, rels),
+//          parasHtml(paras), table(tbl, rels) (PowerPoint's text as a
+//          slide's HTML); Lantern.pptx.draw(html) -> {paras, tables, lost}
+//          and parXml(p, link, o), tableXml(t, box, link, o) (a slide's HTML
+//          as PowerPoint's text)
+// ===========================================================================
+// The text of a slide both ways (1.24.33). In: each paragraph of a text box
+// with its level and its bullet or number -- its own, or the one its list
+// style, its placeholder on the layout and the master, or the master's text
+// styles give that level -- and its runs' bold, italic, underline, strike,
+// raised or lowered, and links; a table's cells, joined cells kept joined.
+// Out: a slide's HTML (paragraphs, headings, bullet and numbered lists at
+// their levels, the same looks and links, tables) as DrawingML paragraphs.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var P = L.pptx = L.pptx || {};
+  var R = ["http:\x2F\x2Fschemas.openxmlformats.org\x2FofficeDocument\x2F2006\x2Frelationships", "http:\x2F\x2Fpurl.oclc.org\x2Fooxml\x2FofficeDocument\x2Frelationships"];
+  function kids(el) { var a = []; for (var n = el ? el.firstChild : null; n; n = n.nextSibling) if (n.nodeType === 1) a.push(n); return a; }
+  function name(el) { return el.localName || String(el.nodeName).replace(/^.*:/, ""); }
+  function child(el, n) { if (!el) return null; var k = kids(el); for (var i = 0; i < k.length; i++) if (name(k[i]) === n) return k[i]; return null; }
+  function path(el) { for (var i = 1; i < arguments.length && el; i++) el = child(el, arguments[i]); return el || null; }
+  function below(el, n) {
+    var out = [];
+    (function walk(e) { kids(e).forEach(function (k) { if (name(k) === n) out.push(k); walk(k); }); })(el);
+    return out;
+  }
+  function rid(el, a) {
+    if (!el) return null;
+    for (var i = 0; i < R.length; i++) { var v = el.getAttributeNS ? el.getAttributeNS(R[i], a) : null; if (v) return v; }
+    return el.getAttribute("r:" + a) || null;
+  }
+  function num(v, d) { var n = parseInt(v, 10); return isNaN(n) ? d : n; }
+  function esc(t) { return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\x22/g, "&quot;"); }
+  // x(text): text for XML, without the control characters XML cannot hold
+  function x(t) { return esc(String(t == null ? "" : t).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]/g, "")); }
+  // E("a:off", {x: 0, y: 0}) -> <a:off x="0" y="0"/>; E("a:t", null, "text") -> <a:t>text<\x2Fa:t>
+  function E(n, at, inner) {
+    var s = "<" + n;
+    if (at) for (var k in at) if (at[k] != null && at[k] !== false) s += " " + k + "=\x22" + x(at[k]) + "\x22";
+    return s + (inner == null ? "\x2F>" : ">" + inner + "<\x2F" + n + ">");
+  }
+  P.xmlOf = { kids: kids, name: name, child: child, path: path, below: below, rid: rid, num: num, esc: esc, x: x, E: E };
+
+  // ---- in: PowerPoint's text as HTML ---------------------------------------------------------------------------
+  function bulletOf(pPr, lvl, chain) {
+    var cands = [pPr].concat(chain.map(function (ls) { return ls && child(ls, "lvl" + (lvl + 1) + "pPr"); }));
+    for (var i = 0; i < cands.length; i++) {
+      var e = cands[i];
+      if (!e) continue;
+      if (child(e, "buNone")) return null;
+      var an = child(e, "buAutoNum");
+      if (an) return { tag: "ol", start: num(an.getAttribute("startAt"), 1) };
+      if (child(e, "buChar") || child(e, "buBlip")) return { tag: "ul" };
+    }
+    return null;
+  }
+  function runHtml(r, rels) {
+    var rp = child(r, "rPr"), t = esc((child(r, "t") || r).textContent || "").replace(/\x0b/g, "<br>");
+    if (!t) return "";
+    if (rp) {
+      var on = function (a) { var v = rp.getAttribute(a); return v === "1" || v === "true"; };
+      if (on("b")) t = "<b>" + t + "<\x2Fb>";
+      if (on("i")) t = "<i>" + t + "<\x2Fi>";
+      var u = rp.getAttribute("u");
+      if (u && u !== "none") t = "<u>" + t + "<\x2Fu>";
+      var st = rp.getAttribute("strike");
+      if (st && st !== "noStrike") t = "<s>" + t + "<\x2Fs>";
+      var bl = num(rp.getAttribute("baseline"), 0);
+      if (bl > 0) t = "<sup>" + t + "<\x2Fsup>"; else if (bl < 0) t = "<sub>" + t + "<\x2Fsub>";
+      var hl = child(rp, "hlinkClick"), id = hl && rid(hl, "id"), rel = id && rels[id];
+      if (rel && rel.external && /^(https?:|mailto:)/i.test(rel.target)) t = "<a href=\x22" + esc(rel.target) + "\x22>" + t + "<\x2Fa>";
+    }
+    return t;
+  }
+  // paras(txBody, chain, rels) -> [{lvl, bullet: "ul"|"ol"|null, start, html, text}]
+  function paras(tx, chain, rels) {
+    var out = [];
+    kids(tx).forEach(function (p) {
+      if (name(p) !== "p") return;
+      var pPr = child(p, "pPr"), lvl = Math.min(8, num(pPr && pPr.getAttribute("lvl"), 0)), html = "", text = "";
+      kids(p).forEach(function (r) {
+        var n = name(r);
+        if (n === "r" || n === "fld") { html += runHtml(r, rels || {}); text += (child(r, "t") || r).textContent || ""; }
+        else if (n === "br") { html += "<br>"; text += " "; }
+      });
+      text = text.replace(/[\s\x0b]+/g, " ").replace(/^\s+|\s+$/g, "");
+      // runs side by side with the same look are one: <b>a<\x2Fb><b>b<\x2Fb> is <b>ab<\x2Fb>
+      html = html.replace(/<\x2F(b|i|u|s|sup|sub)><\1>/g, "");
+      var bu = text ? bulletOf(pPr, lvl, chain || []) : null;
+      out.push({ lvl: lvl, bullet: bu ? bu.tag : null, start: bu && bu.start, html: text ? html.replace(/^(\s|<br>)+|(\s|<br>)+$/g, "") : "", text: text });
+    });
+    return out;
+  }
+  // parasHtml(paras): bullets and numbers as lists, nested by level
+  function parasHtml(ps) {
+    var out = "", st = [];
+    function closeTo(d) { while (st.length > d) out += "<\x2Fli><\x2F" + st.pop() + ">"; }
+    ps.forEach(function (p) {
+      if (!p.text) return;
+      if (!p.bullet) { closeTo(0); out += "<p>" + p.html + "<\x2Fp>"; return; }
+      var d = Math.min(p.lvl, st.length) + 1;
+      closeTo(d);
+      if (st.length === d && st[d - 1] !== p.bullet) closeTo(d - 1);
+      if (st.length === d) out += "<\x2Fli><li>" + p.html;
+      else { out += "<" + p.bullet + (p.bullet === "ol" && p.start > 1 ? " start=\x22" + p.start + "\x22" : "") + "><li>" + p.html; st.push(p.bullet); }
+    });
+    closeTo(0);
+    return out;
+  }
+  // table(a:tbl, rels) -> HTML: the cells' text, joined cells kept joined, the header row as a header
+  function table(tbl, rels) {
+    var tp = child(tbl, "tblPr"), first = tp && /^(1|true)$/.test(tp.getAttribute("firstRow") || ""), out = "<table>";
+    kids(tbl).filter(function (e) { return name(e) === "tr"; }).forEach(function (tr, i) {
+      out += "<tr>";
+      kids(tr).filter(function (e) { return name(e) === "tc"; }).forEach(function (tc) {
+        if (/^(1|true)$/.test(tc.getAttribute("hMerge") || "") || /^(1|true)$/.test(tc.getAttribute("vMerge") || "")) return;
+        var tag = first && i === 0 ? "th" : "td", gs = num(tc.getAttribute("gridSpan"), 1), rs = num(tc.getAttribute("rowSpan"), 1);
+        var ps = paras(child(tc, "txBody") || tc, [], rels).filter(function (p) { return p.text; });
+        out += "<" + tag + (gs > 1 ? " colspan=\x22" + gs + "\x22" : "") + (rs > 1 ? " rowspan=\x22" + rs + "\x22" : "") + ">" + ps.map(function (p) { return p.html; }).join("<br>") + "<\x2F" + tag + ">";
+      });
+      out += "<\x2Ftr>";
+    });
+    return out + "<\x2Ftable>";
+  }
+  P.paras = paras;
+  P.parasHtml = parasHtml;
+  P.table = table;
+
+  // ---- out: a slide's HTML as PowerPoint's text ----------------------------------------------------------------
+  var INLINE = { b: { b: 1 }, strong: { b: 1 }, i: { i: 1 }, em: { i: 1 }, u: { u: 1 }, ins: { u: 1 }, s: { s: 1 }, strike: { s: 1 }, del: { s: 1 }, sup: { sup: 1 }, sub: { sub: 1 } };
+  var BLOCK = /^(p|div|blockquote|pre|section|article|header|footer|figure|figcaption|address|center|dd|dt|dl|main|aside|nav|li)$/;
+  function look(el, st) {
+    var o = {}, k, t = el.tagName.toLowerCase(), add = INLINE[t] || {}, css = el.getAttribute("style") || "";
+    for (k in st) o[k] = st[k];
+    for (k in add) o[k] = 1;
+    if (/font-weight\s*:\s*(bold|[6-9]00)/i.test(css)) o.b = 1;
+    if (/font-style\s*:\s*italic/i.test(css)) o.i = 1;
+    if (/text-decoration[^;]*underline/i.test(css)) o.u = 1;
+    if (/text-decoration[^;]*line-through/i.test(css)) o.s = 1;
+    if (t === "a" && /^(https?:|mailto:)/i.test(el.getAttribute("href") || "")) o.href = el.getAttribute("href");
+    return o;
+  }
+  // draw(html) -> {paras: [{lvl, list, start, head, cont, runs: [{t | br, b, i, u, s, sup, sub, href}]}], tables: [{rows}], lost}
+  function draw(html) {
+    var doc = new DOMParser().parseFromString("<!DOCTYPE html><html><body>" + String(html || "") + "<\x2Fbody><\x2Fhtml>", "text\x2Fhtml");
+    var out = [], tables = [], lost = {}, cur = null;
+    function para(o) { cur = { lvl: Math.min(8, o.lvl || 0), list: o.list || null, start: o.start || 0, head: !!o.head, cont: !!o.cont, runs: [] }; out.push(cur); return cur; }
+    function text(t, st, cx) {
+      t = t.replace(/[\s\u00a0]+/g, " ");
+      if (!cur) { if (!/\S/.test(t)) return; para({ lvl: cx.lvl, cont: cx.li }); }
+      var r = { t: t }, k;
+      for (k in st) r[k] = st[k];
+      cur.runs.push(r);
+    }
+    function list(el, tag, st, cx) {
+      var first = true, start = tag === "ol" ? num(el.getAttribute("start"), 1) : 0, d = Math.min(8, cx.depth);
+      for (var c = el.firstChild; c; c = c.nextSibling) {
+        if (c.nodeType === 3) { if (/\S/.test(c.data)) { cur = null; text(c.data, st, { lvl: d, li: true }); cur = null; } continue; }
+        if (c.nodeType !== 1) continue;
+        var t = c.tagName.toLowerCase();
+        if (t === "ul" || t === "ol") { cur = null; list(c, t, st, { lvl: d, depth: cx.depth + 1, li: true }); cur = null; continue; }
+        para({ lvl: d, list: tag, start: first && start > 1 ? start : 0 });
+        first = false;
+        walk(c, st, { lvl: d, depth: cx.depth + 1, li: true });
+        cur = null;
+      }
+    }
+    function walk(n, st, cx) {
+      for (var c = n.firstChild; c; c = c.nextSibling) {
+        if (c.nodeType === 3) { text(c.data, st, cx); continue; }
+        if (c.nodeType !== 1) continue;
+        var t = c.tagName.toLowerCase();
+        if (t === "br") { if (!cur) para({ lvl: cx.lvl, cont: cx.li }); cur.runs.push({ br: 1 }); continue; }
+        if (t === "ul" || t === "ol") { cur = null; list(c, t, st, cx); cur = null; continue; }
+        if (t === "table") { cur = null; tables.push(tableOf(c)); continue; }
+        if (/^(img|svg|canvas|video|audio|iframe|object|embed|picture)$/.test(t)) { lost.pictures = (lost.pictures || 0) + 1; continue; }
+        if (/^(script|style|template|head|title|meta|link)$/.test(t)) continue;
+        if (t === "hr") { cur = null; continue; }
+        var keep = cur && !cur.runs.length;   // a list item's first block is the item itself
+        if (/^h[1-6]$/.test(t)) {
+          if (keep) cur.head = true; else { cur = null; para({ lvl: cx.lvl, head: 1, cont: cx.li }); }
+          walk(c, look(c, (function () { var o = {}, k; for (k in st) o[k] = st[k]; o.b = 1; return o; })()), cx);
+          cur = null;
+          continue;
+        }
+        if (BLOCK.test(t)) { if (!keep) cur = null; walk(c, look(c, st), cx); cur = null; continue; }
+        walk(c, look(c, st), cx);
+      }
+    }
+    function tableOf(el) {
+      var rows = [];
+      Array.prototype.forEach.call(el.rows || [], function (tr) {
+        var row = [];
+        Array.prototype.forEach.call(tr.cells || [], function (td) {
+          var sub = draw(td.innerHTML), runs = [];
+          if (sub.tables.length) lost.nested = (lost.nested || 0) + sub.tables.length;
+          sub.paras.forEach(function (p, i) { if (i) runs.push({ br: 1 }); runs = runs.concat(p.runs); });
+          row.push({ runs: runs, colspan: Math.max(1, num(td.getAttribute("colspan"), 1)), rowspan: Math.max(1, num(td.getAttribute("rowspan"), 1)), th: td.tagName.toLowerCase() === "th" });
+        });
+        if (row.length) rows.push(row);
+      });
+      return { rows: rows };
+    }
+    walk(doc.body, {}, { lvl: 0, depth: 0, li: false });
+    // a paragraph's spaces at its ends, and empty paragraphs, go
+    out.forEach(function (p) {
+      while (p.runs.length && p.runs[0].t != null && !p.runs[0].t.replace(/^ +/, "")) p.runs.shift();
+      if (p.runs.length && p.runs[0].t != null) p.runs[0].t = p.runs[0].t.replace(/^ +/, "");
+      while (p.runs.length && (p.runs[p.runs.length - 1].br || (p.runs[p.runs.length - 1].t != null && !p.runs[p.runs.length - 1].t.replace(/ +$/, "")))) p.runs.pop();
+      if (p.runs.length && p.runs[p.runs.length - 1].t != null) p.runs[p.runs.length - 1].t = p.runs[p.runs.length - 1].t.replace(/ +$/, "");
+    });
+    return { paras: out.filter(function (p) { return p.runs.length; }), tables: tables, lost: lost };
+  }
+  // runXml(run, link(href) -> rId, o {sz, color}) -> <a:r> or <a:br/>
+  function rPr(r, link, o, tag) {
+    var at = { lang: o && o.lang, sz: o && o.sz, b: r.b ? 1 : null, i: r.i ? 1 : null, u: r.u ? "sng" : null, strike: r.s ? "sngStrike" : null, baseline: r.sup ? "30000" : r.sub ? "-25000" : null, dirty: "0" };
+    var inner = (o && o.color ? E("a:solidFill", null, E("a:srgbClr", { val: o.color })) : "") + (r.href && link ? E("a:hlinkClick", { "r:id": link(r.href) }) : "");
+    return E(tag || "a:rPr", at, inner || null);
+  }
+  function runXml(r, link, o) {
+    if (r.br) return E("a:br", null, rPr({}, null, o));
+    return E("a:r", null, rPr(r, link, o) + E("a:t", null, x(r.t)));
+  }
+  // parXml(p, link, o {sz, color, plain}) -> <a:p>: a list item at its level with the master's bullet, or its number (with
+  // room for "10."); any other paragraph without one
+  function parXml(p, link, o) {
+    var pp = "";
+    if (p.list === "ol") pp = E("a:pPr", { marL: 457200 * (p.lvl + 1), lvl: p.lvl || null, indent: -457200 }, E("a:buFont", { typeface: "+mj-lt" }) + E("a:buAutoNum", { type: "arabicPeriod", startAt: p.start > 1 ? p.start : null }));
+    else if (p.list === "ul") pp = p.lvl ? E("a:pPr", { lvl: p.lvl }) : "";
+    else if (!(o && o.plain)) pp = E("a:pPr", p.lvl ? { lvl: p.lvl, indent: 0 } : { marL: 0, indent: 0 }, E("a:buNone"));
+    var runs = p.runs.map(function (r) { if (p.head && !r.br) { var c = {}, k; for (k in r) c[k] = r[k]; c.b = 1; r = c; } return runXml(r, link, o); }).join("");
+    return E("a:p", null, pp + runs + rPr({}, null, o, "a:endParaRPr"));
+  }
+  // tableXml(t, {x, y, w, h}, link, o {id, sz, color, line}) -> a <p:graphicFrame> holding the table, each column as wide
+  function tableXml(t, b, link, o) {
+    var cols = 0, grid = [], i, j;
+    t.rows.forEach(function (row, ri) {
+      grid[ri] = grid[ri] || [];
+      var c = 0;
+      row.forEach(function (cell) {
+        while (grid[ri][c]) c++;
+        for (i = 0; i < cell.rowspan && ri + i < t.rows.length; i++) for (j = 0; j < cell.colspan; j++) { grid[ri + i] = grid[ri + i] || []; grid[ri + i][c + j] = { cell: cell, top: i === 0 && j === 0, h: j > 0, v: i > 0 }; }
+        c += cell.colspan;
+      });
+    });
+    grid.forEach(function (r) { cols = Math.max(cols, r.length); });
+    if (!cols) return "";
+    var cw = Math.floor(b.w / cols), rh = Math.max(254000, Math.floor(b.h / Math.max(1, grid.length)));
+    var ln = function (side) { return E("a:" + side, { w: 12700 }, E("a:solidFill", null, E("a:srgbClr", { val: o.line }))); };
+    var tcPr = E("a:tcPr", null, ln("lnL") + ln("lnR") + ln("lnT") + ln("lnB"));
+    var rows = grid.map(function (r) {
+      var cells = "";
+      for (var c = 0; c < cols; c++) {
+        var g = r[c], cell = g && g.cell;
+        var body = cell && g.top && cell.runs.length ? E("a:p", null, cell.runs.map(function (run) { var q = run; if (cell.th && !run.br) { q = {}; for (var k in run) q[k] = run[k]; q.b = 1; } return runXml(q, link, o); }).join("")) : E("a:p", null, rPr({}, null, o, "a:endParaRPr"));
+        cells += E("a:tc", g ? { gridSpan: g.top && cell.colspan > 1 ? cell.colspan : null, rowSpan: g.top && cell.rowspan > 1 ? cell.rowspan : null, hMerge: g.h ? 1 : null, vMerge: g.v ? 1 : null } : null,
+          E("a:txBody", null, E("a:bodyPr") + E("a:lstStyle") + body) + tcPr);
+      }
+      return E("a:tr", { h: rh }, cells);
+    }).join("");
+    var gridXml = "";
+    for (i = 0; i < cols; i++) gridXml += E("a:gridCol", { w: cw });
+    return E("p:graphicFrame", null,
+      E("p:nvGraphicFramePr", null, E("p:cNvPr", { id: o.id, name: "Table " + (o.id - 1) }) + E("p:cNvGraphicFramePr", null, E("a:graphicFrameLocks", { noGrp: 1 })) + E("p:nvPr")) +
+      E("p:xfrm", null, E("a:off", { x: Math.round(b.x), y: Math.round(b.y) }) + E("a:ext", { cx: cw * cols, cy: rh * grid.length })) +
+      E("a:graphic", null, E("a:graphicData", { uri: "http:\x2F\x2Fschemas.openxmlformats.org\x2Fdrawingml\x2F2006\x2Ftable" },
+        E("a:tbl", null, E("a:tblPr", { firstRow: t.rows[0] && t.rows[0].some(function (c) { return c.th; }) ? 1 : null }) + E("a:tblGrid", null, gridXml) + rows))));
+  }
+  P.draw = draw;
+  P.parXml = parXml;
+  P.tableXml = tableXml;
+  P.runXml = runXml;
+})();
+// ===========================================================================
+// MODULE: PPTX_TEXT - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: PPTX_READ - START
+// Depends: ZIP (Lantern.zip), PPTX_TEXT (Lantern.pptx.xmlOf, paras, parasHtml,
+//          table); ZIP_INFLATE (Lantern.inflate) and EMF_DRAW (Lantern.emf)
+//          for EMF and EMZ pictures -- feature-detected
+// Exports: Lantern.pptx.read(bytes, fileName) -> {title, slides: [{h, body,
+//          img, notes, pics?}], notes: [what was not kept], size: {cx, cy}}
+// ===========================================================================
+// A PowerPoint file (.pptx) as a Slides deck (1.24.33). Each slide's title
+// (its title box; on a slide with none, a short first line at the top, or
+// the slide's only line), its text in reading order -- bullets and numbers
+// at their levels, bold, italic, underline, links -- its tables, its charts
+// as tables of their numbers, its SmartArt as lists of its words, its
+// largest picture that a browser can show (a Lantern slide has one), and
+// its speaker notes. What a Lantern slide cannot hold is counted and said:
+// other pictures (each with its place, for Slides to put together), pictures
+// in WMF, and in EMF where there is no canvas to draw them on (EMF_DRAW draws
+// them in a browser), video and sound, comments, and the layout itself
+// (where each box sat, fonts, colours, the master's designs, transitions).
+// PowerPoint's usual names (p:, a:) and the Strict ones are both read, as
+// are the files Google Slides, Keynote and LibreOffice write.
+(function () {
+  var L = window.Lantern;
+  var P = L && L.pptx;
+  if (!P || !L.zip) return;
+  var X = P.xmlOf;
+  if (!X || !P.paras) return;
+  var kids = X.kids, name = X.name, child = X.child, path = X.path, below = X.below, rid = X.rid, num = X.num, paras = P.paras, parasHtml = P.parasHtml, table = P.table;
+  function parse(t) {
+    var x = new DOMParser().parseFromString(t, "application\x2Fxml");
+    if (!x || !x.documentElement || name(x.documentElement) === "parsererror" || x.getElementsByTagName("parsererror").length) throw new Error("the file is damaged: a part of it is not readable XML");
+    return x;
+  }
+  function join(from, target) {
+    if (/^\x2F/.test(target)) return target.replace(/^\x2F+/, "");
+    var p = from.replace(/[^\x2F]*$/, "").split("\x2F"), t = target.split("\x2F");
+    p.pop();
+    for (var i = 0; i < t.length; i++) { if (t[i] === "..") p.pop(); else if (t[i] !== ".") p.push(t[i]); }
+    return p.join("\x2F");
+  }
+  function b64(b) {
+    var s = "", i;
+    for (i = 0; i < b.length; i += 8192) s += String.fromCharCode.apply(null, Array.prototype.slice.call(b.subarray(i, i + 8192)));
+    return btoa(s);
+  }
+  // the pictures a browser shows, by the part's extension (or its first bytes)
+  var MIME = { png: "image\x2Fpng", jpg: "image\x2Fjpeg", jpeg: "image\x2Fjpeg", jpe: "image\x2Fjpeg", gif: "image\x2Fgif", bmp: "image\x2Fbmp", webp: "image\x2Fwebp", svg: "image\x2Fsvg+xml" };
+  function sniff(b) {
+    if (!b || b.length < 4) return null;
+    if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return MIME.png;
+    if (b[0] === 0xff && b[1] === 0xd8) return MIME.jpg;
+    if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return MIME.gif;
+    if (b[0] === 0x42 && b[1] === 0x4d) return MIME.bmp;
+    return null;
+  }
+  // which slides, said short: "slide 2", "slides 1, 4 and 6"
+  function onSlides(list) {
+    var u = [];
+    list.forEach(function (n) { if (u.indexOf(n) < 0) u.push(n); });
+    u.sort(function (a, b) { return a - b; });
+    if (u.length === 1) return "slide " + u[0];
+    if (u.length > 6) return u.length + " slides";
+    return "slides " + u.slice(0, -1).join(", ") + " and " + u[u.length - 1];
+  }
+
+  function read(bytes, fileName) {
+    var z = L.zip.read(bytes), cache = {};
+    function xml(n) { if (!n) return null; if (!(n in cache)) { var t = z.text(n); cache[n] = t == null ? null : parse(t); } return cache[n]; }
+    // rels("ppt/slides/slide1.xml") -> {rId: {type, target, external}}
+    function rels(n) {
+      var rn = n.replace(/([^\x2F]*)$/, "_rels\x2F$1.rels"), x = xml(rn), out = {};
+      if (!x) return out;
+      kids(x.documentElement).forEach(function (r) {
+        var ext = /^external$/i.test(r.getAttribute("TargetMode") || ""), tg = r.getAttribute("Target") || "";
+        out[r.getAttribute("Id")] = { type: (r.getAttribute("Type") || "").replace(/^.*\x2F/, ""), target: ext ? tg : join(n, tg), external: ext };
+      });
+      return out;
+    }
+    function byType(rs, type) { for (var k in rs) if (rs[k].type === type) return rs[k].target; return null; }
+    var ct = z.text("[Content_Types].xml") || "", pkg = rels(""), main = byType(pkg, "officeDocument");
+    if (!main || !/^ppt\x2F/i.test(main) || !/presentationml/.test(ct)) {
+      if (/wordprocessingml/.test(ct)) throw new Error("this is a Word document (.docx), not a PowerPoint presentation; Writer opens Word files");
+      if (/spreadsheetml/.test(ct)) throw new Error("this is an Excel workbook (.xlsx), not a PowerPoint presentation; Sheets opens Excel files");
+      if (!main && z.has("ppt\x2Fpresentation.xml")) main = "ppt\x2Fpresentation.xml";
+      else throw new Error("this zip file has no PowerPoint presentation in it");
+    }
+    var px = xml(main);
+    if (!px) throw new Error("this zip file has no PowerPoint presentation in it");
+    var pr = rels(main), root = px.documentElement, sz = child(root, "sldSz");
+    var W = sz ? num(sz.getAttribute("cx"), 9144000) : 9144000, H = sz ? num(sz.getAttribute("cy"), 6858000) : 6858000;
+    var miss = {}, slides = [];
+    function lose(kind, slide, n) { var m = miss[kind] = miss[kind] || { n: 0, on: [], what: {} }; m.n += n || 1; if (slide) m.on.push(slide); return m; }
+
+    // a layout's or master's placeholders: [{type, idx, el}]
+    var phCache = {};
+    function phOf(sp) { var nv = child(sp, "nvSpPr") || child(sp, "nvPicPr") || child(sp, "nvGraphicFramePr"), ph = nv && path(nv, "nvPr", "ph"); return ph ? { type: ph.getAttribute("type") || "obj", idx: ph.getAttribute("idx") || "0" } : null; }
+    function placeholders(part) {
+      if (!part) return [];
+      if (phCache[part]) return phCache[part];
+      var x = xml(part), out = [];
+      if (x) below(path(x.documentElement, "cSld", "spTree") || x.documentElement, "sp").forEach(function (sp) { var ph = phOf(sp); if (ph) out.push({ type: ph.type, idx: ph.idx, el: sp }); });
+      return (phCache[part] = out);
+    }
+    var KIND = { ctrTitle: "title", title: "title", subTitle: "body", body: "body", obj: "body" };
+    function findPh(list, ph, byIdx) {
+      var i;
+      if (byIdx && ph.idx !== "0") for (i = 0; i < list.length; i++) if (list[i].idx === ph.idx) return list[i].el;
+      for (i = 0; i < list.length; i++) if (list[i].type === ph.type) return list[i].el;
+      for (i = 0; i < list.length; i++) if (KIND[list[i].type] && KIND[list[i].type] === KIND[ph.type]) return list[i].el;
+      return null;
+    }
+    // where a shape is (its own place, or its placeholder's on the layout, then the master)
+    function xfrmOf(el) { var sp = child(el, "spPr") || child(el, "grpSpPr"); return (sp && child(sp, "xfrm")) || child(el, "xfrm"); }
+    function box(x) {
+      var off = x && child(x, "off"), ext = x && child(x, "ext");
+      return off && ext ? { x: num(off.getAttribute("x"), 0), y: num(off.getAttribute("y"), 0), w: num(ext.getAttribute("cx"), 0), h: num(ext.getAttribute("cy"), 0) } : null;
+    }
+
+    var deckTitle = "";
+    var core = byType(pkg, "core-properties"), cx = core && xml(core);
+    if (cx) { var t = below(cx.documentElement, "title")[0]; if (t && t.textContent) deckTitle = t.textContent.replace(/\s+/g, " ").replace(/^\s+|\s+$/g, ""); }
+    if (/^(PowerPoint Presentation|Presentation\s*\d*|Untitled[\s\w]*)$/i.test(deckTitle)) deckTitle = "";   // the name PowerPoint gives a new file
+    var masterStyles = {};
+    function txStyles(master) {
+      if (!master) return {};
+      if (masterStyles[master]) return masterStyles[master];
+      var x = xml(master), ts = x && child(x.documentElement, "txStyles");
+      return (masterStyles[master] = { title: ts && child(ts, "titleStyle"), body: ts && child(ts, "bodyStyle"), other: ts && child(ts, "otherStyle") });
+    }
+    var defStyle = child(root, "defaultTextStyle");
+
+    var ids = kids(child(root, "sldIdLst")).filter(function (e) { return name(e) === "sldId"; });
+    ids.forEach(function (sid, k) {
+      var no = k + 1, part = pr[rid(sid, "id")] && pr[rid(sid, "id")].target, x = part && xml(part);
+      if (!x) { lose("broken", no); return; }
+      var sr = rels(part), layout = byType(sr, "slideLayout"), master = layout && byType(rels(layout), "slideMaster");
+      var lph = placeholders(layout), mph = placeholders(master), styles = txStyles(master);
+      if (x.documentElement.getAttribute("show") === "0") lose("hidden", no);
+      var items = [], pics = [], titleEl = null;
+      function chainFor(sp, ph) {
+        var c = [path(sp, "txBody", "lstStyle")];
+        if (ph) {
+          var a = findPh(lph, ph, true), b = findPh(mph, ph, false);
+          c.push(a && path(a, "txBody", "lstStyle"), b && path(b, "txBody", "lstStyle"), KIND[ph.type] === "title" ? styles.title : KIND[ph.type] === "body" ? styles.body : styles.other);
+        } else c.push(styles.other, defStyle);
+        return c.filter(function (e) { return !!e; });
+      }
+      function placeOf(el, ph, tf) {
+        var b = box(xfrmOf(el));
+        if (!b && ph) { var a = findPh(lph, ph, true) || findPh(mph, ph, false); if (a) b = box(xfrmOf(a)); if (!b) { a = findPh(mph, ph, false); if (a) b = box(xfrmOf(a)); } }
+        b = b || { x: 0, y: 0, w: 0, h: 0 };
+        return tf ? tf(b) : b;
+      }
+      // a picture: kept if it is the largest a browser shows
+      function picture(embed, b, ole) {
+        var r = sr[embed];
+        if (!r || r.external || !z.has(r.target)) { lose("linked", no); return; }
+        var ext = (r.target.match(/\.([a-z0-9]+)$/i) || ["", ""])[1].toLowerCase(), data = z.bytes(r.target), mime = MIME[ext] || sniff(data), url = null;
+        // (1.24.33) an EMF picture (EMZ: packed) drawn by Lantern where a canvas is there to draw it on (EMF_DRAW)
+        if (!mime && /^(emf|emz)$/.test(ext) && L.emf && L.emf.draw) {
+          var eb = ext === "emz" ? gunzip(data) : data, dr = null;
+          try { dr = eb && L.emf.draw(eb, 1600); } catch (e) { dr = null; }
+          if (dr) { url = dr.url; mime = "image\x2Fpng"; lose(ole ? "oleEmf" : "emfDrawn", no); if (Object.keys(dr.left).length) lose("emfPart", no); }
+        }
+        if (!mime) { var m = lose(ole ? "ole" : "unshown", no); m.fmt = m.fmt || {}; m.fmt[ext.toUpperCase() || "?"] = 1; if (ole) m.what[ole] = 1; return; }
+        if (ole) lose("oleShown", no).what[ole] = 1;
+        pics.push({ area: b.w * b.h, url: url || "data:" + mime + ";base64," + b64(data), b: b });
+      }
+      function walk(parent, tf) {
+        kids(parent).forEach(function (el) {
+          var n = name(el), ph;
+          if (n === "AlternateContent") { var fb = child(el, "Fallback"), ch = child(el, "Choice"); walk(fb && kids(fb).length ? fb : ch || el, tf); return; }
+          if (n === "grpSp") {
+            var gx = xfrmOf(el), off = gx && child(gx, "off"), ext = gx && child(gx, "ext"), co = gx && child(gx, "chOff"), ce = gx && child(gx, "chExt");
+            var inner = tf;
+            if (off && ext && co && ce) {
+              var ox = num(off.getAttribute("x"), 0), oy = num(off.getAttribute("y"), 0), sx = num(ext.getAttribute("cx"), 1) / (num(ce.getAttribute("cx"), 1) || 1), sy = num(ext.getAttribute("cy"), 1) / (num(ce.getAttribute("cy"), 1) || 1);
+              var cox = num(co.getAttribute("x"), 0), coy = num(co.getAttribute("y"), 0);
+              inner = function (b) { b = { x: ox + (b.x - cox) * sx, y: oy + (b.y - coy) * sy, w: b.w * sx, h: b.h * sy }; return tf ? tf(b) : b; };
+            }
+            walk(el, inner);
+            return;
+          }
+          if (n === "sp") {
+            ph = phOf(el);
+            if (ph && /^(dt|ftr|sldNum|hdr)$/.test(ph.type)) return;   // the footer, date and number: the deck's, not the slide's
+            var b = placeOf(el, ph, tf), tx = child(el, "txBody"), ps = tx ? paras(tx, chainFor(el, ph), sr) : [];
+            var fill = path(el, "spPr", "blipFill");
+            if (fill && child(fill, "blip")) picture(rid(child(fill, "blip"), "embed"), b);
+            if (!ps.some(function (p) { return p.text; })) { if (!ph && !fill) lose("shapes", no); return; }
+            var it = { ps: ps, b: b, ph: ph };
+            if (ph && KIND[ph.type] === "title" && !titleEl) titleEl = it;
+            items.push(it);
+            return;
+          }
+          if (n === "pic") {
+            var nvp = path(el, "nvPicPr", "nvPr");
+            if (nvp && (child(nvp, "videoFile") || child(nvp, "audioFile") || child(nvp, "quickTimeFile") || below(nvp, "media").length)) { lose("media", no); return; }
+            var bl = path(el, "blipFill", "blip");
+            if (bl) picture(rid(bl, "embed"), placeOf(el, phOf(el), tf));
+            return;
+          }
+          if (n === "graphicFrame") {
+            var gd = path(el, "graphic", "graphicData"), uri = gd ? gd.getAttribute("uri") || "" : "", gb = placeOf(el, phOf(el), tf);
+            var tbl = gd && child(gd, "tbl");
+            if (tbl) { items.push({ table: table(tbl, sr), b: gb }); return; }
+            if (/\x2Fchart$/.test(uri)) {
+              var cref = below(gd, "chart")[0], cpart = cref && sr[rid(cref, "id")], ctab = cpart && !cpart.external ? chartTable(xml(cpart.target)) : "";
+              if (ctab) { items.push({ table: ctab, b: gb }); lose("chartTable", no); } else lose("chart", no);
+              return;
+            }
+            if (/\x2Fdiagram$/.test(uri)) {
+              var ids = below(gd, "relIds")[0], dpart = ids && sr[rid(ids, "dm")], dlist = dpart && !dpart.external ? smartList(xml(dpart.target)) : "";
+              if (dlist) { items.push({ table: dlist, b: gb }); lose("smartList", no); } else lose("smartart", no);
+              return;
+            }
+            if (/\x2Fole$/.test(uri)) {
+              var oles = below(gd, "oleObj"), prog = oles.length ? String(oles[0].getAttribute("progId") || "").split(".")[0] : "", opic = below(gd, "pic")[0], obl = opic && path(opic, "blipFill", "blip");
+              if (obl) picture(rid(obl, "embed"), gb, prog || "OLE"); else lose("ole", no).what[prog || "OLE"] = 1;
+              return;
+            }
+            lose("other", no);
+            return;
+          }
+          if (n === "cxnSp") { lose("shapes", no); return; }
+          if (n === "contentPart") { lose("ink", no); return; }
+        });
+      }
+      walk(path(x.documentElement, "cSld", "spTree") || x.documentElement, null);
+      if (child(path(x.documentElement, "cSld"), "bg") && below(child(path(x.documentElement, "cSld"), "bg"), "blip").length) lose("background", no);
+      if (byType(sr, "comments") || byType(sr, "comment")) lose("comments", no);
+
+      // reading order: the title, then top to bottom, and left to right along a line
+      var tol = H / 24;
+      items.sort(function (a, c) { var ya = Math.round(a.b.y / tol), yc = Math.round(c.b.y / tol); return ya !== yc ? ya - yc : a.b.x - c.b.x; });
+      var texts = items.filter(function (it) { return it.ps; });
+      if (!titleEl && texts.length) {
+        var first = texts[0], lines = first.ps.filter(function (p) { return p.text; });
+        var short = lines.length === 1 && lines[0].text.length <= 80 && !lines[0].bullet;
+        var only = items.length === 1;
+        if (short && (only || first.b.y < H * 0.3)) { titleEl = first; lose("titled", no); }
+      }
+      var h = titleEl ? titleEl.ps.filter(function (p) { return p.text; }).map(function (p) { return p.text; }).join(" ").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "") : "";
+      var body = items.filter(function (it) { return it !== titleEl; }).map(function (it) { return it.table || parasHtml(it.ps); }).join("");
+      var s = { h: h, body: body };
+      // the largest picture; with others, all of them and where each sat (Slides puts them together into one picture
+      // where a browser can: SLIDES_PPTX)
+      var order = pics.slice();
+      pics.sort(function (a, c) { return c.area - a.area; });
+      if (pics.length) s.img = pics[0].url;
+      if (pics.length > 1) { lose("pictures", no, pics.length - 1); s.pics = order.map(function (p) { return { url: p.url, x: p.b.x, y: p.b.y, w: p.b.w, h: p.b.h }; }); }
+      var notes = byType(sr, "notesSlide"), nx = notes && xml(notes);
+      if (nx) {
+        var nt = [];
+        below(nx.documentElement, "sp").forEach(function (sp) {
+          var ph = phOf(sp);
+          if (!ph || ph.type !== "body") return;
+          paras(child(sp, "txBody"), [], {}).forEach(function (p) { if (p.text) nt.push((p.bullet ? "- " : "") + p.text); });
+        });
+        if (nt.length) s.notes = nt.join("\n");
+      }
+      slides.push(s);
+    });
+    if (!slides.length) throw new Error(ids.length ? "none of its slides could be read" : "the presentation has no slides");
+
+    var out = [];
+    function said(kind, text) { var m = miss[kind]; if (m) out.push(text(m) + (m.on.length ? " (" + onSlides(m.on) + ")" : "")); }
+    function many(n, one, more) { return n + " " + (n === 1 ? one : more); }
+    said("pictures", function (m) { return many(m.n, "more picture", "more pictures") + ": a slide in Lantern holds one picture, and kept its largest"; });
+    // a kind no browser shows, or (EMF, EMZ) one Lantern could not draw here
+    function kinds(m) { var f = Object.keys(m.fmt || {}), emf = f.filter(function (k) { return /^EM[FZ]$/.test(k); }), other = f.filter(function (k) { return !/^EM[FZ]$/.test(k); });
+      return [emf.length ? emf.join(" or ") + " that Lantern could not draw" + (L.emf ? "" : " (it has no EMF drawing here)") : "", other.length ? other.join(" or ") + ", which no browser shows" : ""].filter(String).join(", and in "); }
+    said("ole", function (m) { return many(m.n, "object", "objects") + " made in another program (" + Object.keys(m.what).join(", ") + ") " + (Object.keys(m.fmt || {}).length ? "whose pictures are in " + kinds(m) : "with no picture of its own") + ": open the file in PowerPoint or LibreOffice to see them"; });
+    said("oleShown", function (m) { return "objects made in another program (" + Object.keys(m.what).join(", ") + ") kept as pictures" + (miss.oleEmf ? ", drawn by Lantern from their EMF (no browser draws EMF): look at them beside the original;" : ":") + " they cannot be edited here"; });
+    said("unshown", function (m) { return many(m.n, "picture", "pictures") + " in " + kinds(m); });
+    said("emfDrawn", function (m) { return many(m.n, "picture", "pictures") + " in EMF drawn by Lantern (no browser draws EMF): look at " + (m.n === 1 ? "it" : "them") + " beside the original"; });
+    said("emfPart", function (m) { return "parts of EMF pictures Lantern does not draw yet"; });
+    said("linked", function (m) { return many(m.n, "picture", "pictures") + " linked from outside the file, or missing from it"; });
+    said("chartTable", function (m) { return many(m.n, "chart", "charts") + " kept as " + (m.n === 1 ? "a table of its" : "tables of their") + " numbers: Slides does not draw charts"; });
+    said("chart", function (m) { return many(m.n, "chart", "charts") + " with no numbers Lantern could read"; });
+    said("smartList", function (m) { return many(m.n, "SmartArt diagram", "SmartArt diagrams") + " kept as " + (m.n === 1 ? "a list of its" : "lists of their") + " words: Slides does not draw SmartArt"; });
+    said("smartart", function (m) { return many(m.n, "SmartArt diagram", "SmartArt diagrams") + " with no words Lantern could read"; });
+    said("media", function (m) { return many(m.n, "video or sound", "videos or sounds"); });
+    said("ink", function (m) { return "ink drawings"; });
+    said("comments", function (m) { return "comments"; });
+    said("background", function (m) { return "background pictures"; });
+    said("other", function (m) { return many(m.n, "object", "objects") + " of a kind Lantern does not read"; });
+    said("broken", function (m) { return many(m.n, "slide", "slides") + " that could not be read, left out"; });
+    said("hidden", function (m) { return "slides hidden in PowerPoint are shown here, in their places"; });
+    said("titled", function (m) { return "a slide with no title box takes its short first line as its title"; });
+    out.push("the layout: where each box and picture sat, fonts, sizes and colours, drawn shapes and lines" + (miss.shapes ? " (" + onSlides(miss.shapes.on) + ")" : "") +
+      ", the slide master\u2019s designs and logos, transitions and animations. Each slide is a title, its text and one picture, in Lantern\u2019s colours");
+    return { title: deckTitle || (fileName ? String(fileName).replace(/^.*[\\\x2F]/, "").replace(/\.pptx?$/i, "") : "") || slides[0].h || "Presentation", slides: slides, notes: out, size: { cx: W, cy: H } };
+  }
+
+  // gunzip(bytes) -> what a gzip file (an .emz picture) holds, or null
+  function gunzip(b) {
+    if (!b || b.length < 18 || b[0] !== 0x1f || b[1] !== 0x8b || b[2] !== 8 || !L.inflate) return null;
+    var f = b[3], o = 10;
+    if (f & 4) o += 2 + (b[o] | b[o + 1] << 8);
+    if (f & 8) { while (o < b.length && b[o]) o++; o++; }
+    if (f & 16) { while (o < b.length && b[o]) o++; o++; }
+    if (f & 2) o += 2;
+    var n = b[b.length - 4] | b[b.length - 3] << 8 | b[b.length - 2] << 16 | b[b.length - 1] << 24;
+    try { return L.inflate(b.subarray(o, b.length - 8), n >>> 0); } catch (e) { return null; }
+  }
+  // chartTable(chart part) -> a table of the chart's numbers (its title above it), from the values PowerPoint keeps
+  // with the chart: a row for each category, a column for each series
+  function chartTable(cx) {
+    if (!cx) return "";
+    var e = X.esc, sers = below(cx.documentElement, "ser");
+    if (!sers.length) return "";
+    function pts(el) { var o = {}; below(el, "pt").forEach(function (p) { var v = child(p, "v"); o[p.getAttribute("idx")] = v ? v.textContent : ""; }); return o; }
+    var cols = sers.map(function (s) {
+      var tx = child(s, "tx"), nm = tx ? below(tx, "v").concat(below(tx, "t")).map(function (v) { return v.textContent; }).join("") : "";
+      return { name: nm, cats: pts(child(s, "cat") || child(s, "xVal")), vals: pts(child(s, "val") || child(s, "yVal")) };
+    });
+    var idx = [], k;
+    cols.forEach(function (c) { for (k in c.vals) if (idx.indexOf(k) < 0) idx.push(k); });
+    if (!idx.length) return "";
+    idx.sort(function (a, b) { return +a - +b; });
+    var title = below(cx.documentElement, "title")[0], tt = title ? below(title, "t").map(function (t) { return t.textContent; }).join("") : "";
+    var out = (tt ? "<p><b>" + e(tt) + "<\x2Fb><\x2Fp>" : "") + "<table><tr><th><\x2Fth>" + cols.map(function (c, i) { return "<th>" + e(c.name || "Series " + (i + 1)) + "<\x2Fth>"; }).join("") + "<\x2Ftr>";
+    idx.forEach(function (i) {
+      var cat = cols[0].cats[i];
+      out += "<tr><td>" + e(cat == null ? String(+i + 1) : cat) + "<\x2Ftd>" + cols.map(function (c) { return "<td>" + e(c.vals[i] == null ? "" : c.vals[i]) + "<\x2Ftd>"; }).join("") + "<\x2Ftr>";
+    });
+    return out + "<\x2Ftable>";
+  }
+  // smartList(SmartArt's data part) -> its words as a list, each point's text in order, a point under another one level in
+  function smartList(dx) {
+    if (!dx) return "";
+    var pts = {}, order = [], par = {};
+    below(dx.documentElement, "pt").forEach(function (p) {
+      var ty = p.getAttribute("type") || "node";
+      if (ty !== "node") return;
+      var tt = child(p, "t"), t = (tt ? below(tt, "t") : []).map(function (e) { return e.textContent; }).join(" ").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "");
+      if (!t) return;
+      pts[p.getAttribute("modelId")] = t; order.push(p.getAttribute("modelId"));
+    });
+    below(dx.documentElement, "cxn").forEach(function (c) { var ty = c.getAttribute("type") || "parOf"; if (ty === "parOf") par[c.getAttribute("destId")] = c.getAttribute("srcId"); });
+    if (!order.length) return "";
+    function depth(id) { var d = 0; for (var p = par[id], n = 0; p && n < 9; p = par[p], n++) if (pts[p]) d++; return d; }
+    return P.parasHtml(order.map(function (id) { return { lvl: Math.min(8, depth(id)), bullet: "ul", html: X.esc(pts[id]), text: pts[id] }; }));
+  }
+  P.read = read;
+})();
+// ===========================================================================
+// MODULE: PPTX_READ - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: PPTX_WRITE - START
+// Depends: ZIP (Lantern.zip.write), PPTX_TEXT (Lantern.pptx.xmlOf, draw,
+//          parXml, tableXml) -- feature-detected
+// Exports: Lantern.pptx.write(deck) -> {bytes, notes}; Lantern.pptx.save(deck)
+//          -> notes (downloads it); Lantern.pptx.fileName(title)
+// ===========================================================================
+// A Slides deck as a PowerPoint file (1.24.33) that PowerPoint, LibreOffice
+// Impress, Google Slides and Keynote open: each slide its title in the title
+// box and its text in the content box (bullets and numbers at their levels,
+// bold, italic, underline, links), its tables as tables, its picture beside
+// the text (or across the slide when there is no text), and its speaker
+// notes as notes. The deck's colours (its theme in Slides) are the file's
+// theme -- background, text, titles and links -- so a theme chosen in
+// PowerPoint afterwards recolours it as any deck. Wide (16:9), Georgia, as
+// Lantern shows it.
+(function () {
+  var L = window.Lantern, P = L && L.pptx, X = P && P.xmlOf;
+  if (!X || !P.draw || !L.zip) return;
+  var E = X.E, x = X.x;
+  var S = "http:\x2F\x2Fschemas.openxmlformats.org\x2F", A = S + "drawingml\x2F2006\x2Fmain", RT = S + "officeDocument\x2F2006\x2Frelationships", PM = S + "presentationml\x2F2006\x2Fmain";
+  var PR = S + "package\x2F2006\x2Frelationships", OD = "application\x2Fvnd.openxmlformats-officedocument.", HEAD = "<?xml version=\x221.0\x22 encoding=\x22UTF-8\x22 standalone=\x22yes\x22?>\r\n";
+  var NS = { "xmlns:a": A, "xmlns:r": RT, "xmlns:p": PM };
+  var SW = 12192000, SH = 6858000;              // 16:9, 13.333 by 7.5 inches
+  var TB = { x: 838200, y: 365125, w: 10515600, h: 1325563 }, BB = { x: 838200, y: 1825625, w: 10515600, h: 4351338 };
+  var NIGHT = { bg: "#0b0f14", fg: "#ffffff", accent: "#c2410c" };   // Slides' own colours (SLIDES_EXPORT)
+  function hex(c, d) {
+    var m = /^#?([0-9a-f]{6}|[0-9a-f]{3})$/i.exec(String(c || "").replace(/\s+/g, ""));
+    if (!m) return d;
+    var h = m[1].length === 3 ? m[1].replace(/(.)/g, "$1$1") : m[1];
+    return h.toUpperCase();
+  }
+  function dark(h) { var n = parseInt(h, 16); return (0.299 * (n >> 16 & 255) + 0.587 * (n >> 8 & 255) + 0.114 * (n & 255)) < 128; }
+  function root(n, inner, at) { var a = {}, k; for (k in NS) a[k] = NS[k]; for (k in at || {}) a[k] = at[k]; return HEAD + E(n, a, inner); }
+  function rels(list) { return HEAD + E("Relationships", { xmlns: PR }, list.map(function (r) { return E("Relationship", { Id: r.id, Type: r.type.indexOf(":") > 0 ? r.type : RT + "\x2F" + r.type, Target: r.target, TargetMode: r.external ? "External" : null }); }).join("")); }
+  var GRP = E("p:nvGrpSpPr", null, E("p:cNvPr", { id: 1, name: "" }) + E("p:cNvGrpSpPr") + E("p:nvPr")) +
+    E("p:grpSpPr", null, E("a:xfrm", null, E("a:off", { x: 0, y: 0 }) + E("a:ext", { cx: 0, cy: 0 }) + E("a:chOff", { x: 0, y: 0 }) + E("a:chExt", { cx: 0, cy: 0 })));
+  function xfrm(b) { return E("a:xfrm", null, E("a:off", { x: Math.round(b.x), y: Math.round(b.y) }) + E("a:ext", { cx: Math.round(b.w), cy: Math.round(b.h) })); }
+  function rect() { return E("a:prstGeom", { prst: "rect" }, E("a:avLst")); }
+  // a placeholder: <p:sp> with its <p:ph>, a place if given, and its paragraphs
+  function ph(id, nm, phAt, b, body, bodyPr) {
+    return E("p:sp", null, E("p:nvSpPr", null, E("p:cNvPr", { id: id, name: nm }) + E("p:cNvSpPr", null, E("a:spLocks", { noGrp: 1 })) + E("p:nvPr", null, E("p:ph", phAt))) +
+      (b ? E("p:spPr", null, xfrm(b) + rect()) : E("p:spPr")) + (body == null ? "" : E("p:txBody", null, (bodyPr || E("a:bodyPr")) + E("a:lstStyle") + body)));
+  }
+  function defR(sz, clr, font) { return E("a:defRPr", { sz: sz, kern: 1200 }, E("a:solidFill", null, E("a:schemeClr", { val: clr })) + E("a:latin", { typeface: font + "-lt" }) + E("a:ea", { typeface: font + "-ea" }) + E("a:cs", { typeface: font + "-cs" })); }
+  // the theme: the deck's background as Background 1, its text as Text 1, its title colour as Accent 1
+  function theme(c, nm) {
+    var sys = function (n, v) { return E("a:" + n, null, E("a:srgbClr", { val: v })); };
+    var clr = E("a:clrScheme", { name: nm }, sys("dk1", c.fg) + sys("lt1", c.bg) + sys("dk2", c.fg) + sys("lt2", c.bg) + sys("accent1", c.accent) + sys("accent2", "ED7D31") + sys("accent3", "A5A5A5") +
+      sys("accent4", "FFC000") + sys("accent5", "5B9BD5") + sys("accent6", "70AD47") + sys("hlink", c.link) + sys("folHlink", c.link));
+    var face = function (n) { return E("a:" + n, null, E("a:latin", { typeface: "Georgia" }) + E("a:ea", { typeface: "" }) + E("a:cs", { typeface: "" })); };
+    var solid = E("a:solidFill", null, E("a:schemeClr", { val: "phClr" })), ln = function (w) { return E("a:ln", { w: w, cap: "flat", cmpd: "sng", algn: "ctr" }, solid + E("a:prstDash", { val: "solid" }) + E("a:miter", { lim: 800000 })); };
+    var eff = E("a:effectStyle", null, E("a:effectLst"));
+    return HEAD + E("a:theme", { "xmlns:a": A, name: nm }, E("a:themeElements", null, clr + E("a:fontScheme", { name: "Lantern" }, face("majorFont") + face("minorFont")) +
+      E("a:fmtScheme", { name: "Lantern" }, E("a:fillStyleLst", null, solid + solid + solid) + E("a:lnStyleLst", null, ln(6350) + ln(12700) + ln(19050)) +
+        E("a:effectStyleLst", null, eff + eff + eff) + E("a:bgFillStyleLst", null, solid + solid + solid))) + E("a:objectDefaults") + E("a:extraClrSchemeLst"));
+  }
+  var MAP = { bg1: "lt1", tx1: "dk1", bg2: "lt2", tx2: "dk2", accent1: "accent1", accent2: "accent2", accent3: "accent3", accent4: "accent4", accent5: "accent5", accent6: "accent6", hlink: "hlink", folHlink: "folHlink" };
+  function master() {
+    var lv = "", SZ = [2400, 2000, 1800, 1600, 1600, 1600, 1600, 1600, 1600];
+    for (var i = 0; i < 9; i++) lv += E("a:lvl" + (i + 1) + "pPr", { marL: 228600 + 457200 * i, indent: -228600, algn: "l", defTabSz: 914400 },
+      E("a:lnSpc", null, E("a:spcPct", { val: 100000 })) + E("a:spcBef", null, E("a:spcPts", { val: i ? 500 : 1000 })) + E("a:buFont", { typeface: "Arial" }) + E("a:buChar", { "char": "\u2022" }) + defR(SZ[i], "tx1", "+mn"));
+    var title = E("a:lvl1pPr", { algn: "l", defTabSz: 914400 }, E("a:lnSpc", null, E("a:spcPct", { val: 90000 })) + E("a:spcBef", null, E("a:spcPct", { val: 0 })) + E("a:buNone") + defR(4000, "accent1", "+mj"));
+    var other = E("a:defPPr", null, E("a:defRPr", { lang: "en-US" })) + E("a:lvl1pPr", { marL: 0, algn: "l", defTabSz: 914400 }, defR(1800, "tx1", "+mn"));
+    var tree = GRP + ph(2, "Title Placeholder 1", { type: "title" }, TB, E("a:p", null, E("a:r", null, E("a:rPr", { lang: "en-US" }) + E("a:t", null, "Title"))), E("a:bodyPr", { anchor: "b" }, E("a:normAutofit"))) +
+      ph(3, "Text Placeholder 2", { type: "body", idx: 1 }, BB, E("a:p", null, E("a:r", null, E("a:rPr", { lang: "en-US" }) + E("a:t", null, "Text"))), E("a:bodyPr", null, E("a:normAutofit")));
+    return root("p:sldMaster", E("p:cSld", null, E("p:bg", null, E("p:bgPr", null, E("a:solidFill", null, E("a:schemeClr", { val: "bg1" })) + E("a:effectLst"))) + E("p:spTree", null, tree)) +
+      E("p:clrMap", MAP) + E("p:sldLayoutIdLst", null, E("p:sldLayoutId", { id: 2147483649, "r:id": "rId1" })) +
+      E("p:txStyles", null, E("p:titleStyle", null, title) + E("p:bodyStyle", null, lv) + E("p:otherStyle", null, other)));
+  }
+  function layout() {
+    return root("p:sldLayout", E("p:cSld", { name: "Title and Content" }, E("p:spTree", null, GRP + ph(2, "Title 1", { type: "title" }, null, E("a:p", null, E("a:endParaRPr", { lang: "en-US" }))) +
+      ph(3, "Content Placeholder 2", { idx: 1 }, null, E("a:p", null, E("a:endParaRPr", { lang: "en-US" }))))) + E("p:clrMapOvr", null, E("a:masterClrMapping")), { type: "obj", preserve: 1 });
+  }
+  function notesMaster() {
+    var img = E("p:sp", null, E("p:nvSpPr", null, E("p:cNvPr", { id: 2, name: "Slide Image Placeholder 1" }) + E("p:cNvSpPr", null, E("a:spLocks", { noGrp: 1, noRot: 1, noChangeAspect: 1 })) + E("p:nvPr", null, E("p:ph", { type: "sldImg", idx: 2 }))) +
+      E("p:spPr", null, xfrm({ x: 685800, y: 1143000, w: 5486400, h: 3086100 }) + rect() + E("a:noFill") + E("a:ln", { w: 12700 }, E("a:solidFill", null, E("a:prstClr", { val: "black" })))));
+    var body = ph(3, "Notes Placeholder 2", { type: "body", sz: "quarter", idx: 3 }, { x: 685800, y: 4400550, w: 5486400, h: 3600450 }, E("a:p", null, E("a:r", null, E("a:rPr", { lang: "en-US" }) + E("a:t", null, "Notes"))));
+    return root("p:notesMaster", E("p:cSld", null, E("p:bg", null, E("p:bgRef", { idx: 1001 }, E("a:schemeClr", { val: "bg1" }))) + E("p:spTree", null, GRP + img + body)) + E("p:clrMap", MAP) +
+      E("p:notesStyle", null, E("a:lvl1pPr", { marL: 0, algn: "l", defTabSz: 914400 }, defR(1200, "tx1", "+mn"))));
+  }
+  function notesSlide(text) {
+    var ps = String(text).replace(/\r\n?/g, "\n").split("\n").map(function (l) { return E("a:p", null, l ? E("a:r", null, E("a:rPr", { lang: "en-US", dirty: "0" }) + E("a:t", null, x(l))) : E("a:endParaRPr", { lang: "en-US" })); }).join("");
+    var img = E("p:sp", null, E("p:nvSpPr", null, E("p:cNvPr", { id: 2, name: "Slide Image Placeholder 1" }) + E("p:cNvSpPr", null, E("a:spLocks", { noGrp: 1, noRot: 1, noChangeAspect: 1 })) + E("p:nvPr", null, E("p:ph", { type: "sldImg" }))) + E("p:spPr"));
+    return root("p:notes", E("p:cSld", null, E("p:spTree", null, GRP + img + ph(3, "Notes Placeholder 2", { type: "body", idx: 1 }, null, ps))) + E("p:clrMapOvr", null, E("a:masterClrMapping")));
+  }
+  // a picture's size in pixels, from its first bytes (PNG, JPEG, GIF, BMP), or null
+  function pixels(b) {
+    if (b.length > 24 && b[0] === 0x89 && b[1] === 0x50) return { w: (b[16] << 24 | b[17] << 16 | b[18] << 8 | b[19]) >>> 0, h: (b[20] << 24 | b[21] << 16 | b[22] << 8 | b[23]) >>> 0 };
+    if (b.length > 10 && b[0] === 0x47 && b[1] === 0x49) return { w: b[6] | b[7] << 8, h: b[8] | b[9] << 8 };
+    if (b.length > 26 && b[0] === 0x42 && b[1] === 0x4d) return { w: Math.abs(b[18] | b[19] << 8 | b[20] << 16 | b[21] << 24), h: Math.abs(b[22] | b[23] << 8 | b[24] << 16 | b[25] << 24) };
+    if (b.length > 4 && b[0] === 0xff && b[1] === 0xd8) {
+      for (var i = 2; i + 9 < b.length;) {
+        if (b[i] !== 0xff) { i++; continue; }
+        var m = b[i + 1], len = b[i + 2] << 8 | b[i + 3];
+        if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { h: b[i + 5] << 8 | b[i + 6], w: b[i + 7] << 8 | b[i + 8] };
+        if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { i += 2; continue; }
+        i += 2 + len;
+      }
+    }
+    return null;
+  }
+  var EXT = { "image\x2Fjpeg": "jpeg", "image\x2Fjpg": "jpeg", "image\x2Fpng": "png", "image\x2Fgif": "gif", "image\x2Fbmp": "bmp" };
+  function dataPicture(url) {
+    var m = /^data:([^;,]+)(;base64)?,(.*)$/i.exec(String(url || ""));
+    if (!m) return { why: "not stored in the deck" };
+    var ext = EXT[m[1].toLowerCase()];
+    if (!ext) return { why: m[1].replace(/^image\x2F/i, "").replace(/\+xml$/, "").toUpperCase() + ", which PowerPoint does not take as it is" };
+    var raw;
+    try { raw = m[2] ? atob(m[3]) : decodeURIComponent(m[3]); } catch (e) { return { why: "damaged" }; }
+    var b = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) b[i] = raw.charCodeAt(i) & 255;
+    return { ext: ext, bytes: b, px: pixels(b) };
+  }
+  function fit(px, area) {
+    var r = px && px.w && px.h ? px.w / px.h : 4 / 3, w = area.w, h = w / r;
+    if (h > area.h) { h = area.h; w = h * r; }
+    return { x: area.x + (area.w - w) / 2, y: area.y + (area.h - h) / 2, w: w, h: h };
+  }
+
+  function write(deck) {
+    var d = deck || {}, th = d.theme || NIGHT, notes = {}, media = [], exts = {};
+    var c = { bg: hex(th.bg, "0B0F14"), fg: hex(th.fg, "FFFFFF"), accent: hex(th.accent, "C2410C") };
+    c.link = dark(c.bg) ? "7DD3FC" : "1D4ED8";   // a link that reads on the deck's background
+    var slides = (d.slides && d.slides.length ? d.slides : [{ h: d.title || "", body: "" }]), files = [], ct = [], hasNotes = slides.some(function (s) { return s.notes && String(s.notes).replace(/\s+/g, ""); });
+    function note(k, n) { notes[k] = notes[k] || []; notes[k].push(n); }
+    slides.forEach(function (s, i) {
+      var n = i + 1, rl = [{ id: "rId1", type: "slideLayout", target: "..\x2FslideLayouts\x2FslideLayout1.xml" }], links = {};
+      function link(href) { if (!links[href]) { links[href] = "rId" + (rl.length + 1); rl.push({ id: links[href], type: "hyperlink", target: href, external: true }); } return links[href]; }
+      var dr = P.draw(s.body || ""), pic = s.img ? dataPicture(s.img) : null, id = 2, tree = GRP;
+      if (dr.lost.pictures) note("inline", n);
+      if (dr.lost.nested) note("nested", n);
+      if (pic && pic.why) { note("pic:" + pic.why, n); pic = null; }
+      var text = dr.paras.length > 0, area = BB, textBox = BB;
+      if (pic && (text || dr.tables.length)) { textBox = { x: BB.x, y: BB.y, w: Math.round(BB.w * 0.56), h: BB.h }; area = { x: BB.x + textBox.w + 228600, y: BB.y, w: BB.w - textBox.w - 228600, h: BB.h }; }
+      tree += ph(id++, "Title " + (id - 2), { type: "title" }, null, E("a:p", null, s.h ? E("a:r", null, E("a:rPr", { lang: "en-US", dirty: "0" }) + E("a:t", null, x(String(s.h).replace(/\s+/g, " ")))) : E("a:endParaRPr", { lang: "en-US" })));
+      // the text, then any tables under it, sharing the content box by their lines
+      var lines = dr.paras.reduce(function (a, p) { return a + 1 + p.runs.filter(function (r) { return r.br; }).length + Math.floor(p.runs.reduce(function (t, r) { return t + (r.t ? r.t.length : 0); }, 0) / (textBox.w > 8e6 ? 70 : 38)); }, 0);
+      var rows = dr.tables.reduce(function (a, t) { return a + t.rows.length; }, 0), tTop = textBox.y;
+      if (text) {
+        var tb = dr.tables.length ? { x: textBox.x, y: textBox.y, w: textBox.w, h: Math.min(textBox.h * 0.6, Math.max(457200, lines * 420000 + 91440)) } : (textBox !== BB ? textBox : null);
+        tree += ph(id++, "Content " + (id - 2), { idx: 1 }, tb, dr.paras.map(function (p) { return P.parXml(p, link, { lang: "en-US" }); }).join(""), E("a:bodyPr", null, E("a:normAutofit")));
+        if (tb && dr.tables.length) tTop = tb.y + tb.h + 91440;
+      }
+      dr.tables.forEach(function (t) {
+        var h = Math.max(254000 * t.rows.length, (textBox.y + textBox.h - tTop) * t.rows.length / Math.max(1, rows));
+        tree += P.tableXml(t, { x: textBox.x, y: tTop, w: textBox.w, h: Math.min(h, 457200 * t.rows.length) }, link, { id: id++, lang: "en-US", sz: t.rows.length > 8 ? 1400 : 1800, line: c.fg });
+        tTop += Math.min(h, 457200 * t.rows.length) + 91440;
+      });
+      if (tTop > BB.y + BB.h + 91440) note("long", n);
+      if (pic) {
+        var mname = "image" + (media.length + 1) + "." + pic.ext, rp = "rId" + (rl.length + 1);
+        media.push({ name: mname, bytes: pic.bytes }); exts[pic.ext] = 1;
+        rl.push({ id: rp, type: "image", target: "..\x2Fmedia\x2F" + mname });
+        tree += E("p:pic", null, E("p:nvPicPr", null, E("p:cNvPr", { id: id, name: "Picture " + (id - 1), descr: s.h || "" }) + E("p:cNvPicPr", null, E("a:picLocks", { noChangeAspect: 1 })) + E("p:nvPr")) +
+          E("p:blipFill", null, E("a:blip", { "r:embed": rp }) + E("a:stretch", null, E("a:fillRect"))) + E("p:spPr", null, xfrm(fit(pic.px, area)) + rect()));
+        id++;
+      }
+      if (s.notes && String(s.notes).replace(/\s+/g, "")) {
+        rl.push({ id: "rId" + (rl.length + 1), type: "notesSlide", target: "..\x2FnotesSlides\x2FnotesSlide" + n + ".xml" });
+        files.push({ name: "ppt\x2FnotesSlides\x2FnotesSlide" + n + ".xml", data: notesSlide(s.notes) });
+        files.push({ name: "ppt\x2FnotesSlides\x2F_rels\x2FnotesSlide" + n + ".xml.rels", data: rels([{ id: "rId1", type: "notesMaster", target: "..\x2FnotesMasters\x2FnotesMaster1.xml" }, { id: "rId2", type: "slide", target: "..\x2Fslides\x2Fslide" + n + ".xml" }]) });
+        ct.push(["\x2Fppt\x2FnotesSlides\x2FnotesSlide" + n + ".xml", "presentationml.notesSlide+xml"]);
+      }
+      files.push({ name: "ppt\x2Fslides\x2Fslide" + n + ".xml", data: root("p:sld", E("p:cSld", null, E("p:spTree", null, tree)) + E("p:clrMapOvr", null, E("a:masterClrMapping"))) });
+      files.push({ name: "ppt\x2Fslides\x2F_rels\x2Fslide" + n + ".xml.rels", data: rels(rl) });
+      ct.push(["\x2Fppt\x2Fslides\x2Fslide" + n + ".xml", "presentationml.slide+xml"]);
+    });
+    // the presentation: its master and layout, its slides, its notes master, and the parts PowerPoint expects beside them
+    var prl = [{ id: "rId1", type: "slideMaster", target: "slideMasters\x2FslideMaster1.xml" }], sid = "";
+    slides.forEach(function (s, i) { prl.push({ id: "rId" + (i + 2), type: "slide", target: "slides\x2Fslide" + (i + 1) + ".xml" }); sid += E("p:sldId", { id: 256 + i, "r:id": "rId" + (i + 2) }); });
+    var k = slides.length + 2;
+    if (hasNotes) prl.push({ id: "rId" + k++, type: "notesMaster", target: "notesMasters\x2FnotesMaster1.xml" });
+    prl.push({ id: "rId" + k++, type: "presProps", target: "presProps.xml" }, { id: "rId" + k++, type: "viewProps", target: "viewProps.xml" }, { id: "rId" + k++, type: "theme", target: "theme\x2Ftheme1.xml" }, { id: "rId" + k++, type: "tableStyles", target: "tableStyles.xml" });
+    var pres = root("p:presentation", E("p:sldMasterIdLst", null, E("p:sldMasterId", { id: 2147483648, "r:id": "rId1" })) +
+      (hasNotes ? E("p:notesMasterIdLst", null, E("p:notesMasterId", { "r:id": "rId" + (slides.length + 2) })) : "") + E("p:sldIdLst", null, sid) +
+      E("p:sldSz", { cx: SW, cy: SH }) + E("p:notesSz", { cx: 6858000, cy: 9144000 }) + E("p:defaultTextStyle", null, E("a:defPPr", null, E("a:defRPr", { lang: "en-US" }))), { saveSubsetFonts: 1 });
+    var now = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+    files = files.concat([
+      { name: "_rels\x2F.rels", data: rels([{ id: "rId1", type: "officeDocument", target: "ppt\x2Fpresentation.xml" }, { id: "rId2", type: PR + "\x2Fmetadata\x2Fcore-properties", target: "docProps\x2Fcore.xml" }, { id: "rId3", type: "extended-properties", target: "docProps\x2Fapp.xml" }]) },
+      { name: "ppt\x2Fpresentation.xml", data: pres },
+      { name: "ppt\x2F_rels\x2Fpresentation.xml.rels", data: rels(prl) },
+      { name: "ppt\x2FslideMasters\x2FslideMaster1.xml", data: master() },
+      { name: "ppt\x2FslideMasters\x2F_rels\x2FslideMaster1.xml.rels", data: rels([{ id: "rId1", type: "slideLayout", target: "..\x2FslideLayouts\x2FslideLayout1.xml" }, { id: "rId2", type: "theme", target: "..\x2Ftheme\x2Ftheme1.xml" }]) },
+      { name: "ppt\x2FslideLayouts\x2FslideLayout1.xml", data: layout() },
+      { name: "ppt\x2FslideLayouts\x2F_rels\x2FslideLayout1.xml.rels", data: rels([{ id: "rId1", type: "slideMaster", target: "..\x2FslideMasters\x2FslideMaster1.xml" }]) },
+      { name: "ppt\x2Ftheme\x2Ftheme1.xml", data: theme(c, "Lantern") },
+      { name: "ppt\x2FpresProps.xml", data: root("p:presentationPr", "") },
+      { name: "ppt\x2FviewProps.xml", data: root("p:viewPr", E("p:normalViewPr", null, E("p:restoredLeft", { sz: 15620 }) + E("p:restoredTop", { sz: 94660 })) + E("p:gridSpacing", { cx: 76200, cy: 76200 })) },
+      { name: "ppt\x2FtableStyles.xml", data: HEAD + E("a:tblStyleLst", { "xmlns:a": A, def: "{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}" }) },
+      { name: "docProps\x2Fcore.xml", data: HEAD + E("cp:coreProperties", { "xmlns:cp": S + "package\x2F2006\x2Fmetadata\x2Fcore-properties", "xmlns:dc": "http:\x2F\x2Fpurl.org\x2Fdc\x2Felements\x2F1.1\x2F", "xmlns:dcterms": "http:\x2F\x2Fpurl.org\x2Fdc\x2Fterms\x2F", "xmlns:xsi": "http:\x2F\x2Fwww.w3.org\x2F2001\x2FXMLSchema-instance" },
+        E("dc:title", null, x(d.title || "")) + E("dc:creator", null, "Lantern") + E("dcterms:created", { "xsi:type": "dcterms:W3CDTF" }, now) + E("dcterms:modified", { "xsi:type": "dcterms:W3CDTF" }, now)) },
+      { name: "docProps\x2Fapp.xml", data: HEAD + E("Properties", { xmlns: S + "officeDocument\x2F2006\x2Fextended-properties" }, E("Application", null, "Lantern") + E("Slides", null, String(slides.length))) }
+    ]);
+    if (hasNotes) files.push({ name: "ppt\x2FnotesMasters\x2FnotesMaster1.xml", data: notesMaster() },
+      { name: "ppt\x2FnotesMasters\x2F_rels\x2FnotesMaster1.xml.rels", data: rels([{ id: "rId1", type: "theme", target: "..\x2Ftheme\x2Ftheme2.xml" }]) },
+      { name: "ppt\x2Ftheme\x2Ftheme2.xml", data: theme({ bg: "FFFFFF", fg: "000000", accent: c.accent, link: "1D4ED8" }, "Notes") });
+    media.forEach(function (m) { files.push({ name: "ppt\x2Fmedia\x2F" + m.name, data: m.bytes }); });
+    ct = ct.concat([["\x2Fppt\x2Fpresentation.xml", "presentationml.presentation.main+xml"], ["\x2Fppt\x2FslideMasters\x2FslideMaster1.xml", "presentationml.slideMaster+xml"],
+      ["\x2Fppt\x2FslideLayouts\x2FslideLayout1.xml", "presentationml.slideLayout+xml"], ["\x2Fppt\x2Ftheme\x2Ftheme1.xml", "theme+xml"], ["\x2Fppt\x2FpresProps.xml", "presentationml.presProps+xml"],
+      ["\x2Fppt\x2FviewProps.xml", "presentationml.viewProps+xml"], ["\x2Fppt\x2FtableStyles.xml", "presentationml.tableStyles+xml"], ["\x2FdocProps\x2Fapp.xml", "extended-properties+xml"]]);
+    if (hasNotes) ct.push(["\x2Fppt\x2FnotesMasters\x2FnotesMaster1.xml", "presentationml.notesMaster+xml"], ["\x2Fppt\x2Ftheme\x2Ftheme2.xml", "theme+xml"]);
+    var types = E("Default", { Extension: "rels", ContentType: "application\x2Fvnd.openxmlformats-package.relationships+xml" }) + E("Default", { Extension: "xml", ContentType: "application\x2Fxml" }) +
+      Object.keys(exts).map(function (e) { return E("Default", { Extension: e, ContentType: "image\x2F" + e }); }).join("") +
+      ct.map(function (o) { return E("Override", { PartName: o[0], ContentType: OD + o[1] }); }).join("") + E("Override", { PartName: "\x2FdocProps\x2Fcore.xml", ContentType: "application\x2Fvnd.openxmlformats-package.core-properties+xml" });
+    files.unshift({ name: "[Content_Types].xml", data: HEAD + E("Types", { xmlns: S + "package\x2F2006\x2Fcontent-types" }, types) });
+    var said = [];
+    function on(list) { return list.length === 1 ? "slide " + list[0] : "slides " + list.slice(0, -1).join(", ") + " and " + list[list.length - 1]; }
+    Object.keys(notes).forEach(function (k) {
+      if (k === "inline") said.push("pictures inside a slide\u2019s text (" + on(notes[k]) + "): a slide\u2019s own picture is saved, not one in its text");
+      else if (k === "nested") said.push("a table inside a table\u2019s cell (" + on(notes[k]) + ")");
+      else if (k === "long") said.push("more text and tables than fit (" + on(notes[k]) + "): PowerPoint shrinks the text to fit when it is edited; split the slide if it is too small");
+      else said.push("the picture on " + on(notes[k]) + ": " + k.replace(/^pic:/, ""));
+    });
+    return { bytes: L.zip.write(files), notes: said };
+  }
+  function fileName(title) { return (String(title || "slides").replace(/[\\\x2F:*?\x22<>|\x00-\x1f]+/g, " ").replace(/\s+/g, " ").replace(/^[\s.]+|[\s.]+$/g, "").slice(0, 120) || "slides") + ".pptx"; }
+  P.write = write;
+  P.fileName = fileName;
+  P.save = function (deck) {
+    var w = write(deck);
+    L.download(fileName(deck && deck.title), w.bytes, OD + "presentationml.presentation");
+    return w.notes;
+  };
+})();
+// ===========================================================================
+// MODULE: PPTX_WRITE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: SLIDES_PPTX - START
+// Depends: SLIDES (Lantern.slideDeckTools, Lantern.slideLibTools), PPTX_READ
+//          (Lantern.pptx.read), PPTX_WRITE (Lantern.pptx.save) --
+//          feature-detected
+// Exports: Lantern.slidesPptx = {open(file, libApi), shrink(slides, done)}
+// ===========================================================================
+// PowerPoint files in Slides (1.24.33). Save .pptx, in a deck, downloads it
+// as a PowerPoint file. Open .pptx, in the list of decks, makes a deck of
+// one: its slides' titles, text, tables, pictures (a slide's several put
+// together into one, each where it sat) and speaker notes.
+// Either way a note says what was not kept, so nothing goes missing without
+// a word. Pictures are made smaller as Slides makes a picture it is given
+// (1,200 pixels across at most), so a deck fits in the browser's storage.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.pptx || !L.el) return;
+  // a table on a slide (from a PowerPoint file, or a chart's numbers) with its lines, in the editor, in Present and in
+  // the printed handout (module-owned CSS, rule 11)
+  var css = document.createElement("style");
+  css.appendChild(document.createTextNode(".sb table,.print-area table{border-collapse:collapse;margin:.4em 0;}" +
+    ".sb th,.sb td,.print-area th,.print-area td{border:1px solid currentColor;padding:.15em .6em;text-align:left;vertical-align:top;}.sb th,.print-area th{font-weight:700;}"));
+  (document.head || document.documentElement).appendChild(css);
+  function say(head, lines) {
+    var el = L.el;
+    function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
+    var body = [el("p", { text: head })];
+    if (lines && lines.length) {
+      var ul = el("ul", {});
+      lines.forEach(function (t) { ul.appendChild(el("li", { text: t })); });
+      body.push(ul);
+    }
+    var ov = el("div", { "class": "guide-overlay", role: "dialog", "aria-label": "PowerPoint file", onclick: function (e) { if (e.target === ov) close(); } }, [
+      el("div", { "class": "guide-panel" }, [
+        el("div", { "class": "guide-head" }, [el("h2", { text: "PowerPoint file" }), el("button", { text: "OK", onclick: close })]),
+        el("div", { "class": "guide-body" }, body)
+      ])
+    ]);
+    document.body.appendChild(ov);
+  }
+  // together(s, done): a slide's pictures put into one, each where it sat on the slide (a slide in Slides holds one)
+  function together(s, done) {
+    var P = s.pics, x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, left = P.length, ims = [];
+    P.forEach(function (p) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x + p.w); y1 = Math.max(y1, p.y + p.h); });
+    var k = Math.min(1200 / Math.max(1, x1 - x0), 1200 / Math.max(1, y1 - y0));
+    function fin() {
+      var c = document.createElement("canvas"); c.width = Math.max(1, Math.round((x1 - x0) * k)); c.height = Math.max(1, Math.round((y1 - y0) * k));
+      var x = c.getContext("2d");
+      x.fillStyle = "#ffffff"; x.fillRect(0, 0, c.width, c.height);
+      var n = 0;
+      ims.forEach(function (im, i) { if (!im) return; var p = P[i]; try { x.drawImage(im, (p.x - x0) * k, (p.y - y0) * k, p.w * k, p.h * k); n++; } catch (e) { } });
+      if (n > 1) { try { s.img = c.toDataURL("image\x2Fjpeg", 0.85); s.together = true; } catch (e) { } }
+      delete s.pics;
+      done();
+    }
+    P.forEach(function (p, i) {
+      var im = new Image();
+      im.onload = function () { ims[i] = im; if (--left === 0) fin(); };
+      im.onerror = function () { ims[i] = null; if (--left === 0) fin(); };
+      im.src = p.url;
+    });
+  }
+  // shrink(slides, done): a slide's pictures put together; each picture at most 1,200 pixels across, as a JPEG on
+  // white (as Slides stores a picture)
+  function shrink(slides, done) {
+    var cv = document.createElement("canvas"), ok = false;
+    try { ok = !!(window.Image && cv.getContext && cv.getContext("2d")); } catch (e) { ok = false; }
+    var many = ok ? slides.filter(function (s) { return s.pics && s.pics.length > 1; }) : [], waiting = many.length;
+    if (waiting) { many.forEach(function (s) { together(s, function () { if (--waiting === 0) shrink(slides, done); }); }); return; }
+    slides.forEach(function (s) { delete s.pics; });
+    var todo = slides.filter(function (s) { return s.img && !s.together; });
+    if (!ok || !todo.length) { done(); return; }
+    var left = todo.length;
+    function one() { if (--left === 0) done(); }
+    todo.forEach(function (s) {
+      var img = new Image();
+      img.onload = function () {
+        var w = img.width, h = img.height, max = 1200;
+        if (w > max) { h = Math.round(h * max / w); w = max; }
+        var c = document.createElement("canvas"); c.width = w || 1; c.height = h || 1;
+        var x = c.getContext("2d");
+        x.fillStyle = "#ffffff"; x.fillRect(0, 0, c.width, c.height);
+        x.drawImage(img, 0, 0, c.width, c.height);
+        try { s.img = c.toDataURL("image\x2Fjpeg", 0.82); } catch (e) { }
+        one();
+      };
+      img.onerror = function () { delete s.img; s.lost = true; one(); };
+      img.src = s.img;
+    });
+  }
+  function open(file, api) {
+    var r = new FileReader();
+    r.onload = function () {
+      var res;
+      try { res = L.pptx.read(new Uint8Array(r.result), file.name); }
+      catch (e) { window.alert("Lantern could not open \u201c" + file.name + "\u201d: " + e.message + "."); return; }
+      shrink(res.slides, function () {
+        var notes = res.notes.slice(), lost = res.slides.filter(function (s) { return s.lost; }).length, tog = [];
+        res.slides.forEach(function (s, i) { if (s.together) tog.push(i + 1); delete s.lost; delete s.together; });
+        // pictures put together: said so, in place of "kept its largest"
+        if (tog.length) notes = notes.filter(function (t) { return !/^\d+ more pictures?: /.test(t); }).concat(["the pictures on " + (tog.length === 1 ? "slide " + tog[0] : "slides " + tog.slice(0, -1).join(", ") + " and " + tog[tog.length - 1]) +
+          " put together into one picture each, as they sat on the slide (a slide in Slides holds one picture)"]);
+        if (lost) notes.unshift(lost + " picture" + (lost === 1 ? "" : "s") + " this browser could not show");
+        var d = api.newDeck(res.title, res.slides);
+        if (L.store && L.store.ok && !L.store.ok() && d) {
+          d.slides.forEach(function (s) { delete s.img; });
+          api.col.put(d);
+          notes.unshift("the pictures: the deck with them does not fit in the space this browser gives Lantern (Backup, then remove decks you do not need, and open it again)");
+          if (api.open) api.open(d.id);
+        }
+        say("Opened from the PowerPoint file \u201c" + file.name + "\u201d (" + res.slides.length + " slide" + (res.slides.length === 1 ? "" : "s") + "). Save .pptx makes a PowerPoint file again. What could not come in as it was:", notes);
+      });
+    };
+    r.onerror = function () { window.alert("Lantern could not read \u201c" + file.name + "\u201d from this device."); };
+    r.readAsArrayBuffer(file);
+  }
+  var DT = L.slideDeckTools = L.slideDeckTools || [];
+  DT.push({ label: "Save .pptx", title: "Download this deck as a PowerPoint file (.pptx), for PowerPoint, LibreOffice, Google Slides or Keynote", run: function (api) {
+    if (api.save) api.save();
+    try {
+      var left = L.pptx.save(api.doc);
+      if (left.length) say("Saved as a PowerPoint file, except:", left);
+    } catch (e) { say("The PowerPoint file could not be made: " + e.message, []); }
+  } });
+  var LT = L.slideLibTools = L.slideLibTools || [];
+  LT.push({ label: "Open .pptx", title: "Open a PowerPoint file (.pptx) as a new deck", run: function (api) {
+    var inp = document.createElement("input");
+    inp.type = "file"; inp.accept = ".pptx,application\x2Fvnd.openxmlformats-officedocument.presentationml.presentation"; inp.style.display = "none";
+    inp.onchange = function () { var f = inp.files && inp.files[0]; if (inp.parentNode) inp.parentNode.removeChild(inp); if (f) open(f, api); };
+    document.body.appendChild(inp);
+    inp.click();
+  } });
+  L.slidesPptx = { open: open, shrink: shrink };
+})();
+// ===========================================================================
+// MODULE: SLIDES_PPTX - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: GUIDE_SLIDES_PPTX - START
+// Depends: GUIDE, SLIDES_PPTX
+// Exports: (none) -- appends a section to the "slides" guide
+// ===========================================================================
+(function () {
+  if (!window.Lantern || !Lantern.guide || !Lantern.guide.append || !Lantern.slidesPptx) return;
+  Lantern.guide.append("slides", [
+    ["PowerPoint files (.pptx)", "<p><b>Save .pptx<\x2Fb>, in a deck, downloads it as a PowerPoint file. PowerPoint, LibreOffice Impress, " +
+      "Google Slides and Keynote open it: each slide\u2019s title in its title box, its text in the content box (bullets and numbers at " +
+      "their levels, bold, italic, underline, links), its tables as tables, its picture beside the text, and its speaker notes as notes. " +
+      "The deck\u2019s theme (its colours in Slides) is the file\u2019s theme, so choosing a theme in PowerPoint afterwards recolours it.<\x2Fp>" +
+      "<p><b>Open .pptx<\x2Fb>, in the list of decks, opens a PowerPoint file as a new deck: each slide\u2019s title, its text in reading order, " +
+      "its tables, its charts as tables of their numbers, its SmartArt as lists of its words, its pictures and its notes. A slide in " +
+      "Lantern holds one picture, so a slide\u2019s several pictures are put together into one, each where it sat. Pictures in EMF (Visio " +
+      "drawings, older Office pictures), which no browser draws, are drawn by Lantern: look at them beside the original. Pictures in WMF, " +
+      "video and sound, and where each box sat, fonts and animations are not kept, and a note says which, on which slides. An old .ppt " +
+      "file must be saved as .pptx in PowerPoint or LibreOffice first.<\x2Fp>"]
+  ]);
+})();
+// ===========================================================================
+// MODULE: GUIDE_SLIDES_PPTX - END
+// ===========================================================================
+// ===========================================================================
 // MODULE: HANDWRITING_READER - START
 // Depends: CORE (window.Lantern) -- feature-detected
 // Exports: Lantern.handwritingReader = {available() -> false, read(canvas,
@@ -55645,6 +56967,8 @@ Lantern.RFB = (function () {
         return row;
       },
       png: null,
+      // (1.24.33) a PowerPoint file of it straight away (PPTX_WRITE)
+      extra: L.pptx && L.pptx.save ? [{ label: "Save .pptx", title: "Download it as a PowerPoint file", run: function () { L.pptx.save({ title: title, slides: slides }); } }] : [],
       open: function () {
         if (!L.slideDocs) return;
         if (!made) made = L.slideDocs.create(title, slides);
@@ -55676,7 +57000,7 @@ Lantern.RFB = (function () {
     "- Tell the crew before power returns",
     "END"];
   if (!ACTS.some(function (a) { return a.id === "slides"; })) ACTS.push({
-    id: "slides", kind: "SLIDES", kinds: ["SLIDES", "SLIDE DECK", "DECK", "PRESENTATION"], title: "a slide deck", opens: "Slides",
+    id: "slides", kind: "SLIDES", kinds: ["SLIDES", "SLIDE DECK", "DECK", "PRESENTATION"], title: "a slide deck", opens: "Slides", also: "Save .pptx makes a PowerPoint file",
     match: function (q) { return /\b(slides?|slide deck|presentation|powerpoint|deck for|talk on|toolbox talk|briefing)\b/i.test(q); },
     prompt: PROMPT,
     // (1.24.6) what the question says about the number of slides is said

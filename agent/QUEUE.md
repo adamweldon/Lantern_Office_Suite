@@ -151,8 +151,17 @@ tried by a reviewer:
   word-first grammar; free-line kinds (MUSIC, DOC, DRAWING, SCHEMATIC) let
   copied guide lines and prose through -- their own first words, as the
   station's have, would hold those out.
-- **Next: .pptx in Slides** (1.24.33). Adam's ITW deck is ITW's training
-  material: test with it in the session, never commit it.
+- PowerPoint files in Slides: **done in 1.24.33** (Save .pptx, Open .pptx,
+  MAKE SLIDES' Save .pptx; PPTX_TEXT, PPTX_READ, PPTX_WRITE, SLIDES_PPTX;
+  `tests/pptx.js`, `tests/pptx_lo.py`, `tests/browser/slides_pptx.py`; the
+  review replayed by `tests/review_pptx_1233.py`). Adam's ITW deck is
+  ITW's training material: tried in the session, never committed. Waits on
+  Adam (QUESTIONS 1): whether PowerPoint opens the saves without a repair,
+  and whether Slides should keep a slide as PowerPoint lays it out. Left:
+  every picture on a slide, and where each box and picture sat; EMF and
+  WMF pictures (Visio drawings, old clip art) drawn (a reader of EMF's
+  records into a canvas); SmartArt's text; a chart drawn, not only its
+  numbers; fonts and sizes; .odp; an old .ppt (binary).
 
 0. **The Health lessons' sources (1.24.22, Adam).** Every lesson names the
    guidelines it was checked against in November 2026; where they said
@@ -162,8 +171,8 @@ tried by a reviewer:
    "Some practical steps here are not in these sources" where they are
    many); WHO's 2005 diarrhoea manual and the Sphere 2018 PDF, which no
    checker could open; the same for the Food tile's lessons and the other
-   tiles' (a lesson's `sources`, any tile); a trained reader (QUESTIONS 11);
-   the medicines (QUESTIONS 12). Check again when a named guideline is
+   tiles' (a lesson's `sources`, any tile); a trained reader (QUESTIONS 12);
+   the medicines (QUESTIONS 13). Check again when a named guideline is
    replaced (the NHS hypothermia page was past its review date).
 
 1. **The one-link starter: what 1.24.19 leaves** (`tools/starter`,
@@ -181,11 +190,11 @@ tried by a reviewer:
    the icons made without PowerShell, the Windows build not stripped,
    another Lantern or program on 8080 handled. **Still flagged** on Adam's
    home laptop with Windows's own protection (Bearfoos.A!ml: the copy of
-   itself and its icons). Adam: no signing for now (QUESTIONS 3). The free
+   itself and its icons). Adam: no signing for now (QUESTIONS 4). The free
    thing left to try: a starter that does not copy itself (its icons to the
    kit's Start Lantern), and the kit's downloads in the starter itself (Go),
    not the setup run hidden through PowerShell. Left:
-   - Adam's first real double-click (QUESTIONS 2): what SmartScreen and
+   - Adam's first real double-click (QUESTIONS 3): what SmartScreen and
      Gatekeeper show, how the corner button looks to him;
    - the page under the starter in a real browser (Playwright on the Linux
      job: the corner button, the list, Add, Stop), not only jsdom;
@@ -193,7 +202,7 @@ tried by a reviewer:
      run without `--plan small`, perhaps by hand: 3 GB more);
    - an offer's download for real (the library's 12 GB is too big for a
      run; the shelves' 5 GB perhaps);
-   - signing (QUESTIONS 3); a Mac icon in the Dock/Applications after the
+   - signing (QUESTIONS 4); a Mac icon in the Dock/Applications after the
      first run; Windows on ARM and an Intel Mac, built but not run;
    - an update: the starter could offer a newer Lantern.zip when the release
      has one (today it sets up the newest once, and Lantern.zip is laid over
@@ -317,7 +326,7 @@ tried by a reviewer:
      checks stay.
    - **Commands for constructions Lantern knows** (a sunset sky, a road to
      the horizon, a parallel bank of resistors, a note from the chord):
-     this is Adam's "words for things" (QUESTIONS 5); waits on his answer
+     this is Adam's "words for things" (QUESTIONS 6); waits on his answer
      there for drawings, not for circuits or music.
    - **State-tracking tools: already there.** `die-four-moves` has TURN:
      Die and passes; the brief's `die-four-moves-alone` is the same puzzle
