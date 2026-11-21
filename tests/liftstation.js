@@ -10,6 +10,9 @@
 //    part's tool and the list, the block is asked for with the list, and each next part with its own instructions,
 //    in Chat and on the bench's path;
 //  - without the new modules, Lantern boots clean and does what it did.
+// (1.24.31) Adam's question is now one MAKE STATION block (AI_STATION, tests/station.js). This file keeps the 1.24.30
+// path -- three drawings made one at a time -- which a Lantern without AI_STATION still takes, so it loads Lantern
+// without AI_STATION; the bench item's 1.24.30 answer (the three blocks) is kept here as OLD_IDEAL.
 "use strict";
 var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualConsole;
 var fs = require("fs"), path = require("path");
@@ -57,7 +60,7 @@ function seq(list, seen) { var i = 0; return function (msgs) { if (seen) seen.pu
 function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" + lines.join("\n") + "\nEND"; }
 
 (async function () {
-  var o = load(), L = o.L;
+  var o = load(["AI_STATION"]), L = o.L;
   await sleep(80);
   await L.ai.detect();
   var act = L.aiAct, C = L.CHAT, PT = L.aiParts, PS = L.aiPumpStation, CT = L.aiControl, Q = RUN.question;
@@ -196,8 +199,12 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   ok("the bench's path: the block asked for, then each part, and all three made; out.made is the first", out.made && out.made.block.kind === "CONTROL" && out.made.ok &&
     JSON.stringify((out.parts || []).map(function (p) { return [p.kind, p.ok]; })) === JSON.stringify([["CONTROL", true], ["PIPING", true], ["LEVELS", true]]) && out.rounds === 4, [out.rounds, out.parts && out.parts.map(function (p) { return [p.kind, p.ok]; })]);
 
-  var bq = L.aiBenchQuestions.filter(function (q) { return q.id === "make-liftstation"; })[0], bo = await act.solve(bq.q, seq([bq.ideal]));
-  ok("the bench has Adam's question; its model answer (all three blocks in one reply) passes, and a missing part fails it", bq && L.aiBench.grade(bq, bo.text, bo).pass &&
+  var OLD_IDEAL = "MAKE CONTROL: Duplex lift station\nfloat FS1 \x22off\x22\nfloat FS2 \x22lead on\x22\nfloat FS3 \x22high level alarm\x22\nalternator AR M1 M2\ncoil M1 \x22pump 1 starter\x22\ncoil M2 \x22pump 2 starter\x22\nEND\n\n" +
+    "MAKE PIPING: Lift station\npump P1\npump P2\nEND\n\nMAKE LEVELS: Wet well\npump P1 P2\nfloat FS1 \x22off\x22\nfloat FS2 \x22lead on\x22\nfloat FS3 \x22high level alarm\x22\nEND";
+  var bq = L.aiBenchQuestions.filter(function (q) { return q.id === "make-liftstation"; })[0];
+  bq = bq && Object.assign({}, bq, { kind: "SCHEMATIC" });
+  var bo = await act.solve(bq.q, seq([OLD_IDEAL]));
+  ok("the bench has Adam's question; its 1.24.30 answer (all three blocks in one reply) passes as parts, and a missing part fails it", bq && L.aiBench.grade(bq, bo.text, bo).pass &&
     /the MAKE LEVELS part was not made/.test(L.aiBench.grade(bq, "x", { made: bo.made, parts: bo.parts.slice(0, 2) }).why), bq && L.aiBench.grade(bq, bo.text, bo));
   // --- without the new modules ----------------------------------------------------------------------------
   var o2 = load(["AI_PARTS", "AI_PUMP_STATION"]), L2 = o2.L;
