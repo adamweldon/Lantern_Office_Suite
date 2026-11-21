@@ -172,7 +172,7 @@ var OLD_IDEAL = "MAKE CONTROL: Duplex lift station\nfloat FS1 \x22off\x22\nfloat
   var c3 = await chat(Q, ["MAKE STATION: Bad\npumps 2\nfloats off 4 ft, lead 3 ft, lag 5 ft, alarm 6 ft\nEND", "MAKE STATION: Good\npumps 2\nfloats off 2 ft, lead 3 ft, lag 4 ft, alarm 5 ft\nEND"]);
   ok("Chat: a station Lantern questions goes back once, the correction held to the grammar", c3.sent.length === 2 && /^Lantern checked your MAKE STATION block/.test(c3.sent[1]) && bodies[1].grammar && c3.r.made.ok, [c3.sent, c3.r.made && c3.r.made.problems]);
   var bo5 = await (async function () { var got = []; var r = await act.solve(Q, function (m, op) { got.push(op || null); return Promise.resolve(got.length === 1 ? "I cannot draw." : "MAKE STATION: S\npumps 2\nEND"); }); return { r: r, got: got }; })();
-  ok("the bench's path: the block asked for after prose carries the grammar too", bo5.got.length === 2 && !bo5.got[0] && bo5.got[1] && /^root ::= "MAKE STATION: "/.test(bo5.got[1].grammar) && bo5.r.grammar === 1 && bo5.r.made.ok, bo5.got);
+  ok("the bench's path: the block asked for after prose carries the grammar too", bo5.got.length === 2 && !bo5.got[0] && bo5.got[1] && /^root ::= "MAKE STATION: "/.test(bo5.got[1].grammar) && bo5.r.made.ok, bo5.got);
 
   // --- the grammar ----------------------------------------------------------------------------------------
   ok("each grammar is the one llama.cpp's own parser read and ran the blocks through (tests/fixtures/grammar_1231)", CASES.every(function (c) { return act.grammarFor(c.name) === c.grammar; }) &&

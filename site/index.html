@@ -21356,8 +21356,9 @@ Lantern.RFB = (function () {
       if (OWNK) sent = sent.map(OWNK.message);   // "Not in my library" -> "say so, then your own knowledge, said"
       // (1.24.31) after Lantern asked for only a block, the reply is held to that block's shape (AI_ACTIONS' grammarFor)
       var co = opts.max_tokens ? { max_tokens: opts.max_tokens } : undefined;
-      if (gram) { co = co || {}; co.grammar = gram; rec.grammar = (rec.grammar || 0) + 1; gram = null; }
+      if (gram) { co = co || {}; co.grammar = gram; gram = null; }
       var reply = await call(sent, co);
+      if (co && co.grammar && window.Lantern.ai && window.Lantern.ai.lastGrammar) rec.grammar = (rec.grammar || 0) + 1;
       rec.rounds++;
       // (1.24.5) said: what Lantern read differently in the reply (AI_READ), and
       // a request it had to shorten for the model (AI_FIT)
@@ -26790,6 +26791,7 @@ Lantern.RFB = (function () {
         // (1.24.31) a call after Lantern asked for only a block carries that block's grammar (AI_ACTIONS' solve)
         var callFn = function (m, o) {
           return L.ai.complete(m, { temperature: 0, max_tokens: item.cat === "make" ? (item.max_tokens || 700) : (opts.max_tokens || 256), signal: opts.signal, grammar: o && o.grammar }).then(function (t) {
+            if (o && o.grammar && o.onSent && L.ai.lastGrammar) o.onSent();
             var la = L.ai.last || {}; toks += la.tokens || 0; if (la.guard) byRule = true; return t;
           });
         };
@@ -30993,6 +30995,9 @@ Lantern.RFB = (function () {
   // instructions far back in its context has them again where it looks.
   function fixText(made, q) {
     var b = made.block || {}, ps = made.problems || [], hint = null;
+    // (1.24.31) a result that asks to be written again as another kind (a station read from its drawings' blocks): that
+    // kind's block, its guide
+    if (made.fixKind && actionFor(made.fixKind) && actionFor(made.fixKind) !== b.action) b = { kind: made.fixKind, title: b.title, action: actionFor(made.fixKind), lines: [] };
     try { hint = b.action && typeof b.action.fixHint === "function" ? b.action.fixHint(b, made, q) : null; } catch (e) { hint = null; }
     if (!hint && b.action && b.action.prompt && b.action.prompt.indexOf("END") > 1 && b.action.prompt.indexOf("END") <= 9)
       hint = ["Lantern reads a MAKE " + b.kind + " block like this:"].concat(b.action.prompt.slice(0, b.action.prompt.indexOf("END")));
@@ -31065,7 +31070,7 @@ Lantern.RFB = (function () {
     var msgs = [{ role: "system", content: sys }, { role: "user", content: q }];
     var out = { rounds: 0, kind: "", fixed: false, rejected: "", grammar: 0 };
     // (1.24.31) the call after Lantern asks for only a block carries that block's grammar, as in Chat
-    function held(kind) { var g = null; try { g = kind ? grammarFor(kind) : null; } catch (e) { g = null; } if (g) out.grammar++; return g ? { grammar: g } : undefined; }
+    function held(kind) { var g = null; try { g = kind ? grammarFor(kind) : null; } catch (e) { g = null; } return g ? { grammar: g, onSent: function () { out.grammar++; } } : undefined; }
     var text = await call(msgs); out.rounds++;
     out.first = text; out.text = text;
     var made = build(text, q), runs = 0, hit;
@@ -31194,11 +31199,12 @@ Lantern.RFB = (function () {
     if (alt.length && a.grammarTags) alt.push("[A-Za-z] [A-Za-z]? [A-Za-z]? [A-Za-z]? [0-9] [0-9]? [0-9]?");
     return ["root ::= " + gq("MAKE " + K + ": ") + " title " + GNL + " (line " + GNL + ")* " + gq("END"),
       "title ::= [^\\n]+",
-      alt.length ? "line ::= (pre? first rest)?\npre ::= [-*] [ \\t]+ | [0-9] [0-9]? [.)] [ \\t]+\nfirst ::= " + alt.join(" | ") + "\nrest ::= ([ \\t:=,.] [^\\n]*)?" : "line ::= [^\\n]*"].join("\n");
+      alt.length ? "line ::= ([ \\t]* pre? first rest)?\npre ::= [-*\\u2022] [ \\t]+ | [0-9] [0-9]? [.)] [ \\t]+\nfirst ::= " + alt.join(" | ") + "\nrest ::= ([ \\t:=,.-] [^\\n]*)?" : "line ::= [^\\n]*"].join("\n");
   }
   // fixKind(made) -> the kind a correction holds the reply to: the block's own, or none when a problem tells the model to
   // write another kind ("for compressed air write MAKE PNEUMATIC", the first review of 1.24.31)
   function fixKind(made) {
+    if (made && made.fixKind) return made.fixKind;
     var k = made && made.block ? String(made.block.kind || "").toUpperCase().replace(/\s+/g, " ") : "";
     var named = (((made && made.problems) || []).join(" ").match(/\bMAKE\s+[A-Z][A-Z]+(?:\s[A-Z]{3,})?\b/g) || []).map(function (m) { return m.replace(/^MAKE\s+/, ""); });
     return named.some(function (n) { return n !== k; }) ? null : k || null;
@@ -33975,9 +33981,11 @@ Lantern.RFB = (function () {
       // (the first review of 1.24.31) only for a wet well's pumps -- a lift station, sewage, a sump, storm water, named in
       // the question or on the coils -- never two compressors, boosters, fans or chilled-water pumps on an alternator
       var WETP = /\b(lift(?:ing)?[\s-]+(?:pump[\s-]+)?stations?|sewage|sewer|wastewater|wet[\s-]?wells?|sumps?|storm[\s-]?water|effluent|grinder[\s-]+pumps?|lift[\s-]+pumps?)\b/i;
-      var NOTWET = /\b(compressors?|boosters?|chilled|cooling[\s-]+towers?|fans?|blowers?|vacuum|boilers?|irrigation|potable|domestic\s+water|hot\s+water|condensers?)\b/i;
+      var NOTWET = /\b(generators?|odou?r|heaters?|scrubbers?|transfer\s+switch(?:es)?|lights?|lamps?|compressors?|boosters?|chilled|cooling[\s-]+towers?|fans?|blowers?|vacuum|boilers?|irrigation|potable|domestic\s+water|hot\s+water|condensers?)\b/i;
       var wetTxt = String(pr.question || "") + " " + items.filter(function (it) { return it.role === "coil" || it.role === "alternator"; }).map(function (it) { return it.label || ""; }).join(" ");
-      if (!items.some(function (it) { return it.role === "float"; }) && WETP.test(wetTxt) && !NOTWET.test(wetTxt)) {
+      // (the second review) and the two the alternator takes are pumps: a pump's label, or none
+      var arePumps = pumps.every(function (p) { var lb = String(dev[p] && dev[p].label || ""); return !lb || /\b(pumps?|starters?|contactors?|motors?)\b/i.test(lb) && !NOTWET.test(lb); });
+      if (!items.some(function (it) { return it.role === "float"; }) && WETP.test(wetTxt) && !NOTWET.test(wetTxt) && arePumps) {
         var four = ["off", "lead on", "lag on", "high level alarm"].map(function (lb) {
           var f0 = { role: "float", kind: "float", id: nid("FS"), label: lb, nc: false, refs: [], a: {}, made: true };
           dev[f0.id] = f0; items.push(f0); return f0;
@@ -34070,12 +34078,14 @@ Lantern.RFB = (function () {
       fl.off.forEach(function (f) { if (f.nc) changed.push(f.id + " (" + f.label + ") is written nc; it is drawn as Lantern wires an off float, made while the water is above it, so the call holds in until the water falls below it"); });
       if (fl.alarm.length) {
         alarms = outs.filter(function (o) { return /^(lamp|horn)$/.test(o.role) && ((ALARM.test(o.label || "") && !LOWA.test(o.label || "")) || o.refs.some(function (r) { return fl.alarm.some(function (f) { return f.id === r.id; }); })); });
+        // (the second review of 1.24.31) a light names one of two alarms only where each alarm float has a light or horn of its own
+        var eachOwn = fl.alarm.every(function (f) { return outs.some(function (o2) { return /^(lamp|horn)$/.test(o2.role) && o2.refs.some(function (r) { return r.id === f.id; }); }); });
         alarms.forEach(function (o) {
           var other = o.refs.filter(function (r) { return !fl.alarm.some(function (f) { return f.id === r.id; }); }).map(function (r) { return r.id; });
           // (the first review of 1.24.31) with two alarm floats (high level and high high), a light that names one of them is
           // that one's
           var mine = fl.alarm.filter(function (f) { return o.refs.some(function (r) { return r.id === f.id; }); });
-          if (fl.alarm.length > 1 && mine.length === 1 && !other.length) { o.own = mine[0]; o.refs = []; return; }
+          if (fl.alarm.length > 1 && mine.length === 1 && !other.length && eachOwn) { o.own = mine[0]; o.refs = []; return; }
           if (!o.refs.length) changed.push(o.id + " (" + o.label + ") is set off by the alarm float " + list(fl.alarm.map(function (f) { return f.id; }), "or"));
           if (other.length) changed.push(o.id + " (" + o.label + ") is lit by the alarm float " + list(fl.alarm.map(function (f) { return f.id; }), "or") + ", not by " + list(other, "and"));
           o.refs = [];
@@ -34592,7 +34602,7 @@ Lantern.RFB = (function () {
   // (1.24.31) the words a control circuit's line begins with, for the grammar that holds a block Lantern asks for
   var gwBefore = act.grammarWords, CKINDS = ["CONTROL", "CONTROL CIRCUIT", "MOTOR CONTROL", "RELAY LOGIC", "RELAY CIRCUIT", "LADDER DIAGRAM", "STARTER"];
   act.grammarWords = function (k) {
-    if (CKINDS.indexOf(String(k || "").toUpperCase()) >= 0) return Object.keys(ROLE).filter(function (w) { return ROLE[w] !== "implied" && ROLE[w] !== "pipe"; }).concat(["motor", "magnetic", "push", "emergency", "pilot", "control", "e-stop", "run", "status", "time", "hand", "thermal", "high", "low", "lead", "lag", "normally"]);
+    if (CKINDS.indexOf(String(k || "").toUpperCase()) >= 0) return Object.keys(ROLE).filter(function (w) { return ROLE[w] !== "implied" && ROLE[w] !== "pipe"; }).concat(["motor", "magnetic", "push", "emergency", "pilot", "control", "e-stop", "run", "status", "time", "hand", "thermal", "high", "low", "lead", "lag", "normally", "off", "on", "stop", "start", "pump"]);
     return typeof gwBefore === "function" ? gwBefore(k) : gwBefore || null;
   };
   var hintBefore = act.fixHint;
@@ -34970,7 +34980,8 @@ Lantern.RFB = (function () {
       if (!role) { problems.push("\u201c" + line + "\u201d is not a line of MAKE LEVELS (it takes: well, pump, float, inlet, note)"); return; }
       // a height outside the quotes; else (the first review) one in the label ("off at 2 ft"), but not a pipe's size
       var bare = line.replace(/\x22[^\x22]*\x22|\u201c[^\u201d]*\u201d/g, " "), hq = heightOf(bare);
-      if (!hq && role !== "inlet" && role !== "pump") hq = heightOf(line);
+      // (1.24.31, the second review of MAKE STATION) in the label only: the tag's digit and a quote ("FS3 \x222nd ...") are not 3 in
+      if (!hq && role !== "inlet" && role !== "pump") hq = heightOf((line.match(/\x22([^\x22]*)\x22|\u201c([^\u201d]*)\u201d/g) || []).join(" ").replace(/[\x22\u201c\u201d]/g, " "));
       // (the third review) "8 in gravity sewer at 4.5 ft": heightOf passes over the pipe's size and reads the invert
       if (!hq && role === "inlet") { var qs = /\x22([^\x22]*)\x22/.exec(line); if (qs) hq = heightOf(qs[1]); }
       var it = { role: role === "job" ? "float" : role, id: "", label: role === "job" ? w0 : "", refs: [], h: hq, line: line, count: 0 };
@@ -35015,7 +35026,12 @@ Lantern.RFB = (function () {
         var a = null, b = null, k;
         for (k = i - 1; k >= 0 && a == null; k--) if (fs[k].h) a = fs[k].h.m;
         for (k = i + 1; k < fs.length && b == null; k++) if (fs[k].h) b = fs[k].h.m;
-        if (a != null && b != null) hs[i] = pre + (Math.round((a + b) / 2 / UNIT[u] * 10) / 10) + " " + u + post;
+        // (1.24.31, the second review of MAKE STATION) two or more left out between the same neighbours: spread evenly, so
+        // the line copied is in order
+        var ia = -1, ib = -1;
+        for (k = i - 1; k >= 0 && ia < 0; k--) if (fs[k].h) ia = k;
+        for (k = i + 1; k < fs.length && ib < 0; k++) if (fs[k].h) ib = k;
+        if (a != null && b != null) hs[i] = pre + (Math.round((a + (b - a) * (i - ia) / (ib - ia)) / UNIT[u] * 10) / 10) + " " + u + post;
       });
     }
     return fs.map(function (f, i) { return "float " + (f.id || "FS" + (i + 1)) + " \x22" + names[i] + "\x22" + (hs[i] ? " " + hs[i] : ""); }).join(", ");
@@ -35296,7 +35312,7 @@ Lantern.RFB = (function () {
   // main, or floats. "duplex" or "pump station" alone is a two-family house, a receptacle, air compressors, a booster or
   // chilled water's too
   var WETQ = /\b(lift(?:ing)?[\s-]+(?:pump[\s-]+)?stations?|sewage|wastewater|sewer|wet[\s-]?wells?|sumps?|storm[\s-]?water|force[\s-]+mains?|lift[\s-]+pumps?|floats?|effluent|grinder[\s-]+pumps?)\b/i;
-  var NOT_OURS = /\b(booster|irrigation|distribution|potable|drinking|chilled|cooling[\s-]+towers?|compressors?|receptacles?|outlets?|apartments?|two[\s-]+family|townhouses?|condos?|fire[\s-]+pumps?|sprinklers?|boilers?|hvac|fountains?|pools?)\b/i;
+  var NOT_OURS = /\b(one[\s-]+line|single[\s-]+line|odou?r[\s-]+control|transfer[\s-]+switch(?:es)?|bypass[\s-]+pumping|booster|irrigation|distribution|potable|drinking|chilled|cooling[\s-]+towers?|compressors?|receptacles?|outlets?|apartments?|two[\s-]+family|townhouses?|condos?|fire[\s-]+pumps?|sprinklers?|boilers?|hvac|fountains?|pools?)\b/i;
   function isStation(q) { try { return (PS().isStation ? PS().isStation(q) : false) && WETQ.test(q) && !NOT_OURS.test(q); } catch (e) { return false; } }
   // "high level alarm", "low water" are a float's job, not a drawing of the levels
   function noJobs(q) { return String(q || "").replace(/\b(?:high|low|water|alarm)[\s-]+(?:high[\s-]+)?(?:levels?|water)\b/gi, " "); }
@@ -35328,25 +35344,52 @@ Lantern.RFB = (function () {
   // table or a checklist is the station's only when it is the station's own (its parts list, sequence, commissioning)
   var OTHER = /\b(slides?|slide\s*decks?|decks?|presentations?|power\s*points?|spread\s*sheets?|sheets?|workbooks?|charts?|graphs?|flash\s*cards?|cards|quiz(?:zes)?|songs?|poems?|stor(?:y|ies)|logos?|cartoons?|maps?|calendars?|budgets?|timelines?|posters?|e-?mails?|letters?|memos?|essays?|lesson\s+plans?|maintenance\s+plans?|schedules?|invoices?|pictures?|paintings?|illustrations?)\b/i;
   var OTHER_DOC = /\b(documents?|docs?|reports?|check\s*lists?|checklists?|tables?|lists?|procedures?|manuals?|sops?|forms?)\b/i;
+  // (the second review) a question that asks for a station and something else -- a motor starter, a house -- is in parts:
+  // a request in it that is another tool's, or another machine's control, is not the station's
+  var OTHER_MACHINE = /\b(motor\s+starters?|starter\s+circuits?|conveyors?|fans?|blowers?|compressors?|heaters?|generators?|mixers?|cranes?|hoists?|doors?|garage|press(?:es)?|lathes?|elevators?|traffic|houses?|cars?)\b/i;
+  var deep = 0;
+  function foreign(t) {
+    if (PACKAGE.test(t) || views(t).length && !(OTHER_MACHINE.test(t) && !/\b(pumps?|stations?|wet|floats?|sumps?|sewage)\b/i.test(t))) return false;
+    if (OTHER_MACHINE.test(t) && !/\b(pumps?|stations?|wet|floats?|sumps?|sewage)\b/i.test(t)) return true;
+    var acts = [];
+    try { acts = L.aiAct.relevant(t); } catch (e) { acts = []; }
+    return acts.some(function (a) { return !/^(station|piping|levels|schematic)$/.test(a.id); });
+  }
   function asks(q) {
     q = String(q || "");
     if (!isStation(q) || NOT_WHOLE.test(q) || OTHER.test(q)) return false;
+    // (the second review) another machine named before the station ("a house ... of a lift station", "a motor starter
+    // circuit for a lift station") is what is asked for
+    var wm = WETQ.exec(q), pre0 = wm ? q.slice(0, wm.index) : "";
+    if (OTHER_MACHINE.test(pre0) && !/\b(pumps?|floats?|wet|sumps?|sewage)\b/i.test(pre0)) return false;
+    var PT = L.aiParts;
+    if (!deep && PT && PT.pieces) {
+      var heads = [];
+      try { heads = PT.pieces(q).filter(function (pc) { return pc.kind === "head" || pc.kind === "maybe"; }); } catch (e) { heads = []; }
+      if (heads.length > 1) {
+        deep++;
+        var other = false;
+        try { other = heads.some(function (pc) { return foreign(pc.t); }); } finally { deep--; }
+        if (other) return false;
+      }
+    }
     var v = views(q), pk = PACKAGE.test(q);
     // "Write the commissioning checklist ..." asks to make one too
-    if (!SHOWV.test(q) && !(pk && /\b(write|prepare|list|give|need|want)\b/i.test(q))) return false;
+    // "Write the commissioning checklist ...", "I need the panel wiring and the float settings ..." ask to make them too
+    if (!SHOWV.test(q) && !((pk || v.length >= 2) && /\b(write|prepare|list|give|need|want|send)\b/i.test(q))) return false;
     if (v.length >= 2 || pk) return true;
     return !v.length && !OTHER_DOC.test(q) && WHOLE.test(q);
   }
 
   // ---- the block --------------------------------------------------------------------------------
-  var SROLES = { pumps: "pump pumps", floats: "float floats level levels fs", well: "well wetwell sump pit basin tank", inlet: "inlet influent inflow sewer invert",
+  var SROLES = { pumps: "pump pumps", floats: "float floats level levels fs alarm high low", well: "well wetwell sump pit basin tank", inlet: "inlet influent inflow sewer invert",
     main: "main mains forcemain header discharge outlet", valves: "valve valves", supply: "supply voltage power", show: "show views drawings",
     note: "note text label", vent: "vent", horn: "horn buzzer siren bell", lights: "light lights lamp lamps", alternator: "alternator alternating alternate alternation",
     station: "station simplex duplex triplex quadplex type", coil: "coil starter contactor", check: "check" };
   var SROLE = {};
   Object.keys(SROLES).forEach(function (r) { SROLES[r].split(" ").forEach(function (w) { SROLE[w] = r; }); });
   // the names a model gives a line's part, as its first words
-  var LEADS = [[/^\s*(?:the\s+)?wet[\s-]+wells?\b/i, "well"], [/^\s*(?:the\s+)?(?:force|rising)[\s-]+mains?\b/i, "main"], [/^\s*float[\s-]+(?:switch(?:es)?|levels?)\b/i, "floats"],
+  var LEADS = [[/^\s*(\d+|one|two|three|four|five|six)\s+(?:sewage\s+|submersible\s+|lift\s+)?pumps?\b/i, "pumps $1"], [/^\s*(?:the\s+)?wet[\s-]+wells?\b/i, "well"], [/^\s*(?:the\s+)?(?:force|rising)[\s-]+mains?\b/i, "main"], [/^\s*float[\s-]+(?:switch(?:es)?|levels?)\b/i, "floats"],
     [/^\s*(?:control[\s-]+)?(?:voltage|supply)\b|^\s*control[\s-]+(?:voltage|power|supply)\b/i, "supply"], [/^\s*(?:shut[\s-]?off|isolation|isolating)[\s-]+valves?\b/i, "valves"],
     [/^\s*(gate|plug|ball|butterfly|eccentric(?:[\s-]+plug)?)[\s-]+valves?\b/i, "valves $1"], [/^\s*check[\s-]+valves?\b/i, "check"], [/^\s*(?:run|pilot|pump)[\s-]+(?:lights?|lamps?)\b/i, "lights"],
     [/^\s*(swing|ball|flap|wafer|lift|spring|silent|duckbill)[\s-]+check(?:[\s-]+valves?)?\b/i, "check $1"], [/^\s*alarm[\s-]+(?:horn|buzzer|siren|bell)\b/i, "horn"], [/^\s*(?:alarm|high[\s-]+level)[\s-]+(?:lights?|lamps?)\b/i, "lights alarm"], [/^\s*(?:gravity[\s-]+sewer|inlet[\s-]+pipe|influent)\b/i, "inlet"],
@@ -35356,7 +35399,7 @@ Lantern.RFB = (function () {
     return line;
   }
   // the jobs in a line of floats, each with the height written after it: "floats off 2 ft, lead on 3.5 ft, alarm"
-  var JOBRE = /\b(?:high[\s-]+high(?:[\s-]+(?:level|water))?(?:[\s-]+alarm)?|high[\s-]+(?:level[\s-]+|water[\s-]+)?alarm|high[\s-]+(?:level|water)|low[\s-]+(?:level[\s-]+|water[\s-]+)?alarm|low[\s-]+(?:level|water)|alarm|lead(?:[\s-]+(?:on|start|pump))?|lag(?:[\s-]+(?:on|start|pump))?|(?:all[\s-]+|pumps?[\s-]+)?(?:off|stop)|pump[\s-]+on|start|on)\b/gi;
+  var JOBRE = /\b(?:high[\s-]+high(?:[\s-]+(?:level|water))?(?:[\s-]+alarm)?|high[\s-]+(?:level[\s-]+|water[\s-]+)?alarm|high[\s-]+(?:level|water)|low[\s-]+(?:level[\s-]+|water[\s-]+)?alarm|low[\s-]+(?:level|water)|alarm|lag[\s-]+(?:pump[\s-]+)?(?:off|stop)|(?:lead|lag)(?:[\s-]+pump)?(?:[\s-]+(?:on|start))?|(?:all[\s-]+|pumps?[\s-]+)?(?:off|stop)|(?:(?:second|2nd|other)[\s-]+)?pump(?:[\s-]+(?:\d|one|two))?[\s-]+on|start|on)\b/gi;
   function floatList(t) {
     var out = [], m, re = new RegExp(JOBRE.source, "gi"), hits = [];
     while ((m = re.exec(t))) hits.push({ at: m.index, end: m.index + m[0].length, t: m[0] });
@@ -35365,9 +35408,15 @@ Lantern.RFB = (function () {
     var before = hits.length && heightOf(t.slice(0, hits[0].at));
     hits.forEach(function (h, i) {
       var seg = before ? t.slice(i ? hits[i - 1].end : 0, h.at) : t.slice(h.end, i + 1 < hits.length ? hits[i + 1].at : t.length), job = floatJob(h.t) || (/\bon\b|start/i.test(h.t) ? "lead" : null);
+      // (the second review) "pump 2 on" and "second pump on" start the second pump: the lag float
+      if (/\b(?:second|2nd|other)\b|\bpump[\s-]+(?:2|two)\b/i.test(h.t) && job === "lead") job = "lag";
       if (!job) return;
-      out.push({ job: job, label: /\s/.test(h.t) && !/^(?:lead|lag)[\s-]+on$/i.test(h.t) ? h.t.replace(/\s+/g, " ").toLowerCase() : "", h: heightOf(seg) });
+      out.push({ job: job, label: /\s/.test(h.t) && !/^(?:lead|lag)[\s-]+on$/i.test(h.t) ? h.t.replace(/\s+/g, " ").toLowerCase() : "", h: heightOf(seg), seg: seg });
     });
+    // (the second review) a unit written once at the end ("off 2.0, lead 3.0, ... alarm 5.0 ft"): the bare numbers are in it
+    var lastH = out.length && out[out.length - 1].h, unit = lastH ? (/(ft|in|mm|cm|m)$/.exec(lastH.text.replace(/ below grade$/, "")) || [])[1] : null;
+    if (unit) out.forEach(function (f) { var bn = !f.h && /(?:^|[^\d.])(\d+(?:\.\d+)?)\s*[,;]?\s*$/.exec(f.seg || ""); if (bn) f.h = heightOf(bn[1] + " " + unit); });
+    out.forEach(function (f) { delete f.seg; });
     return out;
   }
   // parse(block, lenient) -> {count, ids, floats, well, inlet, main, valve, supply, horn, lights, show, notes, unread,
@@ -35382,6 +35431,8 @@ Lantern.RFB = (function () {
       if (!/\S/.test(line) || /^\s*(?:#|\x2F\x2F|--)/.test(line)) return;
       // a heading the guide shows ("the wet well's depth:"), its prose, or a MAKE or END line copied: nothing
       if ((/:\s*$/.test(line) && !/\d/.test(line)) || ECHO[echoKey(line)] || /^\s*(?:MAKE\s+[A-Za-z ]+:|END\s*$)/.test(line)) return;
+      // (the second review) a float written tag first ("FS1 off 2 ft", "FS1: off float at 2 ft") is a float line
+      if (/^\s*(?:FS|LS|LSL|LSH|LSLL|LSHH|LSW|F)\d{1,3}\s*:?\s+\S/i.test(line) && !/^\s*\S+\s*:?\s*$/.test(line)) line = "float " + line.replace(/^\s*(\S+?)\s*:\s*/, "$1 ");
       var ws = words(stidy(line)), w0 = ws[0] && ws[0].w ? ws[0].w.toLowerCase().replace(/[:.,;=]+$/, "") : "", role = SROLE[w0] || "", rest = ws.slice(1);
       var restText = unholder(rest.map(function (x) { return x.q != null ? "\x22" + x.q + "\x22" : x.w; }).join(" ")), quoted = rest.filter(function (x) { return x.q != null; }).map(function (x) { return unholder(x.q); }).filter(function (x) { return x; });
       var bare = rest.filter(function (x) { return x.q == null; }).map(function (x) { return x.w.replace(/[.,;:]+$/, ""); }).filter(function (x) { return !/^<[^<>]*>$/.test(x); });
@@ -35394,13 +35445,16 @@ Lantern.RFB = (function () {
       if (role === "pumps") {
         // (the first review) the first number on the line is the count ("pumps 2 x 5 HP", "pumps 2 rated 200 gpm");
         // "1 duty + 1 standby" is two; "pump 2" (a pump's own number, a line each) counts up to it
-        var got = false, dm = /(\d+)\s*(?:x\s*)?(?:duty|lead|running|working|main)\b[^\d]{0,20}(\d+)\s*(?:standby|stand-by|spare|back-?up|lag|reserve)\b/i.exec(restText);
+        // (the second review) counts in words too ("one duty, one standby"), "3x 2 HP" three, never the horsepower
+        var rt = restText.replace(/\b(one|two|three|four|five|six)\b/gi, function (w) { return String({ one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 }[w.toLowerCase()]); });
+        var got = false, dm = /(\d+)\s*(?:x\s*)?(?:duty|lead|running|working|main)\b[^\d]{0,20}(\d+)\s*(?:standby|stand-by|spare|back-?up|lag|reserve)\b/i.exec(rt);
         if (dm) { pr.count = Math.max(pr.count, +dm[1] + +dm[2]); got = true; }
         bare.forEach(function (x) {
           var lx = x.toLowerCase().replace(/^[\x28]+|[\x29:,;]+$/g, "");
           if (/^[A-Za-z]{1,3}\d{1,2}$/.test(lx)) { if (pr.ids.indexOf(lx.toUpperCase()) < 0) pr.ids.push(lx.toUpperCase()); return; }
           if (got) return;
-          if (/^\d+$/.test(lx)) { pr.count = w0 === "pump" ? Math.max(pr.count, +lx) : +lx; got = true; return; }
+          var nx = /^(\d+)x?$/.exec(lx);
+          if (nx) { pr.count = w0 === "pump" ? Math.max(pr.count, +nx[1]) : +nx[1]; got = true; return; }
           if (COUNT[lx]) { pr.count = COUNT[lx]; got = true; }
         });
         return;
@@ -35418,6 +35472,8 @@ Lantern.RFB = (function () {
       if (role === "floats") {
         var id = bare[0] && /^[A-Za-z]{1,4}\d{0,3}$/.test(bare[0]) && /\d|^LS/i.test(bare[0]) ? bare[0].toUpperCase() : "";
         var body = (id ? restText.replace(/^\S+\s*/, "") : restText), lab = quoted.join(" ");
+        // a line that begins with the job ("alarm high level float", "high level alarm float 5 ft"): the job is on it
+        if (/^(alarm|high|low)$/.test(w0)) { body = unholder(line); id = ""; if (/\b(horn|buzzer|siren|bell)\b/i.test(line)) pr.horn = true; }
         if (w0 !== "floats" && w0 !== "levels" && (id || lab)) {   // one float: float FS2 "lead on" 3.5 ft
           var j = floatJob(lab || body), fh = heightOf(body.replace(/\x22[^\x22]*\x22/g, " "));
           // (the first review) the guide's own float line copied, its placeholder for a height: the guide's, not a float
@@ -35433,10 +35489,16 @@ Lantern.RFB = (function () {
         pr.unread.push(trim(line));
         return;
       }
-      if (role === "well") { var wl = quoted.join(" ") || "", wh = heightOf(restText.replace(/\x22[^\x22]*\x22/g, " ")); pr.well = { label: pr.well && pr.well.label || wl, h: pr.well && pr.well.h || wh }; return; }
+      if (role === "well") {
+        var wt = restText.replace(/\x22[^\x22]*\x22/g, " "), wd = /([\d.,]+\s*(?:ft|feet|foot|m|metres?|meters?|mm|cm|in|\x27)?(?:\s*\d+\s*(?:in|\x22))?)\s*(?:deep|depth)\b/i.exec(wt);
+        var wl = quoted.join(" ") || "", wh = wd ? heightOf(wd[1] + " deep") : heightOf(wt); pr.well = { label: pr.well && pr.well.label || wl, h: pr.well && pr.well.h || wh }; return;
+      }
       if (role === "inlet") {
         var il = quoted.join(" ") || unholder(restText.replace(/-?\d+(?:\.\d+)?\s*(?:ft|feet|foot|in|inches|m|cm|mm|\x27|\x22)?\s*$/i, "")) || "", ih = heightOf(restText.replace(/\x22[^\x22]*\x22/g, " "));
         il = trim(il.replace(/\s+(?:at|@|invert(?:\s+at)?)\s*$/i, "").replace(/^invert$/i, ""));
+        // (the second review) inlet 8" at 6': the size before "at", the invert after it
+        var atm = /(?:\bat\b|@|\binvert\b)\s*(.*)$/i.exec(restText.replace(/\x22[^\x22]*\x22/g, " ").replace(/(\d)\x22/g, "$1 in"));
+        if (atm && heightOf(atm[1])) { ih = heightOf(atm[1]); if (!quoted.length) il = trim(restText.replace(/(\d)\x22/g, "$1 in").replace(/\s*(?:\bat\b|@|\binvert\b)[\s\S]*$/i, "")) || il; }
         // (the first review) "inlet 8 in": a pipe's size (inches or millimetres, and nothing saying it is the invert or
         // where it is), not its height
         if (ih && !quoted.length && /^(?:in|mm)$/.test(ih.text.split(" ").pop()) && !/\b(?:invert|at|el|elev|elevation|above|bottom)\b|@/i.test(restText)) { if (!il || il === ih.src) il = restText; ih = null; }
@@ -35444,7 +35506,10 @@ Lantern.RFB = (function () {
         pr.inlet = { label: il || (pr.inlet ? pr.inlet.label : ""), h: ih || (pr.inlet ? pr.inlet.h : null) };
         return;
       }
-      if (role === "main") { var ml = quoted.join(" ") || unholder(restText); if (ml) pr.main = ml; else if (!pr.main) pr.main = ""; return; }
+      if (role === "main") {
+        if (/\bbreakers?\b|\bdisconnect\b|\b\d+\s*a(?:mps?)?\b/i.test(restText) && !/\bforce\b|\bpipe\b|\bin\b|\bmm\b/i.test(restText)) { pr.unread.push(trim(line)); return; }
+        var ml = quoted.join(" ") || unholder(restText); if (ml) pr.main = ml; else if (!pr.main) pr.main = ""; return;
+      }
       if (role === "check") { var ck = /\b(swing|ball|flap|wafer|lift|spring|silent|tilting[\s-]+disc|dual[\s-]+plate|duckbill|double[\s-]+door|rubber[\s-]+flapper)\b/i.exec(restText + " " + quoted.join(" ")); if (ck) { pr.checkKind = ck[1].toLowerCase(); return; } }
       if (role === "valves" || role === "check") {
         var kt = restText + " " + quoted.join(" ") + " " + w0, km = /\b(gate|plug|ball|butterfly|eccentric(?:[\s-]+plug)?)\b/i.exec(kt);
@@ -35453,7 +35518,16 @@ Lantern.RFB = (function () {
         else if (kinds0.length > 1 && role === "valves") pr.unread.push(trim(line) + " (more than one kind of valve: the drawing shows the shutoff valve without a kind)");
         return;
       }
-      if (role === "supply") { var sv = quoted.join(" ") || unholder(restText); if (/\d/.test(sv)) pr.supply = sv; return; }
+      // (the second review) a control voltage only: "120 V AC", "24 V DC", the part marked control where two are given --
+      // never the pumps' "480 V 3 phase", nor a sentence
+      if (role === "supply") {
+        var sv = trim((quoted.join(" ") || unholder(restText)).replace(/\x22/g, "")), cv0 = sv ? null : "placeholder", cv = /control[^,;]*?(\d+(?:\.\d+)?\s*V(?:AC|DC)?(?:\s*(?:AC|DC))?)/i.exec(sv);
+        if (cv0) return;   // the guide's "<volts>" copied: nothing
+        if (cv) sv = cv[1];
+        if (/^\s*\d+(?:\.\d+)?\s*V(?:AC|DC)?(?:\s*(?:AC|DC))?\s*$/i.test(sv)) pr.supply = sv.replace(/\s+/g, " ");
+        else pr.unread.push(trim(line) + " (not a control voltage: the ladder is drawn between L1 and L2)");
+        return;
+      }
       if (role === "show") { VIEWS.forEach(function (v) { if (new RegExp(v === "control" ? "control|wiring|ladder|circuit|electrical" : v === "piping" ? "pip|plumb|valve" : "level|float|section", "i").test(restText)) pr.show.push(v); }); if (/\ball\b/i.test(restText)) pr.show = VIEWS.slice(); return; }
       if (role === "note") { var nt = unholder(line.replace(/^\s*\S+\s*/, "")); if (nt) pr.notes.push(nt); return; }
       if (role === "vent") return;
@@ -35482,7 +35556,7 @@ Lantern.RFB = (function () {
       if (want) { n = want; sp.said.push(pumps(n) + " (the question asks for " + (n === 1 ? "one" : n === 2 ? "a duplex" : n) + ")"); }
       else if (qc.length > 1) { n = Math.max.apply(null, qc); sp.said.push(pumps(n) + " (the question names " + list(qc.map(String), "and") + "; Lantern took the larger)"); }
       else if (tc.length === 1) { n = tc[0]; sp.said.push(pumps(n) + ", as the block\u2019s title says"); }
-      else if (/\bsump[\s-]+pump\b/i.test(q) && !/\bsump[\s-]+pumps\b|\b(?:station|lift|sewage|duplex)\b/i.test(q)) { n = 1; sp.said.push("one pump (the question asks for a sump pump)"); }
+      else if (/\bsump[\s-]+pump\b/i.test(q) && !/\bsump[\s-]+pumps\b|\b(?:station|lift|sewage|duplex|back-?up|standby|stand-by|second|spare)\b/i.test(q)) { n = 1; sp.said.push("one pump (the question asks for a sump pump)"); }
       else { n = 2; sp.said.push("2 pumps: the block did not say, and two taking turns is the usual lift station"); }
     }
     sp.count = n;
@@ -35499,7 +35573,7 @@ Lantern.RFB = (function () {
         var g0 = same[0];
         if (!g0.h && f.h) g0.h = f.h;
         if (!g0.id && f.id) g0.id = f.id;
-        if (g0.h && f.h && Math.abs(g0.h.m - f.h.m) > 0.001) twice.push(NAME[f.job]);
+        if (g0.h && f.h && Math.abs(g0.h.m - f.h.m) > 0.001) twice.push({ job: NAME[f.job], id: g0.id || f.id || "", a: g0.h.text, b: f.h.text });
         return;
       }
       floats.push({ id: f.id, job: f.job, label: f.label, h: f.h, key: key(f) });
@@ -35517,7 +35591,7 @@ Lantern.RFB = (function () {
       if (lagF.length) { floats = floats.filter(function (f) { return lagF.indexOf(f) < 0; }); byJob.lag = 0; sp.said.push("not the " + list(lagF.map(function (f) { return (f.id ? f.id + " " : "") + "(" + (f.label || NAME[f.job]) + ")"; }), "and") + " float" + (lagF.length > 1 ? "s" : "") + ": one pump has no lag pump to start or stop"); }
     }
     odd.forEach(function (f) { sp.problems.push("\u201c" + f.line + "\u201d does not say what the float is for: name its job, like: float " + (f.id || "FS1") + " \x22" + (byJob.off ? byJob.lead ? byJob.lag || n < 2 ? "high level alarm" : "lag on" : "lead on" : "off") + "\x22" + (f.h ? " " + f.h.text : "")); });
-    twice.forEach(function (j) { sp.problems.push("two heights for the " + j + " float: write it once, like: float FS1 \x22" + j + "\x22 <its height>"); });
+    twice.forEach(function (t) { sp.problems.push("two heights for the " + t.job + " float (" + t.a + " and " + t.b + "): write it once, like: float " + (t.id || "FS" + (ORDER[(pr.floats.filter(function (x) { return NAME[x.job] === t.job; })[0] || {}).job] || 1)) + " \x22" + t.job + "\x22 " + t.a); });
     if (!floats.length) {
       var jobs = n === 1 ? ["off", "lead", "alarm"] : pr.floatCount === 3 ? ["off", "lead", "alarm"] : pr.floatCount === 2 ? ["off", "lead"] : ["off", "lead", "lag", "alarm"];
       jobs.forEach(function (j) { floats.push({ id: "", job: j, label: "", h: null }); });
@@ -35529,6 +35603,13 @@ Lantern.RFB = (function () {
       if (!byJob.alarm && !byJob.low) sp.said.push("no high level alarm float: the block has none (most stations have one, above the lag float)");
     }
     floats.sort(function (x, y) { return (x.key === "lagoff" ? 1.5 : x.key === "alarm2" ? 5 : ORDER[x.job]) - (y.key === "lagoff" ? 1.5 : y.key === "alarm2" ? 5 : ORDER[y.job]); });
+    // (the second review) heights for some floats only, where a float without one has no height above or below it to be
+    // set between: drawn in order, not to scale, and said (a line to write would only come back)
+    var withH = floats.filter(function (f) { return f.h; });
+    if (withH.length && withH.length < floats.length && floats.some(function (f, i) { return !f.h && (!floats.slice(0, i).some(function (g) { return g.h; }) || !floats.slice(i + 1).some(function (g) { return g.h; })); })) {
+      sp.said.push("the float levels in order, not to scale: heights were given for " + list(withH.map(function (f) { return (f.id || NAME[f.job]) + " (" + f.h.text + ")"; })) + " only");
+      floats.forEach(function (f) { f.h = null; });
+    }
     var used = {};
     floats.forEach(function (f) { if (f.id) { if (used[f.id]) f.id = ""; else used[f.id] = 1; } });
     var k = 1;
@@ -35561,7 +35642,7 @@ Lantern.RFB = (function () {
       alarmF.forEach(function (f) { c.push("lamp LT" + (++lt) + " " + f.id + " " + q2(alarmF.length > 1 ? f.label : "high level") + " red"); });
       // a low level alarm: its light on while the water is below it
       sp.floats.filter(function (f) { return f.job === "low"; }).forEach(function (f) { c.push("lamp LT" + (++lt) + " " + f.id + " off " + q2("low level") + " amber"); });
-      if (sp.horn && alarmF.length) c.push("horn AH1 " + alarmF[alarmF.length - 1].id + " " + q2("high level"));
+      if (sp.horn && alarmF.length) c.push("horn AH1 " + alarmF[alarmF.length - 1].id + " " + q2(alarmF.length > 1 ? alarmF[alarmF.length - 1].label : "high level"));
       out.control = { kind: "CONTROL", title: "", lines: c };
     }
     var p = [];
@@ -35620,6 +35701,20 @@ Lantern.RFB = (function () {
     return rows;
   }
   // how it works, in the order it happens
+  // setsOff(made, float) -> what the control drawn sets off at that alarm float: "the alarm light", "the alarm light and
+  // horn", "the horn"; with no control drawn, "the alarm" (the second review: a horn drawn on the high high float only was
+  // said to sound at the high level one)
+  function setsOff(made, x) {
+    var c = ctlOf(made);
+    if (!c) return "the alarm comes";
+    var kinds = [];
+    c.rungs.forEach(function (r) {
+      if (!/^(lamp|horn)$/.test(r.out.kind)) return;
+      var on = r.series.concat(r.starts).some(function (e) { return e.id === x.id && !e.nc; }) || (r.branches || []).some(function (b) { return b.some(function (e) { return e.id === x.id && !e.nc; }); });
+      if (on && kinds.indexOf(r.out.kind) < 0) kinds.push(r.out.kind);
+    });
+    return kinds.length === 2 ? "the alarm light and horn come" : kinds[0] === "horn" ? "the horn comes" : kinds[0] === "lamp" ? "the alarm light comes" : "nothing drawn comes";
+  }
   function ctlOf(made) { return made.control && made.control.plan && made.control.plan.circuit ? made.control.plan.circuit : null; }
   function alternates(made, sp) { var c = ctlOf(made); return c ? c.rungs.some(function (r) { return r.out.kind === "alternator"; }) : sp.count === 2; }
   function sequence(made, sp) {
@@ -35628,9 +35723,12 @@ Lantern.RFB = (function () {
     var two = alternates(made, sp), many = sp.count > 2;
     if (f.lead && f.off) out.push("As the water rises to " + f.lead.id + " (" + f.lead.label + "), " + (sp.count === 1 ? "the pump starts" : "the lead pump starts") + "; it pumps the well down to " + f.off.id + " (" + f.off.label + ") and stops.");
     if (two) out.push("Each time the pumps stop, the alternating relay changes over, so the next time the other pump leads and the two wear evenly.");
-    if (f.lag && (two || many)) out.push("If the water still rises to " + f.lag.id + " (" + f.lag.label + "), " + (two ? "the other pump starts too, and both run" : "another pump starts too") + " until the water is down to " + (f.off ? f.off.id : "the off float") + ".");
-    var lit = ctlOf(made) ? (sp.horn ? "light and horn come" : "light comes") : "comes";
-    sp.floats.filter(function (x) { return x.job === "alarm"; }).forEach(function (x) { out.push("If the water reaches " + x.id + " (" + x.label + "), the alarm " + lit + " on: the pumps are not keeping up. One may have failed, or a float may be stuck."); });
+    // (the second review) the lag pump's own off float stops it first
+    var lagOff = sp.floats.filter(function (x) { return x.key === "lagoff"; })[0];
+    var c0 = ctlOf(made);
+    if (f.lag && (two || many) && (!c0 || c0.rungs.some(function (r) { return r.starts.some(function (e) { return e.id === f.lag.id; }); }))) out.push("If the water still rises to " + f.lag.id + " (" + f.lag.label + "), " + (two ? "the other pump starts too, and both run" : "another pump starts too") +
+      (lagOff ? "; the lag pump stops at " + lagOff.id + " (" + lagOff.label + ") and the lead pump at " + (f.off ? f.off.id + " (" + f.off.label + ")" : "the off float") + "." : " until the water is down to " + (f.off ? f.off.id : "the off float") + "."));
+    sp.floats.filter(function (x) { return x.job === "alarm"; }).forEach(function (x) { out.push("If the water reaches " + x.id + " (" + x.label + "), " + setsOff(made, x) + " on: the pumps are not keeping up. One may have failed, or a float may be stuck."); });
     sp.floats.filter(function (x) { return x.job === "low"; }).forEach(function (x) { out.push("If the water falls below " + x.id + " (" + x.label + "), its alarm comes on."); });
     var steps = made.control && made.control.plan && made.control.plan.circuit ? made.control.plan.circuit.steps : [];
     return { plain: out, rungs: steps.slice() };
@@ -35644,18 +35742,21 @@ Lantern.RFB = (function () {
     var before = ["Have a licensed electrician wire the panel and the pumps and check them, with the pump maker\u2019s manual to hand: the motors, their overload settings and how the pumps are wired are the maker\u2019s.",
       "Do not go into the wet well to do any of this. It is a confined space where sewer gas can kill: hydrogen sulfide poisons, methane can catch fire or explode and pushes out the air, and the air can have too little oxygen to breathe. Do every check from above, lifting the floats on their cables or filling the well with clean water. If anyone collapses in the well, do not go in after them: call for rescue. Going in takes a trained crew with gas testing, fresh air blown in, a harness and line, someone outside and a rescue plan (in the US, OSHA 29 CFR 1910.146, permit-required confined spaces; on a construction job, 29 CFR 1926 Subpart AA).",
       "Lock out and tag the pumps\u2019 power before anyone touches a pump or a wire, or reaches into the well: a pump can start without warning whenever its power is on. The checks below need the power on: switch it on only when everyone is clear of the pumps and pipes, lift the floats from above by their cables, and lock it out again before any other work (OSHA 29 CFR 1910.147)."];
-    out.push("Before any pump runs: each shutoff valve opens and closes all the way, and is then left open.");
-    out.push("Each float hangs free at its height on the drawing of the float levels, against a wall, clear of the other floats, the pump cables and the water falling from the inlet (Ontario\u2019s guidelines set floats at least 300 mm (12 in) apart up and down and 450 mm (18 in) side to side).");
+    var piped = !!(made.piping && made.piping.plan);
+    if (piped) out.push("Before any pump runs: each shutoff valve opens and closes all the way, and is then left open.");
+    out.push("Each float hangs free at its height" + (made.levels && made.levels.plan ? " on the drawing of the float levels" : "") + ", against a wall, clear of the other floats, the pump cables and the water falling from the inlet (Ontario\u2019s guidelines set floats at least 300 mm (12 in) apart up and down and 450 mm (18 in) side to side).");
     out.push("The pump and float cables enter the panel through sealed fittings, so the wet well\u2019s gas cannot get into the panel.");
     out.push("Each pump turns the right way: run it for a moment as its maker\u2019s manual says. A three-phase pump turns backwards when any two of its three supply wires are swapped; backwards it pumps little, and it may still sound normal. If it is backwards, the electrician swaps two of the pump\u2019s leads.");
     out.push("With each pump running, the electrician checks the voltage and the current it draws against the motor\u2019s nameplate.");
-    var c = ctlOf(made), own = c || sp.count <= 2;
+    // (the second review) the checks of the circuit are of the circuit drawn; with none drawn, the floats named and the controller's manual
+    var c = ctlOf(made), own = !!c;
     if (!own) out.push("Lift each float in turn, from the bottom up -- " + list(sp.floats.map(function (x) { return x.id + " (" + x.label + ")"; }), "and") + " -- and check that the pumps and the alarm do as the manual of the controller made for this station says (Lantern did not draw its control).");
     if (own && f.lead && f.off) out.push("With the water in the well above " + f.off.id + " (" + f.off.label + "), lift " + f.lead.id + " (" + f.lead.label + ") and let it go: " + (sp.count === 1 || (c && !alternates(made, sp) && sp.count === 1) ? "the pump starts" : "one pump starts") + ", and runs until the water is down to " + f.off.id + " (" + f.off.label + ").");
     if (own && alternates(made, sp)) out.push("Do it again: this time the other pump starts (the alternating relay changed over).");
     if (own && f.lag && sp.count >= 2 && (!c || c.rungs.some(function (r) { return r.starts.some(function (e) { return e.id === f.lag.id; }); }))) out.push("Lift " + f.lag.id + " (" + f.lag.label + ") with " + (f.lead ? f.lead.id : "the lead float") + " up: both pumps run.");
-    if (own) sp.floats.filter(function (x) { return x.job === "alarm"; }).forEach(function (x) { out.push("Lift " + x.id + " (" + x.label + "): the alarm " + (sp.horn ? "light and horn come" : "light comes") + " on, and the alarm reaches whoever must answer it. With the panel\u2019s main power off, an alarm on backup power of its own still works and tells of the power failure."); });
-    out.push("When a pump stops, its check valve closes: the water in the force main does not run back into the well, and the pump does not spin backwards.");
+    if (own) sp.floats.filter(function (x) { return x.job === "alarm"; }).forEach(function (x) { out.push("Lift " + x.id + " (" + x.label + "): " + setsOff(made, x) + " on, and the alarm reaches whoever must answer it. With the panel\u2019s main power off, an alarm on backup power of its own still works and tells of the power failure."); });
+    if (own && c) sp.floats.filter(function (x) { return x.job === "low"; }).forEach(function (x) { out.push("Let the water fall below " + x.id + " (" + x.label + "), or hold the float down: its light comes on."); });
+    if (piped) out.push("When a pump stops, its check valve closes: the water in the force main does not run back into the well, and the pump does not spin backwards.");
     out.push("Run the whole cycle several times before leaving.");
     out.push("Write down the date, the height of each float, and what each check showed, and keep it with the drawings.");
     return { before: before, run: out };
@@ -35664,7 +35765,7 @@ Lantern.RFB = (function () {
     "The sizes of the pipes and valves, the depth of the wet well and the heights of the floats, where the block did not give them: a design engineer\u2019s, from the flow coming in.",
     "Each pump alone must be able to pump the peak flow, so the station keeps up with one pump out of service; where there are two pumps, both are the same size: a design engineer\u2019s.",
     "What keeps the well from overflowing when the power fails -- a standby generator, a portable pump, or room to hold the flow: a design engineer\u2019s.",
-    "The alarm Lantern draws is a light on the control circuit\u2019s own power. A station\u2019s alarm should have backup power of its own and tell someone who can come at any hour of a high level, a pump failure or a power failure; a light and horn at the panel alone are allowed only in some cases.",
+    "ALARM A station\u2019s alarm should have backup power of its own and tell someone who can come at any hour of a high level, a pump failure or a power failure; a light and horn at the panel alone are allowed only in some cases.",
     "The control voltage, the starters\u2019 and overloads\u2019 ratings, the wiring rules where the station is, the rating of everything in the well for a place where flammable gas may be, the seals between the well and the panel, and ground-fault protection on the pump cords: a licensed electrician\u2019s."];
 
   // ---- the station --------------------------------------------------------------------------------
@@ -35672,7 +35773,7 @@ Lantern.RFB = (function () {
   // drawn as written), then the parts list, how it works, the checks and what Lantern does not know
   function make(sp, title, q, given) {
     given = given || {};
-    var bl = blocks(sp), made = {}, problems = [], left = [];
+    var bl = blocks(sp), made = {}, problems = [], left = [], pviews = [];
     VIEWS.forEach(function (v) {
       if (sp.show.indexOf(v) < 0) return;
       // (the first review) more pumps than Lantern pipes: never a line that makes another station; the rest said
@@ -35683,7 +35784,7 @@ Lantern.RFB = (function () {
       try { r = v === "control" ? CT().build(b, { question: q }) : v === "piping" ? PS().piping.build(b, { question: given.piping ? q : "" }) : PS().levels.build(b); }
       catch (e) { r = { problems: ["it could not be drawn (" + ((e && e.message) || e) + ")"], plan: null }; }
       r = r || { problems: ["it could not be drawn"], plan: null };
-      if (r.problems && r.problems.length) r.problems.forEach(function (p) { problems.push("the " + VNAME[v] + ": " + p); });
+      if (r.problems && r.problems.length) { r.problems.forEach(function (p) { problems.push("the " + VNAME[v] + ": " + p); }); pviews.push(v); }
       made[v] = r;
     });
     var drawn = VIEWS.filter(function (v) { return made[v] && made[v].plan; });
@@ -35696,7 +35797,11 @@ Lantern.RFB = (function () {
     var plan = { mode: "station", title: title, views: viewsPlan, show: sp.show.slice(),
       spec: { pumps: sp.pumps.map(function (p) { return p.id; }), floats: sp.floats.map(function (f) { return { id: f.id, job: f.job, label: f.label, height: f.h ? f.h.text : null }; }),
         well: sp.well ? sp.well.label || "wet well" : "", depth: sp.well && sp.well.h ? sp.well.h.text : null, inlet: sp.inlet ? sp.inlet.label : "", main: sp.main, valve: sp.valve, supply: sp.supply, horn: sp.horn },
-      blocks: {}, parts: parts, sequence: seq, checks: chk, unknown: UNKNOWN.slice(), said: said, unread: sp.unread.slice(), left: left, given: Object.keys(given),
+      blocks: {}, parts: parts, sequence: seq, checks: chk, unknown: UNKNOWN.map(function (u) {
+        if (!/^ALARM /.test(u)) return u;
+        var c0 = ctlOf(made), af = sp.floats.filter(function (x) { return x.job === "alarm"; });
+        return (!af.length ? "This station has no high level alarm. " : !c0 ? "Lantern drew no control circuit here, so no alarm. " : "The alarm Lantern draws is on the control circuit\u2019s own power. ") + u.slice(6);
+      }), said: said, unread: sp.unread.slice(), left: left, given: Object.keys(given),
       notes: sp.notes.slice(), warn: (sp.warn || []).slice() };
     drawn.forEach(function (v) { var b = given[v] || bl[v]; plan.blocks[v] = "MAKE " + VKIND[v] + ": " + b.title + "\n" + b.lines.join("\n") + "\nEND"; });
     var names = drawn.map(function (v) { return "the " + VNAME[v]; });
@@ -35735,7 +35840,7 @@ Lantern.RFB = (function () {
     var wdoc = null;
     function writer() { return "<h1>" + esc(title) + "<\u002Fh1>\n" + docHtml(true); }
     return {
-      problems: problems, plan: plan, summary: summary, openLabel: "Open in Writer", views: made,
+      problems: problems, plan: plan, summary: summary, openLabel: "Open in Writer", views: made, problemViews: pviews,
       preview: function () {
         var el = L.el, box = el("div", {});
         drawn.forEach(function (v) {
@@ -35794,7 +35899,7 @@ Lantern.RFB = (function () {
   var station = { id: "station", kind: "STATION", kinds: ["STATION", "PUMP STATION", "LIFT STATION", "SEWAGE STATION", "PUMPING STATION", "SEWAGE PUMP STATION", "LIFT STATION DRAWINGS"],
     title: "a pump station", whole: true, opens: "Writer, and each drawing in Draw",
     // (the first review) the grammar's words are the parser's: every role word and every word a LEADS line begins with
-    grammarWords: Object.keys(SROLE).concat(["wet", "force", "rising", "control", "shut", "shutoff", "isolation", "isolating", "gate", "plug", "ball", "butterfly", "eccentric", "run", "pilot", "alarm", "high", "gravity", "number", "low", "quadplex"]),
+    grammarWords: Object.keys(SROLE).concat(["swing", "flap", "wafer", "duckbill", "tilting", "dual", "silent", "spring", "wet", "force", "rising", "control", "shut", "shutoff", "isolation", "isolating", "gate", "plug", "ball", "butterfly", "eccentric", "run", "pilot", "alarm", "high", "gravity", "number", "low", "quadplex"]),
     grammarTags: true,
     match: function (q) { return asks(q); }, prompt: PROMPT, build: function (block, ctx) { return build(block, ctx); },
     fixHint: function () { return ["Lantern reads a MAKE STATION block line by line, like this:", "pumps 2", "floats off lead lag alarm", "float FS2 \x22lead on\x22 <height>", "well \x22wet well\x22 <depth>"]; } };
@@ -35855,15 +35960,34 @@ Lantern.RFB = (function () {
       // what the blocks written disagree on is said, not smoothed over
       sp.warn = [];
       if (given.control && ctlN && ctlN !== sp.count) sp.warn.push("the control circuit written runs " + ctlN + (ctlN === 1 ? " pump" : " pumps") + " and the station has " + sp.count + ": check which is meant");
+      // (the second review) the control and the levels disagree about a float (FS3 lag on in one, the alarm in the other):
+      // back once, naming it, as one MAKE STATION block; and a piping of another count of pumps is said
+      var clash = [];
       if (given.control && given.levels && cpz) {
-        var jc = cpz.items.filter(function (it) { return it.role === "float"; }).map(function (it) { return floatJob(it.label); }).filter(function (j) { return j; }).sort().join(","),
-          jl = parse({ lines: given.levels.lines || [] }, true).floats.map(function (f) { return f.job; }).filter(function (j) { return j; }).sort().join(",");
-        if (jl && jc !== jl) sp.warn.push("the control circuit\u2019s floats and the float levels\u2019 are not the same (" + jc.replace(/,/g, ", ") + "; " + jl.replace(/,/g, ", ") + ")");
+        var byId = {};
+        cpz.items.filter(function (it) { return it.role === "float"; }).forEach(function (it) { if (it.id) byId[it.id] = floatJob(it.label); });
+        parse({ lines: given.levels.lines || [] }, true).floats.forEach(function (f) { if (f.id && byId[f.id] && f.job && byId[f.id] !== f.job) clash.push(f.id + " is " + NAME[byId[f.id]] + " in the control circuit and " + NAME[f.job] + " in the float levels"); else if (f.id && !byId[f.id] && Object.keys(byId).length) clash.push(f.id + " (" + (f.label || NAME[f.job] || "") + ") is in the float levels and not in the control circuit"); });
+      }
+      if (given.piping) { var pp0 = parse({ lines: given.piping.lines || [] }, true), pn = Math.max(pp0.count || 0, pp0.ids.length); if (pn && pn !== sp.count) sp.warn.push("the piping written has " + pn + " pumps and the station " + sp.count + ": check which is meant"); }
+      // (the second review) when they disagree, what is written about the station follows the circuit drawn: its floats
+      var allF = sp.floats.slice();
+      if (clash.length) {
+        sp.warn.push("the blocks disagree about the floats: " + clash.join("; "));
+        var keepF = sp.floats.filter(function (f) { return byId[f.id] && byId[f.id] === f.job; });
+        if (keepF.length) sp.floats = keepF;
       }
       var r = make(sp, unholder(block.title) || "Pump station", q, given), qc0 = countsIn(q);
+      if (clash.length) { r.problems = (r.problems || []).concat(["the blocks disagree about the floats: " + clash.join("; ") + ". Write the station as one MAKE STATION block, each float once, like: " + allF.map(function (f) { return "float " + f.id + " \x22" + f.label + "\x22" + (f.h ? " " + f.h.text : ""); }).join(", ")]); r.fixKind = "STATION"; }
       // (the first review) a control circuit of another count of pumps than the question names goes back once, with the line
       if (given.control && ctlN && qc0.length === 1 && ctlN !== qc0[0] && qc0[0] === 2) {
+        r.fixKind = "STATION";
         r.problems = (r.problems || []).concat(["the control circuit runs " + ctlN + (ctlN === 1 ? " pump" : " pumps") + " and the question asks for 2: write the two pumps and the alternating relay that takes them in turn, like: alternator AR M1 M2, coil M1 \x22pump 1 starter\x22, coil M2 \x22pump 2 starter\x22"]);
+      }
+      // (the second review) the correction asks for the block whose drawing has the problems (MAKE LEVELS for the levels'
+      // heights, not the MAKE CONTROL that was right), its guide and its grammar
+      if (r.problems && r.problems.length && !r.fixKind && r.problemViews && r.problemViews.length && given[r.problemViews[0]]) {
+        var pk0 = VKIND[r.problemViews[0]], bk0 = String(block.kind || "").toUpperCase();
+        if (pk0 !== bk0 && !(pk0 === "CONTROL" && a.id === "schematic") && !(pk0 === "PIPING" && a.id === "piping") && !(pk0 === "LEVELS" && a.id === "levels")) r.fixKind = pk0;
       }
       r.readAs = "STATION";
       return r;
@@ -71733,7 +71857,7 @@ Lantern.RFB = (function () {
     // part, that tool's
     for (var wi = 0; wi < out.length - 1; wi++) {
       for (var wj = out.length; wj > wi + 1; wj--) {
-        var run = out.slice(wi, wj), jt = run.map(function (p) { return p.text; }).join(", "), jtail = run[run.length - 1].tail || "";
+        var run = out.slice(wi, wj), jt = [run[0].ask].concat(run.slice(1).map(function (p) { return p.text; })).join(", "), jtail = run[run.length - 1].tail || "";
         var wa = rel(jt + (jtail && jt.indexOf(jtail) < 0 ? " " + jtail : "")).filter(function (a) { return a.whole; });
         if (!wa.length) continue;
         out.splice(wi, run.length, { text: jt, ask: jt + (jtail && jt.indexOf(jtail) < 0 ? " " + jtail : ""), acts: wa, kind: nameOf(wa[0], jt), back: run[0].back, sent: run[0].sent, tail: jtail });
