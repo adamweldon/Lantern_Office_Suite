@@ -25,8 +25,11 @@ KEEP = {
     "E-GS-leads": "'the wet well 12 ft deep' is held out: 'the' is not a line's first word in the station's grammar, because with it every sentence beginning 'The station ...' would get through; the grammar then lets 'well' and 'wet well' through.",
     "E-GS-36": "a sentence that begins with a line's word ('Power: if the power fails ...') gets through a grammar that holds each line to its first word; the station's parser now reads it as nothing and says so (not a control voltage), so it cannot reach the rails.",
     "E-GS-37": "the same: 'Pumps alternate on each cycle ...' begins with a line's word; the parser reads no count from it and the station keeps its own.",
+    "E-GS-prose": "(1.24.32) GS-35, a station block with no END, is let through: 1.24.31's run showed a grammar that goes on to END forbids the end of a reply, and the small models ran on to their limit (tests/fixtures/bench_run_1.24.31_*.json). The parser reads the block whole without END (tests/station.js). Every other sample here (prose before, inside or after, a fence, another kind) is still held out: ONLY below.",
     "E-s09": "MAKE LIFT STATION with a height for FS2 only: the floats around it cannot be set between known heights, so the station is drawn in order, not to scale, and says so -- nothing goes back, so there is no correction to hold to a grammar.",
 }
+# a kept case that groups several samples is kept only for what it names: any other sample in it that disagrees fails
+ONLY = {"E-GS-prose": r"GS-35: let through \(prose\) \[high\]"}
 VERBOSE = "-v" in sys.argv
 r = subprocess.run(["node", os.path.join(FX, "replay.js")], cwd=ROOT, capture_output=True, text=True, timeout=900)
 out = r.stdout
@@ -39,6 +42,9 @@ else:
     if int(total.group(1)) != 242: fails.append("%s cases, not 242" % total.group(1))
     new = [c for c in dis if c not in KEEP]
     if new: fails.append("disagree, not kept: " + ", ".join(new))
+    for c, pat in ONLY.items():
+        for d in re.findall(r"^DISAGREE\s+" + re.escape(c) + r"\s+(.*)$", out, re.M):
+            if not re.fullmatch(pat, d.strip()): fails.append("%s kept only for %s, but: %s" % (c, pat, d.strip()[:300]))
     gone = [c for c in KEEP if c not in dis]
     if gone: fails.append("kept but now agree (take them out of KEEP): " + ", ".join(gone))
 for f in fails: print("FAIL " + f)

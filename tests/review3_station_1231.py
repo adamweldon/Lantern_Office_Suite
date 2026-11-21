@@ -18,6 +18,7 @@ KEEP = {
     "D-12": "a levels problem beside a right control: the correction now asks for all the blocks again, the levels mended and the control as it was (the model's 24 V DC and horn kept); the case's scripted reply sends the levels alone, so the control is made from them.",
     "D-13": "the same as D-12.",
     "D-19": "a control block of two pumps with 'pump 1 on' and 'pump 2 on' floats and no alternator: MAKE CONTROL's own line for pump 2's float (1.24.30's), unchanged here.",
+    "F-26": "(1.24.32) SCHEMATIC's and ELECTRONICS' grammars still hold no word, but a free line is no longer written [^\\n]*: it is any line but END itself, since a reply may now stop without END and must stop after it (1.24.31's run, tests/fixtures/bench_run_1.24.31_*.json). What the case says is checked in tests/station.js with the new form.",
     "F-09": "a sentence that begins with a line's word ('Pump 1 and pump 2 take turns ...', 'Floats are set by ...') gets through a grammar that holds each line to its first word; the parser reads no new count or float from them.",
 }
 VERBOSE = "-v" in sys.argv

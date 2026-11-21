@@ -178,6 +178,18 @@ var OLD_IDEAL = "MAKE CONTROL: Duplex lift station\nfloat FS1 \x22off\x22\nfloat
   ok("each grammar is the one llama.cpp's own parser read and ran the blocks through (tests/fixtures/grammar_1231)", CASES.every(function (c) { return act.grammarFor(c.name) === c.grammar; }) &&
     CHECKED.length === CASES.length && CHECKED.every(function (c) { return c.parsed && c.samples.every(function (s) { return s.agree; }); }), CASES.filter(function (c) { return act.grammarFor(c.name) !== c.grammar; }).map(function (c) { return c.name; }));
   ok("...no grammar for a kind Lantern has no tool for", act.grammarFor("SPACESHIP") === null && act.grammarFor("") === null);
+  // (1.24.32) 1.24.31's run: a grammar that went on to END forbade the end of a reply, and the small models ran on to their
+  // limit (the replies in tests/fixtures/bench_run_1.24.31_*.json, each now a sample the grammar lets stop: grammar_1231)
+  var gEnd = CASES.map(function (c) { return c.grammar; });
+  ok("(1.24.32) every grammar lets a reply stop without END, and takes nothing after END", gEnd.every(function (g) { return /^root ::= "MAKE [A-Z ]+: " title "\\n" \(line "\\n"\)\* \("END" \| line\)\?$/m.test(g); }) &&
+    CHECKED.some(function (c) { return c.samples.some(function (s) { return s.want && !/\nEND\s*$/.test(s.text) && s.agree; }); }), gEnd.filter(function (g) { return !/\("END" \| line\)\?$/m.test(g); }).slice(0, 2));
+  ok("...the replies of 1.24.31 that ran to their limit, cut at a whole line, are each a place the model may now stop", CHECKED.filter(function (c) { return c.samples.length && c.samples.every(function (s) { return s.want; }) && c.samples.some(function (s) { return s.text.length > 400; }); }).length >= 5);
+  var ne = act.build("MAKE STATION: Lift station\npumps 2\nfloats off lead lag alarm", Q);
+  ok("...and a block that stops without END is read whole (a station, two pumps, four floats)", ne && ne.ok && ne.plan && ne.plan.mode === "station", ne && ne.problems);
+  ok("...a control block's other names hold to CONTROL's lines; SCHEMATIC and ELECTRONICS take any line but END itself (the third review's F-26)", (function () {
+    var tail = function (k) { return (act.grammarFor(k) || "").split("\n").slice(1).join("\n"); }, c = tail("CONTROL");
+    return tail("LADDER DIAGRAM") === c && tail("CONTROL CIRCUIT") === c && /^line ::= \(\[\^E\\n\]/m.test(act.grammarFor("SCHEMATIC")) && /^line ::= \(\[\^E\\n\]/m.test(act.grammarFor("ELECTRONICS")) && !/^first ::=/m.test(act.grammarFor("SCHEMATIC"));
+  })());
   // the server call: only to a llama.cpp server; refused once, never sent again
   var A = L.ai, sent2 = [], status = 200, fetch0 = o.w.fetch;
   o.w.fetch = function (url, op) {

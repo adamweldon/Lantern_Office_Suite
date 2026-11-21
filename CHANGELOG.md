@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.24.32 — A reply held to its block may stop when it is done: END is no longer required, so a small model is not made to run on to its limit (2026-11-21)
+
+What the small models' run of 1.24.31 showed (run 44867258186): 1.24.31 held a reply to its block's shape whenever Lantern had asked for only a block -- a correction, the block asked for after an explanation. Of the questions held to a grammar, the 0.8B passed 1 of 22, the 2B 4 of 17, the 4B 9 of 13. Of the 38 failed rows held to a grammar, 14 had no END and had run to the token limit: the 2B's songs went on for 95 and 174 bars ("| D | F# | A | C |" over and over), its weekly safety checklist was cut off, the 0.8B's waltz melody filled the reply, the 4B's sunset drawing never finished. The lift station passed on all three models.
+
+Traced to the grammar: it ended `(line "\n")* "END"`, so llama.cpp let the reply end at END and nowhere else. A model that was done -- that would have stopped after its last line, as it does without a grammar -- could not; the end of a reply was not a token the grammar allowed until END had been written, and a small model that does not think to write END goes on writing lines until its tokens run out. Each of the 14 replies, cut at its last whole line and run through llama.cpp b11435's own grammar code with 1.24.31's grammar, is refused with "cannot end".
+
+**What changed (AI_ACTIONS' grammarFor).** A reply now ends `(line "\n")* ("END" | line)?`: it may stop after any line, or at END, and nothing may follow END. A free line (a kind whose lines are not held to first words: SCHEMATIC, ELECTRONICS, SHEET, DOC, CODE, MUSIC, DRAWING ...) is any line but END itself, so END still closes the block where a model writes it. The block reader already took a block without END (a reply cut off had always been read up to where it stopped), and does the same here: "MAKE STATION: Lift station / pumps 2 / floats off lead lag alarm" with no END is the whole station.
+
+**Tested.** The 1.24.31 run's failed rows saved as tests/fixtures/bench_run_1.24.31_0.8b.json, _2b.json and _4b.json (58, 47 and 8 rows, as the models wrote them). Every grammar Lantern sends read by llama.cpp b11435's grammar parser, and every block and reply in tests/fixtures/grammar_1231 run through it token by token (tools/gbnf_check.py): the 14 runaway replies, each cut at its last whole line, are now let stop (under 1.24.31's grammar each is "cannot end"); a block with or without END is let through; prose after END, before MAKE, or a line of prose in a block held to first words is held out as before; a sheet with rows "ENDS", "EN" and "E" is let through. tests/station.js (53: those, a block without END read whole, a control block's other names on CONTROL's lines). The three reviews of 1.24.31 replayed with their grammar cases run again through llama.cpp: two cases now disagree by design and are kept with the reason (the second review's GS-35, "no END, held out", is let through now, and only that sample of its group; the third review's F-26 looked for the free line in its old form). npm test (ALL CHECKS PASS).
+
+**Not tested.** Any model generating under the new grammar: no model files reach this session. The small models' run starts with this push; read the summary's "Held to a block's grammar" line and the held rows' replies for length and END. Not changed: a single line that runs on (the 0.8B's waltz wrote its whole melody on one line) is not stopped by this; only the end of a line now lets the reply end. The grammars were checked with Qwen2's vocabulary, not Qwen3.5's. The processors of the 1.24.31 and 1.24.30 runs all differ, so their scores are not compared here.
+
 ## 1.24.31 — A pump station from one short description: its control, piping and float levels drawn together, with its parts list, how it works and the checks to make; a duplex with no floats gets the usual four; a reply Lantern asked to be only a block is held to that block's grammar (2026-11-20)
 
 Adam (2026-11-20), after 1.24.30: "How far can we theoretically get with Lantern the way we are going. Can we design a system so it automatically does what is necessary in most instances for such things as the lift station or other common things?" Asked whether that should come before .pptx in Slides: "Before".
@@ -56,9 +68,6 @@ The three reviews of 1.24.30 replay on Lantern without AI_STATION (they reviewed
 
 **Not tested.** Any real model: every Chat and bench case is a scripted stand-in. A model generating under a grammar was not run (no model files reach this session), nor the kit's llama-server taking body.grammar beside chat_template_kwargs; the small models' bench run starts with this push and reads both. The grammars were checked with Qwen2's vocabulary, not Qwen3.5's (the grammar is matched on each token's text). How the drawings and the Writer document look is Adam's to judge (the sheet is sent with this version).
 
-**Tested.** ...
-
-**Not tested.** ...
 
 ## 1.24.30 — A lift station in three drawings: the alternating relay, the piping, the float levels, made one at a time; Start Lantern and the desktop Lantern no longer share an address (2026-11-20)
 

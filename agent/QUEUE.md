@@ -140,7 +140,18 @@ tried by a reviewer:
   triplex's control; the same idea for other common systems (a booster
   set, a duplex compressor, a motor starter package) once the station has
   been run by the models.
-- **Next: .pptx in Slides** (1.24.32). Adam's ITW deck is ITW's training
+- The block grammars' END: **done in 1.24.32**. 1.24.31's run (the 0.8B
+  passed 1 of 22 questions held to a grammar, the 2B 4 of 17, the 4B 9 of
+  13; 14 of the 38 held failures ran to the token limit with no END)
+  traced to the grammar letting a reply end only at END. A reply may now
+  stop after any line; nothing may follow END. Read 1.24.32's run: the
+  held rows' length and END, and the summary's "Held to a block's grammar"
+  line. Left: a single line that runs on (a melody on one line) is not
+  stopped; prose that begins with a line's word still gets through a
+  word-first grammar; free-line kinds (MUSIC, DOC, DRAWING, SCHEMATIC) let
+  copied guide lines and prose through -- their own first words, as the
+  station's have, would hold those out.
+- **Next: .pptx in Slides** (1.24.33). Adam's ITW deck is ITW's training
   material: test with it in the session, never commit it.
 
 0. **The Health lessons' sources (1.24.22, Adam).** Every lesson names the
