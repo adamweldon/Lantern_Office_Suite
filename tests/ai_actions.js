@@ -52,13 +52,13 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
   await sleep(60);
   var L = w.Lantern, act = L.aiAct;
   ok("boot clean", errs.length === 0, errs);
-  ok("twelve actions registered (1.12: a document, slides, flashcards and a plan; 1.12.7: a wheel chart; 1.13.0: a program; 1.19.0: a song; 1.24.30: a pump station\u2019s piping and its float levels)", L.aiActions.map(function (a) { return a.id; }).join(",") === "schematic,drawing,piping,levels,wheel,sheet,doc,slides,cards,plan,code,music", L.aiActions.map(function (a) { return a.id; }));
+  ok("thirteen actions registered (1.12: a document, slides, flashcards and a plan; 1.12.7: a wheel chart; 1.13.0: a program; 1.19.0: a song; 1.24.30: a pump station\u2019s piping and its float levels; 1.24.31: a pump station whole)", L.aiActions.map(function (a) { return a.id; }).join(",") === "schematic,drawing,piping,levels,station,wheel,sheet,doc,slides,cards,plan,code,music", L.aiActions.map(function (a) { return a.id; }));
 
   // --- finding blocks, and the prompt ---
   var fb = act.find("Here it is:\n```\nMAKE SCHEMATIC: Lamp\npart B1 battery\nwire B1 L1\nEND\n```\nDone.");
   ok("a MAKE block is found (code fences ignored, ends at END)", fb.length === 1 && fb[0].kind === "SCHEMATIC" && fb[0].title === "Lamp" && fb[0].lines.length === 2, fb);
   var unk = act.build("MAKE VIDEO: cats\nframe 1\nEND", "");
-  ok("an unknown kind says what Lantern can make", unk && !unk.ok && /can make: schematic, drawing, piping, levels, wheel, sheet/.test(unk.problems[0]), unk && unk.problems);
+  ok("an unknown kind says what Lantern can make", unk && !unk.ok && /can make: schematic, drawing, piping, levels, station, wheel, sheet/.test(unk.problems[0]), unk && unk.problems);
   ok("Chat lists only the actions the question is about", /MAKE SCHEMATIC/.test(L.CHAT.buildSystem("Draw a circuit with a battery and a lamp")) &&
     !/MAKE SHEET/.test(L.CHAT.buildSystem("Draw a circuit with a battery and a lamp")) && !/MAKE [A-Z]+:/.test(L.CHAT.buildSystem("What is the capital of Kenya?")) &&
     /MAKE SHEET/.test(L.CHAT.buildSystem("Make a table of my shopping with a total")) && /MAKE DRAWING/.test(L.CHAT.buildSystem("Draw a house")));

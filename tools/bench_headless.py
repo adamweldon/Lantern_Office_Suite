@@ -82,6 +82,11 @@ def summary_md(label, st, rows, report):
                % (len(passed), len(scored), pct(len(passed), len(scored)), st.get("minutes") or 0, len(second)))
     if alone:
         out.append("Puzzles without Lantern's tools (not scored): %d of %d." % (len([r for r in alone if r.get("pass")]), len(alone)))
+    # (1.24.31) the questions where Lantern asked for only a block and held the reply to its grammar
+    held = [r for r in scored if r.get("grammar")]
+    if held:
+        out.append("Held to a block's grammar after Lantern asked for only the block: %d question%s (%d passed: %s)."
+                   % (len(held), "" if len(held) == 1 else "s", len([r for r in held if r.get("pass")]), ", ".join(r.get("id", "?") for r in held[:12]) + (" ..." if len(held) > 12 else "")))
     if report and report.get("summary") and report["summary"].get("medianTps"):
         out.append("Median speed: %s tokens a second." % report["summary"]["medianTps"])
     if report and report.get("prompt"):
@@ -231,7 +236,7 @@ def main():
     for r in rows:
         if r.get("pass") or r.get("cat") == "alone":
             continue
-        slim = dict((k, r.get(k)) for k in ("id", "cat", "q", "why", "value", "expected", "rounds", "retry", "rejected", "flags", "needAnswered", "commands", "codeInReply", "tokens", "ms") if r.get(k) not in (None, "", [], False))
+        slim = dict((k, r.get(k)) for k in ("id", "cat", "q", "why", "value", "expected", "rounds", "retry", "rejected", "flags", "needAnswered", "commands", "codeInReply", "grammar", "tokens", "ms") if r.get(k) not in (None, "", [], False))
         # A thing to make is printed as the page kept it (1500 characters, a
         # program 6000): the 4B's program on 1.24.5 was cut here at 700,
         # before its first line of code, and could not be replayed.
