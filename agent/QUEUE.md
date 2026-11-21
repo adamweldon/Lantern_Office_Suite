@@ -122,7 +122,25 @@ tried by a reviewer:
   corner said "Getting the AI engine (llama.cpp): 0%" under Start Lantern).
   The starter's fixes (exclusive address on Windows, a stalled download
   stopped) reach Get-Lantern.exe only through a release from `main`.
-- **Next: .pptx in Slides** (1.24.31). Adam's ITW deck is ITW's training
+- A pump station from one description: **done in 1.24.31** (Adam,
+  2026-11-20: "Can we design a system so it automatically does what is
+  necessary in most instances for such things as the lift station?" --
+  "Before" .pptx). MAKE STATION (AI_STATION): the control, piping and float
+  levels from one short block, with the parts list, how it works, the
+  commissioning checks (fact-checked on OSHA, Ten States, Ontario and a pump
+  maker's pages) and what Lantern does not know; the drawings' own blocks
+  read as a station; the usual four floats in a floatless duplex; a reply
+  Lantern asked to be only a block held to its grammar (AI_ACTIONS'
+  grammarFor, checked with llama.cpp's own parser by tools/gbnf_check.py).
+  Three reviews (756 cases). Read the small models' run of 1.24.31: the lift
+  stations, and the summary's line of questions held to a grammar -- did a
+  held correction pass where 1.24.30's did not? Left, from the reviews: two
+  stations in one question; a station beside a sheet, a quiz, an e-mail or a
+  flow chart split as 1.24.30 split them; bottom/middle/top floats; a
+  triplex's control; the same idea for other common systems (a booster
+  set, a duplex compressor, a motor starter package) once the station has
+  been run by the models.
+- **Next: .pptx in Slides** (1.24.32). Adam's ITW deck is ITW's training
   material: test with it in the session, never commit it.
 
 0. **The Health lessons' sources (1.24.22, Adam).** Every lesson names the

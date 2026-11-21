@@ -165,7 +165,7 @@ var OLD_IDEAL = "MAKE CONTROL: Duplex lift station\nfloat FS1 \x22off\x22\nfloat
   try { c1.r.made.open(); } catch (e) { }
   L.writerDocs.create = cr0;
   ok("...Open in Writer: one document with each drawing, the parts list, how it works, the checks and the sources", made1 && made1.t === "Lift station" && /<h2>Parts list<\/h2>/.test(made1.h) &&
-    /<h2>Checks when it is set to work<\/h2>/.test(made1.h) && /Ten States Standards/.test(made1.h) && /1910\.146/.test(made1.h) && /<h2>Control circuit<\/h2>/.test(made1.h), made1 && made1.h.slice(0, 300));
+    /<h2>Checks when it is set to work<\/h2>/.test(made1.h) && !/ALARM /.test(made1.h) && /The alarm Lantern draws is on the control circuit/.test(made1.h) && /Ten States Standards/.test(made1.h) && /1910\.146/.test(made1.h) && /<h2>Control circuit<\/h2>/.test(made1.h), made1 && made1.h.slice(0, 300));
   var c2 = await chat(Q, [RUN.replies[0].reply, "MAKE STATION: Lift station\npumps 2\nEND"]);
   ok("Chat: prose first, the station's block asked for -- and the reply held to its grammar", c2.sent.length === 2 && /MAKE STATION: <a short title>/.test(c2.sent[1]) &&
     bodies[1].grammar && /^root ::= "MAKE STATION: " title/.test(bodies[1].grammar) && !bodies[0].grammar && c2.r.made && c2.r.made.ok && c2.r.grammar === 1, [c2.sent, bodies.map(function (b) { return !!b.grammar; })]);
