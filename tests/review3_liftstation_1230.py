@@ -11,6 +11,17 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "liftstation_review3_1230")
 KEEP = {
 }
+# (1.24.31) A station asked for whole is one MAKE STATION block now (AI_STATION; tests/station.js,
+# tests/review_station_1231.py). This review was of the 1.24.30 path -- the three drawings made one at a time -- which a
+# Lantern without AI_STATION still takes, so its cases replay on the source without that module (no_station()); its
+# drawings in Chromium read a station's own drawing of the block's kind.
+def no_station():
+    src = open(os.path.join(ROOT, "src", "lantern.inner.html"), encoding="utf-8").read()
+    a, b = src.index("// MODULE: AI_STATION - START"), src.index("// MODULE: AI_STATION - END")
+    f = tempfile.NamedTemporaryFile("w", suffix=".html", prefix="lantern_no_station_", delete=False, encoding="utf-8")
+    f.write(src[:a] + src[b:]); f.close()
+    return f.name
+NOST = no_station()
 RUNS = [
     ("cases", ["node", os.path.join(FX, "replay.js")], 272, 900),
     ("drawings", [sys.executable, os.path.join(FX, "replay_browser.py")], 16, 900),
@@ -18,7 +29,7 @@ RUNS = [
 VERBOSE = "-v" in sys.argv
 fails, agree_n, dis_n, total_n = [], 0, 0, 0
 for name, cmd, n, limit in RUNS:
-    env = dict(os.environ, LANTERN_PNG_OUT=tempfile.mkdtemp(prefix="lantern_ls_png_"))  # the kept PNGs are the review's; a replay does not rewrite them
+    env = dict(os.environ, LANTERN_SRC=NOST, LANTERN_PNG_OUT=tempfile.mkdtemp(prefix="lantern_ls_png_"))  # the kept PNGs are the review's; a replay does not rewrite them
     r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=limit, env=env)
     out = r.stdout
     if VERBOSE: print(out)

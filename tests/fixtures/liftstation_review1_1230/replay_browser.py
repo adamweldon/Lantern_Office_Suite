@@ -57,7 +57,9 @@ CASES = [
 
 JS = r"""
 ([block, q]) => {
-  const m = Lantern.aiAct.build(block, q);
+  let m = Lantern.aiAct.build(block, q);
+  // (1.24.31) a station question's block is read as MAKE STATION (AI_STATION): its own drawing of this block's kind
+  if (m && m.plan && m.plan.mode === "station" && m.views) { const vk = { CONTROL: "control", PIPING: "piping", LEVELS: "levels", SCHEMATIC: "piping" }[String((/MAKE\s+([A-Z]+)/.exec(block) || [])[1])]; const sub = m.views[vk]; if (sub) m = Object.assign({}, sub, { ok: !(sub.problems || []).length }); }
   if (!m || !m.plan) return { ok: false, problems: m ? m.problems : ["no block"] };
   const cv = m.preview();
   const k = cv.width / (cv.width / (cv.width ? 1 : 1));

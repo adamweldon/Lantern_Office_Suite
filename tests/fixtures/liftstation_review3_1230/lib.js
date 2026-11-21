@@ -7,7 +7,8 @@ var path = require("path"), fs = require("fs");
 var load = require("./load.js"), sim = require("./sim.js");
 var ROOT = path.resolve(__dirname, "../../..");
 var cur = null, old = null;
-function L() { if (!cur) cur = load(path.join(ROOT, "src/lantern.inner.html")); return cur.L; }
+// (1.24.31) LANTERN_SRC: the source to load (tests/review3_liftstation_1230.py gives it the source without AI_STATION)
+function L() { if (!cur) cur = load(process.env.LANTERN_SRC || path.join(ROOT, "src/lantern.inner.html")); return cur.L; }
 function O() { if (!cur) L(); return cur; }
 
 function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" + lines.join("\n") + "\nEND"; }

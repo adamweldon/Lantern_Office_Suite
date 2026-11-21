@@ -1,0 +1,238 @@
+THE FIRST REVIEW OF 1.24.31 (MAKE STATION -- AI_STATION; the usual four floats added to a floatless duplex in
+AI_CONTROL's takeTurns; the block grammars -- AI_ACTIONS' grammarFor, sent by Chat and the bench's solve, AI.callServer).
+Reviewed at d141e58 (wip 1.24.31) by a reviewer that did not write the rules. 1.24.30 as it was (ad0d654) is loaded beside
+it for every comparison (lib.js OLD(), from git show).
+
+HOW TO REPLAY
+  node tests/fixtures/station_review1_1231/replay.js [id-prefix]     (jsdom; about 4 s)
+  node tests/fixtures/station_review1_1231/make_grammar.js            (E-G: runs the grammar samples through llama.cpp's
+                                                                       parser, tools/gbnf_check.py, and rewrites
+                                                                       grammar_results.json; needs LLAMA_LIB, LLAMA_VOCAB)
+  replay.js runs E-G live when LLAMA_LIB and LLAMA_VOCAB exist (b11435's libllama.so, ggml-vocab-qwen2.gguf), else from
+  grammar_results.json (and says so when the grammars have changed since). load.js and sim.js are copies of the third
+  1.24.30 review's harness, read before use; lib.js and every case are this review's own.
+
+COUNTS
+  303 cases: 212 AGREE, 91 DISAGREE (13 high, 42 medium, 36 low), in about 22 root causes
+    A  MAKE STATION blocks       114 cases, 31 DISAGREE (7 high, 10 medium, 14 low)
+    B  routing                    74 cases, 26 DISAGREE (4 high, 17 medium, 5 low)
+    C  read as a station          25 cases,  8 DISAGREE (2 high, 5 medium, 1 low)
+    D  the floatless duplex       28 cases,  6 DISAGREE (4 medium, 2 low)
+    E  grammars (G: parser)       47 cases, 19 DISAGREE (5 medium, 14 low)
+       grammars (P: when sent)    15 cases,  1 DISAGREE (1 medium)
+  tests/station.js passes (46) on the same tree.
+
+FINDINGS (highest harm first)
+
+1. [high] Anything MADE about a station is routed as the station, and loses its own tool. B-52 B-53 B-54 B-56 (high),
+   B-55 B-57 B-58 B-59 B-60 B-61 B-62 B-73 (medium), B-63..B-66 (low).
+   Lantern did: "Make a slide deck about lift stations for a city council meeting", "Make a spreadsheet of lift station
+   pump run hours", "Make flashcards about lift station parts", "Plan a maintenance schedule for our lift station", a
+   budget, a checklist, a calendar, a table, a map, a cartoon, a bar chart, a quiz, a logo, a timeline, a lesson plan:
+   each is offered MAKE STATION alone (1.24.30 offered slides, sheet, cards, plan, doc, drawing). asks() returns true for
+   any "make/create/draw/plan/design ... lift|pump|sewage ... station" with no drawing named (WHOLE), and relevant() then
+   drops every tool that is not whole. B-73: "... control circuit and piping, then make a slide deck about it" is not
+   split, and the deck is never asked for.
+   Right (rule 7): a question is the station whole only when the thing to make IS the station (its drawings, its parts
+   list, its sequence, its checks); when the question names another tool's thing (slides, sheet, table, chart, cards,
+   plan, schedule, calendar, document, checklist, map, picture, quiz, logo) that tool stays, and a whole station beside
+   it is one part of a split question.
+
+2. [high] A loose word in the question overrules the block's count of pumps. A-97, A-98 (high), A-99 (medium).
+   Lantern did: "Design a duplex lift station where one pump runs and the other stands by" -> one pump ("1 pumps: the
+   question asks for 1 (the block said 2)"); "Upgrade a simplex lift station to a duplex" -> one pump; "Design a triplex
+   lift station ... two pumps run at peak flow" -> two. pumpsAsked() (AI_PUMP_STATION) tests simplex / one pump first,
+   then duplex / two pumps, then triplex; AI_STATION's spec() overrules the block with it and says the question asked.
+   Right: overrule the block only on a count the question gives unambiguously (one count, nothing contradicting it:
+   "duplex" with "one pump runs" is a duplex); else keep the block's count, or say both.
+
+3. [high] Any later number on the pumps line becomes the count. A-90, A-91, A-93 (high), A-94 (medium), A-92 (low).
+   Lantern did: "pumps 2 x 5 HP" and "pumps 2 rated 200 gpm at 50 ft" -> count 5 / 200 -> sent back "keep it to 4 pumps
+   or fewer, like: pumps 4" (a line to copy that turns a duplex into a quadplex with no control circuit); "pumps 2 (1
+   duty, 1 standby)" and "pumps: 1 duty + 1 standby" -> one pump (a simplex); "pumps 2, 10 hp each" for Adam's question ->
+   "2 pumps: the question asks for 2 (the block said 10)". parse(): if (!pr.count || pr.count < +x || !pr.ids.length)
+   pr.count = +x -- with no tags, every bare number overwrites the count.
+   Right: the first number after "pumps" (or a count word) is the count; a number followed by hp, kW, gpm, L/s, ft, m,
+   or inside brackets after the count, is not; "1 duty + 1 standby" is two.
+
+4. [high] One pump with a lag float: a control circuit that does not do what Lantern says it does. A-105.
+   Lantern did: "pumps 1 / floats off lead lag alarm" (a duplex's floats on a simplex question): blocks() writes FS3
+   "lag on" into a one-pump MAKE CONTROL with no alternator; AI_CONTROL puts FS1, FS2 and FS3 in series in M1's rung
+   with no holding contact (the pump runs only while the water is above the lag float, and short-cycles there); drawn
+   with no problem; the sequence and the checks say "As the water rises to FS2 (pump on), the pump starts; it pumps the
+   well down to FS1 (off) and stops."
+   Right: for one pump a lag float is dropped and said (or the block questioned); the control Lantern writes itself must
+   be the one its own sequence describes (rule 2).
+
+5. [high] Heights written before their floats are shifted one float up, and the shifted line is handed back to copy.
+   A-37.
+   Lantern did: "floats 2 ft off, 3 ft lead, 4 ft lag, 5 ft alarm" -> off 3 ft, lead 4 ft, lag 5 ft, alarm none; the
+   levels refuse it ("give every float its height, or none") with the line "like float FS1 \"off\" 3 ft, float FS2
+   \"lead on\" 4 ft, float FS3 \"lag on\" 5 ft, float FS4 \"high level alarm\"" -- each height wrong. floatList() gives
+   each job the text after it.
+   Right: a height before the first job word goes with it (the order of number and word is the same throughout the
+   line); or the block questioned without a wrong line to copy (rule 3, rule 7).
+
+6. [high] Read as a station, the drawings disagree about the floats. C-11, C-12 (high); A-111 (low, the same in a MAKE
+   STATION block, where it is at least said as "not read").
+   Lantern did: a station question answered with MAKE CONTROL whose floats are written "level LS1 ..." or "fs FS1 ..."
+   (words MAKE CONTROL reads as floats): the control is drawn with LS1-LS3 (or FS1-FS2); AI_STATION's lenient parse does
+   not read those words, so the float levels and the parts list show the usual four floats FS1-FS4 (said as "the usual
+   floats"), two of which, or all of which, are in no circuit.
+   Right: the station reads every float word MAKE CONTROL reads (SROLES' floats lacks "level", "fs", "ls"), so one
+   station has one set of floats.
+
+7. [medium] "duplex" or "pump station" alone makes a question a lift station. B-43..B-51.
+   Lantern did: the plumbing and wiring of a two-family "duplex", a duplex receptacle's wiring and parts list, a duplex
+   air compressor (two questions), cooling tower and chilled-water pumps, a booster, an irrigation and a water
+   distribution pump station: each is MAKE STATION alone (a wet well, floats, an alternating relay, a force main), and
+   the code or schematic tool is dropped. 1.24.30 already offered a wet well's MAKE PIPING to most of these (the
+   STATION word list of AI_PUMP_STATION); now the whole lift station comes with it.
+   Right (rule 7): a station question names a wet well, sewage, wastewater, a lift station, a sump or storm water;
+   "duplex" with none of these, and booster / irrigation / distribution / chilled / cooling tower / compressor / receptacle
+   / apartment, are not one.
+
+8. [medium] The floatless duplex rule adds a wet well's floats to any two motors on an alternator. D-18 D-19 D-20 D-21
+   (medium), D-22 D-23 (low).
+   Lantern did: two air compressors, two booster pumps, two chilled-water pumps, two fans on a timer, a compressor whose
+   pressure switch is written 'switch PS1 "pressure switch"', two vacuum pumps -- with no float written, each gets
+   "the floats FS1 (off), FS2 (lead on), FS3 (lag on) and FS4 (high level alarm)" and is drawn as a lift station. (1.24.30
+   sent them back asking for floats -- also not right, but it drew nothing.) The rule looks at no label and no question.
+   Right: add the four only when the circuit or the question is a wet well's (pumps of a lift station, sump, sewage);
+   otherwise question it as the pressure-switch case is questioned (no float line).
+
+9. [medium] Read as a station, a contradiction between the blocks is not said. C-13, C-14.
+   Lantern did: a one-pump MAKE CONTROL for Adam's two-pump question -> the control of one pump beside a piping of two,
+   the sequence "Each time the pumps stop, the alternating relay changes over" (there is none), and "2 pumps: the
+   question asks for 2 (the block said 1)" as if the control were made for two. A control of three floats (no lag) with
+   a levels block of four (with a lag): both drawn as written, listed as one station, the sequence promising the lag
+   float runs both pumps; nothing said.
+   Right: what the given blocks disagree on is said (or the station questioned once, naming it).
+
+10. [medium] A station question answered with a block that is not a station's drawing: that block alone, nothing more.
+    C-21, C-22, C-25.
+    Lantern did: MAKE SCHEMATIC holding the piping's lines (read as MAKE PIPING by AI_PUMP_STATION, which AI_STATION's
+    viewOf passes by): the piping drawn, the turn ended, the control and levels neither made nor said missing; on the
+    bench "made a schematic, not station" with nothing asked. MAKE DRAWING (a grid picture): shown, the turn ended.
+    1.24.30 (AI_PARTS) asked for each part still missing; a whole question is not split now, so nothing does.
+    Right: a station question's block read as piping is read as the station (its piping as written); any other block
+    gets the station asked for once.
+
+11. [medium] A float the block wrote is dropped without a word. A-109, A-110.
+    Lantern did: "floats off lead lag alarm" + 'float FS5 "high high level alarm"' -> four floats, FS5 taking the alarm's
+    place and its label "high level alarm" (the floats line's bare "alarm" merges with any alarm); a 5-float design with
+    'float FS2 "lag off"' -> FS2 merged into the off float and gone.
+    Right: two alarms with different labels kept (MAKE CONTROL draws both); a lag pump's own off float kept (MAKE CONTROL
+    has lagOff) or said.
+
+12. [medium] The guide's own float line, copied, is not "the usual". A-88.
+    Lantern did: 'float FS2 "lead on" <height>' copied (with "pumps 2", no floats line) -> a duplex of two floats (off
+    added; no lag, no alarm).
+    Right (the module's own header): the guide's lines copied as they stand read as the usual -- four floats.
+
+13. [medium] The block grammars hold out lines Lantern reads. E-G07 E-G08 E-G09 E-G11 E-G12 (medium); E-G10, E-G13..E-G18,
+    E-G30..E-G32, E-G37, E-G38, E-G42, E-G43 (low).
+    llama.cpp b11435's parser (Qwen2 vocabulary) holds out: STATION "Wet well: 10 ft deep", "force main 4 in", "control
+    voltage 120 V AC", "voltage: 230 V", "Number of pumps: 2", "- pumps 2", "gate valves", "alarm horn", "Type: duplex",
+    "PUMPS 2", a blank line, "sump 6 ft"; CONTROL "e-stop PB0", "run light LT1 M1", "time delay relay TR1"; PIPING "flap
+    check valve", "eccentric plug valve"; LEVELS "FS1: off float at 2 ft", "1. float FS1 ...". Lantern's parsers read
+    every one as meant. grammarWords is a hand list narrower than SROLES / LEADS (and PROLE, LROLE, ROLE, tidy1), with no
+    bullet, number, all-capitals or blank line. Held on a correction or after prose, the model is pushed off the line it
+    would write -- onto another allowed word ("Note", "valves", "well") with the rest of its line.
+    Right: the words from the same tables the parser reads (every role word and every LEADS first word), case-blind, an
+    optional bullet or number, and blank lines.
+
+14. [medium] A correction that names another kind is held to the old kind's grammar. E-P13.
+    Lantern did: MAKE HYDRAULIC with a compressor for a pneumatic question -> "a compressor is pneumatic ... for
+    compressed air write MAKE PNEUMATIC", and the next call is held to root ::= "MAKE HYDRAULIC: ". (The same for
+    PNEUMATIC's "write MAKE HYDRAULIC for an oil circuit".) Before the grammar, the model could do as told.
+    Right: no grammar, or the named kind's, when a problem tells the model to write another MAKE kind.
+
+15. [medium] Inch marks in a floats line lose the heights. A-42.
+    Lantern did: 'floats off 24", lead 36", lag 48", alarm 60"' -> the " marks read as quotes, every height dropped,
+    nothing said; the levels then say "Not to scale: give each float its height".
+    Right: 24" is 24 in (as the float lines read 2'6"), or the line questioned.
+
+16. [medium] A four-letter ISA tag is renamed in the levels drawing. A-51.
+    Lantern did: 'float LSHH1 "high level alarm" 5 ft' -> the control and the parts list say LSHH1, the levels drawing FS1
+    (MAKE LEVELS takes tags of 1-3 letters).
+    Right: one tag for one float in every drawing.
+
+17. [medium] A pipe's size read as the inlet's invert. A-63.
+    Lantern did: "inlet 8 in" -> the inlet invert at 8 in above the floor, and the levels' steps say the inlet's invert
+    is "above them" (the floats).
+    Right: "8 in" after "inlet" with nothing else is a size (as heightOf passes over "8 in gravity sewer"); no invert.
+
+18. [medium] More pumps than Lantern draws are sent back with a line that changes the station. A-100.
+    Lantern did: "Design a lift station with five pumps", "pumps 5" -> "keep it to 4 pumps or fewer, like: pumps 4".
+    Right: say what it cannot draw (the control, as for three and four) and draw the rest, or decline; never a line that
+    makes another station than the one asked for.
+
+19. [medium] A sump's "low level" and "high level" floats. A-106.
+    Lantern did: "pumps 1 / floats low level, high level" -> "low level" not read, "high level" made the alarm, an off and
+    a lead float added: three floats for the block's two.
+    Right: as MAKE CONTROL reads them (second 1.24.30 review): low level stops, high level starts.
+
+20. [low] What the parts list and the checks say beyond the drawings. A-85, A-101, A-102.
+    The pumps P1, P2 are not in the parts list when the piping is not drawn (control and levels asked); a triplex or
+    quadplex's checks say "Lift FS3 (lag on) with FS2 up: both pumps run" and "the alarm light comes on" with no control
+    circuit drawn.
+
+21. [low] Wording, and silent drops or choices. A-59 ("Wet well, 10 ft below grade deep"), A-60 ("8 ft diameter 12 ft
+    deep": no depth, nothing said -- heightOf takes "12 ft" as the diameter's), A-62 (inlet "8 in gravity sewer at"),
+    A-64 (inlet labelled "invert"), A-72 ("valves gate, plug or ball" -> gate, not said), A-73 ("check valves: swing"
+    dropped), A-82 (a note line parsed and then used nowhere: not drawn, not in the document, not said), A-92 (see 3),
+    "1 pumps" (in A-97's said).
+
+22. [low] Defaults and scope. A-107 (two pumps "taking turns, the usual lift station" for "a sump pump"), A-108 (a block
+    titled "Simplex sump station" drawn as two pumps), C-19 (MAKE STATION for a question about the control circuit alone
+    draws all three drawings: spec() takes all three when fewer than two are asked), B-20 ("Write the commissioning
+    checklist for a duplex lift station" is not the station: asks() names commissioning but needs a drawing verb).
+
+WHAT HELD (selected AGREEs)
+  - The guide's example and 60-odd right variants (counts as words, colons, equals, bullets, numbers, capitals, slashes,
+    other names for the jobs, "float switches:", tags, a line per pump; heights in ft, m, mm, in, ft and in, primes,
+    decimal commas, mixed units, elevations, below grade; floats top down, tags numbered from the top; set B's form;
+    a low level alarm; well, inlet, main, plug/gate/ball valves, supply as quoted, bare, "control voltage", "voltage:";
+    horn; no lights): each drawn whole and right -- the ladder simulated (the lead float starts one pump, held in to the
+    off float, the pumps take turns, the lag runs both and holds to the off float, the alarm light only at the alarm
+    float, an overload drops only its pump), each pump's check then shutoff valve, the levels the same floats in order
+    and to scale (measured), the parts list naming every rung, valve and float and nothing else, the sequence and the
+    checks naming the floats drawn, every default said (A-01..A-58 bar the above).
+  - Placeholders read as nothing (A-87); prose and typos said as not read (A-31, A-32); floats out of order, two heights
+    for one float, floats above the well's depth questioned with the line (A-54..A-56); a float with no job questioned
+    with its line (A-112); a simplex right (A-103, A-104).
+  - Read as a station: the 35B's two control blocks, the 2B's floatless duplex, set B's control, piping alone, levels
+    alone, control and levels, all three, MAKE SCHEMATIC with the control's lines (C-01..C-10); the same blocks for a
+    question about one drawing stay that drawing (C-15..C-18); Chat one call (C-20); the bench passes the 1.24.30 blocks
+    and the 2B's floatless control (C-23, C-24, D-28).
+  - The floatless duplex: four floats added, said and wired right, with lights, supply, a horn on FS4, a light on the
+    alternator, the 35B's "alternating"/"starter" words (D-01..D-08); every circuit with floats, with "level" floats,
+    with a start button, three pumps, a pressure or temperature switch, and plain starters is as 1.24.30 drew it or
+    questioned it (D-09..D-17, D-24..D-27).
+  - Routing: every one of the 298 other bench questions is offered the same tools, split the same and given the same
+    short prompt as on 1.24.30; their whole instructions differ only by "a pump station (Writer, and each drawing in
+    Draw), " in the list (B-71, B-72). Single drawings, PLC and Arduino programs, fire pumps, a house's sump, boilers,
+    septic tanks, drinking-water wells, hydraulics stay off the station (B-21..B-42); a station and its PLC program is
+    now split into the station and the program (B-74, better than 1.24.30).
+  - Grammars: each parses in llama.cpp b11435; prose before, inside and after a block, fences, a refusal, another kind's
+    block and a missing title are held out (E-G19..E-G25, E-G33, E-G34, E-G39, E-G44, E-G47). Sent on the block asked for
+    after prose, on corrections and on the next part only; never on a question's first call, a later conversation turn's
+    first call, a sum, or to a server without /props; a server that refuses one gets the request again without it and
+    no grammar after; a context-size refusal does not turn grammars off; the old-form SCHEMATIC correction still lets
+    the right answer through (E-P01..E-P12, E-P14, E-P15).
+
+NOT RUN OR NOT CHECKED
+  - No model at all: every reply is scripted (no 35B, no 4B/2B/0.8B run, no bench workflow). Nothing here says how a
+    model writes under a grammar; whether a held-out line pushes a model onto a worse one (finding 13) is reasoned, not
+    measured.
+  - The grammars were run through llama.cpp's parser with Qwen2's vocabulary file only (tools/gbnf_check.py), not with
+    the Qwen3.5 models' own vocabulary, and not sent to a running llama-server (whether it takes "grammar" beside
+    chat_template_kwargs in /v1/chat/completions was not tried).
+  - No real browser: the station's view, its Draw buttons, Writer and the PDF were not opened, and no drawing was looked
+    at (how a drawing looks is Adam's to judge). The levels' scale was measured from the shapes, not seen.
+  - The in-page (device) engine ignores opts.grammar: read in the code (D.complete), not run.
+  - A custom endpoint beside a detected llama-server (AI.endpoint() !== AI.server.endpoint) was not tried.
+  - The standards the document cites (Ten States 42.52, 44.4, 42.64; Ontario 7.2.5; OSHA 1910.146) were not re-read on
+    their pages by this review (the third 1.24.30 review read them).
+  - npm test was not run; only tests/station.js (46 pass) and this replay.

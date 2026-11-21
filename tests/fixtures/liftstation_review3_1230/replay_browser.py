@@ -62,7 +62,9 @@ CASES = [
 MEASURE = r"""
 (args) => {
   const [text, q, name] = args;
-  const r = window.Lantern.aiAct.build(text, q);
+  let r = window.Lantern.aiAct.build(text, q);
+  // (1.24.31) a station question's block is read as MAKE STATION (AI_STATION): its own drawing of this block's kind
+  if (r && r.plan && r.plan.mode === "station" && r.views) { const vk = { CONTROL: "control", PIPING: "piping", LEVELS: "levels", SCHEMATIC: "piping" }[String((/MAKE\s+([A-Z]+)/.exec(text) || [])[1])]; const sub = r.views[vk]; if (sub) r = Object.assign({}, sub, { ok: !(sub.problems || []).length }); }
   if (!r) return {err: "no block read"};
   if (!r.ok || !r.shapes) return {err: "not drawn: " + (r.problems || []).join("; ")};
   const png = r.png();

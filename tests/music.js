@@ -191,7 +191,7 @@ function chords(p) { return p.chords.map(function (c) { return c.name + (c.len !
   var pr = L.CHAT.buildSystem(ONE);
   ok("...the prompt: the lines, the bars do the timing, never lengths or MIDI numbers, an example not the bench's", /MAKE MUSIC: <title>/.test(pr) && /the notes of a bar share it equally/.test(pr) &&
     /Never write note lengths, MIDI\nnumbers or frequencies/.test(pr) && /MAKE MUSIC: Morning walk/.test(pr) && !/Ode to Joy/.test(pr));
-  ok("twelve actions (1.24.30: a pump station\u2019s piping and its float levels), music last", L.aiActions.map(function (a) { return a.id; }).join(",") === "schematic,drawing,piping,levels,wheel,sheet,doc,slides,cards,plan,code,music", L.aiActions.map(function (a) { return a.id; }));
+  ok("thirteen actions (1.24.30: a pump station\u2019s piping and its float levels; 1.24.31: a pump station whole), music last", L.aiActions.map(function (a) { return a.id; }).join(",") === "schematic,drawing,piping,levels,station,wheel,sheet,doc,slides,cards,plan,code,music", L.aiActions.map(function (a) { return a.id; }));
   var fx = act.fixText(act.build(song(["key C", "melody C E/2 G"]), "a tune"), "a tune");
   ok("the correction turn names the problem and how Lantern reads a MAKE MUSIC block", /^Lantern checked your MAKE MUSIC block: \u201cE\/2\u201d \(bar 1\) is not a note/.test(fx) &&
     /Lantern reads these lines of a MAKE MUSIC block like this \(the other lines stay as you wrote them\):\nchords Em \| Am \| B7 \| Em/.test(fx) && /\nmelody B A G E \| A - G F# \| E - - r[^\n]*\n +- holds the note before/.test(fx) &&

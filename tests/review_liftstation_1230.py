@@ -11,6 +11,8 @@ import os, re, subprocess, sys, tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "liftstation_review1_1230")
 KEEP = {
+    # (1.24.31)
+    "A-ref-no-floats": "a duplex for a lift station written with no floats at all (the 2B's, on 1.24.30) gets the usual four floats, from the bottom up, said and wired (tests/station.js); this case was written to expect the block back asking for them.",
     "A-35b-select-switch": "SS1 (lead/lag select) in the 35B's block is drawn as written, in M1's rung, and the notes say so and that a selector that fixes the lead pump is not drawn yet. Lantern does not move a switch it cannot place surely (CLAUDE.md, rule 7).",
     "A-isa-tags": "the alarm float now keeps its tag LSHH1, as the case's own 'right' asks, and lights the high level alarm light Lantern adds; the case's map still names it FS1 (written for the draft that renamed it).",
     "A-ref-alt-4letter-tag": "ALTR is now read as the alternator's tag and the circuit is drawn and said, which is the case's own 'right'; the case was written to expect the block back.",
@@ -24,14 +26,25 @@ KEEP = {
     "B-route-sump-piping": "the third review showed MAKE PIPING drawing a basement sump with a valve vault and the wastewater standard's sections; a sump in a basement or a house is no longer a pump station's (it gets the picture tool). This case said piping was acceptable there.",
     "B-pipe-1": "the replay asks this one-pump block of 'a 2 pump lift station'; Lantern now adds P2 with its valves when the question names more pumps than the block, and says so (a simplex question draws one pump: the second review's C-pp-simplex).",
 }
+# (1.24.31) A station asked for whole is one MAKE STATION block now (AI_STATION; tests/station.js,
+# tests/review_station_1231.py). This review was of the 1.24.30 path -- the three drawings made one at a time -- which a
+# Lantern without AI_STATION still takes, so its cases replay on the source without that module (no_station()); its
+# drawings in Chromium read a station's own drawing of the block's kind.
+def no_station():
+    src = open(os.path.join(ROOT, "src", "lantern.inner.html"), encoding="utf-8").read()
+    a, b = src.index("// MODULE: AI_STATION - START"), src.index("// MODULE: AI_STATION - END")
+    f = tempfile.NamedTemporaryFile("w", suffix=".html", prefix="lantern_no_station_", delete=False, encoding="utf-8")
+    f.write(src[:a] + src[b:]); f.close()
+    return f.name
+NOST = no_station()
 RUNS = [
-    ("cases", ["node", os.path.join(FX, "replay.js")], 351, 900),
+    ("cases", ["node", os.path.join(FX, "replay.js"), NOST], 351, 900),
     ("drawings", [sys.executable, os.path.join(FX, "replay_browser.py"), "8337"], 14, 900),
 ]
 VERBOSE = "-v" in sys.argv
 fails, agree_n, dis_n, total_n = [], 0, 0, 0
 for name, cmd, n, limit in RUNS:
-    env = dict(os.environ, LANTERN_PNG_OUT=tempfile.mkdtemp(prefix="lantern_ls_png_"))  # the kept PNGs are the review's; a replay does not rewrite them
+    env = dict(os.environ, LANTERN_SRC=NOST, LANTERN_PNG_OUT=tempfile.mkdtemp(prefix="lantern_ls_png_"))  # the kept PNGs are the review's; a replay does not rewrite them
     r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=limit, env=env)
     out = r.stdout
     if VERBOSE: print(out)

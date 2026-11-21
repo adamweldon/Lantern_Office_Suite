@@ -12,19 +12,34 @@ import os, re, subprocess, sys, tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "liftstation_review2_1230")
 KEEP = {
+    # (1.24.31)
+    "A-no-floats": "a duplex for a lift station written with no floats at all (the 2B's, on 1.24.30) gets the usual four floats, from the bottom up, said and wired (tests/station.js); this case was written to expect the block back asking for them.",
+    "D-bench-grade-ideal": "the bench item's own model answer is one MAKE STATION block now; this replay runs on Lantern without AI_STATION, where it cannot be made. tests/station.js grades it on the whole Lantern, with the 1.24.30 answer (the three blocks) too.",
+    "D-bench-b-grade-ideal": "set B's twin, the same: its model answer is one MAKE STATION block now, graded in tests/station.js.",
     "D-turn-control-again-for-piping": "a second MAKE CONTROL when the piping is asked for is no longer taken for the piping: Lantern asks for the MAKE PIPING block again with its own instructions, and never says the piping was made. The scripted model's replies stay CONTROL then LEVELS, so no piping block is ever written, and the case's check (PIPING among the blocks made) cannot pass.",
     "D-turn-schematic-then-obeys": "the MAKE SCHEMATIC written for the piping now goes back asking for MAKE PIPING, not MAKE CONTROL; the scripted model then writes MAKE CONTROL, which it was not told, and never a piping block.",
     "D-solve-control-again": "on the bench's path the piping is asked for again and recorded as not made (PIPING(not made)); the scripted model never writes a piping block.",
     "E-ctl-long-float-labels": "the floats' labels now keep their own words (all pumps off, lead pump on, lag pump on); the two cut alike are the alarm float FS4 and the light LT1 it lights, both 'high level alarm', told apart by their tags.",
 }
+# (1.24.31) A station asked for whole is one MAKE STATION block now (AI_STATION; tests/station.js,
+# tests/review_station_1231.py). This review was of the 1.24.30 path -- the three drawings made one at a time -- which a
+# Lantern without AI_STATION still takes, so its cases replay on the source without that module (no_station()); its
+# drawings in Chromium read a station's own drawing of the block's kind.
+def no_station():
+    src = open(os.path.join(ROOT, "src", "lantern.inner.html"), encoding="utf-8").read()
+    a, b = src.index("// MODULE: AI_STATION - START"), src.index("// MODULE: AI_STATION - END")
+    f = tempfile.NamedTemporaryFile("w", suffix=".html", prefix="lantern_no_station_", delete=False, encoding="utf-8")
+    f.write(src[:a] + src[b:]); f.close()
+    return f.name
+NOST = no_station()
 RUNS = [
-    ("cases", ["node", os.path.join(FX, "replay.js")], 607, 900),
+    ("cases", ["node", os.path.join(FX, "replay.js"), NOST], 607, 900),
     ("drawings", [sys.executable, os.path.join(FX, "replay_browser.py")], 17, 900),
 ]
 VERBOSE = "-v" in sys.argv
 fails, agree_n, dis_n, total_n = [], 0, 0, 0
 for name, cmd, n, limit in RUNS:
-    env = dict(os.environ, LANTERN_PNG_OUT=tempfile.mkdtemp(prefix="lantern_ls_png_"))  # the kept PNGs are the review's; a replay does not rewrite them
+    env = dict(os.environ, LANTERN_SRC=NOST, LANTERN_PNG_OUT=tempfile.mkdtemp(prefix="lantern_ls_png_"))  # the kept PNGs are the review's; a replay does not rewrite them
     r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=limit, env=env)
     out = r.stdout
     if VERBOSE: print(out)

@@ -54,6 +54,10 @@ var OLD_IDEAL = "MAKE CONTROL: Duplex lift station\nfloat FS1 \x22off\x22\nfloat
     ids("draw the control circuit for a duplex lift station: floats off, lead, lag and high level alarm, with an alternating relay") === "schematic" &&
     ids("Draw a house with a red roof") === "drawing" && !/station/.test(ids("Write a PLC program for a duplex lift station's control and piping")) &&
     !/station/.test(ids("Design the fire pump station: its control and piping")), [ids("Write a PLC program for a duplex lift station's control and piping"), ids("Design the fire pump station: its control and piping")]);
+  var dk = "Draw the control circuit and the piping for a duplex lift station, then make a slide deck about it for the city council", dkp = L.aiParts.split(dk);
+  ok("a station's drawings beside a slide deck about it: two parts, the station whole and then the deck (the first review)", dkp && dkp.map(function (p) { return p.kind; }).join(",") === "STATION,SLIDES" &&
+    ["Make a slide deck about lift stations for a city council meeting", "Make a spreadsheet of lift station pump run hours", "Make flashcards about lift station parts", "Plan a maintenance schedule for our lift station",
+      "Draw the plumbing and wiring for my duplex (a two-family house)", "Design a duplex air compressor station: its control and piping"].every(function (q) { return !S.asks(q); }), dkp && dkp.map(function (p) { return p.kind; }));
   var benchSt = (L.aiBenchQuestions || []).concat(L.aiBenchQuestionsB || []).filter(function (q) { return S.asks(q.q); }).map(function (q) { return q.id; }).sort().join(",");
   ok("of every bench question, only the two lift stations are a station", benchSt === "make-liftstation,make-liftstation-b", benchSt);
 
