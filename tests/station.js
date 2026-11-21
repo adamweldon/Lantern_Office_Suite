@@ -76,7 +76,12 @@ var OLD_IDEAL = "MAKE CONTROL: Duplex lift station\nfloat FS1 \x22off\x22\nfloat
     /confined space/.test(p1.checks.before[1]) && /1910\.146/.test(p1.checks.before[1]) && /Lock out/.test(p1.checks.before[2]) &&
     /lift FS2 \(lead on\)/.test(p1.checks.run.join(" ")) && /the other pump starts/.test(p1.checks.run.join(" ")) && /Lift FS3 \(lag on\) with FS2 up: both pumps run/.test(p1.checks.run.join(" ")) &&
     /Lift FS4 \(high level alarm\): the alarm light comes on/.test(p1.checks.run.join(" ")) && /check valve closes/.test(p1.checks.run.join(" ")), p1.checks);
-  ok("...what Lantern does not know, and what it assumed, said", p1.unknown.length === 3 && /minimum submergence/.test(p1.unknown[0]) &&
+  ok("...the checks as the fact check found them on their pages: no one goes in after a collapsed worker, the power on only with everyone clear (1910.147), the valves opened before any pump runs, the alarm on backup power",
+    /do not go in after them: call for rescue/.test(p1.checks.before[1]) && /1926 Subpart AA/.test(p1.checks.before[1]) && /1910\.147/.test(p1.checks.before[2]) && !/touches a pump, a float/.test(p1.checks.before[2]) &&
+    /^Before any pump runs: each shutoff valve/.test(p1.checks.run[0]) && /backup power of its own/.test(p1.checks.run.join(" ")) && /may still sound normal/.test(p1.checks.run.join(" ")) &&
+    /450 mm \(18 in\) side to side/.test(p1.checks.run.join(" ")), p1.checks);
+  ok("...what a station needs that is not drawn, in the parts list (the alarm on backup power, gas-rated equipment, a blower)", p1.parts.filter(function (r) { return /^Not drawn: /.test(r.item); }).length === 3, p1.parts);
+  ok("...what Lantern does not know, and what it assumed, said", p1.unknown.length === 6 && /minimum submergence/.test(p1.unknown[0]) && /one pump out of service/.test(p1.unknown[2]) && /power fails/.test(p1.unknown[3]) &&
     p1.said.join("; ") === "no control voltage: the ladder is drawn between L1 and L2; a run light for each pump and a red light on the high level alarm", p1.said);
   ok("...the summary says what was drawn and what was assumed", /^Lantern drew the control circuit, the piping and the float levels from one description/.test(r1.summary) && /Lantern assumed: no control voltage/.test(r1.summary), r1.summary);
 
