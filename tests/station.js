@@ -193,6 +193,12 @@ var OLD_IDEAL = "MAKE CONTROL: Duplex lift station\nfloat FS1 \x22off\x22\nfloat
   function asIf(fin, rep) { var a = AIx.lastFinish, b = AIx.lastReply; AIx.lastFinish = fin; AIx.lastReply = rep; try { return act.build(oil.reply, oil.question || ""); } finally { AIx.lastFinish = a; AIx.lastReply = b; } }
   var mStop = asIf("stop", oil.reply), mLen = asIf("length", oil.reply), mOther = asIf("stop", "MAKE DOC: another reply\nEND"), mNone = asIf(null, null);
   ok("(1.24.33) a reply the model ended itself without END (1.24.32's 0.8B: an oil change in three steps) is read whole, not \u201ccut off\u201d", mStop && mStop.ok && !/cut off/.test((mStop.problems || []).join()), mStop && mStop.problems);
+  // (1.24.33's run, tests/fixtures/bench_run_1.24.33_0.8b.json) the 0.8B's SI-units cards, ended without END: made, and
+  // failed for what they hold, not as cut off; the checklist that ran to 1,800 tokens, still cut off
+  var R33 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "bench_run_1.24.33_0.8b.json"), "utf8"));
+  function as33(id, fin) { var r = R33.filter(function (x) { return x.id === id; })[0], a = AIx.lastFinish, b = AIx.lastReply; AIx.lastFinish = fin; AIx.lastReply = r.reply; try { return act.build(r.reply, r.question || ""); } finally { AIx.lastFinish = a; AIx.lastReply = b; } }
+  var c33 = as33("make-cards-si-units", "stop"), k33 = as33("make-doc-word-checklist", "length");
+  ok("(1.24.33's run) the 0.8B's cards it ended itself are made; its checklist cut at 1,800 tokens is still called cut off", c33 && c33.ok && k33 && /cut off before END/.test((k33.problems || []).join()), [c33 && c33.problems, k33 && k33.problems]);
   ok("...one the server cut at its length, or not the reply the server gave last, or with no finish known, is still cut off", [mLen, mOther, mNone].every(function (m) { return m && /cut off before END/.test((m.problems || []).join()); }));
   ok("...a control block's other names hold to CONTROL's lines; SCHEMATIC and ELECTRONICS take any line but END itself (the third review's F-26)", (function () {
     var tail = function (k) { return (act.grammarFor(k) || "").split("\n").slice(1).join("\n"); }, c = tail("CONTROL");
