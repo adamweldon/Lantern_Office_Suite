@@ -36,7 +36,11 @@ w.fetch = function (url, opts) {
   modelCalls.push(body);
   var r = modelReplies.length ? modelReplies.shift() : "ANSWER: ok";
   if (typeof r === "function") r = r(body);
-  return resp(200, JSON.stringify({ choices: [{ message: { content: r }, finish_reason: "stop" }], usage: { completion_tokens: 20 } }));
+  // (1.24.33) a reply given as {content, finish} ends as the server said: the real looping replies of 1.9.8 were cut at their
+  // length, and since 1.24.33 a reply the model ended itself ("stop") is read as ended
+  var fin = "stop";
+  if (r && typeof r === "object") { fin = r.finish || "stop"; r = r.content; }
+  return resp(200, JSON.stringify({ choices: [{ message: { content: r }, finish_reason: fin }], usage: { completion_tokens: 20 } }));
 };
 var fails = 0, passes = 0;
 function ok(name, cond, info) { if (cond) passes++; else { fails++; console.log("FAIL", name, info === undefined ? "" : JSON.stringify(info).slice(0, 700)); } }
@@ -251,7 +255,7 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
 
   // --- 1.9.8: Chat with the real looping replies ---
   go("chat"); await sleep(40);
-  modelReplies = [ra1, ra2];
+  modelReplies = [{ content: ra1, finish: "length" }, { content: ra2, finish: "length" }];
   before = logText().length;
   chatAsk("draw a house on a hill at sunset"); await sleep(300);
   t = logText().slice(before);

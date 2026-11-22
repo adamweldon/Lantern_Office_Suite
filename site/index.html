@@ -30911,9 +30911,34 @@ Lantern.RFB = (function () {
     // small models' run of 1.24.32 had whole ones (an oil change of three steps, a deck of one card) questioned as "cut
     // off before END". The server says how the reply ended: "stop" (the model's own end) closes the last block; "length"
     // (out of tokens), or a reply that is not the one the server gave last, leaves it as it was.
+    // (the second review) the reply is the server's when one ends the other: Lantern may have taken off a <think> part or
+    // an = before MAKE, so the shorter's whole length (up to 200 characters) is compared from the end. A reply whose last
+    // paragraph, after a blank line, is one sentence of prose ("I hope this helps with your talk!", "This blinks the LED
+    // once a second.") is left open as before: that sentence is the model talking, not the block, and a slide, a row or
+    // a line of a program it is not. "END." on the last line of a program is its END.
     var lb = bs[bs.length - 1], AIx = window.Lantern.ai;
-    function tail(t) { return String(t).replace(/\s+$/, "").slice(-200); }
-    if (lb && !lb.closed && AIx && AIx.lastFinish === "stop" && typeof AIx.lastReply === "string" && tail(AIx.lastReply) === tail(text)) { lb.closed = true; lb.endedBy = "stop"; }
+    var tA = AIx && typeof AIx.lastReply === "string" ? String(AIx.lastReply).replace(/\s+$/, "") : null, tB = String(text).replace(/\s+$/, ""), tn = Math.min(200, tB.length, tA ? tA.length : 0);
+    if (lb && !lb.closed && AIx && AIx.lastFinish === "stop" && tA && tn >= 12 && tA.slice(-tn) === tB.slice(-tn)) {
+      var rw = (lb.raw || []).slice(), li = rw.length;
+      while (rw.length && !/\S/.test(rw[rw.length - 1])) rw.pop();
+      var lastL = rw.length ? rw[rw.length - 1].replace(/^\s+|\s+$/g, "") : "", blank = -1;
+      for (li = 0; li < rw.length; li++) if (!/\S/.test(rw[li])) blank = li;
+      var after = blank >= 0 ? rw.slice(blank + 1) : [];
+      var PROSE = /^(?![-*\u2022#>|]|\d+[.\x29]|\/\/)[A-Z][^|{};=<>\t]{10,}[.!?][\x22\x27\u201d\x29]?$/;
+      if (/^END\W+$/.test(lastL)) { lb.raw = rw.slice(0, -1); if (lb.lines.length && lb.lines[lb.lines.length - 1] === lastL) lb.lines.pop(); lb.closed = true; lb.endedBy = "stop"; }
+      else if (!(after.length === 1 && PROSE.test(lastL) && lastL.split(" ").length >= 4)) { lb.closed = true; lb.endedBy = "stop"; }
+    }
+    // (the second review) a program or a table left open, whose last paragraph is one sentence of prose after a blank line:
+    // the sentence is the model talking after the block, as it would after END -- not a line of the program (it would not
+    // compile) nor a row of the table (it has none of the table's dividers) -- and is left outside it
+    if (lb && !lb.closed && lb.action && /^(code|sheet)$/.test(lb.action.id)) {
+      var rw2 = (lb.raw || []).slice();
+      while (rw2.length && !/\S/.test(rw2[rw2.length - 1])) rw2.pop();
+      var l2 = rw2.length ? rw2[rw2.length - 1].replace(/^\s+|\s+$/g, "") : "", PR2 = /^[A-Z][^|{};=<>\t,]{10,}[.!?]$/;
+      if (rw2.length > 2 && !/\S/.test(rw2[rw2.length - 2]) && PR2.test(l2) && l2.split(" ").length >= 4 && lb.lines[lb.lines.length - 1] === l2) {
+        lb.raw = rw2.slice(0, -1); lb.lines.pop(); lb.proseAfter = l2;
+      }
+    }
     var b = bs[0];
     if (b.action && typeof b.action.join === "function") {
       var same = bs.filter(function (x) { return x.action === b.action; }), j = null;
@@ -50472,6 +50497,59 @@ Lantern.RFB = (function () {
       for (var i = 0; i < d.length; i += 4) { d[i] ^= c & 255; d[i + 1] ^= c >> 8 & 255; d[i + 2] ^= c >> 16 & 255; }
       ctx.putImageData(im, x0, y0);
     }
+    // hatch(style, colour): a hatched brush's pattern, its lines in the brush's colour on the background colour (or clear)
+    function hatch(hs, c) {
+      try {
+        var hc = document.createElement("canvas"); hc.width = 8; hc.height = 8;
+        var x = hc.getContext("2d");
+        if (st.bkm === 2) { x.fillStyle = rgb(st.bk); x.fillRect(0, 0, 8, 8); }
+        x.strokeStyle = rgb(c); x.lineWidth = 1; x.beginPath();
+        if (hs === 0 || hs === 4) { x.moveTo(0, 3.5); x.lineTo(8, 3.5); }
+        if (hs === 1 || hs === 4) { x.moveTo(3.5, 0); x.lineTo(3.5, 8); }
+        if (hs === 2 || hs === 5) { x.moveTo(0, 0); x.lineTo(8, 8); }
+        if (hs === 3 || hs === 5) { x.moveTo(8, 0); x.lineTo(0, 8); }
+        x.stroke();
+        return ctx.createPattern(hc, "repeat");
+      } catch (e) { return null; }
+    }
+    // arc(record, box, start, end): an arc, a chord, a pie slice, or an arc on from the pen, between the two radials,
+    // anticlockwise unless SETARCDIRECTION says otherwise
+    function arc(t, r, a, b) {
+      var cx = (r[0] + r[2]) / 2, cy = (r[1] + r[3]) / 2, rx = Math.abs(r[2] - r[0]) / 2 || 1, ry = Math.abs(r[3] - r[1]) / 2 || 1;
+      var a1 = Math.atan2((a[1] - cy) / ry, (a[0] - cx) / rx), a2 = Math.atan2((b[1] - cy) / ry, (b[0] - cx) / rx), anti = st.arcDir !== 2;
+      if (a1 === a2) a2 = a1 + (anti ? -2 : 2) * Math.PI;
+      var m = setT();
+      ctx.beginPath();
+      if (t === 55) { ctx.moveTo(st.cur[0], st.cur[1]); }
+      if (t === 47) ctx.moveTo(cx, cy);
+      if (ctx.ellipse) ctx.ellipse(cx, cy, rx, ry, 0, a1, a2, anti);
+      if (t === 46 || t === 47) { ctx.closePath(); fillIt(); }
+      strokeIt(m);
+      if (t === 55) st.cur = [cx + rx * Math.cos(a2), cy + ry * Math.sin(a2)];
+    }
+    // gradient(record): GRADIENTFILL -- rectangles shaded across or down from one corner's colour to the other's; a
+    // triangle filled with its corners' mean colour
+    function gradient(o) {
+      var nv = v.getUint32(o + 24, true), nt = v.getUint32(o + 28, true), mode = v.getUint32(o + 32, true), vs = [], i;
+      if (nv > 10000 || nt > 10000) return;
+      for (i = 0; i < nv; i++) { var q = o + 36 + i * 16; vs.push({ x: v.getInt32(q, true), y: v.getInt32(q + 4, true), c: [v.getUint16(q + 8, true) >> 8, v.getUint16(q + 10, true) >> 8, v.getUint16(q + 12, true) >> 8] }); }
+      var g0 = o + 36 + nv * 16;
+      setT();
+      for (i = 0; i < nt; i++) {
+        if (mode === 2) {
+          var t3 = [0, 1, 2].map(function (k) { return vs[v.getUint32(g0 + i * 12 + k * 4, true)]; });
+          if (t3.some(function (p) { return !p; })) continue;
+          ctx.fillStyle = "rgb(" + [0, 1, 2].map(function (k) { return Math.round((t3[0].c[k] + t3[1].c[k] + t3[2].c[k]) / 3); }).join(",") + ")";
+          ctx.beginPath(); ctx.moveTo(t3[0].x, t3[0].y); ctx.lineTo(t3[1].x, t3[1].y); ctx.lineTo(t3[2].x, t3[2].y); ctx.closePath(); ctx.fill();
+        } else {
+          var A = vs[v.getUint32(g0 + i * 8, true)], B = vs[v.getUint32(g0 + i * 8 + 4, true)];
+          if (!A || !B) continue;
+          var gr = mode === 1 ? ctx.createLinearGradient(0, A.y, 0, B.y) : ctx.createLinearGradient(A.x, 0, B.x, 0);
+          gr.addColorStop(0, "rgb(" + A.c.join(",") + ")"); gr.addColorStop(1, "rgb(" + B.c.join(",") + ")");
+          ctx.fillStyle = gr; ctx.fillRect(Math.min(A.x, B.x), Math.min(A.y, B.y), Math.abs(B.x - A.x), Math.abs(B.y - A.y));
+        }
+      }
+    }
     function rectRec(o) { return [v.getInt32(o, true), v.getInt32(o + 4, true), v.getInt32(o + 8, true), v.getInt32(o + 12, true)]; }
     function shape(kind, r, rr) {
       var m = setT();
@@ -50509,7 +50587,7 @@ Lantern.RFB = (function () {
       ctx.restore();
       if (st.align & 1) st.cur = [rx + ctx.measureText(str).width / sc, ry];
     }
-    var o = 0, n = 0, done = false, drawn = 0, DRAWS = ",2,3,4,5,6,7,8,42,43,44,54,62,63,64,76,77,81,83,84,85,86,87,88,89,90,91,";
+    var o = 0, n = 0, done = false, drawn = 0, DRAWS = ",2,3,4,5,6,7,8,42,43,44,45,46,47,54,55,62,63,64,76,77,81,83,84,85,86,87,88,89,90,91,118,";
     while (o + 8 <= b.length && !done && n++ < 500000) {
       var t = v.getUint32(o, true), sz = v.getUint32(o + 4, true);
       if (sz < 8 || o + sz > b.length) break;
@@ -50528,7 +50606,12 @@ Lantern.RFB = (function () {
           case 24: st.tc = v.getUint32(o + 8, true); break;
           case 25: st.bk = v.getUint32(o + 8, true); break;
           case 27: st.cur = [v.getInt32(o + 8, true), v.getInt32(o + 12, true)]; if (path) cp = null; break;
-          case 54: figure([st.cur.slice(), [v.getInt32(o + 8, true), v.getInt32(o + 12, true)]], false, false, false); break;
+          // a line on from where the pen is: in a path it goes on the figure (the second review: a triangle drawn as MoveTo,
+          // LineTo, LineTo, CloseFigure, FillPath came out blank, each LineTo starting a figure of its own)
+          case 54: figure([[v.getInt32(o + 8, true), v.getInt32(o + 12, true)]], false, false, false, true); break;
+          case 45: case 46: case 47: case 55: arc(t, rectRec(o + 8), [v.getInt32(o + 24, true), v.getInt32(o + 28, true)], [v.getInt32(o + 32, true), v.getInt32(o + 36, true)]); break;
+          case 57: st.arcDir = v.getUint32(o + 8, true); break;
+          case 118: gradient(o); break;
           case 33: stack.push(copy(st)); ctx.save(); break;
           case 34: var k = v.getInt32(o + 8, true), back = k < 0 ? -k : stack.length - k; for (; back > 0 && stack.length; back--) { st = stack.pop(); ctx.restore(); } break;
           case 35: st.world = [v.getFloat32(o + 8, true), v.getFloat32(o + 12, true), v.getFloat32(o + 16, true), v.getFloat32(o + 20, true), v.getFloat32(o + 24, true), v.getFloat32(o + 28, true)]; break;
@@ -50544,7 +50627,10 @@ Lantern.RFB = (function () {
             objs[v.getUint32(o + 8, true)] = { k: "pen", none: (ps & 15) === 5, w: v.getUint32(o + 32, true), c: v.getUint32(o + 40, true), dash: { 1: [4, 2], 2: [1, 2], 3: [4, 2, 1, 2], 4: [4, 2, 1, 2, 1, 2] }[ps & 15],
               cap: { 0: "round", 0x100: "square", 0x200: "butt" }[ps & 0xf00], join: { 0: "round", 0x1000: "bevel", 0x2000: "miter" }[ps & 0xf000] };
             break;
-          case 39: var bs = v.getUint32(o + 12, true); objs[v.getUint32(o + 8, true)] = { k: "brush", none: bs === 1, c: v.getUint32(o + 16, true) }; break;
+          case 39:
+            var bs = v.getUint32(o + 12, true), bc = v.getUint32(o + 16, true);
+            objs[v.getUint32(o + 8, true)] = { k: "brush", none: bs === 1, c: bc, pat: bs === 2 ? hatch(v.getUint32(o + 20, true), bc) : null };
+            break;
           case 94: case 93:
             var pc = dib(b, o + v.getUint32(o + 16, true), v.getUint32(o + 20, true), o + v.getUint32(o + 24, true), v.getUint32(o + 28, true)), pat = null;
             try { pat = pc ? ctx.createPattern(pc, "repeat") : null; } catch (e) { pat = null; }
@@ -50593,6 +50679,9 @@ Lantern.RFB = (function () {
             else { bx = v.getInt32(o + 24, true); by = v.getInt32(o + 28, true); bw = v.getInt32(o + 32, true); bh = v.getInt32(o + 36, true); img = dib(b, o + v.getUint32(o + 84, true), v.getUint32(o + 88, true), o + v.getUint32(o + 92, true), v.getUint32(o + 96, true));
               if (t === 77 && sz >= 108) { bw = v.getInt32(o + 100, true) ? bw : bw; } }
             setT();
+            // (the second review) a picture stretched as Windows stretches it: pixel by pixel, unless the picture asks for
+            // HALFTONE (SETSTRETCHBLTMODE 4)
+            if ("imageSmoothingEnabled" in ctx) ctx.imageSmoothingEnabled = st.blt === 4;
             // the raster operation: a picture copied, or (with no picture) the brush painted, black, white, or the
             // brush or white laid over what is there (XOR, drawn as a difference); the destination left as it is
             var rop = t === 81 ? v.getUint32(o + 68, true) : v.getUint32(o + 40, true), br2 = st.brush;
@@ -50603,7 +50692,8 @@ Lantern.RFB = (function () {
             else if (rop !== 0xaa0029) left.rop = (left.rop || 0) + 1;
             break;
           case 20: st.rop2 = v.getUint32(o + 8, true); break;
-          case 1: case 13: case 16: case 21: case 23: case 57: case 58: case 70: case 98: case 75: case 48: case 49: case 50: case 52: break;
+          case 21: st.blt = v.getUint32(o + 8, true); break;
+          case 1: case 13: case 16: case 23: case 58: case 70: case 98: case 75: case 48: case 49: case 50: case 52: break;
           default: left[t] = (left[t] || 0) + 1;
         }
       } catch (e) { left.broken = (left.broken || 0) + 1; }
@@ -50777,7 +50867,7 @@ Lantern.RFB = (function () {
   function draw(html) {
     var doc = new DOMParser().parseFromString("<!DOCTYPE html><html><body>" + String(html || "") + "<\x2Fbody><\x2Fhtml>", "text\x2Fhtml");
     var out = [], tables = [], lost = {}, cur = null;
-    function para(o) { cur = { lvl: Math.min(8, o.lvl || 0), list: o.list || null, start: o.start || 0, otype: o.otype || "", head: !!o.head, cont: !!o.cont, under: o.under || null, runs: [] }; out.push(cur); return cur; }
+    function para(o) { cur = { lvl: Math.min(8, o.lvl || 0), list: o.list || null, start: o.start || 0, otype: o.otype || "", first: !!o.first, rtl: !!o.rtl, head: !!o.head, cont: !!o.cont, under: o.under || null, runs: [] }; out.push(cur); return cur; }
     function text(t, st, cx) {
       t = t.replace(/[\s\u00a0]+/g, " ");
       if (!cur) { if (!/\S/.test(t)) return; para({ lvl: cx.lvl, cont: cx.li, under: cx.under }); }
@@ -50792,7 +50882,7 @@ Lantern.RFB = (function () {
         if (c.nodeType !== 1) continue;
         var t = c.tagName.toLowerCase();
         if (t === "ul" || t === "ol") { cur = null; list(c, t, st, { lvl: d, depth: cx.depth + 1, li: true, under: tag }); cur = null; continue; }
-        para({ lvl: d, list: tag, start: first && start > 1 ? start : 0, otype: oty });
+        para({ lvl: d, list: tag, start: first ? start : 0, otype: oty, first: first, rtl: /rtl/i.test(c.getAttribute("dir") || el.getAttribute("dir") || "") });
         first = false;
         walk(c, st, { lvl: d, depth: cx.depth + 1, li: true, under: tag });
         cur = null;
@@ -50818,7 +50908,11 @@ Lantern.RFB = (function () {
           cur = null;
           continue;
         }
-        if (BLOCK.test(t)) { if (!keep) cur = null; walk(c, look(c, st), cx); cur = null; continue; }
+        if (BLOCK.test(t)) {
+          if (!keep) cur = null;
+          if (/rtl/i.test(c.getAttribute("dir") || "")) { if (!cur) para({ lvl: cx.lvl, cont: cx.li, under: cx.under }); cur.rtl = true; }   // (the second review) right to left kept
+          walk(c, look(c, st), cx); cur = null; continue;
+        }
         walk(c, look(c, st), cx);
       }
     }
@@ -50861,11 +50955,14 @@ Lantern.RFB = (function () {
   function parXml(p, link, o) {
     var pp = "";
     var NUM = { a: "alphaLcPeriod", A: "alphaUcPeriod", i: "romanLcPeriod", I: "romanUcPeriod" };
-    if (p.list === "ol") pp = E("a:pPr", { marL: 457200 * (p.lvl + 1), lvl: p.lvl || null, indent: -457200 }, E("a:buFont", { typeface: "+mj-lt" }) + E("a:buAutoNum", { type: NUM[p.otype] || "arabicPeriod", startAt: p.start > 1 ? p.start : null }));
-    else if (p.list === "ul") pp = p.lvl ? E("a:pPr", { lvl: p.lvl }) : "";
+    // (the second review) right-to-left paragraphs as such
+    var rtl = p.rtl ? { rtl: 1, algn: "r" } : {};
+    function at(o) { for (var k in rtl) o[k] = rtl[k]; return o; }
+    if (p.list === "ol") pp = E("a:pPr", at({ marL: 457200 * (p.lvl + 1), lvl: p.lvl || null, indent: -457200 }), E("a:buFont", { typeface: "+mj-lt" }) + E("a:buAutoNum", { type: NUM[p.otype] || "arabicPeriod", startAt: p.first && p.start > 1 ? p.start : null }));
+    else if (p.list === "ul") pp = p.lvl || p.rtl ? E("a:pPr", at({ lvl: p.lvl || null })) : "";
     // (the first review) a list item's second paragraph sits under its text: past a number's room, or at its level's margin
-    else if (p.cont) pp = E("a:pPr", p.under === "ol" ? { marL: 457200 * (p.lvl + 1), lvl: p.lvl || null, indent: 0 } : { lvl: p.lvl || null, indent: 0 }, E("a:buNone"));
-    else if (!(o && o.plain)) pp = E("a:pPr", p.lvl ? { lvl: p.lvl, indent: 0 } : { marL: 0, indent: 0 }, E("a:buNone"));
+    else if (p.cont) pp = E("a:pPr", at(p.under === "ol" ? { marL: 457200 * (p.lvl + 1), lvl: p.lvl || null, indent: 0 } : { lvl: p.lvl || null, indent: 0 }), E("a:buNone"));
+    else if (!(o && o.plain)) pp = E("a:pPr", at(p.lvl ? { lvl: p.lvl, indent: 0 } : { marL: 0, indent: 0 }), E("a:buNone"));
     var runs = p.runs.map(function (r) { if (p.head && !r.br) { var c = {}, k; for (k in r) c[k] = r[k]; c.b = 1; r = c; } return runXml(r, link, o); }).join("");
     return E("a:p", null, pp + runs + rPr({}, null, o, "a:endParaRPr"));
   }
@@ -51016,9 +51113,10 @@ Lantern.RFB = (function () {
     function byType(rs, type) { for (var k in rs) if (rs[k].type === type) return rs[k].target; return null; }
     var ct = z.text("[Content_Types].xml") || "", pkg = rels(""), main = byType(pkg, "officeDocument");
     if (!main || !/^ppt\x2F/i.test(main) || !/presentationml/.test(ct)) {
-      if (/wordprocessingml/.test(ct)) throw new Error("this is a Word document (.docx), not a PowerPoint presentation; Writer opens Word files");
-      if (/spreadsheetml/.test(ct)) throw new Error("this is an Excel workbook (.xlsx), not a PowerPoint presentation; Sheets opens Excel files");
-      if (!main && z.has("ppt\x2Fpresentation.xml")) main = "ppt\x2Fpresentation.xml";
+      if (/wordprocessingml/.test(ct) || (!main && z.has("word\x2Fdocument.xml"))) throw new Error("this is a Word document (.docx), not a PowerPoint presentation; Writer opens Word files");
+      if (/spreadsheetml/.test(ct) || (!main && z.has("xl\x2Fworkbook.xml"))) throw new Error("this is an Excel workbook (.xlsx), not a PowerPoint presentation; Sheets opens Excel files");
+      // (the second review) a damaged or missing list of the file's parts: the presentation is still where it always is
+      if (z.has("ppt\x2Fpresentation.xml")) main = main && /^ppt\x2F/i.test(main) && z.has(main) ? main : "ppt\x2Fpresentation.xml";
       else throw new Error("this zip file has no PowerPoint presentation in it");
     }
     var px = xml(main);
@@ -51185,13 +51283,48 @@ Lantern.RFB = (function () {
           for (var i = 1; i < sp.length; i++) { if (sp[i][0] > end && (!g || sp[i][0] - end > g[0])) g = [sp[i][0] - end, (sp[i][0] + end) / 2]; end = Math.max(end, sp[i][1]); }
           return g;
         }
-        var v = gap("x", "w"), r = gap("y", "h"), byX = !!v && (!r || v[0] > r[0] * 1.2), g = byX ? v : r, k = byX ? "x" : "y", z2 = byX ? "w" : "h";
+        var v = gap("x", "w"), r = gap("y", "h"), byX = !!v && (!r || v[0] > r[0] * 1.2);
+        // (the second review) a grid of like boxes -- rows of the same count, the boxes alike in size, each column's boxes
+        // over one another -- is read row by row, as its numbers say (1, 2, 3 / 4, 5, 6); the column rule is for a heading
+        // over its points, or a column of unlike boxes
+        if (byX && r && grid(list)) byX = false;
+        // ...and a timeline staggered above and below its line (two rows whose boxes take turns along it) left to right
+        if (!v && r && staggered(list, r[1])) return list.slice().sort(function (a, c) { return a.b.x - c.b.x; });
+        var g = byX ? v : r, k = byX ? "x" : "y", z2 = byX ? "w" : "h";
         // boxes that overlap both ways: on one line (sharing more than half the shorter's height) left to right, else top first
         if (!g) return list.slice().sort(function (a, c) { var ov = Math.min(a.b.y + a.b.h, c.b.y + c.b.h) - Math.max(a.b.y, c.b.y); return ov > 0.5 * Math.min(a.b.h, c.b.h) ? a.b.x - c.b.x : a.b.y - c.b.y || a.b.x - c.b.x; });
         var A = list.filter(function (it) { return it.b[k] + it.b[z2] / 2 < g[1]; }), B = list.filter(function (it) { return A.indexOf(it) < 0; });
         return A.length && B.length ? cut(A).concat(cut(B)) : list;
       }
-      items = cut(items);
+      function rowsOf(list) {   // boxes in rows: those that share height with one another
+        var rows = [];
+        list.slice().sort(function (a, c) { return a.b.y - c.b.y; }).forEach(function (it) {
+          var row = rows.filter(function (rw) { return rw.some(function (o) { return Math.min(o.b.y + o.b.h, it.b.y + it.b.h) - Math.max(o.b.y, it.b.y) > 0.5 * Math.min(o.b.h, it.b.h); }); })[0];
+          if (row) row.push(it); else rows.push([it]);
+        });
+        return rows.map(function (rw) { return rw.sort(function (a, c) { return a.b.x - c.b.x; }); });
+      }
+      function grid(list) {
+        if (list.length < 4) return false;
+        var rows = rowsOf(list), n = rows[0].length, ws = list.map(function (it) { return it.b.w; }).sort(function (a, c) { return a - c; }), hs = list.map(function (it) { return it.b.h; }).sort(function (a, c) { return a - c; });
+        var mw = ws[ws.length >> 1], mh = hs[hs.length >> 1];
+        if (rows.length < 2 || n < 2 || rows.some(function (rw) { return rw.length !== n; })) return false;
+        // alike: widths within half the middle one's and heights within 60% (boxes that shrink or grow to their text, as
+        // LibreOffice saves them) -- never a heading's few lines over a column's many
+        if (list.some(function (it) { return Math.abs(it.b.w - mw) > 0.5 * mw || Math.abs(it.b.h - mh) > 0.6 * mh; })) return false;
+        for (var j = 0; j < n; j++) for (var i = 1; i < rows.length; i++) if (Math.abs(rows[i][j].b.x + rows[i][j].b.w / 2 - rows[0][j].b.x - rows[0][j].b.w / 2) > Math.max(0.15 * mw, 274320)) return false;
+        return true;
+      }
+      function staggered(list, at) {
+        var A = list.filter(function (it) { return it.b.y + it.b.h / 2 < at; }), B = list.filter(function (it) { return it.b.y + it.b.h / 2 >= at; });
+        if (A.length < 2 || B.length < 1 || A.length + B.length < 4) return false;
+        var all = list.slice().sort(function (a, c) { return a.b.x - c.b.x; }), turns = 0;
+        for (var i = 1; i < all.length; i++) if ((A.indexOf(all[i]) >= 0) !== (A.indexOf(all[i - 1]) >= 0)) turns++;
+        // taking turns all along, and no box straight over another (a grid's columns are)
+        return turns === all.length - 1 && !A.some(function (a) { return B.some(function (c) { return Math.abs(a.b.x + a.b.w / 2 - c.b.x - c.b.w / 2) < 0.25 * Math.min(a.b.w, c.b.w); }); });
+      }
+      // (the second review) the title box is the slide's h: it takes no part in the cut
+      items = titleEl ? [titleEl].concat(cut(items.filter(function (it) { return it !== titleEl; }))) : cut(items);
       var texts = items.filter(function (it) { return it.ps; });
       if (!titleEl && !hadTitle && texts.length) {
         var first = texts[0], lines = first.ps.filter(function (p) { return p.text; });
@@ -51291,15 +51424,39 @@ Lantern.RFB = (function () {
     function shown(v, f) {
       var n = parseFloat(v);
       if (f == null || v === "" || isNaN(n) || !/^\s*-?[\d.]+(e[-+]?\d+)?\s*$/i.test(v)) return v;
-      if (/%/.test(f)) return String(Math.round(n * 1e4) / 100) + "%";
+      // (the second review) a % written as text (0"%" or 0\%) is a sign after the number, not a percentage of it
+      var bare = f.replace(/\x22[^\x22]*\x22|\\./g, "");
+      var dec = /\.(0+)\s*%/.exec(bare);   // (the second review) 0.0% shows one decimal
+      if (/%/.test(bare)) return (n * 100).toFixed(dec ? dec[1].length : 0) + "%";
+      if (/%/.test(f)) return v + "%";
       // a date's format names its days, months or years outside [colours] and "quoted text"
       if (/[dmy]/i.test(f.replace(/\x5b[^\x5d]*\x5d|\x22[^\x22]*\x22|\\./g, "")) && !/0\.0|#/.test(f) && n > 0 && n < 2958466) {
-        var d = new Date(Date.UTC(1899, 11, 30) + Math.round(n * 864e5)), y = d.getUTCFullYear(), m = d.getUTCMonth(), dd = d.getUTCDate();
-        return /mmm/i.test(f) ? MON[m] + (/y/i.test(f) ? " " + y : "") + (/d/i.test(f) ? " " + dd : "") : y + "-" + (m < 9 ? "0" : "") + (m + 1) + "-" + (dd < 10 ? "0" : "") + dd;
+        // (the second review) in the format's own order and words: d-mmm-yy is 3-Mar-25, m/d/yyyy 3/4/2025, yyyy 2022
+        var d = new Date(Date.UTC(1899, 11, 30) + Math.round(n * 864e5)), Y = d.getUTCFullYear(), Mo = d.getUTCMonth(), Dd = d.getUTCDate(), wd = d.getUTCDay();
+        var FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"], DAY = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        function two(k) { return (k < 10 ? "0" : "") + k; }
+        return f.replace(/\x5b[^\x5d]*\x5d/g, "").replace(/\x22([^\x22]*)\x22|\\(.)|yyyy|yy|mmmm|mmm|mm|m|dddd|ddd|dd|d|[^\x22\\ymd]+/gi, function (t, q, e) {
+          if (q != null) return q;
+          if (e != null) return e;
+          var l = t.toLowerCase();
+          return l === "yyyy" ? String(Y) : l === "yy" ? String(Y).slice(-2) : l === "mmmm" ? FULL[Mo] : l === "mmm" ? MON[Mo] : l === "mm" ? two(Mo + 1) : l === "m" ? String(Mo + 1) :
+            l === "dddd" ? DAY[wd] : l === "ddd" ? DAY[wd].slice(0, 3) : l === "dd" ? two(Dd) : l === "d" ? String(Dd) : t;
+        });
       }
       return v;
     }
     function pts(el) {
+      // (the second review) categories in two levels (quarters under years): each named "2023 Q1"
+      var ml = el ? below(el, "multiLvlStrCache")[0] : null;
+      if (ml) {
+        var lv = below(ml, "lvl"), inner = {}, o2 = {};
+        lv.forEach(function (l, li) {
+          var ps = below(l, "pt").map(function (p) { var v = child(p, "v"); return [+p.getAttribute("idx"), v ? v.textContent : ""]; }).sort(function (a, c) { return a[0] - c[0]; });
+          if (!li) ps.forEach(function (p) { inner[p[0]] = p[1]; o2[p[0]] = p[1]; });
+          else Object.keys(inner).forEach(function (i) { var at = null; ps.forEach(function (p) { if (p[0] <= +i) at = p[1]; }); if (at != null) o2[i] = at + " " + o2[i]; });
+        });
+        return o2;
+      }
       var o = {}, fc = el ? below(el, "formatCode")[0] : null, f = fc ? fc.textContent : null;
       below(el, "pt").forEach(function (p) { var v = child(p, "v"); o[p.getAttribute("idx")] = shown(v ? v.textContent : "", p.getAttribute("formatCode") || f); });
       return o;
@@ -51331,8 +51488,20 @@ Lantern.RFB = (function () {
       if (!t) return;
       pts[p.getAttribute("modelId")] = t; order.push(p.getAttribute("modelId"));
     });
-    below(dx.documentElement, "cxn").forEach(function (c) { var ty = c.getAttribute("type") || "parOf"; if (ty === "parOf") par[c.getAttribute("destId")] = c.getAttribute("srcId"); });
+    var kidsOf = {};
+    below(dx.documentElement, "cxn").forEach(function (c) {
+      var ty = c.getAttribute("type") || "parOf";
+      if (ty !== "parOf") return;
+      par[c.getAttribute("destId")] = c.getAttribute("srcId");
+      (kidsOf[c.getAttribute("srcId")] = kidsOf[c.getAttribute("srcId")] || []).push([num(c.getAttribute("srcOrd"), 0), c.getAttribute("destId")]);
+    });
     if (!order.length) return "";
+    // (the second review) in the diagram's own order (each point's place among its parent's, srcOrd), not the list's
+    var seen = {}, ordered = [];
+    function visit(id) { (kidsOf[id] || []).sort(function (a, c) { return a[0] - c[0]; }).forEach(function (k) { if (seen[k[1]]) return; seen[k[1]] = 1; if (pts[k[1]]) ordered.push(k[1]); visit(k[1]); }); }
+    Object.keys(kidsOf).filter(function (id) { return !par[id]; }).forEach(visit);
+    order.forEach(function (id) { if (!seen[id]) ordered.push(id); });
+    order = ordered;
     function depth(id) { var d = 0; for (var p = par[id], n = 0; p && n < 9; p = par[p], n++) if (pts[p]) d++; return d; }
     return P.parasHtml(order.map(function (id) { return { lvl: Math.min(8, depth(id)), bullet: "ul", html: X.esc(pts[id]), text: pts[id] }; }));
   }
@@ -51475,7 +51644,9 @@ Lantern.RFB = (function () {
       return paras.reduce(function (h, p, i) {
         var sz = (title ? 40 : SZ[p.lvl || 0]) * sc, marL = title ? 0 : p.list === "ol" ? 457200 * ((p.lvl || 0) + 1) : p.list === "ul" || p.cont ? 228600 + 457200 * (p.lvl || 0) : 0;
         var usable = Math.max(36, (box.w - 182880 - marL) / 12700), chars = 0, brs = 0;
-        p.runs.forEach(function (r) { if (r.br) brs++; else chars += (r.t || "").length; });
+        // each letter at its own width, as Georgia draws it (the second review: six lines in capitals were stored at full
+        // size and ran off the slide): capitals 0.7 em, small letters 0.5, figures 0.6, spaces 0.25
+        p.runs.forEach(function (r) { if (r.br) brs++; else String(r.t || "").replace(/[A-Z]|[a-z]|[0-9]| |./g, function (ch) { chars += /[A-Z]/.test(ch) ? 1.4 : /[a-z]/.test(ch) ? 1 : /[0-9]/.test(ch) ? 1.2 : ch === " " ? 0.5 : 1.1; return ch; }); });
         return h + (Math.max(1, Math.ceil(chars * 0.5 * sz / usable)) + brs) * sz * 1.2 * (title ? 0.9 : 1) * (1 - red) + (i && !title ? (p.lvl ? 5 : 10) * sc : 0);
       }, 0);
     }
@@ -51742,7 +51913,8 @@ Lantern.RFB = (function () {
   var LT = L.slideLibTools = L.slideLibTools || [];
   LT.push({ label: "Open .pptx", title: "Open a PowerPoint file (.pptx) as a new deck", run: function (api) {
     var inp = document.createElement("input");
-    inp.type = "file"; inp.accept = ".pptx,.ppsx,.potx,.pptm,.ppsm,.potm,application\x2Fvnd.openxmlformats-officedocument.presentationml.presentation,application\x2Fvnd.openxmlformats-officedocument.presentationml.slideshow,application\x2Fvnd.openxmlformats-officedocument.presentationml.template";   // a show and a template too (the first review) inp.style.display = "none";
+    inp.type = "file"; inp.accept = ".pptx,.ppsx,.potx,.pptm,.ppsm,.potm,application\x2Fvnd.openxmlformats-officedocument.presentationml.presentation,application\x2Fvnd.openxmlformats-officedocument.presentationml.slideshow,application\x2Fvnd.openxmlformats-officedocument.presentationml.template";   // a show and a template too (the first review)
+    inp.style.display = "none";   // (the second review: it sat in the comment above, and the box showed on the page)
     inp.onchange = function () { var f = inp.files && inp.files[0]; if (inp.parentNode) inp.parentNode.removeChild(inp); if (f) open(f, api); };
     document.body.appendChild(inp);
     inp.click();

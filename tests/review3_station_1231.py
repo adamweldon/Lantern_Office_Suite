@@ -10,6 +10,13 @@ import os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "station_review3_1231")
 KEEP = {
+    "A-04": "(1.24.33) One bench reply reads otherwise, by design: the 2B's make-sheet-excel (bench_run_1268_2b) ends, after a blank line, "
+            "in a sentence of prose (\u201cYou can copy the table above and paste it into Excel ...\u201d) that was a row of the table; since "
+            "1.24.33 an open table or program leaves such a sentence outside it (the second review of 1.24.33).",
+    "A-56": "(1.24.33) Twelve bench replies make other Chat turns, by design: the case's server says every reply stopped (finish "
+            "\u201cstop\u201d), and since 1.24.33 a reply the model ended itself closes its block (1.24.32's run: a whole oil change in "
+            "three steps was asked to be shorter) -- so the 0.8B's oil changes and the decks and drawings that had no END are made "
+            "where they were questioned as cut off. A reply cut at its length (\u201clength\u201d) is read as before (tests/station.js).",
     "B-02": "the merged STATION part's own words carry the tail the question's list gave it ('for the city council'), as AI_PARTS gives a list's last words to each part (1.24.30); the station drawn is the one asked for.",
     "B-04": "the same: the list's tail ('of the pump run hours') carried into the station part's words; what is drawn is the station.",
     "B-09": "a station beside a conveyor's starter: CONTROL (the conveyor) then STATION, in the order the question names them; the case wanted the station first.",

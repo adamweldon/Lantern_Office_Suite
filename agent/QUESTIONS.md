@@ -10,13 +10,13 @@ answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
    copy of PowerPoint has opened one yet. Open any deck in Slides, Save
    .pptx, and open it in PowerPoint: does it open straight away? The deck's
    colours come with it (Night is light text on near-black, as Present
-   shows it). Your ITW deck opened in Slides keeps each slide's title, text,
-   its largest picture and notes; the four Visio drawings on slide 2 are
-   EMF pictures that no browser draws, so they are said and left out. One
-   direction is yours: a Lantern slide is a title, text and one picture;
-   should Slides also keep each slide as PowerPoint lays it out (boxes and
-   pictures where they were, every picture), at the cost of a more
-   complicated editor? (Asked 2026-11-21.)
+   shows it). Your ITW deck opened in Slides keeps each slide's title, text
+   and notes, its pictures put together as they sat, and its four Visio
+   menus, which Lantern now draws itself (no browser draws EMF): do they
+   look right beside the original? One direction is yours: a Lantern slide
+   is a title, text and one picture; should Slides also keep each slide as
+   PowerPoint lays it out (every text box where it was), at the cost of a
+   more complicated editor? (Asked 2026-11-21.)
 2. **A colour wheel cut into one wedge a colour: how does it look?**
    (1.24.20) "Primary: Red | Yellow | Blue / Secondary: Orange | Green |
    Violet" is now drawn as six wedges round the wheel, each its own colour,

@@ -1,0 +1,171 @@
+The second review of 1.24.33 (PowerPoint files, EMF pictures, the AI stop rule) -- findings, worst first.
+Replay: node tests/fixtures/pptx_review2_1233/replay.js [src]   (210 cases on the 1.24.33 wip source: 174 AGREE, 36 DISAGREE -- 7 high, 12 medium, 17 low)
+Each finding: the input, what Lantern did, what it should do, why it matters. Case ids in [brackets].
+Run here: jsdom (Lantern's own script), Chromium through Playwright (the page served from the src), python-pptx 1.0.2,
+LibreOffice 24.2 (PDF, PNG, its .pptx/.ppt/.odp/EMF), the ISO/IEC 29500 schemas with lxml. Not run: PowerPoint itself,
+Google Slides' and Keynote's own exports (a Google-style file and a streamed zip were written here instead), a Visio EMF,
+the in-page (wllama) AI, a phone.
+
+==== HIGH ===========================================================================================================
+
+1. The stop rule puts the model's closing sentence into the block, and nothing is questioned
+   [ai-prose-after-slides, ai-prose-after-sheet, ai-prose-after-code; ai-code-end-dot (medium)]
+   Input: a reply with no END whose server finish is "stop", where the block is followed by a blank line and prose:
+     MAKE SLIDES: Changing a tyre / # Changing a tyre / - Park on flat ground / - Loosen the nuts / - Jack it up /
+     (blank) / I hope this helps with your talk!
+   (the same after a MAKE SHEET table: "Let me know if you need more items."; after a MAKE CODE Arduino program: "This
+   blinks the LED once a second."; and a program ending "END." instead of a bare END.)
+   Lantern did: closed the block at the end of the reply, so the sentence is IN the block: the slide's body begins
+   "<p>I hope this helps with your talk!</p>" (a plain line is a sentence on the slide, put above its points); the
+   table gets a row "Let me know if you need more items."; the program's last line is the English sentence (or
+   "END."), which does not compile. All built with ok = true and no problem. Before 1.24.33 each was questioned
+   ("cut off before END") and the model was asked once more.
+   Should: "stop" says the reply ended, not where the block ended. Close the block at its last line that fits the
+   block (for code: before the first blank line followed by prose; for slides/sheet/doc: drop trailing lines after a
+   blank line that do not have the block's shape), or keep questioning a block followed by prose. The grammar of
+   1.24.31/32 does not prevent this: a first reply is not held to a grammar, and kinds without grammarWords allow any
+   line.
+   Why: small models very often add a sign-off sentence, and forgetting END is exactly what the rule is for. The person
+   presents a slide whose first line is the model talking to them, prints a shopping list with a sentence as an item,
+   or uploads a "checked" program that will not compile -- and Lantern told them nothing.
+
+2. EMF: a LineTo inside a path starts a new figure, so paths drawn with lines are filled wrong or not at all
+   [emf-path-lines, open-emf-path (high); emf-path-curve (medium)]
+   Input: emf/e23_path_lines.emf -- BeginPath, MoveTo(150,20), LineTo(280,280), LineTo(20,280), CloseFigure,
+   EndPath, FillPath with a red brush (a red triangle); emf/e09_path.emf -- MoveTo, LineTo, PolyBezierTo, LineTo,
+   CloseFigure, StrokeAndFillPath (an arch); r17_emf.pptx slide 3 (the triangle in a deck, opened in Slides).
+   Lantern did: draws nothing for the triangle (white where it is red); the arch is filled only above a diagonal and its
+   bottom edge is not drawn. LibreOffice draws both as the records say (lo_emf.py).
+   Cause: EMF_DRAW's case 54 (EMR_LINETO) calls figure(..., cont=false), and figure() starts a new figure in the path
+   when cont is false, so each LineTo becomes a figure of its own two points (src line ~50524). In GDI only MoveTo
+   starts a figure; LineTo goes on with it (POLYLINETO already passes cont=true).
+   Why: MoveTo/LineTo paths are the plainest way a program writes a filled shape (LibreOffice itself writes its curves
+   as paths with LineTo, lo_dashes.emf). A Visio or CAD drawing's filled shapes vanish or are cut diagonally, and the
+   dialog only says the EMF was "drawn by Lantern".
+
+3. A chart's percent sign written as text multiplies the number by 100
+   [read-chart-literal-percent, read-chart-escaped-percent]
+   Input: r03 slide 6, values 40 and 65 with number format 0"%"; r15 slide 2, values 92 and 88 with format 0\%
+   (Excel's way to show a % after numbers typed as whole percents).
+   Lantern did: 4000% and 6500%; 9200% and 8800%.
+   Should: 40% and 65%; 92% and 88%. Only a % outside quotes and not escaped scales by 100 (chartTable's shown(): test
+   /%/ on the format after taking out "quoted text", \x escapes and [brackets], as the date test already does).
+   Why: the table of a chart's numbers is all a person (and a model reading the deck) gets of the chart; numbers wrong
+   by a factor of 100 are wrong facts.
+
+==== MEDIUM =========================================================================================================
+
+4. Reading order: grids are read down their columns, a staggered timeline out of order, column headings across
+   [read-grid6-low, read-grid4-gutter, read-grid4-uneven, read-timeline-staggered, read-column-headings-close;
+   read-timeline-two-rows (low)]
+   Input (r13, r02; python-pptx text boxes on Title Only): six numbered steps "1. Isolate" ... "6. Restore" in a 3 by 2
+   grid (gaps 0.5 in across, 0.25 in down); four numbered steps for mixing mortar in a 2 by 2 grid with a gutter;
+   four seasons in a hand-placed 2 by 2 grid; a timeline of five years above and below its line in turn; a heading over
+   each column 0.15 in under the title box.
+   Lantern did: 1, 4, 2, 5, 3, 6; 1, 3, 2, 4; Spring, Autumn, Summer, Winter; 1985, 2001, 2020, 1992, 2012; Petrol
+   engines, Diesel engines, then all the points. (The same six steps 0.3 in higher, right under the title, come out
+   1 to 6 -- read-grid6-tight agrees -- because the slide's own title takes part in the cut and its gap decides.)
+   Should: a grid of like boxes is read row by row (as its numbers say); a timeline left to right; a heading with its
+   column. Two changes would do most of it: cut without the title box (it is the slide's h already); and prefer rows
+   when the boxes form a grid (each row's boxes share their tops and sizes) -- the column rule is for a heading or a
+   column of different boxes. A timeline whose boxes overlap across but not down is one line, read left to right.
+   Why: a lockout or a mortar recipe read 1, 4, 2, 5 on the slide (and to the model) is a procedure out of order.
+
+5. The stop rule misses a whole short block when Lantern changed the reply's start
+   [ai-think-short, ai-read-head-short]
+   Input: "<think>...</think>" then a three-point deck (under 200 characters), finish "stop"; and "= MAKE SLIDES:
+   Tyre" (the = of a formula line, as the 0.8B and 2B write it, read by AI_READ as MAKE SLIDES) with two points, "stop".
+   Lantern did: "the deck was cut off before END" -- the rule compares the last 200 characters of the server's reply with
+   the last 200 of the text Chat builds; for a reply shorter than 200 those include its start, which clean() (think) or
+   AI_READ changed.
+   Should: compare the text with what Lantern made of the last reply (AI.lastRaw / the cleaned, read text), or compare
+   only as many characters as the shorter of the two.
+   Why: short blocks from small models are the rule's main case (an oil change of three steps).
+
+6. Saved text in capitals is not shrunk and runs off the slide in PowerPoint
+   [write-fit-capitals]
+   Input: a slide of six safety-sign bullets in capitals ("DANGER: HIGH VOLTAGE - KEEP OUT UNLESS AUTHORISED AND
+   ISOLATED", 60 to 70 letters each), saved as .pptx.
+   Lantern did: stored it at 100% (no fontScale). Laid out with Georgia's widths (Gelasio, check_fit.py) it needs 396 pt
+   in a 335 pt box (374 pt even at 1.14 line height): the last line runs past the slide's bottom until someone edits it.
+   Mixed-case text fits (write-fit-twelve, -long-title, -beside-picture agree).
+   Should: count capitals wider than half an em (Georgia's capitals are about 0.56 em to 0.7 em, lowercase about 0.44).
+   Why: warning and safety slides are the ones written in capitals.
+
+7. A chart with two levels of categories names rows by the outer level
+   [read-chart-two-levels]
+   Input: r15 slide 1, Q1 and Q2 under 2023 and 2024 (c:multiLvlStrRef).
+   Lantern did: rows named 2023, Q2, 2024, Q2 (the outer level's points, at the first index of each group, overwrite
+   the quarters).
+   Should: Q1, Q2, Q1, Q2 with their year ("2023 Q1", ...): read the first c:lvl (the leaves) and add the outer label.
+
+8. SmartArt steps in the order of the list of points, not of the diagram
+   [read-smartart-order]  (unsure whether PowerPoint writes points out of order; the spec gives sibling order by srcOrd)
+   Input: r14, a process whose fourth point "Tag" is last in ptLst but third by its connection's srcOrd.
+   Lantern did: Isolate, Lock, Prove dead, Tag.  Should: Isolate, Lock, Tag, Prove dead (siblings by srcOrd).
+
+==== LOW ============================================================================================================
+
+9. A block ended by the next block is still "cut off before END" [ai-two-blocks-first-open]
+   "MAKE DOC: ... (no END)" then "MAKE SLIDES: ... END", finish "stop": the DOC is questioned as cut off, though the
+   model went on to the next block (as before 1.24.33; the rule closes only the last block).
+
+10. Right-to-left text is saved left to right [write-rtl]
+   <p dir="rtl"> and <li dir="rtl"> (which PPTX_READ makes from rtl="1") are written without rtl="1"; LibreOffice sets
+   the Arabic from the left, and Lantern reads it back without dir. Round trip loses it.
+
+11. LibreOffice numbers a second list on from the first [write-num-restart-shown]
+   "Morning: 1. 2.  Evening: 1. 2." saved and opened in LibreOffice shows Evening 3. 4. (PowerPoint restarts after a
+   paragraph with no number, I believe; LibreOffice goes on). Writing startAt="1" on a list's first item would tell
+   both. Lantern's offline users are the ones likely to open the file in LibreOffice.
+
+12. Text after a table is saved above it [write-text-after-table]
+   "<p>The rota for the week:</p><table>...</table><p>Swap with a friend if you must.</p>": both lines go in the
+   content box above the table; read back, the last line comes before the table.
+
+13. Chart dates and decimals not as the chart shows them
+   [read-chart-percent-decimal, read-chart-day-dates, read-chart-years, read-chart-us-dates]
+   0.0% shows 91.25% (chart 91.3%); d-mmm-yy shows "Mar 2025 3" (chart 3-Mar-25 -- the day after the year reads as
+   odd); yyyy shows 2022-01-01 (chart 2022); m/d/yyyy shows 2025-03-04 (chart 3/4/2025; ISO is unambiguous, unsure
+   which a person wants).
+
+14. A damaged [Content_Types].xml: "this zip file has no PowerPoint presentation in it" [damaged-content-types]
+   The presentation and every part are there (ppt/presentation.xml, the package relationships); PowerPoint offers to
+   repair. Lantern refuses with a sentence that is not true; reading it (the parts are found by relationships) or saying
+   "damaged" would be right.
+
+15. Open .pptx leaves a file box on the page when the chooser is closed with no file [open-chooser-closed]
+   In SLIDES_PPTX the line `inp.style.display = "none";` sits after `// a show and a template too (the first review)`
+   on the same line, inside the comment (src ~51738), so the input is shown; when no file is chosen no change event
+   comes and it stays at the bottom of the page (366 by 40 px). Slides' own Insert picture hides its input and removes
+   it after 2 s.
+
+16. EMF: parts drawn otherwise than Windows draws them (said as "parts Lantern does not draw yet" where not drawn)
+   [emf-hatch, emf-gradient, emf-pie, emf-xor-twice, emf-dib-sharp, emf-lo-image]
+   - a hatched brush (BS_HATCHED) fills solid: a black block where Windows draws thin crossed lines (LibreOffice 24.2
+     also fills solid);
+   - EMR_GRADIENTFILL and EMR_PIE are not drawn; a picture of only those gives nothing (LibreOffice draws the pie, not
+     the gradient);
+   - R2_XORPEN drawn as "difference": the same red box twice leaves grey (185,195,195), not nothing (LibreOffice draws
+     red);
+   - small bitmaps stretched big are smoothed; Windows' default stretch mode (and SETSTRETCHBLTMODE, which is ignored)
+     draws sharp pixels (LibreOffice also smooths).
+
+==== AGREED (the main things that held) ==============================================================================
+Title/subtitle, levels, Section Header, Two Content, Comparison, Picture with Caption, notes with pauses, core title;
+chevrons, a timeline in a row, a heading over two columns, column headings at the usual distance, a picture beside
+words, nested groups; tables with joined cells; charts with 0%, mmm yyyy, several series; looks and links; hidden
+slides and sections said; empty title box, no title box, a lone line; every numbering type and start; RTL read; six
+photos, crops, turns and flips (put together right in the browser); GIF, BMP, TIFF said; 16:9 and footers; SmartArt
+lists; a Google-style file, Strict names, a streamed zip, .pptm/.ppsx/.potx, LibreOffice's saves; every damaged and
+wrong file but #14 refused or read with a plain sentence (empty, cut short, text, Keynote, photos zip, Word, Excel,
+.ppt -- hand-made and LibreOffice's --, .odp, PDF, locked); markup meant to run a script stays text (in jsdom and in the
+page). Saved decks: every part valid against the schemas, every part typed and every relationship's target there,
+python-pptx and LibreOffice open them with every title, dark and light themes drawn as chosen (Dark 1 the darker),
+numbering types shown by LibreOffice, joined cells, long text and long titles shrunk to fit, pictures beside and
+across, links with spaces, notes, odd characters, an empty deck, round trips, MAKE SLIDES' deck, LibreOffice's re-save.
+EMF: shapes, polygons, text (also turned), both map modes, LOMETRIC, world transform, save/restore, clips, DIBs of
+1, 8 and 24 bits, polypolygon holes, offset frames, dashed pens, EMF+ dual, PATCOPY, isotropic, and LibreOffice's own
+EMFs (shapes, text, gradient bands, curves, clip). AI: stop closes a whole block, length/none/null do not, END, trailing
+space, a long block after <think>, mid-line stop, whole code with blank lines, two blocks, an older reply after a newer
+call, runaway still found, lastReply/lastFinish kept as sent.

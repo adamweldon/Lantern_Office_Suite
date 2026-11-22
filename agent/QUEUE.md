@@ -154,14 +154,15 @@ tried by a reviewer:
 - PowerPoint files in Slides: **done in 1.24.33** (Save .pptx, Open .pptx,
   MAKE SLIDES' Save .pptx; PPTX_TEXT, PPTX_READ, PPTX_WRITE, SLIDES_PPTX;
   `tests/pptx.js`, `tests/pptx_lo.py`, `tests/browser/slides_pptx.py`; the
-  review replayed by `tests/review_pptx_1233.py`). Adam's ITW deck is
+  two reviews replayed by `tests/review_pptx_1233.py` and
+  `tests/review2_pptx_1233.py`). EMF pictures drawn by Lantern (EMF_DRAW:
+  Adam's Visio menus), a slide's pictures put together as they sat. Adam's ITW deck is
   ITW's training material: tried in the session, never committed. Waits on
   Adam (QUESTIONS 1): whether PowerPoint opens the saves without a repair,
   and whether Slides should keep a slide as PowerPoint lays it out. Left:
-  every picture on a slide, and where each box and picture sat; EMF and
-  WMF pictures (Visio drawings, old clip art) drawn (a reader of EMF's
-  records into a canvas); SmartArt's text; a chart drawn, not only its
-  numbers; fonts and sizes; .odp; an old .ppt (binary).
+  where each box sat; WMF pictures (old clip art) and EMF+ only pictures;
+  a chart drawn, not only its numbers; fonts and sizes; .odp; an old .ppt
+  (binary).
 
 0. **The Health lessons' sources (1.24.22, Adam).** Every lesson names the
    guidelines it was checked against in November 2026; where they said
