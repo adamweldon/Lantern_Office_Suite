@@ -47,6 +47,13 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   var b = act.build(sch(['part LS1 switch "Off"', 'part LS2 switch "Lead On"', 'part LS3 switch "Lag On"', 'part LS4 switch "High Level Alarm"', 'part S1 switch "Pump 1 Start"', 'part S2 switch "Emergency Stop"']), q2);
   var bf = b && b.plan ? b.plan.spec.floats.map(function (f) { return f.id + ":" + f.job; }).join(",") : "";
   ok("an LS named for a float's job is a float by its name; a start button and an e-stop are not", bf === "LS1:off,LS2:lead,LS3:lag,LS4:alarm" && /S1, S2 \(switch\)/.test(b.summary), [bf, b && b.summary]);
+  // (the review) an LS named for a float's work is still its float; named for a hatch or a valve, a limit switch; an e-stop, an
+  // On/Off switch and a Lead/Lag selector are never floats
+  var c = act.build(sch(['part LS1 switch "Stop"', 'part LS2 switch "Pump 1 On"', 'part LS3 switch "Pump 2 On"', 'part LS4 switch "High Level Alarm"', 'part LS5 switch "Hatch Open"',
+    'part ES1 switch "Emergency-Stop"', 'part S1 switch "On/Off"', 'part SS1 selector switch "Lead/Lag"']), q2);
+  var cf = c && c.plan ? c.plan.spec.floats.map(function (f) { return f.id + ":" + f.job; }).join(",") : "";
+  ok("LS floats named Stop, Pump 1 On, Pump 2 On, High Level Alarm kept; LS5 Hatch Open a limit switch; the e-stop, On/Off and Lead/Lag not floats", cf === "LS1:off,LS2:lead,LS3:lag,LS4:alarm" &&
+    /LS5, ES1, S1 \(switch\); SS1 \(selector switch\)/.test(c.summary), [cf, c && (c.summary || c.problems)]);
   // probes Stop, Start, High: High starts the second pump; the alarm is a float of its own, highest
   var p = act.build(sch(['part E1 probe "Stop"', 'part E2 probe "Start"', 'part E3 probe "High"', 'part E4 probe "High Level Alarm"']), q2);
   var pf = p && p.plan ? p.plan.spec.floats.map(function (f) { return f.id + ":" + f.job; }).join(",") : "";

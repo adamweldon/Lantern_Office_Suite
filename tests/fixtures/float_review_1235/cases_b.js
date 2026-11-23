@@ -29,7 +29,9 @@ function drawn(m) {
   Object.keys(want).forEach(function (id) {
     var seen = [];
     tags.filter(function (t) { return t.s === id; }).forEach(function (t) {
-      [t.y + 34, t.y - 30].forEach(function (cy) {
+      // (the mending: a branch row's tag under a float now sits 36 below the line, clear of it, as B-control-two-alarms-one-horn
+      // asked; only that offset is added here)
+      [t.y + 34, t.y - 30, t.y - 36].forEach(function (cy) {
         var b = sh.filter(function (s) { return s.t === "path" && s.pts.length === 2 && Math.abs(s.pts[0][0] - (t.x - 11)) < 0.5 && Math.abs(s.pts[0][1] - cy) < 0.5; })[0];
         if (!b) return;
         var endY = b.pts[1][1], yAt = b.pts[0][1] + (b.pts[1][1] - b.pts[0][1]) * 22 / (b.pts[1][0] - b.pts[0][0]);

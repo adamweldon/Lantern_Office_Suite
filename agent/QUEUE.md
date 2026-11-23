@@ -183,6 +183,14 @@ tried by a reviewer:
   two ground symbols are two parts to the loop check; Adam's question is
   not on the bench (set A and B keep their counts); Adam answered both (2026-11-23):
   High starts the second pump; LS is a limit switch (1.24.35).
+- Float switches drawn the right way up: **done in 1.24.35** (Adam: a
+  normally open float is open under the line and closes as it rises; LS a
+  limit switch, FS a float). Float, pressure and temperature switches in
+  DRAW_LADDER; `tests/float_switch_1235.js`, the review replayed by
+  `tests/review_float_1235.py`. Left: a high cutout or a heater's
+  thermostat written normally open is drawn as written (send it back once
+  with its nc line -- a rule to be reviewed; a low cutout is normally
+  open); MAKE STATION's "floats low ..." drops the low float.
 
 0. **The Health lessons' sources (1.24.22, Adam).** Every lesson names the
    guidelines it was checked against in November 2026; where they said
