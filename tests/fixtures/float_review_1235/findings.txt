@@ -1,0 +1,147 @@
+Review of 1.24.35's float switches (wip commit 9820186 against 1.24.34 as released, 1e318a5), 2026-11-23.
+A reviewer who wrote none of the change. Inputs and verdicts were written from what each part or circuit IS, before
+Lantern was run on them; nothing under src/ or the existing tests was touched.
+
+How to replay
+  node tests/fixtures/float_review_1235/replay.js [path/to/lantern.inner.html] [--only <id regex>]
+     192 cases (cases_a.js .. cases_e.js), the draft and 1.24.34 loaded side by side in jsdom (lib.js, load.js).
+     On the draft:            138 AGREE, 54 DISAGREE (high 21, medium 23, low 10)  -- run_9820186.txt
+     The same cases, 1.24.34: 151 AGREE, 41 DISAGREE (high 18, medium 19, low 4)
+     Of those, 36 cases went DISAGREE -> AGREE (the drawings, LS with no name, "Lead Pump On"), and 49 went AGREE ->
+     DISAGREE (all in the part reader, AI_STATION's FTAG/FJOB2).
+  python3 tests/fixtures/float_review_1235/replay_browser.py <out dir>
+     draws render_inputs.js's 12 ladders in Chromium with the built page (site/index.html) and with 1.24.34's
+     (git show 1e318a5:site/), each process switch at 3x with DRAW's own render (the one Save PNG uses), and contact
+     sheets, draft left, 1.24.34 right. The sheets made are in png/ (sheet_00..05.png; preview_size_draft_then_1.24.34.png
+     is the Chat preview's own pixels at 3x: rows 1 and 3 the draft, 2 and 4 1.24.34; station-typical-draft.png the
+     station's whole ladder as Chat shows it).
+
+==== HIGH ===========================================================================================================
+
+H1. FJOB2 makes switches that are not floats into floats -- on/off switches, selectors (even ones typed "selector
+    switch"), push buttons (PB tag, "pushbutton switch" type), e-stops written "Emergency-Stop" / "Emergency Off" /
+    "Emergency", lead/lag selectors, two-speed selectors -- and where the station has no float for that job, DRAWS one
+    of them as the float.
+    Cases: C-onoff, C-pump1-onoff, C-on-dash-off, C-off-on, C-alarm-onoff, C-ss-off, C-selector-type-off,
+    C-selector-type-off-s, C-ss-leadlag, C-selector-leadlag, C-ss-pump1-lead, C-ss-pump2-lead, C-ss-lead-pump-1-2,
+    C-pb-pump1-off, C-pb-off, C-pb-lead-start, C-pb-lag-start, C-pushbutton-switch-off, C-estop-hyphen, C-estop-off,
+    C-estop-emergency, C-highlow-speed, C-hi-lo, C-pump1-off-s, E-lead-and-lag, E-pump-hash-off, E-sensor-pump1-off;
+    what is drawn: C-set-onoff-is-not-the-off-float, C-set-estop-is-not-the-off-float,
+    C-set-leadlag-selector-is-not-the-lag, C-set-no-floats-onoff-estop.
+    Seen (draft; every one of these was "not carried" on 1.24.34):
+      - part ES1 switch "Emergency-Stop" beside LS2 lead, LS3 lag, LS4 alarm: the station's off float is ES1, and Lantern
+        tells the person: "As the water rises to LS2 (Lead On), the lead pump starts; it pumps the well down to ES1
+        (Emergency-Stop) and stops." The ladder draws ES1 as a normally open float in both call relays' rungs.
+      - part S1 switch "On/Off" the same: "it pumps the well down to S1 (On/Off) and stops".
+      - part SS1 selector switch "Lead/Lag" beside off, lead and alarm floats: drawn as the lag float SS1 (1.24.34 drew
+        three floats and said there is no lag float).
+      - part SW2 switch "Alarm On/Off" and part ES1 switch "Emergency": drawn as a second high level alarm float.
+      - pumps with part S1 switch "On/Off" and part S2 switch "Emergency Stop", no floats: 1.24.34 drew the schematic;
+        now it is read as a station whose off float is S1, with a lead float Lantern made.
+      - beside a station that already has the job, the summary says e.g. "not drawn: S1 “On/Off” (the station has one
+        off float: both pumps stop on it)" -- telling the reader the on/off switch is a float.
+    Traced to (src/lantern.inner.html, AI_STATION partRole):
+      (a) FJOB2's word set holds on, off, stop, pump(s), digits, "/" and "&", so "On/Off", "Pump 1 On/Off", "Off",
+          "High/Low", "Hi-Lo", "Lead/Lag", "Lead & Lag", "Pump 1 Lead" all pass, and each has off/lead/lag/high/low in it;
+      (b) the exclusion /\b(?:hand|auto|...|selector|...|push|e-?stop)\b|\bemergency\s+stop\b/ is tested on the name
+          (lb) only -- a part typed "selector switch" or "pushbutton switch" with the name "Off" passes;
+      (c) "\bemergency\s+stop\b" misses "Emergency-Stop"; "Emergency Off" and "Emergency" are not excluded (floatJob
+          reads "emergency" as the high level alarm, "emergency ... off" as the off float);
+      (d) the tag is never asked: PB (push button), SS (selector), ES (e-stop), SW, HS are not a float's, by the same
+          JIC/NFPA reading that made LS a limit switch.
+    Expected: each of these is not a float ("not carried", as on 1.24.34); a station missing a float gets the usual
+    one, said, as Lantern already does when no float is written.
+
+H2. LS-tagged floats named with start, stop or on are no longer floats, and the station drawn runs differently from
+    the one the model wrote -- among them Adam's own probes written as switches.
+    Cases: C-ls-stop, C-ls-start, C-ls-on, C-ls-pump-on, C-ls-pump1-on, C-ls-pump2-on, C-ls-both-on, C-ls-all-on,
+    C-ls-1st-on, C-ls-second-start, C-ls-pump1-start; what is drawn: C-set-adam-probes-as-switches, C-set-pump-on,
+    C-set-on-both, C-set-start-stop, C-set-pump-off-on.
+    Seen (draft; 1.24.34 read every set as written):
+      - LS1 "Stop", LS2 "Start", LS3 "High": drawn FS1 off (Lantern's), LS3 "High" as the LEAD float, LS1 and LS2 "not
+        carried ... (switch)"; "no lag float: one pump runs at a time". Adam (2026-11-23): High should start the second
+        pump while the first runs. As probes (E1-E3) or as FS switches the same three read off, lead, lag (E-probes-*,
+        E-fs-*: right); only the LS form changed.
+      - LS1 "Pumps Off", LS2 "Pump 1 On", LS3 "Pump 2 On", LS4 "High Water Alarm": the lag float is lost (LS1 off,
+        FS1 lead made by Lantern, LS4 alarm); the second pump never runs on high water.
+      - LS1 "Pump Off", LS2 "Pump On", LS3 "Both Pumps On", LS4 "High Level": LS4 "High Level" becomes the lead start.
+      - nothing goes back to the model: the floats it wrote are listed under "not carried".
+    Traced to: FTAG no longer takes LS, and FJOB2 requires lead|lag|off|alarm|high|low|hi|lo|emergency in the name, so
+    a name of start/stop/on words alone ("Stop", "Pump 2 On", "Both Pumps On") is neither.
+    Expected: Adam's rule holds where the part is a limit switch's -- LS with no name, or named hatch, valve, door,
+    open, closed (C-ls-noname, C-ls-hatch-*, C-ls-valve-open, C-ls-open/closed, C-set-ls-noname: all AGREE now) -- but
+    an LS on a lift station's schematic whose whole name is a float's job, start/stop/on included, is a float (no limit
+    switch on a station is called "Pump 2 On" or "Both Pumps On"). For a plain S tag, start and stop stay buttons
+    (C-start, C-stop, C-pump1-start, C-pump1-stop AGREE): the tag is what tells them apart.
+
+==== MEDIUM ==========================================================================================================
+
+M1. B-cutout-written-without-nc (medium) and B-thermostat-heater-written-without-nc (low): not this change's doing,
+    but this change makes it show. A model that writes `pressure PS1 M1 "high pressure cutout"` (no nc; the prompt
+    says "write nc for a normally closed one") gets a compressor that never starts (runs 0: 4: 6:M1). On 1.24.34 the
+    picture (blade up, diaphragm pushing it further open) looked like a cutout while the circuit treated it as
+    normally open; now picture and circuit agree, so the drawing shows a switch that closes on rising pressure under
+    the word "cutout". A "cutout"/"cut-out" pressure or temperature switch (or a heater's thermostat) written without
+    nc is a case for rule 3: back once with `pressure PS1 M1 nc "high pressure cutout"`.
+
+==== LOW =============================================================================================================
+
+L1. B-control-two-alarms-one-horn: in a branch row (e.under) the tag is drawn 30 under the switch and crosses the
+    float (the float's ring reaches y+25, "FS5" at 12 px starts at about y+24.6; sheet: duplex-two-alarms-horn-FS5).
+    1.24.34 the same; the change moved the row's label clear of the float (y+34) but not the branch row's tag.
+L2. E-isa-lshl, E-isa-lsa: FTAG also dropped LSHL (ISA level switch high-low), LSA and LSW, which 1.24.34 took as
+    floats (and asked their jobs); the change's comment names only LS. Now "not carried" without a word.
+L3. A-palette-has-float: Draw's Electrical palette has Limit switch NO/NC but no float, pressure or temperature
+    switch, so a person drawing a lift station's ladder by hand cannot place the symbol AI_CONTROL draws. A gap, not a
+    regression.
+L4. E-station-floats-low-shorthand: "floats low off lead lag alarm" in MAKE STATION drops "low" without a word (the
+    long form, float FS0 "low level alarm", is drawn, normally closed: E-station-low-alarm-nc AGREE). Not this change.
+L5. For Adam's eye (no case fails): the normally closed blade rises 4 px over 26; in Chat's preview (scale 0.76 to 0.80 for these
+    ladders) that is about 3 px, and at that size it reads as a T resting on the terminal (png/preview_size_*.png). Distinct
+    from normally open (blade down), but the lean is slight.
+
+==== WHAT THE CHANGE GOT RIGHT (AGREE) ===============================================================================
+
+- The symbols (A, 32 cases): float, pressure and temperature, normally open: the blade under the line, clear of the
+  right terminal, the float/diaphragm/bulb under it on a stem that meets the blade; normally closed: the blade resting
+  on the right terminal's top, its end beyond it. Ports unchanged; contact, button, toggle, limit, overload, coil, lamp,
+  solenoid, horn, fuse drawn exactly as on 1.24.34; the limit switch keeps the selector's blade.
+- Every circuit (B, 21 cases), simulated through the process's rise and fall with "normally open = closes as the
+  process rises" (the usual meaning of normal for a process switch: least stimulus -- an empty well, no pressure,
+  cold): the station (4 floats; 24 V DC with a horn; no lag), MAKE CONTROL's duplex example, two alarm lights, two
+  alarm floats on one horn, the low level alarm (the one normally closed float a station draws, its light lit only
+  below it), a simplex sump, the prompt's sump example, a fill (nc), a booster's low level cutoff, a compressor's high
+  pressure cutout (nc) with and without buttons, a low suction pressure cutout, a heater's thermostat and high limit
+  (nc), a fan's thermostat (no), a motor overtemperature switch, four process switches on one rung. Each runs as it
+  should, each contact is drawn the way the circuit uses it, its tag and label clear of other strokes -- and the
+  circuits are 1.24.34's exactly. On 1.24.34 every one of these was drawn the wrong way up (normally open: blade up,
+  a rising float pushing it further open; normally closed: blade under the terminal with the stem through it), and the
+  labels under floats touched the float.
+- The part reader: LS with no name or a limit's name is not a float (Adam); "Lead Pump On" on an S tag now is; ISA
+  LSL/LSH/LSHH/LSLL, FS, float/level types and names, the 35B's sensors, Adam's probes Stop/Start/High (High the lag)
+  as before; start/stop buttons, HOA, hand/auto, alarm silence/reset/test, speed, oil, temperature, lights, relays,
+  horns, breakers and lead/lag "select"/"selector" names are not floats.
+
+==== THE GUARD (D, 6 cases, all AGREE) ===============================================================================
+
+- Every bench question of both sets (150 + 150) is offered the tools 1.24.34 offered it.
+- 1,221 saved replies (944 rows of tests/fixtures/bench_run_*.json, first and last) build as on 1.24.34: ok, kind,
+  readAs, problems, summary, and the ladder's rungs and contacts.
+- 944 rows solved the bench's way and graded: each passes or fails as on 1.24.34. 66 ideals: the same, and
+  make-liftstation(-b) and make-control(-b) pass.
+- 6 saved replies draw a ladder; 3 are drawn differently, and only in process switches' lines and circles and the
+  label under one.
+- Not a case here, but run: the three reviews of 1.24.34 (liftstation_review1/2/3_1234, 752 cases) give the same
+  verdict, line for line, on the draft as on 1.24.34.
+- No difference was found in any bench question or saved reply: the 49 regressions above are all inputs of this
+  review's own (no saved reply has a part-and-wire schematic with these names).
+
+==== NOT RUN ===========================================================================================================
+
+- No model was run: no bench on the 35B or the small models; every reply here is scripted.
+- The Draw page itself was not clicked (Open in Draw, Save PNG); the pictures were made with DRAW's render(), which
+  Save PNG uses, and AI_DRAW's preview.
+- The JIC/NEMA chart itself (the blade's exact angle) was not opened; the meaning of "normal" (least stimulus) was
+  checked against Kuphaldt, Lessons In Industrial Instrumentation, "Process switches"
+  (https://ibiblio.org/kuphaldt/socratic/sinst/output/process_switches.pdf). How the symbols look to a tradesman is
+  Adam's to judge (png/).
