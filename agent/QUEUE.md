@@ -163,6 +163,25 @@ tried by a reviewer:
   where each box sat; WMF pictures (old clip art) and EMF+ only pictures;
   a chart drawn, not only its numbers; fonts and sizes; .odp; an old .ppt
   (binary).
+- Adam's lift station schematic: **done in 1.24.34** (his chat on the
+  laptop, 2026-11-23: "write a schematic for a typical lift station.
+  Include any other drawings a lift station would need" went to MAKE
+  SCHEMATIC; the 35B's two part-and-wire blocks could not be drawn, the
+  second was never mentioned). The question is MAKE STATION's; a station
+  question's part-and-wire schematics are read as the station (pumps,
+  floats by name or tag, wet well, valves; the rest named); "emergency
+  high" is the alarm; a reply's other blocks are made and shown, kept
+  across a correction; an open circuit gets its line (`wire G1 V1`); the
+  failure's advice is the action's own (`tests/liftstation_1234.js`; the
+  reviews replayed by `tests/review_liftstation_1234.py` and
+  `tests/review2_liftstation_1234.py`). Read the small models' run of
+  1.24.34 for the station questions and any row with a second block. Left:
+  a part on one wire in a closed circuit is not questioned (a lamp hanging
+  off a node never lights) -- a general check, to be tried over every
+  saved bench reply first; MAKE SCHEMATIC's industrial parts (breaker,
+  transformer, relay coil, float) outside a station or control question
+  are still "no such part" (a control question gets MAKE CONTROL's line);
+  Adam's question is not on the bench (set A and B keep their counts).
 
 0. **The Health lessons' sources (1.24.22, Adam).** Every lesson names the
    guidelines it was checked against in November 2026; where they said
