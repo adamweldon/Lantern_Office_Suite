@@ -50,9 +50,9 @@ var PIPE = R1.slice(R1.indexOf("MAKE SCHEMATIC: Lift Station Piping"));
   ok("...two pumps; its floats by their names, from the bottom up: Low Level off, High Level the lead (said), Emergency High the alarm", sp && sp.pumps.length === 2 && fl === "H2:off,H1:lead,H3:alarm" &&
     /the “High Level Float \(lead on\)” float starts the pumps/.test(m1.summary), [fl, m1 && m1.summary]);
   ok("...what it took and what it did not are said: the pumps, the floats, the well and valves; the breakers, transformer, relays, switches, lamps and the suction piping not carried",
-    /^Read as MAKE STATION \(the question asks for a pump station’s drawings\), from the AI’s MAKE SCHEMATIC blocks: 2 pumps \(M1, M2 and P1, P2\), the floats H1 “High Level Float”, H2 “Low Level Float” and H3 “Emergency High”, the wet well \(W1\), the check valves \(V1, V2\) and the shutoff valves \(V3, V4\)\./.test(m1.summary) &&
-    /not carried from the AI’s schematics: V1 \(source\); Q1, Q2 \(breaker\); T1 \(transformer\); L1–L4 \(lamp\); S1–S5 \(switch\); K1–K3 \(relay\); V5, V6 \(suction valve\); P3 \(pipe\); P4 \(suction pipe\)/.test(m1.summary) &&
-    /no suction piping/.test(m1.summary), m1 && m1.summary);
+    /^Read as MAKE STATION \(the question asks for a pump station’s drawings\), from the AI’s MAKE SCHEMATIC blocks: 2 pumps \(M1, M2 and P1, P2\), the floats H1 “High Level Float”, H2 “Low Level Float” and H3 “Emergency High”, the wet well \(W1\), the check valves \(V1, V2\), the shutoff valves \(V3, V4\) and the header \(P3\)\./.test(m1.summary) &&
+    /not carried from the AI’s schematics: V1 \(source\); Q1, Q2 \(breaker\); T1 \(transformer\); L1–L4 \(lamp\); S1–S5 \(switch\); K1–K3 \(relay\); V5, V6 \(suction valve\); P4 \(suction pipe\)/.test(m1.summary) &&
+    /no suction piping or dry well/.test(m1.summary) && /no lag float in the AI’s schematic: one pump runs at a time/.test(m1.summary), m1 && m1.summary);
   ok("...the gate valves are the shutoff valves drawn; the piping is two pumps each with its check and shutoff valve", m1.plan.spec.valve === "gate" && m1.plan.views.piping.pumps.length === 2 && m1.plan.views.piping.pumps.every(function (p) { return p.check && p.valve; }), m1.plan.spec);
   ok("...both blocks are the station's: Chat makes neither again on its own", (m1.reads || []).length === 2 && act.rest(R1, Q, m1).length === 0, [(m1.reads || []).length, act.rest(R1, Q, m1).length]);
   var mp = act.build(PIPE, Q);
@@ -71,16 +71,21 @@ var PIPE = R1.slice(R1.indexOf("MAKE SCHEMATIC: Lift Station Piping"));
 
   // --- floats called emergency ----------------------------------------------------------------------------
   var FJ = L.aiControl.floatJob;
-  ok("an emergency high float is the high level alarm; an emergency off or stop float is an off float; emergency low is the low alarm", FJ("Emergency High") === "alarm" && FJ("emergency high level") === "alarm" &&
-    FJ("emergency off") === "off" && FJ("Emergency Stop Float") === "off" && FJ("emergency low") === "low" && FJ("high level") === "alarm" && FJ("lead on") === "lead",
-    ["Emergency High", "emergency high level", "emergency off", "Emergency Stop Float", "emergency low", "high level", "lead on"].map(FJ));
+  // (the first review) only where nothing in the name starts, runs, stops or cuts off a pump: as 1.24.33 read those
+  ok("an emergency high float is the high level alarm; emergency off, stop, low and cutoff are off floats; emergency start both pumps the lag", FJ("Emergency High") === "alarm" && FJ("emergency high level") === "alarm" &&
+    FJ("emergency off") === "off" && FJ("Emergency Stop Float") === "off" && FJ("emergency low") === "off" && FJ("emergency low level cutoff") === "off" && FJ("Emergency High - Start Both Pumps") === "lag" && FJ("high level") === "alarm" && FJ("lead on") === "lead",
+    ["Emergency High", "emergency high level", "emergency off", "Emergency Stop Float", "emergency low", "emergency low level cutoff", "Emergency High - Start Both Pumps", "high level", "lead on"].map(FJ));
   var mc = act.build("MAKE CONTROL: Duplex\nfloat FS1 \x22off\x22\nfloat FS2 \x22lead on\x22\nfloat FS3 \x22lag on\x22\nfloat FS4 \x22emergency high\x22\nalternator AR M1 M2\ncoil M1 \x22pump 1 starter\x22\ncoil M2 \x22pump 2 starter\x22\nEND", "draw the control circuit for a duplex lift station with an alternating relay");
   var al = mc && mc.plan && mc.plan.circuit && mc.plan.circuit.rungs.filter(function (r) { return r.out.kind === "lamp" || r.out.kind === "horn"; }).some(function (r) { return r.series.concat(r.starts || []).some(function (e) { return e.id === "FS4"; }); });
   ok("...in MAKE CONTROL too: FS4 “emergency high” works the alarm, not a third start", mc && mc.ok && al, mc && { ok: mc.ok, problems: mc.problems });
 
   // --- a circuit that is not closed: the line to write ------------------------------------------------------
   var m2 = act.build(R2, "draw a circuit with a source, switches, two motors and three lamps");
-  ok("the 35B's second try: it reaches the ground G1 and goes no further -- the line is wire G1 V1", m2 && !m2.ok && m2.problems.length === 1 && /the current reaches the ground G1 and goes no further: join it back to V1, like: wire G1 V1$/.test(m2.problems[0]), m2 && m2.problems);
+  ok("the 35B's second try: it reaches the ground G1 and goes no further -- the line is wire G1 V1, the stop buttons on one wire named before it", m2 && !m2.ok && m2.problems.length === 1 &&
+    /the current reaches the ground G1 and goes no further; S5 and S7 are on one wire too: say where each goes on; join the ground back to V1, like: wire G1 V1$/.test(m2.problems[0]), m2 && m2.problems);
+  var gb = act.build("MAKE SCHEMATIC: Lamp\npart B1 battery \x229 V\x22\npart L1 lamp\npart G1 ground\nwire B1 G1\nwire L1 G1\nEND", "draw a battery and a lamp");
+  var gs = act.build("MAKE SCHEMATIC: Motor\npart B1 battery \x2212 V\x22\npart M1 motor\npart G1 ground\npart S1 switch\nwire B1 M1\nwire M1 G1\nwire G1 S1\nEND", "draw a battery, a motor and a switch");
+  ok("(the first review) no ground line where the battery's one wire is the ground's, nor where a part lies beyond the ground", gb && !/like: wire G1/.test(gb.problems.join(" ")) && gs && !/like: wire G1/.test(gs.problems.join(" ")), [gb && gb.problems, gs && gs.problems]);
   var m2b = act.build(R2.replace("wire L3 G1\n", "wire L3 G1\nwire G1 V1\n"), "draw a circuit with a source, switches, two motors and three lamps");
   ok("...written, it is made", m2b && m2b.ok, m2b && m2b.problems);
   var sm = act.build("MAKE SCHEMATIC: Lamp\npart B1 battery \x229 V\x22\npart S1 switch\npart L1 lamp\nwire B1 S1\nwire S1 L1\nEND", "draw a battery, a switch and a lamp");
@@ -121,9 +126,11 @@ var PIPE = R1.slice(R1.indexOf("MAKE SCHEMATIC: Lift Station Piping"));
     (c3.r.more || []).length === 1 && c3.r.more[0].block.kind === "SHEET", [c3.sent.length, c3.sent[1] && c3.sent[1].slice(0, 200), (c3.r.more || []).map(function (m) { return m.block.kind; })]);
 
   // --- the bench -----------------------------------------------------------------------------------------------
-  var bq = L.aiBenchQuestions.filter(function (x) { return x.id === "make-liftstation-drawings"; })[0];
-  var bo = bq ? await act.solve(bq.q, seq([bq.ideal])) : null;
-  ok("the bench has Adam's question; its ideal passes", bq && bq.q === Q && bo && L.aiBench.grade(bq, bo.text, bo).pass, bq && bo && L.aiBench.grade(bq, bo.text, bo));
+  // Adam's question graded as the bench grades his first lift station (make-liftstation's checks: the three drawings,
+  // the two pumps taken in turn); it is not added to the bench, whose sets keep their counts so runs compare
+  var b0 = L.aiBenchQuestions.filter(function (x) { return x.id === "make-liftstation"; })[0], bq = b0 && Object.assign({}, b0, { id: "adam-1234", q: Q });
+  var bo = bq ? await act.solve(bq.q, seq(["MAKE STATION: Lift station\npumps 2\nfloats off lead lag alarm\nEND"])) : null;
+  ok("Adam's question on the bench's path: MAKE STATION passes make-liftstation's checks", bq && bo && L.aiBench.grade(bq, bo.text, bo).pass, bq && bo && L.aiBench.grade(bq, bo.text, bo));
   var bo2 = bq ? await act.solve(bq.q, seq([R1])) : null;
   ok("...and so does the 35B's own reply, read as the station", bo2 && L.aiBench.grade(bq, bo2.text, bo2).pass, bo2 && L.aiBench.grade(bq, bo2.text, bo2));
 
