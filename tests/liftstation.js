@@ -171,7 +171,9 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
     !PT.split("Draw a hydraulic circuit: a pump takes oil from a tank and feeds a cylinder through a valve, and the oil returns to the tank.") &&
     !PT.split("Draw a parallel circuit: a 12 V battery with 4, 6 and 12 ohm resistors in parallel, and show the total resistance on the picture") &&
     !PT.split("Draw a circuit with a 9 V battery and a lamp. Show the current.") && !PT.split("Draw a lamp circuit and a battery") &&
-    (L.aiBenchQuestions || []).concat(L.aiBenchQuestionsB || []).every(function (q) { return !PT.split(q.q) === !q.parts; }));
+    // (1.24.34) Adam's second lift station question is one request (a schematic and the drawings a station needs):
+    // MAKE STATION's whole, a module this load leaves out
+    (L.aiBenchQuestions || []).concat(L.aiBenchQuestionsB || []).every(function (q) { return q.id === "make-liftstation-drawings" || !PT.split(q.q) === !q.parts; }));
   var two = PT.split("Write an Arduino sketch that blinks an LED and draw the circuit for it");
   ok("two different things are two parts: a sketch and its circuit", two && two.map(function (p) { return p.kind; }).join(",") === "CODE,SCHEMATIC", two && two.map(function (p) { return p.kind; }));
 

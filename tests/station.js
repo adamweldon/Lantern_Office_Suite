@@ -59,7 +59,7 @@ var OLD_IDEAL = "MAKE CONTROL: Duplex lift station\nfloat FS1 \x22off\x22\nfloat
     ["Make a slide deck about lift stations for a city council meeting", "Make a spreadsheet of lift station pump run hours", "Make flashcards about lift station parts", "Plan a maintenance schedule for our lift station",
       "Draw the plumbing and wiring for my duplex (a two-family house)", "Design a duplex air compressor station: its control and piping"].every(function (q) { return !S.asks(q); }), dkp && dkp.map(function (p) { return p.kind; }));
   var benchSt = (L.aiBenchQuestions || []).concat(L.aiBenchQuestionsB || []).filter(function (q) { return S.asks(q.q); }).map(function (q) { return q.id; }).sort().join(",");
-  ok("of every bench question, only the two lift stations are a station", benchSt === "make-liftstation,make-liftstation-b", benchSt);
+  ok("of every bench question, only the three lift stations are a station (1.24.34: Adam's second, a schematic and the drawings it needs)", benchSt === "make-liftstation,make-liftstation-b,make-liftstation-drawings", benchSt);
 
   // --- the station from one block ---------------------------------------------------------------------
   var B = L.aiBench, item = (L.aiBenchQuestions || []).filter(function (q) { return q.id === "make-liftstation"; })[0];

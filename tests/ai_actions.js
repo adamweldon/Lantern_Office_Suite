@@ -291,7 +291,7 @@ function blk(kind, title, lines) { return "MAKE " + kind + ": " + title + "\n" +
 
   // --- the bench: make questions ---
   var Q = L.aiBenchQuestions.filter(function (q) { return q.cat === "make"; });
-  ok("thirty-three make questions (1.12.7: the power wheel; 1.13.0: seven programs; 1.18.0: pneumatics, control, electronics; 1.19.0: two songs; 1.20.0: a waltz for violin and piano; 1.22.0: the Ode for an orchestra; 1.24.7: a shore at sunset, a road to the horizon; 1.24.26: a Word file; 1.24.28: an Excel file; 1.24.30: Adam\u2019s lift station), four quick", Q.length === 33 && Q.filter(function (q) { return q.quick; }).length === 4, Q.length);
+  ok("thirty-four make questions (1.12.7: the power wheel; 1.13.0: seven programs; 1.18.0: pneumatics, control, electronics; 1.19.0: two songs; 1.20.0: a waltz for violin and piano; 1.22.0: the Ode for an orchestra; 1.24.7: a shore at sunset, a road to the horizon; 1.24.26: a Word file; 1.24.28: an Excel file; 1.24.30: Adam\u2019s lift station; 1.24.34: his schematic and the drawings a lift station needs), four quick", Q.length === 34 && Q.filter(function (q) { return q.quick; }).length === 4, Q.length);
   function gradeWith(id, reply) {
     var item = Q.filter(function (q) { return q.id === id; })[0];
     return L.aiBench.grade(item, reply, { made: act.build(reply, item.q) });
