@@ -172,16 +172,17 @@ tried by a reviewer:
   floats by name or tag, wet well, valves; the rest named); "emergency
   high" is the alarm; a reply's other blocks are made and shown, kept
   across a correction; an open circuit gets its line (`wire G1 V1`); the
-  failure's advice is the action's own (`tests/liftstation_1234.js`; the
-  reviews replayed by `tests/review_liftstation_1234.py` and
-  `tests/review2_liftstation_1234.py`). Read the small models' run of
-  1.24.34 for the station questions and any row with a second block. Left:
-  a part on one wire in a closed circuit is not questioned (a lamp hanging
-  off a node never lights) -- a general check, to be tried over every
-  saved bench reply first; MAKE SCHEMATIC's industrial parts (breaker,
+  failure's advice is the action's own; a part on one wire, or parts apart
+  from the source, questioned in any closed circuit (`tests/liftstation_1234.js`;
+  three reviews, 752 cases, replayed by `tests/review_liftstation_1234.py`,
+  `review2_` and `review3_`). Read the small models' run of 1.24.34 for the
+  station questions, any row with a second block, and any schematic row
+  now questioned for a part on one wire. Left: MAKE SCHEMATIC's industrial parts (breaker,
   transformer, relay coil, float) outside a station or control question
   are still "no such part" (a control question gets MAKE CONTROL's line);
-  Adam's question is not on the bench (set A and B keep their counts).
+  two ground symbols are two parts to the loop check; Adam's question is
+  not on the bench (set A and B keep their counts); QUESTIONS 1 (a probe
+  "High", an unnamed LS1).
 
 0. **The Health lessons' sources (1.24.22, Adam).** Every lesson names the
    guidelines it was checked against in November 2026; where they said
