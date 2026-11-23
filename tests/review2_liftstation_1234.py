@@ -20,8 +20,9 @@ KEEP = {
                             "judge looks for \\u201cfloat LS1 ... name its job\\u201d in Lantern's own float line, which is no longer quoted.",
     "B-spanish-back": "the same as B-no-job-floats-back: \\u201cpart F1 float \\x22Paro\\x22\\u201d is quoted as the AI wrote it.",
     "B-probes-stop-start-high": "the probe \\u201cHigh\\u201d beside \\u201cStart\\u201d is read as a second start, the lag float (said), so "
-                                "\\u201cno high level alarm float: the block has none\\u201d is true of the station drawn. Whether a "
-                                "High probe is the alarm or the lag start is Adam's (QUESTIONS).",
+                                "\\u201cno high level alarm float: the block has none\\u201d is true of the station drawn. Adam (2026-11-23): "
+                                "\\u201cshould be high level to start second pump while first is already running and alarm level float "
+                                "at highest for alarm indication\\u201d -- High is the lag start, as Lantern reads it.",
     "A-miss-list-and-draw": "\\u201cList the drawings a lift station needs and draw them\\u201d: \\u201clist\\u201d is read as a "
                             "document's word (OTHER_DOC, since 1.24.31), as on 1.24.33.",
     "D-port-short-unseen": "older than 1.24.34: \\u201cwire B1+ S1, wire S1 B1\\u201d puts a named and an unnamed terminal on one side "

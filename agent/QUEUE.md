@@ -158,7 +158,7 @@ tried by a reviewer:
   `tests/review2_pptx_1233.py`). EMF pictures drawn by Lantern (EMF_DRAW:
   Adam's Visio menus), a slide's pictures put together as they sat. Adam's ITW deck is
   ITW's training material: tried in the session, never committed. Waits on
-  Adam (QUESTIONS 2): whether PowerPoint opens the saves without a repair,
+  Adam (QUESTIONS 1): whether PowerPoint opens the saves without a repair,
   and whether Slides should keep a slide as PowerPoint lays it out. Left:
   where each box sat; WMF pictures (old clip art) and EMF+ only pictures;
   a chart drawn, not only its numbers; fonts and sizes; .odp; an old .ppt
@@ -181,8 +181,8 @@ tried by a reviewer:
   transformer, relay coil, float) outside a station or control question
   are still "no such part" (a control question gets MAKE CONTROL's line);
   two ground symbols are two parts to the loop check; Adam's question is
-  not on the bench (set A and B keep their counts); QUESTIONS 1 (a probe
-  "High", an unnamed LS1).
+  not on the bench (set A and B keep their counts); Adam answered both (2026-11-23):
+  High starts the second pump; LS is a limit switch (1.24.35).
 
 0. **The Health lessons' sources (1.24.22, Adam).** Every lesson names the
    guidelines it was checked against in November 2026; where they said
@@ -192,8 +192,8 @@ tried by a reviewer:
    "Some practical steps here are not in these sources" where they are
    many); WHO's 2005 diarrhoea manual and the Sphere 2018 PDF, which no
    checker could open; the same for the Food tile's lessons and the other
-   tiles' (a lesson's `sources`, any tile); a trained reader (QUESTIONS 13);
-   the medicines (QUESTIONS 14). Check again when a named guideline is
+   tiles' (a lesson's `sources`, any tile); a trained reader (QUESTIONS 12);
+   the medicines (QUESTIONS 13). Check again when a named guideline is
    replaced (the NHS hypothermia page was past its review date).
 
 1. **The one-link starter: what 1.24.19 leaves** (`tools/starter`,
@@ -211,11 +211,11 @@ tried by a reviewer:
    the icons made without PowerShell, the Windows build not stripped,
    another Lantern or program on 8080 handled. **Still flagged** on Adam's
    home laptop with Windows's own protection (Bearfoos.A!ml: the copy of
-   itself and its icons). Adam: no signing for now (QUESTIONS 5). The free
+   itself and its icons). Adam: no signing for now (QUESTIONS 4). The free
    thing left to try: a starter that does not copy itself (its icons to the
    kit's Start Lantern), and the kit's downloads in the starter itself (Go),
    not the setup run hidden through PowerShell. Left:
-   - Adam's first real double-click (QUESTIONS 4): what SmartScreen and
+   - Adam's first real double-click (QUESTIONS 3): what SmartScreen and
      Gatekeeper show, how the corner button looks to him;
    - the page under the starter in a real browser (Playwright on the Linux
      job: the corner button, the list, Add, Stop), not only jsdom;
@@ -223,7 +223,7 @@ tried by a reviewer:
      run without `--plan small`, perhaps by hand: 3 GB more);
    - an offer's download for real (the library's 12 GB is too big for a
      run; the shelves' 5 GB perhaps);
-   - signing (QUESTIONS 5); a Mac icon in the Dock/Applications after the
+   - signing (QUESTIONS 4); a Mac icon in the Dock/Applications after the
      first run; Windows on ARM and an Intel Mac, built but not run;
    - an update: the starter could offer a newer Lantern.zip when the release
      has one (today it sets up the newest once, and Lantern.zip is laid over
@@ -347,7 +347,7 @@ tried by a reviewer:
      checks stay.
    - **Commands for constructions Lantern knows** (a sunset sky, a road to
      the horizon, a parallel bank of resistors, a note from the chord):
-     this is Adam's "words for things" (QUESTIONS 7); waits on his answer
+     this is Adam's "words for things" (QUESTIONS 6); waits on his answer
      there for drawings, not for circuits or music.
    - **State-tracking tools: already there.** `die-four-moves` has TURN:
      Die and passes; the brief's `die-four-moves-alone` is the same puzzle
