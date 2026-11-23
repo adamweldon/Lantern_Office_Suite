@@ -18,9 +18,20 @@ KEEP = {
     "F-20": BENCH, "F-21": BENCH, "F-22": BENCH, "F-23": BENCH, "F-24": BENCH, "F-25": BENCH, "F-26": BENCH, "F-27": BENCH, "F-28": BENCH,
     "D-25": "the ground line is given with the other part on one wire named before it (“L2 is on one wire too: say where it goes "
             "on; join the ground back to B1, like: wire G1 B1”): the ground is where the way from the source ends, and the part on a "
-            "side branch is the model's to place. The case wanted no line at all.",
+            "side branch is the model's to place; written, the circuit is closed and L2 is questioned (wired on one side only, the "
+            "second review's finding 11). The case wanted no line at all.",
     "D-26": "the same as D-25 (L1 on one wire, named before the line).",
     "D-28": "the same as D-25 (L2 on one wire, named before the line).",
+    "D-01": "the 35B's second try with wire G1 V1 written is closed, and now questioned: its stop buttons S5 and S7 are each wired on "
+            "one side only and stop nothing (the second review's finding 11: drawn, they looked as if in series). The case wanted it made.",
+    "A-62": "the 2B's make-parallel-lamps reply of 1.24.4 (a failed row then and now) has L2 wired to the battery on one side only; it "
+            "is now questioned for that (the lamp never lights), where 1.24.33 questioned only the LED's resistor. No row that passed changes.",
+    "A-63": "the same reply as A-62, through the bench's path.",
+    "B-17": "the shutoff and check valves are named by what they are, not by the AI's tags (the second review's finding 8: the "
+            "summary said \u201cthe check valves (V1, V2)\u201d where the piping drawn calls V1 and V2 the gate valves); the suction valves "
+            "are said not carried, and the station drawn submersible. The case looked for the tags.",
+    "B-25": "the same as B-17: ball check valves read as the checks and the gate valves as the shutoff valves (kind gate), named "
+            "without the AI's tags.",
 }
 VERBOSE = "-v" in sys.argv
 r = subprocess.run(["node", os.path.join(FX, "replay.js")], cwd=ROOT, capture_output=True, text=True, timeout=900)

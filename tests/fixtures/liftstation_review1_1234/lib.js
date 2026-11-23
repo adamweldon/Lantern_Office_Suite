@@ -33,13 +33,15 @@ function pumpsOf(r) { return r && r.plan && r.plan.spec ? r.plan.spec.pumps.leng
 function viewsOf(r) { return r && r.plan && r.plan.views ? Object.keys(r.plan.views).sort().join(",") : ""; }
 function short(r) { return r ? { ok: r.ok, readAs: r.readAs || "", problems: r.problems, summary: String(r.summary || "").slice(0, 600), floats: floatsOf(r), pumps: pumpsOf(r) } : null; }
 function textOf(c) { return typeof c === "string" ? c : (c || []).filter(function (x) { return x.type === "text"; }).map(function (x) { return x.text; }).join("\n"); }
+// (the mending, 1.24.34: the other blocks moved from rec.more, the library's titles since 1.24.18, to rec.moreMade, as
+// the second review found; only that name changed here)
 // a whole Chat turn against a scripted model: replies in order (the last again if more are asked)
 function turn(q, replies, which) {
   var o = which === "old" ? OO() : O(), LL = o.L, i = 0, sent = [], grammars = [], notes = [];
   o.script = function (last, body) { sent.push(last); grammars.push(body.grammar || null); var r = typeof replies === "function" ? replies(last, i) : replies[Math.min(i, replies.length - 1)]; i++; return r; };
   return LL.CHAT.turn([], q, { note: function (t) { notes.push(String(t)); } }, {}).then(function (rec) {
     o.script = null;
-    return { rec: rec, sent: sent, grammars: grammars, notes: notes, calls: i, more: (rec.more || []).map(function (m) { return (m.block ? String(m.block.kind).toUpperCase() + ":" + m.block.title : "?") + (m.readAs ? ">" + m.readAs : "") + (m.ok ? "" : "(not made)"); }),
+    return { rec: rec, sent: sent, grammars: grammars, notes: notes, calls: i, more: (rec.moreMade || []).map(function (m) { return (m.block ? String(m.block.kind).toUpperCase() + ":" + m.block.title : "?") + (m.readAs ? ">" + m.readAs : "") + (m.ok ? "" : "(not made)"); }),
       made: rec.made ? (rec.made.block ? String(rec.made.block.kind).toUpperCase() + ":" + rec.made.block.title : "?") + (rec.made.readAs ? ">" + rec.made.readAs : "") + (rec.made.ok ? "" : "(not made)") : "none" };
   }, function (e) { o.script = null; return { error: String(e && e.stack || e), notes: notes, sent: sent, grammars: grammars, calls: i, more: [], made: "error" }; });
 }

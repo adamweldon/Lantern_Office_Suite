@@ -49,9 +49,9 @@ var PIPE = R1.slice(R1.indexOf("MAKE SCHEMATIC: Lift Station Piping"));
     m1 && { ok: m1.ok, problems: m1.problems, readAs: m1.readAs });
   ok("...two pumps; its floats by their names, from the bottom up: Low Level off, High Level the lead (said), Emergency High the alarm", sp && sp.pumps.length === 2 && fl === "H2:off,H1:lead,H3:alarm" &&
     /the “High Level Float \(lead on\)” float starts the pumps/.test(m1.summary), [fl, m1 && m1.summary]);
-  ok("...what it took and what it did not are said: the pumps, the floats, the well and valves; the breakers, transformer, relays, switches, lamps and the suction piping not carried",
-    /^Read as MAKE STATION \(the question asks for a pump station’s drawings\), from the AI’s MAKE SCHEMATIC blocks: 2 pumps \(M1, M2 and P1, P2\), the floats H1 “High Level Float”, H2 “Low Level Float” and H3 “Emergency High”, the wet well \(W1\), the check valves \(V1, V2\), the shutoff valves \(V3, V4\) and the header \(P3\)\./.test(m1.summary) &&
-    /not carried from the AI’s schematics: V1 \(source\); Q1, Q2 \(breaker\); T1 \(transformer\); L1–L4 \(lamp\); S1–S5 \(switch\); K1–K3 \(relay\); V5, V6 \(suction valve\); P4 \(suction pipe\)/.test(m1.summary) &&
+  ok("...what it took and what it did not are said: the pumps, the floats, the well and valves; the breakers, transformer, relays, switches, lamps and the suction piping not carried, block by block",
+    /^Read as MAKE STATION \(the question asks for a pump station’s drawings\), from the AI’s MAKE SCHEMATIC blocks: 2 pumps \(M1, M2 and P1, P2\), the floats H1 “High Level Float”, H2 “Low Level Float” and H3 “Emergency High”, the wet well \(W1\), its check valves, its shutoff valves and its discharge header\./.test(m1.summary) &&
+    /not carried from the AI’s schematics: from “Dual Pump Lift Station Electrical”, V1 \(source\); Q1, Q2 \(breaker\); T1 \(transformer\); L1–L4 \(lamp\); S1–S5 \(switch\); K1–K3 \(relay\); from “Lift Station Piping and Valves”, V5, V6 \(suction valve\); P4 \(suction pipe\)/.test(m1.summary) &&
     /no suction piping or dry well/.test(m1.summary) && /no lag float in the AI’s schematic: one pump runs at a time/.test(m1.summary), m1 && m1.summary);
   ok("...the gate valves are the shutoff valves drawn; the piping is two pumps each with its check and shutoff valve", m1.plan.spec.valve === "gate" && m1.plan.views.piping.pumps.length === 2 && m1.plan.views.piping.pumps.every(function (p) { return p.check && p.valve; }), m1.plan.spec);
   ok("...both blocks are the station's: Chat makes neither again on its own", (m1.reads || []).length === 2 && act.rest(R1, Q, m1).length === 0, [(m1.reads || []).length, act.rest(R1, Q, m1).length]);
@@ -87,7 +87,8 @@ var PIPE = R1.slice(R1.indexOf("MAKE SCHEMATIC: Lift Station Piping"));
   var gs = act.build("MAKE SCHEMATIC: Motor\npart B1 battery \x2212 V\x22\npart M1 motor\npart G1 ground\npart S1 switch\nwire B1 M1\nwire M1 G1\nwire G1 S1\nEND", "draw a battery, a motor and a switch");
   ok("(the first review) no ground line where the battery's one wire is the ground's, nor where a part lies beyond the ground", gb && !/like: wire G1/.test(gb.problems.join(" ")) && gs && !/like: wire G1/.test(gs.problems.join(" ")), [gb && gb.problems, gs && gs.problems]);
   var m2b = act.build(R2.replace("wire L3 G1\n", "wire L3 G1\nwire G1 V1\n"), "draw a circuit with a source, switches, two motors and three lamps");
-  ok("...written, it is made", m2b && m2b.ok, m2b && m2b.problems);
+  // (the second review) written, the stop buttons S5 and S7, each on one wire, are questioned: they stop nothing
+  ok("...written, the stop buttons each on one wire are questioned, with where their one wire goes", m2b && !m2b.ok && m2b.problems.length === 2 && /^S5 \(“Pump 1 Stop”\) is wired on one side only, to M1: no current goes through it/.test(m2b.problems[0]), m2b && m2b.problems);
   var sm = act.build("MAKE SCHEMATIC: Lamp\npart B1 battery \x229 V\x22\npart S1 switch\npart L1 lamp\nwire B1 S1\nwire S1 L1\nEND", "draw a battery, a switch and a lamp");
   ok("a chain that stops at one part: wire L1 B1", sm && /the current stops at L1: add the wire from it back to B1, like: wire L1 B1$/.test(sm.problems[0]), sm && sm.problems);
   var two = act.build("MAKE SCHEMATIC: Two\npart B1 battery \x229 V\x22\npart J1 junction\npart L1 lamp\npart L2 lamp\nwire B1 J1\nwire J1 L1\nwire J1 L2\nEND", "draw a battery and two lamps");
@@ -112,18 +113,18 @@ var PIPE = R1.slice(R1.indexOf("MAKE SCHEMATIC: Lift Station Piping"));
   // --- whole Chat turns -----------------------------------------------------------------------------------------
   async function chat(q, replies) { var sent = []; o.script = function (last) { sent.push(last); return replies[Math.min(sent.length - 1, replies.length - 1)]; }; var r = await C.turn([], q, {}, {}); return { r: r, sent: sent }; }
   var c1 = await chat(Q, [R1]);
-  ok("Chat, Adam's question answered as the 35B did: the station made from its two blocks, nothing asked again", c1.sent.length === 1 && c1.r.made && c1.r.made.ok && c1.r.made.readAs === "STATION" && !(c1.r.more || []).length,
-    [c1.sent.length, c1.r.made && c1.r.made.problems, (c1.r.more || []).length, c1.r.notes]);
+  ok("Chat, Adam's question answered as the 35B did: the station made from its two blocks, nothing asked again", c1.sent.length === 1 && c1.r.made && c1.r.made.ok && c1.r.made.readAs === "STATION" && !(c1.r.moreMade || []).length,
+    [c1.sent.length, c1.r.made && c1.r.made.problems, (c1.r.moreMade || []).length, c1.r.notes]);
   var c2 = await chat("Draw a circuit with a battery and a lamp", [BL + "\n\nHere are its values too:\n\n" + TB]);
-  ok("Chat: a circuit and a table in one reply are both made and shown", c2.r.made && c2.r.made.block.kind === "SCHEMATIC" && (c2.r.more || []).length === 1 && c2.r.more[0].block.kind === "SHEET" && c2.sent.length === 1,
-    [c2.r.made && c2.r.made.block.kind, (c2.r.more || []).map(function (m) { return m.block.kind; }), c2.sent.length]);
+  ok("Chat: a circuit and a table in one reply are both made and shown", c2.r.made && c2.r.made.block.kind === "SCHEMATIC" && (c2.r.moreMade || []).length === 1 && c2.r.moreMade[0].block.kind === "SHEET" && c2.sent.length === 1,
+    [c2.r.made && c2.r.made.block.kind, (c2.r.moreMade || []).map(function (m) { return m.block.kind; }), c2.sent.length]);
   var c2b = await chat(QD, [BL + "\n\n" + TB]);
-  ok("...a question in parts keeps its own way (AI_PARTS): both made as its parts, none twice", (c2b.r.mades || []).map(function (m) { return m.block.kind; }).join(",") === "SCHEMATIC,SHEET" && !(c2b.r.more || []).length,
-    [(c2b.r.mades || []).map(function (m) { return m.block.kind; }), (c2b.r.more || []).length]);
+  ok("...a question in parts keeps its own way (AI_PARTS): both made as its parts, none twice", (c2b.r.mades || []).map(function (m) { return m.block.kind; }).join(",") === "SCHEMATIC,SHEET" && !(c2b.r.moreMade || []).length,
+    [(c2b.r.mades || []).map(function (m) { return m.block.kind; }), (c2b.r.moreMade || []).length]);
   var BAD = BL.replace("wire L1 B1\n", "");
   var c3 = await chat("Draw a circuit with a battery and a lamp", [BAD + "\n\n" + TB, BL]);
   ok("Chat: the first block sent back for its correction, the table written beside it is kept and shown after the corrected one", c3.sent.length === 2 && /wire L1 B1/.test(c3.sent[1]) && c3.r.made && c3.r.made.ok &&
-    (c3.r.more || []).length === 1 && c3.r.more[0].block.kind === "SHEET", [c3.sent.length, c3.sent[1] && c3.sent[1].slice(0, 200), (c3.r.more || []).map(function (m) { return m.block.kind; })]);
+    (c3.r.moreMade || []).length === 1 && c3.r.moreMade[0].block.kind === "SHEET", [c3.sent.length, c3.sent[1] && c3.sent[1].slice(0, 200), (c3.r.moreMade || []).map(function (m) { return m.block.kind; })]);
 
   // --- the bench -----------------------------------------------------------------------------------------------
   // Adam's question graded as the bench grades his first lift station (make-liftstation's checks: the three drawings,
