@@ -14,6 +14,7 @@ import os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "review6_1236")
 KEEP = {
+    "g-fixture-replies": "1.24.37 changes how the saved transistor replies (make-electronics, make-electronics-b) and Adam's parallel lesson (make-parallel-ohm-b, saved with his laptop run of 1.24.36) build, and only those, by design: ANS in a drawing's notes is the sum just before it, so the lesson draws \u201cIt = 1.8 A\u201d and passes; the 35B's motor driver is read in where sure and passes; what goes back to a transistor reply names the question's kind of load in place of the guide's relay K1. Each judged by its own review (tests/review_notes_ans_1237.py, review_electronics_1237.py, review2_electronics_1237.py).",
     "p-l-until-starts": "\u201ca pilot light that is on until the pump starts\u201d is not one of the few light forms read (since the fourth review): no given, a safe miss; the changelog no longer says it is read.",
     "p-l-fwd-light-rev-light": "\u201ca forward light and a reverse light\u201d: two light words with no state each -- no given, a safe miss (low).",
     "p-s-stop-two-locations": "no given now, where the draft fitted one wrong: a count said of the stops alone is not the start and stop stations the given draws; Lantern does not yet draw two stops and one start.",

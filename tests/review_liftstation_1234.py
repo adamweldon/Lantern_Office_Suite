@@ -15,6 +15,7 @@ BENCH = ("Adam's question is not added to the bench: set A's guard (“set A is 
          "the 1.24.30-31 reviews' bench guards keep the bench as it was, so runs compare from version to version. It is replayed "
          "in tests/liftstation_1234.js instead, graded by make-liftstation's own checks (the 35B's reply and MAKE STATION both pass).")
 KEEP = {
+    "A-64": "1.24.37 changes how the saved transistor replies (make-electronics, make-electronics-b) and Adam's parallel lesson (make-parallel-ohm-b, saved with his laptop run of 1.24.36) build, and only those, by design: ANS in a drawing's notes is the sum just before it, so the lesson draws \u201cIt = 1.8 A\u201d and passes; the 35B's motor driver is read in where sure and passes; what goes back to a transistor reply names the question's kind of load in place of the guide's relay K1. Each judged by its own review (tests/review_notes_ans_1237.py, review_electronics_1237.py, review2_electronics_1237.py).",
     # (1.24.36) by design: the two motor-starter questions are shown Lantern's given for them (GIVENS_CONTROL) in place of
     # the instructions' example; every other bench prompt is as it was (tests/review_givens_1236.py, cases D)
     "A-60": "make-control and make-control-b are shown the three-wire starter given (1.24.36), by design; every other bench prompt is unchanged.",

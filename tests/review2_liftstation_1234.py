@@ -12,6 +12,7 @@ import os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "liftstation_review2_1234")
 KEEP = {
+    "A-bench-saved-replies": "1.24.37 changes how the saved transistor replies (make-electronics, make-electronics-b) and Adam's parallel lesson (make-parallel-ohm-b, saved with his laptop run of 1.24.36) build, and only those, by design: ANS in a drawing's notes is the sum just before it, so the lesson draws \u201cIt = 1.8 A\u201d and passes; the 35B's motor driver is read in where sure and passes; what goes back to a transistor reply names the question's kind of load in place of the guide's relay K1. Each judged by its own review (tests/review_notes_ans_1237.py, review_electronics_1237.py, review2_electronics_1237.py).",
     "B-isa-tags-no-names": "the ISA tags with no names are read from the tag (LSL1 low level: off; LSH1 high level: the lead, said; "
                            "LSHH1 high high level: the alarm) and the station made -- the first of the two right answers the case gives "
                            "(\\u201cread from the tag, or sent back with lines that follow it\\u201d); its judge accepts only the second.",
