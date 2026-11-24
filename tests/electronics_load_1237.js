@@ -6,7 +6,8 @@
 // -- "transistor Q1 K1 P1" is the guide's own line (its example is a relay K1). Lantern said Q1 switched nothing,
 // "like: transistor Q1 K1 P1" (the guide's line again). The second reply wrote "transistor Q1 M1 P1" and left the motor's
 // own line out; Lantern said there was nothing to power, "like: led D1", the transistor switched nothing "like:
-// transistor Q1 K1 P1", the diode should name "K1". Both failed, and the row with them.
+// transistor Q1 K1 P1", the diode should name "K1". Both failed, and the row with them. The same two replies, word for
+// word, are saved from an earlier run of the 35B in tests/fixtures/bench_run_1258_35b_setb.json: the same row failing twice.
 // What is checked: both replies draw the motor switched by Q1 from P1, with its diode, and say what Lantern read; the
 // row passes; where Lantern is not sure -- two loads free, the question naming two kinds or none, the load on another
 // pin, a letter that is not the asked kind -- nothing is read in, and what goes back names this question's load, not

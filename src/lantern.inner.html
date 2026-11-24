@@ -32390,22 +32390,26 @@ Lantern.RFB = (function () {
   // noteText(text, state) -> {text, problems}: each {= ...} worked out.
   // (1.24.37, Adam's laptop: the 35B drew the parallel lesson with "Rt = {=1/(1/10+1/15+1/30)} ohm" and then "Total
   // current It = {=9/ANS} A" -- the battery's 9 V over the total it had just worked out. ANS was always 0 here, so the
-  // note went back as "Divide by zero", twice, and the current the lesson wanted was never shown.) Now ANS is what it is
-  // in Chat's sums and on the calculator: the sum worked out just before it, in the same note or the one before, and
-  // ANS1, ANS2 ... the first, second sum of the drawing's notes -- when every note of one drawing is given the same
-  // state, in order. Where there is no sum before it, or the one before could not be worked out, ANS says so; never 0.
+  // note went back as "Divide by zero", twice, and the current the lesson wanted was never shown.) Now ANS is the
+  // previous result, as the calculator and the full prompt say it: the sum worked out just before it, in the same note
+  // or an earlier one -- when every note of one drawing is given the same state, in order. Where there is no sum before
+  // it, or the one before could not be worked out, ANS says so; never 0 (Chat's sums differ: there ANS skips a line that
+  // failed). (The review of 1.24.37) ANS1, ANS2 ... are not read in a note: the prompt counts them by lines, a drawing's
+  // notes by sums, and the two part as soon as a note has no sum -- "It = {=9/ANS2} A" took another note's value.
   function noteText(t, state) {
     var problems = [], st = state && typeof state === "object" ? state : {};
     if (!Array.isArray(st.vals)) st.vals = [];
     var s = String(t).replace(/^\s*[\x22\u201c]|[\x22\u201d]\s*$/g, "").replace(/\x7B=\s*([^\x7D]+)\x7D/g, function (m, e) {
       var bare = e.replace(/\x22[^\x22]*\x22/g, "").replace(/\x27[^\x27]*\x27/g, ""), prev = st.vals.length ? st.vals[st.vals.length - 1] : null;
+      var an = /\b(ANS\d{1,2})\b/i.exec(bare);
+      if (an) { st.vals.push(null); problems.push("note: {=" + e + "} uses " + an[1].toUpperCase() + ": in a note only ANS is read, the sum just before it -- write the number, or its own sum, in place of " + an[1].toUpperCase()); return "?"; }
       if (/\bans\b(?!\d)/i.test(bare) && typeof prev !== "number") {
         st.vals.push(null);
         problems.push("note: {=" + e + "} uses ANS, the sum worked out just before it, but " + (st.vals.length > 1 ? "the sum before it could not be worked out" : "there is no sum before it") + ": write the number, or its own sum, in place of ANS");
         return "?";
       }
       try {
-        var v = L.formula.evaluate(e, { deg: false, ans: typeof prev === "number" ? prev : 0, ansList: st.vals.slice() });
+        var v = L.formula.evaluate(e, { deg: false, ans: typeof prev === "number" ? prev : 0 });
         if (typeof v !== "number" || !isFinite(v)) throw new Error("not a number");
         st.vals.push(v);
         return fmt(v);
@@ -32719,15 +32723,20 @@ Lantern.RFB = (function () {
     var q = ctx && ctx.question ? String(ctx.question) : "", n = null;
     try { n = network(sc); } catch (e) { n = null; }
     if (!n) return;
-    var notes = sc.notes = sc.notes || [], has = false, wrong = null, nst = {};
+    var notes = sc.notes = sc.notes || [], has = false, wrong = null, nst = {}, lastForeign = [];
     notes.forEach(function (t) {
       var shown = shownOhms(t, nst);
-      if (shown.some(function (v) { return near(v, n.total); })) { has = true; return; }
-      // a sum of numbers that are not this circuit's (the guide's own example, copied)
+      // a sum of numbers that are not this circuit's (the guide's own example, copied) -- (1.24.37, the review) its own
+      // numbers, not ANS's; and one that takes ANS takes the numbers of the sum before it with it
       var sums = String(t).match(/\x7B=[^\x7D]+\x7D/g) || [], foreign = [];
       sums.forEach(function (e) {
-        (e.match(/\d+(?:\.\d+)?/g) || []).forEach(function (x) { var v = parseFloat(x); if (v !== 1 && foreign.indexOf(x) < 0 && !n.values.some(function (r) { return near(r, v); })) foreign.push(x); });
+        var mine = [];
+        (e.replace(/\bANS\d*\b/gi, " ").match(/\d+(?:\.\d+)?/g) || []).forEach(function (x) { var v = parseFloat(x); if (v !== 1 && mine.indexOf(x) < 0 && !n.values.some(function (r) { return near(r, v); })) mine.push(x); });
+        if (/\bANS\b/i.test(e)) lastForeign.forEach(function (x) { if (mine.indexOf(x) < 0) mine.push(x); });
+        mine.forEach(function (x) { if (foreign.indexOf(x) < 0) foreign.push(x); });
+        lastForeign = mine;
       });
+      if (shown.some(function (v) { return near(v, n.total); })) { has = true; return; }
       if (sums.length && foreign.length && shown.length && !wrong) wrong = { text: t, shown: shown[shown.length - 1], foreign: foreign };
     });
     if (has) return;
