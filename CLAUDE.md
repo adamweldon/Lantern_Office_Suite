@@ -110,6 +110,23 @@ These are Adam's design rules, in the order they usually apply.
    the model drew it; a right picture it spoils, or a wrong sum it hands
    over as the recipe, is Lantern's doing.
 
+8. **Givens for every well-known assembly, and custom changes that pass the
+   code** (Adam, 2026-11-24): "Lantern should contain givens for any
+   typical, well known process assemblies (electrical, hydraulic,
+   pneumatic, mechanical etc.) in a way that makes the AI's answer being
+   correct the path of least resistance. This does not mean that we get a
+   typical drawing no matter what just that Lantern presents the context to
+   the AI that takes the user query and fits the most correct answer most
+   of the time. There should be a way for the AI to make modifications that
+   do apply in a way where the AI and user can work to make custom changes
+   as long as they are code approved. Our float switch being correct is an
+   example." So: a given is a tested block for a typical assembly, shown to
+   the AI when the question fits it ("start from this; change only what the
+   question asks"), never forced on a question it does not fit; what the
+   AI writes is held to code checks (a rule broken goes back once, with
+   the rule and the line); and a custom version that passes them can be
+   kept as the user's own given (`Lantern.givens`).
+
 ## What goes into the lessons and tables
 
 People will act on what Lantern says with nobody to ask. So:

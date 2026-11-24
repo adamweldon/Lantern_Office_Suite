@@ -34785,7 +34785,9 @@ Lantern.RFB = (function () {
     "lamp LT2 M2 \x22pump 2 run\x22 green",
     "lamp LT3 FS4 \x22high level\x22 red",
     "END"]);
-  function promptOf(q) { return isPumps(q) ? PROMPT_PUMPS : PROMPT; }
+  // (1.24.36) a question that fits one of Lantern's givens (GIVENS_CONTROL: a three-wire starter, forward and reverse ...)
+  // gets it, fitted to the question, in place of the example
+  function promptOf(q) { var base = isPumps(q) ? PROMPT_PUMPS : PROMPT, g = !isPumps(q) && L.givens && L.givens.prompt ? L.givens.prompt("CONTROL", q, base) : null; return g || base; }
   var HINT_PUMPS = PROMPT_PUMPS.slice(1, PROMPT_PUMPS.indexOf("END"));
   window.Lantern.aiControl = { isControl: isControl, parse: parse, circuit: circuit, layout: layout, verify: verify, build: build, PROMPT: PROMPT, PROMPT_PUMPS: PROMPT_PUMPS, HINT: HINT, asks: asks, floatJob: floatJob, promptOf: promptOf, isPumps: isPumps };
 
@@ -36629,6 +36631,180 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: AI_STATION - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: GIVENS - START
+// Depends: (none) -- the domains' prompts ask it (AI_CONTROL's promptOf), feature-detected
+// Exports: Lantern.givens = {add(given), all(kind), match(kind, question), prompt(kind, question, base)}
+// ===========================================================================
+// Givens (1.24.36, Adam, 2026-11-24): "Lantern should contain givens for any typical, well known process assemblies
+// (electrical, hydraulic, pneumatic, mechanical etc.) in a way that makes the AI's answer being correct the path of
+// least resistance. This does not mean that we get a typical drawing no matter what just that Lantern presents the
+// context to the AI that takes the user query and fits the most correct answer most of the time."
+// A given is a tested block for a typical assembly -- a three-wire motor starter, forward and reverse, a compressor on
+// its pressure switch -- with the questions it answers. When a question fits one, the domain's instructions show it in
+// place of their own example: "Lantern's tested circuit for this: write it as it stands, changing only what the
+// question asks". A small model copies the example in front of it (CLAUDE.md, 1.24.4-1.24.6), so the block is fitted
+// to the question before it is shown -- its stations, its lights, its supply, what the motor drives, from the
+// question's own words -- and a question no given fits gets the instructions as before. It is context, never the
+// answer forced: the AI writes the block, Lantern draws and checks it as any other.
+// A given: {id, kind ("CONTROL" ...), title, asks: RegExp, not: RegExp (optional), rank (higher wins when two fit),
+// says: what it is (shown above the block), block: function (question) -> [lines] (without MAKE ... and END)}.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var ALL = [];
+  function add(g) { if (g && g.id && g.kind && g.asks && g.block) { ALL = ALL.filter(function (x) { return x.id !== g.id; }); ALL.push(g); } return g; }
+  function all(kind) { return ALL.filter(function (g) { return !kind || g.kind === kind; }); }
+  function match(kind, q) {
+    q = String(q || "");
+    var fit = ALL.filter(function (g) { return g.kind === kind && g.asks.test(q) && !(g.not && g.not.test(q)); });
+    fit.sort(function (a, b) { return (b.rank || 0) - (a.rank || 0); });
+    return fit[0] || null;
+  }
+  // prompt(kind, question, base): the base instructions with their example ("... For example:" and the block after it)
+  // replaced by the given fitted to the question; null when no given fits
+  function prompt(kind, q, base) {
+    var g = match(kind, q);
+    if (!g || !base || !base.length) return null;
+    var lines;
+    try { lines = g.block(String(q || "")); } catch (e) { lines = null; }
+    if (!lines || !lines.length) return null;
+    var at = -1;
+    base.forEach(function (l, i) { if (at < 0 && /For example:\s*$/.test(l)) at = i; });
+    if (at < 0) return null;
+    var head = base.slice(0, at + 1).map(function (l, i) { return i === at ? l.replace(/\s*For example:\s*$/, "") : l; }).filter(function (l) { return l !== ""; });
+    var title = typeof g.title === "function" ? g.title(q) : g.title;
+    return head.concat(["Lantern\u2019s tested circuit for this" + (g.says ? " (" + g.says + ")" : "") + ": write it as it stands, changing only what the question asks:",
+      "MAKE " + kind + ": " + title]).concat(lines, ["END"]);
+  }
+  L.givens = { add: add, all: all, match: match, prompt: prompt };
+})();
+// ===========================================================================
+// MODULE: GIVENS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: GIVENS_CONTROL - START
+// Depends: GIVENS (Lantern.givens) -- feature-detected
+// Exports: (none) -- adds the control circuits' givens
+// ===========================================================================
+// The control circuits every panel shop draws (1.24.36), as US ladder diagrams (NEMA/JIC practice: L1 and L2 rails,
+// stops normally closed and in series before the starts, a motor starter's overload contact after its coil -- the
+// motor's overload protection NEC Article 430 asks for). Each is fitted to the question: one station or two (stops in
+// series, starts in parallel), a light on while it runs or while it is stopped (only where the question asks for a
+// light), the control voltage the question names, and what the motor drives ("pump", "fan", "conveyor").
+// The duplex pump station (an alternating relay and four floats) stays AI_CONTROL's own PROMPT_PUMPS.
+(function () {
+  var G = window.Lantern && window.Lantern.givens;
+  if (!G) return;
+  var Q = "\x22";
+  function q2(s) { return Q + s + Q; }
+  // what the motor drives, from the question: "pump", "fan", "conveyor" ... else "motor"
+  var LOADS = ["pump", "fan", "blower", "conveyor", "compressor", "mixer", "agitator", "crusher", "saw", "grinder", "hoist", "winch", "auger", "elevator", "press", "lathe", "drill", "spindle", "motor"];
+  function load(q) { var lo = String(q).toLowerCase(); for (var i = 0; i < LOADS.length; i++) if (new RegExp("\\b" + LOADS[i] + "s?\\b").test(lo)) return LOADS[i]; return "motor"; }
+  function device(q) { return /\bcontactor\b/i.test(q) ? "contactor" : "starter"; }
+  // the control voltage the question names: "24 V DC", "120 V AC", "120 volt", "24VDC"
+  function supply(q) {
+    var m = /\b(\d{2,3})\s*-?\s*(?:v|volts?)\b\s*(ac|dc)?/i.exec(String(q));
+    if (!m) return null;
+    var v = +m[1], kind = m[2] ? m[2].toUpperCase() : (v <= 48 ? "DC" : "AC");
+    if (v > 600) return null;
+    return "supply " + q2(v + " V " + kind);
+  }
+  // the lights the question asks for: on while running, on while stopped, an overload trip light
+  function lights(q, coil, n0) {
+    var t = String(q).toLowerCase(), out = [], n = n0 || 1;
+    if (!/\b(light|lights|lamp|lamps|indicator|pilot)\b/.test(t)) return out;
+    // (a light "on while the pump is stopped" is the stopped light alone; a run light where the question names running, or
+    // names a light and no state)
+    var stopped = /(?:light|lamp|indicator)[^.?!]{0,50}\b(?:stopped|not running|is off|idle|at rest)\b|\b(?:stopped|idle|ready)\s+(?:light|lamp|indicator)\b/.test(t);
+    var running = /(?:light|lamp|indicator)[^.?!]{0,50}\b(?:runs|running|is running|energi[sz]ed|in operation)\b|\b(?:run|running)\s+(?:light|lamp|indicator)\b/.test(t) || !stopped;
+    if (running) out.push("lamp LT" + (n++) + " " + coil + " " + q2("run") + " green");
+    if (stopped) out.push("lamp LT" + (n++) + " " + coil + " off " + q2("stopped") + " red");
+    return out;
+  }
+  function sup(q) { var s = supply(q); return s ? [s] : []; }
+  // a three-wire (momentary start, stop, holding contact) motor starter, one station or two
+  var TWO = /\b(two|2|second|both|multiple|several)\s+(?:control\s+)?(?:stations?|locations?|places?|sets?\s+of\s+(?:push\s*)?buttons)\b|\b(?:local\s+and\s+remote|remote\s+and\s+local)\b|\bfrom\s+(?:two|2)\s+(?:places|locations)\b/i;
+  G.add({ id: "control-starter", kind: "CONTROL", rank: 1,
+    title: function (q) { var l = load(q); return l.charAt(0).toUpperCase() + l.slice(1) + " " + device(q); },
+    says: "a three-wire starter: the stop normally closed, the start held in by the coil\u2019s own contact, the overload after the coil",
+    asks: /\b(?:start[\s\x2F-]+(?:and\s+)?stop|stop[\s\x2F-]+(?:and\s+)?start|three[\s-]wire|3[\s-]wire|holding\s+contact|seal[\s-]?in|motor\s+starter|magnetic\s+starter|(?:pump|fan|motor|conveyor|blower|compressor|mixer)\s+(?:starter|contactor))\b/i,
+    not: /\b(reverse|reversing|forward|two[\s-]speed|star[\s-]delta|wye[\s-]delta|jog|jogging|sequence|sequential|after\s+(?:the\s+)?(?:first|M1)|timer|time[\s-]delay|delay(?:ed)?|alternat\w*|duplex|lift\s+station|pump\s+station|float|pressure\s+switch|plc|program)\b/i,
+    block: function (q) {
+      var c = "M1", ls = sup(q), two = TWO.test(q);
+      if (two) ls = ls.concat(["stop PB1 " + c + " " + q2("stop, local"), "stop PB2 " + c + " " + q2("stop, remote"), "start PB3 " + c + " " + q2("start, local"), "start PB4 " + c + " " + q2("start, remote")]);
+      else ls = ls.concat(["stop PB1 " + c, "start PB2 " + c]);
+      ls.push("coil " + c + " " + q2(load(q) + " " + device(q)));
+      ls.push("overload OL1 " + c);
+      return ls.concat(lights(q, c));
+    } });
+  // forward and reverse: two starters, each locked out while the other runs
+  G.add({ id: "control-reversing", kind: "CONTROL", rank: 3,
+    title: function (q) { var l = load(q); return "Reversing " + l + " " + device(q); },
+    says: "forward and reverse: one stop for both, each starter locked out by the other\u2019s closed contact, one overload",
+    asks: /\b(?:forward\s*(?:and|\x2F|&|-)\s*reverse|reverse\s*(?:and|\x2F|&|-)\s*forward|reversing\s+(?:starter|contactor|motor|circuit|control)|fwd[\s\x2F-]+rev|run\s+(?:in\s+)?(?:both|either)\s+directions?)\b/i,
+    not: /\b(plc|program|drum\s+switch|single[\s-]phase\s+capacitor)\b/i,
+    block: function (q) {
+      return sup(q).concat(["stop PB1", "start PB2 M1 " + q2("forward"), "start PB3 M2 " + q2("reverse"), "coil M1 " + q2("forward"), "coil M2 " + q2("reverse"),
+        "interlock M1 M2", "overload OL1 M1 M2"]).concat(/\b(light|lights|lamp|lamps|indicator|pilot)\b/i.test(q) ? ["lamp LT1 M1 " + q2("forward") + " green", "lamp LT2 M2 " + q2("reverse") + " green"] : []);
+    } });
+  // a second motor that can start only while the first runs (conveyors fed in order)
+  G.add({ id: "control-sequence", kind: "CONTROL", rank: 2,
+    title: function () { return "Sequence start"; },
+    says: "two starters in sequence: M2 only while M1 runs, one stop stopping both",
+    asks: /\b(?:sequence|sequential|in\s+sequence|interlocked\s+(?:start|conveyors?)|(?:can(?:not|\x27t|\u2019t)?|only|must)\s+(?:start|run)[^.?!]{0,30}\b(?:after|until|unless|while|when)\b[^.?!]{0,30}\b(?:first|other|M1|conveyor\s*1|motor\s*1|running|runs|is\s+running))\b/i,
+    not: /\b(plc|program|timer|time[\s-]delay|delay(?:ed)?|reverse|reversing)\b/i,
+    block: function (q) {
+      var l = load(q);
+      return sup(q).concat(["stop PB1 M1 M2", "start PB2 M1 " + q2(l + " 1 start"), "start PB3 M2 " + q2(l + " 2 start"), "coil M1 " + q2(l + " 1 " + device(q)), "coil M2 M1 " + q2(l + " 2 " + device(q)),
+        "overload OL1 M1", "overload OL2 M2"]).concat(/\b(light|lights|lamp|lamps|indicator|pilot)\b/i.test(q) ? ["lamp LT1 M1 " + q2(l + " 1 run") + " green", "lamp LT2 M2 " + q2(l + " 2 run") + " green"] : []);
+    } });
+  // a delayed start: a run relay starts a timer, the motor starts when it times out (a warning horn while it times)
+  G.add({ id: "control-delayed-start", kind: "CONTROL", rank: 2,
+    title: function () { return "Delayed start"; },
+    says: "a delayed start: the run relay starts the timer, the motor starts when it has timed out",
+    asks: /\b(?:time[\s-]delay(?:ed)?\s+(?:start|relay|motor)|delay(?:ed)?\s+start|start[^.?!]{0,30}\bafter\s+(?:a\s+)?(?:\d+\s*(?:s|sec|seconds?|min|minutes?)|delay|time)|starts?\s+\d+(?:\.\d+)?\s*(?:s|sec|secs|seconds?|min|mins|minutes?)\s+after|on[\s-]delay\s+timer|warning\s+(?:horn|buzzer)\s+before)\b/i,
+    not: /\b(plc|program|reverse|reversing|star[\s-]delta|wye[\s-]delta)\b/i,
+    block: function (q) {
+      var m = /(\d+(?:\.\d+)?)\s*(s|sec|secs|seconds?|min|mins|minutes?)\b/i.exec(q), t = m ? m[1] + (/^m/i.test(m[2]) ? " min" : " s") : "10 s", l = load(q);
+      var ls = sup(q).concat(["stop PB1 CR1", "start PB2 CR1", "relay CR1 " + q2("run"), "timer TR1 " + q2(t) + " CR1", "coil M1 TR1 " + q2(l + " " + device(q)), "overload OL1 M1"]);
+      if (/\b(horn|buzzer|warning|siren|beacon|bell)\b/i.test(q)) ls.push("horn AH1 CR1 TR1 off " + q2("warning"));
+      return ls;
+    } });
+  // an air compressor on its pressure switch: the switch opens at the cut-out pressure and closes again at the cut-in
+  G.add({ id: "control-compressor", kind: "CONTROL", rank: 3,
+    title: function () { return "Air compressor"; },
+    says: "a compressor on its pressure switch: normally closed, it opens as the pressure rises to the cut-out and closes again at the cut-in",
+    asks: /\b(?:air\s+)?compressors?\b[^.?!]{0,60}\bpressure\s+switch\b|\bpressure\s+switch\b[^.?!]{0,60}\bcompressors?\b/i,
+    not: /\b(plc|program|duplex|alternat\w*|lead[\s\x2F-]+lag)\b/i,
+    block: function (q) {
+      var m = /cuts?[\s-]?(?:out|off)\b[^\d]{0,12}(\d+(?:\.\d+)?)\s*(psi|bar|kpa)\b/i.exec(q), co = m ? m[1] + " " + m[2].toLowerCase() : null;
+      return sup(q).concat(["switch SS1 M1 " + q2("on/off"), "pressure PS1 M1 nc " + q2(co ? "cut-out " + co : "opens at cut-out"), "coil M1 " + q2("compressor " + device(q)), "overload OL1 M1"])
+        .concat(/\b(light|lights|lamp|lamps|indicator|pilot)\b/i.test(q) ? ["lamp LT1 M1 " + q2("run") + " green"] : []);
+    } });
+  // one pump on one float: filling a tank (the float opens as it fills) or pumping a sump down (it closes as it rises)
+  G.add({ id: "control-fill", kind: "CONTROL", rank: 2,
+    title: function () { return "Tank fill pump"; },
+    says: "a pump filling a tank: the float switch normally closed, it opens as the water rises to it",
+    asks: /\b(?:fill(?:s|ing)?\s+(?:a\s+|the\s+)?(?:tank|cistern|reservoir|tower|trough)|(?:tank|cistern|reservoir)\s+fill(?:ing)?|pump[\s-]up|keep\s+(?:a\s+|the\s+)?tank\s+full)\b/i,
+    not: /\b(plc|program|duplex|alternat\w*|two\s+pumps|lead[\s\x2F-]+lag|empty|drain|sump|sewage|pump[\s-]?down)\b/i,
+    block: function (q) {
+      return sup(q).concat(["switch SS1 M1 " + q2("on/off"), "float FS1 M1 nc " + q2("tank full"), "coil M1 " + q2("pump " + device(q)), "overload OL1 M1"])
+        .concat(/\b(light|lights|lamp|lamps|indicator|pilot)\b/i.test(q) ? ["lamp LT1 M1 " + q2("pump on") + " green"] : []);
+    } });
+  G.add({ id: "control-sump", kind: "CONTROL", rank: 2,
+    title: function () { return "Sump pump"; },
+    says: "a pump emptying a sump: the float switch normally open, it closes as the water rises to it",
+    asks: /\b(?:sump\s+pump|pump[\s-]?down|empt(?:y|ies|ying)\s+(?:a\s+|the\s+)?(?:sump|pit|tank|basin)|drain(?:s|ing)?\s+(?:a\s+|the\s+)?(?:sump|pit|basin))\b/i,
+    not: /\b(plc|program|duplex|alternat\w*|two\s+pumps|both\s+pumps|lead[\s\x2F-]+lag|lift\s+station|pump\s+station|fill(?:s|ing)?)\b/i,
+    block: function (q) {
+      return sup(q).concat(["switch SS1 M1 " + q2("on/off"), "float FS1 M1 " + q2("pump on"), "coil M1 " + q2("pump " + device(q)), "overload OL1 M1"])
+        .concat(/\b(light|lights|lamp|lamps|indicator|pilot|alarm)\b/i.test(q) ? ["lamp LT1 M1 " + q2("pump on") + " green"] : []);
+    } });
+})();
+// ===========================================================================
+// MODULE: GIVENS_CONTROL - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: AI_ELECTRONICS - START
