@@ -38074,6 +38074,34 @@ Lantern.RFB = (function () {
         added.push("pin " + r + ", which " + it.id + "\u2019s line names (a pin line for " + r + " says which pin of the board it is)");
       });
     });
+    // (1.24.37, Adam's laptop: the 35B, asked for "an Arduino output pin switches a 12 V DC motor through an NPN
+    // transistor", wrote "transistor Q1 K1 P1" -- the guide's relay K1 -- beside "motor M1 P1", and was told Q1 switched
+    // nothing, like: transistor Q1 K1 P1. Its second try named M1 on the transistor's line and left the motor's own line
+    // out, and was told there was nothing to power. Both failed.) A transistor's line that names a part no line has is
+    // read where Lantern is sure, and said:
+    //  - the part's letter is the one kind of load the question asks for (M a motor or fan, K a relay, L a lamp, Y a
+    //    solenoid, BZ a buzzer): the part is added;
+    //  - else, the block's one load that no transistor switches, of the kind the question asks for, on the transistor's
+    //    own pin or on none: the transistor switches it.
+    var qs = String(pr.question || ""), KINDQ = [["motor", /\b(?:motors?|fans?)\b/i, "M"], ["relay", /\brelays?\b/i, "K"], ["lamp", /\b(?:lamps?|bulbs?)\b/i, "L"], ["solenoid", /\bsolenoids?\b/i, "Y"], ["buzzer", /\b(?:buzzers?|beepers?)\b/i, "BZ"]];
+    var asked = KINDQ.filter(function (k) { return k[1].test(qs); }), one = asked.length === 1 ? asked[0] : null;
+    items.filter(function (t) { return t.role === "transistor"; }).forEach(function (t) {
+      var unk = t.refs.filter(function (r) { return !dev[r]; });
+      if (unk.length !== 1) return;
+      var r = unk[0], tPins = t.refs.filter(function (x) { return dev[x] && dev[x].role === "pin"; });
+      if (one && new RegExp("^" + one[2] + "\\d{1,3}$").test(r)) {
+        var ld = { role: one[0], id: r, label: "", refs: [], a: {}, said: one[0] + " " + r, addedLoad: true };
+        items.push(ld); dev[r] = ld; used[r] = 1;
+        added.push(one[0] + " " + r + ", which " + t.id + "\u2019s line names (a line " + one[0] + " " + r + " says what it is)");
+        return;
+      }
+      var free = items.filter(function (x) { return LOAD.test(x.role) && !items.some(function (q) { return q.role === "transistor" && (q.refs.indexOf(x.id) >= 0 || x.refs.indexOf(q.id) >= 0); }); });
+      if (free.length !== 1 || !one || free[0].role !== one[0]) return;
+      if (free[0].refs.some(function (x) { return dev[x] && dev[x].role === "pin" && tPins.indexOf(x) < 0; })) return;
+      t.refs[t.refs.indexOf(r)] = free[0].id;
+      changed.push(t.id + "\u2019s line names " + r + ", which no line has: " + free[0].id + " is the one " + free[0].role + " for it to switch, so " + t.id + " switches " + free[0].id +
+        (tPins.length ? ", driven by " + tPins[0] : "") + " (transistor " + t.id + " " + free[0].id + (tPins.length ? " " + tPins[0] : "") + ")");
+    });
     var pins = of("pin");
     // a pin's voltage: said, or its board's (an ESP32, a Pico or a Pi is 3.3 V); pins not said take the board's
     pins.forEach(function (p) { p.sv = volts(p.label) || volts(p.said) || (/\b3\.3V\b|esp32|pico|raspberry|\bpi\b/i.test(p.label + " " + p.said) ? 3.3 : 0); });
@@ -38083,7 +38111,8 @@ Lantern.RFB = (function () {
     // who drives each load: a transistor naming it, a pin (either line names
     // the other), a switch in its line, or nothing (+ to 0 V)
     var loads = items.filter(function (it) { return LOAD.test(it.role); }), br = [];
-    if (!loads.length && !of("switch").length && !of("sensor").length && !of("pot").length) problems.push("there is nothing to power or read: add a part, like: led D1 \x22power on\x22");
+    var exId = loads[0] ? loads[0].id : one ? one[2] + "1" : "K1";
+    if (!loads.length && !of("switch").length && !of("sensor").length && !of("pot").length) problems.push("there is nothing to power or read: " + (one ? "add the " + one[0] + " the question asks for, like: " + one[0] + " " + exId + (of("transistor")[0] ? " (with transistor " + of("transistor")[0].id + " " + exId + " P1)" : "") : "add a part, like: led D1 \x22power on\x22"));
     loads.forEach(function (ld) {
       var q = of("transistor").filter(function (t) { return t.refs.indexOf(ld.id) >= 0 || ld.refs.indexOf(t.id) >= 0; })[0];
       var pin = ld.refs.map(pinOf).filter(function (x) { return x; })[0] || pins.filter(function (p) { return p.refs.indexOf(ld.id) >= 0; })[0];
@@ -38145,9 +38174,9 @@ Lantern.RFB = (function () {
         }
       }
     });
-    of("transistor").forEach(function (t) { if (!br.some(function (b) { return b.q === t; })) problems.push("transistor " + t.id + " switches nothing: name the part it switches and what drives it, like: transistor " + t.id + " " + (loads[0] ? loads[0].id : "K1") + " P1"); });
+    of("transistor").forEach(function (t) { if (!br.some(function (b) { return b.q === t; })) problems.push("transistor " + t.id + " switches nothing: name the part it switches and what drives it, like: transistor " + t.id + " " + exId + " " + ((pins[0] || {}).id || "P1")); });
     userR.filter(function (r) { return !r.used; }).forEach(function (r) { problems.push("resistor " + r.id + ": name the part it is in series with, like: resistor " + r.id + " \x22" + (r.label || "220 ohm") + "\x22 " + (loads[0] ? loads[0].id : "D1") + " (Lantern sizes LED, base and pull-down resistors itself)"); });
-    of("diode").filter(function (d) { return !d.used; }).forEach(function (d) { problems.push("diode " + d.id + ": Lantern draws a diode across a relay, motor or solenoid a transistor switches (and adds it there itself) -- leave it out, or name the coil: diode " + d.id + " K1"); });
+    of("diode").filter(function (d) { return !d.used; }).forEach(function (d) { problems.push("diode " + d.id + ": Lantern draws a diode across a relay, motor or solenoid a transistor switches (and adds it there itself) -- leave it out, or name the coil: diode " + d.id + " " + ((loads.filter(function (x) { return KICK.test(x.role); })[0] || {}).id || (one && KICK.test(one[0]) ? one[2] + "1" : "K1"))); });
     // inputs: a push button, a sensor or a pot read by a pin
     function readBy(it) {
       var p = it.refs.map(pinOf).filter(function (x) { return x; })[0] || pins.filter(function (x) { return x.refs.indexOf(it.id) >= 0; })[0];
@@ -38193,7 +38222,7 @@ Lantern.RFB = (function () {
           "Give " + it.id + " a pin of its own (pin P" + k + " \x22Arduino D2\x22 and " + word + " " + it.id + " P" + k + "), or leave " + it.id + "\u2019s line out if the question does not ask for it"));
       if (free) free.taken = true;
     });
-    pins.forEach(function (p) { if (!p.taken && !br.some(function (b) { return b.pin === p; })) problems.push("pin " + p.id + " drives or reads nothing: name it on a part\u2019s line (led D1 " + p.id + ", transistor Q1 K1 " + p.id + ", switch S1 " + p.id + ")"); });
+    pins.forEach(function (p) { if (!p.taken && !br.some(function (b) { return b.pin === p; })) problems.push("pin " + p.id + " drives or reads nothing: name it on a part\u2019s line (" + (one ? "transistor Q1 " + exId + " " + p.id : "led D1 " + p.id + ", transistor Q1 K1 " + p.id + ", switch S1 " + p.id) + ")"); });
     if (br.length > 8) problems.push("keep it to 8 branches (things powered or read) or fewer");
     var c = { v: V, battery: bat || null, supply: sup || null, pins: pins, branches: br, problems: problems, added: added, changed: changed, notes: pr.notes, dev: dev };
     if (!problems.length) c.steps = steps(c);
@@ -38413,7 +38442,9 @@ Lantern.RFB = (function () {
 
   // build(block, ctx) -> what Chat and the bench take (AI_DRAW's result)
   function build(block, ctx) {
-    var pr = parse(block), c = circuit(pr);
+    var pr = parse(block);
+    pr.question = ctx && ctx.question ? String(ctx.question) : "";
+    var c = circuit(pr);
     if (c.problems.length) return { problems: c.problems, plan: null };
     if (!L.aiDraw || !L.aiDraw.result) return { problems: ["Lantern\u2019s drawing part (AI_DRAW) is missing"], plan: null };
     var lay = layout(c, block.title), late = [];
