@@ -31,7 +31,7 @@ total = re.search(r"^(\d+) cases: (\d+) AGREE, (\d+) DISAGREE", out, re.M)
 fails = []
 if not total: fails.append("the replay did not finish: " + (r.stderr or out)[-1500:])
 else:
-    if int(total.group(1)) != 338: fails.append("%s cases, not 338" % total.group(1))
+    if int(total.group(1)) < 338: fails.append("%s cases, fewer than 338" % total.group(1))   # saved bench runs added later add guard cases
     new = [c for c in dis if c not in KEEP]
     if new: fails.append("disagree, not kept: " + ", ".join(new))
     gone = [c for c in KEEP if c not in dis]

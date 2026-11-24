@@ -19,6 +19,8 @@ import os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "givens_review_1236")
 KEEP = {
+    "A-rv-rev-fwd-120": "\u201creverse/forward control of a motor, 120 V AC\u201d and \u201can air compressor on a pressure switch, 240 V\u201d: a voltage said after the machine is not surely the control\u2019s (the fifth review found \u201ca control circuit for a 575 V crusher\u201d drawn at 575 V), so the given has no supply line and the model writes its own (rule 7: when unsure, nothing).",
+    "A-cp-240": "\u201can air compressor on a pressure switch, 240 V\u201d: a voltage said of the machine is not surely the control\u2019s (the fifth review), so no supply line; the model writes its own.",
     "B-load-saw-verb": "\u201cas I saw in the manual\u201d now gets no given: \u201cmanual\u201d is not a word the givens know (a manual run is a switch they do not draw, the fourth review's sp-manual-run), and a given is shown only where every word is known. The instructions as 1.24.35 gave them.",
     "A-rv-both-directions": "a hoist that runs both ways gets no given now: a hoist, a winch or a crane is held to run (its pendant's buttons "
                             "momentary, nothing sealed in), with limits of travel, which a three-wire reversing starter is not -- the second "
@@ -36,7 +38,7 @@ total = re.search(r"^(\d+) cases: (\d+) AGREE, (\d+) DISAGREE", out, re.M)
 fails = []
 if not total: fails.append("the replay did not finish: " + (r.stderr or out)[-1500:])
 else:
-    if int(total.group(1)) != 235: fails.append("%s cases, not 235" % total.group(1))
+    if int(total.group(1)) < 235: fails.append("%s cases, fewer than 235" % total.group(1))   # saved bench runs added later add guard cases
     new = [c for c in dis if c not in KEEP]
     if new: fails.append("disagree, not kept: " + ", ".join(new))
     gone = [c for c in KEEP if c not in dis]

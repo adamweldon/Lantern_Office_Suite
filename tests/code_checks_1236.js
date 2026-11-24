@@ -60,15 +60,17 @@ function strip(src, names) { names.forEach(function (n) { var a = src.indexOf("/
   kb.onclick();
   var mine = G.mine();
   ok("kept: the block as written, the question's words, stored", mine.length === 1 && mine[0].kept.lines.join("|") === fan.block.lines.join("|") && /Forget it/.test(fv.textContent) && (L.store.get("givens.user", []) || []).length === 1, mine.map(function (g) { return g.kept; }));
-  var p = act.prompt("Draw a start stop circuit for a fan contactor, 24 VAC");
+  var p = act.prompt("Draw a start stop circuit for a fan contactor, 24 VAC, with a green run light");
   ok("a question like it is shown the user's own, above Lantern's given", /Your own kept circuit for this \(kept \d{4}-\d\d-\d\d, checked to US practice\): write it as it stands, changing only what the question asks:\nMAKE CONTROL: Test\nsupply \x2224 V AC\x22/.test(p) && !/Lantern’s tested circuit/.test(p), p.slice(-500));
   ok("a question unlike it is not", !/Your own kept circuit/.test(act.prompt("Draw a forward/reverse motor control circuit with interlocks")) && !/Your own kept circuit/.test(act.prompt("Draw a start/stop motor starter")));
+  // (the fifth review) kept from a question that asked a run light: not for one that asks none, nor one with an e-stop
+  ok("not for the same circuit asked without its light, nor with an e-stop it lacks", !/Your own kept circuit/.test(act.prompt("Draw a start stop circuit for a fan contactor, 24 VAC")) && !/Your own kept circuit/.test(act.prompt("Draw a start stop circuit for a fan contactor, 24 VAC, with a green run light and an e-stop")));
   // loaded at start
   var keptStore = L.store.get("givens.user", []);
   var src2 = fs.readFileSync(SRC, "utf8").replace("Lantern.store = (function () {", "try { localStorage.setItem(\x22lantern.givens.user\x22, " + JSON.stringify(JSON.stringify(keptStore)) + "); } catch (e) {}\nLantern.store = (function () {");
   var tmp = path.join(os.tmpdir(), "givens_kept_1236.html"); fs.writeFileSync(tmp, src2);
   var o3 = load(tmp), L3 = o3.L; await sleep(60);
-  ok("a kept given is loaded at start, from the store", keptStore.length === 1 && o3.errs.length === 0 && L3.givens.mine().length === 1 && /Your own kept circuit/.test(L3.aiAct.prompt("Draw a start stop circuit for a fan contactor, 24 VAC")), [keptStore.length, L3.givens.mine().length, o3.errs]);
+  ok("a kept given is loaded at start, from the store", keptStore.length === 1 && o3.errs.length === 0 && L3.givens.mine().length === 1 && /Your own kept circuit/.test(L3.aiAct.prompt("Draw a start stop circuit for a fan contactor, 24 VAC, with a green run light")), [keptStore.length, L3.givens.mine().length, o3.errs]);
   // forget
   var fb = Array.prototype.slice.call(fv.querySelectorAll("button")).filter(function (b) { return /^Forget it$/.test(b.textContent); })[0];
   fb.onclick();
