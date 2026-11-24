@@ -1,0 +1,265 @@
+The sixth review of 1.24.36 (commit 801fe71; 1.24.35 is 8cb3281)
+=================================================================
+
+SUMMARY
+391 cases of my own (none taken from the earlier reviews), run against src/lantern.inner.html at 801fe71:
+313 AGREE, 78 DISAGREE -- 51 high, 23 medium, 4 low.
+  node tests/fixtures/review6_1236/replay.js [file]    (output: run_801fe71.txt)
+Both guards agree: every bench prompt equals 1.24.35's except make-control and make-control-b, and all 1139 saved
+replies with a MAKE block in tests/fixtures/bench_run_*.json build exactly as on 1.24.35.
+
+The high findings fall into nine groups. Six are Lantern's own givens shown for a question they do not fit. Two are code
+checks that send back a right circuit, with a line that builds wrong. One is the user's kept circuits being matched
+on loose word overlap. The pattern is the same every time: a word that changes the circuit is read as fitting.
+
+
+HIGH
+----
+H1  The control voltage: a control transformer written "primary / secondary" gives the PRIMARY as the control
+    voltage.
+    Cases: p-v-xfmr-240-24, p-v-xfmr-240-24b, p-v-xfmr-208-24, p-v-xfmr-120-24, p-v-xfmr-230-24.
+    Seen: "a control transformer 240 V / 24 V" (also 240V/24V, 208 V / 24 V, 120 V / 24 V, 230 V / 24 V) gives
+      supply "240 V AC" (208, 120, 230).
+    Right: 24 V, which is the secondary, or no supply line at all.
+    Cause (GIVENS_CONTROL supply()): CTRL_BEFORE matches "control transformer " right before the first number. The
+      24 V after the slash is not a candidate, so the primary is the only one and it wins. "480/120 V control
+      transformer" is read right, because there the voltage stands before "control".
+
+H2  Sequence: "the second may start only when the first is OFF" gets the sequence given, which is the opposite.
+    Cases: p-q-off-fan, p-q-off-motor-idle, p-q-off-pump-not-on, p-q-off-pump-fan-not-running,
+      p-q-off-conv-not-running, p-q-off-unless-off, p-q-off-while-off, p-q-off-pump-idle, p-q-off-m-tags,
+      p-q-off-ordinals, p-q-off-not-on.
+    Seen: questions like these all get coil M2 M1, so M2 can start only while M1 RUNS:
+      - "fan 2 can only start when fan 1 is off"
+      - "motor 2 can only start when motor 1 is idle"
+      - "pump 2 ... when pump 1 is not on"
+      - "the pump can only run when the fan is not running"
+      - "conveyor 2 cannot start unless conveyor 1 is off"
+      - "can only run while conveyor 1 is off"
+      - "M2 ... when M1 is off"
+      - "the second fan ... when the first fan is off"
+    Right: no given. The two must never run together, which is an interlock on M1's closed contact.
+    Cause: seqOrder() reads the order word (when, while, unless, only) but never the state the first machine must be
+      in. SEQ matches on the machine's number ("fan 1", "M1", "pump 1"), so any state passes. "is stopped" is refused
+      only by accident, through the block's stop-word rule. "is off", "idle", "not running" and "not on" are not
+      refused.
+
+H3  Stations: "two locations / places" is counted as two start/stop stations, whatever it was said of.
+    Cases: p-s-estop-two-locations, p-s-estop-two-places, p-s-stop-two-locations, p-s-stop-two-start-one,
+      p-s-stopped-3-started-1, p-s-stops-at-two-places, p-s-stops-2-start-panel, p-s-runlight-two-loc.
+    Seen:
+      - "an e-stop at two locations" and "an emergency stop at two places" give one e-stop and two full stations.
+      - "a stop button at 2 locations", "stop buttons at two places" and "stops at 2 locations and the start at the
+        panel" all give two starts as well.
+      - "the stop button at two locations and the start button at one" gives two starts.
+      - "stopped from 3 places but started from one" gives three starts.
+      - "a run light at two locations" gives two stations and one light.
+    Right: no given, or only the stops counted.
+    Cause: stations() takes "(two|...) (stations|locations|places)" without asking what stands before it, and never
+      reads "at one", "from one" or "at the panel".
+
+H4  Delayed start: shown where the timer's job is not said, or is said to be something else.
+    Cases: p-d-tdr-fan, p-d-tdr-pump-starter, p-d-tdr-blower, p-d-tdr-stops-it, p-d-horn-also-stop,
+      p-d-power-restored.
+    Seen:
+      - "a fan with a time delay relay", "a motor starter for a pump with a time delay relay" and "a blower with a
+        time delay relay, start and stop buttons" each get a delayed start, timed at Lantern's own 10 s. The relay
+        could as well be an off-delay run-on or a run for a set time.
+      - "a pump with a time delay relay that stops it" gets a delayed start.
+      - "the horn sounds before start and also when it stops" gets a horn only before the start.
+      - "a delayed start of 30 seconds after power comes on" is a restart delay with no buttons, but gets a
+        push-button start.
+    Right: no given.
+    Cause: asks matches "time delay relay" and "time-delay relay" alone. The `not` list has no "that stops it", no
+      "also when it stops" and no "after power".
+
+H5  Lit button said another way.
+    Case: p-l-in-button.
+    Seen: "a light in the start button" gives a plain run light (lamp LT1 M1 "run" green). The fifth review mended
+      "illuminated / lighted / lit button"; "a light on the start button" is refused.
+    Right: no given.
+
+H6  Sump: the alarm's red light is drawn as a pump-running light.
+    Case: p-sp-horn-and-red-light.
+    Seen: "a high water alarm that sounds a horn and lights a red light" gives lamp LT1 M1 "pump on" red, plus the
+      horn on FS2. The light the question ties to the alarm comes on whenever the pump runs.
+    Right: no given, or the light on FS2.
+    Cause: read() takes "lights a red light" as a plain light (the alarm's words are not before a "with" or "and a").
+      The sump block's alarm path then adds the horn only, because the question has a horn word.
+
+H7  Code check (control-cutouts): a vacuum switch's numbers are read as pressure, and the right line is sent back.
+    Cases: b-ok-vacuum-inhg, b-ok-vacuum-kpa.
+    Seen: a vacuum pump's switch written "cut-in 15 inHg, cut-out 22 inHg" (or "60 kPa / 80 kPa" of vacuum) without nc
+      is sent back: "a high cut-out drawn normally open ... Write it: pressure PS1 M1 nc ...".
+    Why that is wrong: read as gauge vacuum, the pump must run while the vacuum is weak. That means the absolute
+      pressure is high, so the switch closes as the pressure rises: no nc, as written. The line handed back runs the
+      pump only once the vacuum is already deep.
+    Right: nothing. A vacuum's numbers can be read either way (rule 7).
+    Cause: way() trusts cut-in < cut-out for any pressure switch. NOT_AIR (with vacuum in it) guards only the BARE path.
+
+H8  Code check (control-stops): an overload's alarm relay is judged as if it were the motor.
+    Case: b-ok-overload-aux-relay.
+    Seen: "overload OL2 CR5 no" with coil CR5 "motor overload relay" (a horn on CR5) is sent back as "the motor runs
+      only with the overload tripped. Write it: overload OL2 CR5". Copied, the alarm relay is pulled in, and the horn
+      sounds, whenever the motor is healthy.
+    Right: drawn, with nothing sent back. A relay named for an overload is not a machine.
+    Cause: this is the fifth review's "fault relay" class. MACHINE matches "motor" in the label, and NOT_MACHINE has
+      no "overload".
+
+H9  The user's kept circuits are shown for questions they do not fit (GIVENS sameAs()). The test is about 75% of the
+    words the same, so one word that changes the circuit passes. "without" and "no" are stop words, and word order is
+    not read.
+    Cases: k-run-off-light, k-run-idle-light, k-run-stop-light, k-stop-run, k-stop-running, k-seq-reversed,
+      k-horn-without, k-horn-no, k-fwd-plugging, k-fill-jobs-swapped, k-comp-refrig, k-comp-low, k-comp-vacuum,
+      k-24dc-vs-ac, k-sump-on-off-floats, k-sump-alarm.
+    Seen:
+      - Light state: a kept green RUN light is shown for "a green off light", "green idle light" and "a green stop
+        light". A kept red STOPPED light is shown for "a red run light" and "a red running light".
+      - Sequence order: a kept "conveyor 2 after conveyor 1" is shown for "conveyor 1 after conveyor 2", which has
+        the same words.
+      - Without / no: a kept delayed start with its horn is shown for "without a warning horn" and "no warning horn".
+      - Extra or other function:
+          - A kept forward/reverse is shown for "with plugging".
+          - A kept low-start, high-stop fill is shown for "the high float starts it". Lantern's own fill given refuses
+            that question.
+          - A kept air compressor cut-out is shown for "a refrigeration compressor", "a low pressure switch" and "a
+            vacuum compressor".
+          - A kept 24 V DC circuit (+ and 0 V rails) is shown for "24 V AC control".
+          - A kept one-float sump is shown for "an on float and an off float" and for "... and an alarm".
+    Right: none of these is shown.
+
+
+MEDIUM
+------
+M1  "on until it starts" is never read.
+    Case: p-l-until-starts.
+    The changelog lists it as read. "a pilot light that is on until the pump starts" (and four other wordings) gets
+    no given. POST has no "until".
+M2  "stopped from two locations" adds a second start button.
+    Case: p-s-stopped-from-two. This is the same cause as H3, but here only stopping is said.
+M3  "a mushroom head stop button" gives an e-stop AND a stop.
+    Case: p-e-mushroom-stop. The question asks for one stop button.
+M4  "mechanical interlock only" gives the electrical interlock line too.
+    Case: p-r-mech-only. Lantern adds that interlock between forward and reverse anyway, so it is medium, not high.
+M5  "where the start button also stops it" (push on, push off) gets the three-wire starter.
+    Case: p-n-start-also-stops.
+M6  "a conveyor with an on-delay timer" gets the delayed start.
+    Case: p-d-on-delay-timer. What the timer delays is not said.
+M7  Manual or automatic sequence is not said, yet the given has a start for each machine.
+    Cases: p-q-starts-once, p-q-starts-first-then, p-q-m1-first-then-m2.
+    Questions: "conveyor 2 starts once conveyor 1 is running", "the fan starts first and then the pump starts",
+    "M1 starts first, then M2".
+M8  The stop check hands back a line that builds wrong.
+    Case: b-ok-energise-stop-relay.
+    Written: "stop PB1 CR2 no" pulls in a stop relay whose closed contact drops the pump. That is not fail-safe, but it
+    works. Handed back: "stop PB1 CR2". Copied, CR2 is pulled in whenever the stop is not pressed, so the pump can
+    never run. Right: say the stop should be fail-safe and give the whole change (stop PB1 M1), or say nothing.
+M9  A fill's single float named for the EMPTY tank, written open, is drawn to run the pump only while the water is
+    above it, and nothing goes back.
+    Case: b-back-fill-empty-open.
+    Only a stop float written open is caught. The line to write is float FS1 M1 nc "tank empty".
+M10 Which code, by place.
+    Cases: c-lagos, c-nairobi, c-seoul, c-mexico-comma, c-ghana, c-uganda, c-pakistan, c-egypt, c-iec-480-60.
+    - "in Nigeria", "in Kenya" and "in South Korea" pick IEC, but "Lagos, Nigeria", "Nairobi, Kenya" and
+      "Seoul, South Korea" fall to US. The comma form lists other countries but not these three.
+    - "Monterrey, Mexico" picks IEC while "in Mexico" picks US. Mexico's NOM-001-SEDE is drawn from the NEC, so US is
+      right.
+    - IEC / BS 7671 countries that are not listed fall to US: Ghana, Uganda, Pakistan, Egypt, and likewise Tanzania,
+      Zambia, Zimbabwe, Bangladesh, Sri Lanka, Dubai and others.
+    - "an IEC contactor, 480 V 60 Hz" picks IEC. IEC-rated contactors are what most US panels use, and 480 V 60 Hz says
+      North America.
+M11 Sump alarm: "a high water alarm horn and a high water alarm light" gets the horn only.
+    Case: p-sp-horn-and-alarm-light. The given is shown "as it stands" without the light that was asked for.
+M12 Kept circuits.
+    - Case k-estop-without: a kept e-stop circuit is shown for "without an e-stop".
+    - Case k-comp-cutin: a kept switch labelled "cut-out 120 psi" is shown for "cut-in 120 psi".
+
+
+LOW
+---
+L1  "a 2 h.p. fan" reads "2 h" as two hours, a time, so no given. Case: p-st-2hp-dots.
+L2  "a forward light and a reverse light" gets no given. This plain ask is missed safely.
+    Case: p-l-fwd-light-rev-light.
+L3  "a Latin American customer" (and "South America") picks IEC, but the region is mixed. Case: c-latin.
+L4  "a pre-start warning horn" with no time gives timer TR1 "10 s". That is Lantern's own time, copied as a setting.
+    CLAUDE.md asks never to invent a time for electrical work. Case: p-d-pre-start-no-time.
+L5  Not a case. A vacuum switch written nc is listed under the drawing as "checked: PS1 opens as the pressure rises",
+    vouching for a reading Lantern cannot be sure of (H7).
+
+
+WHAT AGREES (313)
+-----------------
+- Starter, plain and in many trades' words: seal-in, latching, NEMA size 1, DOL to IEC, transfer pump, barn fan, 5 HP,
+  1/2 HP, 30 A, a 10 m belt, Kenya.
+- The control voltage said of the control:
+  - "24 V control", "control voltage 120 V", "the starter coil is 120 V", "control circuit, 120 V", "230 V coil",
+    "12 V DC control", "115 V control transformer", "480/120 V" and "480 to 120 V control transformer", "24 V DC
+    start/stop station", "coil voltage of 24 V AC", "400 V pump with 230 V control".
+  - No supply line for a machine's voltage, for 277 V, for "on a 120 V circuit", or where two control voltages are said.
+- Lights: plain, run and stop, "goes out when it starts", "shows it is stopped", colours paired with states either
+  way, white, "turns off when it stops".
+- No light given and no given at all for plural lights, illuminated or lighted buttons, flashing, and one light for
+  forward/reverse.
+- Trip, overload and power lights left out for the model.
+- Stations: both ends, two and two, three, two places, local and remote, with an e-stop.
+- Refused: two stops and one start, office and roof, a remote stop, "each end and the middle", two e-stops.
+- Every "explain / what / why / size" question, two-wire, VFD, star-delta, hoist, heater, lights as the load, two
+  machines, IEC tags, jog, key switch, a time said.
+- Reversing: plain, e-stop, 24 V, "stop before reversing". The interlock is kept even for "without interlocks"
+  (NFPA 79 / IEC 60204-1 9.3.4).
+- Sequence order read right by name, number, number word, ordinal, M-tag, letter and reversed numbering; a chain of
+  three; "must not start before"; "will not start unless".
+- Sequence refused: "must not run while", "until it has stopped", a stop said otherwise.
+- Delayed start with the times said: 5 s, 30 s, 15 s, 1 min, 0.5 s, "horn 5 s then"; e-stop. Refused for two times,
+  run-on, and "after the pump starts".
+- Compressor: cut-out read (8 bar, 125 psi, never "20 psi above"), lights, e-stop, contactor.
+- Compressor refused: refrigeration, low oil, two machines, well pump, unloader.
+- Fill on one float (trough, cistern from a well pump, tower) and on two floats with jobs said. Refused: from a well,
+  with an alarm, reversed jobs.
+- Sump with an alarm light, horn, buzzer or bell, and with a run light. Refused: plain "alarm", buzzer alone, beacon,
+  low alarm, overload alarm.
+- All eleven givens I built for their own questions build clean, with nothing sent back. The delayed start's
+  overload is in CR1's rung, and the horn sounds only while it times.
+- Code checks leave 33 right circuits from boiler, refrigeration, fire, HVAC, hydraulic, well, kiln, gas, pool,
+  heat-trace, fill and sump work.
+  - These include standby, freeze, fire-pump starts, fault relays, a tank-full relay, a dry-run float, energised
+    alarm relays, a switch on the coil's line, `stop PB1 all`, an e-stop written open (drawn closed and said), and
+    an overload light.
+- The checks send back 23 wrong circuits once, each with the right line, and each line copied in place builds clean:
+  - high and low cut-outs both ways;
+  - a compressor's bare "cut-out";
+  - stop / off / e-stop buttons;
+  - a stop or overload written "no";
+  - a fill's floats written open;
+  - IEC practice named as 60204-1 9.3.2.
+- Practice: 28 of 38 pick cases agree (including 2 saved-choice and 2 code-line cases). The user's choice decides only where nothing is named. The IEC line names 7.3,
+  9.4 and 10.7.
+- Kept circuits: not shown for e-stop, two stations, IEC, flashing, jog, local and remote, remote, both ends, a
+  second station, HOA, a float, a timer, 24 V, a light the kept circuit lacks, a thermostat, another machine,
+  empty or drain against a fill.
+  Also: never while the bench runs; a circuit with a rule sent back is not kept.
+
+
+NOT THIS CHANGE (seen on 1.24.35 too)
+-------------------------------------
+- An overload written on two lines with one ID ("overload OL1 M1" then "overload OL1 LT1 no") keeps the first line's
+  closed contact. The trip light is drawn lit while NOT tripped.
+- A rung whose only element is an overload contact is called "nothing switching it".
+- AI_CONTROL's asks() misses some plain wordings, so they never get a given:
+  - "Draw a sequence control: ..."
+  - "Draw a delayed start circuit for a conveyor ..."
+  - "Draw a hold-in circuit ..."
+  - "Draw a ladder where motor 2 can't start unless motor 1 is already running"
+  - "Draw a forward reverse control for a mixer with an e-stop and a stop button"
+
+
+NOT RUN
+-------
+- No model (no small model, no 35B), no `npm test`, no browser. The view was checked through jsdom only. I called
+  keep() and forget() directly rather than clicking "Keep as my given".
+- I did not judge how the drawings look.
+- Not tried:
+  - a duplex pump station's own kept circuits;
+  - the IEC/US button's change of the saved choice through the DOM;
+  - givens for hydraulic or pneumatic circuits (none exist).
+- I did not read the earlier reviews' cases or tests, as asked.

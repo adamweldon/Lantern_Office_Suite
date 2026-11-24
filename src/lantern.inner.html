@@ -36796,8 +36796,20 @@ Lantern.RFB = (function () {
     "intake return second another both fire jockey brake interlock overload local remote flash flashing blink blinking iec nec nfpa").split(" ").forEach(function (w) { DEF[stem(w)] = 1; });
   var ASK = /\b(?:explain\w*|describe|what\s+size|sizing|why\s+(?:does|do|is|are|would)|how\s+(?:does|do)\s+(?:a|an|the|it|this|they|these)\b|what\s+(?:is|are|does)\s+(?:a|an|the)\b|difference\s+between)\b/i,
     DRAWQ = /\b(?:draw|drawn|sketch|diagram|schematic|ladder|print|design|make|build|show|create|lay\s+out|give\s+me)\b/i;
+  // (the sixth review) a kept circuit is shown only for the same question, its words in the same order -- the review
+  // before found it shown, on most words alike, for the opposite light, the reversed order, "without a horn", swapped
+  // floats, a refrigeration compressor, 24 V AC against DC. Only the asking words differ ("draw", "please", "again")
+  var FILLW = {};
+  ("a an the please me my i can could would you draw drawn make made show create sketch give design build lay out again same diagram diagrams schematic " +
+    "schematics drawing drawings ladder circuit circuits control controls wiring for of with is it this that").split(" ").forEach(function (w) { FILLW[w] = 1; });
+  function said(q) {
+    return (String(q || "").toLowerCase().replace(/\be[\s-]+stop/g, "estop").replace(/\bemergency[\s-]+stop/g, "estop").match(/[a-z0-9]+(?:\.\d+)?/g) || [])
+      .filter(function (w) { return !FILLW[w]; }).map(stem).join(" ");
+  }
   function sameAs(u, q) {
     if (ASK.test(q) && !DRAWQ.test(q)) return false;
+    var a = said(q);
+    if (!a || a !== said(u.question)) return false;
     var w = words(q), hits = u.words.filter(function (x) { return w.indexOf(x) >= 0; }).length;
     // a light asked for where the kept circuit has none, or "no run light" where it has one
     var noLight = /\b(?:no|without)\s+(?:\w+\s+){0,2}(?:lights?|lamps?|indicators?)\b/i.test(q), asksLight = !noLight && /\b(?:lights?|lamps?|indicators?)\b/i.test(q), hasLamp = u.lines.some(function (l) { return /^\s*lamp\b/i.test(l); });
@@ -36940,7 +36952,8 @@ Lantern.RFB = (function () {
     // where it is, and the codes (the third review: a question that named its country never got a given)
     "iec nec nfpa ul ce csa us usa uk eu europe european america american canada canadian britain british england scotland wales ireland irish northern " +
     "germany german france french spain spanish italy italian netherlands dutch belgium austria switzerland sweden norway denmark finland poland portugal " +
-    "australia australian zealand india indian africa china japan singapore malaysia brazil mexico kenya nigeria korea country state states");
+    "australia australian zealand india indian africa china japan singapore malaysia brazil mexico kenya nigeria korea ghana uganda tanzania zambia zimbabwe " +
+    "pakistan egypt bangladesh sri lanka uae dubai emirates country state states");
   var UNITS = wordSet("v volt volts vac vdc ac dc hz hp kw kva amp amps ma phase phases ph single psi bar kpa sec secs second seconds min mins minute minutes " +
     "hr hrs hour hours ms zero one two three four five six seven eight nine ten eleven twelve fifteen twenty thirty forty fifty sixty ninety hundred half quarter");
   var VOCAB = {
@@ -37048,6 +37061,18 @@ Lantern.RFB = (function () {
     VOLT.lastIndex = 0;
     while ((m = VOLT.exec(s))) { var v = +m[1]; if (v >= 6 && v <= 600) all.push({ v: v, kind: m[2] ? m[2].toUpperCase() : "", at: m.index, end: m.index + m[0].length }); }
     if (!all.length) return null;
+    // (the sixth review) a transformer's two voltages, "240 V / 24 V", "480/120 V", "480 V to 120 V": which is the control's
+    // is not sure
+    // -- unless it is a control transformer's, whose control side is the lower ("480/120 V control transformer")
+    var PAIR_A = /^\s*(?:ac|dc)?\s*(?:\x2F|to|-|\u2013|:)\s*(\d{2,3})\b/i, PAIR_B = /(\d{2,3})\s*(?:v|volts?)?\s*(?:ac|dc)?\s*(?:\x2F|to|-|\u2013|:)\s*$/i;
+    var pr = all.filter(function (x) { return PAIR_A.test(s.slice(x.end, x.end + 12)) || PAIR_B.test(s.slice(Math.max(0, x.at - 14), x.at)); });
+    if (pr.length) {
+      if (pr.length !== 1 || all.length !== 1 || !/\bcontrol\s+transformer\b|\btransformer\b[^.?!]{0,20}\bcontrol\b/i.test(s)) return null;
+      var pa = PAIR_A.exec(s.slice(pr[0].end, pr[0].end + 12)), pb = PAIR_B.exec(s.slice(Math.max(0, pr[0].at - 14), pr[0].at)), other = +(pa ? pa[1] : pb[1]);
+      if (other <= pr[0].v) return null;   // the lower is written as a bare number: not sure
+      all = [pr[0]];
+      return pr[0].v > 240 ? null : "supply " + q2(pr[0].v + " V" + " " + (pr[0].kind || "AC"));
+    }
     var c = all.filter(function (x) { return CTRL_AFTER.test(s.slice(x.end, x.end + 30)) || CTRL_BEFORE.test(s.slice(Math.max(0, x.at - 40), x.at)); }), one = all.length === 1 ? all[0] : null;
     var pick = c.length === 1 ? c[0] : !c.length && one && one.v <= 48 ? one : null;
     if (!pick || pick.v > 240) return null;
@@ -37058,7 +37083,9 @@ Lantern.RFB = (function () {
   function estop(q) {
     if (/\b(?:e[\s-]?stops|emergency[\s-]+stops)\b|\b(?:e[\s-]?stop|emergency[\s-]+stop)\s+(?:(?:push[\s-]?)?buttons?\s+)?(?:at|on|in|by|from)\s+(?:each|both|every|either)\b/i.test(q)) return null;
     if (/\b(?:no|without|not?\s+(?:need|needed|required|want)\w*)\s+(?:an?\s+|any\s+)?(?:e[\s-]?stops?|emergency[\s-]+stops?)\b|\b(?:e[\s-]?stops?|emergency[\s-]+stops?)\s+(?:is\s+|are\s+)?not\s+(?:needed|required|wanted)\b/i.test(q)) return [];
-    return /\b(?:e[\s-]?stops?|emergency[\s-]+stops?|mushroom[\s-]+(?:head|button))\b/i.test(q) ? ["estop ES1"] : [];
+    // (the sixth review) "a mushroom head stop button" may be the stop itself: an e-stop only where it says so
+    if (/\bmushroom\b/i.test(q) && !/\b(?:e[\s-]?stops?|emergency)\b/i.test(q)) return null;
+    return /\b(?:e[\s-]?stops?|emergency[\s-]+stops?)\b/i.test(q) ? ["estop ES1"] : [];
   }
 
   // the lights the question asks for. Each light word is read with the words that name it (back to "with", "and a" or
@@ -37118,6 +37145,8 @@ Lantern.RFB = (function () {
     if (NOLIGHT.test(s)) return res;
     // (the fifth review) a lit push button is a light Lantern's givens do not draw
     if (/\b(?:illuminated|lighted|lit)\s+(?:(?:start|stop|push|reset)[\s-]*)*(?:buttons?|pushbuttons?|pbs?)\b/i.test(s)) { res.unsure = true; return res; }
+    // (the sixth review) "a light in the start button", "a button that lights up"; "lights a red light" (a verb)
+    if (/\b(?:lights?|lamps?)\s+(?:in|on|inside|behind)\s+(?:the\s+|each\s+|its\s+)?(?:[\w-]+\s+){0,2}(?:buttons?|pushbuttons?|pbs?)\b|\b(?:buttons?|pushbuttons?)\s+(?:that\s+)?(?:lights?\s+up|glows?|is\s+lit|with\s+(?:a\s+)?(?:built[\s-]in\s+)?(?:lights?|lamps?))\b|\blights?\s+(?:up\s+)?(?:an?|the)\s+/i.test(s)) { res.unsure = true; return res; }
     // "a green and a red light": two colours for one light word, which is which the asker's
     if (new RegExp("\\b(?:an?\\s+)?" + C_ + "\\s+(?:and|or|&)\\s+(?:an?\\s+)" + C_ + "\\s+(?:pilot\\s+|indicator\\s+)?(?:light|lamp)\\b", "i").test(s)) { res.unsure = true; return res; }
     LIGHTW.lastIndex = 0;
@@ -37185,6 +37214,16 @@ Lantern.RFB = (function () {
     if (!n && /\blocal\s+and\s+remote\s+(?:start[\s\x2F-]*(?:and\s+)?stop\s+|push[\s-]?button\s+|control\s+)?stations\b|\bremote\s+and\s+local\s+(?:start[\s\x2F-]*(?:and\s+)?stop\s+|push[\s-]?button\s+|control\s+)?stations\b|\bfrom\s+(?:a\s+)?local\s+and\s+(?:a\s+)?remote\s+(?:station|location)s?\b/.test(t)) n = 2;
     if (!n && /\b(?:start[\s\x2F-]*(?:and\s+)?stop\s+|push[\s-]?button\s+)?stations\s+(?:at|on)\s+(?:both|either|each)\s+ends?\b|\b(?:start[\s\x2F-]*(?:and\s+)?stop|stop[\s\x2F-]*(?:and\s+)?start)\s+(?:(?:push[\s-]?)?buttons?\s+|stations?\s+)?(?:at|from|on)\s+(?:both|either|each)\s+ends?\b/.test(t)) n = 2;
     if (n === -1) return null;
+    // (the sixth review) "an e-stop at two locations", "stop buttons at two places", "a run light at two locations", "the
+    // start at one": the count is not said of the start and stop
+    if (n && n > 1 && m) {
+      var pre = t.slice(0, m.index), cut = 0, cm2, CUT = /[,;]|\bwith\b|\band\s+(?=(?:a|an|the|one|two|three|four|\d)\b)/g;
+      while ((cm2 = CUT.exec(t)) && cm2.index < m.index) cut = cm2.index;
+      var win = pre.slice(cut) + m[0];
+      if (/e[\s-]?stops?|emergency|lights?|lamps?|indicators?|pilots?|horns?|alarms?/.test(win)) return null;
+      if (/\bstart(?:s|ed|ing)?\b/.test(win) !== /\bstop(?:s|ped|ping)?\b/.test(win)) return null;
+      if (/\b(?:at|from|in)\s+(?:only\s+)?one\b|\bone\s+(?:location|place|station|end|panel)\b|\bonly\s+(?:from|at)\b/.test(t)) return null;
+    }
     // (the fourth review) anything else said of where the buttons are, or how many: not sure
     var rest = n ? t.replace(m ? m[0] : "", " ") : t;
     var PLACEW = /\b(?:another|extra|additional|local|remote)\b|\bsecond\s+(?:station|location|place|set|panel|start|stop|push|button)|\b(?:at|from|on|by)\s+(?:each|both|either|every)\b|\b(?:each|both|either)\s+(?:end|ends|side|sides|location|place|station)\b|\b(?:and|plus)\s+one\s+(?:at|on|in|by)\b/;
@@ -37215,6 +37254,16 @@ Lantern.RFB = (function () {
       return (on && off && (h || l)) || (h && on) || (l && off);
     });
   }
+  // (the fifth and sixth reviews) a stop said any way but the buttons' own -- "one stop button stops both", "a horn ... and
+  // also when it stops", "a delay relay that stops it" -- is not the given's
+  function stopSaid(q) {
+    var rs = String(q).toLowerCase().replace(/\be[\s-]?stops?\b|\bemergency[\s-]+stops?\b/g, " ").replace(/\b(?:start|run)[\s\x2F&-]+(?:and\s+)?stop(?:[\s-]+(?:push[\s-]?)?buttons?|[\s-]+pbs?|[\s-]+stations?|[\s-]+controls?)?\b|\bstop[\s\x2F&-]+(?:and\s+)?start(?:[\s-]+(?:push[\s-]?)?buttons?|[\s-]+pbs?|[\s-]+stations?|[\s-]+controls?)?\b/g, " ");
+    rs = rs.replace(/\b(?:own|separate|individual)\s+stop(?:[\s-]+(?:push[\s-]?)?buttons?|[\s-]+pbs?)?\b|\bstop(?:[\s-]+(?:push[\s-]?)?buttons?|[\s-]+pbs?)\s+(?:for|on)\s+each\b/g, " ");
+    // "a start button and a stop button": a stop button that is not one for all ("one", "a common", "a master")
+    rs = rs.replace(/\b([a-z]+)\s+stop(?:[\s-]+(?:push[\s-]?)?buttons?|[\s-]+pbs?)\b/g, function (a, w) { return /^(?:one|single|common|master|main|shared|global)$/.test(w) ? a : " "; });
+    // (a light "when stopped" says a state, not a stop)
+    return /\bstop(?:s|ping)?\b|\bshut\w*|\bhalt\w*/.test(rs);
+  }
   function anyLight(q) { var r = read(q); return !r.unsure && r.lamps.length > 0; }
   function unsureLights(q) { return read(q).unsure; }
   function stationLines(n, c) {
@@ -37235,7 +37284,7 @@ Lantern.RFB = (function () {
     says: "a three-wire starter: the stop normally closed, the start held in by the coil\u2019s own contact, the overload after the coil",
     asks: both(/\b(?:start[\s\x2F-]+(?:and\s+)?(?:an?\s+)?stop|stop[\s\x2F-]+(?:and\s+)?(?:an?\s+)?start|three[\s-]wire|3[\s-]wire|holding\s+contact|seal[\s-]?in|motor\s+starter|magnetic\s+starter|direct[\s-]+on[\s-]+line|dol|across[\s-]+the[\s-]+line|(?:pump|fan|motor|conveyor|blower|compressor|mixer)\s+(?:starter|contactor))\b/i,
       function (q) { return askOnly(q) || !loadsIn(q).length && !/\b(?:starter|contactor)\b/i.test(q) || unknown(q, ["load", "start", "light"]).length > 0 || machines(q) > 1 || unsureLights(q) || LIGHTLOAD.test(q) || IECTAGS.test(q) || saysTime(q); }),
-    not: /\b(reverse|reversing|forward|two[\s-]speed|2[\s-]speed|dual[\s-]speed|multi[\s-]?speed|star[\s\x2F-]+delta|wye[\s\x2F-]+delta|y[\s\x2F-]+delta|jog\w*|inch\w*|sequence|sequential|after\s+(?:the\s+)?(?:first|M1)|timer|time[\s-]delay|delay(?:ed)?|alternat\w*|duplex|lift\s+station|pump\s+station|floats?|pressure\s+switch|plc|program\w*|smart\s+relay|two[\s-]wire|2[\s-]wire|thermostat\w*|toggle|maintained|hand[\s\x2F-]+off[\s\x2F-]+auto|h[\x2F-]o[\x2F-]a|hoa|vfds?|variable[\s-](?:frequency|speed)|frequency\s+drive|ac\s+drive|inverter|soft[\s-]?start\w*|auto[\s-]?transformer|reduced[\s-]voltage|part[\s-]winding|primary\s+resistor|lighting|heater|heating|solenoid|horn|buzzer|siren|warning)\b/i,
+    not: /\b(reverse|reversing|forward|two[\s-]speed|2[\s-]speed|dual[\s-]speed|multi[\s-]?speed|star[\s\x2F-]+delta|wye[\s\x2F-]+delta|y[\s\x2F-]+delta|jog\w*|inch\w*|sequence|sequential|after\s+(?:the\s+)?(?:first|M1)|timer|time[\s-]delay|delay(?:ed)?|alternat\w*|duplex|lift\s+station|pump\s+station|floats?|pressure\s+switch|plc|program\w*|smart\s+relay|two[\s-]wire|2[\s-]wire|thermostat\w*|toggle|maintained|hand[\s\x2F-]+off[\s\x2F-]+auto|h[\x2F-]o[\x2F-]a|hoa|vfds?|variable[\s-](?:frequency|speed)|frequency\s+drive|ac\s+drive|inverter|soft[\s-]?start\w*|auto[\s-]?transformer|reduced[\s-]voltage|part[\s-]winding|primary\s+resistor|lighting|heater|heating|solenoid|horn|buzzer|siren|warning|also\s+stops?|push[\s-]+on[\s,\x2F-]+push[\s-]+off|same\s+button|(?:one|single)\s+(?:push[\s-]?)?button)\b/i,
     block: function (q) {
       var c = "M1", lp = lights(q, c), st = stations(q), es = estop(q);
       if (!lp || !st || !es || /\b(?:no|without)\s+(?:a\s+|the\s+)?(?:holding|seal[\s-]?in|latch\w*)\b/i.test(q)) return null;
@@ -37248,7 +37297,7 @@ Lantern.RFB = (function () {
     asks: both(/\b(?:forward\s*(?:and|\x2F|&|-)?\s*reverse|reverse\s*(?:and|\x2F|&|-)\s*forward|reversing\s+(?:starter|contactor|motor|circuit|control)|fwd[\s\x2F-]+rev|run\s+(?:in\s+)?(?:both|either)\s+directions?)\b/i,
       function (q) { return askOnly(q) || unknown(q, ["load", "start", "light", "rev"]).length > 0 || machines(q) > 1 || unsureLights(q) || IECTAGS.test(q) || saysTime(q); }),
     // (the fifth review) push-button interlocks, an overload for each: more than the given has
-    not: /\b(plc|program\w*|drum\s+switch|single[\s-]phase\s+capacitor|jog\w*|inch\w*|two[\s-]speed|2[\s-]speed|vfds?|variable[\s-](?:frequency|speed)|frequency\s+drive|inverter|plugging|brak\w*|push[\s-]?buttons?\s+interlock\w*|buttons?\s+interlock\w*|(?:two|2|separate)\s+overloads?|overloads?\s+(?:for|on|in)\s+(?:each|both)|own\s+overloads?)\b/i,
+    not: /\b(plc|program\w*|drum\s+switch|single[\s-]phase\s+capacitor|jog\w*|inch\w*|two[\s-]speed|2[\s-]speed|vfds?|variable[\s-](?:frequency|speed)|frequency\s+drive|inverter|plugging|brak\w*|push[\s-]?buttons?\s+interlock\w*|buttons?\s+interlock\w*|mechanical\w*\s+interlock\w*\s+only|only\s+(?:an?\s+)?mechanical\w*|(?:two|2|separate)\s+overloads?|overloads?\s+(?:for|on|in)\s+(?:each|both)|own\s+overloads?)\b/i,
     block: function (q) {
       // a light for each direction, where the question asks for lights; a stopped light, or one light, is not sure
       var r = read(q), lamps = [], es = estop(q);
@@ -37310,7 +37359,7 @@ Lantern.RFB = (function () {
         // (the third review) "must not start while/when the other runs" asks for the two never together; "until it has
         // stopped", for one after the other has stopped: neither is a sequence start
         if (/\b(?:not|never|cannot|can[\x27\u2019]?t|won[\x27\u2019]?t|mustn[\x27\u2019]?t|shouldn[\x27\u2019]?t)\b/.test(seg) && /\b(?:while|when|whenever|if)\b/.test(seg)) return null;
-        if (/\b(?:until|after|once)\b/.test(seg) && /\b(?:stop\w*|off|shut\w*|finish\w*)\b/.test(rest)) return null;
+        if (/\b(?:until|after|once|when|while|unless|whenever|if)\b/.test(seg) && /\b(?:stop\w*|off|idle|shut\w*|finish\w*|down|de-?energi[sz]ed|not\s+(?:running|on|started)|isn[\x27\u2019]?t|is\s+not)\b/.test(rest)) return null;
         if (/\b(?:after|once|when|while|unless|until)\b/.test(seg)) return [Y.nm, X.nm];
         if (/\bbefore\b/.test(seg)) return /\b(?:not|never|cannot|can[\x27\u2019]?t|won[\x27\u2019]?t|mustn[\x27\u2019]?t|shouldn[\x27\u2019]?t)\b/.test(seg.split(/\bbefore\b/)[0]) ? [Y.nm, X.nm] : [X.nm, Y.nm];
         if (/\b(?:then|first)\b/.test(seg)) return [X.nm, Y.nm];
@@ -37339,9 +37388,11 @@ Lantern.RFB = (function () {
       if (!nm || !es || stations(q) !== 1 || /\b(?:one|single|a\s+common)\s+start\b|\bstop\w*\s+(?:\w+\s+){0,3}(?:after|before|until|in\s+(?:sequence|order|reverse))\b|\b(?:last|downstream|upstream|discharge|reverse\s+order|backwards?)\b/i.test(q)) return null;
       // (the fifth review) a stop asked for any way but each machine's own start and stop -- "one stop button stops both", "a
       // common stop", "when conveyor 2 stops, conveyor 1 stops too" -- is not the given's
-      var rs = String(q).toLowerCase().replace(/\be[\s-]?stops?\b|\bemergency[\s-]+stops?\b/g, " ").replace(/\b(?:start|run)[\s\x2F&-]+(?:and\s+)?stop(?:[\s-]+(?:push[\s-]?)?buttons?|[\s-]+pbs?|[\s-]+stations?|[\s-]+controls?)?\b|\bstop[\s\x2F&-]+(?:and\s+)?start(?:[\s-]+(?:push[\s-]?)?buttons?|[\s-]+pbs?|[\s-]+stations?|[\s-]+controls?)?\b/g, " ");
-      rs = rs.replace(/\b(?:own|separate|individual)\s+stop(?:[\s-]+(?:push[\s-]?)?buttons?|[\s-]+pbs?)?\b|\bstop(?:[\s-]+(?:push[\s-]?)?buttons?|[\s-]+pbs?)\s+(?:for|on)\s+each\b/g, " ");
-      if (/\bstop\w*|\bshut\w*|\bhalt\w*/.test(rs)) return null;
+      if (stopSaid(q)) return null;
+      // (the sixth review) "the fan starts first and then the pump", "M1 starts first, then M2", "starts once conveyor 1
+      // is running": whether the later one starts by itself or by its button is not said -- only a start allowed (can,
+      // only, must, not), or a sequence or interlock asked by name, is the given's
+      if (!/\b(?:can|cannot|can[\x27\u2019]?t|only|must|mustn[\x27\u2019]?t|not|never|won[\x27\u2019]?t|allowed|able|permit\w*|interlock\w*|sequen\w*|in\s+order)\b/i.test(q)) return null;
       var ls = sup(q).concat(es);
       for (i = 1; i <= n; i++) ls.push("stop PB" + i + " M" + i + " " + q2(nm[i - 1] + " stop"));
       for (i = 1; i <= n; i++) ls.push("start PB" + (n + i) + " M" + i + " " + q2(nm[i - 1] + " start"));
@@ -37359,7 +37410,7 @@ Lantern.RFB = (function () {
   // (the second review) a time as the question says it: "5 s", "five seconds", "half a minute", "1 hour"; "a second" is
   // the ordinal, never a time
   var NUMW = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, ninety: 90 };
-  var DN = "half\\s+(?:a|an)|\\d+(?:\\.\\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|ninety", DU = "s|secs?|seconds?|min|mins|minutes?|h|hrs?|hours?";
+  var DN = "half\\s+(?:a|an)|\\d+(?:\\.\\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|ninety", DU = "s|secs?|seconds?|min|mins|minutes?|h(?![.\\s]*p\\b)|hrs?|hours?";
   var DURS = new RegExp("\\b(" + DN + ")\\s*-?\\s*(" + DU + ")\\b", "gi");
   function dur(nw, unit) {
     var u = /^h/i.test(unit) ? "h" : /^m/i.test(unit) ? "min" : "s", w = String(nw).toLowerCase().replace(/\s+/g, " ");
@@ -37383,7 +37434,8 @@ Lantern.RFB = (function () {
     if (/\b\d+(?:\.\d+)?\s*(?:-|\u2013|to|or)\s*\d+(?:\.\d+)?\s*(?:s|secs?|seconds?|min|mins|minutes?|h|hrs?|hours?)\b|\bbetween\s+\S+\s+and\s+\S+\s+(?:s|secs?|seconds?|min|mins|minutes?|h|hrs?|hours?)\b/.test(s)) return null;
     DURS.lastIndex = 0;
     while ((m = DURS.exec(s))) { var d = dur(m[1], m[2]); if (d && all.indexOf(d) < 0) all.push(d); }
-    if (!all.length) return "10 s";
+    // (the sixth review) no time said: none of Lantern's own (CLAUDE.md: never invent a time)
+    if (!all.length) return null;
     if (all.length === 1) return all[0];
     return null;   // (the third review) two times -- a horn's and the start's -- the given's one timer cannot be both
     m = new RegExp("\\b(?:starts?|runs?|start-?up)\\b[^.?!]{0,30}?\\b(" + DN + ")\\s*-?\\s*(" + DU + ")\\s+(?:after|later)\\b", "i").exec(s) || new RegExp("\\bstarts?\\s+(?:up\\s+)?after\\s+(?:a\\s+(?:delay\\s+of\\s+)?)?(" + DN + ")\\s*-?\\s*(" + DU + ")\\b", "i").exec(s);
@@ -37392,8 +37444,8 @@ Lantern.RFB = (function () {
   G.add({ id: "control-delayed-start", kind: "CONTROL", rank: 2,
     title: function () { return "Delayed start"; },
     says: "a delayed start: the run relay starts the timer, the motor starts when it has timed out, and the overload drops the run relay too",
-    asks: both(/\b(?:time[\s-]delay(?:ed)?\s+(?:start|relay|motor)|delay(?:ed)?\s+start|start[\s-]+delay|start[^.?!]{0,30}\bafter\s+(?:a\s+)?(?:\d+\s*(?:s|sec|seconds?|min|minutes?)|delay|time)|(?:horn|buzzer|siren|bell)\b[^.?!]{0,50}\bthen\b[^.?!]{0,30}\bstart\w*|starts?\s+(?:\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|forty|fifty|sixty|ninety|half\s+a)\s*-?\s*(?:s|sec|secs|seconds?|min|mins|minutes?|h|hours?)\s+after|start\w*\s+after\s+a\s+delay|on[\s-]delay\s+timer|pre[\s-]?start\s+(?:warning|alarm|horn)|(?:warning|horn|buzzer|siren|bell|beacon)\b[^.?!]{0,50}\bbefore\b[^.?!]{0,30}\bstart\w*)\b/i,
-      function (q) { return askOnly(q) || !loadsIn(q).length || !delayOf(q) || unknown(q, ["load", "start", "light", "delay"]).length > 0 || machines(q) > 1 || IECTAGS.test(q); }),
+    asks: both(/\b(?:time[\s-]delay(?:ed)?\s+(?:start|motor)|delay(?:ed)?\s+start|start[\s-]+delay|start[^.?!]{0,30}\bafter\s+(?:a\s+)?(?:\d+\s*(?:s|sec|seconds?|min|minutes?)|delay|time)|(?:horn|buzzer|siren|bell)\b[^.?!]{0,50}\bthen\b[^.?!]{0,30}\bstart\w*|starts?\s+(?:\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|forty|fifty|sixty|ninety|half\s+a)\s*-?\s*(?:s|sec|secs|seconds?|min|mins|minutes?|h|hours?)\s+after|start\w*\s+after\s+a\s+delay|pre[\s-]?start\s+(?:warning|alarm|horn)|waits?\s+(?:for\s+)?(?:\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|forty|fifty|sixty|half\s+a)\s*-?\s*(?:s|sec|secs|seconds?|min|mins|minutes?)\b[^.?!]{0,20}\bthen\b[^.?!]{0,30}\b(?:runs|starts)|(?:warning|horn|buzzer|siren|bell|beacon)\b[^.?!]{0,50}\bbefore\b[^.?!]{0,30}\bstart\w*)\b/i,
+      function (q) { return askOnly(q) || !loadsIn(q).length || !delayOf(q) || unknown(q, ["load", "start", "light", "delay"]).length > 0 || machines(q) > 1 || IECTAGS.test(q) || stopSaid(q) || /\bpower\b|\bcomes?\s+(?:back\s+)?on\b|\brestor\w*/i.test(q); }),
     not: /\b(plc|program\w*|reverse|reversing|star[\s\x2F-]+delta|wye[\s\x2F-]+delta|y[\s\x2F-]+delta|off[\s-]?delay|keeps?\s+(?:on\s+)?running|runs?\s+on|run[\s-]on|continues?\s+(?:to\s+)?run\w*|released|shuts?\s+(?:off|down)|turns?\s+off|stops?\s+(?:\w+\s+){0,3}after|floats?|pressure\s+switch|thermostat\w*|limit\s+switch|(?:motor|pump|fan|conveyor|m)\s*(?:2|two|b)\b|second\s+(?:motor|pump|fan|conveyor)|two\s+(?:motors|pumps|fans|conveyors)|lights?\s+(?:comes?|turns?)\s+on|again|re-?start\w*|after\s+(?:it|the\s+[\w-]+)\s+(?:stops|has\s+stopped|is\s+stopped|shuts?\s+(?:off|down)))\b/i,
     block: function (q) {
       var t = delayOf(q), l = load(q);
@@ -37472,10 +37524,14 @@ Lantern.RFB = (function () {
       // (the fifth review) a horn or a buzzer asked for not as the high water alarm: which float sounds it is the asker's
       if (/\b(?:horn|buzzer|siren|bell|beacon|strobe)\b/i.test(q) && !/\balarm\w*\b/i.test(q)) return null;
       if (/\balarm\w*\b/i.test(q)) {
+        // (the sixth review) a light asked beside the alarm that says no state of its own: the alarm's or the pump's, not sure
+        if (read(q).lamps.some(function (x) { return x.plain; })) return null;
         // (the fourth review) the alarm only where it is for high water: an overload's alarm light, a horn while it runs, are not
         if (!/\bhigh[\s-]+(?:water|level)\s+alarm\b|\balarm\b[^.?!]{0,30}\b(?:for|when|on|at)\s+(?:the\s+)?(?:high\s+(?:water|level)|water\s+(?:gets|is|rises)\s+high)\b/i.test(q)) return null;
         ls.push("float FS2 " + q2("high level alarm"));
-        ls.push(/\b(horn|buzzer|siren|bell)\b/i.test(q) ? "horn AH1 FS2 " + q2("high water") : "lamp LT" + (ls.filter(function (l) { return /^lamp/.test(l); }).length + 1) + " FS2 " + q2("high water") + " red");
+        var hn = /\b(horn|buzzer|siren|bell)\b/i.test(q), al = /\b(?:alarm|high[\s-]+(?:water|level))\s+(?:alarm\s+)?(?:light|lamp|indicator)\b/i.test(q);
+        if (!hn || al) ls.push("lamp LT" + (ls.filter(function (l) { return /^lamp/.test(l); }).length + 1) + " FS2 " + q2("high water") + " red");
+        if (hn) ls.push("horn AH1 FS2 " + q2("high water"));
       }
       return ls;
     } });
@@ -37517,7 +37573,8 @@ Lantern.RFB = (function () {
   var PLACE_IEC = new RegExp("\\b(?:in|for|to|from|across|throughout|within|of|at)\\s+(?:the\\s+)?(?:" +
     "europe|eu|uk|u\\.k\\.|united\\s+kingdom|britain|great\\s+britain|england|scotland|wales|ireland|germany|france|spain|italy|netherlands|belgium|austria|switzerland|" +
     "sweden|norway|denmark|finland|poland|portugal|australia|new\\s+zealand|india|south\\s+africa|china|japan|singapore|malaysia|brazil|argentina|chile|kenya|nigeria|south\\s+korea|korea|" +
-    "northern\\s+ireland|new\\s+south\\s+wales|queensland|south\\s+america|latin\\s+america)" + STREET + "|,\\s*(?:india|germany|france|australia|new\\s+zealand|south\\s+africa|ireland|uk|england|scotland|brazil|mexico|chile|argentina|spain|italy|china|japan)(?![a-z])|\\b(?:uk|u\\.k\\.)(?![a-z])", "i");
+    "ghana|uganda|tanzania|zambia|zimbabwe|pakistan|egypt|bangladesh|sri\\s+lanka|uae|united\\s+arab\\s+emirates|dubai|" +
+    "northern\\s+ireland|new\\s+south\\s+wales|queensland|south\\s+america|latin\\s+america)" + STREET + "|,\\s*(?:india|germany|france|australia|new\\s+zealand|south\\s+africa|ireland|uk|england|scotland|brazil|chile|argentina|spain|italy|china|japan|kenya|nigeria|south\\s+korea|korea|ghana|uganda|tanzania|pakistan|egypt|bangladesh|sri\\s+lanka|uae|dubai)(?![a-z])|\\b(?:uk|u\\.k\\.)(?![a-z])", "i");
   var NOUNS = "(?:standards?|codes?|practice|regulations?|rules|wiring|market|customers?|machines?|plants?|sites?|factor(?:y|ies)|installations?|requirements?|electricians?|mines?|farms?|houses?|homes?|buildings?|projects?|jobs?|shops?|mills?)";
   var ADJ_IEC = new RegExp("\\b(?:european|british|german|french|italian|spanish|dutch|australian|swedish|norwegian|danish|polish|irish|chinese|brazilian|latin\\s+american|south\\s+american|south\\s+african)\\s+(?:[\\w-]+\\s+)?" + NOUNS + "\\b|\\bindian\\s+" + NOUNS + "\\b", "i");
   var PLACE_US = new RegExp("\\b(?:united\\s+states|north\\s+america|america|american|canada|canadian|csa|alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new\\s+hampshire|new\\s+jersey|new\\s+mexico|new\\s+york|north\\s+carolina|north\\s+dakota|ohio|oklahoma|oregon|pennsylvania|rhode\\s+island|south\\s+carolina|south\\s+dakota|tennessee|texas|utah|vermont|virginia|washington|west\\s+virginia|wisconsin|wyoming|new\\s+england|tulsa|ontario|quebec|alberta)\\b", "i"),
@@ -37531,11 +37588,12 @@ Lantern.RFB = (function () {
     var caps = q.replace(/[^A-Za-z]/g, "").length > 12 && q === q.toUpperCase();
     var qu = q.replace(NOT_US, " ");
     // (the fifth review) a part's rating -- "a NEMA starter", "an IEC contactor", "NEMA 4X" -- says what was bought, not the
-    // code the machine is built to: it decides after the place, before the voltage
+    // code the machine is built to: it decides after the place and the voltage
     var PROD = /\b(?:nema|iec)(?:\s+(?:size\s+)?\d\w*)?(?=\s+(?:rated\s+|style\s+|type\s+)?(?:starters?|contactors?|relays?|overloads?|breakers?|motors?|enclosures?|devices?|components?|parts?|push[\s-]?buttons?|pilot|rated|rating)\b)|\bnema\s+(?:size\s+)?\d\w*/gi;
     var qp = q.replace(PROD, " "), prod = (q.match(PROD) || []).map(function (x) { return x.toLowerCase(); });
+    // (the sixth review) after the voltage too: "an IEC contactor, 480 V 60 Hz" is a North American panel
     var tiers = [[CODE_IEC.test(qp), CODE_US.test(qp)], [PLACE_IEC.test(q) || ADJ_IEC.test(q), PLACE_US.test(qu) || (!caps && PLACE_US2.test(qu))],
-      [prod.some(function (x) { return /^iec/.test(x); }), prod.some(function (x) { return /^nema/.test(x); })], [VOLT_IEC.test(q), VOLT_US.test(q)]];
+      [VOLT_IEC.test(q), VOLT_US.test(q)], [prod.some(function (x) { return /^iec/.test(x); }), prod.some(function (x) { return /^nema/.test(x); })]];
     // "redraw this NEC starter to IEC": the code it is to be drawn to
     var to = /\b(?:to|per|under|by|for)\s+(?:the\s+)?(iec|nec|nfpa)\b/i.exec(q);
     if (tiers[0][0] && tiers[0][1] && to) return /iec/i.test(to[1]) ? "IEC" : "US";
@@ -37629,7 +37687,7 @@ Lantern.RFB = (function () {
   var CUTW = /\bcut[\s-]?(?:out|off)s?\b|\bcutouts?\b|\bcutoffs?\b|\bshut[\s-]?(?:off|down)s?\b|\btrips?\b|\bsafety\b|\bprotect\w*/i, HLIMIT = /\b(?:high|hi|max|maximum)[\s-]?limit\b/i;
   // a machine the switch stops -- never an alarm, a fan, a valve, a timer, a call for heat
   var MACHINE = /\b(?:pumps?|compressors?|motors?|burners?|boilers?|heaters?|heating|elements?|furnaces?|kilns?|ovens?|starters?|conveyors?|mixers?|blowers?)\b|\brun\s+relay\b/i;
-  var NOT_MACHINE = /\b(?:alarms?|horns?|bells?|lights?|lamps?|fans?|cool\w*|exhaust|vent\w*|relief|dump|unload\w*|bypass|drain|purge|defrost|trace|frost|freez\w*|call|permit|timers?|delay|idle|trip|fault\w*|fail\w*|warn\w*|indicat\w*|status|monitor\w*)\b/i;
+  var NOT_MACHINE = /\b(?:alarms?|horns?|bells?|lights?|lamps?|fans?|cool\w*|exhaust|vent\w*|relief|dump|unload\w*|bypass|drain|purge|defrost|trace|frost|freez\w*|call|permit|timers?|delay|idle|trip|fault\w*|fail\w*|warn\w*|indicat\w*|status|monitor\w*|overloads?)\b/i;
   // (the fifth review) a switch whose name says it starts or calls a machine -- a standby pump on loss of pressure, a pool
   // pump's freeze protection, a lead or lag call -- is no cut-out, whatever else its name says
   var STARTS_W = /\b(?:start\w*|standby|stand[\s-]by|back[\s-]?up|freez\w*|frost|calls?|calling|lead|lag)\b/i;
@@ -37667,6 +37725,8 @@ Lantern.RFB = (function () {
   function way(it, q) {
     var lb = String(it.label || ""), hi = HIGHW.test(lb), lo = LOWW.test(lb);
     if (STARTS_W.test(lb)) return null;
+    // (the sixth review) a vacuum switch: "high" and "low" turn over as the vacuum deepens -- not sure which way it cuts out
+    if (it.role === "pressure" && /\bvac\w*|\bin\.?\s*hg\b|\bmm\s*hg\b|\btorr\b|\bnegative\b/i.test(lb + " " + q)) return null;
     // (the second review) a float: a cut-out only in so many words, and a high one only where the pump fills -- a sump's
     // "high level safety" float starts its pump
     if (it.role === "float") {
@@ -37736,7 +37796,7 @@ Lantern.RFB = (function () {
         var em = /\b(?:e[\s-]?stop|emergency)\b/i.test(nm);
         out.push({ back: name(it) + " is a" + (em ? "n emergency" : "") + " stop written as a normally open button: drawn beside " + other[0].id + ", it would start " + coils.join(" and ") + ", not stop it. A stop is normally closed, so pressing it or a broken wire stops the circuit" + (em ? ", and an emergency stop stops everything" : ""),
           line: em ? "estop " + it.id : "stop " + it.id + " " + coils.join(" ") + (it.label && !/^\s*stop\s*$/i.test(it.label) ? " \x22" + it.label + "\x22" : ""), refs: em ? REF.estop : REF.fail });
-      } else if ((it.role === "stop" || it.role === "overload") && !it.nc && it.refs.every(function (r) { return /^(?:M|K|CR|KM|MS|MC|C|R|TR|T)\d/i.test(r.id) && !/^(?:LT|PL|L|H|AH|HN|BZ)\d/i.test(r.id); }) && (c.rungs || []).every(function (r) { return !it.refs.some(function (x) { return x.id === r.out.id; }) || (it.role === "overload" ? machine(r.out, "high", c) : /^(?:coil|timer)$/.test(r.out.role)); }) && /^\s*\S+(?:\s+[A-Za-z]{1,4}\d{1,3}[A-Za-z]?)+\s+(?:no|n\.o\.?|normally[\s-]open|open)\s*$/i.test(parts(it.said || "").filter(function (x, k) { return !(k % 2); }).join(" "))) {
+      } else if ((it.role === "stop" || it.role === "overload") && !it.nc && !(it.role === "stop" && it.refs.some(function (x) { return !/^M\d/i.test(x.id) && (c.rungs || []).some(function (r) { return [].concat(r.series || [], r.stops || [], r.starts || []).some(function (e) { return e.kind === "contact" && e.nc && e.of === x.id; }); }); })) && it.refs.every(function (r) { return /^(?:M|K|CR|KM|MS|MC|C|R|TR|T)\d/i.test(r.id) && !/^(?:LT|PL|L|H|AH|HN|BZ)\d/i.test(r.id); }) && (c.rungs || []).every(function (r) { return !it.refs.some(function (x) { return x.id === r.out.id; }) || (it.role === "overload" ? machine(r.out, "high", c) : /^(?:coil|timer)$/.test(r.out.role)); }) && /^\s*\S+(?:\s+[A-Za-z]{1,4}\d{1,3}[A-Za-z]?)+\s+(?:no|n\.o\.?|normally[\s-]open|open)\s*$/i.test(parts(it.said || "").filter(function (x, k) { return !(k % 2); }).join(" "))) {
         out.push({ back: name(it) + " is " + (it.role === "stop" ? "a stop" : "an overload contact") + " written normally open: drawn so, " + (it.role === "stop" ? "the circuit runs only while it is held" : "the motor runs only with the overload tripped") + ". It is normally closed, so " + (it.role === "stop" ? "pressing it" : "a trip") + " or a broken wire stops the circuit",
           line: withoutNo(it.said || ""), refs: it.role === "stop" ? REF.fail : REF.overload });
       }

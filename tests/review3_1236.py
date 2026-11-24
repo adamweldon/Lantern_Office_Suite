@@ -14,6 +14,9 @@ import os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "review3_1236")
 KEEP = {
+    "g-sq-then": "\u201cconveyor 1 starts first, then conveyor 2\u201d does not say whether conveyor 2 starts by itself or by its own button: no given (the sixth review's M7; only a start allowed -- can, only, must, not -- or a sequence or interlock asked by name is the given's).",
+    "u-same-reworded": "a kept circuit is now shown only for the same question, its words in the same order (the asking words -- draw, please, again -- aside): the sixth review found it shown, on most words alike, for the opposite light, the reversed order, \u201cwithout a horn\u201d, swapped floats and a refrigeration compressor (rule 7: when unsure, the instructions as before).",
+    "u-same-other-order": "a kept circuit is now shown only for the same question, its words in the same order (the asking words -- draw, please, again -- aside): the sixth review found it shown, on most words alike, for the opposite light, the reversed order, \u201cwithout a horn\u201d, swapped floats and a refrigeration compressor (rule 7: when unsure, the instructions as before).",
     "g-st-415-motor": "a question with a 415 V motor and a 24 V DC control read as two control-side voltages: no supply line in the given (left out, not wrong); the model writes the one asked.",
     "g-rv-interlocking-parts": "AI_PARTS cuts \u201ca forward and reverse motor control circuit with interlocking\u201d into a drawing and a control circuit, as on 1.24.35: not this change's, in the queue.",
     "c-ok-trip-lamp-ol-line": "\u201coverload OL1 LT2 no\u201d (a trip light on the overload's open contact) is drawn with OL1 closed, as 1.24.35 drew it; Lantern no longer questions it or hands a wrong line back. Drawing an overload's open contact for a trip light is in the queue.",

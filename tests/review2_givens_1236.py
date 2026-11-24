@@ -13,6 +13,8 @@ import os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "givens_review2_1236")
 KEEP = {
+    "F-dl-15": "a pre-start horn with no time said gets no given: the given's timer would carry a time Lantern made up, copied as a setting (the sixth review; CLAUDE.md: never invent a time).",
+    "U-04": "a kept circuit is now shown only for the same question, its words in the same order (the asking words -- draw, please, again -- aside): the sixth review found it shown, on most words alike, for the opposite light, the reversed order, \u201cwithout a horn\u201d, swapped floats and a refrigeration compressor (rule 7: when unsure, the instructions as before).",
     "R-16": "a fill with its start float written normally open and its stop float nc is now sent back once with the start float's nc line (the fourth review's rp-fill2-mixed: as drawn the pump runs only between the floats and never starts on an empty tank). The case guarded the rule as first drafted.",
     "F-fl-07": "AI_PARTS cuts \u201c... with a float, 24 V DC control, and a pump running light\u201d into two parts and the given is fitted to the first (no supply, no light); fitted to the whole question it has both. The cut is AI_PARTS\" (older): in the queue.",
     "F-sp-13": "the same AI_PARTS cut for a sump pump with 24 V control and a running light: in the queue.",

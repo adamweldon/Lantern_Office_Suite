@@ -13,6 +13,7 @@ import os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "review4_1236")
 KEEP = {
+    "us-duplex-sewage": "a kept circuit is now shown only for the same question, its words in the same order (the asking words -- draw, please, again -- aside): the sixth review found it shown, on most words alike, for the opposite light, the reversed order, \u201cwithout a horn\u201d, swapped floats and a refrigeration compressor (rule 7: when unsure, the instructions as before).",
     "rp-fill2-no-floats": "the same two nc lines go back, now one problem a float, each with its own \u201cWrite it:\u201d line (the third review's copy test: a line handed back is one line, and copied in place of the float's line it builds clean); the case matched both lines joined in one problem, as first drafted.",
     "rp-fill2-no-said-no": "the same two nc lines go back, now one problem a float, each with its own \u201cWrite it:\u201d line (the third review's copy test: a line handed back is one line, and copied in place of the float's line it builds clean); the case matched both lines joined in one problem, as first drafted.",
     "rp-fill2-unquoted": "the same two nc lines go back, now one problem a float, each with its own \u201cWrite it:\u201d line (the third review's copy test: a line handed back is one line, and copied in place of the float's line it builds clean); the case matched both lines joined in one problem, as first drafted.",
