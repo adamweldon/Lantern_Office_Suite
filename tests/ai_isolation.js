@@ -30,8 +30,8 @@ var MODS = ["PLANET_DATA", "AI_RECIPES", "AI_ENGINE", "AI_GUARD", "AI_CHECKS", "
   "AI_NO_BLOCK", "AI_NEED_GIVEN", "AI_READ", "AI_FIT", "AI_ACT_SENSE", "AI_UNITS", "AI_NO_FORMULA", "AI_NEED_RECIPE", "CHAT_LESSON_SHOWN", "AI_SCHEMATIC_TOTAL", "AI_PUZZLE_ASK",
   // 1.24.7
   "AI_SCENE",
-  // 1.24.36: the givens
-  "GIVENS", "GIVENS_CONTROL"];
+  // 1.24.36: the givens and the code checks
+  "GIVENS", "GIVENS_CONTROL", "CODE_CHECKS", "CODE_CHECKS_CONTROL"];
 function without(src, name) {
   var a = src.indexOf("// MODULE: " + name + " - START"), b = src.indexOf("// MODULE: " + name + " - END");
   if (a < 0 || b < 0) throw new Error("missing " + name);

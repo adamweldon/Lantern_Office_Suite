@@ -12,8 +12,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "float_review_1235")
 OLDER = "as on 1.24.34, not this change's doing; in the queue."
 KEEP = {
-    "B-cutout-written-without-nc": "a high pressure cutout written without nc is drawn as written (closing as the pressure rises): " + OLDER +
-                                   " Sending it back once with its nc line is a rule of its own, to be reviewed (a low pressure cutout is normally open).",
+    "B-cutout-written-without-nc": "a high pressure cutout written without nc is sent back once with its nc line (1.24.36's code checks, "
+                                   "tests/code_checks_1236.js): Lantern asks, by rule 3 and rule 8, where the case wants it drawn normally "
+                                   "closed without asking.",
     "B-thermostat-heater-written-without-nc": "the same for a heater's thermostat written without nc: " + OLDER,
     "C-s-lead-pump-on": "a switch tagged S named “Lead Pump On” is not read as a float (a selector's position may be named so): " + OLDER,
     "E-station-floats-low-shorthand": "MAKE STATION's “floats low ...” shorthand drops the low float without a word: " + OLDER,

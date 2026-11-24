@@ -31362,6 +31362,9 @@ Lantern.RFB = (function () {
     if (res.open && res.plan) box.appendChild(el("div", { "class": "row", style: "margin-top:6px" }, [
       el("button", { "class": "primary", text: res.openLabel || "Open", onclick: function () { res.open(); } })].concat((res.extra || []).map(function (x) {
         return el("button", { text: x.label, title: x.title || x.label, onclick: function () { x.run(); } }); }))));
+    // (1.24.36) what other modules show under a made thing (Lantern.aiViewTools): the code it was checked to (CODE_CHECKS),
+    // keep it as the user's own given (GIVENS)
+    (window.Lantern.aiViewTools || []).slice().sort(function (a, b) { return (a.order || 0) - (b.order || 0); }).forEach(function (f) { var n = null; try { n = f(res); } catch (e) { n = null; } if (n) box.appendChild(n); });
     return box;
   }
   window.Lantern.aiAct = { find: find, relevant: relevant, prompt: prompt, build: build, rest: rest, fromReply: fromReply, inReply: inReply, replyCode: replyCode, replyCodeText: replyCodeText, solve: solve, view: view, lookText: lookText, LOOKS: LOOKS,
@@ -34723,6 +34726,11 @@ Lantern.RFB = (function () {
         c.problems = pr.problems.concat(["the question asks for an alternating relay, and this block has none: add the line alternator " + an + " " + st2[0] + " " + st2[1] + " -- Lantern then wires the floats, the call relays and the pumps itself"]);
       }
     }
+    // (1.24.36) the code checks (CODE_CHECKS_CONTROL): a rule broken goes back once, with the rule and the line, in the practice
+    // the question names or the user chose; what was kept is shown under the drawing, with where it stands in each code
+    var cc = null;
+    if (L.codeChecks && L.codeChecks.run) { try { cc = L.codeChecks.run("CONTROL", { items: pr.items, circuit: c, question: qq, block: block }); } catch (e) { cc = null; } }
+    if (cc && cc.back.length) c.problems = c.problems.concat(cc.back.filter(function (x) { return c.problems.indexOf(x) < 0; }));
     if (c.problems.length) return { problems: c.problems, plan: null };
     if (!L.ladderSym || !L.aiDraw || !L.aiDraw.result) return { problems: ["Lantern\u2019s ladder drawing parts are missing"], plan: null };
     var lay = layout(c, block.title), late = [];
@@ -34742,7 +34750,10 @@ Lantern.RFB = (function () {
     // wires for anything that reads the plan as a graph: each device joined to the rung's output
     c.rungs.forEach(function (r) { r.stops.concat.apply(r.stops.concat(r.starts, r.series, r.after), r.branches || []).forEach(function (e) { plan.wires.push([e.id, r.out.id]); }); });
     var summary = c.rungs.length + " rung" + (c.rungs.length === 1 ? "" : "s") + " between " + (/\bdc\b/i.test(c.supply || "") ? "+ and 0 V" : "L1 and L2") + "; wired by Lantern. " + c.steps.join(". ") + (said ? ". " + said : "");
-    return L.aiDraw.result(lay.shapes, plan, summary, block.title, late);
+    var res = L.aiDraw.result(lay.shapes, plan, summary, block.title, late);
+    if (res && cc) res.codes = cc;
+    if (res) res.question = qq;
+    return res;
   }
 
   // what the AI is told when the question is about a control circuit
@@ -34810,7 +34821,8 @@ Lantern.RFB = (function () {
     "END"]);
   // (1.24.36) a question that fits one of Lantern's givens (GIVENS_CONTROL: a three-wire starter, forward and reverse ...)
   // gets it, fitted to the question, in place of the example
-  function promptOf(q) { var base = isPumps(q) ? PROMPT_PUMPS : PROMPT, g = !isPumps(q) && L.givens && L.givens.prompt ? L.givens.prompt("CONTROL", q, base) : null; return g || base; }
+  // (a pump station's question is shown only a given the user kept: Lantern's own are for single circuits)
+  function promptOf(q) { var base = isPumps(q) ? PROMPT_PUMPS : PROMPT, g = L.givens && L.givens.prompt ? L.givens.prompt("CONTROL", q, base, isPumps(q) ? { user: true } : null) : null; return g || base; }
   var HINT_PUMPS = PROMPT_PUMPS.slice(1, PROMPT_PUMPS.indexOf("END"));
   window.Lantern.aiControl = { isControl: isControl, parse: parse, circuit: circuit, layout: layout, verify: verify, build: build, PROMPT: PROMPT, PROMPT_PUMPS: PROMPT_PUMPS, HINT: HINT, asks: asks, floatJob: floatJob, promptOf: promptOf, isPumps: isPumps };
 
@@ -36657,8 +36669,10 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // ===========================================================================
 // MODULE: GIVENS - START
-// Depends: (none) -- the domains' prompts ask it (AI_CONTROL's promptOf), feature-detected
-// Exports: Lantern.givens = {add(given) -> given or null, all(kind), match(kind, question), prompt(kind, question, base)}
+// Depends: (none) -- the domains' prompts ask it (AI_CONTROL's promptOf), AI_ACTIONS' view shows its button, both
+//          feature-detected
+// Exports: Lantern.givens = {add(given) -> given or null, all(kind), match(kind, question, opts), prompt(kind, question,
+//          base, opts), keep(made, question) -> the user's given or null, forget(id), mine(), words(text)}
 // ===========================================================================
 // Givens (1.24.36, Adam, 2026-11-24): "Lantern should contain givens for any typical, well known process assemblies
 // (electrical, hydraulic, pneumatic, mechanical etc.) in a way that makes the AI's answer being correct the path of
@@ -36684,16 +36698,17 @@ Lantern.RFB = (function () {
   function isTest(x) { return !!x && typeof x.test === "function"; }
   function add(g) { if (g && g.id && g.kind && isTest(g.asks) && (!g.not || isTest(g.not)) && typeof g.block === "function") { ALL = ALL.filter(function (x) { return x.id !== g.id; }); ALL.push(g); return g; } return null; }
   function all(kind) { return ALL.filter(function (g) { return !kind || g.kind === kind; }); }
-  function match(kind, q) {
+  // match(kind, question, opts) -> the given that fits best; opts.user: only the user's own
+  function match(kind, q, opts) {
     q = String(q || "");
-    var fit = ALL.filter(function (g) { try { return g.kind === kind && g.asks.test(q) && !(g.not && g.not.test(q)); } catch (e) { return false; } });
+    var fit = ALL.filter(function (g) { try { return g.kind === kind && (!opts || !opts.user || g.user) && g.asks.test(q) && !(g.not && g.not.test(q)); } catch (e) { return false; } });
     fit.sort(function (a, b) { return (b.rank || 0) - (a.rank || 0); });
     return fit[0] || null;
   }
   // prompt(kind, question, base): the base instructions with their example ("... For example:" and the block after it)
   // replaced by the given fitted to the question; null when no given fits
-  function prompt(kind, q, base) {
-    var g = match(kind, q);
+  function prompt(kind, q, base, opts) {
+    var g = match(kind, q, opts);
     if (!g || !base || !base.length) return null;
     var lines;
     try { lines = g.block(String(q || "")); } catch (e) { lines = null; }
@@ -36704,10 +36719,80 @@ Lantern.RFB = (function () {
     var head = base.slice(0, at + 1).map(function (l, i) { return i === at ? l.replace(/\s*For example:\s*$/, "") : l; }).filter(function (l) { return l !== ""; });
     var title;
     try { title = typeof g.title === "function" ? g.title(q) : g.title; } catch (e) { title = ""; }
-    return head.concat(["Lantern\u2019s tested circuit for this" + (g.says ? " (" + g.says + ")" : "") + ": write it as it stands, changing only what the question asks:",
+    return head.concat([(g.head || "Lantern\u2019s tested circuit for this") + (g.says ? " (" + g.says + ")" : "") + ": write it as it stands, changing only what the question asks:",
       "MAKE " + kind + ": " + title]).concat(lines, ["END"]);
   }
-  L.givens = { add: add, all: all, match: match, prompt: prompt };
+  // The user's own givens (rule 8: "a custom version that passes them can be kept as the user's own given"). Under a
+  // control circuit Lantern made with nothing questioned and its code checks kept, "Keep as my given" keeps the block as
+  // the AI wrote it, with the question's words. A later question with most of those words (or the block's title) is
+  // shown it, as the user's own, above Lantern's own givens; the AI's copy is checked again like any other. Kept in
+  // Lantern.store ("givens.user", up to 50), loaded at start; "Forget it" takes one out.
+  var STOP = ("a an the and or of for to in on with without from by at as is are be this that it its my our your me i we you us " +
+    "draw drawn make made show create build design sketch give need want please can could would should how what which " +
+    "circuit circuits control controls diagram diagrams drawing drawings ladder schematic schematics wiring wire wired again same one").split(" ");
+  function words(q) {
+    var out = [];
+    (String(q || "").toLowerCase().match(/[a-z0-9][a-z0-9-]*/g) || []).forEach(function (w) { if (w.length > 1 && STOP.indexOf(w) < 0 && out.indexOf(w) < 0) out.push(w); });
+    return out;
+  }
+  var KINDS = { CONTROL: 1, "CONTROL CIRCUIT": 1, "MOTOR CONTROL": 1, "RELAY LOGIC": 1, "RELAY CIRCUIT": 1, "LADDER DIAGRAM": 1, STARTER: 1 };
+  function userGiven(u) {
+    var tw = words(u.title);
+    return { id: u.id, kind: u.kind, title: u.title, rank: 10, user: true, kept: u, head: "Your own kept circuit for this",
+      says: "kept " + String(u.at || "").slice(0, 10) + (u.practice ? ", checked to " + (u.practice === "IEC" ? "IEC" : "US") + " practice" : ""),
+      asks: { test: function (q) {
+        var w = words(q), hits = u.words.filter(function (x) { return w.indexOf(x) >= 0; }).length;
+        return (tw.length >= 2 && tw.every(function (x) { return w.indexOf(x) >= 0; })) || (u.words.length >= 2 && hits >= Math.max(2, Math.ceil(u.words.length * 2 / 3)));
+      } },
+      block: function () { return u.lines.slice(); } };
+  }
+  function stored() { var a = []; try { a = L.store && L.store.get ? L.store.get("givens.user", []) : []; } catch (e) { a = []; } return Array.isArray(a) ? a : []; }
+  function save(a) { try { if (L.store && L.store.set) L.store.set("givens.user", a.slice(-50)); } catch (e) { } }
+  function mine() { return ALL.filter(function (g) { return g.user; }); }
+  // keep(made, question) -> the user's given, or null when the made thing is not a control circuit made clean and checked
+  function keep(made, q) {
+    var b = made && made.block, k = b ? String(b.kind || "").toUpperCase().replace(/\s+/g, " ") : "";
+    if (!made || !made.ok || !made.plan || made.plan.mode !== "control" || !KINDS[k] || !made.codes || (made.codes.back || []).length) return null;
+    var lines = (b.lines || []).map(function (l) { return String(l); }).filter(function (l) { return /\S/.test(l) && !/^\s*END\s*$/i.test(l); });
+    if (!lines.length || lines.length > 40 || lines.some(function (l) { return l.length > 200; })) return null;
+    var u = { id: "user-" + Date.now().toString(36), kind: "CONTROL", title: String(b.title || "My circuit").slice(0, 80), words: words(q || b.title).slice(0, 16), lines: lines,
+      question: String(q || "").slice(0, 300), at: new Date().toISOString(), practice: made.codes.practice || "" };
+    var a = stored().filter(function (x) { return !(x.lines && x.lines.join("\n") === lines.join("\n")); });
+    a.push(u); save(a);
+    ALL = ALL.filter(function (x) { return !(x.user && x.kept && x.kept.lines.join("\n") === lines.join("\n")); });
+    return add(userGiven(u));
+  }
+  function forget(id) {
+    save(stored().filter(function (x) { return x.id !== id; }));
+    var n = ALL.length;
+    ALL = ALL.filter(function (x) { return x.id !== id; });
+    return ALL.length < n;
+  }
+  stored().forEach(function (u) { if (u && u.id && u.kind && Array.isArray(u.lines) && u.lines.length && Array.isArray(u.words)) add(userGiven(u)); });
+  // under a control circuit made clean and checked: keep it as the user's own given, or forget it
+  function view(made) {
+    if (!L.el || !made || !made.ok || !made.plan || made.plan.mode !== "control" || !made.block || !made.codes || (made.codes.back || []).length) return null;
+    var el = L.el, box = el("div", { "class": "muted la-keep", style: "margin-top:4px;font-size:0.92em" }), lines = (made.block.lines || []).join("\n");
+    var have = mine().filter(function (g) { return g.kept.lines.join("\n") === lines; })[0] || null;
+    function draw() {
+      while (box.firstChild) box.removeChild(box.firstChild);
+      if (have) {
+        box.appendChild(el("span", { text: "Kept as your own given: Lantern shows it to the AI as the starting point for questions like this one. " }));
+        var f = el("button", { text: "Forget it", title: "Lantern stops showing this circuit to the AI" });
+        f.onclick = function () { forget(have.id); have = null; draw(); };
+        box.appendChild(f);
+      } else {
+        var k = el("button", { text: "Keep as my given", title: "Lantern shows this circuit to the AI as the starting point when you ask for one like it again" });
+        k.onclick = function () { have = keep(made, made.question || ""); draw(); };
+        box.appendChild(k);
+      }
+    }
+    draw();
+    return box;
+  }
+  view.order = 20;
+  L.givens = { add: add, all: all, match: match, prompt: prompt, keep: keep, forget: forget, mine: mine, words: words };
+  L.aiViewTools = (L.aiViewTools || []).concat([view]);
 })();
 // ===========================================================================
 // MODULE: GIVENS - END
@@ -37010,6 +37095,207 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: GIVENS_CONTROL - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: CODE_CHECKS - START
+// Depends: (none) -- AI_CONTROL's build and AI_ACTIONS' view ask it, feature-detected
+// Exports: Lantern.codeChecks = {PRACTICES, pick(question), saved(), choose(id), add(check), all(kind), run(kind, ctx) ->
+//          {practice, back: [lines for the model], checked: [...]}, line(result, practice), view(made) -> element|null}
+// ===========================================================================
+// Code checks (1.24.36). Adam, 2026-11-24: "There should be a way for the AI to make modifications that do apply in a
+// way where the AI and user can work to make custom changes as long as they are code approved." And on which code:
+// "Since both are often accepted there should be a reference to both that the user can see presented and choose which
+// code section to follow as applicable. This could be a choice Lantern presents to the AI and the user in whichever way
+// would provide the most likely correct path being followed."
+// A check reads what the AI wrote and returns, for each thing it finds,
+//   {back: why, line: the line to write, refs}  -- a rule broken: back once, with the rule and the line (rule 3)
+//   {ok: what, refs}                            -- a rule kept: shown to the user as checked
+// with refs {US: ..., IEC: ...}, where the rule stands in each code. Lantern follows one practice at a time: the one the
+// question names (IEC, 400 V, 50 Hz, a country that follows IEC; NEC, NFPA, 120 V, 60 Hz), else the one the user chose,
+// else US. The AI is told only that one -- in the line that goes back -- so a small model is never handed two sets of
+// rules; under a made drawing the user sees what was checked and where it stands, and can switch to the other code.
+// A reference names a section only where it was read on a page (CHANGELOG 1.24.36 lists the pages); otherwise it names
+// the standard and the subject.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var PRACTICES = { US: { id: "US", name: "US practice", codes: "NEC and NFPA 79" }, IEC: { id: "IEC", name: "IEC practice", codes: "IEC 60204-1" } };
+  // what a question says of where it is
+  var SAYS_IEC = /\b(?:iec|60204|iso\s*13849|bs\s*7671|vde|din\s+en|as\x2Fnzs|50\s*hz|400\s*v(?:olts?|ac)?|415\s*v|380\s*v|230\s*\x2F\s*400\s*v?)\b|\b(?:europe|european\s+union|eu|uk|united\s+kingdom|britain|england|scotland|wales|ireland|germany|france|spain|italy|netherlands|belgium|sweden|norway|denmark|poland|australia|new\s+zealand|india|south\s+africa)\b/i;
+  var SAYS_US = /\b(?:nec|nfpa(?:\s*(?:70|79))?|nema|ul\s*508a?|60\s*hz|120\s*v(?:olts?|ac)?|480\s*v|460\s*v|277\s*v|208\s*v|united\s+states|america|american|canada|canadian|csa)\b/i, SAYS_US2 = /\b(?:US|U\.S\.|USA|U\.S\.A\.)(?![a-z])/;
+  function saved() { var s = ""; try { s = L.store && L.store.get ? L.store.get("codes.practice", "") : ""; } catch (e) { s = ""; } return PRACTICES[s] ? s : ""; }
+  function choose(id) { if (!PRACTICES[id]) return false; try { if (L.store && L.store.set) L.store.set("codes.practice", id); } catch (e) { } return true; }
+  function pick(q) {
+    q = String(q || "");
+    var iec = SAYS_IEC.test(q), us = SAYS_US.test(q) || SAYS_US2.test(q);
+    if (iec && !us) return "IEC";
+    if (us && !iec) return "US";
+    return saved() || "US";
+  }
+  var CHECKS = [];
+  function add(c) { if (c && c.id && c.kind && typeof c.run === "function") { CHECKS = CHECKS.filter(function (x) { return x.id !== c.id; }); CHECKS.push(c); return c; } return null; }
+  function all(kind) { return CHECKS.filter(function (c) { return !kind || c.kind === kind; }); }
+  function ref(r, p) { return r && r.refs ? r.refs[p] || r.refs.US || "" : ""; }
+  // run(kind, ctx) -> what goes back to the model (in the practice followed) and what was checked
+  function run(kind, ctx) {
+    ctx = ctx || {};
+    var p = PRACTICES[ctx.practice] ? ctx.practice : pick(ctx.question), out = [];
+    all(kind).forEach(function (c) {
+      var rs = null;
+      try { rs = c.run(ctx, p); } catch (e) { rs = null; }
+      (rs || []).forEach(function (r) { if (r && (r.back || r.ok)) { r.check = c.id; out.push(r); } });
+    });
+    var back = out.filter(function (r) { return r.back; }).map(function (r) { return r.back + " (" + PRACTICES[p].name + ": " + ref(r, p) + ")" + (r.line ? ". Write it: " + r.line : ""); });
+    return { kind: kind, practice: p, back: back, checked: out };
+  }
+  // line(result, practice) -> "Checked to US practice: ..." -- what was kept, and where each rule stands in that code
+  function line(cc, p) {
+    p = PRACTICES[p] ? p : cc.practice;
+    var oks = (cc.checked || []).filter(function (r) { return r.ok; });
+    if (!oks.length) return "";
+    var by = [];
+    oks.forEach(function (r) { var k = ref(r, p), g = by.filter(function (x) { return x.k === k; })[0]; if (g) g.what.push(r.ok); else by.push({ k: k, what: [r.ok] }); });
+    return "Checked to " + PRACTICES[p].name + " (" + PRACTICES[p].codes + "): " + by.map(function (g) { return g.what.join(", ") + " \u2014 " + g.k; }).join("; ") + ".";
+  }
+  // under a made drawing: what it was checked to, and the other code a tap away (the choice kept for questions that
+  // name neither)
+  function view(made) {
+    var cc = made && made.codes;
+    if (!cc || !L.el || !line(cc, cc.practice)) return null;
+    var el = L.el, p = cc.practice, txt = el("span", { text: line(cc, p) + " " });
+    function other() { return p === "IEC" ? "US" : "IEC"; }
+    var btn = el("button", { text: "Use " + PRACTICES[other()].name, title: "See this checked to " + PRACTICES[other()].codes + ", and follow it for questions that name neither code" });
+    btn.onclick = function () { p = other(); choose(p); txt.textContent = line(cc, p) + " "; btn.textContent = "Use " + PRACTICES[other()].name; btn.title = "See this checked to " + PRACTICES[other()].codes + ", and follow it for questions that name neither code"; };
+    return el("div", { "class": "muted la-codes", style: "margin-top:6px;font-size:0.92em" }, [txt, btn]);
+  }
+  view.order = 10;
+  L.codeChecks = { PRACTICES: PRACTICES, pick: pick, saved: saved, choose: choose, add: add, all: all, run: run, line: line, view: view };
+  L.aiViewTools = (L.aiViewTools || []).concat([view]);
+})();
+// ===========================================================================
+// MODULE: CODE_CHECKS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: CODE_CHECKS_CONTROL - START
+// Depends: CODE_CHECKS (Lantern.codeChecks) -- feature-detected; reads what AI_CONTROL's parse and circuit give it
+// Exports: (none) -- adds the control circuits' code checks
+// ===========================================================================
+// The checks on a control circuit the AI wrote (1.24.36). What goes back once, with its line:
+//   - a high cut-out (a pressure, temperature or float switch named a high, over or max cut-out, cut-off, limit, trip,
+//     shut-off or safety; or one whose cut-out is above its cut-in; or an air compressor's or a well pump's pressure
+//     switch named for its cut-out) written normally open where it switches a coil: it would run the motor only above
+//     its setting. It opens as the pressure, temperature or level rises: written nc.
+//   - a low cut-out (low, under, min, loss of, dry run, freeze ... cut-out) written normally closed: it would run the
+//     motor only below its setting. It opens as the quantity falls: written without nc.
+//   - a push button named stop written normally open, beside a start on the same coil: drawn as a second start.
+// Each is sure before it acts (rule 7): a switch named both high and low, a cut-out alone where the question does not
+// say which way it cuts out, a light or a horn on a high switch (an alarm closes on rise), a duplex's floats (Lantern
+// wires them itself): left as written. What is kept is shown to the user with where it stands: the overload on each
+// motor starter, the stops normally closed, an interlock, an emergency stop ahead of every rung, a cut-out the right way.
+// Sources (read on these pages, 2026-11-24): IEC 60204-1:2016's contents (standards.iteh.ai): 7.3 protection of motors
+// against overheating, 9.3.2 exceeding operating limits, 9.3.4 interlocks between different operations and for
+// contrary motions, 9.4 control functions in the event of failure, 10.7 emergency stop devices. NEC Article 430 Part
+// III, motor and branch-circuit overload protection (ecmweb.com, "NEC: Motors -- Part 3"). NFPA 79 10.7 emergency stop
+// devices (NFPA's first-revision statements for the 2024 edition). NFPA 79's other sections were not read: named by
+// subject only. A normal state is the state at rest, with the least of what the switch senses (Kuphaldt, Lessons In
+// Industrial Instrumentation); Adam (2026-11-23): a float rising closes the circuit to run a pump.
+(function () {
+  var C = window.Lantern && window.Lantern.codeChecks;
+  if (!C) return;
+  var RUNS = /^(coil|timer|solenoid|alternator)$/;
+  var HIGHW = /\b(?:high|hi|over|max(?:imum)?|excess\w*|upper)\b/i, OVERW = /\bover[\s-]?(?:pressure|temp\w*|heat\w*|fill\w*)\b/i;
+  var LOWW = /\b(?:low|lo|under|min(?:imum)?|lower)\b|\bloss\s+of\b|\bdry[\s-]?run\w*|\bfreeze\w*|\bfrost\w*|\bno[\s-]flow\b/i, LOWSELF = /\bloss\s+of\b|\bdry[\s-]?run\w*|\bfreeze\w*|\bfrost\w*|\bno[\s-]flow\b/i;
+  var CUTW = /\bcut[\s-]?(?:out|off)s?\b|\bcutouts?\b|\bcutoffs?\b|\bshut[\s-]?(?:off|down)s?\b|\btrips?\b|\blimits?\b|\bsafety\b|\bprotect\w*/i;
+  var AIRQ = /\bair\s+compressors?\b|\bcompressed\s+air\b|\bshop\s+compressors?\b|\bwell\s+pumps?\b|\bbooster\s+pumps?\b|\bpressure\s+tanks?\b|\bjet\s+pumps?\b/i;
+  var NOT_AIR = /\b(refrigerat\w*|vacuum|pump[\s-]?down|freez\w*|chillers?|coolers?|condens\w*|evaporat\w*|heat\s+pumps?|air[\s-]+condition\w*|hvac)\b/i;
+  var WHAT = { pressure: "pressure", temp: "temperature", float: "water" };
+  var REF = {
+    limit: { US: "NFPA 79, exceeding operating limits", IEC: "IEC 60204-1:2016, 9.3.2" },
+    fail: { US: "NFPA 79, control functions in the event of failure", IEC: "IEC 60204-1:2016, 9.4" },
+    overload: { US: "NEC Article 430, Part III", IEC: "IEC 60204-1:2016, 7.3" },
+    interlock: { US: "NFPA 79, interlocks for contrary motions", IEC: "IEC 60204-1:2016, 9.3.4" },
+    estop: { US: "NFPA 79, 10.7", IEC: "IEC 60204-1:2016, 10.7" }
+  };
+  // the line as written, outside its quoted name: with nc, or without it
+  function parts(s) { return String(s).split(/(\x22[^\x22]*\x22|\u201c[^\u201d]*\u201d)/); }
+  function withNc(said) {
+    var ps = parts(said), done = false;
+    ps = ps.map(function (x, k) { return k % 2 ? x : x.replace(/\s+(?:no|n\.o\.?|normally[\s-]open|open)(?=\s|$)/gi, ""); });
+    for (var k = 0; k < ps.length && !done; k++) if (k % 2 === 1) { ps[k - 1] = ps[k - 1].replace(/\s*$/, "") + " nc "; done = true; }
+    var s = ps.join("").replace(/\s{2,}/g, " ").trim();
+    return done ? s : s + " nc";
+  }
+  function withoutNc(said) {
+    return parts(said).map(function (x, k) { return k % 2 ? x : x.replace(/\s+(?:nc|n\.c\.?|normally[\s-]closed|closed)(?=\s|$)/gi, ""); }).join("").replace(/\s{2,}/g, " ").trim();
+  }
+  // which way a process switch cuts out: "high", "low" or null (not sure)
+  function way(it, q) {
+    var lb = String(it.label || ""), hi = HIGHW.test(lb) || OVERW.test(lb), lo = LOWW.test(lb);
+    if (hi && lo) return null;
+    if ((hi && CUTW.test(lb)) || (OVERW.test(lb) && !lo)) return "high";
+    if (lo && (CUTW.test(lb) || LOWSELF.test(lb))) return "low";
+    var ci = /\bcut[\s-]?in\b\D{0,8}(\d+(?:\.\d+)?)/i.exec(lb), co = /\bcut[\s-]?(?:out|off)\b\D{0,8}(\d+(?:\.\d+)?)/i.exec(lb);
+    if (ci && co && +co[1] !== +ci[1]) return +co[1] > +ci[1] ? "high" : "low";
+    if (it.role === "pressure" && /\bcut[\s-]?(?:out|off)\b|\bcutouts?\b/i.test(lb) && !hi && !lo && AIRQ.test(q) && !NOT_AIR.test(q)) return "high";
+    return null;
+  }
+  function name(it) { return it.id + (it.label ? " (\u201c" + it.label + "\u201d)" : ""); }
+  C.add({ id: "control-cutouts", kind: "CONTROL", run: function (ctx) {
+    var items = ctx.items || [], c = ctx.circuit || {}, q = String(ctx.question || ""), out = [];
+    var rungs = c.rungs || [], duplex = items.some(function (it) { return it.role === "alternator"; });
+    // the outputs each device is drawn in
+    var inR = {};
+    rungs.forEach(function (r) {
+      var els = [].concat(r.stops || [], r.starts || [], r.series || [], r.after || []);
+      (r.branches || []).forEach(function (b) { els = els.concat(b); });
+      els.forEach(function (e) { if (e && e.id) (inR[e.id] = inR[e.id] || []).push(r.out); });
+    });
+    items.forEach(function (it) {
+      if (!/^(pressure|temp|float)$/.test(it.role) || (it.role === "float" && duplex)) return;
+      var outs = (inR[it.id] || []).filter(function (o) { return RUNS.test(o.role); });
+      if (!outs.length) return;
+      var w = way(it, q);
+      if (!w) return;
+      var o = outs.map(function (x) { return x.id; }).join(" and "), qty = WHAT[it.role];
+      if (w === "high" && !it.nc) out.push({ back: name(it) + " is a high cut-out written normally open: " + o + " would run only while the " + qty + " is above it. A high cut-out opens as the " + qty + " rises", line: withNc(it.said || ""), refs: REF.limit });
+      else if (w === "low" && it.nc) out.push({ back: name(it) + " is a low cut-out written normally closed: " + o + " would run only while the " + qty + " is below it. A low cut-out opens as the " + qty + " falls", line: withoutNc(it.said || ""), refs: REF.limit });
+      else out.push({ ok: it.id + " opens as the " + qty + (w === "high" ? " rises" : " falls"), refs: REF.limit });
+    });
+    return out;
+  } });
+  // a push button named stop, written normally open beside a start on the same coil: it would start the coil, not stop it
+  C.add({ id: "control-stop-open", kind: "CONTROL", run: function (ctx) {
+    var items = ctx.items || [], out = [];
+    items.forEach(function (it) {
+      if (it.role !== "button" || it.nc || !/\b(?:stop|off|e[\s-]?stop|emergency)\b/i.test(it.label || "") || /\bstart\b|\bon\b/i.test(it.label || "")) return;
+      var coils = it.refs.map(function (r) { return r.id; });
+      var other = items.filter(function (x) { return x !== it && (x.role === "start" || (x.role === "button" && !x.nc && !/\b(?:stop|off)\b/i.test(x.label || ""))) && x.refs.some(function (r) { return coils.indexOf(r.id) >= 0; }); });
+      if (!coils.length || !other.length) return;
+      out.push({ back: name(it) + " is a stop written as a normally open button: drawn beside " + other[0].id + ", it would start " + coils.join(" and ") + ", not stop it. A stop is normally closed, so pressing it or a broken wire stops the circuit", line: "stop " + it.id + " " + coils.join(" ") + (it.label && !/^\s*stop\s*$/i.test(it.label) ? " \x22" + it.label + "\x22" : ""), refs: REF.fail });
+    });
+    return out;
+  } });
+  // what Lantern drew to code, shown to the user: each starter's overload, the stops, an interlock, the emergency stop
+  C.add({ id: "control-drawn", kind: "CONTROL", run: function (ctx) {
+    var c = ctx.circuit || {}, rungs = c.rungs || [], out = [], ol = [], il = [];
+    rungs.forEach(function (r) {
+      if (r.out.kind === "starter" && (r.after || []).some(function (e) { return e.kind === "ol"; })) ol.push(r.after.filter(function (e) { return e.kind === "ol"; })[0].id + " on " + r.out.id);
+      (r.series || []).forEach(function (e) {
+        if (e.kind !== "contact" || !e.nc) return;
+        var back = rungs.filter(function (x) { return x.out.id === e.of; })[0];
+        if (back && (back.series || []).some(function (f) { return f.kind === "contact" && f.nc && f.of === r.out.id; }) && !il.some(function (p) { return p.indexOf(e.of) >= 0 && p.indexOf(r.out.id) >= 0; })) il.push(r.out.id + " and " + e.of);
+      });
+    });
+    if (ol.length) out.push({ ok: "the overload " + ol.join(", "), refs: REF.overload });
+    var stops = (c.feed || []).filter(function (f) { return f.role === "stop"; }).length + rungs.reduce(function (n, r) { return n + (r.stops || []).filter(function (e) { return e.kind === "pb"; }).length; }, 0);
+    if (stops) out.push({ ok: "the stop" + (stops > 1 ? "s" : "") + " normally closed", refs: REF.fail });
+    il.forEach(function (p) { out.push({ ok: p + " locked out of each other", refs: REF.interlock }); });
+    (c.feed || []).filter(function (f) { return f.role === "estop"; }).forEach(function (f) { out.push({ ok: "the emergency stop " + f.id + " ahead of every rung", refs: REF.estop }); });
+    return out;
+  } });
+})();
+// ===========================================================================
+// MODULE: CODE_CHECKS_CONTROL - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: AI_ELECTRONICS - START
