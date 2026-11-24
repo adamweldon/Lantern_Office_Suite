@@ -75,7 +75,7 @@ function ok(name, cond, info) { n++; if (cond) console.log("ok   " + name); else
     libs.every(function (b, i) { var s = shorts[i][1].split("\n").slice(1).join("\n").replace(/^\s+/, ""); return b[1].slice(-s.length) === s; }));
   function head(q) { return C.header(C.route(q)); }
   ok("the rice question: shelf 6.2, its lessons given", /on shelf 6\.2 food/.test(head(QS[0])) && /its lessons come with the question/.test(head(QS[0])), head(QS[0]));
-  ok("the battery: shelf 7.1, opened below", /on shelf 7\.1 electrical sums/.test(head(QS[1])) && /opened it for you below/.test(head(QS[1])), head(QS[1]));
+  ok("the battery: most likely shelf 7.1, opened below", /most likely on shelf 7\.1 electrical sums/.test(head(QS[1])) && /opened it below/.test(head(QS[1])), head(QS[1]));
   ok("the transistor and motor: shelf 7.2", /on shelf 7\.2 circuits/.test(head(QS[2])), head(QS[2]));
   ok("a question about the model itself: no shelf named", head(QS[3]) === "", head(QS[3]));
   ok("a question Lantern has nothing for: no shelf named, and the model may choose one", /no lesson it is sure of/.test(head(QS[4])) && /OPEN and the shelf\x27s number/.test(head(QS[4])) && !/\d\.\d/.test(head(QS[4])), head(QS[4]));
@@ -91,11 +91,13 @@ function ok(name, cond, info) { n++; if (cond) console.log("ok   " + name); else
   Object.keys(got).concat(Object.keys(stored)).forEach(function (k) { var a = got[k] || [0, 0], b = stored[k] || [0, 0]; if (a[0] !== b[0] || a[1] !== b[1]) diff.push([k, a, b]); });
   ok("SURETY is what " + items.length + " labelled questions give now (else: node tools/calibrate_catalog.js --write)", diff.length === 0, diff);
   // (on the bench\u2019s questions alone a MAKE tool that fits was right 62 times in 63; on the first reviewer\u2019s 360 questions,
-  // 50 in 65 -- "who painted the Mona Lisa" is not a drawing to make: counted on both, it is likely, not sure)
-  ok("...a kind of evidence seen often and right is sure; one right less often is likely; a guess is neither", C.band(C.pct("card-one")) === "sure" && C.band(C.pct("puzzle")) === "sure" &&
+  // 50 in 65 -- "who painted the Mona Lisa" is not a drawing to make; a recipe card 74 in 78 on the bench, 21 in 28 on the
+  // second reviewer\u2019s 300, written to catch the router out -- "how do I find north at night" is not a bearing between
+  // two towns. Counted on all three, each is likely, not sure)
+  ok("...a kind of evidence seen often and right is sure; one right less often is likely; a guess is neither", C.band(C.pct("card-one")) === "likely" && C.band(C.pct("puzzle")) === "sure" &&
     C.band(C.pct("make-one")) === "likely" && C.band(C.pct("lesson-other")) === "likely" && C.band(C.pct("func")) === "unsure", [C.pct("card-one"), C.pct("puzzle"), C.pct("make-one"), C.pct("lesson-other"), C.pct("func")]);
   var right = items.filter(function (x) { var r = C.route(x.q); return r.band === "sure" && r.shelf; }), wrongSure = right.filter(function (x) { return x.shelf.indexOf(C.route(x.q).shelf) < 0; });
-  ok("where Lantern says it is sure, it is right at least 9 times in 10 (" + (right.length - wrongSure.length) + " of " + right.length + ")", right.length > 120 && wrongSure.length * 10 <= right.length,
+  ok("where Lantern says it is sure, it is right at least 9 times in 10 (" + (right.length - wrongSure.length) + " of " + right.length + ")", right.length >= 15 && wrongSure.length * 10 <= right.length,
     wrongSure.map(function (x) { return [x.q.slice(0, 60), C.route(x.q).shelf, x.shelf]; }));
 
   // --- OPEN ----------------------------------------------------------------------------------------------------------

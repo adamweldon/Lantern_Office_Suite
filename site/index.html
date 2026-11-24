@@ -19889,7 +19889,10 @@ Lantern.RFB = (function () {
     // -- AI_PROMPT's short form for a small model), when a module has them
     var PF = window.Lantern.assistPromptFor, alt = null;
     if (typeof PF === "function" && question != null) { try { alt = PF(question, cards || []); } catch (e) { alt = null; } }
-    if (typeof alt === "string" && alt) return alt;
+    // (1.24.38) ... and a module may put its own start on it (Lantern.assistPromptWrap -- LIBRARY_CATALOG)
+    var WR = window.Lantern.assistPromptWrap;
+    function wrapped(text) { var w = null; if (typeof WR === "function" && question != null) { try { w = WR(question, text); } catch (e) { w = null; } } return typeof w === "string" && w ? w : text; }
+    if (typeof alt === "string" && alt) return wrapped(alt);
     out.push("You are a careful calculation assistant working with an offline formula engine.");
     out.push("Rules:");
     out.push("- Use ONLY the functions listed below. Their units are SI (metres, kilograms, seconds)");
@@ -19954,7 +19957,7 @@ Lantern.RFB = (function () {
     // (Lantern.aiUnitNote -- AI_UNITS), when no recipe card does it already
     var unote = window.Lantern.aiUnitNote && !(cards && cards.length) ? window.Lantern.aiUnitNote(question) : "";
     if (unote) out.push(unote);
-    return out.join("\n");
+    return wrapped(out.join("\n"));
   };
   A.parseReply = function (text) {
     text = String(text || "");
@@ -20961,6 +20964,13 @@ Lantern.RFB = (function () {
   C.buildSystem = function (question) {
     var AIP = window.Lantern.aiPrompt;
     if (question && AIP && AIP.active && AIP.active() === "short") return smallSystem(question);
+    // (1.24.38) the library prompt (LIBRARY_CATALOG): the same start for every question, the shelf Lantern opened, then
+    // the short instructions for that kind of question; without the catalog, the short ones
+    if (question && AIP && AIP.active && AIP.active() === "library") {
+      var lbody = smallSystem(question), CATL = window.Lantern.catalog, lw = null;
+      if (CATL && CATL.wrap) { try { lw = CATL.wrap(question, lbody); } catch (e) { lw = null; } }
+      return lw || lbody;
+    }
     var out = [];
     out.push("You are the reasoning half of an offline toolbench called Lantern. The person asks;");
     out.push("you decide; Lantern computes. Rules: use ONLY the functions listed. SI units, angles");
@@ -26867,7 +26877,7 @@ Lantern.RFB = (function () {
           // each block the AI wrote and what Lantern made of it, so a wrong
           // answer can be traced to its line (bench run 9, 1.13.1)
           blocks: t.puzzles && t.puzzles.length ? t.puzzles.map(function (z) { return { kind: z.kind, ok: z.ok, lines: z.lines, final: z.final || undefined, problems: z.problems.length ? z.problems : undefined }; }) : undefined,
-          needAnswered: t.needAnswered || undefined, rounds: t.rounds, reply: String(t.final).slice(0, item.cat === "alone" ? 2500 : 500) }; }) : undefined,
+          needAnswered: t.needAnswered || undefined, commands: t.commands && t.commands.length ? t.commands : undefined, rounds: t.rounds, reply: String(t.final).slice(0, item.cat === "alone" ? 2500 : 500) }; }) : undefined,
         tools: g.tools || undefined, answer: item.cat === "reason" || item.cat === "alone" ? String(g.answer || "").slice(0, 400) : undefined,
         ms: Date.now() - t0, tokens: err ? null : toks, tps: err || !toks ? null : Math.round(toks / Math.max(0.001, secs) * 10) / 10,
         // a program is kept whole (up to 6000 characters): run 11's was cut at 1500, mid-line
@@ -26997,8 +27007,11 @@ Lantern.RFB = (function () {
     var m = /(?:^|[^0-9A-Za-z.])(\d+(?:\.\d+)?)B(?![0-9A-Za-z])/i.exec(name);
     return !!m && parseFloat(m[1]) < 3;
   };
+  // (1.24.38) "library": the short instructions behind Lantern's catalog (LIBRARY_CATALOG), for every size of model;
+  // without that module it is "auto"
   P.active = function () {
     var m = P.mode();
+    if (m === "library" && !(window.Lantern.catalog && window.Lantern.catalog.wrap)) m = "auto";
     if (m === "auto") return L.ai && (L.ai.resolve() === "device" || (L.ai.resolve() === "server" && P.small())) ? "short" : "full";
     return m;
   };
@@ -27055,7 +27068,8 @@ Lantern.RFB = (function () {
     return out;
   };
   window.Lantern.assistToolFilter = function (question, cards) {
-    return P.active() === "short" ? P.pick(question, cards) : null;
+    var am = P.active();
+    return am === "short" || am === "library" ? P.pick(question, cards) : null;
   };
   // (1.24.6) P.assist(question, cards) -> Assist's instructions for a small
   // model, when the question is a sum Lantern can see (a recipe card fits, or
@@ -27118,14 +27132,15 @@ Lantern.RFB = (function () {
     if (unote) out.push(unote);
     return out.join("\n");
   };
-  window.Lantern.assistPromptFor = function (question, cards) { return P.active() === "short" ? P.assist(question, cards) : null; };
+  window.Lantern.assistPromptFor = function (question, cards) { var am = P.active(); return am === "short" || am === "library" ? P.assist(question, cards) : null; };
 
   if (!L.el || !L.assist) return;
   var Pn = window.Lantern.aiPanels = window.Lantern.aiPanels || [];
   var el = L.el;
   Pn.push({ id: "prompt", title: "Prompt size", order: 35, render: function (box) {
     var sel = el("select", { "aria-label": "Prompt size", html: "<option value=\"auto\">Automatic (short on this device, and for a small model)</option>" +
-      "<option value=\"short\">Short (only tools that fit the question)</option><option value=\"full\">Full (every tool)</option>" });
+      "<option value=\"short\">Short (only tools that fit the question)</option><option value=\"full\">Full (every tool)</option>" +
+      (window.Lantern.catalog ? "<option value=\"library\">Library (Lantern opens the shelf for the question; being tried)</option>" : "") });
     var info = el("p", { "class": "muted" });
     sel.value = P.mode();
     function paint() {
@@ -57677,7 +57692,13 @@ Lantern.RFB = (function () {
   // (Adam's run of set B: Eating well on little was not given). Can, could, should, might: a way to do something,
   // not "how do my lungs work".
   var HOWMY = /\bhow (can|could|should|might) (my|our) [a-z]+/i;
-  function howTo(q) { q = String(q || "").replace(/[\u2018\u2019]/g, "\x27"); return (HOWTO.test(q) || TROUBLE.test(q) || HOWMY.test(q)) && !/\d/.test(q); }
+  // (1.24.38) ... and how long a thing keeps, or whether it is safe to eat or drink: "How long can cooked rice be left
+  // out on the table before it is unsafe to eat?" (Adam's laptop, 1.24.36, set B: the 35B answered from memory, "Not in
+  // my library", with Cooking food so it is safe unread; Lantern's own search had it first). The lesson is still given
+  // only when it is sure to be about the question (SUITE_PASSAGES), so "How long can a battery be left on charge?" gets
+  // the battery lesson or none.
+  var KEEPS = /\bhow long (can|could|should|will|would|does|do|is|are|may|might|must)\b[^?.!]{0,60}?\b(be left|be kept|be stored|left out|kept|stored|keep|last)\b|\b(is|are) (it|they|this|that|these|those)\b[^?.!]{0,40}?\b(safe|ok|okay|alright|all right) to (eat|drink)\b|\b(unsafe|not safe|safe) to (eat|drink)\b/i;
+  function howTo(q) { q = String(q || "").replace(/[\u2018\u2019]/g, "\x27"); return (HOWTO.test(q) || TROUBLE.test(q) || HOWMY.test(q) || KEEPS.test(q)) && !/\d/.test(q); }
 
   // --- what the AI is told ----------------------------------------------------
   // (the reply lines are offered only when SUITE_COMMANDS has added them)
@@ -58691,6 +58712,335 @@ Lantern.RFB = (function () {
 // MODULE: HEALTH_CHAT - END
 // ===========================================================================
 // ===========================================================================
+// MODULE: LIBRARY_CATALOG - START
+// Depends: SUITE_INDEX, SUITE_SEARCH, SUITE_CHAT (Lantern.suite: entries, search, passages, text, catalog, chat),
+//          ASSIST_CORE (Lantern.assist), ASSIST_CHAT (Lantern.CHAT.kindOf), AI_ACTIONS (Lantern.aiAct),
+//          AI_PUZZLE (Lantern.aiPuzzle), HEALTH_CHAT (Lantern.healthNeed, Lantern.healthLessons),
+//          AI_PROMPT (Lantern.aiPrompt) -- all feature-detected, at the time of each question
+// Exports: Lantern.catalog = {classes, shelves, shelf(id), shelfOf(entry), route(question), prefix(), header(route),
+//          wrap(question, body), open(id, question), active(), surety, band(p)};
+//          Lantern.assistPromptWrap (read by ASSIST_CORE.buildPrompt); adds the Chat command OPEN
+//          (Lantern.chatCommands) and a Lantern.chatContext provider -- both act only with the library prompt
+// ===========================================================================
+// Lantern as a library (1.24.38). Adam, 2026-11-24: "we have a reasoning engine doing the reasoning with calculators
+// and tools that present the easy button to the reasoning engine whenever possible and still provide a way to get to
+// the goal and how to do it in the easiest way possible". And: "a dewey decimal type system with a do your homework
+// prompt and then when the subject comes up the calculator or sheets or code commands are given to the AI".
+//
+// What the runs said a model does, and so how this is built:
+//  - a model does not do homework it is not handed: on Adam's laptop (1.24.36, set B) the 35B answered how long
+//    cooked rice may stand from memory, "Not in my library", with the Food lesson one command (LESSON:) away. So
+//    Lantern walks to the shelf when it is sure, and hands the model what is on it;
+//  - a small model copies what is in front of it (CLAUDE.md, 1.24.4 to 1.24.6): the reply lines and tools of every
+//    shelf before every question were what the 0.8B wrote back. So the start of the prompt names the shelves in one
+//    line, with no reply line to copy; only the shelf opened carries its own;
+//  - every prompt that starts differently is read afresh on a small computer. So the start (prefix()) is the same
+//    words for every question, and the server reads it once a run;
+//  - where Lantern is not sure, the model, which understands the question better, chooses: it is shown the likely
+//    shelves and replies OPEN <number> (a question in words only: a sum, a drawing and a puzzle keep the tools
+//    Lantern has always chosen for them, tuned over thirty versions).
+// How sure Lantern is (route().pct) is measured, not guessed: SURETY below is how often each kind of evidence picked
+// the right shelf over questions whose shelf is known (tests/fixtures/catalog_labels.json; tools/calibrate_catalog.js
+// counts them again and tests/catalog_1238.js fails when the counts no longer hold). The person sees the percentage;
+// the model sees a word (sure, likely, unsure), because a small model copies a number it is shown.
+// It runs only with the library prompt (AI tile, Prompt size: Library). The other prompts are as they were, and Lantern
+// Bench runs both, so that the numbers decide.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var CLASSES = [["0", "Lantern itself and the encyclopedia"], ["1", "puzzles and clear thinking"], ["2", "money, plans and community"],
+    ["3", "reading, writing and documents"], ["4", "maths and measures"], ["5", "science"], ["6", "health, food, water and farming"],
+    ["7", "electricity and radio"], ["8", "machines, pumps and repair"], ["9", "music, drawings and places"]];
+  // the shelves: what each holds (tiles whose lessons are on it, functions, recipe cards, things to MAKE)
+  var SHELVES = [
+    { id: "0.1", title: "Lantern\u2019s own tiles and how to use them", apps: ["help", "search", "assist", "forge", "chat", "backup", "ai", "writer", "calc", "draw", "slides", "cards", "sheet", "typing", "timer", "convert", "charter", "deckplate", "rfbench", "planner", "ledger", "invoice", "drill"], guides: true, about: true },
+    { id: "0.2", title: "the encyclopedia: people, places, history", lookup: true },
+    { id: "0.3", title: "programs and code", apps: ["code", "codelab"], acts: ["code"] },
+    { id: "1.1", title: "puzzles Lantern tracks and solves", puzzle: true },
+    { id: "1.2", title: "clear thinking: evidence, chance, decisions", apps: ["mind"] },
+    { id: "2.1", title: "money: costs, prices and budgets", recipes: ["total-cost"], money: true },
+    { id: "2.2", title: "plans, schedules and records", acts: ["plan"] },
+    { id: "2.3", title: "community: meetings, disputes, rights", apps: ["civics"] },
+    { id: "3.1", title: "reading and writing", apps: ["literacy", "compose"] },
+    { id: "3.2", title: "documents, slides, flashcards and tables", acts: ["doc", "slides", "cards", "sheet"] },
+    { id: "3.3", title: "letters, words and codes", funcs: ["REVERSE", "REMOVE", "LEN", "MID", "MORSE", "NATO", "BASE64", "CAESAR", "SHA256"], letters: true },
+    { id: "4.1", title: "arithmetic, fractions, percent, algebra, shapes", apps: ["mathlearn", ""], recipes: ["scale-recipe", "count-bags", "field-area", "fill-time", "trip-fuel"] },
+    { id: "4.2", title: "units and conversions", funcs: ["CONVERT"], recipes: ["unit-convert"] },
+    { id: "5.1", title: "forces, energy and motion", apps: ["physics"], funcs: ["FORCE", "WEIGHT", "MOMENTUM", "WORK", "POWERW", "PRESSURE", "STRESS", "KE", "PE", "DENSITY", "CENTRIP"], recipes: ["kinetic", "weight-n"] },
+    { id: "5.2", title: "the sky, planets and orbits", apps: ["astronomy"], funcs: ["ORBITV", "ESCV", "ORBITT", "GRAV", "VISVIVA", "SMAXIS", "KEPLERE", "TRUEANOM", "ORBR", "HOHMANN", "HOHMANNT", "PLANET", "SCHWARZ", "GRAVDIL", "VELDIL", "PERIPREC", "LORE", "EMC2", "RELKE"],
+      recipes: ["orbit-period", "geo-altitude", "escape-v", "hohmann-dv", "hohmann-time", "ellipse-speed", "speed-dilation", "grav-dilation", "schwarzschild", "mercury-precession", "planet-escape", "planet-weight", "planet-orbit", "hohmann-alt", "hohmann-alts", "hohmann-dv-alt", "hohmann-dv-alts"] },
+    { id: "5.3", title: "chemistry", apps: ["chem"], funcs: ["MOLARMASS", "MOLES", "GRAMS", "ATOMICMASS"], recipes: ["molar-mass", "grams-moles"] },
+    { id: "5.4", title: "the earth and the weather", apps: ["geography", "weather"] },
+    { id: "5.5", title: "living things", apps: ["biology"] },
+    { id: "5.6", title: "patterns: waves, cycles, feedback", apps: ["atlas"] },
+    { id: "6.1", title: "health and first aid (never a dose)", apps: ["health"], recipes: ["ors-sugar", "ors-salt"] },
+    { id: "6.2", title: "food: cooking, keeping and eating well", apps: ["food"] },
+    { id: "6.3", title: "safe water", lessons: ["health_water", "health_waterstore", "health_latrine"], recipes: ["water-bleach"] },
+    { id: "6.4", title: "farming and animals", apps: ["farming", "husbandry"], funcs: ["PLANTS", "EGGS", "FEEDKG"], recipes: ["plants-bed", "eggs-week", "feed-total"] },
+    { id: "7.1", title: "electrical sums: volts, amps, watts, batteries", lessons: ["eng_ohm", "eng_power", "eng_series", "eng_battery"],
+      funcs: ["VOLTS", "AMPS", "OHMS", "WATTS", "RSERIES", "RPARALLEL", "WHRS", "RUNTIME"], recipes: ["battery-runtime", "ohm-volts", "ohm-amps", "ohm-ohms", "watts-va", "series-r", "parallel-r"] },
+    { id: "7.2", title: "circuits to draw: schematics, electronics, control", acts: ["schematic"], kinds: ["SCHEMATIC", "ELECTRONICS", "CONTROL"] },
+    { id: "7.3", title: "radio and antennas", apps: ["rfbench"], funcs: ["REFL", "SWR", "WAVELEN", "FRES", "MATCHSER", "MATCHSH", "REFLPH", "RLOSS", "LNSWR", "ZINRE", "QSER", "ELEN", "BEATF", "LOCKP"], recipes: ["wavelength"] },
+    { id: "8.1", title: "hydraulic and pneumatic circuits", kinds: ["HYDRAULIC", "PNEUMATIC"] },
+    { id: "8.2", title: "pumps, piping and pump stations", acts: ["piping", "levels", "station"] },
+    { id: "8.3", title: "machines, gears and materials", apps: ["engineering"], funcs: ["GEAR", "TORQUE"] },
+    { id: "8.4", title: "repair: bicycles, engines, tools", apps: ["repair"] },
+    { id: "9.1", title: "music", apps: ["music"], acts: ["music"] },
+    { id: "9.2", title: "drawings, pictures and charts", acts: ["drawing", "wheel"] },
+    { id: "9.3", title: "places, maps and distances", lessons: ["geo_coords", "geo_map"], funcs: ["PLACE", "DISTKM", "BEARING"], recipes: ["place-distance", "place-bearing"] }
+  ];
+  var BYID = {}, APP = {}, LESSON = {}, FUNC = {}, RECIPE = {}, ACT = {}, KIND = {};
+  SHELVES.forEach(function (s) {
+    BYID[s.id] = s;
+    (s.apps || []).forEach(function (a) { if (!(a in APP)) APP[a] = s.id; });
+    (s.lessons || []).forEach(function (a) { LESSON[a] = s.id; });
+    (s.funcs || []).forEach(function (a) { FUNC[a] = s.id; });
+    (s.recipes || []).forEach(function (a) { RECIPE[a] = s.id; });
+    (s.acts || []).forEach(function (a) { ACT[a] = s.id; });
+    (s.kinds || []).forEach(function (a) { KIND[a] = s.id; });
+  });
+  // The tile a lesson or guide belongs to decides its shelf; a few lessons sit on a shelf of their own (safe water is
+  // in the Health tile, Ohm\u2019s law in Engineering, maps in Earth). A tile\u2019s help guide is about using Lantern.
+  function shelfOf(e) {
+    if (!e) return "";
+    if (e.kind === "guide") return "0.1";
+    if (e.kind === "lesson") return LESSON[e.id] || APP[e.app || ""] || "";
+    if (e.kind === "function") return FUNC[e.id] || "";
+    if (e.kind === "recipe") return RECIPE[e.id] || "";
+    return "";
+  }
+  // ---------------------------------------------------------------------------------------------------------------
+  // SURETY: for each kind of evidence, [right, asked] over the questions whose shelf is known. Counted by
+  // tools/calibrate_catalog.js (run it again after any change to route(), and paste what it prints here).
+  // CALIBRATION - START
+  var SURETY = {"about": [7, 8], "card-many": [9, 11], "card-one": [141, 160], "func": [22, 56], "guard": [7, 8], "health": [15, 17], "lantern-named": [9, 11], "lesson-howto": [42, 50], "lesson-other": [67, 105], "letters": [3, 4], "make-many": [8, 14], "make-one": [131, 149], "nothing": [103, 218], "numbers": [32, 94], "puzzle": [19, 19]};
+  // CALIBRATION - END
+  function pctOf(ev) { var c = SURETY[ev]; return c && c[1] ? (c[0] + 1) / (c[1] + 2) : 0.5; }
+  function band(p) { return p >= 0.9 ? "sure" : p >= 0.6 ? "likely" : "unsure"; }
+  // ---------------------------------------------------------------------------------------------------------------
+  // (a sum with no recipe card: watts, kWh and amp-hours are electricity before they are money -- "a 60 W bulb ...
+  // costs 0.15 dollars per kWh" is both, and its card says which)
+  // (a unit of one letter only in capitals, as it is written: "15 a day", "4.25 a metre" are not amps -- the first
+  // review\u2019s questions)
+  var ELEC = /\b(?:kwh|kilowatt[- ]?hours?|watt[- ]?hours?|amp[- ]?hours?|watts?|volts?|amps?|amperes?|kw|mah)\b|\d\s*(?:W|V|A|Wh|Ah|kWh)\b/;
+  var MONEY = /\b(costs?|price[sd]?|pay|paid|money|budget|wages?|profit|sells?|sold|buy|bought|spend|spent|shillings?|pesos?|dollars?|euros?|pounds sterling|rupees?|naira|cedis?|rand|francs?|cents?)\b/i;
+  function actShelf(a, q) {
+    if (!a) return "";
+    if (a.id !== "schematic") return ACT[a.id] || "";
+    var t = "";
+    try { t = typeof a.promptFor === "function" ? [].concat(a.promptFor(q)).join("\n") : [].concat(a.prompt || []).join("\n"); } catch (e) { t = ""; }
+    var m = /\bMAKE (HYDRAULIC|PNEUMATIC|CONTROL|ELECTRONICS|SCHEMATIC)\b/.exec(t);
+    return KIND[m ? m[1] : "SCHEMATIC"] || "7.2";
+  }
+  // route(question) -> {kind, shelf, ev, pct, band, alts: [shelf ids], title}. The kind (sum, make, puzzle, talk) is
+  // the one Chat has always worked out (Lantern.CHAT.kindOf), so the shelf named and the tools given agree.
+  // What the bench\u2019s 264 labelled questions showed the first draft doing (tools/calibrate_catalog.js):
+  //  - a lesson found by a weak match was the right shelf for 6 questions in 36 ("Who wrote Things Fall Apart?",
+  //    "What causes the tides?" sent to Repair): a question in words with no lesson Lantern is sure of is on no shelf,
+  //    and the model may choose one (OPEN);
+  //  - a lesson found by a strong match was right for 23 in 30, and wrong for facts asked as facts ("What is the capital
+  //    of Kenya?" -- the lesson on capital letters): a how-to or a trouble with the person\u2019s own things (SUITE_CHAT\u2019s
+  //    howTo) is counted apart from any other question;
+  //  - a question about the model itself or this chat ("Is this how you work?") is on no shelf at all;
+  //  - a medicine dose, live mains, a chemical mix (AI.guard) is answered by Lantern\u2019s rule before any shelf.
+  function route(question) {
+    var q = String(question || ""), C = L.CHAT, A = L.assist, S = L.suite, kind = "talk", out = [], i;
+    function add(id, ev) { if (id && BYID[id] && !out.some(function (x) { return x.id === id; })) out.push({ id: id, ev: ev }); }
+    function done() {
+      var p = out[0] || { id: "", ev: "self" }, pct = p.id ? pctOf(p.ev) : 0;
+      return { kind: kind, shelf: p.id, ev: p.ev, pct: pct, band: p.id ? band(pct) : "", alts: out.slice(1).map(function (x) { return x.id; }).slice(0, 3),
+        title: p.id ? BYID[p.id].title : "" };
+    }
+    try { if (C && C.kindOf) kind = C.kindOf(q); } catch (e0) { kind = "talk"; }
+    var self = false, aboutL = false, g = null;
+    try { self = !!(A && ((A.aboutSelf && A.aboutSelf(q)) || (A.noLibrary && A.noLibrary(q)))); } catch (e9) { self = false; }
+    try { aboutL = !!(S && S.chat && S.chat.about && S.chat.about(q)); } catch (e6) { aboutL = false; }
+    if (aboutL) { add("0.1", "about"); return done(); }
+    // a question that names Lantern itself, or one of its tiles ("how do I open the spreadsheet tile", "can lantern read
+    // the answer out loud"): SUITE_CHAT\u2019s reader is for what Lantern has; this is how to use it (the first review)
+    if (/\b(?:in|on|with|use|using|does|do|can|could|will|is|has|have|about|of|from|onto|copy|install|open|start|update) lantern\b|\blantern(?:\x27s|\u2019s)? (?:tiles?|app|file|stick|program|has|have|can|could|does|do|will|is|work|works|read|show|save|keep|send|sends)\b|\b(?:the|this|a) [a-z]+ tile\b/i.test(q)) { add("0.1", "lantern-named"); return done(); }
+    if (self) return done();
+    try { g = L.ai && L.ai.guard ? L.ai.guard(q) : null; } catch (e10) { g = null; }
+    if (g) { add(g.id === "live-mains" ? "7.1" : "6.1", "guard"); return done(); }
+    if (kind === "make") {
+      var acts = [];
+      try { acts = L.aiAct && L.aiAct.relevant ? L.aiAct.relevant(q) : []; } catch (e1) { acts = []; }
+      for (i = 0; i < acts.length; i++) add(actShelf(acts[i], q), acts.length === 1 ? "make-one" : "make-many");
+    } else if (kind === "puzzle") add("1.1", "puzzle");
+    else if (kind === "sum") {
+      var fam = false;
+      (L.assistToolFamilies || []).forEach(function (fn) { try { if ((fn(q) || []).length) fam = true; } catch (e2) { /* not this family */ } });
+      if (fam) add("3.3", "letters");
+      var cards = [];
+      try { cards = A && A.match ? A.match(q) : []; } catch (e3) { cards = []; }
+      for (i = 0; i < cards.length; i++) add(RECIPE[cards[i].id], cards.length === 1 ? "card-one" : "card-many");
+      if (!out.length) {
+        var picked = [];
+        try { picked = L.aiPrompt && L.aiPrompt.pick ? L.aiPrompt.pick(q, []) : []; } catch (e4) { picked = []; }
+        var votes = {};
+        picked.forEach(function (f) { var s = FUNC[f.n]; if (s && f.n !== "CONVERT") votes[s] = (votes[s] || 0) + 1; });
+        Object.keys(votes).sort(function (a, b) { return votes[b] - votes[a]; }).forEach(function (s) { add(s, "func"); });
+      }
+      if (!out.length) add(ELEC.test(q) ? "7.1" : MONEY.test(q) ? "2.1" : /\b(convert|in (?:kilo|centi|milli)?(?:metres|meters|grams|litres|liters)|in (?:miles|pounds|feet|inches|gallons|fahrenheit|celsius))\b/i.test(q) ? "4.2" : "4.1", "numbers");
+    } else {
+      var hl = [], howGiven = false;
+      try { hl = L.healthNeed && L.healthNeed(q) && L.healthLessons ? L.healthLessons(q) : []; } catch (e5) { hl = []; }
+      if (hl.length) add(LESSON[hl[0].key] || "6.1", "health");
+      if (!out.length && S && S.passages) {
+        var ps = [], how = false;
+        try { ps = S.passages(q, q, { detail: true, max: 3, strong: true }); } catch (e7) { ps = []; }
+        try { how = !!(S.chat && S.chat.howTo && S.chat.howTo(q)); } catch (e8) { how = false; }
+        // every shelf the sure passages are on, the first one\u2019s first
+        ps.forEach(function (x) { add(shelfOf(entry(x.key, x.kind)), how ? "lesson-howto" : "lesson-other"); });
+        howGiven = how && ps.length > 0;
+      }
+      if (!out.length) { out.push({ id: "", ev: "nothing" }); var r0 = done(); r0.ev = "nothing"; return r0; }
+    }
+    var r = done();
+    // the lessons go with the question (Chat\u2019s lesson providers): a health need, a how-to (SUITE_CHAT), or a
+    // shelf of lessons Lantern is sure of (this module\u2019s own, below)
+    r.given = r.ev === "health" || (/^lesson-/.test(r.ev) && (howGiven || r.band === "sure"));
+    return r;
+  }
+  function entry(id, kind) {
+    var S = L.suite, es = S && S.entries ? S.entries() : [], i;
+    for (i = 0; i < es.length; i++) if (es[i].id === id && (!kind || es[i].kind === kind)) return es[i];
+    return null;
+  }
+  // ---------------------------------------------------------------------------------------------------------------
+  // The same words at the start of every question (the model\u2019s server reads them once a run): who does what, the
+  // homework, and the ten classes. No reply line: the shelf opened below gives its own.
+  function prefix() {
+    return ["You are the reasoning half of Lantern, an offline library with calculators and tools. You understand the person",
+      "and reason; Lantern looks up, works out, draws and checks.",
+      "Do your homework: use what Lantern gives you below before your own memory.",
+      "Lantern\x27s shelves: " + CLASSES.map(function (c) { return c[0] + " " + c[1]; }).join("; ") + "."].join("\n");
+  }
+  // holds(shelf) -> " (its first lessons, functions, things to make)", for a class\u2019s list of shelves
+  function holds(s) {
+    var S = L.suite, es = S && S.entries ? S.entries() : [], bits = [];
+    var les = es.filter(function (e) { return e.kind === "lesson" && shelfOf(e) === s.id; }).map(function (e) { return e.title; });
+    if (les.length) bits.push((les.length > 5 ? les.slice(0, 5).join(", ") + " and " + (les.length - 5) + " more" : les.join(", ")));
+    if (s.funcs && s.funcs.length) bits.push("functions " + s.funcs.slice(0, 6).join(", ") + (s.funcs.length > 6 ? " ..." : ""));
+    if (s.acts || s.kinds) bits.push("Lantern draws or makes these");
+    return bits.length ? ": " + bits.join("; ") : "";
+  }
+  function name(id) { return BYID[id] ? id + " " + BYID[id].title : id; }
+  // header(route) -> the lines about the shelf: which one Lantern opened, and for a question in words where Lantern is
+  // not sure, the others it might be (the model replies OPEN <number>). The numbers are this question\u2019s own.
+  // (Lantern names a shelf only where it is sure or nearly: where it is unsure it names none, as a guess named is a
+  // guess copied. A question in words with no shelf may have one the model can see better than Lantern\u2019s word
+  // search: it is told it may choose one.)
+  var CHOOSE = "If one of Lantern\x27s shelves above holds what the question needs, you may reply with only one line: OPEN and the shelf\x27s number " +
+    "(one digit for a whole class). Lantern then sends what is on it. Otherwise answer from what is below.";
+  function header(r) {
+    if (!r) return "";
+    if (r.ev === "nothing") return "Lantern has no lesson it is sure of for this question.\n" + CHOOSE;
+    if (!r.shelf || r.ev === "guard") return "";
+    var out = [];
+    if (r.ev === "about") return "This question is about Lantern itself (shelf " + name(r.shelf) + "): its catalog comes with the question.";
+    if (r.kind === "talk" && r.given) return "This question is on shelf " + name(r.shelf) + ". Lantern has opened it for you: its lessons come with the question.";
+    if (r.kind === "talk" && /^lesson-/.test(r.ev)) {
+      out.push("This question may be on shelf " + name(r.shelf) + ". To read its lessons, reply with only one line: OPEN " + r.shelf + ". Otherwise answer from what is below.");
+      if (r.alts.length) out.push("(Other shelves it may be on: " + r.alts.map(name).join("; ") + ".)");
+      return out.join("\n");
+    }
+    if (r.band === "sure") out.push("This question is on shelf " + name(r.shelf) + ". Lantern has opened it for you below.");
+    else if (r.band === "likely") out.push("This question is most likely on shelf " + name(r.shelf) + ". Lantern has opened it below.");
+    else if (r.kind === "talk") return "Lantern is not sure which shelf this question is on.\n" + CHOOSE;
+    else return "";
+    var alts = r.kind === "talk" && r.band !== "sure" ? r.alts : [];
+    if (alts.length) out.push("If the question is about something else, reply with only one line: OPEN and the shelf\x27s number (" +
+      alts.map(name).join("; ") + "). Lantern then sends what is on it.");
+    return out.join("\n");
+  }
+  function active() { var P = L.aiPrompt; return !!(P && P.active && P.active() === "library"); }
+  // wrap(question, body) -> the library prompt: the same start for every question, the shelf, then the instructions
+  // that kind of question has always had (body), without their first line about who the model is
+  function wrap(question, body) {
+    if (!active() || body == null) return null;
+    var ls = String(body).split("\n");
+    while (ls.length && (/^You are\b/.test(ls[0]) || /^Lantern computes and checks\.\s*$/.test(ls[0]))) ls.shift();
+    while (ls.length && !/\S/.test(ls[0])) ls.shift();
+    var r = route(question), h = header(r);
+    return prefix() + "\n\n" + (h ? h + "\n\n" : "") + ls.join("\n");
+  }
+  // open(id, question) -> what Chat sends for OPEN <id>: the shelf\u2019s lessons for this question (checked as
+  // passages are), its functions with how to write a sum, its MAKE block, its puzzle tools, or the encyclopedia
+  function open(id, question) {
+    var q = String(question || ""), key = String(id || "").replace(/\s+/g, ""), s = BYID[key], S = L.suite;
+    if (!s && /^\d$/.test(key)) {
+      var cl = CLASSES.filter(function (c) { return c[0] === key; })[0];
+      return { prompt: "CLASS " + key + " " + cl[1] + ". Its shelves:\n" + SHELVES.filter(function (x) { return x.id.charAt(0) === key; }).map(function (x) { return x.id + " " + x.title + holds(x); }).join("\n") +
+        "\nReply with only one line: OPEN and the number of the shelf that holds what the question needs. If none does, answer the QUESTION from your own knowledge, and say so.\n\nQUESTION: " + q,
+        note: "Lantern showed the AI the shelves of class " + key + " (" + cl[1] + ")\u2026" };
+    }
+    if (!s) return { prompt: "Lantern has no shelf " + id + ". Its shelves: " + CLASSES.map(function (c) { return c[0] + " " + c[1]; }).join("; ") + ". Answer the QUESTION now.\n\nQUESTION: " + q };
+    var head = "SHELF " + name(s.id) + "\n";
+    if (s.puzzle && L.aiPuzzle && L.aiPuzzle.prompt) return { prompt: head + L.aiPuzzle.prompt(q) + "\n\nQUESTION: " + q, note: "Lantern opened shelf " + name(s.id) + " for the AI\u2026" };
+    if ((s.acts || s.kinds) && L.aiAct && L.aiAct.prompt) {
+      var mk = L.aiAct.prompt(q);
+      if (mk) return { prompt: head + mk + "\n\nQUESTION: " + q, note: "Lantern opened shelf " + name(s.id) + " for the AI\u2026" };
+    }
+    if (s.lookup) {
+      var lib = L.library && L.library.ready && L.library.ready();
+      return { prompt: head + (lib ? "Reply with only one line: LOOKUP: <2 to 5 search words>. Lantern searches its offline encyclopedia and sends you passages." :
+        "The encyclopedia is not on this computer. Answer from your own knowledge, and say that it is your own.") + "\n\nQUESTION: " + q };
+    }
+    if (s.about && S && S.catalog) {
+      var c = null; try { c = S.catalog(q); } catch (e1) { c = null; }
+      if (c && c.text) return { prompt: head + c.text + "\n\nAnswer the QUESTION from this catalog, in plain sentences.\n\nQUESTION: " + q, catalog: true, note: "Lantern opened shelf " + name(s.id) + " for the AI\u2026" };
+    }
+    // its lessons, the ones nearest the question (searched on this shelf only), whole
+    var src = [];
+    if (S && S.search && S.text) {
+      var hits = [];
+      try { hits = S.search(q, { kinds: { lesson: 1 }, max: 40 }).filter(function (h) { return h.d && h.d.units && h.d.units.length && shelfOf(h.e) === s.id; }); } catch (e2) { hits = []; }
+      src = hits.slice(0, 2).map(function (h, k) {
+        var e = h.e;
+        return { n: k + 1, title: e.title + (e.appName ? " (" + e.appName + " tile)" : ""), bookTitle: "Lantern\u2019s own lesson", text: S.text(e), suite: true, kind: "lesson", key: e.id, app: e.app || "", open: e.open };
+      });
+    }
+    if (src.length && S.chat && S.chat.prompt)
+      return { sources: src, detail: true, more: true, how: "lessons", query: "OPEN " + s.id, prompt: S.chat.prompt(q, src, ""),
+        note: "Lantern opened shelf " + name(s.id) + " for the AI: " + src.map(function (x) { return "\u201c" + x.title + "\u201d"; }).join(", ") + "\u2026" };
+    // its functions, and how to write a sum with them
+    var cat = (L.assistCatalog || []).filter(function (f) { return (s.funcs || []).indexOf(f.n) >= 0 || f.n === "CONVERT"; });
+    if (cat.length > 1) return { prompt: head + "To work a number out, reply with a line that STARTS with = and has the question\x27s numbers in it, using these" +
+      " functions; then a line ANSWER: <sentence with {result} where the number goes>. Lantern puts its number there.\nFUNCTIONS\n" +
+      cat.map(function (f) { return f.n + f.s + " - " + f.d; }).join("\n") + "\n\nQUESTION: " + q, note: "Lantern opened shelf " + name(s.id) + " for the AI\u2026" };
+    return { prompt: "Shelf " + name(s.id) + " has nothing more for this question. Answer the QUESTION now.\n\nQUESTION: " + q };
+  }
+  window.Lantern.catalog = { classes: CLASSES, shelves: SHELVES, shelf: function (id) { return BYID[id] || null; }, shelfOf: shelfOf, route: route,
+    prefix: prefix, header: header, wrap: wrap, open: open, active: active, surety: SURETY, band: band, pct: pctOf };
+  // Assist\u2019s sums (ASSIST_CORE.buildPrompt) in the library prompt
+  window.Lantern.assistPromptWrap = function (question, text) { return active() ? wrap(question, text) : null; };
+  // OPEN <shelf>: the model chooses a shelf
+  var CMD = window.Lantern.chatCommands = window.Lantern.chatCommands || [];
+  if (!CMD.some(function (c) { return c && c.id === "open"; })) CMD.push({ id: "open", verb: "OPEN", usage: "OPEN <shelf number>", desc: "open a shelf of Lantern\u2019s catalog (the library prompt)",
+    // (a line of its own, in capitals, as the model is told to write it: "Open 2 windows" in a list of steps is not it)
+    test: function (reply) { if (!active()) return null; var m = /^[ \t*>#]*OPEN:?[ \t]*(?:shelf[ \t]*|class[ \t]*)?(\d(?:\.\d)?)[ \t*.]*$/m.exec(String(reply || "")); return m ? m[1] : null; },
+    run: function (arg, question) { return Promise.resolve(open(arg, question)); } });
+  // a question in words that Lantern is sure is on a shelf of lessons: the lessons go with it (the library prompt only;
+  // after a health need, a document handed over and a how-to, which come first)
+  var CTX = window.Lantern.chatContext = window.Lantern.chatContext || [];
+  CTX.push({ id: "library-shelf", provide: function (q) {
+    var S = L.suite;
+    if (!active() || !S || !S.passages || !S.chat || !S.chat.prompt || (L.textReader && L.textReader.attached)) return null;
+    var r = route(q);
+    if (r.kind !== "talk" || r.band !== "sure" || !/^lesson-/.test(r.ev)) return null;
+    var src = [];
+    try { src = S.passages(q, q, { detail: true, max: 3, strong: true }); } catch (e) { src = []; }
+    if (!src.length) return null;
+    return { sources: src, detail: true, more: true, how: "lessons", label: "Lantern\u2019s own lessons", query: "",
+      prompt: S.chat.prompt(q, src, ""), note: "Lantern opened shelf " + name(r.shelf) + " (" + Math.round(r.pct * 100) + "% of questions like this are on it) and gave the AI its lessons: " +
+        src.map(function (x) { return "\u201c" + x.title + "\u201d"; }).join(", ") + "\u2026" };
+  } });
+})();
+// ===========================================================================
+// MODULE: LIBRARY_CATALOG - END
+// ===========================================================================
+// ===========================================================================
 // MODULE: HEALTH_BENCH_DATA - START
 // Depends: AI_BENCH (runs Lantern.aiBenchQuestions, created here if absent)
 // Exports: (none) -- adds health questions to Lantern Bench: four conversations and two sums
@@ -58778,7 +59128,9 @@ Lantern.RFB = (function () {
     return function (t) {
       var r = last(t);
       if (!readLessons(r)) return "Chat did not give the AI Lantern’s own lessons";
-      if (!(r.sources || []).some(function (s) { return s.key === key; })) return "the " + key + " lesson was not among the passages";
+      // (1.24.38) a list: each of these lessons says it (the 2-hour rule is in Keeping food safe and in Cooking food so it is safe)
+      var keys = [].concat(key);
+      if (!(r.sources || []).some(function (s) { return keys.indexOf(s.key) >= 0; })) return "the " + keys.join(" or ") + " lesson was not among the passages";
       if (r.declined) return "answered “Not in my library”";
       if (!(r.backed >= 1)) return "no sentence backed by a lesson passage";
       return must.test(text(r)) ? "" : "did not say " + what;
@@ -58802,7 +59154,7 @@ Lantern.RFB = (function () {
       { id: "food-b-raw-milk", turns: ["Is it safe to drink milk straight from our goat, and how do I make it safe?"],
         check: grade("food_milk", /\bboil|pasteuri|\bheat/i, "to boil (or heat) the milk") },
       { id: "food-b-rice-left-out", turns: ["How long can cooked rice be left out on the table before it is unsafe to eat?"],
-        check: grade("food_safe", /\b2 hours?\b|\btwo hours?\b|\b1 hour\b|\bone hour\b/i, "2 hours (1 hour when it is hot)") },
+        check: grade(["food_safe", "food_cook"], /\b2 hours?\b|\btwo hours?\b|\b1 hour\b|\bone hour\b/i, "2 hours (1 hour when it is hot)") },
       { id: "food-b-cheap-meals", turns: ["How can my family eat well on very little money?"],
         check: grade("food_thrift", /\bbeans?\b|lentils?|legumes?|\bpeas\b|staple|grains?/i, "a cheap staple with beans or lentils") }
     ].forEach(function (x) {
