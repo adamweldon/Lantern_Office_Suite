@@ -1,0 +1,221 @@
+The fourth review of 1.24.36 (givens, user givens, code checks, AI_CONTROL's fill and "stop all" changes)
+==========================================================================================================
+
+Reviewed: src/lantern.inner.html at 9cac81a (the working copy's src is byte-for-byte 9cac81a's; HEAD moved to 30a3753
+during the review, a docs-only commit). Against: 1.24.35 (8cb3281), read from git in memory.
+Run: node tests/fixtures/review4_1236/replay.js  ->  run_9cac81a.txt
+Cases written by this reviewer, without reading the earlier reviews' folders or tests.
+
+SUMMARY
+  351 cases: 297 AGREE, 54 DISAGREE  (26 high, 18 medium, 10 low)
+  Cases: 2 guards; 187 questions (75 a given should fit, 100 none should be shown, 12 either); 102 model replies built
+  (copies of givens with small changes, fences, numbered lines, no END; right circuits from many trades; wrong ones);
+  22 code-practice picks; 31 user-given cases; 5 view cases; 2 prompt-shape cases.
+
+  Both guards hold:
+  - every bench prompt (L.aiBenchQuestions and L.aiBenchQuestionsB, 300) equals 1.24.35's except make-control and
+    make-control-b (guard-bench-prompts);
+  - all 1,460 saved replies with a MAKE block in tests/fixtures/bench_run_*.json build as on 1.24.35: same ok, problems,
+    summary and steps (guard-fixture-builds).
+
+  The high findings fall in six groups. Most are one root each:
+  A. the lights reader makes two lamps from one light (4 cases);
+  B. the station count is taken as one, or as two full stations, where the question says otherwise (8 cases);
+  C. a sequence's or a delay's meaning is guessed past what the question says (4 cases);
+  D. the sump given reads every "alarm" as a high water alarm, and a manual run switch as its on/off (3 cases);
+  E. AI_CONTROL's fill rule takes a booster's break-tank floats for a fill's (2 cases);
+  F. the code checks hand back lines that build wrong (4 cases);
+  G. a kept circuit is shown for two machines or a fire pump (3 cases, user givens).
+
+
+HIGH
+----
+A. One light read as two lamps (GIVENS_CONTROL read(), the "else" branch: both RUNW and STOPW found in one light's clause
+   push a run lamp AND a stopped lamp). The given shows two lamps where one was asked.
+   - st-one-light-two-states  "...with a pilot light that is on when running and off when stopped"
+       seen: lamp LT1 M1 "run" green + lamp LT2 M1 off "stopped" red.  right: one run lamp (or no given).
+   - st-pump-light-on-off  "...a light that is on when the pump is running and off when it is stopped"  -- the same.
+   - st-red-on-when-stops  "...a red light that comes on when the motor stops running"
+       seen: a green run lamp AND a red stopped lamp.  right: lamp LT1 M1 off "stopped" red alone (or none).
+   - (medium) st-light-running-or-stopped "a light that shows the motor is running or stopped" -- two lamps; unsure, none.
+   Mend: a light word gives one lamp; where its clause names both states, the one it is on/lit/comes on for, else unsure.
+
+B. Stations (stations() returns 1 unless one of its patterns says otherwise; the reversing given never asks it).
+   - st-motor-and-panel-no-at  "...start stop buttons at the motor and the panel"  seen: one station. right: two, or none.
+     (stations() catches "at the motor and AT the panel" only.)
+   - st-stop-each-end  "...a stop button at each end"  seen: 2 stops AND 2 starts ("start, remote"). right: none (one start,
+     two stops is not a given's) -- the ends rule counts full stations whatever the buttons at the ends are.
+   - st-estop-each-end  "...an emergency stop at each end"  seen: estop ES1 (one) plus two full start/stop stations.
+     right: none.
+   - st-local-plus-remote-stop  "...a local start/stop station and a remote stop"  seen: one station. right: none.
+   - rv-both-ends  "forward/reverse ... start and stop stations at both ends"  seen: one stop, one start each way.
+   - rv-local-remote  "forward reverse ... with a local and remote station"  -- the same.
+   - rv-two-stops  "forward reverse starter ... with two stop buttons"  seen: stop PB1 all (one).
+     (control-reversing's block never calls stations(); "local", "remote", "station" are in its word lists.)
+   - (medium) st-remote-stop-station  "a pump with a remote stop station"  seen: one station.
+   Mend: refuse where "remote", "local", "each end", "both ends" or a count of stops/starts appears and stations() cannot
+   say both how many stops and how many starts; give the reversing given the same test.
+
+C. Order, buttons and times guessed:
+   - sq-last-one-first  "three conveyors start in sequence, the last one first"
+       seen: conveyor 1 first, then 2, then 3 (the opposite).  right: none.
+       seqOrder() returns 1..n early when no machine is numbered, before the n >= 3 "order words -> null" test.
+   - sq-one-start-button  "two conveyors started in sequence with one start button"
+       seen: a start button per conveyor.  right: none (one start for two needs a timer or an automatic start).
+   - sq-sequential-stop  "motor 2 starts after motor 1 is running, and motor 1 can only stop after motor 2 has stopped"
+       seen: the sequence start (stopping M1 drops M2 at once).  right: none -- the second clause is ignored.
+   - dl-horn-while-runs  "the conveyor starts 10 seconds after start is pressed and a horn sounds while the conveyor runs"
+       seen: horn AH1 CR1 TR1 off "warning" (the horn only during the delay).  right: none.
+
+D. The sump given:
+   - sp-overload-alarm-light  "...a sump pump with a float switch and an overload alarm light"
+       seen: float FS2 "high level alarm" + lamp LT1 FS2 "high water" red; the overload light asked for is not there.
+   - sp-horn-when-runs  "...an alarm horn that sounds when the pump runs"
+       seen: float FS2 "high level alarm" + horn AH1 FS2 "high water".  right: none for both.
+       (block() adds the high water alarm for any "alarm"; "overload", "runs" and "sound" are in the sump's words.)
+   - sp-manual-run  "...a sump pump with a float switch and a manual run switch"
+       seen: switch SS1 M1 "on/off" in series with the float -- a model relabelling it "manual run" can never run the pump
+       by hand.  right: none ("manual" is in GENERIC). (1.24.35's own example has SS1 "hand" in series too; the given
+       is now "tested for this", which is what makes it worse.)
+
+E. AI_CONTROL's fill rule and a booster (FILLQ there includes boost\w* and "pressure tank"):
+   - rp-booster-two-nc  "a booster pump on a break tank with a low float and a high float", floats nc "low"/"high":
+       now drawn and said "FS1 (low) starts M1 as the water falls below it and FS2 (high) stops it" -- a booster that
+       starts as its break tank runs low (dry). 1.24.35 left it as written (wrong too, but not Lantern's doing).
+   - rp-booster-two-no  the same floats written open: sent back "write them nc: float FS1 M1 nc "low", float FS2 M1 nc
+       "high"" -- the line builds the same backwards booster.
+   Mend: a booster's or a pressure tank's floats are its source's; take boost/pressure tank out of the fill test for floats.
+
+F. Code checks that hand back a line that builds wrong (rule 3: the line must be right):
+   - cw-trip-relay-pump / cw-trip-relay-comp  "coil CR1 "pump shutdown relay"" (or "compressor safety relay"),
+       "pressure PS1 CR1 "high pressure cut-out"", "coil M1 CR1 off ..." -- an energise-to-trip relay. Back: "CR1 would run
+       only while the pressure is above it ... Write it: pressure PS1 CR1 nc ...". With "coil M1 CR1 off" kept, that line
+       stops the pump/compressor whenever the pressure is normal. machine() reads CR1's label (pump, compressor) and never
+       asks how CR1's contact is used. (De-energise-to-trip is better practice, so a send-back can be right; the line is
+       not.) Mend: a relay whose only contacts are used off (nc) in a machine's rung is a trip relay -- leave it, or send
+       back both lines.
+   - cw-ol-alarm-relay  "overload OL1 CR3 no", "coil CR3 "overload alarm relay"", "horn AH1 CR3" -- back: "OL1 is an
+       overload contact written normally open ... Write it: overload OL1 CR3" -- the alarm relay then sounds the horn
+       whenever the overload has NOT tripped. The check excludes lamps and horns, not a relay that drives an alarm.
+       (1.24.35 also sent this block back, for "CR3 has nothing switching it".)
+   - cw-booster-bare-suction  question names "a low suction cut-out at 10 psi"; reply has PS1 nc "cut-in 40 psi, cut-out 60
+       psi" (right) and PS2 "cut-out 10 psi" (no nc: right for a suction cut-out). Back: "PS2 ... is a high cut-out ...
+       Write it: pressure PS2 M1 nc "cut-out 10 psi"" -- the pump would then run only with the suction below 10 psi.
+       BARE reads any label of "cut-out N" as the pressure switch's own; with two pressure switches it cannot be sure.
+
+G. User givens shown where they do not fit (GIVENS sameAs: words beyond the kept question pass while they are under a
+   quarter of the question and not in DEF; "second", "another", "fire" are not in DEF):
+   - us-second-conveyor  kept "start stop circuit for a conveyor with a run light"; shown for "... for a conveyor and a
+       second conveyor with run lights" (two machines).
+   - us-another-pump  kept "motor starter for a pump"; shown for "... for a pump and another pump".
+   - us-fire-pump  kept "motor starter for a pump" (with an overload); shown for "a motor starter for a fire pump". A fire
+       pump's controller is its own kind (NFPA 20; as I recall it a fire pump controller has no overload trip -- not
+       checked on a page here); Lantern's own givens refuse "fire".
+   Mend: treat a kept circuit as Lantern's own are treated -- every word of the question known to the kept question (or
+   GENERIC), and machines() equal; or at least add second/another/other/fire/jockey/brake/interlock/without to DEF.
+
+
+MEDIUM
+------
+- IEC tags asked for, a US-tagged given shown: sq-iec-tags (KM1/KM2), dl-iec-tags (KM1, S1), fl-iec-tags (K1, B1),
+  ft-iec-tags (KM1). Only the starter, reversing, compressor and sump givens test IECTAGS; the sequence, delayed start,
+  fill and fill-two do not.
+- A time Lantern cannot be sure of: dl-range "starts 10-15 seconds after" -> "15 s"; dl-between "between 5 and 10 seconds"
+  -> "10 s" (delayOf sees only the number with a unit). Right: none.
+- fl-level-switches "a pump that fills a tank using level switches" -> the one-float fill (TWO_FLOATS counts floats only).
+- st-no-holding "start and stop buttons and no holding contact" -> the three-wire given. (AI_CONTROL adds the holding
+  contact across any start anyway, as on 1.24.35, so the drawing is no worse; the given still says it is tested for this.)
+- st-remote-stop-station, st-light-running-or-stopped (above).
+- rp-fill-nc-dropped: the fill given copied without its nc ("float FS1 M1 "tank full"") is drawn "FS1 (tank full) is
+  made" -- the pump runs only when the tank is full -- and nothing goes back. The given's own label is not one the
+  cut-out check knows (no high/cut word). Right: back once, "Write it: float FS1 M1 nc "tank full"".
+- rp-fill2-cutoff-label: nc "low level start" + nc "high level cut-off" in a fill: left in series (the pump stops as the
+  water reaches the low float; the tank never fills), while the line under it says "FS2 opens as the water rises". fj()
+  makes any label with "cut" a guard. Right: hold in (FS1 start, FS2 stop).
+- rp-fill2-mixed: "low level start" written open, "high level stop" nc: left in series -- the pump runs only between the
+  floats and never starts on an empty tank. Right: back once with FS1's nc line, as for two open floats.
+- us-brake, us-plus-stop-light, us-without-overload, us-jockey, us-interlock: a kept circuit shown for a question asking
+  for more or other (a brake, a stop light, no overload, a jockey pump, an interlock).
+
+LOW
+---
+- st-208-pump "for a pump on 208 V" -> supply "208 V AC" (the pump's voltage taken for the control's; "on" is not one of
+  motorBefore's joining words).
+- sq-downstream-first "the downstream conveyor must start first" -> conveyor 1 first (labels do not say which is
+  downstream).
+- rv-driving "a 3 phase motor driving a conveyor belt" -> refused ("driving" unknown); "a 3 phase conveyor belt motor" fits.
+- rp-fill2-two-vessels "fills the house tank from a cistern", floats nc "tank low"/"tank high" -> left in series
+  (short-cycling) by the two-vessel rule, though both floats name the tank.
+- cc-heater-ol-ref: a heater contactor (M1) gets AI_CONTROL's overload (as on 1.24.35) and the checked line cites
+  "NEC Article 430, Part III" (motors) for it.
+- pk-brazil-comma (", Brazil" -> US), pk-south-african ("a South African mine" -> US), pk-indian-creek ("Indian Creek
+  farms" -> IEC). Only the reference text changes.
+- us-red-light: a kept green-run-light circuit shown for "a red light".
+- us-schematic-keep-button: under a MAKE SCHEMATIC block drawn as a control circuit, "Keep as my given" is shown and keeps
+  nothing (view() does not test the block's kind; keep() does).
+
+
+WHAT AGREES (297)
+-----------------
+- The guards above.
+- Givens shown and right (75 fits, each built clean with nothing sent back): three-wire starters for conveyors, pumps,
+  fans, blowers, mixers, crushers, saws, lathes, grinders; 120 V from a control transformer beside a 460 V motor; 240 V
+  control beside a 415 V motor; 12 V DC and 24 V DC; no supply line for 115 V or 480 V motors; run and stopped lights by
+  colour and state ("goes out when the motor starts", "turns off when the pump stops"); trip, fault and power lights left
+  to the model; two and three stations, local and remote, both ends; e-stops including a mushroom head; the two bench
+  questions (run light; stopped light). Forward and reverse with lights for each direction, an e-stop, in Australia.
+  Sequences with the order said every way tried ("must be running before", "only when the fan is running", "conveyor 2
+  before conveyor 1", "1 feeds 2 so 2 first", "3 first, then 2, then 1", "only run while", "B unless A"). Delayed starts
+  with horns and times in figures and words (15 s, 5 min, 1.5 min, forty-five seconds). Compressors with cut-outs in
+  psi and bar. Fills on one float (troughs, towers, cisterns, stock tanks) and two; sumps, bilge pumps, pits, high water
+  alarms (light or horn).
+- Refused rightly, the prompt byte-for-byte 1.24.35's (100): two-speed, jog, hand-off-auto, VFD, soft start, star-delta,
+  two machines, IEC tags (starter, sump), explanations and sizes, two-wire, lights or heaters as the load, hoists and
+  garage doors, pressure switches on a starter, colours with no states, held-to-run, power-failure restarts, a second
+  place for the buttons, limits, drums, plugging, push-button interlocking, never-together and after-stopped
+  sequences, lube pumps, reverse order, timers, off-delays, beacons, two times, refrigeration and heat pump compressors,
+  oil and temperature switches, duplex and lead/lag, fills from a well or a cistern, dry-run and low cut-offs, alarms on
+  fills, valves, three floats, floats in series, pump fail alarms, silence buttons, two floats on a sump, refrigeration
+  pump-down. A pump station's question is shown no Lantern given (pr-shape-pumps).
+- The prompt with a given keeps every instruction line, drops "For example:" and the sump example, and has the header
+  "Lantern's tested circuit for this (...): write it as it stands, changing only what the question asks:" (pr-shape).
+- Model replies: copies with fences, numbered lines and no END build as the given does; the reversing copy without
+  its interlock gets it; "stop PB1", "stop PB1 all", "stop PB1 everything" go in L1; "stop PB1 M1 all" stays in M1's
+  rung; "stop PB1 all" with only a lamp goes back as before. The fill on two nc floats holds itself in (on a relay too,
+  beside a stop button); a start button on the coil leaves it as written; a well's dry-run float and a source's
+  "supply low cut-out" stay in series and are never the start; a source float named "pond low" and the tank's "high" are
+  left alone; two open floats go back once with both nc lines, quoted, said "no"/"normally open", or unquoted; a sump's
+  pump on/off floats hold in as on 1.24.35.
+- Code checks keep 35 right circuits from the trades: boiler burner (thermostat, high limit nc, low water cut-off open),
+  refrigeration (low pressure open, high pressure nc; cut-in above cut-out), well pump (cut-in/cut-out nc, low pressure
+  open), exhaust and tower fans on rising temperature, a supply fan's freezestat and static pressure safety, HPU (high
+  pressure nc, low oil open, high oil temperature nc), heater and kiln limits, heat trace, a booster's low suction,
+  vacuum pump in mbar, low ambient, dosing pump low level, pressure washer, grain dryer burner, chiller low temperature,
+  a compressor's cut-out on its run relay, a switch written nc on the coil's line, an alarm silence relay ("horn off"),
+  trip lights, septic effluent pump, stock tank heater, zero speed switch, control fuse, a student's two-lamp relay,
+  irrigation low pressure.
+- They send back the wrong ones once, with the right line: a boiler's high limit open and low water cut-off nc (both
+  lines), a well pump's switch open, a booster's low suction nc, a dry-run float nc, a water heater element's high limit
+  open, a refrigeration high pressure open, a kiln over-temperature open, a fill's high level shut-off open, an HPU low oil
+  nc, a stop written as an open button ("stop", "off", "emergency stop" -> "estop PB0"), stops and overloads written
+  "no", "open", "normally open", a cut-out written on the coil's line without nc; in IEC practice with IEC's reference.
+- Practice picks (19 of 22): codes named first, then places (Germany, Ireland, UK, NSW, China, Ontario, Indiana not
+  India, Germany Road not Germany, New Mexico, Tulsa), then volts and hertz; capitals' "US" ignored.
+- User givens: kept and shown for the same question (a starter, in place of Lantern's own given; a duplex station); never shown
+  while the bench runs; not shown for 24 V, an explanation, an e-stop, jog, no lights, two stations, triplex, seal fail
+  lights, a flow switch, two-wire, a float or pressure switch, a well; a circuit sent back is not kept; "Forget it" takes
+  it out of the store and the prompt.
+- Under the drawing: the "Checked to US practice ..." line with the overload, the stops, the interlock and the e-stop;
+  "Use IEC practice" switches it, is kept, and a question naming neither code then follows it; nothing is shown under a
+  circuit that went back.
+
+
+WHAT WAS NOT RUN
+----------------
+- No model: every reply here is written by hand. Nothing was run on the 35B or the small models; nothing in Chat's whole
+  turn (the send-back round) -- build() and prompt() only, in jsdom, not a real browser.
+- No drawings looked at.
+- A page reloaded with kept givens already in the store (stored() at start) was not tried; nor the bench's own run with a
+  kept circuit (L.aiBench.running was set by hand).
+- npm test was not run (as asked). The earlier reviews' folders and tests were not read (as asked).
+- Facts about fire pump controllers (NFPA 20) are from memory, not checked on a page.

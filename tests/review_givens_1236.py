@@ -19,6 +19,7 @@ import os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "givens_review_1236")
 KEEP = {
+    "B-load-saw-verb": "\u201cas I saw in the manual\u201d now gets no given: \u201cmanual\u201d is not a word the givens know (a manual run is a switch they do not draw, the fourth review's sp-manual-run), and a given is shown only where every word is known. The instructions as 1.24.35 gave them.",
     "A-rv-both-directions": "a hoist that runs both ways gets no given now: a hoist, a winch or a crane is held to run (its pendant's buttons "
                             "momentary, nothing sealed in), with limits of travel, which a three-wire reversing starter is not -- the second "
                             "review's H3. The question gets the instructions as 1.24.35 gave them.",
