@@ -5,6 +5,17 @@ file in the same commit as the work. Read `CLAUDE.md` first.
 
 ## Next, in order
 
+**First: Adam's laptop run of 1.24.36 (set B, the 35B, 133 of 139,
+`tests/fixtures/bench_run_1.24.36_35b_setb.json`).** Mended in 1.24.37: ANS in
+a drawing's notes (the parallel lesson's current), the transistor's load named
+only on its own line or as the guide's K1 (the motor driver, failing on two
+runs), the robot's distance to more places (the check). Next: (1) Chat not
+reading the Food lesson by itself for "how long can cooked rice be left out"
+(`food-b-rice-left-out`, failing on every 35B run since 1.24.16 -- a gap set B
+was written to show; mend for every question of its kind, a reviewer first);
+(2) read 1.24.37's small-model run; (3) Chat's sums: a first line "=ANS*30"
+still takes ANS as 0 (the notes now question it; the review of 1.24.37).
+
 **Now: what commercial office software does, in Lantern (Adam,
 2026-11-17).** "Anything that is available on commercial software should be
 available on Lantern as much as possible plus more while being easier to use
