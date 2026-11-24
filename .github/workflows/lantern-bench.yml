@@ -26,7 +26,14 @@
 #
 # By hand (Actions tab, Run workflow): choose the models, "quick", "full" or
 # a pattern for the question ids (for example ^make-music), and the prompt
-# size (auto, short or full: to compare a model both ways).
+# (auto, short, full or library: to compare a model both ways).
+#
+# (1.24.38) A push runs each model once for each prompt named in
+# .github/bench-prompts (one line, for example "auto library"; "auto" when the
+# file is not there): Lantern's library prompt (LIBRARY_CATALOG) is being
+# tried beside the prompt it may replace, on the same computer type, and the
+# two runs of a model are read side by side. The jobs run at the same time,
+# so the run takes no longer; each is its own job, with its own log.
 name: Lantern Bench
 
 # (A push that creates a branch is judged by the new commits it brings and
@@ -48,7 +55,7 @@ on:
         description: 'quick, full, or a pattern for question ids'
         default: 'full'
       prompt:
-        description: 'Prompt size: auto (short for a model under 3B), short, or full'
+        description: 'Prompt: auto (short for a model under 3B), short, full, or library'
         default: 'auto'
 
 permissions:
@@ -63,16 +70,27 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       models: ${{ steps.models.outputs.list }}
+      prompts: ${{ steps.models.outputs.prompts }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github
       - id: models
         env:
           ASKED: ${{ github.event.inputs.models }}
+          ASKED_PROMPT: ${{ github.event.inputs.prompt }}
         run: |
           python3 - <<'EOF' >> "$GITHUB_OUTPUT"
           import json, os
           asked = (os.environ.get("ASKED") or "0.8b 2b 4b").lower().split()
           known = ["0.8b", "2b", "4b", "9b"]
           print("list=" + json.dumps([m for m in known if m in asked] or ["0.8b", "2b", "4b"]))
+          # the prompts: the one asked for by hand, else those in .github/bench-prompts, else auto
+          kinds = ["auto", "short", "full", "library"]
+          p = (os.environ.get("ASKED_PROMPT") or "").lower().split()
+          if not p and os.path.exists(".github/bench-prompts"):
+              p = open(".github/bench-prompts").read().lower().split()
+          print("prompts=" + json.dumps([k for k in kinds if k in p] or ["auto"]))
           EOF
 
   bench:
@@ -83,10 +101,11 @@ jobs:
       fail-fast: false
       matrix:
         model: ${{ fromJson(needs.plan.outputs.models) }}
+        prompt: ${{ fromJson(needs.plan.outputs.prompts) }}
     env:
       MODEL_ID: ${{ matrix.model }}
       QUESTIONS: ${{ github.event.inputs.questions }}
-      PROMPT: ${{ github.event.inputs.prompt }}
+      PROMPT: ${{ matrix.prompt }}
     steps:
       - uses: actions/checkout@v4
 
@@ -147,7 +166,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: lantern-bench-${{ matrix.model }}
+          name: lantern-bench-${{ matrix.model }}-${{ matrix.prompt }}
           path: |
             bench-out
             start-lantern.log

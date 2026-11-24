@@ -90,7 +90,8 @@ def summary_md(label, st, rows, report):
     if report and report.get("summary") and report["summary"].get("medianTps"):
         out.append("Median speed: %s tokens a second." % report["summary"]["medianTps"])
     if report and report.get("prompt"):
-        out.append("Prompt: %s%s." % (report["prompt"], " (only the functions each question is about)" if report["prompt"] == "short" else " (every function)" if report["prompt"] == "full" else ""))
+        out.append("Prompt: %s%s." % (report["prompt"], " (only the functions each question is about)" if report["prompt"] == "short" else " (every function)" if report["prompt"] == "full" else
+                                      " (Lantern's catalog, then the shelf it opened for each question: 1.24.38)" if report["prompt"] == "library" else ""))
     if report and not report.get("library"):
         out.append("No offline library was attached, so the encyclopedia questions were left out.")
     out.append("")
@@ -133,7 +134,7 @@ def main():
     ap.add_argument("--label", default="")
     ap.add_argument("--poll", type=float, default=15, help="seconds between looks at the run")
     ap.add_argument("--reply-chars", type=int, default=700, help="how much of each failed reply to print in the log")
-    ap.add_argument("--prompt", default="", choices=["", "auto", "short", "full"],
+    ap.add_argument("--prompt", default="", choices=["", "auto", "short", "full", "library"],
                     help="the prompt size for this run (Lantern.aiPrompt): auto is short for a model under 3 billion parameters; default: as the page has it")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
