@@ -32312,7 +32312,7 @@ Lantern.RFB = (function () {
 // Depends: AI_SCHEMATIC (Lantern.aiSchematic: PARTS, SYN, hooks), DRAW
 //          (Lantern.drawModes, Lantern.drawSymbols, Lantern.drawShapes),
 //          FORMULA (Lantern.formula) -- all feature-detected
-// Exports: Lantern.aiSchematicMore = {fold(sc), noteText(text)} (for tests)
+// Exports: Lantern.aiSchematicMore = {fold(sc), noteText(text, state)} -- state: one {} for all the notes of one drawing
 // ===========================================================================
 // More for the AI's schematics (1.12.5), from a Chat where a 35B drew Ohm's
 // law in parallel:
@@ -32387,15 +32387,29 @@ Lantern.RFB = (function () {
     if (a >= 1e6 || a < 1e-3) return v.toPrecision(4).replace(/\.?0+e/, "e");
     return String(parseFloat(v.toPrecision(4)));
   }
-  // noteText(text) -> {text, problems}: each {= ...} worked out
-  function noteText(t) {
-    var problems = [];
+  // noteText(text, state) -> {text, problems}: each {= ...} worked out.
+  // (1.24.37, Adam's laptop: the 35B drew the parallel lesson with "Rt = {=1/(1/10+1/15+1/30)} ohm" and then "Total
+  // current It = {=9/ANS} A" -- the battery's 9 V over the total it had just worked out. ANS was always 0 here, so the
+  // note went back as "Divide by zero", twice, and the current the lesson wanted was never shown.) Now ANS is what it is
+  // in Chat's sums and on the calculator: the sum worked out just before it, in the same note or the one before, and
+  // ANS1, ANS2 ... the first, second sum of the drawing's notes -- when every note of one drawing is given the same
+  // state, in order. Where there is no sum before it, or the one before could not be worked out, ANS says so; never 0.
+  function noteText(t, state) {
+    var problems = [], st = state && typeof state === "object" ? state : {};
+    if (!Array.isArray(st.vals)) st.vals = [];
     var s = String(t).replace(/^\s*[\x22\u201c]|[\x22\u201d]\s*$/g, "").replace(/\x7B=\s*([^\x7D]+)\x7D/g, function (m, e) {
+      var bare = e.replace(/\x22[^\x22]*\x22/g, "").replace(/\x27[^\x27]*\x27/g, ""), prev = st.vals.length ? st.vals[st.vals.length - 1] : null;
+      if (/\bans\b(?!\d)/i.test(bare) && typeof prev !== "number") {
+        st.vals.push(null);
+        problems.push("note: {=" + e + "} uses ANS, the sum worked out just before it, but " + (st.vals.length > 1 ? "the sum before it could not be worked out" : "there is no sum before it") + ": write the number, or its own sum, in place of ANS");
+        return "?";
+      }
       try {
-        var v = L.formula.evaluate(e, { deg: false, ans: 0 });
+        var v = L.formula.evaluate(e, { deg: false, ans: typeof prev === "number" ? prev : 0, ansList: st.vals.slice() });
         if (typeof v !== "number" || !isFinite(v)) throw new Error("not a number");
+        st.vals.push(v);
         return fmt(v);
-      } catch (er) { problems.push("note: {=" + e + "} could not be worked out (" + ((er && er.message) || er) + ")"); return "?"; }
+      } catch (er) { st.vals.push(null); problems.push("note: {=" + e + "} could not be worked out (" + ((er && er.message) || er) + ")"); return "?"; }
     });
     return { text: s, problems: problems };
   }
@@ -32414,7 +32428,7 @@ Lantern.RFB = (function () {
       if (b) { x0 = Math.min(x0, b[0]); x1 = Math.max(x1, b[2]); y1 = Math.max(y1, b[3]); }
     });
     if (x0 > x1) { x0 = 60; x1 = 600; }
-    var y = y1 + 34, shown = notes.map(function (n) { var r = noteText(n); r.problems.forEach(function (p) { problems.push(p); }); return r.text.slice(0, 120); });
+    var nst = {}, y = y1 + 34, shown = notes.map(function (n) { var r = noteText(n, nst); r.problems.forEach(function (p) { problems.push(p); }); return r.text.slice(0, 120); });
     // centred under the drawing, and never off its left edge
     var half = Math.max.apply(null, shown.map(function (t) { return t.length * 15 * 0.32; })), cx = Math.max(200, (x0 + x1) / 2, half + 20);
     shown.forEach(function (t) { lay.shapes.push({ t: "text", c: NOTE, x: cx, y: y, s: t, fs: 15 }); y += 24; });
@@ -32695,8 +32709,8 @@ Lantern.RFB = (function () {
     return { kind: kind, values: vals, total: total, note: note };
   }
   // the numbers of ohms a note shows, once Lantern has worked out its sums
-  function shownOhms(n) {
-    var NT = L.aiSchematicMore && L.aiSchematicMore.noteText, t = NT ? NT(n).text : String(n), out = [], m, re = /(\d+(?:\.\d+)?)\s*(k|M)?\s*(?:ohms?\b|\u03a9)/g;
+  function shownOhms(n, nst) {
+    var NT = L.aiSchematicMore && L.aiSchematicMore.noteText, t = NT ? NT(n, nst).text : String(n), out = [], m, re = /(\d+(?:\.\d+)?)\s*(k|M)?\s*(?:ohms?\b|\u03a9)/g;
     while ((m = re.exec(t))) out.push(parseFloat(m[1]) * (m[2] === "k" ? 1e3 : m[2] === "M" ? 1e6 : 1));
     return out;
   }
@@ -32705,9 +32719,9 @@ Lantern.RFB = (function () {
     var q = ctx && ctx.question ? String(ctx.question) : "", n = null;
     try { n = network(sc); } catch (e) { n = null; }
     if (!n) return;
-    var notes = sc.notes = sc.notes || [], has = false, wrong = null;
+    var notes = sc.notes = sc.notes || [], has = false, wrong = null, nst = {};
     notes.forEach(function (t) {
-      var shown = shownOhms(t);
+      var shown = shownOhms(t, nst);
       if (shown.some(function (v) { return near(v, n.total); })) { has = true; return; }
       // a sum of numbers that are not this circuit's (the guide's own example, copied)
       var sums = String(t).match(/\x7B=[^\x7D]+\x7D/g) || [], foreign = [];
@@ -33114,9 +33128,9 @@ Lantern.RFB = (function () {
 
   function notesUnder(lay, notes, problems) {
     var y = lay.bottom + 30, cx = Math.max(300, (lay.left + lay.right) / 2), shown = [];
-    var nt = L.aiSchematicMore && L.aiSchematicMore.noteText;
+    var nt = L.aiSchematicMore && L.aiSchematicMore.noteText, nst = {};
     (notes || []).slice(0, 8).forEach(function (n) {
-      var r = nt ? nt(n) : { text: String(n), problems: [] };
+      var r = nt ? nt(n, nst) : { text: String(n), problems: [] };
       r.problems.forEach(function (p) { problems.push(p); });
       shown.push(r.text.slice(0, 120));
       lay.shapes.push({ t: "text", c: NOTE, x: cx, y: y, s: r.text.slice(0, 120), fs: 15 }); y += 24;
@@ -33758,9 +33772,9 @@ Lantern.RFB = (function () {
   }
   function notesUnder(lay, lines, problems, grey) {
     var y = lay.y || lay.bottom + 30, cx = Math.max(300, (lay.left + lay.right) / 2), shown = [], fs = grey ? 12 : 15;
-    var nt = L.aiSchematicMore && L.aiSchematicMore.noteText;
+    var nt = L.aiSchematicMore && L.aiSchematicMore.noteText, nst = {};
     lines.forEach(function (n) {
-      var r = grey ? { text: String(n), problems: [] } : nt ? nt(n) : { text: String(n), problems: [] };
+      var r = grey ? { text: String(n), problems: [] } : nt ? nt(n, nst) : { text: String(n), problems: [] };
       r.problems.forEach(function (p) { problems.push(p); });
       shown.push(r.text.slice(0, 150));
       wrap(r.text.slice(0, grey ? 400 : 150), grey ? 100 : 80).forEach(function (part) {
@@ -34738,9 +34752,9 @@ Lantern.RFB = (function () {
   }
   function notesUnder(lay, lines, problems, grey) {
     var y = lay.y || lay.bottom + 34, cx = Math.max(300, (lay.left + lay.right) / 2), shown = [], fs = grey ? 12 : 15;
-    var nt = L.aiSchematicMore && L.aiSchematicMore.noteText;
+    var nt = L.aiSchematicMore && L.aiSchematicMore.noteText, nst = {};
     lines.forEach(function (n) {
-      var r = grey ? { text: String(n), problems: [] } : nt ? nt(n) : { text: String(n), problems: [] };
+      var r = grey ? { text: String(n), problems: [] } : nt ? nt(n, nst) : { text: String(n), problems: [] };
       r.problems.forEach(function (p) { problems.push(p); });
       shown.push(r.text.slice(0, 150));
       wrap(r.text.slice(0, grey ? 900 : 150), grey ? 120 : 80).forEach(function (part) {
@@ -38384,9 +38398,9 @@ Lantern.RFB = (function () {
   }
   function notesUnder(lay, lines, problems, grey) {
     var y = lay.y || lay.bottom + 34, cx = Math.max(300, (lay.left + lay.right) / 2), shown = [], fs = grey ? 12 : 15;
-    var nt = L.aiSchematicMore && L.aiSchematicMore.noteText;
+    var nt = L.aiSchematicMore && L.aiSchematicMore.noteText, nst = {};
     lines.forEach(function (n) {
-      var r = grey ? { text: String(n), problems: [] } : nt ? nt(n) : { text: String(n), problems: [] };
+      var r = grey ? { text: String(n), problems: [] } : nt ? nt(n, nst) : { text: String(n), problems: [] };
       r.problems.forEach(function (p) { problems.push(p); });
       shown.push(r.text.slice(0, 150));
       wrap(r.text.slice(0, grey ? 600 : 150), grey ? 110 : 80).forEach(function (part) {
@@ -39023,9 +39037,9 @@ Lantern.RFB = (function () {
     var shown = { parts: w.parts.map(function (p) { return { name: p.name, fill: p.fill, items: p.items.map(pretty) }; }), hub: w.hub };
     var lay = W.draw(shown, block.title), sh = lay.shapes, notes = [];
     lay.tooLong.slice(0, 3).forEach(function (it) { problems.push("\u201c" + it + "\u201d is too long for its place on the wheel: shorten it, or use fewer items"); });
-    var y = lay.bottom + 44, NT = L.aiSchematicMore && L.aiSchematicMore.noteText;
+    var y = lay.bottom + 44, NT = L.aiSchematicMore && L.aiSchematicMore.noteText, nst = {};
     w.notes.slice(0, 6).forEach(function (nt) {
-      var r = NT ? NT(nt) : { text: unq(nt), problems: [] };
+      var r = NT ? NT(nt, nst) : { text: unq(nt), problems: [] };
       r.problems.forEach(function (p) { problems.push(p); });
       notes.push(r.text.slice(0, 110));
       sh.push({ t: "text", c: NOTE, x: W.CX, y: y, s: r.text.slice(0, 110), fs: 16 }); y += 26;
