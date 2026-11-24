@@ -100,7 +100,8 @@ function ok(name, cond, info) { n++; if (cond) console.log("ok   " + name); else
   ok("OPEN is a Chat command", !!OPEN && OPEN.verb === "OPEN");
   ok("...read on a line of its own: OPEN 6.2, OPEN: 6.2, **OPEN 6.2**, OPEN shelf 6.2, OPEN 6", OPEN.test("OPEN 6.2") === "6.2" && OPEN.test("OPEN: 6.2") === "6.2" &&
     OPEN.test("**OPEN 6.2**") === "6.2" && OPEN.test("OPEN shelf 6.2") === "6.2" && OPEN.test("OPEN 6") === "6" && OPEN.test("Let me look.\nOPEN 6.1") === "6.1");
-  ok("...not in a sentence, nor a longer number", OPEN.test("I would open 6.2 first") === null && OPEN.test("OPEN 6.21") === null && OPEN.test("OPEN 12") === null);
+  ok("...not in a sentence, nor a longer number, nor a step that opens something", OPEN.test("I would open 6.2 first") === null && OPEN.test("OPEN 6.21") === null && OPEN.test("OPEN 12") === null &&
+    OPEN.test("Open 2 windows to let the air in.") === null && OPEN.test("1. OPEN 3 valves slowly") === null && OPEN.test("OPEN 6.2 and read the lesson") === null);
   P.setMode("auto");
   ok("...and only with the library prompt", OPEN.test("OPEN 6.2") === null);
   P.setMode("library");
