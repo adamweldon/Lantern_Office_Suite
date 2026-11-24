@@ -126,6 +126,16 @@ These are Adam's design rules, in the order they usually apply.
    AI writes is held to code checks (a rule broken goes back once, with
    the rule and the line); and a custom version that passes them can be
    kept as the user's own given (`Lantern.givens`).
+   On which code (Adam, 2026-11-24): "Since both are often accepted there
+   should be a reference to both that the user can see presented and
+   choose which code section to follow as applicable." So a check carries
+   a US reference (NEC, NFPA 79) and an IEC one (IEC 60204-1), a section
+   number only where it was read on a page; Lantern follows the one the
+   question names, else the user's choice, else US, tells the AI only
+   that one, and shows the user both (`Lantern.codeChecks`). A given is
+   shown only where Lantern is sure it fits: where unsure, none (the four
+   reviews of 1.24.36 found every guess at a light, a station, an order
+   or a time copied wrong somewhere).
 
 ## What goes into the lessons and tables
 

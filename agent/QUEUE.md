@@ -191,6 +191,27 @@ tried by a reviewer:
   thermostat written normally open is drawn as written (send it back once
   with its nc line -- a rule to be reviewed; a low cutout is normally
   open); MAKE STATION's "floats low ..." drops the low float.
+- Givens and code checks: **done in 1.24.36** (Adam, 2026-11-24: givens
+  for every well-known assembly, custom changes "as long as they are code
+  approved"; US and IEC both shown, the user choosing). GIVENS,
+  GIVENS_CONTROL (nine control circuits, shown only where Lantern is
+  sure), the user's own givens (Keep as my given), CODE_CHECKS and
+  CODE_CHECKS_CONTROL (cut-outs, stops, overloads; US or IEC);
+  `tests/givens_1236.js`, `tests/code_checks_1236.js`, four reviews
+  replayed. Next, in order: (1) read the small models' run of 1.24.36 for
+  make-control and make-control-b (the only prompts changed); (2)
+  hydraulic and pneumatic givens (a double-acting cylinder on a 4/3 or
+  5/2 valve, relief, meter-out speed control; single-acting on a 3/2) and
+  their code checks (ISO 1219 symbols, ISO 4413/4414: a relief valve on
+  every pump, ...), each reviewed; (3) mechanical givens (belt and
+  chain drives, gear ratios) as recipes; (4) IEC tags (IEC 81346-2's
+  letter codes, read on a page first) so IEC practice draws K/S/F.
+  Left: an overload drawn in each rung it guards (reversing, delayed
+  start) where NEMA/JIC draw one contact in the common line; a trip light
+  on an overload's open contact is drawn closed (as before); AI_PARTS cuts
+  "... with a float, 24 V DC control, and a pump running light" in two
+  and the given fits the first part; a freeze stat or low limit written
+  nc on a fan, and a fill valve's cut-off, are not judged (rule 7).
 
 0. **The Health lessons' sources (1.24.22, Adam).** Every lesson names the
    guidelines it was checked against in November 2026; where they said
