@@ -12,6 +12,8 @@ import os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "station_review1_1231")
 KEEP = {
+    "B-71": "make-control and make-control-b are shown the three-wire starter given (1.24.36, GIVENS_CONTROL), by design; every other bench prompt is unchanged (tests/review_givens_1236.py, cases D).",
+    "B-72": "make-control and make-control-b are shown the three-wire starter given (1.24.36, GIVENS_CONTROL), by design; every other bench prompt is unchanged (tests/review_givens_1236.py, cases D).",
     "A-105": "one pump with a duplex's floats: the lag float is left out and said ('not the FS3 (lag on) float: one pump has no lag pump to start or stop'), as the case's own 'right' allows; the judge's list of jobs still names it.",
     "A-109": "the high-high alarm FS5 now lights its own light LT4 (and FS4 its LT3), as a two-alarm panel does; the judge's simulator places one alarm float, so FS5 is never made in it and LT4 never lit.",
     "A-109": "the high-high alarm FS5 lights its own light LT4 (and FS4 its LT3), as a two-alarm panel does, now that each alarm float has one; the judge's simulator places one alarm float, so FS5 is never made in it and LT4 never lit.",

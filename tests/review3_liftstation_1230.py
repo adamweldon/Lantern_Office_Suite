@@ -10,6 +10,8 @@ import os, re, subprocess, sys, tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "liftstation_review3_1230")
 KEEP = {
+    "A-20": "an air compressor's pressure switch written normally open is now sent back once with its nc line (1.24.36's code checks, tests/code_checks_1236.js): written so it would run the compressor only above its cut-out. The case guarded against change (as 1.24.29); the line handed back is the right one.",
+    "A-12": "a fill on two normally closed floats (low level start, high level stop) is now held in (1.24.36): in series, as 1.24.29 left it, the pump stopped as soon as the water rose past the low float and started again -- short-cycling, the tank never filled (the givens review's F-fill-two-floats, simulated). The case guarded against change; the change is the right drawing.",
 }
 # (1.24.31) A station asked for whole is one MAKE STATION block now (AI_STATION; tests/station.js,
 # tests/review_station_1231.py). This review was of the 1.24.30 path -- the three drawings made one at a time -- which a

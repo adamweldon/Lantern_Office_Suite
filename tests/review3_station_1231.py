@@ -10,6 +10,7 @@ import os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "station_review3_1231")
 KEEP = {
+    "A-01": "make-control and make-control-b are shown the three-wire starter given (1.24.36, GIVENS_CONTROL), by design; every other bench prompt is unchanged (tests/review_givens_1236.py, cases D).",
     "A-04": "(1.24.33) One bench reply reads otherwise, by design: the 2B's make-sheet-excel (bench_run_1268_2b) ends, after a blank line, "
             "in a sentence of prose (\u201cYou can copy the table above and paste it into Excel ...\u201d) that was a row of the table; since "
             "1.24.33 an open table or program leaves such a sentence outside it (the second review of 1.24.33).",
