@@ -1,0 +1,61 @@
+// cases_c.js -- near misses: control (and not quite control) questions no given fits. Right: no given, and the action
+// prompt exactly as 1.24.35 gave it for the question.
+"use strict";
+var lib = require("./lib.js"), J = require("./judge.js");
+var C = [];
+function none(id, q, harm, why) {
+  C.push({ id: id, harm: harm || "high", input: q, right: "no given; the prompt as 1.24.35's" + (why ? " (" + why + ")" : ""),
+    run: function () { return lib.boot().then(function (x) { return J.none(x, q); }); } });
+}
+none("C-jog", "Draw a motor starter with a jog button", "high", "jogging");
+none("C-jog-relay", "Draw a start/stop/jog control circuit with a control relay", "high", "jogging");
+none("C-jogging-reversing", "Draw a forward/reverse jogging control circuit", "medium", "jogging, which Lantern does not draw");
+none("C-two-speed", "Draw a two-speed motor control circuit", "high");
+none("C-two-speed-starter", "Draw a two speed motor starter with start and stop buttons", "high");
+none("C-star-delta", "Draw a star-delta starter control circuit", "high");
+none("C-wye-delta", "Draw a wye-delta motor starter with a timer", "high");
+none("C-plc-ladder", "Write a PLC ladder program for a start/stop motor with a seal-in", "high");
+none("C-plc-ladder-logic", "Draw the ladder logic for a motor starter in a PLC program", "high");
+none("C-plc-fwdrev", "Write a PLC program for forward/reverse motor control", "high");
+none("C-plc-sequence", "Write a PLC program for two conveyors that start in sequence", "high");
+none("C-plc-compressor", "Write a PLC program for an air compressor on a pressure switch", "high");
+none("C-duplex-lift", "Draw the control circuit for a duplex lift station with an alternating relay", "high");
+none("C-duplex-sump-alt", "Draw the control circuit for two sump pumps that alternate, with floats", "high");
+none("C-sump-pumps-plural", "Draw the control circuit for two sump pumps", "high");
+none("C-lift-panel", "Draw the control panel wiring for a lift station", "high");
+none("C-sump-duplex-word", "Draw the control circuit for a duplex sump pump with a float switch", "high");
+none("C-fill-two-pumps", "Draw the control circuit for two pumps that fill a tank, lead/lag", "high");
+none("C-pneumatic", "Draw a pneumatic circuit with a push button and a cylinder", "high");
+none("C-hydraulic-starter", "Draw a hydraulic circuit for a press with a start/stop motor starter", "high");
+none("C-transistor", "Draw a transistor circuit that switches a relay coil with a start button", "high");
+none("C-555-delay", "Draw a 555 timer circuit with a delayed start", "high");
+none("C-arduino", "Draw an Arduino circuit to start and stop a motor", "high");
+none("C-light-switch", "Draw the wiring for a light switch in a hallway", "high");
+none("C-three-way", "Draw a three-way switch circuit for a staircase light", "high");
+none("C-doorbell", "Draw a doorbell circuit with a transformer and a push button", "high");
+none("C-water-heater", "Draw the control circuit for an electric water heater with a thermostat", "high");
+none("C-motor-thermostat", "Draw the control circuit for a motor with a thermostat", "high");
+none("C-fill-drain-two-pumps", "Draw the control circuit to fill and drain a tank with two pumps", "high");
+none("C-fill-valve-drain", "Draw the control circuit for a tank: a pump fills it and a valve drains it", "high");
+none("C-drum-switch", "Draw a reversing drum switch circuit for a motor", "high");
+none("C-door-light", "Draw a relay circuit that turns on a light when a door opens", "high");
+none("C-limit-conveyor", "Draw a control circuit where a limit switch stops a conveyor", "medium");
+none("C-vfd-wiring", "Draw the control wiring for a VFD", "high");
+none("C-hoa-pump-float", "Draw the control circuit for a pump with a hand-off-auto switch and a float", "high");
+none("C-two-compressors", "Draw the control circuit for two air compressors on pressure switches", "high");
+none("C-duplex-compressor", "Draw the control circuit for a duplex air compressor with lead/lag pressure switches", "high");
+none("C-alternating-compressors", "Draw the control circuit for two air compressors that alternate with an alternator relay", "high");
+none("C-boiler", "Draw the control circuit for a boiler with a low water cutoff and a high limit", "high");
+none("C-transfer-switch", "Draw the control wiring for an automatic transfer switch", "high");
+none("C-traffic", "Draw a traffic light control circuit with relays and timers", "high");
+none("C-flasher", "Draw a relay flasher circuit for a warning light", "high");
+none("C-well-pump-pressure", "Draw the control circuit for a well pump with a pressure switch", "medium", "a pump on a pressure switch is not the air compressor's given");
+none("C-refrigeration-hilo", "Draw the control circuit for a refrigeration compressor with high and low pressure switches", "high");
+none("C-crane-up-down", "Draw the control circuit for a crane hoist with up and down push buttons", "low", "no reversing given is asked by name; none is not wrong");
+none("C-garage-door", "Draw the control circuit for a garage door opener with open, close and stop buttons", "medium");
+none("C-motor-no-control", "What size wire do I need for a 5 HP motor starter?", "medium", "not a drawing: 1.24.35 offered MAKE CONTROL here too (the word wire), but with an example; a block to write as it stands pushes harder to a drawing");
+none("C-explain-3wire", "Explain how a three-wire start/stop circuit works", "medium", "an explanation, not a drawing; a block to write as it stands pushes to a drawing");
+none("C-explain-seal-in", "Why does a seal-in contact keep a motor running?", "high", "a question about a circuit, not a drawing of one");
+none("C-overload-size", "How do I size the overload heaters for a motor starter?", "high", "not a drawing");
+none("C-elevator", "Draw the control circuit for a two-floor elevator with call buttons and limit switches", "medium");
+module.exports = C;

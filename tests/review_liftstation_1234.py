@@ -15,6 +15,9 @@ BENCH = ("Adam's question is not added to the bench: set A's guard (“set A is 
          "the 1.24.30-31 reviews' bench guards keep the bench as it was, so runs compare from version to version. It is replayed "
          "in tests/liftstation_1234.js instead, graded by make-liftstation's own checks (the 35B's reply and MAKE STATION both pass).")
 KEEP = {
+    # (1.24.36) by design: the two motor-starter questions are shown Lantern's given for them (GIVENS_CONTROL) in place of
+    # the instructions' example; every other bench prompt is as it was (tests/review_givens_1236.py, cases D)
+    "A-60": "make-control and make-control-b are shown the three-wire starter given (1.24.36), by design; every other bench prompt is unchanged.",
     "F-20": BENCH, "F-21": BENCH, "F-22": BENCH, "F-23": BENCH, "F-24": BENCH, "F-25": BENCH, "F-26": BENCH, "F-27": BENCH, "F-28": BENCH,
     "D-25": "the ground line is given with the other part on one wire named before it (“L2 is on one wire too: say where it goes "
             "on; join the ground back to B1, like: wire G1 B1”): the ground is where the way from the source ends, and the part on a "

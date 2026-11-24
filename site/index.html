@@ -34066,6 +34066,7 @@ Lantern.RFB = (function () {
         if (/^(off|not|stopped|de-energised|de-energized|out)$/.test(lw)) { if (it.refs.length && !pend) it.refs[it.refs.length - 1].nc = true; else pend = true; return; }
         if (COLOURS[lw]) { it.a.colour = COLOURS[lw]; it.a.colourName = lw; return; }
         if (/^(or)$/.test(lw)) { it.a.or = true; return; }
+        if (/^(all|everything)$/.test(lw)) { it.a.all = true; return; }   // (1.24.36) stop PB1 all: ahead of every rung, as written
         if (/^seal$/.test(lw)) return;
         // (1.24.30) a tag of capitals alone is a device's too (AR, the alternating relay the 35B wrote)
         if ((IDRE.test(t) && !/^\d/.test(t)) || (/^[A-Z]{2,3}$/.test(t) && !/^(NO|NC|ON|OFF|AND|OR|THE|LED|AC|DC|VAC|VDC)$/.test(t))) {
@@ -34357,6 +34358,7 @@ Lantern.RFB = (function () {
       if (!targets.length) {
         var t = it.role === "stop" ? (only(function (o) { return coils(o) && items.some(function (s) { return (s.kind === "start") && s.refs.some(function (r) { return r.id === o.id; }); }); }) || only(coils)) :
           it.role === "overload" ? (only(function (o) { return o.kind === "starter"; }) || only(coils)) : only(coils) || (outs.length === 1 ? outs[0].id : "");
+        if (!t && it.role === "stop" && it.a.all && outs.some(coils)) { feed.push(it); return; }
         if (!t && it.role === "stop" && outs.some(coils)) { feed.push(it); changed.push(it.id + " stops everything: it is drawn in L1 ahead of every rung (name a coil to stop just one: stop " + it.id + " " + outs.filter(coils)[0].id + ")"); return; }
         // (the second review) an overload that names no coil, among several starters: the starter of its number (OL1 M1,
         // OL2 M2), said; else back with a starter in the line, never a relay
@@ -34442,13 +34444,34 @@ Lantern.RFB = (function () {
       r.stops.push(offs[0]); r.starts.push(ons[0]);
       changed.push(ons[0].id + " (" + ons[0].label + ") starts " + o.id + " and " + offs[0].id + " (" + offs[0].label + ") stops it: " + o.id + " holds itself in between (the two in series would stop it as soon as the water fell below " + ons[0].id + ", and start it again: short-cycling)");
     });
+    // (1.24.36, found by the review of the givens) a pump that fills on two floats, each normally closed (opening as the
+    // water rises to it): the low one starts it as the water falls below it, the high one stops it as the water rises to
+    // it, and it holds itself in between -- the two in series would stop it as soon as the water rose past the low one,
+    // and start it again (short-cycling, the tank never filled to the high one). The fill's mirror of the above; two
+    // floats with one job each, or it is left as written
+    if (!duplex) outs.forEach(function (o) {
+      var r = R[o.id], txt = qd + " " + (o.label || "");
+      if (!coils(o) || r.branches || r.starts.length || r.stops.length) return;
+      if (!FILLQ.test(txt) || EMPTYQ.test(txt.replace(FILLQ, " "))) return;
+      var fs = r.series.filter(function (e) { return e.kind === "float"; });
+      if (fs.length !== 2 || !fs.every(function (e) { return e.nc; })) return;
+      function fj(e) {
+        var t = String(e.label || ""), up = /\b(?:high|hi|full|stop|stops|off|shut\w*|top)\b/i.test(t), dn = /\b(?:low|lo|start|starts|on|run|empty|refill)\b/i.test(t);
+        return up && !dn ? "stop" : dn && !up ? "start" : null;
+      }
+      var st = fs.filter(function (e) { return fj(e) === "start"; }), sp = fs.filter(function (e) { return fj(e) === "stop"; });
+      if (st.length !== 1 || sp.length !== 1) return;
+      r.series = r.series.filter(function (e) { return e !== st[0] && e !== sp[0]; });
+      r.stops.push(sp[0]); r.starts.push(st[0]);
+      changed.push(st[0].id + " (" + st[0].label + ") starts " + o.id + " as the water falls below it and " + sp[0].id + " (" + sp[0].label + ") stops it as the water rises to it: " + o.id + " holds itself in between (the two in series would stop it as soon as the water rose past " + st[0].id + ", and start it again: short-cycling)");
+    });
     // latching: a start on a coil gets the coil's holding contact across it,
     // and a circuit that holds itself in gets a stop; a motor starter its overload
     outs.forEach(function (o) {
       var r = R[o.id];
       if (r.starts.length && coils(o)) {
         r.seal = true;
-        if (!o.call) added.push(o.id + "\u2019s holding contact across " + r.starts.map(function (s) { return s.id; }).join(" and ") + ", so " + o.id + " stays on " + (r.starts.every(function (s) { return s.kind === "float"; }) ? "as the water falls below " + (r.starts.length > 1 ? "them" : r.starts[0].id) : "when " + (r.starts.length > 1 ? "they are" : r.starts[0].id + " is") + " let go"));
+        if (!o.call) added.push(o.id + "\u2019s holding contact across " + r.starts.map(function (s) { return s.id; }).join(" and ") + ", so " + o.id + " stays on " + (r.starts.every(function (s) { return s.kind === "float"; }) ? (r.starts.every(function (s) { return s.nc; }) ? "as the water rises above " : "as the water falls below ") + (r.starts.length > 1 ? "them" : r.starts[0].id) : "when " + (r.starts.length > 1 ? "they are" : r.starts[0].id + " is") + " let go"));
         if (!r.stops.length && !feed.some(function (f) { return f.role === "stop"; })) {
           var sid = nid("PB"); r.stops.push({ id: sid, kind: "pb", nc: true, label: "stop" });
           added.push("a stop " + sid + " for " + o.id + " (a circuit that holds itself in needs one)");
@@ -36635,7 +36658,7 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // MODULE: GIVENS - START
 // Depends: (none) -- the domains' prompts ask it (AI_CONTROL's promptOf), feature-detected
-// Exports: Lantern.givens = {add(given), all(kind), match(kind, question), prompt(kind, question, base)}
+// Exports: Lantern.givens = {add(given) -> given or null, all(kind), match(kind, question), prompt(kind, question, base)}
 // ===========================================================================
 // Givens (1.24.36, Adam, 2026-11-24): "Lantern should contain givens for any typical, well known process assemblies
 // (electrical, hydraulic, pneumatic, mechanical etc.) in a way that makes the AI's answer being correct the path of
@@ -36648,17 +36671,22 @@ Lantern.RFB = (function () {
 // to the question before it is shown -- its stations, its lights, its supply, what the motor drives, from the
 // question's own words -- and a question no given fits gets the instructions as before. It is context, never the
 // answer forced: the AI writes the block, Lantern draws and checks it as any other.
-// A given: {id, kind ("CONTROL" ...), title, asks: RegExp, not: RegExp (optional), rank (higher wins when two fit),
-// says: what it is (shown above the block), block: function (question) -> [lines] (without MAKE ... and END)}.
+// A given: {id, kind ("CONTROL" ...), title, asks: a test (a RegExp, or {test: function (question)}), not: a test
+// (optional), rank (higher wins when two fit), says: what it is (shown above the block), block: function (question) ->
+// [lines] (without MAKE ... and END), or null when the question is not one it can be fitted to}.
 (function () {
   var L = window.Lantern;
   if (!L) return;
   var ALL = [];
-  function add(g) { if (g && g.id && g.kind && g.asks && g.block) { ALL = ALL.filter(function (x) { return x.id !== g.id; }); ALL.push(g); } return g; }
+  // (the review of 1.24.36) asks and not are tests (a RegExp, or anything with a test function) and block a function: a
+  // given made otherwise -- a user's, with asks a string -- is not added, and one whose test throws fits nothing, so no
+  // given can break Chat's prompt
+  function isTest(x) { return !!x && typeof x.test === "function"; }
+  function add(g) { if (g && g.id && g.kind && isTest(g.asks) && (!g.not || isTest(g.not)) && typeof g.block === "function") { ALL = ALL.filter(function (x) { return x.id !== g.id; }); ALL.push(g); return g; } return null; }
   function all(kind) { return ALL.filter(function (g) { return !kind || g.kind === kind; }); }
   function match(kind, q) {
     q = String(q || "");
-    var fit = ALL.filter(function (g) { return g.kind === kind && g.asks.test(q) && !(g.not && g.not.test(q)); });
+    var fit = ALL.filter(function (g) { try { return g.kind === kind && g.asks.test(q) && !(g.not && g.not.test(q)); } catch (e) { return false; } });
     fit.sort(function (a, b) { return (b.rank || 0) - (a.rank || 0); });
     return fit[0] || null;
   }
@@ -36674,7 +36702,8 @@ Lantern.RFB = (function () {
     base.forEach(function (l, i) { if (at < 0 && /For example:\s*$/.test(l)) at = i; });
     if (at < 0) return null;
     var head = base.slice(0, at + 1).map(function (l, i) { return i === at ? l.replace(/\s*For example:\s*$/, "") : l; }).filter(function (l) { return l !== ""; });
-    var title = typeof g.title === "function" ? g.title(q) : g.title;
+    var title;
+    try { title = typeof g.title === "function" ? g.title(q) : g.title; } catch (e) { title = ""; }
     return head.concat(["Lantern\u2019s tested circuit for this" + (g.says ? " (" + g.says + ")" : "") + ": write it as it stands, changing only what the question asks:",
       "MAKE " + kind + ": " + title]).concat(lines, ["END"]);
   }
@@ -36690,117 +36719,293 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // The control circuits every panel shop draws (1.24.36), as US ladder diagrams (NEMA/JIC practice: L1 and L2 rails,
 // stops normally closed and in series before the starts, a motor starter's overload contact after its coil -- the
-// motor's overload protection NEC Article 430 asks for). Each is fitted to the question: one station or two (stops in
-// series, starts in parallel), a light on while it runs or while it is stopped (only where the question asks for a
-// light), the control voltage the question names, and what the motor drives ("pump", "fan", "conveyor").
+// motor's overload protection NEC Article 430 Part III asks for). Each is fitted to the question: the stations it asks
+// for (stops in series, starts in parallel), the lights it asks for and no others, the control voltage it names (not
+// the motor's), what the motor drives, an emergency stop.
+// (the review of 1.24.36) A given is shown "write it as it stands", and a small model copies it: so it is shown only
+// where it is sure to fit (rule 7). A question about more than the given -- two-wire control, hand-off-auto, a drive,
+// a starting method, a load with no motor, two floats, an off-delay, a refrigeration switch -- or one that asks for an
+// explanation or a size, not a drawing, gets no given and the instructions as before. A light Lantern cannot be sure of
+// (a trip, fault, alarm or power light) is left out of the block for the model to add.
 // The duplex pump station (an alternating relay and four floats) stays AI_CONTROL's own PROMPT_PUMPS.
 (function () {
   var G = window.Lantern && window.Lantern.givens;
   if (!G) return;
   var Q = "\x22";
   function q2(s) { return Q + s + Q; }
-  // what the motor drives, from the question: "pump", "fan", "conveyor" ... else "motor"
+  // a test made of a regular expression and a function: a question the expression finds and the function does not refuse
+  function both(re, f) { return { test: function (q) { return re.test(String(q || "")) && !f(String(q || "")); } }; }
+  function either(re, f) { return { test: function (q) { return re.test(String(q || "")) || f(String(q || "")); } }; }
+  // a question asking how something works or what size it is, with no word asking for a drawing: no block to copy
+  var ASK_ONLY = /\b(?:explain\w*|describe|what\s+size|sizing|wire\s+size|gauge|awg|why\s+(?:does|do|is|are|would)|how\s+(?:does|do)\s+(?:a|an|the|it|this|they|these)\b|what\s+(?:is|are|does)\s+(?:a|an|the)\b|difference\s+between)\b/i;
+  var DRAW = /\b(?:draw|drawn|sketch|diagram|schematic|ladder|print|design|make|build|show|create|lay\s+out|give\s+me)\b/i;
+  function askOnly(q) { return ASK_ONLY.test(q) && !DRAW.test(q); }
+
+  // what the motor drives, in the order the question names them; "press", "saw" and "drill" only as things (a press, a
+  // table saw, press motor), never as verbs ("press start", "as I saw"); "pump house" is a place
   var LOADS = ["pump", "fan", "blower", "conveyor", "compressor", "mixer", "agitator", "crusher", "saw", "grinder", "hoist", "winch", "auger", "elevator", "press", "lathe", "drill", "spindle", "motor"];
-  function load(q) { var lo = String(q).toLowerCase(); for (var i = 0; i < LOADS.length; i++) if (new RegExp("\\b" + LOADS[i] + "s?\\b").test(lo)) return LOADS[i]; return "motor"; }
-  function device(q) { return /\bcontactor\b/i.test(q) ? "contactor" : "starter"; }
-  // the control voltage the question names: "24 V DC", "120 V AC", "120 volt", "24VDC"
-  function supply(q) {
-    var m = /\b(\d{2,3})\s*-?\s*(?:v|volts?)\b\s*(ac|dc)?/i.exec(String(q));
-    if (!m) return null;
-    var v = +m[1], kind = m[2] ? m[2].toUpperCase() : (v <= 48 ? "DC" : "AC");
-    if (v > 600) return null;
-    return "supply " + q2(v + " V " + kind);
+  function loadsIn(q) {
+    var lo = String(q).toLowerCase(), found = [];
+    LOADS.forEach(function (w) {
+      var re = new RegExp("\\b" + w + "s?\\b", "g"), m;
+      while ((m = re.exec(lo))) {
+        var before = lo.slice(Math.max(0, m.index - 14), m.index), after = lo.slice(m.index + m[0].length, m.index + m[0].length + 12);
+        if (/^(press|saw|drill)$/.test(w) && !/\b(?:a|an|the|punch|hydraulic|drill|brake|table|band|circular|chop|miter|power|press)\s+$/.test(before) && !/^\s+(?:motor|starter|contactor)\b/.test(after)) continue;
+        if (w === "pump" && /^\s*(?:house|room|shed)\b/.test(after)) continue;
+        found.push({ w: w, at: m.index });
+      }
+    });
+    found.sort(function (a, b) { return a.at - b.at; });
+    return found;
   }
-  // the lights the question asks for: on while running, on while stopped, an overload trip light
-  function lights(q, coil, n0) {
-    var t = String(q).toLowerCase(), out = [], n = n0 || 1;
-    if (!/\b(light|lights|lamp|lamps|indicator|pilot)\b/.test(t)) return out;
-    // (a light "on while the pump is stopped" is the stopped light alone; a run light where the question names running, or
-    // names a light and no state)
-    var stopped = /(?:light|lamp|indicator)[^.?!]{0,50}\b(?:stopped|not running|is off|idle|at rest)\b|\b(?:stopped|idle|ready)\s+(?:light|lamp|indicator)\b/.test(t);
-    var running = /(?:light|lamp|indicator)[^.?!]{0,50}\b(?:runs|running|is running|energi[sz]ed|in operation)\b|\b(?:run|running)\s+(?:light|lamp|indicator)\b/.test(t) || !stopped;
-    if (running) out.push("lamp LT" + (n++) + " " + coil + " " + q2("run") + " green");
-    if (stopped) out.push("lamp LT" + (n++) + " " + coil + " off " + q2("stopped") + " red");
-    return out;
+  function load(q) { var f = loadsIn(q).filter(function (x) { return x.w !== "motor"; }); return f.length ? f[0].w : "motor"; }
+  function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+  function device(q) { return /\bcontactor\b/i.test(q) && !/\bstarter\b/i.test(q) ? "contactor" : "starter"; }
+
+  // the control voltage: the one the question says is the control's ("120 V control transformer", "24 V AC control");
+  // a voltage alone only when nothing says it is a motor's ("a 460V 3-phase motor" is the motor's); 24VDC, 120 VAC as one
+  // word; AC or DC as the question says it (a control transformer is AC; 120 V and up is AC; 24 V alone stays 24 V)
+  var VOLT = /(\d{2,3})\s*-?\s*(?:volts?|v)\s*(ac|dc)?(?![a-z])/gi;
+  // (a voltage is the motor's when it stands before the motor: "a 460V 3-phase motor", "a 480 V motor starter", "a 230 V
+  // air compressor"; a contactor's or a coil's is the control's: "a 24 V DC motor contactor"; 48 V and under is control)
+  var CTRL = /\b(?:control|coils?|secondary|class\s*2)\b/i, MOTOR_AFTER = /^\s*(?:ac|dc)?\s*(?:,\s*)?(?:[\w-]+\s+){0,2}(?:motors?|starters?|compressors?|pumps?|fans?|blowers?|heaters?|three[\s-]phase|3[\s-]?ph\w*)\b/i,
+    COIL_AFTER = /^\s*(?:ac|dc)?\s*(?:,\s*)?(?:[\w-]+\s+){0,2}(?:contactors?|coils?|relays?)\b/i;
+  function motors(s, x) { var a = s.slice(x.end, x.end + 40); return x.v > 48 && MOTOR_AFTER.test(a) && !COIL_AFTER.test(a); }
+  function supply(q) {
+    var s = String(q), all = [], m;
+    VOLT.lastIndex = 0;
+    while ((m = VOLT.exec(s))) { var v = +m[1]; if (v >= 6 && v <= 600) all.push({ v: v, kind: m[2] ? m[2].toUpperCase() : "", at: m.index, end: m.index + m[0].length }); }
+    if (!all.length) return null;
+    function near(x, re) { return re.test(s.slice(Math.max(0, x.at - 22), x.at)) || re.test(s.slice(x.end, x.end + 22)); }
+    var c = all.filter(function (x) { return near(x, CTRL) && !motors(s, x); }), pick = c.length === 1 ? c[0] : !c.length && all.length === 1 && !motors(s, all[0]) ? all[0] : null;
+    if (!pick) return null;
+    var kind = pick.kind || (pick.v > 48 || /\btransformer\b/i.test(s.slice(pick.end, pick.end + 30)) ? "AC" : "");
+    return "supply " + q2(pick.v + " V" + (kind ? " " + kind : ""));
   }
   function sup(q) { var s = supply(q); return s ? [s] : []; }
-  // a three-wire (momentary start, stop, holding contact) motor starter, one station or two
-  var TWO = /\b(two|2|second|both|multiple|several)\s+(?:control\s+)?(?:stations?|locations?|places?|sets?\s+of\s+(?:push\s*)?buttons)\b|\b(?:local\s+and\s+remote|remote\s+and\s+local)\b|\bfrom\s+(?:two|2)\s+(?:places|locations)\b/i;
+  function estop(q) { return /\b(?:e[\s-]?stops?|emergency[\s-]+stops?|mushroom[\s-]+(?:head|button))\b/i.test(q) ? ["estop ES1"] : []; }
+
+  // the lights the question asks for. Each light word is read with the words before it (back to "a", "the", "with" or
+  // a comma: "a green run light", "green run and red stopped pilot lights") and the words after it that say when it is
+  // lit ("that is on while the pump is off", "that goes out when the motor runs"), up to the next thing named. A light
+  // for a trip, a fault, an alarm or the power is left for the model: Lantern cannot be sure which contact lights it.
+  var LIGHTW = /\b(?:(?:pilot|indicator|signal)[\s-]+)?(?:lights?|lamps?)\b(?![\s-]+(?:duty|weight|load|curtains?|beams?|fixtures?|switch(?:es)?|bulbs?))|\b(?:indicators?|pilots?)\b(?![\s-]+(?:lights?|lamps?))/gi;
+  var NOLIGHT = /\b(?:no|without(?:\s+any)?|nor)\s+(?:\w+\s+){0,2}(?:lights?|lamps?|indicators?)\b|\b(?:lights?|lamps?|indicators?)\s+(?:is\s+|are\s+)?not\s+(?:needed|required|wanted)\b/i;
+  var OTHERL = /\b(?:trip\w*|fault\w*|alarm\w*|warning|power|ready|overloads?|high[\s-]+(?:water|level)|low[\s-]+(?:water|level)|status|flash\w*|blink\w*|direction\w*|forward|reverse)\b/i;
+  var RUNW = /\b(?:run|running|runs|on|energi[sz]ed|operating|in\s+operation|started)\b/i, STOPW = /\b(?:stop|stopped|stops|off|idle|at\s+rest|de-?energi[sz]ed|standby)\b/i;
+  var COLOURW = /\b(red|green|amber|yellow|white|blue|orange|clear)\b/i;
+  function stateOf(pre, post) {
+    var p = String(pre).toLowerCase(), t = String(post).toLowerCase();
+    if (OTHERL.test(p) || OTHERL.test(t)) return null;
+    var out = [];
+    // before the light: "run", "stopped", "ON", "OFF", or both ("green run and red stopped pilot lights")
+    var r = RUNW.exec(p), s = STOPW.exec(p);
+    if (r) out.push({ st: "run", at: r.index });
+    if (s) out.push({ st: "stopped", at: s.index });
+    // after it: what lights it
+    if (!out.length && t) {
+      var go = /\b(?:goes|go|turns?|switch(?:es)?|is)\s+(?:out|off|dark)\s+(?:when|while|whenever|if|once)\b(.*)$/.exec(t);
+      if (go) { if (RUNW.test(go[1])) out.push({ st: "stopped", at: 0 }); else if (STOPW.test(go[1])) out.push({ st: "run", at: 0 }); }
+      else {
+        var x = t.replace(/^\s*(?:that|which)?\s*(?:is\s+)?(?:on|lit)\b/, " ").replace(/\b(?:comes?|turns?)\s+on\b|\blights?\s+up\b/g, " ");
+        if (/\b(?:not|isn[\x27\u2019]?t|doesn[\x27\u2019]?t|never)\s+(?:\w+\s+)?(?:running|run|on|started)\b/.test(x)) out.push({ st: "stopped", at: 0 });
+        else if (/\bnot\s+(?:\w+\s+)?(?:stopped|off)\b/.test(x)) out.push({ st: "run", at: 0 });
+        else { if (RUNW.test(x)) out.push({ st: "run", at: 0 }); if (STOPW.test(x)) out.push({ st: "stopped", at: 1 }); }
+      }
+    }
+    if (!out.length) out.push({ st: "run", at: 0 });   // a light with no state named: on while it runs
+    out.sort(function (a, b) { return a.at - b.at; });
+    // its colour: the colour word just before its state word, or the one colour said for one light
+    return out.map(function (o, i) {
+      var upto = out.length > 1 ? p.slice(i ? out[i - 1].at : 0, o.at) : p, c = COLOURW.exec(upto) || (out.length === 1 ? COLOURW.exec(p) : null);
+      return { st: o.st, colour: c ? c[1].toLowerCase() : "" };
+    });
+  }
+  function asked(q) {
+    var s = String(q), want = [], m, marks = [];
+    if (NOLIGHT.test(s)) return [];
+    LIGHTW.lastIndex = 0;
+    while ((m = LIGHTW.exec(s))) marks.push({ at: m.index, end: m.index + m[0].length });
+    marks.forEach(function (k, i) {
+      var pre = s.slice(0, k.at), cut = Math.max(pre.lastIndexOf(","), pre.lastIndexOf(";"), pre.lastIndexOf(":"), pre.lastIndexOf("."));
+      pre = pre.slice(cut + 1);
+      var art = /^(?:.*\b(?:a|an|the|with|and\s+a|and\s+an|plus)\s+)?(.*)$/i.exec(pre);
+      pre = (art ? art[1] : pre).split(/\s+/).slice(-6).join(" ");
+      var post = s.slice(k.end, i + 1 < marks.length ? marks[i + 1].at : s.length);
+      if (!/^\s*(?:that|which|to|showing|shows|when|while|whenever|for|on|lit|indicating|if|once|until)\b/i.test(post)) post = "";
+      post = post.split(/[,;.:?!]|\s+and\s+(?:a|an|the|one)\b|\s+(?:plus|also)\b/i)[0];
+      var st = stateOf(pre, post);
+      if (st) st.forEach(function (x) { if (!want.some(function (w) { return w.st === x.st; })) want.push(x); });
+    });
+    return want;
+  }
+  function lights(q, coil, n0, runName) {
+    var out = [], n = n0 || 1;
+    asked(q).forEach(function (x) {
+      if (x.st === "run") out.push("lamp LT" + (n++) + " " + coil + " " + q2(runName || "run") + " " + (x.colour || "green"));
+      else out.push("lamp LT" + (n++) + " " + coil + " off " + q2("stopped") + " " + (x.colour || "red"));
+    });
+    return out;
+  }
+  function anyLight(q) { LIGHTW.lastIndex = 0; return LIGHTW.test(String(q)) && !NOLIGHT.test(String(q)); }
+
+  // the push-button stations the question asks for: "two locations", "local and remote", "a second station", "two stop
+  // buttons and two start buttons", "stations at both ends", "three start/stop stations" (never "between two stations",
+  // the places a conveyor carries parts)
+  var NUM = { one: 1, two: 2, three: 3, four: 4, second: 2, third: 3, fourth: 4, "2": 2, "3": 3, "4": 4, both: 2, multiple: 2, several: 2 };
+  function stations(q) {
+    var t = String(q).toLowerCase(), m;
+    m = /\b(two|three|four|2|3|4|second|third|fourth|multiple|several)\s+(?:(?:push[\s-]?button|start[\s\x2F-]*(?:and\s+)?stop|stop[\s\x2F-]*(?:and\s+)?start|control|operator|remote)\s+)*(?:stations?|locations?|places|points)\b/.exec(t);
+    if (m && !/\bbetween\s+(?:the\s+)?$/.test(t.slice(Math.max(0, m.index - 12), m.index))) return NUM[m[1]];
+    m = /\b(two|three|four|2|3|4)\s+stop\s+(?:push[\s-]?)?buttons?\b[^.?!]{0,24}\b(?:two|three|four|2|3|4)\s+start\s+(?:push[\s-]?)?buttons?\b/.exec(t);
+    if (m) return NUM[m[1]];
+    m = /\b(two|three|four|2|3|4)\s+sets?\s+of\s+(?:start[\s\x2F-]*(?:and\s+)?stop\s+)?(?:push[\s-]?)?buttons\b/.exec(t);
+    if (m) return NUM[m[1]];
+    if (/\b(?:local\s+and\s+remote|remote\s+and\s+local)\b/.test(t)) return 2;
+    if (/\bstations?\b[^.?!]{0,30}\bboth\s+ends\b|\bboth\s+ends\b[^.?!]{0,30}\bstations?\b/.test(t)) return 2;
+    return 1;
+  }
+  function stationLines(n, c) {
+    if (n <= 1) return ["stop PB1 " + c, "start PB2 " + c];
+    var ls = [], i;
+    for (i = 1; i <= n; i++) ls.push("stop PB" + i + " " + c + " " + q2(n === 2 ? (i === 1 ? "stop, local" : "stop, remote") : "stop " + i));
+    for (i = 1; i <= n; i++) ls.push("start PB" + (n + i) + " " + c + " " + q2(n === 2 ? (i === 1 ? "start, local" : "start, remote") : "start " + i));
+    return ls;
+  }
+
+  // a three-wire (momentary start, stop, holding contact) motor starter, one station or more
   G.add({ id: "control-starter", kind: "CONTROL", rank: 1,
-    title: function (q) { var l = load(q); return l.charAt(0).toUpperCase() + l.slice(1) + " " + device(q); },
+    title: function (q) { return cap(load(q)) + " " + device(q); },
     says: "a three-wire starter: the stop normally closed, the start held in by the coil\u2019s own contact, the overload after the coil",
-    asks: /\b(?:start[\s\x2F-]+(?:and\s+)?stop|stop[\s\x2F-]+(?:and\s+)?start|three[\s-]wire|3[\s-]wire|holding\s+contact|seal[\s-]?in|motor\s+starter|magnetic\s+starter|(?:pump|fan|motor|conveyor|blower|compressor|mixer)\s+(?:starter|contactor))\b/i,
-    not: /\b(reverse|reversing|forward|two[\s-]speed|star[\s-]delta|wye[\s-]delta|jog|jogging|sequence|sequential|after\s+(?:the\s+)?(?:first|M1)|timer|time[\s-]delay|delay(?:ed)?|alternat\w*|duplex|lift\s+station|pump\s+station|float|pressure\s+switch|plc|program)\b/i,
+    asks: both(/\b(?:start[\s\x2F-]+(?:and\s+)?stop|stop[\s\x2F-]+(?:and\s+)?start|three[\s-]wire|3[\s-]wire|holding\s+contact|seal[\s-]?in|motor\s+starter|magnetic\s+starter|(?:pump|fan|motor|conveyor|blower|compressor|mixer)\s+(?:starter|contactor))\b/i,
+      function (q) { return askOnly(q) || !loadsIn(q).length && !/\b(?:starter|contactor)\b/i.test(q); }),
+    not: /\b(reverse|reversing|forward|two[\s-]speed|2[\s-]speed|dual[\s-]speed|multi[\s-]?speed|star[\s\x2F-]+delta|wye[\s\x2F-]+delta|y[\s\x2F-]+delta|jog\w*|inch\w*|sequence|sequential|after\s+(?:the\s+)?(?:first|M1)|timer|time[\s-]delay|delay(?:ed)?|alternat\w*|duplex|lift\s+station|pump\s+station|floats?|pressure\s+switch|plc|program\w*|smart\s+relay|two[\s-]wire|2[\s-]wire|thermostat\w*|toggle|maintained|hand[\s\x2F-]+off[\s\x2F-]+auto|h[\x2F-]o[\x2F-]a|hoa|vfds?|variable[\s-](?:frequency|speed)|frequency\s+drive|ac\s+drive|inverter|soft[\s-]?start\w*|auto[\s-]?transformer|reduced[\s-]voltage|part[\s-]winding|primary\s+resistor|lighting|heater|heating|solenoid|horn|buzzer|siren|warning)\b/i,
     block: function (q) {
-      var c = "M1", ls = sup(q), two = TWO.test(q);
-      if (two) ls = ls.concat(["stop PB1 " + c + " " + q2("stop, local"), "stop PB2 " + c + " " + q2("stop, remote"), "start PB3 " + c + " " + q2("start, local"), "start PB4 " + c + " " + q2("start, remote")]);
-      else ls = ls.concat(["stop PB1 " + c, "start PB2 " + c]);
-      ls.push("coil " + c + " " + q2(load(q) + " " + device(q)));
-      ls.push("overload OL1 " + c);
-      return ls.concat(lights(q, c));
+      var c = "M1";
+      return sup(q).concat(estop(q), stationLines(stations(q), c), ["coil " + c + " " + q2(load(q) + " " + device(q)), "overload OL1 " + c], lights(q, c));
     } });
-  // forward and reverse: two starters, each locked out while the other runs
+  // forward and reverse: two starters, each locked out while the other runs; one stop ahead of both
   G.add({ id: "control-reversing", kind: "CONTROL", rank: 3,
-    title: function (q) { var l = load(q); return "Reversing " + l + " " + device(q); },
+    title: function (q) { return "Reversing " + load(q) + " " + device(q); },
     says: "forward and reverse: one stop for both, each starter locked out by the other\u2019s closed contact, one overload",
-    asks: /\b(?:forward\s*(?:and|\x2F|&|-)\s*reverse|reverse\s*(?:and|\x2F|&|-)\s*forward|reversing\s+(?:starter|contactor|motor|circuit|control)|fwd[\s\x2F-]+rev|run\s+(?:in\s+)?(?:both|either)\s+directions?)\b/i,
-    not: /\b(plc|program|drum\s+switch|single[\s-]phase\s+capacitor)\b/i,
+    asks: both(/\b(?:forward\s*(?:and|\x2F|&|-)\s*reverse|reverse\s*(?:and|\x2F|&|-)\s*forward|reversing\s+(?:starter|contactor|motor|circuit|control)|fwd[\s\x2F-]+rev|run\s+(?:in\s+)?(?:both|either)\s+directions?)\b/i, askOnly),
+    not: /\b(plc|program\w*|drum\s+switch|single[\s-]phase\s+capacitor|jog\w*|inch\w*|two[\s-]speed|2[\s-]speed|vfds?|variable[\s-](?:frequency|speed)|frequency\s+drive|inverter|plugging|brak\w*)\b/i,
     block: function (q) {
-      return sup(q).concat(["stop PB1", "start PB2 M1 " + q2("forward"), "start PB3 M2 " + q2("reverse"), "coil M1 " + q2("forward"), "coil M2 " + q2("reverse"),
-        "interlock M1 M2", "overload OL1 M1 M2"]).concat(/\b(light|lights|lamp|lamps|indicator|pilot)\b/i.test(q) ? ["lamp LT1 M1 " + q2("forward") + " green", "lamp LT2 M2 " + q2("reverse") + " green"] : []);
+      var lamps = anyLight(q) && !OTHERL.test(String(q).replace(/\b(?:forward|reverse|directions?)\b/gi, " ").replace(/\breversing\b/gi, " ")) ? ["lamp LT1 M1 " + q2("forward") + " green", "lamp LT2 M2 " + q2("reverse") + " green"] : [];
+      return sup(q).concat(estop(q), ["stop PB1 all", "start PB2 M1 " + q2("forward"), "start PB3 M2 " + q2("reverse"), "coil M1 " + q2("forward"), "coil M2 " + q2("reverse"),
+        "interlock M1 M2", "overload OL1 M1 M2"], lamps);
     } });
-  // a second motor that can start only while the first runs (conveyors fed in order)
+  // motors that start in order (conveyors fed in order): each with its own stop and start, each able to start only while
+  // the one before it runs; the first one's stop or overload stops them all (each later one is held by the one before it)
+  var SEQ = /\b(?:start(?:s|ed|ing)?\s+(?:up\s+)?in\s+(?:sequence|order)|sequen(?:ce|tial|ced)\s+(?:start\w*|control|interlock\w*)|interlocked\s+(?:start\w*|conveyors?)|(?:can(?:not|[\x27\u2019]?t)?|only|must|will\s+not|won[\x27\u2019]?t|is\s+not\s+allowed\s+to)\s+(?:\w+\s+)?(?:start|run)[^.?!]{0,30}\b(?:after|until|unless|while|when|before)\b[^.?!]{0,40}\b(?:first|other|M1|conveyor\s*1|motor\s*1|pump\s*1|fan\s*1|running|runs|is\s+running|started|on))\b/i;
+  function motorsIn(q) {
+    var t = String(q).toLowerCase(), m = /\b(three|four|3|4)\s+(?:\w+\s+)?(?:conveyors?|motors?|pumps?|fans?|belts?|blowers?|augers?)\b/.exec(t);
+    return m ? NUM[m[1]] : 2;
+  }
+  function seqNames(q, n) {
+    var f = loadsIn(q).filter(function (x) { return x.w !== "motor"; }), names = [];
+    f.forEach(function (x) { if (names.indexOf(x.w) < 0) names.push(x.w); });
+    if (names.length === 2 && n === 2) {
+      // the one named after "after", "until", "while" is the one that runs first
+      var m = /\b(?:after|until|unless|while|when|once)\b([^.?!]*)/i.exec(q), later = m ? loadsIn(m[1]).filter(function (x) { return x.w !== "motor"; }).map(function (x) { return x.w; })[0] : null;
+      if (later && later === names[1]) return [names[1], names[0]];
+      return names;
+    }
+    var l = names[0] || "motor", out = [];
+    for (var i = 1; i <= n; i++) out.push(l + " " + i);
+    return out;
+  }
   G.add({ id: "control-sequence", kind: "CONTROL", rank: 2,
     title: function () { return "Sequence start"; },
-    says: "two starters in sequence: M2 only while M1 runs, one stop stopping both",
-    asks: /\b(?:sequence|sequential|in\s+sequence|interlocked\s+(?:start|conveyors?)|(?:can(?:not|\x27t|\u2019t)?|only|must)\s+(?:start|run)[^.?!]{0,30}\b(?:after|until|unless|while|when)\b[^.?!]{0,30}\b(?:first|other|M1|conveyor\s*1|motor\s*1|running|runs|is\s+running))\b/i,
-    not: /\b(plc|program|timer|time[\s-]delay|delay(?:ed)?|reverse|reversing)\b/i,
+    says: "motors in sequence: each with its own stop and start, each able to start only while the one before it runs, and stopping the first stops them all",
+    asks: both(SEQ, askOnly),
+    not: /\b(plc|program\w*|timers?|time[\s-]delay|delay(?:ed)?|reverse|reversing|sequence\s+of\s+(?:operations?|events)|number\w*\s+(?:the\s+)?rungs)\b/i,
     block: function (q) {
-      var l = load(q);
-      return sup(q).concat(["stop PB1 M1 M2", "start PB2 M1 " + q2(l + " 1 start"), "start PB3 M2 " + q2(l + " 2 start"), "coil M1 " + q2(l + " 1 " + device(q)), "coil M2 M1 " + q2(l + " 2 " + device(q)),
-        "overload OL1 M1", "overload OL2 M2"]).concat(/\b(light|lights|lamp|lamps|indicator|pilot)\b/i.test(q) ? ["lamp LT1 M1 " + q2(l + " 1 run") + " green", "lamp LT2 M2 " + q2(l + " 2 run") + " green"] : []);
+      var n = motorsIn(q), nm = seqNames(q, n), dv = device(q), ls = sup(q).concat(estop(q)), i;
+      for (i = 1; i <= n; i++) ls.push("stop PB" + i + " M" + i + " " + q2(nm[i - 1] + " stop"));
+      for (i = 1; i <= n; i++) ls.push("start PB" + (n + i) + " M" + i + " " + q2(nm[i - 1] + " start"));
+      for (i = 1; i <= n; i++) ls.push("coil M" + i + (i > 1 ? " M" + (i - 1) : "") + " " + q2(nm[i - 1] + " " + dv));
+      for (i = 1; i <= n; i++) ls.push("overload OL" + i + " M" + i);
+      if (anyLight(q) && asked(q).some(function (x) { return x.st === "run"; })) for (i = 1; i <= n; i++) ls.push("lamp LT" + i + " M" + i + " " + q2(nm[i - 1] + " run") + " green");
+      return ls;
     } });
-  // a delayed start: a run relay starts a timer, the motor starts when it times out (a warning horn while it times)
+  // a delayed start: a run relay starts a timer, the motor starts when it times out (a warning horn while it times).
+  // The overload is in the run relay's rung too: reset, the motor stays stopped until start is pressed again (and the
+  // warning sounds again) -- a motor that restarts by itself when its overload is reset is what a three-wire control is
+  // there to prevent
+  var DURS = /(\d+(?:\.\d+)?)\s*-?\s*(s|sec|secs|seconds?|min|mins|minutes?)\b/gi;
+  function delayOf(q) {
+    var s = String(q), all = [], m;
+    DURS.lastIndex = 0;
+    while ((m = DURS.exec(s))) all.push(m[1] + (/^m/i.test(m[2]) ? " min" : " s"));
+    var one = all.filter(function (x, i) { return all.indexOf(x) === i; });
+    if (!one.length) return "10 s";
+    if (one.length === 1) return one[0];
+    m = /\b(?:starts?|runs?|start-?up)\b[^.?!]{0,30}?(\d+(?:\.\d+)?)\s*-?\s*(s|sec|secs|seconds?|min|mins|minutes?)\s+(?:after|later)\b/i.exec(s) || /\bstarts?\s+(?:up\s+)?after\s+(?:a\s+)?(\d+(?:\.\d+)?)\s*-?\s*(s|sec|secs|seconds?|min|mins|minutes?)\b/i.exec(s);
+    return m ? m[1] + (/^m/i.test(m[2]) ? " min" : " s") : null;
+  }
   G.add({ id: "control-delayed-start", kind: "CONTROL", rank: 2,
     title: function () { return "Delayed start"; },
-    says: "a delayed start: the run relay starts the timer, the motor starts when it has timed out",
-    asks: /\b(?:time[\s-]delay(?:ed)?\s+(?:start|relay|motor)|delay(?:ed)?\s+start|start[^.?!]{0,30}\bafter\s+(?:a\s+)?(?:\d+\s*(?:s|sec|seconds?|min|minutes?)|delay|time)|starts?\s+\d+(?:\.\d+)?\s*(?:s|sec|secs|seconds?|min|mins|minutes?)\s+after|on[\s-]delay\s+timer|warning\s+(?:horn|buzzer)\s+before)\b/i,
-    not: /\b(plc|program|reverse|reversing|star[\s-]delta|wye[\s-]delta)\b/i,
+    says: "a delayed start: the run relay starts the timer, the motor starts when it has timed out, and the overload drops the run relay too",
+    asks: both(/\b(?:time[\s-]delay(?:ed)?\s+(?:start|relay|motor)|delay(?:ed)?\s+start|start[^.?!]{0,30}\bafter\s+(?:a\s+)?(?:\d+\s*(?:s|sec|seconds?|min|minutes?)|delay|time)|starts?\s+\d+(?:\.\d+)?\s*(?:s|sec|secs|seconds?|min|mins|minutes?)\s+after|on[\s-]delay\s+timer|pre[\s-]?start\s+(?:warning|alarm|horn)|(?:warning|horn|buzzer|siren|bell|beacon)\b[^.?!]{0,50}\bbefore\b[^.?!]{0,30}\bstart\w*)\b/i,
+      function (q) { return askOnly(q) || !loadsIn(q).length || !delayOf(q); }),
+    not: /\b(plc|program\w*|reverse|reversing|star[\s\x2F-]+delta|wye[\s\x2F-]+delta|y[\s\x2F-]+delta|off[\s-]?delay|keeps?\s+(?:on\s+)?running|runs?\s+on|run[\s-]on|continues?\s+(?:to\s+)?run\w*|released|shuts?\s+(?:off|down)|turns?\s+off|floats?|pressure\s+switch|thermostat\w*|limit\s+switch|(?:motor|pump|fan|conveyor|m)\s*(?:2|two|b)\b|second\s+(?:motor|pump|fan|conveyor)|two\s+(?:motors|pumps|fans|conveyors)|lights?\s+(?:comes?|turns?)\s+on)\b/i,
     block: function (q) {
-      var m = /(\d+(?:\.\d+)?)\s*(s|sec|secs|seconds?|min|mins|minutes?)\b/i.exec(q), t = m ? m[1] + (/^m/i.test(m[2]) ? " min" : " s") : "10 s", l = load(q);
-      var ls = sup(q).concat(["stop PB1 CR1", "start PB2 CR1", "relay CR1 " + q2("run"), "timer TR1 " + q2(t) + " CR1", "coil M1 TR1 " + q2(l + " " + device(q)), "overload OL1 M1"]);
+      var t = delayOf(q), l = load(q);
+      if (!t) return null;
+      var ls = sup(q).concat(estop(q), ["stop PB1 CR1", "start PB2 CR1", "relay CR1 " + q2("run"), "timer TR1 " + q2(t) + " CR1", "coil M1 TR1 " + q2(l + " " + device(q)), "overload OL1 M1 CR1"]);
       if (/\b(horn|buzzer|warning|siren|beacon|bell)\b/i.test(q)) ls.push("horn AH1 CR1 TR1 off " + q2("warning"));
       return ls;
     } });
-  // an air compressor on its pressure switch: the switch opens at the cut-out pressure and closes again at the cut-in
+  // an air compressor on its pressure switch: the switch opens at the cut-out pressure and closes again at the cut-in.
+  // Never a refrigeration compressor's: its low-pressure switch opens as the pressure FALLS
+  var NOT_AIR = /\b(refrigerat\w*|low[\s-]+(?:oil\s+)?pressure|oil|vacuum|pump[\s-]?down|freez\w*|chillers?|coolers?|condens\w*|evaporat\w*|heat\s+pumps?|air[\s-]+condition\w*|hvac|a\x2Fc)\b/i;
   G.add({ id: "control-compressor", kind: "CONTROL", rank: 3,
     title: function () { return "Air compressor"; },
     says: "a compressor on its pressure switch: normally closed, it opens as the pressure rises to the cut-out and closes again at the cut-in",
-    asks: /\b(?:air\s+)?compressors?\b[^.?!]{0,60}\bpressure\s+switch\b|\bpressure\s+switch\b[^.?!]{0,60}\bcompressors?\b/i,
-    not: /\b(plc|program|duplex|alternat\w*|lead[\s\x2F-]+lag)\b/i,
+    asks: both(/\b(?:air\s+)?compressors?\b[^.?!]{0,60}\bpressure\s+switch\b|\bpressure\s+switch\b[^.?!]{0,60}\bcompressors?\b/i, function (q) { return askOnly(q) || NOT_AIR.test(q); }),
+    not: /\b(plc|program\w*|duplex|alternat\w*|lead[\s\x2F-]+lag)\b/i,
     block: function (q) {
-      var m = /cuts?[\s-]?(?:out|off)\b[^\d]{0,12}(\d+(?:\.\d+)?)\s*(psi|bar|kpa)\b/i.exec(q), co = m ? m[1] + " " + m[2].toLowerCase() : null;
-      return sup(q).concat(["switch SS1 M1 " + q2("on/off"), "pressure PS1 M1 nc " + q2(co ? "cut-out " + co : "opens at cut-out"), "coil M1 " + q2("compressor " + device(q)), "overload OL1 M1"])
-        .concat(/\b(light|lights|lamp|lamps|indicator|pilot)\b/i.test(q) ? ["lamp LT1 M1 " + q2("run") + " green"] : []);
+      var m = /cuts?[\s-]?(?:out|off)\s*(?:is\s+|at\s+|of\s+|=\s*|:\s*)?(\d+(?:\.\d+)?)\s*(psi|bar|kpa)\b(?!\s+(?:above|below|over|under|higher|lower|more|less|differential))/i.exec(q), co = m ? m[1] + " " + m[2].toLowerCase() : null;
+      return sup(q).concat(estop(q), ["switch SS1 M1 " + q2("on/off"), "pressure PS1 M1 nc " + q2(co ? "cut-out " + co : "opens at cut-out"), "coil M1 " + q2("compressor " + device(q)), "overload OL1 M1"], lights(q, "M1"));
     } });
-  // one pump on one float: filling a tank (the float opens as it fills) or pumping a sump down (it closes as it rises)
+  // one pump on one float: filling a tank (the float opens as it fills) or pumping a sump down (it closes as it rises).
+  // Two floats, a fill and a drain together, a valve, or an alarm are more than these: no given
+  var TWO_FLOATS = /\bfloats\b|\b(?:two|2|second)\s+float|\bhigh\s+and\s+(?:a\s+)?low\b|\blow\s+and\s+(?:a\s+)?high\b|\bon\s+and\s+off\b|\boff\s+and\s+on\b|\bstart\s+and\s+stop\s+float/i;
   G.add({ id: "control-fill", kind: "CONTROL", rank: 2,
     title: function () { return "Tank fill pump"; },
     says: "a pump filling a tank: the float switch normally closed, it opens as the water rises to it",
-    asks: /\b(?:fill(?:s|ing)?\s+(?:a\s+|the\s+)?(?:tank|cistern|reservoir|tower|trough)|(?:tank|cistern|reservoir)\s+fill(?:ing)?|pump[\s-]up|keep\s+(?:a\s+|the\s+)?tank\s+full)\b/i,
-    not: /\b(plc|program|duplex|alternat\w*|two\s+pumps|lead[\s\x2F-]+lag|empty|drain|sump|sewage|pump[\s-]?down)\b/i,
+    asks: both(/\b(?:fill(?:s|ing)?\s+(?:a\s+|the\s+)?(?:tank|cistern|reservoir|tower|trough)|(?:tank|cistern|reservoir)\s+fill(?:ing)?|pump[\s-]up|keep\s+(?:a\s+|the\s+)?tank\s+full)\b/i,
+      function (q) { return askOnly(q) || TWO_FLOATS.test(q) || !/\bpumps?\b/i.test(q); }),
+    not: /\b(plc|program\w*|duplex|alternat\w*|two\s+pumps|lead[\s\x2F-]+lag|empt\w*|drain\w*|sump|sewage|pump[\s-]?down|solenoid|valves?|alarm\w*)\b/i,
     block: function (q) {
-      return sup(q).concat(["switch SS1 M1 " + q2("on/off"), "float FS1 M1 nc " + q2("tank full"), "coil M1 " + q2("pump " + device(q)), "overload OL1 M1"])
-        .concat(/\b(light|lights|lamp|lamps|indicator|pilot)\b/i.test(q) ? ["lamp LT1 M1 " + q2("pump on") + " green"] : []);
+      return sup(q).concat(["switch SS1 M1 " + q2("on/off"), "float FS1 M1 nc " + q2("tank full"), "coil M1 " + q2("pump " + device(q)), "overload OL1 M1"], lights(q, "M1", 1, "pump on"));
     } });
+  // a pump filling a tank between a low and a high float: the low one starts it, the high one stops it, and it holds
+  // itself in between (AI_CONTROL holds a fill on two normally closed floats in, said)
+  G.add({ id: "control-fill-two", kind: "CONTROL", rank: 3,
+    title: function () { return "Tank fill pump, two floats"; },
+    says: "a pump filling a tank between two floats, both normally closed: the low one starts it as the water falls below it, the high one stops it as the water rises to it, and the pump holds itself in between",
+    asks: both(/\b(?:fill(?:s|ing)?\s+(?:a\s+|the\s+)?(?:tank|cistern|reservoir|tower|trough)|(?:tank|cistern|reservoir)\s+fill(?:ing)?|pump[\s-]up|keep\s+(?:a\s+|the\s+)?tank\s+full)\b/i,
+      function (q) { return askOnly(q) || !TWO_FLOATS.test(q) || !/\bpumps?\b/i.test(q) || /\b(?:three|3|four|4)\s+floats\b|\balarm\w*/i.test(q); }),
+    not: /\b(plc|program\w*|duplex|alternat\w*|two\s+pumps|lead[\s\x2F-]+lag|empt\w*|drain\w*|sump|sewage|pump[\s-]?down|solenoid|valves?)\b/i,
+    block: function (q) {
+      return sup(q).concat(["switch SS1 M1 " + q2("on/off"), "float FS1 M1 nc " + q2("low level start"), "float FS2 M1 nc " + q2("high level stop"), "coil M1 " + q2("pump " + device(q)), "overload OL1 M1"], lights(q, "M1", 1, "pump on"));
+    } });
+  // a sump pump; with a high water alarm, the alarm's own float above the pump's (a light, or a horn where it says so)
   G.add({ id: "control-sump", kind: "CONTROL", rank: 2,
     title: function () { return "Sump pump"; },
     says: "a pump emptying a sump: the float switch normally open, it closes as the water rises to it",
-    asks: /\b(?:sump\s+pump|pump[\s-]?down|empt(?:y|ies|ying)\s+(?:a\s+|the\s+)?(?:sump|pit|tank|basin)|drain(?:s|ing)?\s+(?:a\s+|the\s+)?(?:sump|pit|basin))\b/i,
-    not: /\b(plc|program|duplex|alternat\w*|two\s+pumps|both\s+pumps|lead[\s\x2F-]+lag|lift\s+station|pump\s+station|fill(?:s|ing)?)\b/i,
+    asks: both(/\b(?:sump\s+pump|pump[\s-]?down|empt(?:y|ies|ying)\s+(?:a\s+|the\s+)?(?:sump|pit|tank|basin)|drain(?:s|ing)?\s+(?:a\s+|the\s+)?(?:sump|pit|basin))\b/i,
+      function (q) { return askOnly(q) || TWO_FLOATS.test(q); }),
+    not: /\b(plc|program\w*|duplex|alternat\w*|two\s+pumps|both\s+pumps|lead[\s\x2F-]+lag|lift\s+station|pump\s+station|fill(?:s|ing)?|refrigerat\w*|compressors?|liquid[\s-]line|low[\s-]+pressure|solenoid)\b/i,
     block: function (q) {
-      return sup(q).concat(["switch SS1 M1 " + q2("on/off"), "float FS1 M1 " + q2("pump on"), "coil M1 " + q2("pump " + device(q)), "overload OL1 M1"])
-        .concat(/\b(light|lights|lamp|lamps|indicator|pilot|alarm)\b/i.test(q) ? ["lamp LT1 M1 " + q2("pump on") + " green"] : []);
+      var ls = sup(q).concat(["switch SS1 M1 " + q2("on/off"), "float FS1 M1 " + q2("pump on"), "coil M1 " + q2("pump " + device(q)), "overload OL1 M1"], lights(q, "M1", 1, "pump on"));
+      if (/\b(?:high[\s-]+(?:water|level)\s+)?alarm\w*\b/i.test(q)) {
+        ls.push("float FS2 " + q2("high level alarm"));
+        ls.push(/\b(horn|buzzer|siren|bell)\b/i.test(q) ? "horn AH1 FS2 " + q2("high water") : "lamp LT" + (ls.filter(function (l) { return /^lamp/.test(l); }).length + 1) + " FS2 " + q2("high water") + " red");
+      }
+      return ls;
     } });
 })();
 // ===========================================================================

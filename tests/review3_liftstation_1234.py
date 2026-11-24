@@ -11,6 +11,9 @@ import os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "liftstation_review3_1234")
 KEEP = {
+    # (1.24.36) by design: the two motor-starter questions are shown Lantern's given for them (GIVENS_CONTROL) in place of
+    # the instructions' example; every other bench prompt is as it was (tests/review_givens_1236.py, cases D)
+    "E-bench-300": "make-control and make-control-b are shown the three-wire starter given (1.24.36), by design; every other bench prompt is unchanged.",
     "C-jobless-top-down-copied": "the block is the line Lantern handed back on the second draft (FS4 “off” at 5 ft ...), which it no "
                                  "longer hands back: the floats with no job now get their jobs from the bottom up (C-jobless-top-down "
                                  "agrees). That old line, copied, is rightly questioned.",
