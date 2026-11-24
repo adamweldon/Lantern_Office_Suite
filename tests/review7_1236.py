@@ -14,6 +14,9 @@ import os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "review7_1236")
 KEEP = {
+    "st-estop-before": "an e-stop or a run light said before \u201cat two locations\u201d in the same clause may be at both: the eighth review judged the given HIGH there, this review wanted it -- not sure, so no given (rule 7; safe, medium).",
+    "st-runlight-before": "an e-stop or a run light said before \u201cat two locations\u201d in the same clause may be at both: the eighth review judged the given HIGH there, this review wanted it -- not sure, so no given (rule 7; safe, medium).",
+    "st-greenlight-before": "an e-stop or a run light said before \u201cat two locations\u201d in the same clause may be at both: the eighth review judged the given HIGH there, this review wanted it -- not sure, so no given (rule 7; safe, medium).",
     "st-stop-two-start-two": "\u201ca stop button at two locations and a start button at two locations\u201d: a button of one kind said one at a time is not read as a station count -- no given, safe (medium; the seventh review's \u201ca start button and stop buttons at two locations\u201d was fitted two full stations).",
 }
 VERBOSE = "-v" in sys.argv

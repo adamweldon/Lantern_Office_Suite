@@ -3,10 +3,11 @@
 Only what he alone can answer. Newest first. Remove a question when he has
 answered it, and write his answer into `CLAUDE.md` or `agent/QUEUE.md`.
 
-1. **How far should the givens reach?** (1.24.36) Seven reviewers tried
+1. **How far should the givens reach?** (1.24.36) Eight reviewers tried
    the control givens; each found 26 to 51 new ways to ask that Lantern
    fitted wrong, and each was mended by showing no given where Lantern is
-   not sure. So a given now shows only for plainly worded questions, and
+   not sure. The last two found that a round's quick mends broke as much
+   as they fixed, until the mends read less instead of more. So a given now shows only for plainly worded questions, and
    most other questions get the instructions as before. Two directions:
    keep the givens this narrow and let the small models' runs say whether
    they help; or widen them a little a round, each round reviewed. Which
