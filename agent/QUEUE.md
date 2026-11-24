@@ -197,8 +197,10 @@ tried by a reviewer:
   GIVENS_CONTROL (nine control circuits, shown only where Lantern is
   sure), the user's own givens (Keep as my given), CODE_CHECKS and
   CODE_CHECKS_CONTROL (cut-outs, stops, overloads; US or IEC);
-  `tests/givens_1236.js`, `tests/code_checks_1236.js`, four reviews
-  replayed. Next, in order: (1) read the small models' run of 1.24.36 for
+  `tests/givens_1236.js`, `tests/code_checks_1236.js`, seven reviews
+  replayed (their high findings did not fall, 47 to 51 a round: each
+  reviewer wrote new wordings; every kind found was mended by giving
+  nothing where unsure). Next, in order: (1) read the small models' run of 1.24.36 for
   make-control and make-control-b (the only prompts changed); (2)
   hydraulic and pneumatic givens (a double-acting cylinder on a 4/3 or
   5/2 valve, relief, meter-out speed control; single-acting on a 3/2) and
@@ -211,7 +213,10 @@ tried by a reviewer:
   on an overload's open contact is drawn closed (as before); AI_PARTS cuts
   "... with a float, 24 V DC control, and a pump running light" in two
   and the given fits the first part; a freeze stat or low limit written
-  nc on a fan, and a fill valve's cut-off, are not judged (rule 7).
+  nc on a fan, and a fill valve's cut-off, are not judged (rule 7); a fill
+  between two vessels (a well and its tank, a day tank) is left as written,
+  two nc floats in series short-cycling (as 1.24.35); two stops and one
+  start, or a light in each direction said separately, get no given.
 
 0. **The Health lessons' sources (1.24.22, Adam).** Every lesson names the
    guidelines it was checked against in November 2026; where they said
