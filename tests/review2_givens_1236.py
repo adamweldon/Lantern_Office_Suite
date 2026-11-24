@@ -13,6 +13,7 @@ import os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "givens_review2_1236")
 KEEP = {
+    "U-28": "a kept circuit is shown only for the same question, its words as said: \u201cthe conveyors starter\u201d is not \u201ca conveyor starter\u201d (the seventh review found a circuit kept for \u201cthe pump\u201d shown for \u201cthe pumps\u201d, \u201cfan starters\u201d, \u201ce-stops\u201d and \u201cfloats\u201d once plurals were stemmed; low).",
     "F-dl-15": "a pre-start horn with no time said gets no given: the given's timer would carry a time Lantern made up, copied as a setting (the sixth review; CLAUDE.md: never invent a time).",
     "U-04": "a kept circuit is now shown only for the same question, its words in the same order (the asking words -- draw, please, again -- aside): the sixth review found it shown, on most words alike, for the opposite light, the reversed order, \u201cwithout a horn\u201d, swapped floats and a refrigeration compressor (rule 7: when unsure, the instructions as before).",
     "R-16": "a fill with its start float written normally open and its stop float nc is now sent back once with the start float's nc line (the fourth review's rp-fill2-mixed: as drawn the pump runs only between the floats and never starts on an empty tank). The case guarded the rule as first drafted.",
