@@ -90,9 +90,12 @@ function ok(name, cond, info) { n++; if (cond) console.log("ok   " + name); else
   var got = CAL.counts(L, items).by, stored = C.surety, diff = [];
   Object.keys(got).concat(Object.keys(stored)).forEach(function (k) { var a = got[k] || [0, 0], b = stored[k] || [0, 0]; if (a[0] !== b[0] || a[1] !== b[1]) diff.push([k, a, b]); });
   ok("SURETY is what " + items.length + " labelled questions give now (else: node tools/calibrate_catalog.js --write)", diff.length === 0, diff);
-  ok("...a kind of evidence seen often and right is sure; a guess is not", C.band(C.pct("make-one")) === "sure" && C.band(C.pct("card-one")) === "sure" && C.band(C.pct("lesson-other")) !== "sure", [C.pct("make-one"), C.pct("card-one"), C.pct("lesson-other")]);
+  // (on the bench\u2019s questions alone a MAKE tool that fits was right 62 times in 63; on the first reviewer\u2019s 360 questions,
+  // 50 in 65 -- "who painted the Mona Lisa" is not a drawing to make: counted on both, it is likely, not sure)
+  ok("...a kind of evidence seen often and right is sure; one right less often is likely; a guess is neither", C.band(C.pct("card-one")) === "sure" && C.band(C.pct("puzzle")) === "sure" &&
+    C.band(C.pct("make-one")) === "likely" && C.band(C.pct("lesson-other")) === "likely" && C.band(C.pct("func")) === "unsure", [C.pct("card-one"), C.pct("puzzle"), C.pct("make-one"), C.pct("lesson-other"), C.pct("func")]);
   var right = items.filter(function (x) { var r = C.route(x.q); return r.band === "sure" && r.shelf; }), wrongSure = right.filter(function (x) { return x.shelf.indexOf(C.route(x.q).shelf) < 0; });
-  ok("where Lantern says it is sure, it is right at least 9 times in 10 (" + (right.length - wrongSure.length) + " of " + right.length + ")", right.length > 100 && wrongSure.length * 10 <= right.length,
+  ok("where Lantern says it is sure, it is right at least 9 times in 10 (" + (right.length - wrongSure.length) + " of " + right.length + ")", right.length > 120 && wrongSure.length * 10 <= right.length,
     wrongSure.map(function (x) { return [x.q.slice(0, 60), C.route(x.q).shelf, x.shelf]; }));
 
   // --- OPEN ----------------------------------------------------------------------------------------------------------
