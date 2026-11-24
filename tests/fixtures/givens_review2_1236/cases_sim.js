@@ -89,6 +89,18 @@ module.exports = [
       var S = x.sim(r.m);
       return step(S, [["tap", "PB3", { M2: true }], ["press", "ES1", { M2: false }], ["release", "ES1", { M2: false }]]);
     } },
+  { id: "S-dl-02", harm: "low", why: "the delayed start's overload: an overload relay has one normally closed contact; in the run relay's rung it already drops the timer and the motor, so it is drawn once (the given names it on M1 and CR1: two contacts of OL1)",
+    run: function (x) {
+      var r = fromGiven(x, "Draw a delayed start control circuit for a conveyor with a 30 second warning horn"); if (r.err) return r.err;
+      var n = r.m.plan.circuit.rungs.filter(function (g) { return g.after.some(function (e) { return e.id === "OL1"; }); }).map(function (g) { return g.out.id; });
+      return n.length === 1 ? "" : "OL1's normally closed contact drawn in " + n.length + " rungs (" + n.join(", ") + ")";
+    } },
+  { id: "S-rv-04", harm: "low", why: "the reversing starter's one overload: its one normally closed contact in the common line of both coils, drawn once (the given names it on M1 and M2: drawn as two contacts)",
+    run: function (x) {
+      var r = fromGiven(x, "Draw a forward/reverse motor starter control circuit"); if (r.err) return r.err;
+      var n = r.m.plan.circuit.rungs.filter(function (g) { return g.after.some(function (e) { return e.id === "OL1"; }); }).map(function (g) { return g.out.id; });
+      return n.length === 1 ? "" : "OL1's normally closed contact drawn in " + n.length + " rungs (" + n.join(", ") + ")";
+    } },
   { id: "S-sq-01", harm: "high", why: "sequence: M2's start does nothing until M1 runs; M2's stop stops M2 alone; M1's stop or overload stops both",
     run: function (x) {
       var r = fromGiven(x, "Draw a control circuit for two conveyors: conveyor 2 can only start after conveyor 1 is running"); if (r.err) return r.err;

@@ -216,6 +216,68 @@ c("G-05", "high", "the saved control replies are drawn as without the code check
   });
 });
 
+// ------------------------------------------------------------------------------------------------ what the model sees
+// fixText is what goes back to the model; a single problem gets a full stop after it. The model copies the text after
+// "Write it: " to the end of its line, full stop and all.
+function copyCase(id, q, lines, devLine, wantNc, dev, practice) {
+  c(id, "high", "the line in Lantern's correction (fixText), copied with what stands after it on its line, builds and is drawn right", function (x) {
+    x.lib.setPractice(x.L, "");
+    var r = x.lib.build(x.L, lines, q), t = x.L.aiAct.fixText(r, q), ls = t.split("\n").filter(function (l) { return /Write it: /.test(l); });
+    if (!ls.length) return ok(false, "no Write it line in: " + t.slice(0, 300));
+    var nl = lines.slice();
+    ls.forEach(function (l, k) { nl[devLine[k]] = l.replace(/^.*Write it: /, ""); });
+    var r2 = x.lib.build(x.L, nl, q), bad = [];
+    Object.keys(wantNc).forEach(function (d) { x.lib.drawn(r2, d).forEach(function (e) { if (e.nc !== wantNc[d]) bad.push(d + " " + (e.nc ? "nc" : "no")); }); });
+    var pr = practice ? ls.every(function (l) { return l.indexOf("(" + practice + " practice:") >= 0; }) : true;
+    return ok(r2.ok && !bad.length && pr, "copied " + JSON.stringify(nl) + " -> " + (r2.problems || []).join(" | ").slice(0, 200) + " " + bad.join(","));
+  });
+}
+copyCase("T-01", "Refrigeration compressor control", ['pressure PS1 M1 "high pressure cut-out"', 'coil M1 "compressor contactor"'], [0], { PS1: true });
+copyCase("T-02", "Motor starter", ['button PB1 M1 "stop"', 'start PB2 M1', 'coil M1 "motor starter"'], [0], { PB1: true });
+copyCase("T-03", "Boiler low water cut-off", ['float FS1 M1 nc "low water cut-off"', 'coil M1 "burner"'], [0], { FS1: false });
+copyCase("T-04", "Refrigeration compressor control", ['pressure PS1 M1 "high pressure cut-out"', 'pressure PS2 M1 nc "low pressure cut-out"', 'coil M1 "compressor contactor"'], [0, 1], { PS1: true, PS2: false });
+copyCase("T-05", "Control circuit for a 400 V refrigeration compressor", ['pressure PS1 M1 "high pressure cut-out"', 'coil M1 "compressor contactor"'], [0], { PS1: true }, null, "IEC");
+copyCase("T-06", "Pump to fill a tank", ['float FS1 M1 "high level cut-off"', 'coil M1 "fill pump"'], [0], { FS1: true });
+c("T-07", "medium", "the correction names the practice once and gives one line: never the other code's rules beside it", function (x) {
+  x.lib.setPractice(x.L, "");
+  var r = x.lib.build(x.L, WRONG, RQ), t = x.L.aiAct.fixText(r, RQ);
+  return ok((t.match(/practice:/g) || []).length === 1 && !/IEC 60204/.test(t) && (t.match(/Write it:/g) || []).length === 1, t.slice(0, 400));
+});
+
+c("T-08", "low", "a float in a diesel day tank: the correction speaks of the level, not of water", function (x) {
+  x.lib.setPractice(x.L, "");
+  var r = x.lib.build(x.L, ['float FS1 M1 "high level cut-off"', 'coil M1 "fuel transfer pump"'], "Fuel transfer pump filling a diesel day tank"), cb = x.lib.ccBacks(r);
+  return ok(cb.length === 1 && !/\bwater\b/.test(cb[0]), cb.join(" | "));
+});
+
+// ------------------------------------------------------------------------------------------------ Lantern's own blocks
+// A given (GIVENS_CONTROL) is what the model is shown to copy; a station's control block is Lantern's own. Neither may be
+// sent back by the code checks.
+var GIVEN_QS = ["Draw a motor starter with start and stop buttons", "Draw a forward and reverse motor starter", "Draw a 480 V motor starter with a run light",
+  "Draw the control circuit for an air compressor on its pressure switch, cut-out 125 psi", "Draw the control circuit for a compressor with a pressure switch",
+  "Draw the control circuit for a 400 V air compressor on a pressure switch that cuts out at 8 bar", "Wire a pump to fill a tank with a float switch",
+  "Draw a pump that fills a tank between a low float and a high float", "Draw the control circuit for a sump pump", "Draw a sump pump with a high water alarm horn",
+  "Draw a conveyor where motor 2 can only start after motor 1 is running", "Draw a motor that starts 10 seconds after the start button is pressed",
+  "Draw a motor starter with an emergency stop", "Draw a pump to keep a tank full with a float switch, 230/400 V"];
+GIVEN_QS.forEach(function (q, k) {
+  c("K-" + (k < 9 ? "0" : "") + (k + 1), "high", "the given Lantern shows for \"" + q + "\", written as it stands, passes the code checks", function (x) {
+    x.lib.setPractice(x.L, "");
+    var g = x.L.givens && x.L.givens.match("CONTROL", q), ls = g ? g.block(q) : null;
+    if (!ls) return ok(true, "");   // no given for it: nothing to copy (the prompt has the example)
+    var r = x.lib.build(x.L, ls, q), cb = x.lib.ccBacks(r);
+    return ok(!cb.length && r.ok, (g ? g.id : "") + " " + JSON.stringify(ls) + " -> " + (r.problems || []).join(" | ").slice(0, 300));
+  });
+});
+[["ST-01", "Draw a duplex lift station", "pumps 2\nfloats off lead lag alarm"], ["ST-02", "Draw a simplex lift station with one pump", "pumps 1\nfloats off lead alarm"],
+ ["ST-03", "Draw a lift station with three pumps", "pumps 3\nfloats off lead lag alarm"], ["ST-04", "Draw a 400 V duplex sewage lift station", "pumps 2\nfloats off lead lag alarm\nsupply \"230 V AC\""],
+ ["ST-05", "Draw a duplex storm water pump station", "pumps 2\nfloats off lead lag high alarm"]].forEach(function (s) {
+  c(s[0], "high", "a station Lantern draws itself (\"" + s[1] + "\") is not sent back by the code checks", function (x) {
+    x.lib.setPractice(x.L, "");
+    var r = x.L.aiAct.build("MAKE STATION: Lift station\n" + s[2] + "\nEND", s[1]), ps = (r && r.problems) || [];
+    return ok(r && !ps.some(function (p) { return x.lib.CC_RE.test(p); }), "problems: " + ps.join(" | ").slice(0, 300));
+  });
+});
+
 // ------------------------------------------------------------------------------------------------ the code's form
 function mods(x) { var src = fs.readFileSync(x.file, "utf8"); return ["CODE_CHECKS", "CODE_CHECKS_CONTROL"].map(function (n) { return { n: n, t: x.lib.moduleSpan(src, n).text }; }); }
 c("S-01", "medium", "the two modules are ASCII only (non-ASCII written as escapes)", function (x) {

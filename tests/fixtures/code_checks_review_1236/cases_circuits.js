@@ -64,7 +64,7 @@ pass("R-heat-07", "Draw a boiler burner control", ['temp TS1 M1 normally closed 
 pass("R-heat-08", "Draw a boiler burner control", ['temp TS1 M1 "high limit" nc', 'coil M1 "burner"'], { nc: { TS1: true } });
 pass("R-heat-09", "Wire an oven heater with an over-temperature cut-out", ['temp TS1 M1 nc "over-temperature cut-out"', 'coil M1 "oven heater"'], { nc: { TS1: true } });
 pass("R-heat-10", "Wire a frost thermostat to bring on the boiler in a UK house",
-  ['temp TS1 M1 nc "frost stat"', 'coil M1 "boiler relay"'], { nc: { TS1: true }, why: "a frost thermostat brings the heating ON as the temperature falls (BS EN 60730 frost stats close on fall): it opens as the temperature rises, so nc under Lantern's convention. Sent back, the model is told to take nc off, and the boiler would fire only when warm" });
+  ['temp TS1 M1 nc "frost stat"', 'coil M1 "boiler relay"'], { nc: { TS1: true }, why: "a frost thermostat brings the heating ON as the temperature falls (it makes on fall): it opens as the temperature rises, so nc under Lantern's convention. Sent back, the model is told to take nc off, and the boiler would fire only when warm" });
 pass("R-heat-11", "Heat trace on a pipe, turned on by a thermostat when it gets cold",
   ['temp TS1 M1 nc "freeze protection"', 'coil M1 "heat trace contactor"'], { nc: { TS1: true }, why: "freeze-protection heat trace runs as the temperature falls: the stat opens on rise (nc). Sent back, the heat trace would run only above the setting" });
 pass("R-heat-12", "Defrost heater control for a walk-in freezer",
@@ -222,7 +222,7 @@ back("W-well-08", "Well pump with a pressure switch", ['pressure PS1 M1 "cut-out
 back("W-stop-09", "Motor starter", ['button PB1 M1 "stop"', 'start PB2 M1'].concat(M), { dev: ["PB1"], line: "stop PB1 M1", fixNc: { PB1: true } });
 back("W-stop-10", "Motor starter", ['button PB1 M1 "Stop button"', 'start PB2 M1'].concat(M), { dev: ["PB1"], line: 'stop PB1 M1 "Stop button"', fixNc: { PB1: true } });
 back("W-stop-11", "Motor starter with an emergency stop", ['button PB1 M1 "emergency stop"', 'start PB2 M1'].concat(M), { dev: ["PB1"], line: "estop PB1", fixNc: { PB1: true }, harm: "medium",
-  why: "an emergency stop handed back as an ordinary stop on M1 (stop PB1 M1 \"emergency stop\") is drawn as a stop of M1's rung only; Lantern's own line for one is estop PB1, drawn in L1 ahead of every rung (IEC 60204-1 10.7 / NFPA 79 10.7: an emergency stop stops the machine)" });
+  why: "an emergency stop handed back as an ordinary stop on M1 (stop PB1 M1 \"emergency stop\") is drawn as a stop of M1's rung only; Lantern's own line for one is estop PB1, drawn in L1 ahead of every rung (AI_CONTROL: \"an emergency stop stops everything\"), and only that is listed as the emergency stop under 10.7" });
 back("W-curly-12", "Refrigeration compressor control", ['pressure PS1 M1 “high pressure cut-out”', 'coil M1 "compressor contactor"'], { dev: ["PS1"], fixNc: { PS1: true } });
 back("W-order-13", "Refrigeration compressor control", ['pressure "high limit" PS1 M1', 'coil M1 "compressor contactor"'], { dev: ["PS1"], fixNc: { PS1: true } });
 back("W-list-14", "Refrigeration compressor control", ['1. pressure PS1 M1 "high pressure cut-out"', '2. coil M1 "compressor contactor"'], { dev: ["PS1"], line: 'pressure PS1 M1 nc "high pressure cut-out"', fixNc: { PS1: true } });
@@ -287,5 +287,17 @@ back("M-stop-02", "Motor starter", ['button PB1 M1 stop', 'start PB2 M1'].concat
 back("M-start-03", "Motor starter", ['start PB1 M1 "stop"', 'start PB2 M1'].concat(M), { dev: ["PB1"], fixNc: { PB1: true }, harm: "low", why: "a start button named stop: drawn as a start" });
 back("M-dblnc-04", "Refrigeration compressor control", SS.concat(['pressure PS1 nc "high pressure cut-out"', 'coil M1 PS1 nc "compressor contactor"']), { dev: ["PS1"], fixNc: { PS1: true }, harm: "medium",
   why: "nc on both lines: drawn OPEN (the coil's nc turns PS1's own over), a high cut-out closing on rise; the check reads PS1's own nc and lists it as kept (\"PS1 opens as the pressure rises\")" });
+
+back("M-stopno-05", "Motor starter", ['stop PB1 M1 no', 'start PB2 M1'].concat(M), { dev: ["PB1"], fixNc: { PB1: true }, harm: "medium",
+  why: "a stop written no is drawn OPEN (a hold-to-run, not a stop), and the kept line under it says \"the stop normally closed -- NFPA 79, control functions in the event of failure\": the count of stops never looks at nc" });
+back("M-stopno-06", "Motor starter", ['stop PB1 M1 normally open', 'start PB2 M1'].concat(M), { dev: ["PB1"], fixNc: { PB1: true }, harm: "medium", why: "as M-stopno-05" });
+back("M-olno-07", "Motor starter", ['stop PB1 M1', 'start PB2 M1', 'overload OL1 M1 no'].concat(M), { dev: ["OL1"], fixNc: { OL1: true }, harm: "medium",
+  why: "an overload contact written no is drawn OPEN (the motor would run only with the overload tripped), and listed as kept: \"the overload OL1 on M1 -- NEC Article 430, Part III\"" });
+back("M-lowcoil-08", "Boiler low water cut-off", SS.concat(['float FS1 "low water cut-off"', 'coil M1 FS1 nc "burner"']), { dev: ["FS1"], fixNc: { FS1: false }, harm: "medium",
+  why: "the coil's nc draws FS1 normally CLOSED (the burner would fire only with the water low); the check reads FS1's own line and lists it kept: \"FS1 opens as the water falls\"" });
+pass("R-fan-12", "Cabinet fan for high temperature protection",
+  ['temp TS1 M1 "high temperature protection"', 'coil M1 "cabinet fan"'], { nc: { TS1: false }, why: "a fan that protects a cabinet from high temperature runs as it rises: closes on rise. protect is read as a cut word" });
+pass("R-air-10", "Air compressor with an auto-stop timer that starts when the pressure reaches cut-out",
+  ['pressure PS1 M1 nc "cut-in 95 cut-out 125"', 'coil M1 "compressor motor"', 'pressure PS2 TR1 "at cut-out"', 'timer TR1 "10 min" '], { nc: { PS2: false }, why: "the idle timer runs while the pressure is above cut-out: closes on rise. Read as the compressor's own cut-out" });
 
 module.exports = C;

@@ -72,6 +72,12 @@ module.exports = [
   c({ id: "F-st-27", q: "Draw a three-wire start/stop control circuit for a 1/2 HP 115 V fan", want: "control-starter",
     hasRe: ["^coil M1 \x22fan starter\x22$"], lacks: ["^supply (?!\x22115 V AC\x22)"], harm: "low", why: "the fan's 115 V may be the control's too, or left out; nothing else" }),
 
+  c({ id: "F-st-28", q: "Draw a motor starter with a white power light, a green run light and a red stop light", want: "control-starter",
+    has: ["lamp LT1 M1 \x22run\x22 green", "lamp LT2 M1 off \x22stopped\x22 red"], count: { "^lamp": 2 }, harm: "medium", why: "the run and stop lights; the power light left to the model" }),
+  c({ id: "F-st-29", q: "Draw a motor starter for a fan with an indicator showing it is running", want: "control-starter", hasRe: ["^lamp LT1 M1 \x22run\x22"], count: { "^lamp": 1 }, harm: "medium", why: "an indicator is a light" }),
+  c({ id: "F-st-30", q: "Draw a motor starter with no lights for a pump", want: "control-starter", lacks: ["^lamp"], harm: "medium", why: "no lights" }),
+  c({ id: "F-st-31", q: "Draw a motor starter for a conveyor without an overload", want: "control-starter", has: ["overload OL1 M1"], harm: "low",
+    why: "a motor starter keeps its overload (NEC 430 Part III: the motor's overload protection); Lantern adds one whatever is written" }),
   // ---- near misses: no given, and the prompt as 1.24.35's --------------------------------------------------------
   c({ id: "F-sn-01", q: "Explain how a three-wire motor starter control circuit works", want: "none", harm: "medium", why: "an explanation, not a drawing" }),
   c({ id: "F-sn-02", q: "What size overload heaters for a 10 hp motor starter?", want: "none", harm: "medium", why: "a size, not a drawing" }),
@@ -127,6 +133,11 @@ module.exports = [
   c({ id: "F-sn-40", q: "Draw a motor contactor circuit to IEC with K1, S1 stop and S2 start", want: { notGiven: [], orNone: true }, hasRe: ["\\bK1\\b", "\\bS1\\b", "\\bS2\\b"], harm: "low",
     why: "the tags asked for (K1, S1, S2), or no given; a US-tagged block is copied as it stands" }),
 
+  c({ id: "F-sn-41", q: "Draw a motor starter for a conveyor and a separate starter for a fan", want: "none", harm: "high", why: "two starters: the given has one" }),
+  c({ id: "F-sn-42", q: "Draw a motor starter control circuit for an electric hoist", want: "none", harm: "high",
+    why: "a hoist is run hold-to-run from its pendant, up and down, with limits: a sealed-in start is wrong for it" }),
+  c({ id: "F-sn-43", q: "Draw a motor starter for a freight elevator", want: "none", harm: "high", why: "an elevator needs its door interlocks and limits: never a plain start/stop" }),
+  c({ id: "F-sn-44", q: "Draw a start/stop circuit for a conveyor that must stop if the belt breaks, with a zero speed switch", want: "none", harm: "medium", why: "a zero speed switch is more than the given" }),
   // ---- forward and reverse -------------------------------------------------------------------------------------
   c({ id: "F-rv-01", q: "Draw a forward/reverse motor starter control circuit", want: "control-reversing",
     has: ["start PB2 M1 \x22forward\x22", "start PB3 M2 \x22reverse\x22", "interlock M1 M2"], count: { "^stop": 1, "^overload": 1 }, harm: "high", why: "one stop, two starts, the interlock" }),
@@ -147,6 +158,9 @@ module.exports = [
   c({ id: "F-rv-13", q: "Draw a forward/reverse starter where the motor must stop before it can be reversed", want: "control-reversing", has: ["interlock M1 M2"], harm: "medium",
     why: "the interlock with sealed starts does just that: reverse does nothing until stop is pressed" }),
 
+  c({ id: "F-rv-14", q: "Draw a forward/reverse control circuit for a hoist", want: "none", harm: "high", why: "a hoist's up and down are hold-to-run: no holding contacts" }),
+  c({ id: "F-rv-15", q: "Draw a forward/reverse control circuit for a winch", want: "none", harm: "high", why: "a winch's in and out are hold-to-run as a hoist's" }),
+  c({ id: "F-rv-16", q: "Draw a reversing starter for a crane trolley", want: "none", harm: "high", why: "crane travel is hold-to-run from the pendant" }),
   // ---- motors in sequence ----------------------------------------------------------------------------------------
   c({ id: "F-sq-01", q: "Draw a control circuit for two conveyors: conveyor 2 can only start after conveyor 1 is running", want: "control-sequence",
     hasRe: ["^coil M1 \x22conveyor 1 ", "^coil M2 M1 \x22conveyor 2 "], harm: "high", why: "conveyor 1 first, conveyor 2 held by it" }),
@@ -171,6 +185,10 @@ module.exports = [
   c({ id: "F-sq-13", q: "Draw interlocked conveyors control circuit: conveyor B will not start until conveyor A is running, with run lights", want: "control-sequence",
     hasRe: ["^coil M2 M1 "], count: { "^lamp": 2 }, harm: "medium", why: "A first (named 1), B held by it, a run light each" }),
 
+  c({ id: "F-sq-14", q: "Draw a control circuit: the heater must not start unless the fan is running", want: { notGiven: [], orNone: true },
+    hasRe: ["^coil M1 \x22fan", "heater"], lacks: ["fan 2"], harm: "high", why: "airflow before heat: a fan and a heater, not two fans" }),
+  c({ id: "F-sq-15", q: "Draw a control circuit: the conveyor must not start until the dust collector is running", want: { notGiven: [], orNone: true },
+    hasRe: ["dust collector"], lacks: ["conveyor 2"], harm: "high", why: "a dust collector and a conveyor, not two conveyors" }),
   // ---- delayed start ---------------------------------------------------------------------------------------------
   c({ id: "F-dl-01", q: "Draw a ladder diagram for a conveyor that starts 5 seconds after the start button is pressed, with a warning horn while it waits", want: "control-delayed-start",
     has: ["timer TR1 \x225 s\x22 CR1", "horn AH1 CR1 TR1 off \x22warning\x22"], hasRe: ["^coil M1 TR1 \x22conveyor "], harm: "high", why: "5 s, the horn while it times" }),
@@ -239,6 +257,9 @@ module.exports = [
   c({ id: "F-fl-12", q: "Draw a control circuit for a pump that fills a tank with a float switch, 120 V control", want: "control-fill", has: ["supply \x22120 V AC\x22"], harm: "medium", why: "120 V control" }),
   c({ id: "F-fl-13", q: "Draw the control circuit for a pump that fills a tank with a float switch and a pump running light", want: "control-fill", hasRe: ["^lamp LT1 M1 \x22pump on\x22"], harm: "medium", why: "a run light" }),
 
+  c({ id: "F-fl-14", q: "Draw a control circuit for a pump that fills a tank with a float switch that opens when the tank is full", want: "control-fill", has: ["float FS1 M1 nc \x22tank full\x22"], harm: "high", why: "nc, as the question says" }),
+  c({ id: "F-fl-15", q: "Draw a control circuit for a pump that fills a tank with a float switch that closes when the tank is full", want: { notGiven: ["control-fill"], orNone: true }, harm: "medium",
+    why: "the question's float closes as it fills (a relay's closed contact then stops the pump); the given's nc float is not that switch" }),
   // ---- a tank filled between two floats ------------------------------------------------------------------------------
   c({ id: "F-f2-01", q: "Draw a control circuit for a pump that fills a tank between a low and a high float", want: "control-fill-two",
     has: ["float FS1 M1 nc \x22low level start\x22", "float FS2 M1 nc \x22high level stop\x22"], harm: "high", why: "both nc, named by job" }),

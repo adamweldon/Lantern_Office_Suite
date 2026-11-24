@@ -11,13 +11,13 @@ var runCircuits = require("./run_circuits.js");
 var notes = [], variants = {}, oldP = null;
 function variant(names) {
   var k = names.slice().sort().join("+");
-  if (!variants[k]) variants[k] = lib.load(lib.strip(FILE, names, k.replace(/\W+/g, "_")));
+  if (!variants[k]) { try { variants[k] = lib.load(lib.strip(FILE, names, k.replace(/\W+/g, "_")), true); } catch (e) { variants[k] = Promise.reject(e); } }
   return variants[k];
 }
 function old() {
   if (oldP) return oldP;
   var f = path.join(os.tmpdir(), "ccr1236_1235_" + process.pid + ".html");
-  try { fs.writeFileSync(f, cp.execSync("git show 8cb3281:src/lantern.inner.html", { cwd: ROOT, encoding: "utf8", maxBuffer: 64 << 20 })); oldP = lib.load(f); }
+  try { fs.writeFileSync(f, cp.execSync("git show 8cb3281:src/lantern.inner.html", { cwd: ROOT, encoding: "utf8", maxBuffer: 64 << 20 })); oldP = lib.load(f, true); }
   catch (e) { oldP = Promise.resolve(null); }
   return oldP;
 }

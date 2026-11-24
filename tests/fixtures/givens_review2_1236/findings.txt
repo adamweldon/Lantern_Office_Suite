@@ -1,0 +1,252 @@
+The second review of 1.24.36's givens (wip commit ca62870 against 1.24.35 as released, 8cb3281), 2026-11-24.
+A reviewer who wrote none of the change and did not read the first review's cases (givens_review_1236/, givens_1236.js,
+code_checks_1236.js). Every verdict was written from what the question or circuit IS before Lantern was run on it.
+Nothing under src/ or the existing tests was touched. (src/ is the same at HEAD c88534c as at ca62870.)
+
+How to replay
+  node tests/fixtures/givens_review2_1236/replay.js [path/to/lantern.inner.html] [--only <id regex>]
+    Loads the page and 1.24.35 (git show 8cb3281, read into memory) side by side in jsdom, then:
+      cases_fit.js    174 questions: what the model is shown (the given and its lines, or none and then 1.24.35's prompt
+                      byte for byte)
+      cases_sim.js     39 builds: each given as shown, built and run on the ladder Lantern draws (lib.sim: push buttons,
+                      selectors, floats by level, a pressure switch with cut-in and cut-out, overloads tripped and reset,
+                      on-delay timers), and the givens as a small model copies them (fence, no END, numbered lines,
+                      a line changed as the question asks)
+      cases_rules.js   30 builds: "stop PB1 all", and the fill on two nc floats -- where it acts (simulated) and where it
+                      must not (the plan compared with 1.24.35's)
+      cases_guard.js   17 saved model replies with MAKE CONTROL (bench_run*.json, liftstation_1230/run_35b.json), each
+                      built by both versions for its own question
+      cases_user.js    33 scenarios of the user's own givens, each on a fresh page (localStorage set first where needed)
+  Run on ca62870 (run_ca62870.txt): 293 cases: 209 AGREE, 84 DISAGREE (high 37, medium 32, low 15).
+  (On 1.24.35 the same replay gives 134 AGREE: it has no givens, so it says little; given only for completeness.)
+
+SUMMARY
+  The givens are right where they fit. Every given Lantern shows for a question it does fit was built and run, and every
+  one works: the three-wire starter with 1 to 3 stations, e-stop and lights; forward/reverse with its interlock and the
+  new "stop PB1 all"; two and three motors in sequence; the delayed start with its horn; the compressor with cut-in and
+  cut-out; the one-float fill; the two-float fill (it holds in from the low float to the high one, through an overload
+  trip and reset); the sump with its alarm light or horn. The fill-on-two-nc-floats rule never changed a circuit it
+  should not (sump, duplex, fill-and-drain, two stops, three floats, mixed floats, alarm floats on lights, heater, a
+  solenoid valve) and the 17 saved bench replies draw as on 1.24.35. Near misses that the given's own word lists know
+  (HOA, star-delta, two-wire, jog, VFD, PLC, thermostat, floats, refrigeration, duplex) get 1.24.35's prompt byte for byte.
+  What is still wrong is mostly the FIT: a given is shown for questions it does not surely fit, against rule 7.
+    - The sequence given reads the order wrongly ("the pump must not start before the fan is on", "conveyor 1 must not
+      run unless conveyor 2 is running") and invents a second machine of the first's kind when the other is not in its
+      word list (heater, dust collector) or drops a third (feeder).
+    - The delayed start shows Lantern's own "10 s" when the question says "five seconds", "half a minute" or "1 hour",
+      reads "stops after 2 minutes" as the delay, and drops the first motor of "the pump starts 10 s after the fan".
+    - The starter and reversing givens are shown for two motors, for loads with no motor (street lights, a kiln), for
+      hold-to-run machines (hoist, winch, crane, elevator), and with a safety device asked for but missing (a guard
+      door switch, end-of-travel limits).
+    - The user's own givens match on two shared words, are never refused by anything, and outrank every given of
+      Lantern's: a kept three-wire conveyor starter is shown for a reversing or star-delta question, a kept one-pump
+      sump in place of the duplex example of a lift-station question and for a fill question, a kept fill for a sump.
+    - One gap in the new fill rule: the two-float fill given with a stop button added (as "... with a stop button"
+      asks) is drawn in series again and short-cycles.
+
+==== HIGH ============================================================================================================
+
+H1. The sequence given is shown the wrong way round, or for machines it does not have.
+    Cases: F-sq-04, F-sq-05, F-sq-06, F-sq-14, F-sq-15.
+    Seen:
+      - "the pump must not start before the fan is on": coil M1 "pump starter", coil M2 M1 "fan starter" -- the fan is
+        held by the pump. Right: M1 the fan, M2 the pump held by it.
+      - "conveyor 1 must not run unless conveyor 2 is running" (downstream first, the usual conveyor practice): M1
+        "conveyor 1", M2 M1 "conveyor 2". Right: conveyor 2 first, conveyor 1 held by it.
+      - "the feeder can only start after the conveyor and the crusher are running": two coils, conveyor then crusher;
+        the feeder is gone. Right: three machines with the feeder last, or no given.
+      - "the heater must not start unless the fan is running" (airflow before heat): "fan 1" and "fan 2". "the conveyor
+        must not start until the dust collector is running": "conveyor 1" and "conveyor 2". Right: a fan and a heater; a
+        dust collector and a conveyor -- or no given.
+    Why: seqNames (GIVENS_CONTROL, ~line 36983) takes the loads in the order named and looks for the one that runs first
+    only after after/until/unless/while/when/once, never before "before" and never by a number ("conveyor 1 ... unless
+    conveyor 2"); with one word from LOADS it numbers that word ("fan 1", "fan 2") though the question names another
+    machine LOADS does not know; with three names it falls back to the first name twice.
+
+H2. The delayed-start given shows a wrong time, or a wrong circuit.
+    Cases: F-dl-03, F-dl-04, F-dl-05, F-dl-06, F-dl-07, F-dl-08.
+    Seen:
+      - "a five second warning horn", "starts after a delay of half a minute", "a delayed start of 1 hour": timer TR1
+        "10 s" each time -- Lantern's default, written as if it were the question's. Right: 5 s, 30 s, 1 h, or no given.
+      - "the fan starts after a delay and stops after 2 minutes": timer TR1 "2 min" as the START delay, and nothing
+        stops the fan. Right: no given (an interval timer).
+      - "the pump starts 10 seconds after the fan starts", "a time delay relay that starts a fan 30 seconds after the
+        pump": one motor (the pump; the fan) after a start button -- the other motor is gone. Right: two motors, or no
+        given.
+    Why: delayOf (~line 37015) returns "10 s" when it finds no number with a unit, and DURS knows no hours or number
+    words; the not-list catches "motor 2", "second motor" and "two motors" but not two machines named by kind.
+
+H3. The starter and reversing givens are shown for what they do not fit.
+    Cases: F-sn-20, F-sn-21, F-sn-22, F-sn-23, F-sn-24, F-sn-41, F-sn-42, F-sn-43, F-rv-05, F-rv-06, F-rv-07, F-rv-14,
+    F-rv-15, F-rv-16.
+    Seen:
+      - two motors: "starts two motors together with one start button", "an exhaust fan and a supply fan", "a motor
+        starter for a conveyor and a separate starter for a fan" -- one coil M1.
+      - no motor: "a contactor with start and stop buttons for the street lights" -- coil M1 "motor contactor", a motor
+        overload, and a green "run" pilot light (the street lights read as a pilot light); "a start/stop contactor
+        circuit for a kiln" -- "motor contactor" with a motor overload.
+      - hold-to-run machines: "a reversing starter for a hoist with up and down pendant buttons", "forward/reverse ...
+        for a hoist", "... for a winch", "a reversing starter for a crane trolley", "a motor starter ... for an electric
+        hoist" -- each start sealed in by the coil's holding contact. A hoist, winch or crane pendant is constant-
+        pressure (the motion stops when the button is let go); a sealed-in hoist keeps lifting. "a motor starter for a
+        freight elevator" -- a plain start/stop with none of an elevator's door interlocks or limits.
+      - a safety device asked for and missing: "a saw that cannot start while the guard door is open" (no guard switch),
+        "forward/reverse ... for a conveyor with limit switches at each end", "a gate with open and close limit
+        switches" (no limits).
+    Right: no given for each (the module's own rule: "a load with no motor" and "more than the given" get none).
+    Why: the starter's asks accepts "contactor" with no load word (the load becomes "motor"); LIGHTW takes any "lights";
+    neither not-list knows two machines, lighting loads other than "lighting", kilns, ovens, hoists, winches, cranes,
+    elevators, guards or limit switches (the reversing not-list has no "limit").
+
+H4. The fill and sump givens for questions that are not theirs.
+    Cases: F-sn-28, F-cp-12, F-f2-05, F-sp-05.
+    Seen:
+      - "a start/stop circuit for a pump that fills a tank": the fill given (rank 2 beats the starter's 1) -- an on/off
+        selector and a float in place of the start and stop buttons asked for; the pump then starts by itself.
+      - "a booster pump to pump up the pressure tank using a pressure switch": the fill given, with a FLOAT "tank full"
+        ("pump up" read as filling).
+      - "a well pump filling a cistern with two floats: one in the cistern to stop it when full and one in the well to
+        stop it when the well runs low": the two-float fill given -- the low float a START with a holding contact.
+        The well's float is a dry-run cut-out; copied, the pump is held in with the well dry.
+      - "a sump pump with an on float and an off float": the one-float sump given; the off float, and the holding in
+        between, are gone (TWO_FLOATS knows "on and off", not "an on float and an off float").
+    Right: none of these givens.
+
+H5. The two-float fill given with a stop button added short-cycles again.
+    Case: S-f2-stopbutton (and the given shown for F-f2-01 / "..., with a stop button").
+    Seen: the given plus "stop PB1 M1" (what the question asks the model to add) is drawn with FS1 and FS2 in series:
+    the pump stops as soon as the water rises past the low float and the tank never fills.
+    Why: the new rule (AI_CONTROL ~line 34448) returns when the rung has any stop (r.stops.length). With an e-stop (in
+    L1) or a run light it holds in (S-f2-estop, S-f2-light agree). Right: the floats' jobs held in beside a stop button
+    too (a stop button and a stop float in series are both stops).
+
+H6. The user's own givens are matched too loosely and outrank everything.
+    Cases: U-17, U-18, U-19, U-20, U-30, U-31, U-32.
+    Seen (each after one "Keep as my given"):
+      - kept "Conveyor starter" (three-wire): shown for "a reversing starter control circuit for a conveyor" in place of
+        Lantern's reversing given, and for "a star-delta conveyor starter control circuit" (1.24.35 had no block).
+      - kept "Motor starter": shown for "a two-speed motor starter control circuit".
+      - kept one-pump "Sump pump": shown for "a duplex sump pump control circuit with an alternating relay and a high
+        water alarm" IN PLACE OF the duplex example (a 4-line single pump, no alternator; copied, it builds with no
+        problem); and for "a pump that fills a tank with a float switch" (a float that closes on rise: copied, the pump
+        runs while the tank is full).
+      - kept "Tank fill pump" (two nc floats): shown for "a sump pump with a low float and a high float".
+      - kept "Pump starter": shown for "a pump starter for a duplex lift station with an alternating relay" in place of
+        the duplex example.
+    Why: userGiven (GIVENS ~line 36732) matches when the title's words (two or more) are all in the question, or two
+    thirds of the kept question's words are; no not-test, no askOnly, no check that the circuit is the same kind (one
+    pump or two, fill or empty, one direction or two), and rank 10 beats every given of Lantern's. A pump station's
+    question is only ever shown the user's own, so the loosest match lands exactly where Lantern withholds its own.
+    Right: a kept circuit only for a question that asks for that circuit -- at least Lantern's own givens' refusals
+    (their not-tests) applied to it, never above a Lantern given that fits better, and never a one-pump circuit for a
+    duplex/station question.
+
+==== MEDIUM ==========================================================================================================
+
+M1. Lights read wrong. Cases: F-sn-29, F-sn-30, F-sn-31.
+    "a pilot light that goes on when stopped" and "a light that goes on when the motor stops" get BOTH a green run
+    light and a red stopped light (stateOf clears "comes on"/"turns on" but not "goes on", so its "on" is read as run).
+    "red and green pilot lights" gets one red run light.
+
+M2. The motor's voltage written as the control supply. Cases: F-sn-32, F-sn-33, F-sn-34, F-rv-12.
+    "a motor starter for 460 V" -> supply "460 V AC"; "DOL ... 3-phase motor, 400 V, 50 Hz" -> "400 V AC"; "motor is 3
+    phase 415V" -> "415 V AC"; the same for forward/reverse at 400 V 50 Hz. A lone voltage is taken as the control's
+    unless a motor word stands AFTER it. Right: no supply line where the question does not say the control's.
+
+M3. Stations missed. Cases: F-sn-37 ("start/stop from either end of the conveyor"), F-sn-38 ("two start buttons and two
+    stop buttons" -- stations() only knows the order stop ... start). One station shown.
+
+M4. "no e-stop needed" gets estop ES1 (F-sn-35): estop() does not read a "no".
+
+M5. The given shown for a question that asks more than it (not a safety device): F-sn-25 (key switch), F-sn-26 (photo
+    eye stop), F-sn-27 ("hand/auto" with a slash), F-sn-44 (zero speed switch), F-cp-05 (unloader solenoid), F-cp-06
+    (high temperature cut-out), F-cp-07 (compressor with start and stop buttons: the given has a selector instead),
+    F-sp-06 (sump low water cut-off), F-fl-06 (fill with a well low-water cut-out), F-fl-11 (electrode probes: a float
+    shown), F-fl-15 (a float that CLOSES when the tank is full: the given's nc float shown).
+
+M6. AI_PARTS splits one circuit into "parts" and the given is fitted to the first only. Cases: F-fl-07, F-sp-13.
+    "a pump that fills a tank with a float, 24 V DC control, and a pump running light" -> parts ["... with a float",
+    "Draw 24 V DC control, and a pump running light"]; the given has neither the supply nor the light (fitted to the
+    whole question it has both). The split is AI_PARTS' (older); the given makes it a block to copy without them.
+
+M7. The two-float fill: misses. Cases: F-f2-04, S-f2-topbottom, S-f2-upperlower, S-f2-noNc.
+    "a fill pump with a low float and a high float" gets no given ("fill pump" is not in its asks). The fill rule does
+    not read floats named "bottom"/"top" or "lower level"/"upper level": drawn in series, short-cycling. The given copied
+    with both nc left out is drawn as written -- the pump runs only above the high float, the tank overflows -- and
+    nothing questions it (the code check needs a cut word; the fill rule needs nc).
+
+M8. The compressor given is shown for "a compressor with a pressure switch" (no "air"), but the code check is sure of
+    the cut-out's way only for an air compressor (AIRQ): the given copied without nc is drawn normally open -- the
+    compressor runs only above its cut-out -- and not sent back. Case: S-cp-04 (S-cp-03, with "air", is sent back).
+
+M9. "stop PB1 all" is ignored when exactly one coil has a start: with "start PB2 M1" and a fan M2 on a selector, PB1 is
+    drawn in M1's rung only and pressing it leaves the fan running. Case: A-07. (AI_CONTROL ~line 34355: only() finds
+    the coil with a start first, and the all test comes after it.)
+
+M10. "a motor that starts 10 s after power is applied" gets the delayed start with start and stop buttons (F-dl-09).
+
+M11. User givens: U-21 -- a kept conveyor starter (green run light) is shown, coil "conveyor starter" and all, for "a
+    start stop control circuit for a pump with a green run light" (5 of its 6 words are generic control words).
+    U-33 -- the bench's make questions are built by aiAct.solve with Chat's system prompt (~line 31175), so a circuit
+    the user kept on that page changes what the bench's make-control question is shown (a kept 4-line "Motor starter"
+    replaces Lantern's given with its pilot light). A bench run on Adam's laptop after he keeps a given is no longer
+    comparable with one before. (Whether the bench should ignore kept givens is Adam's to say.)
+
+==== LOW =============================================================================================================
+
+L1. Misses (no given where one fits): F-sn-39 "a direct on line starter control circuit"; F-fl-03 "keeps the tank
+    full" (asks has "keep", not "keeps"); F-fl-04 "fills a water tower"; F-fl-10 "fill a cattle trough"; F-sp-11 "a
+    bilge pump with a float switch"; U-28 a kept "Conveyor starter" not shown for "the conveyors starter" (no stemming).
+L2. F-sn-36 "a light conveyor" gets a green run light. F-sn-40 "to IEC with K1, S1 stop and S2 start" gets the US tags.
+L3. S-dl-02, S-rv-04: the delayed start's "overload OL1 M1 CR1" and the reversing "overload OL1 M1 M2" draw OL1's
+    normally closed contact in two rungs -- an overload relay with two NC contacts, which a typical one is not (one NC,
+    one NO). One contact drawn once does the same (in the run relay's rung; in the common line of both coils).
+L4. The store: U-11 a stored entry whose lines hold END and a MAKE line is shown as stored (the prompt's block ends
+    early and a second one starts) -- keep() refuses such lines but nothing checks them at load; U-12 non-string lines
+    show "[object Object]" in the prompt (nothing throws; Chat's system prompt is built).
+L5. U-23 an explanation question ("Explain how a conveyor starter control circuit works") is shown the user's kept
+    circuit to "write as it stands" (Lantern's own givens refuse askOnly questions).
+L6. U-24 a block written with numbered lines is kept and shown with the numbers ("1. stop PB1 M1").
+L7. U-25 two different circuits kept in the same millisecond get the same id ("user-" + Date.now()): the second
+    replaces the first in the session, and forgetting it removes both from the store.
+
+==== WHAT AGREES =====================================================================================================
+  - Every given as shown for a question it fits, built and simulated (S-st-01..05, S-rv-01..03, S-sq-01..02, S-dl-01,
+    S-cp-01..02, S-fl-01, S-f2-01..02, S-sp-01..02): start latches, stops drop, overloads drop and reset leaves it off,
+    lights follow, the interlock holds, sequence and timer behave, the pressure switch's cut-in/cut-out and the floats'
+    levels are right, the two-float fill holds in between and stays off coming down.
+  - The givens copied as a small model writes them: in a fence without END, numbered, reordered, labels unquoted,
+    renamed on/off, empty/full, start/stop, with an e-stop, a light, a run relay (S-f2-*, S-dl-copy-fence,
+    S-st-copy-labels). The air compressor copied without nc is sent back once with its nc line (S-cp-03).
+  - Fitting that works (F-st-01..31): 1, 2 ("two locations", "both ends", "2 places", "local and remote"), 3 stations;
+    "between two stations" (a conveyor's) left at one; the control voltage from a transformer, a coil, "24VDC", "230 V
+    coil" beside a 415 V motor; light states before and after the light word (run/stopped, off when it runs, not
+    running, red-run/green-stopped, a power or trip light left to the model, "no lights"); saw/press as verbs; pump room.
+  - Forward/reverse, sequence, delayed start, compressor, fills and sump: their right fits (F-rv-01..04, 13; F-sq-01..03,
+    09..13; F-dl-01, 02, 13..16; F-cp-01..03, 09, 10, 14; F-fl-01, 02, 12..14; F-f2-01..03, 08; F-sp-01..04, 10, 12).
+  - Near misses get no given and 1.24.35's prompt byte for byte (F-sn-01..19, F-rv-08..11, F-sq-07, 08, 12, F-dl-10..12,
+    F-cp-04, 08, 11, 13, F-fl-05, 08, 09, F-f2-06, 07, F-sp-07..09, 14, 15 -- duplex and lift stations included).
+  - "stop ... all" (A-01..06, 08..12): ahead of every rung with no note; ALL in capitals no longer read as a device;
+    quoted "stop all" a label; the duplex keeps its wiring.
+  - The fill rule (R-01..04, 10..23): holds a make-up pump in; leaves a pressure cut-out in series; never makes a low
+    suction or dry-run cut-out a start (the code check sends them back first); leaves sump, duplex, two stops, three
+    floats, fill-and-drain, two stop floats, mixed nc/no, alarm floats, the 1.24.34 emptying rule, "pump out", a start
+    button, a heater and a solenoid valve as 1.24.35 drew them.
+  - The 17 saved replies (G-*) draw as on 1.24.35.
+  - The user's givens: Keep shown under a clean control circuit only (not with problems, not electronics); kept as the
+    AI wrote it with the question; the same and a reworded question shown it, once, in place of Lantern's; Forget it
+    clears store, session and prompt and turns the button back; loaded at start; a store that is not JSON, an object or
+    an array of junk changes nothing; the same block kept twice stored once; 50 kept at most; the day and the practice
+    (US, IEC) said; a kept duplex shown for its station question; a kept compressor above Lantern's (U-01..10, 13..16,
+    22, 26, 27, 29).
+
+==== WHAT WAS NOT RUN ================================================================================================
+  - No model: nothing here says what a 0.8B, 2B, 4B or the 35B writes when shown these givens; "a small model copies it"
+    is CLAUDE.md's lesson, not a run.
+  - No browser: the ladders were checked as plans and simulated, not drawn in Chromium; the view's buttons were clicked
+    in jsdom through aiAct.view, not in a Chat turn.
+  - The code checks' own review (US/IEC choice, the references) is another reviewer's; only where they touch the
+    givens (S-cp-02..04, R-03, R-04, U-27) were they run.
+  - Outside the change, seen on the way: AI_CONTROL's own match does not know "3-wire control" (F-sn-19 asks a control
+    circuit and gets no control instructions at all, as on 1.24.35); the pre-start horn with no time said is shown
+    Lantern's "10 s" (F-dl-15, agreed: a default, but it is a time Lantern chose).

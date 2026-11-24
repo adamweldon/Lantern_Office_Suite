@@ -6,10 +6,10 @@ var LOADER = path.join(__dirname, "..", "liftstation_review1_1230", "load.js");
 var load0 = require(LOADER);
 
 // load(file) -> Promise of {o, L}: the page's script run in jsdom, after 80 ms
-function load(file) {
+function load(file, removeAfter) {
   return new Promise(function (res, rej) {
     var o;
-    try { o = load0(file); } catch (e) { rej(e); return; }
+    try { o = load0(file); } catch (e) { rej(e); return; } finally { if (removeAfter) { try { fs.unlinkSync(file); } catch (e2) { } } }
     setTimeout(function () { res({ o: o, L: o.L }); }, 80);
   });
 }

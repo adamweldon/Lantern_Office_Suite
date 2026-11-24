@@ -7,9 +7,10 @@ var JSDOM = require("jsdom").JSDOM, VirtualConsole = require("jsdom").VirtualCon
 var fs = require("fs");
 function textOf(c) { return typeof c === "string" ? c : (c || []).filter(function (x) { return x.type === "text"; }).map(function (x) { return x.text; }).join("\n"); }
 
-// load(file, store) -> {w, d, L, errs}; store: {key: raw string} put in localStorage (as "lantern." + key) first
+// load(file, store) -> {w, d, L, errs}; file: a path, or {text: the page's source}; store: {key: raw string} put in
+// localStorage (as "lantern." + key) first
 function load(file, store) {
-  var inner = fs.readFileSync(file, "utf8");
+  var inner = typeof file === "object" && file && file.text != null ? file.text : fs.readFileSync(file, "utf8");
   var JS = inner.match(/<script>\n([\s\S]*?)\n<\/script>/)[1];
   var vc = new VirtualConsole(), errs = [];
   vc.on("jsdomError", function (e) { if (!/Not implemented/.test(String(e.message))) errs.push(String(e.message).slice(0, 200)); });
@@ -54,6 +55,7 @@ function shown(L, q) {
 }
 // which of Lantern's givens a says text is
 function givenId(L, says) {
+  if (!L.givens || !L.givens.all) return null;
   var g = (L.givens.all("CONTROL") || []).filter(function (x) { return !x.user && x.says === says; })[0];
   return g ? g.id : null;
 }

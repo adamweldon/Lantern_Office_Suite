@@ -1,18 +1,18 @@
 // replay.js -- the second review of 1.24.36's givens, replayed.
 // Usage: node tests/fixtures/givens_review2_1236/replay.js [path/to/lantern.inner.html] [--only <id regex>]
-// Loads the page (default src/lantern.inner.html) and 1.24.35 as released (git show 8cb3281) in jsdom, and runs every
-// case: cases_fit.js (what the model is shown), cases_sim.js (the givens built and simulated, and as a small model
-// copies them), cases_rules.js ("stop ... all", a fill held in on two nc floats), cases_user.js (the user's own givens,
-// each on a page of its own). One line per case: AGREE <id>, or DISAGREE <id> <what was seen> [harm].
+// Loads the page (default src/lantern.inner.html) and 1.24.35 as released (git show 8cb3281, read into memory) in
+// jsdom, and runs every case: cases_fit.js (what the model is shown), cases_sim.js (the givens built and simulated, and
+// as a small model copies them), cases_rules.js ("stop ... all", a fill held in on two nc floats), cases_guard.js (saved
+// bench replies beside 1.24.35), cases_user.js (the user's own givens, each on a page of its own).
+// One line per case: AGREE <id>, or DISAGREE <id> <what was seen> [harm]; then the count.
 "use strict";
-var path = require("path"), fs = require("fs"), os = require("os"), cp = require("child_process");
+var path = require("path"), cp = require("child_process");
 var lib = require("./lib.js");
 var ROOT = path.resolve(__dirname, "..", "..", "..");
 var args = process.argv.slice(2), only = null, file = path.join(ROOT, "src", "lantern.inner.html");
 for (var i = 0; i < args.length; i++) { if (args[i] === "--only") only = new RegExp(args[++i]); else file = path.resolve(args[i]); }
-var OLDREV = "8cb3281", oldFile = path.join(os.tmpdir(), "givens_review2_1236_" + OLDREV + ".html");
-if (!fs.existsSync(oldFile)) fs.writeFileSync(oldFile, cp.execSync("git show " + OLDREV + ":src/lantern.inner.html", { cwd: ROOT, maxBuffer: 64 * 1024 * 1024 }));
-var FIT = require("./cases_fit.js"), SIM = require("./cases_sim.js"), RULES = require("./cases_rules.js"), USER = require("./cases_user.js");
+var OLDREV = "8cb3281", oldFile = { text: String(cp.execSync("git show " + OLDREV + ":src/lantern.inner.html", { cwd: ROOT, maxBuffer: 64 * 1024 * 1024 })) };
+var FIT = require("./cases_fit.js"), SIM = require("./cases_sim.js"), RULES = require("./cases_rules.js"), GUARD = require("./cases_guard.js"), USER = require("./cases_user.js");
 var counts = { AGREE: 0, DISAGREE: 0 }, byHarm = { high: 0, medium: 0, low: 0 };
 function say(id, seen, harm) {
   if (!seen) { counts.AGREE++; console.log("AGREE " + id); return; }
@@ -67,7 +67,7 @@ setTimeout(function () {
     build: function (t, q) { return L.aiAct.build(t, q); },
     buildOld: function (t, q) { return LO.aiAct.build(t, q); },
     sim: function (m, env) { return lib.sim(m.plan.circuit, env); } };
-  SIM.concat(RULES).filter(wanted).forEach(function (c) {
+  SIM.concat(RULES, GUARD).filter(wanted).forEach(function (c) {
     var seen;
     try { seen = c.run(X); } catch (e) { seen = "threw: " + (e && e.stack ? e.stack.split("\n").slice(0, 2).join(" ") : e); }
     say(c.id, seen, c.harm);

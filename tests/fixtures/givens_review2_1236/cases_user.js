@@ -70,7 +70,7 @@ module.exports = [
       var ends = after.indexOf("END");
       return after.slice(1, ends).some(function (l) { return /^MAKE /.test(l); }) || after.slice(ends + 1).some(function (l) { return /^(start|coil) /.test(l); }) ? "shown as stored: " + JSON.stringify(after.slice(0, 7)) : "";
     } },
-  { id: "U-12", harm: "high", why: "a stored entry whose lines are not strings: the prompt is still text and Chat's system prompt is still built",
+  { id: "U-12", harm: "low", why: "a stored entry whose lines are not strings: the prompt is still text and Chat's system prompt is still built",
     store: { "givens.user": JSON.stringify([entry({ lines: [{ a: 1 }, 5, null, ["x"]] })]) },
     run: function (x) {
       var p, s;
@@ -142,9 +142,12 @@ module.exports = [
       var s = x.shown(Q);
       return s.lines.some(function (l) { return /^\d+\.\s/.test(l); }) ? "shown with numbers: " + s.lines[0] : "";
     } },
-  { id: "U-25", harm: "low", why: "two different circuits kept in the same moment are both kept, and forgetting one leaves the other",
+  { id: "U-25", harm: "low", why: "two different circuits kept in the same millisecond (the page\x27s clock held still) are both kept, and forgetting one leaves the other",
     run: function (x) {
-      var a = x.build(BLOCK, Q), b = x.build(SUMP, SUMPQ), ga = x.L.givens.keep(a, Q), gb = x.L.givens.keep(b, SUMPQ);
+      // the page's clock held still for the two keeps (two clicks in one millisecond, made sure of)
+      var D = x.w.Date, now0 = D.now; D.now = function () { return 1764000000000; };
+      var a = x.build(BLOCK, Q), b = x.build(SUMP, SUMPQ), ga, gb;
+      try { ga = x.L.givens.keep(a, Q); gb = x.L.givens.keep(b, SUMPQ); } finally { D.now = now0; }
       if (!ga || !gb) return "not kept";
       if (x.L.givens.mine().length !== 2) return x.L.givens.mine().length + " in mine() (ids " + ga.id + ", " + gb.id + ")";
       x.L.givens.forget(ga.id);
@@ -180,5 +183,19 @@ module.exports = [
       var k = keepFrom(x, "MAKE CONTROL: Tank fill pump\nfloat FS1 M1 nc \x22low level start\x22\nfloat FS2 M1 nc \x22high level stop\x22\ncoil M1 \x22pump starter\x22\noverload OL1 M1\nEND", "Draw a control circuit for a pump with a low float and a high float to fill the tank"); if (k.err) return k.err;
       var s = x.shown("Draw a control circuit for a sump pump with a low float and a high float");
       return s.kind === "user" ? "shown the kept fill \x22" + s.title + "\x22 (floats nc, opening on rise) for a sump" : "";
+    } },
+  { id: "U-32", harm: "high", why: "a kept one-pump starter (title Pump starter) is not shown for a duplex lift station's question: 1.24.35's prompt with its duplex example",
+    run: function (x) {
+      var k = keepFrom(x, "MAKE CONTROL: Pump starter\nstop PB1 M1\nstart PB2 M1\ncoil M1 \x22pump starter\x22\noverload OL1 M1\nEND", "Draw a pump starter control circuit"); if (k.err) return k.err;
+      var q = "Draw a pump starter for a duplex lift station with an alternating relay", s = x.shown(q);
+      return !s.kind && s.prompt === x.old(q) ? "" : "shown " + s.kind + " \x22" + s.title + "\x22 in place of the duplex example";
+    } },
+  { id: "U-33", harm: "medium", why: "the bench measures Lantern's prompts: a circuit the user kept on that page should not change what the bench's make-control question is shown (the bench's make questions are built by aiAct.solve with Chat's system prompt)",
+    run: function (x) {
+      var q = "Draw the control circuit for a motor starter: a stop push button, a start push button with a holding contact so the motor keeps running after start is let go, the overload contact, the starter coil, and a pilot light that is on while the motor runs.";
+      var before = x.shown(q);
+      var k = keepFrom(x, "MAKE CONTROL: Motor starter\nstop PB1 M1\nstart PB2 M1\ncoil M1 \x22motor starter\x22\noverload OL1 M1\nEND", "Draw a motor starter control circuit"); if (k.err) return k.err;
+      var after = x.shown(q);
+      return after.kind === before.kind && after.lines.join("\n") === before.lines.join("\n") ? "" : "the bench question is now shown the user\x27s kept " + after.title + " (" + after.lines.length + " lines, no pilot light) in place of Lantern\x27s";
     } }
 ];

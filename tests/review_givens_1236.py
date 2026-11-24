@@ -11,12 +11,17 @@
 # compressor's; fill and drain together as a fill). The givens were made surer (a given only where it is sure to fit;
 # lights read word by word; stations, the control voltage and the load from the question's own words; the delayed
 # start's overload in the run relay's rung too); a fill on two floats now holds itself in (found through the givens, as
-# on 1.24.35), with a given of its own. After the mending every case agrees but these, each kept for the reason given.
+# on 1.24.35), with a given of its own. A second review (givens_review2_1236) found the fitting still too loose, and a
+# given is now shown only where every word of the question is one it knows. After the mending every case agrees but
+# these, each kept for the reason given.
 # Usage: python3 tests/review_givens_1236.py [-v]
 import os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "givens_review_1236")
 KEEP = {
+    "A-rv-both-directions": "a hoist that runs both ways gets no given now: a hoist, a winch or a crane is held to run (its pendant's buttons "
+                            "momentary, nothing sealed in), with limits of travel, which a three-wire reversing starter is not -- the second "
+                            "review's H3. The question gets the instructions as 1.24.35 gave them.",
     "E-reversing-one-overload-twice": "a reversing starter's one overload contact is drawn in each coil's rung (overload OL1 M1 M2), "
                                       "as every Lantern ladder has drawn a shared overload since 1.18.0; NEMA/JIC diagrams draw it once, in "
                                       "the common line. Both open together, so the circuit is right; drawing it once is DRAW_LADDER's work, in the queue.",

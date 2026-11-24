@@ -20,7 +20,7 @@ function strip(src, names) { names.forEach(function (n) { var a = src.indexOf("/
   function made(q, ls) { return act.build("MAKE CONTROL: Test\n" + ls.join("\n") + "\nEND", q); }
   // what goes back once, with the rule and the line
   var m1 = made("Draw a compressor control circuit", ["pressure PS1 M1 \x22high pressure cutout\x22", "coil M1 \x22compressor starter\x22"]);
-  ok("a high pressure cut-out written normally open: back once, with the reason, the US rule and the line with nc", m1 && !m1.ok && !m1.plan && /PS1 .*high cut-out written normally open: M1 would run only while the pressure is above it.*\(US practice: NFPA 79, exceeding operating limits\)\. Write it: pressure PS1 M1 nc \x22high pressure cutout\x22$/.test(m1.problems[0] || ""), m1 && m1.problems);
+  ok("a high pressure cut-out written normally open: back once, with the reason, the US rule and the line with nc", m1 && !m1.ok && !m1.plan && /PS1 .*high cut-out drawn normally open: M1 would run only while the pressure is above it.*\(US practice: NFPA 79, exceeding operating limits\)\. Write it: pressure PS1 M1 nc \x22high pressure cutout\x22$/.test(m1.problems[0] || ""), m1 && m1.problems);
   var m2 = made("Draw a refrigeration compressor control", ["pressure PS1 M1 nc \x22low pressure cut-out\x22", "coil M1 \x22compressor contactor\x22"]);
   ok("a low pressure cut-out written normally closed: back once, the line without nc", m2 && !m2.ok && /Write it: pressure PS1 M1 \x22low pressure cut-out\x22$/.test(m2.problems[0] || ""), m2 && m2.problems);
   var m3 = made("Draw the control circuit for an air compressor with a pressure switch", ["stop PB1 M1", "start PB2 M1", "pressure PS1 M1 \x22cut-out 120 psi\x22", "coil M1 \x22compressor starter\x22"]);
