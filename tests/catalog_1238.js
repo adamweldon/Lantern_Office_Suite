@@ -74,15 +74,21 @@ function ok(name, cond, info) { n++; if (cond) console.log("ok   " + name); else
       return b[0].slice(-s.length) === s; }) &&
     libs.every(function (b, i) { var s = shorts[i][1].split("\n").slice(1).join("\n").replace(/^\s+/, ""); return b[1].slice(-s.length) === s; }));
   function head(q) { return C.header(C.route(q)); }
-  ok("the rice question: shelf 6.2, its lessons given", /on shelf 6\.2 food/.test(head(QS[0])) && /its lessons come with the question/.test(head(QS[0])), head(QS[0]));
-  // (a recipe card on the electrical shelf was right 20 times in 26 of the labelled questions: not sure enough to name)
-  ok("the battery: no shelf named (Lantern is not sure enough of it), its recipe and functions below as ever", head(QS[1]) === "" && /RECIPE/.test(libs[1][1]) && /battery-runtime|RUNTIME/.test(libs[1][1]), head(QS[1]));
+  // (lessons Chat gives are said as found, not claimed: the second review found such claims under their bands)
+  ok("the rice question: lessons found on shelf 6.2, given, no surety claimed", /^Lantern found lessons near this question, on shelf 6\.2 food/.test(head(QS[0])) && /they come with the question/.test(head(QS[0])), head(QS[0]));
+  // (a recipe card on the electrical shelf: right 20 times in 26 of the labelled questions, drawn toward a card\u2019s 158 in
+  // 177 -- named as its band says, or not at all)
+  var bb = C.band(C.pct("card-one", "7.1"));
+  ok("the battery: shelf 7.1 named as its measured band says (" + bb + "), its recipe and functions below as ever", (bb === "likely" ? /^This question is most likely on shelf 7\.1/.test(head(QS[1])) : bb === "sure" ? /^This question is on shelf 7\.1/.test(head(QS[1])) : head(QS[1]) === "") &&
+    /RECIPE/.test(libs[1][1]) && /RUNTIME/.test(libs[1][1]), head(QS[1]));
   ok("a hydraulic circuit: shelf 8.1, sure", /^This question is on shelf 8\.1 hydraulic/.test(head("Draw a hydraulic circuit: a pump feeds a cylinder through a valve.")), head("Draw a hydraulic circuit: a pump feeds a cylinder through a valve."));
   ok("the transistor and motor: most likely shelf 7.2", /most likely on shelf 7\.2 circuits/.test(head(QS[2])), head(QS[2]));
   ok("a question about the model itself: no shelf named", head(QS[3]) === "", head(QS[3]));
   ok("a question Lantern has nothing for: no shelf named, and the model may choose one", /no lesson it is sure of/.test(head(QS[4])) && /OPEN and the shelf\x27s number/.test(head(QS[4])) && !/\d\.\d/.test(head(QS[4])), head(QS[4]));
   ok("the robot: the puzzle shelf, opened", /on shelf 1\.1 puzzles/.test(head(QS[5])), head(QS[5]));
-  ok("malaria: shelf 6.1 named as likely, OPEN 6.1 to read it (a fact asked as a fact is not a how-to)", /may be on shelf 6\.1 health/.test(head(QS[6])) && /OPEN 6\.1\./.test(head(QS[6])), head(QS[6]));
+  // (a lesson found for a fact asked as a fact is right about two times in three: no shelf is offered by name; the model
+  // may choose one -- the reviews: offers at that rate were mostly wrong)
+  ok("malaria: no shelf offered by name; the model may choose one", /not sure which shelf/.test(head(QS[6])) && /OPEN and the shelf\x27s number/.test(head(QS[6])) && !/\d\.\d/.test(head(QS[6])), head(QS[6]));
   var dose = C.route("How many paracetamol tablets can I give my 2 year old?");
   ok("a medicine dose: Lantern\u2019s rule, no shelf named", dose.ev === "guard" && C.header(dose) === "", dose);
 
@@ -138,7 +144,7 @@ function ok(name, cond, info) { n++; if (cond) console.log("ok   " + name); else
       var m = /\[(\d)\][^\n]*\n[\s\S]*?(Never leave food that spoils out for more than 2 hours[^.]*\.)/.exec(last) || /\[(\d)\][^\n]*\n[\s\S]*?(Malaria[^.]{20,}\.)/.exec(last);
       return Promise.resolve(m ? m[2].replace(/\.$/, "") + " [" + m[1] + "].\nQUOTE [" + m[1] + "]: " + m[2] : "ANSWER: Not in my library.");
     }
-    if (/may be on shelf 6\.1/.test(sys) && !/LESSONS/.test(last)) return Promise.resolve("OPEN 6.1");
+    if (/you may reply with only one line: OPEN/.test(sys) && /malaria/.test(curQ) && !/LESSONS/.test(last)) return Promise.resolve("OPEN 6.1");
     return Promise.resolve("ANSWER: Not in my library.");
   }
   var rice = item("food-b-rice-left-out"), curQ = rice.turns[0];
@@ -159,7 +165,7 @@ function ok(name, cond, info) { n++; if (cond) console.log("ok   " + name); else
     !L.suite.chat.howTo("How long can medicine be kept after the expiry date?") && !L.suite.chat.keeps("How long can medicine be kept after the expiry date?"), kbad);
   P.setMode("library"); sent = []; curQ = "What causes malaria?";
   var cm = await L.CHAT.converse(["What causes malaria?"], { call: model }), tm = cm.turns[0];
-  ok("a model that takes the shelf Lantern names (OPEN 6.1) gets its lessons, and its answer is checked against them",
+  ok("a model that chooses a shelf itself (OPEN 6.1 for malaria) gets the lesson Chat\u2019s sure reading finds on it, and its answer is checked against it",
     (tm.commands || []).some(function (c) { return c.verb === "OPEN" && c.arg === "6.1"; }) && tm.searches.some(function (s) { return s.how === "lessons"; }) && tm.backed >= 1 && /Malaria/.test(tm.final) && sent.length === 2,
     { commands: tm.commands, searches: tm.searches, final: tm.final, backed: tm.backed });
   // the library\u2019s own lesson provider: only where Lantern is sure

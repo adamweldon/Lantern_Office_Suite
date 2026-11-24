@@ -5,16 +5,25 @@ file in the same commit as the work. Read `CLAUDE.md` first.
 
 ## Next, in order
 
-**First: Adam's laptop run of 1.24.36 (set B, the 35B, 133 of 139,
-`tests/fixtures/bench_run_1.24.36_35b_setb.json`).** Mended in 1.24.37: ANS in
-a drawing's notes (the parallel lesson's current), the transistor's load named
-only on its own line or as the guide's K1 (the motor driver, failing on two
-runs), the robot's distance to more places (the check). Next: (1) Chat not
-reading the Food lesson by itself for "how long can cooked rice be left out"
-(`food-b-rice-left-out`, failing on every 35B run since 1.24.16 -- a gap set B
-was written to show; mend for every question of its kind, a reviewer first);
-(2) read 1.24.37's small-model run; (3) Chat's sums: a first line "=ANS*30"
-still takes ANS as 0 (the notes now question it; the review of 1.24.37).
+**First: read the library prompt's first runs (1.24.38).** Every push now runs
+each small model twice, `auto` and `library` (`.github/bench-prompts`). For
+each model, read the two jobs side by side, on the same processor: score,
+minutes, rounds and tokens per right answer, and the rows that differ, with
+`commands` (OPEN) in their chat records. Then keep, mend or drop the library
+prompt; making it the default is Adam's call. The 35B can run it on his laptop
+(Prompt size: Library). The surety (`tools/calibrate_catalog.js`) is counted
+on 984 labelled questions: after any change to a reading the router uses, run
+it with `--write`; a new reviewer's labelled questions go in
+`tests/fixtures/catalog_review*/questions.json`.
+Then:
+1. Old faults the labelled questions found, each giving the wrong tools in
+   every prompt: ASSIST_CORE's place cards on "north" and "how far ... from
+   the well", plants-bed on "apart"; AI_ACTIONS reading "every week" as a plan
+   and a piping layout as a drawing. A reviewer first.
+2. Chat's sums: a first line "=ANS*30" still takes ANS as 0 (the notes now
+   question it; the review of 1.24.37).
+3. Done in 1.24.38: the cooked-rice row (`food-b-rice-left-out`) -- how long
+   a food keeps gets the Food lesson, in every prompt.
 
 **Now: what commercial office software does, in Lantern (Adam,
 2026-11-17).** "Anything that is available on commercial software should be

@@ -6,7 +6,8 @@
 //                                                                 (between CALIBRATION - START and - END)
 //
 // With no files it reads tests/fixtures/catalog_labels.json (the bench's questions, labelled from their ids) and every
-// tests/fixtures/catalog_review*/questions.json (questions written by reviewers who had not seen the router). Each
+// tests/fixtures/catalog_review*/questions.json and review*_library_*/questions.json (questions written by reviewers who
+// had not seen the router). Each
 // label is a list of the shelves a librarian would rightly send the question to ("none": nowhere -- Lantern has nothing
 // for it; the encyclopedia, 0.2, is then a right place too, as Lantern has nothing else). A question is routed as the
 // library prompt routes it; it is right when its shelf is one of the label's (on no shelf: right when the label is
@@ -22,7 +23,7 @@ if (args[0] === "--write") { write = true; args.shift(); }
 if (args[0] === "--wrong") { wrong = true; args.shift(); }
 if (args[0] === "--src") { args.shift(); src = args.shift(); }
 var files = args.length ? args : [path.join(ROOT, "tests", "fixtures", "catalog_labels.json")].concat(
-  fs.readdirSync(path.join(ROOT, "tests", "fixtures")).filter(function (d) { return /^catalog_review/.test(d); }).map(function (d) { return path.join(ROOT, "tests", "fixtures", d, "questions.json"); })
+  fs.readdirSync(path.join(ROOT, "tests", "fixtures")).filter(function (d) { return /^catalog_review|^review\d*_library_/.test(d); }).map(function (d) { return path.join(ROOT, "tests", "fixtures", d, "questions.json"); })
     .filter(function (f) { return fs.existsSync(f); }));
 function counts(L, items) {
   var C = L.catalog, by = {}, bad = [];

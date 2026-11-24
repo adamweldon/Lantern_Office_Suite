@@ -9,7 +9,9 @@
 # cards were sure on "north". Mended: how long a food keeps is its own reading (keeps), given only a Food tile lesson
 # by SUITE_CHAT's provider, never a how-to; a shelf named only at 8 in 10 ("likely") or 9 in 10 ("sure"), counted per
 # kind of evidence and per shelf; OPEN read however a model dresses the line but never in a list of steps; a shelf
-# opened gives a lesson only when it has something of the question. After that every case agrees but these.
+# opened gives a lesson only when it has something of the question. A second reviewer then found that bar and the
+# offers too loose (tests/review2_library_1238.py); OPEN now hands only what Chat's sure reading finds on the shelf, and a
+# shelf is offered by name only where it is likely. After that every case agrees but these.
 # Usage: python3 tests/review_library_1238.py [-v]
 import os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -17,6 +19,9 @@ FX = os.path.join(ROOT, "tests", "fixtures", "review_library_1238")
 KEEPS_MISS = ("nothing is given, as before 1.24.38: the reading was narrowed after this review (a food named, how long it keeps, "
               "no medicine, no person going without; \u201csafe to eat or drink\u201d left out) -- a safe miss (rule 7), where the first draft "
               "handed medicines the birth lesson, diesel Drowning, bleach and sea water Making water safe.")
+OPEN_SURE = ("after the second review OPEN hands a shelf's lessons only where Chat's own sure reading (SUITE_PASSAGES, strong) finds them "
+             "for the question on that shelf -- a looser bar of the module's own handed the newborn lesson for insulin and Cooking food for wild "
+             "mushrooms; none here, so the shelf's titles go back and the model may ask for one by LESSON: (a safe miss, rule 7).")
 KEEP = {
     "keeps-rice-overnight": KEEPS_MISS,
     "keeps-pizza": KEEPS_MISS,
@@ -82,10 +87,14 @@ KEEP = {
     "keeps-full-moon": KEEPS_MISS,
     "keeps-eclipse": KEEPS_MISS,
     "header-things-fall-apart": "an old fault, not of this change: ASSIST_CORE\u2019s plants-bed card matches \u201capart\u201d, so the question has been a sum with that card in every prompt since the card was added; the library header names the card\u2019s shelf (likely, 83%). Listed in the queue.",
-    "header-sky-blue": "an offer, not a claim (\u201cmay be on shelf 5.2 ... OPEN 5.2\u201d, right about half the time for its kind): the model chooses whether to open it.",
     "prompt-assist-body-6": "by design, after this review\u2019s own finding (assist-offers-*): Assist runs no OPEN and gives no lessons, so its library prompt names no shelf for a question in words; the short instructions under the start are whole (the other assist-body cases).",
     "prompt-assist-body-7": "by design, after this review\u2019s own finding (assist-offers-*): Assist runs no OPEN and gives no lessons, so its library prompt names no shelf for a question in words; the short instructions under the start are whole (the other assist-body cases).",
     "prompt-open-run-leftovers": "Keeping food without a fridge is now on the food shelf (the review\u2019s finding 4) and has enough of the question to pass OPEN\u2019s bar; the model chose to open the shelf, and the lesson is about keeping food.",
+    "keeps-dried-fruit": KEEPS_MISS,
+    "prompt-open-run-bleach": OPEN_SURE,
+    "prompt-open-run-jerrycan": OPEN_SURE,
+    "prompt-open-run-motorbike": OPEN_SURE,
+    "open-no-such": "a shelf Lantern has not is no command at all (the second review: \u201cOPEN 1.5\u201d alone is one and a half turns); the reply stands as the model wrote it.",
 }
 VERBOSE = "-v" in sys.argv
 r = subprocess.run(["node", os.path.join(FX, "replay.js")], cwd=ROOT, capture_output=True, text=True, timeout=900)
