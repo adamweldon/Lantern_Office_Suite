@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.24.36 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.24.37 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0, or the
 // Zero-Clause BSD licence, 0BSD, if you prefer: LICENSE).
@@ -195,7 +195,7 @@
 //          Lantern.lists = {level(el), type(el), mark(type, n), css(scope)}
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.24.36",
+  version: "1.24.37",
   apps: {},
   order: []
 };
@@ -32319,7 +32319,7 @@ Lantern.RFB = (function () {
 // Depends: AI_SCHEMATIC (Lantern.aiSchematic: PARTS, SYN, hooks), DRAW
 //          (Lantern.drawModes, Lantern.drawSymbols, Lantern.drawShapes),
 //          FORMULA (Lantern.formula) -- all feature-detected
-// Exports: Lantern.aiSchematicMore = {fold(sc), noteText(text)} (for tests)
+// Exports: Lantern.aiSchematicMore = {fold(sc), noteText(text, state)} -- state: one {} for all the notes of one drawing
 // ===========================================================================
 // More for the AI's schematics (1.12.5), from a Chat where a 35B drew Ohm's
 // law in parallel:
@@ -32394,15 +32394,33 @@ Lantern.RFB = (function () {
     if (a >= 1e6 || a < 1e-3) return v.toPrecision(4).replace(/\.?0+e/, "e");
     return String(parseFloat(v.toPrecision(4)));
   }
-  // noteText(text) -> {text, problems}: each {= ...} worked out
-  function noteText(t) {
-    var problems = [];
+  // noteText(text, state) -> {text, problems}: each {= ...} worked out.
+  // (1.24.37, Adam's laptop: the 35B drew the parallel lesson with "Rt = {=1/(1/10+1/15+1/30)} ohm" and then "Total
+  // current It = {=9/ANS} A" -- the battery's 9 V over the total it had just worked out. ANS was always 0 here, so the
+  // note went back as "Divide by zero", twice, and the current the lesson wanted was never shown.) Now ANS is the
+  // previous result, as the calculator and the full prompt say it: the sum worked out just before it, in the same note
+  // or an earlier one -- when every note of one drawing is given the same state, in order. Where there is no sum before
+  // it, or the one before could not be worked out, ANS says so; never 0 (Chat's sums differ: there ANS skips a line that
+  // failed). (The review of 1.24.37) ANS1, ANS2 ... are not read in a note: the prompt counts them by lines, a drawing's
+  // notes by sums, and the two part as soon as a note has no sum -- "It = {=9/ANS2} A" took another note's value.
+  function noteText(t, state) {
+    var problems = [], st = state && typeof state === "object" ? state : {};
+    if (!Array.isArray(st.vals)) st.vals = [];
     var s = String(t).replace(/^\s*[\x22\u201c]|[\x22\u201d]\s*$/g, "").replace(/\x7B=\s*([^\x7D]+)\x7D/g, function (m, e) {
+      var bare = e.replace(/\x22[^\x22]*\x22/g, "").replace(/\x27[^\x27]*\x27/g, ""), prev = st.vals.length ? st.vals[st.vals.length - 1] : null;
+      var an = /\b(ANS\d{1,2})\b/i.exec(bare);
+      if (an) { st.vals.push(null); problems.push("note: {=" + e + "} uses " + an[1].toUpperCase() + ": in a note only ANS is read, the sum just before it -- write the number, or its own sum, in place of " + an[1].toUpperCase()); return "?"; }
+      if (/\bans\b(?!\d)/i.test(bare) && typeof prev !== "number") {
+        st.vals.push(null);
+        problems.push("note: {=" + e + "} uses ANS, the sum worked out just before it, but " + (st.vals.length > 1 ? "the sum before it could not be worked out" : "there is no sum before it") + ": write the number, or its own sum, in place of ANS");
+        return "?";
+      }
       try {
-        var v = L.formula.evaluate(e, { deg: false, ans: 0 });
+        var v = L.formula.evaluate(e, { deg: false, ans: typeof prev === "number" ? prev : 0 });
         if (typeof v !== "number" || !isFinite(v)) throw new Error("not a number");
+        st.vals.push(v);
         return fmt(v);
-      } catch (er) { problems.push("note: {=" + e + "} could not be worked out (" + ((er && er.message) || er) + ")"); return "?"; }
+      } catch (er) { st.vals.push(null); problems.push("note: {=" + e + "} could not be worked out (" + ((er && er.message) || er) + ")"); return "?"; }
     });
     return { text: s, problems: problems };
   }
@@ -32421,7 +32439,7 @@ Lantern.RFB = (function () {
       if (b) { x0 = Math.min(x0, b[0]); x1 = Math.max(x1, b[2]); y1 = Math.max(y1, b[3]); }
     });
     if (x0 > x1) { x0 = 60; x1 = 600; }
-    var y = y1 + 34, shown = notes.map(function (n) { var r = noteText(n); r.problems.forEach(function (p) { problems.push(p); }); return r.text.slice(0, 120); });
+    var nst = {}, y = y1 + 34, shown = notes.map(function (n) { var r = noteText(n, nst); r.problems.forEach(function (p) { problems.push(p); }); return r.text.slice(0, 120); });
     // centred under the drawing, and never off its left edge
     var half = Math.max.apply(null, shown.map(function (t) { return t.length * 15 * 0.32; })), cx = Math.max(200, (x0 + x1) / 2, half + 20);
     shown.forEach(function (t) { lay.shapes.push({ t: "text", c: NOTE, x: cx, y: y, s: t, fs: 15 }); y += 24; });
@@ -32702,8 +32720,8 @@ Lantern.RFB = (function () {
     return { kind: kind, values: vals, total: total, note: note };
   }
   // the numbers of ohms a note shows, once Lantern has worked out its sums
-  function shownOhms(n) {
-    var NT = L.aiSchematicMore && L.aiSchematicMore.noteText, t = NT ? NT(n).text : String(n), out = [], m, re = /(\d+(?:\.\d+)?)\s*(k|M)?\s*(?:ohms?\b|\u03a9)/g;
+  function shownOhms(n, nst) {
+    var NT = L.aiSchematicMore && L.aiSchematicMore.noteText, t = NT ? NT(n, nst).text : String(n), out = [], m, re = /(\d+(?:\.\d+)?)\s*(k|M)?\s*(?:ohms?\b|\u03a9)/g;
     while ((m = re.exec(t))) out.push(parseFloat(m[1]) * (m[2] === "k" ? 1e3 : m[2] === "M" ? 1e6 : 1));
     return out;
   }
@@ -32712,15 +32730,20 @@ Lantern.RFB = (function () {
     var q = ctx && ctx.question ? String(ctx.question) : "", n = null;
     try { n = network(sc); } catch (e) { n = null; }
     if (!n) return;
-    var notes = sc.notes = sc.notes || [], has = false, wrong = null;
+    var notes = sc.notes = sc.notes || [], has = false, wrong = null, nst = {}, lastForeign = [];
     notes.forEach(function (t) {
-      var shown = shownOhms(t);
-      if (shown.some(function (v) { return near(v, n.total); })) { has = true; return; }
-      // a sum of numbers that are not this circuit's (the guide's own example, copied)
+      var shown = shownOhms(t, nst);
+      // a sum of numbers that are not this circuit's (the guide's own example, copied) -- (1.24.37, the review) its own
+      // numbers, not ANS's; and one that takes ANS takes the numbers of the sum before it with it
       var sums = String(t).match(/\x7B=[^\x7D]+\x7D/g) || [], foreign = [];
       sums.forEach(function (e) {
-        (e.match(/\d+(?:\.\d+)?/g) || []).forEach(function (x) { var v = parseFloat(x); if (v !== 1 && foreign.indexOf(x) < 0 && !n.values.some(function (r) { return near(r, v); })) foreign.push(x); });
+        var mine = [];
+        (e.replace(/\bANS\d*\b/gi, " ").match(/\d+(?:\.\d+)?/g) || []).forEach(function (x) { var v = parseFloat(x); if (v !== 1 && mine.indexOf(x) < 0 && !n.values.some(function (r) { return near(r, v); })) mine.push(x); });
+        if (/\bANS\b/i.test(e)) lastForeign.forEach(function (x) { if (mine.indexOf(x) < 0) mine.push(x); });
+        mine.forEach(function (x) { if (foreign.indexOf(x) < 0) foreign.push(x); });
+        lastForeign = mine;
       });
+      if (shown.some(function (v) { return near(v, n.total); })) { has = true; return; }
       if (sums.length && foreign.length && shown.length && !wrong) wrong = { text: t, shown: shown[shown.length - 1], foreign: foreign };
     });
     if (has) return;
@@ -33121,9 +33144,9 @@ Lantern.RFB = (function () {
 
   function notesUnder(lay, notes, problems) {
     var y = lay.bottom + 30, cx = Math.max(300, (lay.left + lay.right) / 2), shown = [];
-    var nt = L.aiSchematicMore && L.aiSchematicMore.noteText;
+    var nt = L.aiSchematicMore && L.aiSchematicMore.noteText, nst = {};
     (notes || []).slice(0, 8).forEach(function (n) {
-      var r = nt ? nt(n) : { text: String(n), problems: [] };
+      var r = nt ? nt(n, nst) : { text: String(n), problems: [] };
       r.problems.forEach(function (p) { problems.push(p); });
       shown.push(r.text.slice(0, 120));
       lay.shapes.push({ t: "text", c: NOTE, x: cx, y: y, s: r.text.slice(0, 120), fs: 15 }); y += 24;
@@ -33765,9 +33788,9 @@ Lantern.RFB = (function () {
   }
   function notesUnder(lay, lines, problems, grey) {
     var y = lay.y || lay.bottom + 30, cx = Math.max(300, (lay.left + lay.right) / 2), shown = [], fs = grey ? 12 : 15;
-    var nt = L.aiSchematicMore && L.aiSchematicMore.noteText;
+    var nt = L.aiSchematicMore && L.aiSchematicMore.noteText, nst = {};
     lines.forEach(function (n) {
-      var r = grey ? { text: String(n), problems: [] } : nt ? nt(n) : { text: String(n), problems: [] };
+      var r = grey ? { text: String(n), problems: [] } : nt ? nt(n, nst) : { text: String(n), problems: [] };
       r.problems.forEach(function (p) { problems.push(p); });
       shown.push(r.text.slice(0, 150));
       wrap(r.text.slice(0, grey ? 400 : 150), grey ? 100 : 80).forEach(function (part) {
@@ -34745,9 +34768,9 @@ Lantern.RFB = (function () {
   }
   function notesUnder(lay, lines, problems, grey) {
     var y = lay.y || lay.bottom + 34, cx = Math.max(300, (lay.left + lay.right) / 2), shown = [], fs = grey ? 12 : 15;
-    var nt = L.aiSchematicMore && L.aiSchematicMore.noteText;
+    var nt = L.aiSchematicMore && L.aiSchematicMore.noteText, nst = {};
     lines.forEach(function (n) {
-      var r = grey ? { text: String(n), problems: [] } : nt ? nt(n) : { text: String(n), problems: [] };
+      var r = grey ? { text: String(n), problems: [] } : nt ? nt(n, nst) : { text: String(n), problems: [] };
       r.problems.forEach(function (p) { problems.push(p); });
       shown.push(r.text.slice(0, 150));
       wrap(r.text.slice(0, grey ? 900 : 150), grey ? 120 : 80).forEach(function (part) {
@@ -38067,6 +38090,41 @@ Lantern.RFB = (function () {
         added.push("pin " + r + ", which " + it.id + "\u2019s line names (a pin line for " + r + " says which pin of the board it is)");
       });
     });
+    // (1.24.37, Adam's laptop: the 35B, asked for "an Arduino output pin switches a 12 V DC motor through an NPN
+    // transistor", wrote "transistor Q1 K1 P1" -- the guide's relay K1 -- beside "motor M1 P1", and was told Q1 switched
+    // nothing, like: transistor Q1 M1 P1. Its second try wrote that line and left the motor's own line out, and was told
+    // there was nothing to power. Both failed; the same two replies failed on an earlier run too.) Read in, and said,
+    // only where the block is that small and the question names one kind of load: one transistor, its line naming its
+    // pin (or none) and one tag no line has, and
+    //  - no load in the block at all, the tag's letter the kind's (M a motor or fan, K a relay, L a lamp, Y a solenoid,
+    //    BZ a buzzer): that part is added;
+    //  - or one load, of that kind, on the transistor's pin or on none, naming nothing else: the transistor switches it.
+    // (Two reviews: reading more -- a free load among others, a pin's board name, a part beside a load already there --
+    // drew loads always on, two transistors on a pin, a second load meant to run on its own given to the first.)
+    var qs = String(pr.question || "").replace(/\b(?:stepper|servo|brushless|bldc|induction|three[\s-]phase|3[\s-]?phase|ac)\s+motors?\b/gi, " ");
+    var KINDQ = [["motor", /\b(?:motors?|fans?)\b/i, "M"], ["relay", /\brelays?\b/i, "K"], ["lamp", /\b(?:lamps?|bulbs?)\b/i, "L"], ["solenoid", /\bsolenoids?\b/i, "Y"], ["buzzer", /\b(?:buzzers?|beepers?)\b/i, "BZ"]];
+    var asked = KINDQ.filter(function (k) { return k[1].test(qs); }), one = asked.length === 1 ? asked[0] : null;
+    (function () {
+      var trs = items.filter(function (x) { return x.role === "transistor"; }), lds = items.filter(function (x) { return LOAD.test(x.role); });
+      if (!one || trs.length !== 1) return;
+      var t = trs[0], unk = t.refs.filter(function (r) { return !dev[r]; }), tPins = t.refs.filter(function (x) { return dev[x] && dev[x].role === "pin"; });
+      if (unk.length !== 1 || unk.length + tPins.length !== t.refs.length || tPins.length > 1) return;
+      var r = unk[0];
+      if (!lds.length) {
+        if (!new RegExp("^" + one[2] + "\\d{1,3}$").test(r)) return;
+        var ld = { role: one[0], id: r, label: "", refs: [], a: {}, said: one[0] + " " + r, addedLoad: true };
+        items.push(ld); dev[r] = ld; used[r] = 1;
+        added.push(one[0] + " " + r + ", which " + t.id + "\u2019s line names (a line " + one[0] + " " + r + " says what it is)");
+        return;
+      }
+      var L1 = lds[0];
+      if (lds.length !== 1 || L1.role !== one[0] || /^(?:LED|LDR|TH|NTC|RV|POT|SW|S|R|C|D|Q|P|U|IC|B|BAT)\d/i.test(r)) return;
+      if (L1.refs.some(function (x) { return !(dev[x] && dev[x].role === "pin" && (!tPins.length || tPins[0] === x)); })) return;
+      if (items.some(function (y) { return y.role === "pin" && y.refs.indexOf(L1.id) >= 0 && tPins.indexOf(y.id) < 0; })) return;
+      t.refs[t.refs.indexOf(r)] = L1.id;
+      changed.push(t.id + "\u2019s line names " + r + ", which no line has: " + L1.id + " is the one " + L1.role + " for it to switch, so " + t.id + " switches " + L1.id +
+        (tPins.length ? ", driven by " + tPins[0] : "") + " (transistor " + t.id + " " + L1.id + (tPins.length ? " " + tPins[0] : "") + ")");
+    })();
     var pins = of("pin");
     // a pin's voltage: said, or its board's (an ESP32, a Pico or a Pi is 3.3 V); pins not said take the board's
     pins.forEach(function (p) { p.sv = volts(p.label) || volts(p.said) || (/\b3\.3V\b|esp32|pico|raspberry|\bpi\b/i.test(p.label + " " + p.said) ? 3.3 : 0); });
@@ -38076,7 +38134,12 @@ Lantern.RFB = (function () {
     // who drives each load: a transistor naming it, a pin (either line names
     // the other), a switch in its line, or nothing (+ to 0 V)
     var loads = items.filter(function (it) { return LOAD.test(it.role); }), br = [];
-    if (!loads.length && !of("switch").length && !of("sensor").length && !of("pot").length) problems.push("there is nothing to power or read: add a part, like: led D1 \x22power on\x22");
+    // (the review of 1.24.37) the load named in what goes back: one of the kind the question asks for, else the first
+    // (the first is the one a transistor must switch -- a relay, motor, solenoid or lamp none switches yet)
+    var fl0 = loads.filter(function (x) { return (KICK.test(x.role) || x.role === "lamp") && !items.some(function (q) { return q.role === "transistor" && (q.refs.indexOf(x.id) >= 0 || x.refs.indexOf(q.id) >= 0); }); })[0];
+    var exLoad = (one ? loads.filter(function (x) { return x.role === one[0]; })[0] : null) || (one ? null : fl0 || loads[0]), exId = exLoad ? exLoad.id : one ? one[2] + "1" : loads[0] ? loads[0].id : "K1", exPin = (pins[0] || {}).id || "P1";
+    var idleQ = of("transistor")[0] ? of("transistor")[0].id : "Q1";
+    if (!loads.length && !of("switch").length && !of("sensor").length && !of("pot").length) problems.push("there is nothing to power or read: " + (one ? "add the " + (one[0] === "led" ? "LED" : one[0]) + " the question asks for, like: " + one[0] + " " + exId + (one[0] !== "led" || of("transistor")[0] ? " (with transistor " + idleQ + " " + exId + " " + exPin + ")" : "") : "add a part, like: led D1 \x22power on\x22"));
     loads.forEach(function (ld) {
       var q = of("transistor").filter(function (t) { return t.refs.indexOf(ld.id) >= 0 || ld.refs.indexOf(t.id) >= 0; })[0];
       var pin = ld.refs.map(pinOf).filter(function (x) { return x; })[0] || pins.filter(function (p) { return p.refs.indexOf(ld.id) >= 0; })[0];
@@ -38138,9 +38201,9 @@ Lantern.RFB = (function () {
         }
       }
     });
-    of("transistor").forEach(function (t) { if (!br.some(function (b) { return b.q === t; })) problems.push("transistor " + t.id + " switches nothing: name the part it switches and what drives it, like: transistor " + t.id + " " + (loads[0] ? loads[0].id : "K1") + " P1"); });
+    of("transistor").forEach(function (t) { if (!br.some(function (b) { return b.q === t; })) problems.push("transistor " + t.id + " switches nothing: name the part it switches and what drives it, like: transistor " + t.id + " " + exId + " " + exPin); });
     userR.filter(function (r) { return !r.used; }).forEach(function (r) { problems.push("resistor " + r.id + ": name the part it is in series with, like: resistor " + r.id + " \x22" + (r.label || "220 ohm") + "\x22 " + (loads[0] ? loads[0].id : "D1") + " (Lantern sizes LED, base and pull-down resistors itself)"); });
-    of("diode").filter(function (d) { return !d.used; }).forEach(function (d) { problems.push("diode " + d.id + ": Lantern draws a diode across a relay, motor or solenoid a transistor switches (and adds it there itself) -- leave it out, or name the coil: diode " + d.id + " K1"); });
+    of("diode").filter(function (d) { return !d.used; }).forEach(function (d) { problems.push("diode " + d.id + ": Lantern draws a diode across a relay, motor or solenoid a transistor switches (and adds it there itself) -- leave it out" + (function () { var k = (loads.filter(function (x) { return KICK.test(x.role); })[0] || {}).id || (one && KICK.test(one[0]) ? one[2] + "1" : !one ? "K1" : ""); return k ? ", or name the coil: diode " + d.id + " " + k : ""; })()); });
     // inputs: a push button, a sensor or a pot read by a pin
     function readBy(it) {
       var p = it.refs.map(pinOf).filter(function (x) { return x; })[0] || pins.filter(function (x) { return x.refs.indexOf(it.id) >= 0; })[0];
@@ -38186,7 +38249,19 @@ Lantern.RFB = (function () {
           "Give " + it.id + " a pin of its own (pin P" + k + " \x22Arduino D2\x22 and " + word + " " + it.id + " P" + k + "), or leave " + it.id + "\u2019s line out if the question does not ask for it"));
       if (free) free.taken = true;
     });
-    pins.forEach(function (p) { if (!p.taken && !br.some(function (b) { return b.pin === p; })) problems.push("pin " + p.id + " drives or reads nothing: name it on a part\u2019s line (led D1 " + p.id + ", transistor Q1 K1 " + p.id + ", switch S1 " + p.id + ")"); });
+    // (the review of 1.24.37) a pin's line handed back: a transistor of its own for a load of the kind asked that nothing
+    // switches yet, else the ways a pin is used, with the kind asked in place of the guide's relay
+    // (the review of 1.24.37) a pin's line handed back: the ways a pin is used, with a transistor that switches nothing
+    // yet, and the kind of load the question asks for in place of the guide's relay K1
+    function pinLine(p) {
+      var idle = of("transistor").filter(function (t) { return !br.some(function (b) { return b.q === t; }); })[0], qn = 1;
+      while (dev["Q" + qn]) qn++;
+      var kindN = one ? loads.filter(function (x) { return x.role === one[0]; }) : [];
+      var tl = "transistor " + (idle ? idle.id : "Q" + qn) + " " + (one ? one[2] + (kindN.length + 1) : "K1") + " " + p.id;
+      // the question's kind first: a small model copies the first line it is given
+      return one ? tl + ", led D1 " + p.id + ", switch S1 " + p.id : "led D1 " + p.id + ", " + tl + ", switch S1 " + p.id;
+    }
+    pins.forEach(function (p) { if (!p.taken && !br.some(function (b) { return b.pin === p; })) problems.push("pin " + p.id + " drives or reads nothing: name it on a part\u2019s line (" + pinLine(p) + ")"); });
     if (br.length > 8) problems.push("keep it to 8 branches (things powered or read) or fewer");
     var c = { v: V, battery: bat || null, supply: sup || null, pins: pins, branches: br, problems: problems, added: added, changed: changed, notes: pr.notes, dev: dev };
     if (!problems.length) c.steps = steps(c);
@@ -38391,9 +38466,9 @@ Lantern.RFB = (function () {
   }
   function notesUnder(lay, lines, problems, grey) {
     var y = lay.y || lay.bottom + 34, cx = Math.max(300, (lay.left + lay.right) / 2), shown = [], fs = grey ? 12 : 15;
-    var nt = L.aiSchematicMore && L.aiSchematicMore.noteText;
+    var nt = L.aiSchematicMore && L.aiSchematicMore.noteText, nst = {};
     lines.forEach(function (n) {
-      var r = grey ? { text: String(n), problems: [] } : nt ? nt(n) : { text: String(n), problems: [] };
+      var r = grey ? { text: String(n), problems: [] } : nt ? nt(n, nst) : { text: String(n), problems: [] };
       r.problems.forEach(function (p) { problems.push(p); });
       shown.push(r.text.slice(0, 150));
       wrap(r.text.slice(0, grey ? 600 : 150), grey ? 110 : 80).forEach(function (part) {
@@ -38406,7 +38481,9 @@ Lantern.RFB = (function () {
 
   // build(block, ctx) -> what Chat and the bench take (AI_DRAW's result)
   function build(block, ctx) {
-    var pr = parse(block), c = circuit(pr);
+    var pr = parse(block);
+    pr.question = ctx && ctx.question ? String(ctx.question) : "";
+    var c = circuit(pr);
     if (c.problems.length) return { problems: c.problems, plan: null };
     if (!L.aiDraw || !L.aiDraw.result) return { problems: ["Lantern\u2019s drawing part (AI_DRAW) is missing"], plan: null };
     var lay = layout(c, block.title), late = [];
@@ -39030,9 +39107,9 @@ Lantern.RFB = (function () {
     var shown = { parts: w.parts.map(function (p) { return { name: p.name, fill: p.fill, items: p.items.map(pretty) }; }), hub: w.hub };
     var lay = W.draw(shown, block.title), sh = lay.shapes, notes = [];
     lay.tooLong.slice(0, 3).forEach(function (it) { problems.push("\u201c" + it + "\u201d is too long for its place on the wheel: shorten it, or use fewer items"); });
-    var y = lay.bottom + 44, NT = L.aiSchematicMore && L.aiSchematicMore.noteText;
+    var y = lay.bottom + 44, NT = L.aiSchematicMore && L.aiSchematicMore.noteText, nst = {};
     w.notes.slice(0, 6).forEach(function (nt) {
-      var r = NT ? NT(nt) : { text: unq(nt), problems: [] };
+      var r = NT ? NT(nt, nst) : { text: unq(nt), problems: [] };
       r.problems.forEach(function (p) { problems.push(p); });
       notes.push(r.text.slice(0, 110));
       sh.push({ t: "text", c: NOTE, x: W.CX, y: y, s: r.text.slice(0, 110), fs: 16 }); y += 26;
@@ -45820,7 +45897,9 @@ Lantern.RFB = (function () {
           // (review 2) the facing said last, an aside in brackets set aside: worked steps say other facings on the way
           var fc = low.replace(/\x28[^\x29]*[a-z][^\x29]*\x29/g, " ").split(/[.;\n,]|\band\b/).filter(function (c) { return /fac/.test(c); });
           if (fc.length ? !/north/.test(fc[fc.length - 1]) : !/north/.test(low)) return "it does not face north";
-          return /2\.8[23]?\b|2\u221a2|2\s*sqrt\s*\x28?2|\u221a8|sqrt\s*\x28?8/.test(low) ? "" : "the straight-line distance is not 2.83";
+          // (1.24.37, Adam's laptop: "approximately 2.828427 units" -- the right distance, more places -- failed: 2.8[23]? then
+          // \b wanted the number to end at its second decimal)
+          return /2\.8(?:[23]\d*)?\b|2\u221a2|2\s*sqrt\s*\x28?2|\u221a8|sqrt\s*\x28?8/.test(low) ? "" : "the straight-line distance is not 2.83";
         } },
       { id: "knights-three-b",
         ideal: "SOLVE: Knights and liars\nperson A B C\nkind knight liar (repeat)\nrule A = knight iff (B = liar and C = liar)\nrule B = knight iff A = knight\nrule C = knight iff A = liar\nEND",
