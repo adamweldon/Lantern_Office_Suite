@@ -75,8 +75,10 @@ function ok(name, cond, info) { n++; if (cond) console.log("ok   " + name); else
     libs.every(function (b, i) { var s = shorts[i][1].split("\n").slice(1).join("\n").replace(/^\s+/, ""); return b[1].slice(-s.length) === s; }));
   function head(q) { return C.header(C.route(q)); }
   ok("the rice question: shelf 6.2, its lessons given", /on shelf 6\.2 food/.test(head(QS[0])) && /its lessons come with the question/.test(head(QS[0])), head(QS[0]));
-  ok("the battery: most likely shelf 7.1, opened below", /most likely on shelf 7\.1 electrical sums/.test(head(QS[1])) && /opened it below/.test(head(QS[1])), head(QS[1]));
-  ok("the transistor and motor: shelf 7.2", /on shelf 7\.2 circuits/.test(head(QS[2])), head(QS[2]));
+  // (a recipe card on the electrical shelf was right 20 times in 26 of the labelled questions: not sure enough to name)
+  ok("the battery: no shelf named (Lantern is not sure enough of it), its recipe and functions below as ever", head(QS[1]) === "" && /RECIPE/.test(libs[1][1]) && /battery-runtime|RUNTIME/.test(libs[1][1]), head(QS[1]));
+  ok("a hydraulic circuit: shelf 8.1, sure", /^This question is on shelf 8\.1 hydraulic/.test(head("Draw a hydraulic circuit: a pump feeds a cylinder through a valve.")), head("Draw a hydraulic circuit: a pump feeds a cylinder through a valve."));
+  ok("the transistor and motor: most likely shelf 7.2", /most likely on shelf 7\.2 circuits/.test(head(QS[2])), head(QS[2]));
   ok("a question about the model itself: no shelf named", head(QS[3]) === "", head(QS[3]));
   ok("a question Lantern has nothing for: no shelf named, and the model may choose one", /no lesson it is sure of/.test(head(QS[4])) && /OPEN and the shelf\x27s number/.test(head(QS[4])) && !/\d\.\d/.test(head(QS[4])), head(QS[4]));
   ok("the robot: the puzzle shelf, opened", /on shelf 1\.1 puzzles/.test(head(QS[5])), head(QS[5]));
@@ -95,7 +97,8 @@ function ok(name, cond, info) { n++; if (cond) console.log("ok   " + name); else
   // second reviewer\u2019s 300, written to catch the router out -- "how do I find north at night" is not a bearing between
   // two towns. Counted on all three, each is likely, not sure)
   ok("...a kind of evidence seen often and right is sure; one right less often is likely; a guess is neither", C.band(C.pct("card-one")) === "likely" && C.band(C.pct("puzzle")) === "sure" &&
-    C.band(C.pct("make-one")) === "likely" && C.band(C.pct("lesson-other")) === "likely" && C.band(C.pct("func")) === "unsure", [C.pct("card-one"), C.pct("puzzle"), C.pct("make-one"), C.pct("lesson-other"), C.pct("func")]);
+    C.band(C.pct("make-one")) === "likely" && C.band(C.pct("lesson-other")) === "unsure" && C.band(C.pct("func")) === "unsure" &&
+    C.band(C.pct("card-one", "9.3")) === "unsure" && C.band(C.pct("card-one", "5.2")) === "sure", [C.pct("card-one"), C.pct("puzzle"), C.pct("make-one"), C.pct("lesson-other"), C.pct("func"), C.pct("card-one", "9.3"), C.pct("card-one", "5.2")]);
   var right = items.filter(function (x) { var r = C.route(x.q); return r.band === "sure" && r.shelf; }), wrongSure = right.filter(function (x) { return x.shelf.indexOf(C.route(x.q).shelf) < 0; });
   ok("where Lantern says it is sure, it is right at least 9 times in 10 (" + (right.length - wrongSure.length) + " of " + right.length + ")", right.length >= 15 && wrongSure.length * 10 <= right.length,
     wrongSure.map(function (x) { return [x.q.slice(0, 60), C.route(x.q).shelf, x.shelf]; }));
@@ -145,6 +148,15 @@ function ok(name, cond, info) { n++; if (cond) console.log("ok   " + name); else
     ok("the cooked-rice row (" + mode + " prompt): the Food lesson goes with the question, and an answer from it passes", why === "" && t.searches.some(function (s) { return s.how === "lessons"; }) &&
       (t.sources || []).some(function (s) { return /^food_/.test(s.key); }) && sent.length === 1, { why: why, searches: t.searches, final: t.final, sent: sent.length });
   }
+  // how long a food keeps: the Food tile\u2019s lesson, in every prompt; never a medicine, fuel, or a person going without
+  var LS = (L.chatContext || []).filter(function (c) { return c.id === "lessons"; })[0];
+  P.setMode("auto");
+  var kq = { "How long can cooked rice be left out on the table before it is unsafe to eat?": /^food_/, "How long does cooked chicken keep without a fridge?": null,
+    "How long can medicine be kept after the expiry date?": null, "How long does diesel keep in a tank?": null, "How long can you last without food?": null,
+    "Is it safe to drink bleach?": null, "Is it safe to eat wild mushrooms?": null, "How long can ORS be kept after mixing?": null }, kbad = [];
+  Object.keys(kq).forEach(function (q) { var r = LS.provide(q), first = r && r.sources[0].key; if (kq[q] ? !(first && kq[q].test(first)) : first && !/^food_/.test(first)) kbad.push([q, first]); });
+  ok("how long a food keeps: a Food lesson or nothing; a medicine, diesel, a person without food, \u201csafe to drink bleach\u201d: nothing", kbad.length === 0 &&
+    !L.suite.chat.howTo("How long can medicine be kept after the expiry date?") && !L.suite.chat.keeps("How long can medicine be kept after the expiry date?"), kbad);
   P.setMode("library"); sent = []; curQ = "What causes malaria?";
   var cm = await L.CHAT.converse(["What causes malaria?"], { call: model }), tm = cm.turns[0];
   ok("a model that takes the shelf Lantern names (OPEN 6.1) gets its lessons, and its answer is checked against them",
@@ -153,10 +165,10 @@ function ok(name, cond, info) { n++; if (cond) console.log("ok   " + name); else
   // the library\u2019s own lesson provider: only where Lantern is sure
   var LP = (L.chatContext || []).filter(function (c) { return c.id === "library-shelf"; })[0];
   ok("the library\u2019s lesson provider gives nothing where Lantern is not sure (malaria is likely, not sure)", !!LP && LP.provide("What causes malaria?") === null);
-  var keep = C.surety["lesson-other"]; C.surety["lesson-other"] = [200, 200];
+  var keep = C.surety["lesson-other"], keep2 = C.surety["lesson-other@6.1"]; C.surety["lesson-other"] = [200, 200]; C.surety["lesson-other@6.1"] = [200, 200];
   var lp = LP.provide("What causes malaria?");
   ok("...and the shelf\u2019s lessons where it is (a surety of 200 in 200, for this test)", lp && lp.how === "lessons" && lp.sources[0].key === "health_malaria" && /opened shelf 6\.1/.test(lp.note) && /% of questions like this/.test(lp.note), lp && lp.note);
-  C.surety["lesson-other"] = keep;
+  C.surety["lesson-other"] = keep; C.surety["lesson-other@6.1"] = keep2;
   P.setMode("auto");
   ok("...and nothing with the usual prompt", LP.provide("What causes malaria?") === null);
   ok("no page errors", o.errs.length === 0, o.errs);

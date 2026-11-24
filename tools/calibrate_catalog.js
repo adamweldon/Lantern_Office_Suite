@@ -11,7 +11,8 @@
 // for it; the encyclopedia, 0.2, is then a right place too, as Lantern has nothing else). A question is routed as the
 // library prompt routes it; it is right when its shelf is one of the label's (on no shelf: right when the label is
 // "none" or the encyclopedia, 0.2). The pct the router gives a kind of
-// evidence is (right + 1) / (asked + 2): a kind seen twice and right twice is 75%, not 100%.
+// evidence is (right + 1) / (asked + 2): a kind seen twice and right twice is 75%, not 100%. Each kind is counted with
+// the shelf it named as well ("card-one@9.3"); the router draws that shelf's count toward its kind's.
 "use strict";
 var fs = require("fs"), path = require("path");
 var ROOT = path.join(__dirname, "..");
@@ -28,7 +29,10 @@ function counts(L, items) {
   items.forEach(function (x) {
     var r = C.route(x.q), want = x.shelf || [], ok = r.ev === "nothing" || !r.shelf ? want.indexOf("none") >= 0 || want.indexOf("0.2") >= 0 : want.indexOf(r.shelf) >= 0 || (want.indexOf("none") >= 0 && r.shelf === "0.2");
     var c = by[r.ev] = by[r.ev] || [0, 0];
-    c[1]++; if (ok) c[0]++; else bad.push([r.ev, r.shelf, want.join("|"), x.q.slice(0, 100), x.from || ""]);
+    c[1]++; if (ok) c[0]++;
+    // ... and the kind with the shelf it named (the router draws a shelf's own count toward its kind's)
+    if (r.shelf) { var cs = by[r.ev + "@" + r.shelf] = by[r.ev + "@" + r.shelf] || [0, 0]; cs[1]++; if (ok) cs[0]++; }
+    if (!ok) bad.push([r.ev, r.shelf, want.join("|"), x.q.slice(0, 100), x.from || ""]);
   });
   return { by: by, bad: bad };
 }
@@ -41,7 +45,7 @@ if (require.main === module) {
     files.forEach(function (f) { JSON.parse(fs.readFileSync(f, "utf8")).forEach(function (x) { x.from = x.from || path.basename(path.dirname(f)); items.push(x); }); });
     var c = counts(L, items), keys = Object.keys(c.by).sort();
     console.log(items.length + " questions from " + files.map(function (f) { return path.relative(ROOT, f); }).join(", "));
-    keys.forEach(function (k) { var v = c.by[k]; console.log("  " + (k + "                ").slice(0, 16) + v[0] + " of " + v[1] + " right (" + Math.round(100 * (v[0] + 1) / (v[1] + 2)) + "%)"); });
+    keys.filter(function (k) { return k.indexOf("@") < 0; }).forEach(function (k) { var v = c.by[k]; console.log("  " + (k + "                ").slice(0, 16) + v[0] + " of " + v[1] + " right (" + Math.round(100 * (v[0] + 1) / (v[1] + 2)) + "%)"); });
     console.log("\n  var SURETY = {" + keys.map(function (k) { return JSON.stringify(k).replace(/\x22/g, "\x22") + ": [" + c.by[k][0] + ", " + c.by[k][1] + "]"; }).join(", ") + "};");
     if (write) {
       var html = fs.readFileSync(src, "utf8"), a = html.indexOf("// CALIBRATION - START\n"), b = html.indexOf("  // CALIBRATION - END", a);
