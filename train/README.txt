@@ -6,6 +6,8 @@ graphics card (Adam's laptop: an RTX A5000 with 16 GB is enough for the 0.8B, 2B
 
 TO RUN IT
   Put this "train" folder beside the "kit" folder of a Lantern that has been set up (or inside the Lantern folder).
+  Then, on a computer the kit has not run on: double-click "Check this computer (Windows).bat". It reads the graphics card, memory,
+  free space and Python, says YES or NO for each model size, and writes it to computer_check.txt. It changes nothing.
   Double-click "Train Lantern model (Windows).bat"            -- the 0.8B, for the short prompt
   or, in a command window:  "Train Lantern model (Windows).bat" 2b library
   It downloads about 3 GB of free programs (PyTorch, transformers, peft) and the model's original weights, trains, and

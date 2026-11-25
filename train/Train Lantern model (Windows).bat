@@ -39,6 +39,14 @@ set "BUILD=b11435"
 echo.
 echo === Lantern model training: %HF%, %PROMPT% prompt ===
 echo.
+rem An NVIDIA card first: without one nothing below can train, so say so before any download.
+where nvidia-smi >nul 2>nul
+if errorlevel 1 if not exist "%SystemRoot%\System32\nvidia-smi.exe" (
+  echo This computer has no NVIDIA graphics card that its driver reports, and the training needs one.
+  echo Double-click Check this computer ^(Windows^).bat to see what this computer has.
+  pause
+  exit /b 2
+)
 echo [1/6] A Python of its own ...
 set "PY="
 if exist venv\Scripts\python.exe goto havevenv
