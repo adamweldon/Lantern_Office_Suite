@@ -20,6 +20,29 @@ So every change should make one of these true:
 - a small offline model, using Lantern, gives a right answer where it gave a
   wrong one (or says plainly that it does not know).
 
+**The combined system, and then a model trained to it** (Adam, 2026-11-24):
+"going forward needs to be with the goal of freezing the model for what works
+best for the modeled AI (lantern) and the llm AI reasoning so the emergent AI
+is better than either alone with more efficiency ... then download the lora
+fine tuning method for each of the models to fine tune to the lantern model".
+So:
+
+- every change is measured as the pair, Lantern and model together, against
+  the model alone, on score and on minutes and tokens per right answer (the
+  bench's "alone" rows and its prompt settings);
+- the reply lines and blocks that work best across the models are frozen as a
+  protocol version Lantern keeps reading from then on, before any model is
+  trained to them (a model trained now would keep writing whatever changes
+  next);
+- then a LoRA adapter is trained for each small model to that protocol: on
+  good transcripts only (passing rows, reviewers' right replies, the labelled
+  questions, right answers that use no tool), tested on questions it never
+  saw, and rewarded, if ever, only for a verified right answer, never for
+  calling a tool (Hinton: a model rewarded for the goal learns to game the
+  check);
+- Lantern keeps working for a model nobody trained: the tuned one is the
+  default on the stick, never a requirement.
+
 ## Who does what
 
 - **Adam directs; Claude writes the code.** Commits are authored by Claude and

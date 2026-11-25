@@ -15,6 +15,18 @@ prompt; making it the default is Adam's call. The 35B can run it on his laptop
 on 984 labelled questions: after any change to a reading the router uses, run
 it with `--write`; a new reviewer's labelled questions go in
 `tests/fixtures/catalog_review*/questions.json`.
+Then the training track (Adam, 2026-11-24; CLAUDE.md "The combined system"):
+- A. The gradebook: each failed row of each model and prompt sorted four ways
+  -- the right tool was there and not used; used wrongly; the wrong tool
+  picked; Lantern had none -- with the pair against the model alone. To Adam
+  as a PDF.
+- B. Freeze protocol v1 from it: the reply lines and blocks Lantern keeps
+  reading from then on.
+- C. Training data in the repository: good transcripts only, labelled shelves,
+  right answers with no tool; a held-out set no trainee sees.
+- D. A LoRA adapter for each small model (0.8B, 2B, 4B) on Adam's laptop or a
+  rented GPU, free tools; merged and made GGUF for the stick; the bench run
+  with and without it. Check each base model's licence before it ships.
 Then:
 1. Old faults the labelled questions found, each giving the wrong tools in
    every prompt: ASSIST_CORE's place cards on "north" and "how far ... from
