@@ -12,10 +12,20 @@ TO RUN IT
   free space and Python, says YES or NO for each model size, and writes it to computer_check.txt. It changes nothing.
   Double-click "Train Lantern model (Windows).bat"            -- the 0.8B, for the short prompt
   or, in a command window:  "Train Lantern model (Windows).bat" 2b library
-  It downloads about 3 GB of free programs (PyTorch, transformers, peft) and the model's original weights, trains, and
-  puts the trained model in kit\models\tuned\. Start Lantern never picks a model from there by itself.
+  The first time it downloads free programs (PyTorch, transformers, peft) and the model's original weights -- about
+  5 GB for the 0.8B, most of it PyTorch -- trains, and puts the trained model in kit\models\tuned\. Start Lantern never
+  picks a model from there by itself. A second run downloads nothing.
   "Start trained model.bat" 0.8b short   starts Lantern with it. Then, in the AI tile, set Prompt size to the same
   prompt, and run the bench (set B: questions the training never saw). Compare with the stick's own model.
+
+WITH NO INTERNET (an air-gapped computer)
+  On a Windows computer that has the internet, double-click "Get everything for offline use (Windows).bat". It fetches
+  into this folder PyTorch, transformers and peft for Python 3.12 (offline\wheels), Python 3.12's own installer
+  (offline\), the 0.8B's and the 2B's original weights (base\) and llama.cpp's converter -- about 10 GB; installs
+  nothing; and can be run again after an interruption. Other sizes:  ... --sizes 0.8b,2b,4b
+  Carry this folder to the computer that trains. There, install Python from offline\python-3.12.10-amd64.exe if it has
+  no Python 3.12, then run "Train Lantern model (Windows).bat": it installs from offline\wheels and downloads nothing.
+  It fetches for Windows, so run it on Windows: pip works out what PyTorch needs from the computer it runs on.
 
 WHAT IT LEARNS FROM (data\, made by build_data.js from runs\)
   Only right answers: replies the 35B wrote on Adam's laptop that Lantern passed, put to today's Lantern again and
