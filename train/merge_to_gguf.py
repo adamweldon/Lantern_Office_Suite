@@ -30,7 +30,7 @@ def main():
     name = a.name or (os.path.basename(a.model.rstrip("/\\")) + "-Lantern")
     merged = os.path.join(a.out, "merged")
     print("merging the adapter into %s ..." % a.model)
-    base = AutoModelForCausalLM.from_pretrained(a.model, torch_dtype=torch.bfloat16)
+    base = AutoModelForCausalLM.from_pretrained(a.model, dtype=torch.bfloat16)
     model = PeftModel.from_pretrained(base, a.adapter).merge_and_unload()
     model.save_pretrained(merged, safe_serialization=True)
     AutoTokenizer.from_pretrained(a.adapter).save_pretrained(merged)

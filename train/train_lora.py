@@ -88,7 +88,7 @@ def main():
     if not train:
         print("nothing to train on"); sys.exit(1)
 
-    load = dict(torch_dtype=dtype)
+    load = dict(dtype=dtype)
     if a.qlora:
         from transformers import BitsAndBytesConfig
         load["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=dtype)

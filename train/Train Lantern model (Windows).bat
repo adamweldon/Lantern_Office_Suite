@@ -42,7 +42,8 @@ echo.
 echo [1/6] A Python of its own ...
 set "PY="
 if exist venv\Scripts\python.exe goto havevenv
-where py >nul 2>nul && set "PY=py -3"
+rem (PyTorch has programs for Python 3.10 to 3.13: one of those first, if the py launcher has it)
+for %%v in (3.12 3.13 3.11 3.10) do if not defined PY py -%%v -c "1" >nul 2>nul && set "PY=py -%%v"
 if not defined PY where python >nul 2>nul && set "PY=python"
 if not defined PY ( echo No Python found. Install Python 3.12 from python.org, tick "Add to PATH", then run this again. & pause & exit /b 1 )
 %PY% -m venv venv || ( echo Could not make train\venv. & pause & exit /b 1 )
