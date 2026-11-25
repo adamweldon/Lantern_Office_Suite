@@ -24,7 +24,11 @@ Written into --out:
 The summary is also printed, and after it the failed rows (id, why, the
 reply cut to --reply-chars) as one line of JSON each between the lines
 "=== FAILED ROWS ..." and "=== END FAILED ROWS ===", so the job's log alone
-is enough to work from; and after those every picture a model drew, passed
+is enough to work from; then the rows that passed, the same way, between
+"=== PASSED ROWS ..." and "=== END PASSED ROWS ===" (1.24.38: right replies
+are what a small model is trained on, train/README.txt, and a cloud session
+cannot fetch the artifact; train/log_to_runs.py turns a log into a run file
+for train/build_data.js); and after those every picture a model drew, passed
 or not, between "=== DRAWINGS ..." and "=== END DRAWINGS ===".
 
 Exit code: 0 the run finished (whatever it scored); 2 no model answered;
@@ -249,6 +253,19 @@ def main():
             slim["chat"] = [dict((k, (str(t[k])[:a.reply_chars] if k == "reply" else t[k])) for k in ("q", "searches", "declined", "reply") if t.get(k) not in (None, "", [], False)) for t in r["chat"]]
         print(json.dumps(slim, ensure_ascii=False), flush=True)
     print("=== END FAILED ROWS ===", flush=True)
+    # (1.24.38) The rows that passed, as the model wrote them: a right reply of the 4B is a right example for the 0.8B
+    # (CLAUDE.md, "The combined system, and then a model trained to it": train on good transcripts only). Whole, as
+    # the page kept them; the puzzles a model solved without Lantern's tools too ("alone": a right answer that uses
+    # no tool). train/build_data.js puts each to today's Lantern again before it is used.
+    print("=== PASSED ROWS (one JSON object a line) ===", flush=True)
+    for r in rows:
+        if not r.get("pass"):
+            continue
+        ok = dict((k, r.get(k)) for k in ("id", "cat", "rounds", "by", "commands", "tokens", "ms", "reply", "first") if r.get(k) not in (None, "", [], False))
+        if r.get("chat"):
+            ok["chat"] = [dict((k, t[k]) for k in ("q", "rounds", "searches", "reply") if t.get(k) not in (None, "", [], False)) for t in r["chat"]]
+        print(json.dumps(ok, ensure_ascii=False), flush=True)
+    print("=== END PASSED ROWS ===", flush=True)
     # Every picture a model drew, passed or not (1.24.7): a row that passes
     # says nothing about how its picture looks, and a picture is the one
     # thing a score cannot show. With the block in the log, a session can

@@ -5,28 +5,48 @@ file in the same commit as the work. Read `CLAUDE.md` first.
 
 ## Next, in order
 
-**First: read the library prompt's first runs (1.24.38).** Every push now runs
-each small model twice, `auto` and `library` (`.github/bench-prompts`). For
-each model, read the two jobs side by side, on the same processor: score,
-minutes, rounds and tokens per right answer, and the rows that differ, with
-`commands` (OPEN) in their chat records. Then keep, mend or drop the library
-prompt; making it the default is Adam's call. The 35B can run it on his laptop
-(Prompt size: Library). The surety (`tools/calibrate_catalog.js`) is counted
-on 984 labelled questions: after any change to a reading the router uses, run
-it with `--write`; a new reviewer's labelled questions go in
-`tests/fixtures/catalog_review*/questions.json`.
+**First: protocol v1, the changes before it is frozen (1.24.39).** From the
+gradebook of 1.24.38's six runs (`agent/reports/2026-11-24-1.24.38.md`, "After
+the release"; `tests/fixtures/gradebook_1.24.38.json`). Each change tried by a
+reviewer who did not write it, with right replies above all; replay
+`tests/fixtures/bench_run_1.24.38_*.json`:
+1. Guide templates: the line to copy stands alone, its meaning above it.
+   "MAKE DRAWING: <title>   -- a simple picture on a grid ..." is copied whole
+   by the 0.8B (12 to 14 of its failed rows hold Lantern's own text).
+2. No example value a model can copy as its answer: PLANET("body", ...); a
+   recipe's {ah} blanks; the short prompt's example sum, which is the bench
+   question fuel-cost (rule 6: choose one no question of set A or B asks).
+3. Send-backs write the corrected line for this question; no NEED offered for
+   a number the model worked out itself (five rows: "NEED: 7.5"; the 4B's
+   water-days); the plants send-back writes the ANSWER line out.
+4. Mends Lantern does itself and says (each passed rows in the replay): unit
+   words inside a sum (4 rows); "= sum = its own result" read as the sum when
+   the number is what the sum gives (3); a line of Lantern's guide copied
+   into a block dropped (2); a PLC program's AT variables put in a VAR block
+   of their own (1); a right sum kept when only the typed ANSWER disagrees
+   (2). Drawings (a hidden shape brought forward, 2; the sunset sky Lantern
+   already wrote out, 1) wait for Adam's answer (QUESTIONS 1).
+5. The catalog and OPEN only where the model has a real choice; sums and
+   things to make get the short prompt (the 0.8B: tool questions 17 of 21 on
+   the short prompt, 10 on the library one, same processor).
 Then the training track (Adam, 2026-11-24; CLAUDE.md "The combined system"):
-- A. The gradebook: each failed row of each model and prompt sorted four ways
-  -- the right tool was there and not used; used wrongly; the wrong tool
-  picked; Lantern had none -- with the pair against the model alone. To Adam
-  as a PDF.
-- B. Freeze protocol v1 from it: the reply lines and blocks Lantern keeps
-  reading from then on.
-- C. Training data in the repository: good transcripts only, labelled shelves,
-  right answers with no tool; a held-out set no trainee sees.
-- D. A LoRA adapter for each small model (0.8B, 2B, 4B) on Adam's laptop or a
-  rented GPU, free tools; merged and made GGUF for the stick; the bench run
-  with and without it. Check each base model's licence before it ships.
+- A. Done: the gradebook (1.24.38, a PDF to Adam).
+- B. Read the second run of 1.24.38 (started by the push of the gradebook):
+  the same rows failing twice are findings; the 2B's prompt is Adam's call
+  from the two runs. Freeze protocol v1 when the changes above pass.
+- C. Training data: `python3 train/log_to_runs.py job.log` on each job's log
+  (the log prints the rows that passed from now), then
+  `node train/build_data.js`. Lean it to what the small models fail and the
+  4B passes: puzzles (TRACK, TURN, SOLVE; the pilot has none), sums set up
+  wrong, pictures, circuits, music. Set B never.
+- D. A LoRA adapter for each small model (0.8B, 2B, 4B) on Adam's laptop
+  (`train/`, a pilot) or a rented GPU, free tools; merged and made GGUF for
+  the stick; the bench run with and without it, on set B.
+Bench checks the gradebook found: die-four-moves fails "5, 4, 1" (the numbers
+in the order asked; the check wants the words); a right QUOTE refused on the
+0.8B's doc-oil-change (to trace); a choking child given the recovery-position
+passage by the 0.8B on the library prompt (one row: a health emergency with
+one passage that plainly fits could get that one alone).
 Then:
 1. Old faults the labelled questions found, each giving the wrong tools in
    every prompt: ASSIST_CORE's place cards on "north" and "how far ... from

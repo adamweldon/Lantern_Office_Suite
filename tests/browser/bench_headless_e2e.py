@@ -120,6 +120,17 @@ check("the log follows the run", ("%d of %d" % (want, want)) in log and "started
 block = log.split("=== FAILED ROWS (one JSON object a line) ===")[-1].split("=== END FAILED ROWS ===")[0].strip().split("\n") if "=== FAILED ROWS" in log else []
 check("the log has the failed rows too, one line of JSON each, with the reply as written", len(block) == 1 and json.loads(block[0])["id"] == "miles-km" and "=26*2" in json.loads(block[0])["reply"]
       and json.loads(block[0])["why"] == "wrong value", block)
+# (1.24.38) the rows that passed too, whole, for training: train/log_to_runs.py reads them back
+okb = log.split("=== PASSED ROWS (one JSON object a line) ===")[-1].split("=== END PASSED ROWS ===")[0].strip().split("\n") if "=== PASSED ROWS" in log else []
+oks = [json.loads(l) for l in okb if l.strip().startswith("{")]
+check("the log has the rows that passed, with the reply as written", sorted(r["id"] for r in oks) == ["eggs", "mayor"] and all(r.get("reply") for r in oks), okb)
+with open(os.path.join(OUT, "job.log"), "w", encoding="utf-8") as f:
+    f.write(log)
+conv = subprocess.run([sys.executable, os.path.join(ROOT, "train", "log_to_runs.py"), os.path.join(OUT, "job.log"), "--out", os.path.join(OUT, "runs")], capture_output=True, text=True)
+made = [n for n in os.listdir(os.path.join(OUT, "runs"))] if os.path.isdir(os.path.join(OUT, "runs")) else []
+runf = json.load(open(os.path.join(OUT, "runs", made[0]), encoding="utf-8")) if made else {}
+check("train/log_to_runs.py turns the log into a run file the data builder reads", conv.returncode == 0 and len(made) == 1 and made[0].startswith("lantern-bench-")
+      and sorted(r["id"] for r in runf.get("rows", []) if r.get("pass")) == ["eggs", "mayor"] and [r["id"] for r in runf.get("rows", []) if not r.get("pass")] == ["miles-km"], (conv.stdout + conv.stderr)[-300:])
 
 # 2. the quick run uses the bench's own quick list
 o2 = os.path.join(OUT, "quick")

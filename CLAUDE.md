@@ -261,8 +261,8 @@ own installer and start script on a GitHub computer (4 cores, 16 GB, no
 graphics card), then the whole bench in a headless browser
 (`tools/bench_headless.py`), once each for the 0.8B, the 2B and the 4B. It
 needs nobody and no laptop. A job is green when the run finished, whatever it
-scored. A push that changes only `agent/`, `docs/`, `README.md` or
-`CLAUDE.md` does not start it, and nor does a new branch whose new commits
+scored. A push that changes only `agent/`, `docs/`, `train/`, `README.md`
+or `CLAUDE.md` does not start it, and nor does a new branch whose new commits
 change nothing outside them (found 2026-11-08: an empty version commit on
 top of the work started no run, and nor did commits already pushed to a
 `wip-` branch; a session cannot start one by hand, the dispatch is
@@ -282,7 +282,9 @@ grep -n 'scored questions' job.log; sed -n '/=== FAILED ROWS/,/=== END FAILED RO
 
 - The log has the summary table and, between `=== FAILED ROWS` and
   `=== END FAILED ROWS ===`, every failed row as one line of JSON (the
-  question, why it failed, the model's reply). `gh run download` (the
+  question, why it failed, the model's reply). From 1.24.38 the rows that
+  passed follow the same way (`=== PASSED ROWS`): right replies, which
+  `python3 train/log_to_runs.py job.log` turns into training examples. `gh run download` (the
   artifact, with the whole `report.json`) was refused from a cloud session on
   2026-11-05: the artifact store is another site. The log was not.
 
