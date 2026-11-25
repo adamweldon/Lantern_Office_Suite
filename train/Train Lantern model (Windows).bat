@@ -32,8 +32,11 @@ if not exist "%DATA%" ( echo No training data at train\%DATA%. & pause & exit /b
 rem the kit: its engine (llama-quantize) and its models folder
 set "KIT=%~dp0..\kit"
 if not exist "%KIT%\start-lantern.bat" set "KIT=%~dp0.."
-set "MODELS=%KIT%\models"
-if not exist "%MODELS%" set "MODELS=%KIT%\..\models"
+rem (no Lantern beside this folder: it still trains, and the model stays in train\out)
+if not exist "%KIT%\start-lantern.bat" set "KIT="
+set "MODELS="
+if defined KIT set "MODELS=%KIT%\models"
+if defined KIT if not exist "%MODELS%" set "MODELS=%KIT%\..\models"
 set "BUILD=b11435"
 
 echo.
@@ -95,6 +98,12 @@ set "NAME=%HF:Qwen/=%-Lantern-%PROMPT%"
 "%VPY%" -u merge_to_gguf.py --model "%BASE%" --adapter "%OUT%\adapter" --out "%OUT%" --llama "%LL%" --quantize "%QZ%" --name "%NAME%" || ( echo The conversion stopped. Its messages are above. & pause & exit /b 1 )
 
 echo [6/6] Into models\tuned\ ...
+if not defined MODELS (
+  echo   No Lantern kit beside this folder, so the trained model stays in train\out\%SIZE%-%PROMPT%\
+  echo   To run it, copy its .gguf into a Lantern kit's models\tuned folder and use "Start trained model.bat" there.
+  pause
+  exit /b 0
+)
 if not exist "%MODELS%\tuned" mkdir "%MODELS%\tuned"
 for %%f in ("%OUT%\%NAME%-Q4_K_M.gguf" "%OUT%\%NAME%-Q8_0.gguf") do if exist "%%~f" copy /y "%%~f" "%MODELS%\tuned\" >nul && echo   %%~nxf
 echo.
