@@ -66,9 +66,12 @@ tests/fixtures/:
    as pictures, the words, tables as CSV. Left: Word that keeps the layout;
    certificate signatures (L); guided actions on many files; an index across
    a shelf of PDFs; PDF/A, accessibility tags, preflight last.
-Open from the reviews: none that is Lantern's (the replays keep six the
-oracles get wrong, each with its reason). Adam: what a PDF's maker asks
-(QUESTIONS 1).
+Open from the reviews (five rounds, every finding mended or kept with its
+reason in tests/review*_pdf_1240.py): in the tile's preview only, a field
+value with its own drawing is marked 2.5 pt left of the drawing (the copy is
+right; review 4's finding 14); a comb flattened by another program is read as
+separate digits (Redact's "Not found" says to drag over them); a word on a
+slant is marked a box a letter. Adam: what a PDF's maker asks (QUESTIONS 1).
 
 Bench checks the gradebook found: die-four-moves fails "5, 4, 1" (the numbers
 in the order asked; the check wants the words); a right QUOTE refused on the

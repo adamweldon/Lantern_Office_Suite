@@ -5,8 +5,9 @@
 # short last line, table cells, the next column's words at the same height); letter-spacing from 0.05 to 1 em beside rows of
 # keys, single-letter cells, grades and equations; Turkish, Greek, ligatures and separate accents; standard fonts with no
 # widths or no encoding; forms nested 70 deep and forms that draw themselves; links, named places and bookmarks holding a
-# name; forms on two pages -- 831 checks, 79 failed. Mended (CHANGELOG 1.24.40); every check now agrees but these, kept
-# with the reasons the reviewer gave or this session found.
+# name; forms on two pages -- 831 checks, 79 failed. Mended (CHANGELOG 1.24.40); every check now agrees but this one, kept
+# with the reason the reviewer gave. (Writer's and microtype's letter-spacing, kept at first as beyond the rule, are read as
+# words since the fifth round's mends.)
 # Usage: python3 tests/review4_pdf_1240.py [build.html] [1.24.39 index.html]
 import os, re, subprocess, sys, tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -19,8 +20,6 @@ if not os.path.exists(OLD):
     if old.returncode != 0: old = subprocess.run(["git", "show", "origin/lantern-1.24.39:site/index.html"], cwd=ROOT, capture_output=True)
     open(OLD, "wb").write(old.stdout)
 KEEP = [
-    ("[ls] ls_lo.pdf: Text reading of 'WAREHOUSE NORTH spaced in Writer'", "Writer's own letter-spacing (fo:letter-spacing), not a browser's: read a letter at a time, as 1.24.39 and poppler read it (the reviewer's note: beyond the rule)"),
-    ("[ls] ls_tex.pdf: Text reading of 'WAREHOUSE NORTH and Calderdale letter-spaced.'", "microtype's \\textls with TeX's kerns between capitals: its gaps are not even, so it is not taken for letter-spacing (the reviewer's note: beyond the rule; 1.24.39 read it apart too)"),
     ("[forms] forms_rl.pdf: the mark is where the appearance draws the word", "in the tile's preview only, a field value with its own drawing is marked by Helvetica's widths from its box's edge, 2.5 pt left of where the drawing puts it; the copy is right: after flattening the word is found again where it is drawn, and every inked dot of it is black (the reviewer's finding 14)"),
 ]
 env = dict(os.environ, R3EV=os.path.join(OUT, "evidence"), R3OUT=os.path.join(OUT, "work"), CJNAME=os.path.join(OUT, "cases.json"), PYTHONDONTWRITEBYTECODE="1")
