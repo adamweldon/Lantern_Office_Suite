@@ -54687,7 +54687,15 @@ Lantern.RFB = (function () {
       // the master Saturation works on HSL saturation, s / (1 - amount) up and s x (1 + amount) down (psd-tools' fit to Photoshop's files)
       if (dh || ms) { var h2 = M.hsl(c[0], c[1], c[2]), s2 = h2[1]; if (ms > 0) s2 = Math.min(1, s2 / (1 - ms + 0.01)); else if (ms < 0) s2 = s2 * (1 + ms); c = M.rgbOfHsl(h2[0] + dh, s2, h2[2]); }
       if (ds) c = sat(c, Math.max(-1, Math.min(1, ds)));
-      if (dl) c = light(c, Math.max(-1, Math.min(1, dl)));
+      // a colour range's Lightness (psd-tools' fit to Photoshop's renders, in HSV): up, the colour is paled towards white at its
+      // own brightness; down, it is darkened as much as it is saturated -- so greys, and nearly grey whites, stay as they are
+      if (dl) {
+        dl = Math.max(-1, Math.min(1, dl));
+        var hv = M.hsv(clamp(c[0]), clamp(c[1]), clamp(c[2])), sv = hv[1], vv = hv[2], s3, v3;
+        if (dl >= 0) { v3 = vv; s3 = sv * (1 - dl); }
+        else { v3 = Math.max(0, Math.min(1, vv * (1 + dl * sv))); var dv = 1 / (sv + 1e-3); s3 = Math.max(0, Math.min(1, 1 + (dv - 1) / (Math.abs(dl) - dv + 1e-3))); }
+        c = M.rgbOfHsv(hv[0], s3, v3);
+      }
       a[i] = clamp(c[0]); a[i + 1] = clamp(c[1]); a[i + 2] = clamp(c[2]);
     }
   }
@@ -56203,7 +56211,7 @@ Lantern.RFB = (function () {
     return L.inflate(src.subarray(2), size);
   }
   // one channel of w x h: returns a Uint8Array of 8-bit values
-  function channel(r, w, h, depth, big, end) {
+  function channel(r, w, h, depth, big, end, cover) {
     var comp = r.u16(), bpr = Math.ceil(w * depth / 8), size = bpr * h, raw = new Uint8Array(size);
     if (comp === 0) raw.set(r.bytes(Math.min(size, end - r.o)));
     else if (comp === 1) {
@@ -56214,7 +56222,7 @@ Lantern.RFB = (function () {
       raw = inflateZ(r.bytes(end - r.o), size);
       if (comp === 3) unpredict(raw, w, h, depth);
     } else throw new Error("a channel packed in a way Lantern does not know (" + comp + ")");
-    return to8(raw, w * h, depth);
+    return to8(raw, w * h, depth, cover);
   }
   function unpredict(raw, w, h, depth) {
     var bpr = w * depth / 8, x, y;
@@ -56231,11 +56239,12 @@ Lantern.RFB = (function () {
       }
     }
   }
-  function to8(raw, n, depth) {
+  // cover: a transparency or mask channel, which is coverage (a share), never put through the colour curve
+  function to8(raw, n, depth, cover) {
     if (depth === 8) return raw;
     var o = new Uint8Array(n), i;
     if (depth === 16) for (i = 0; i < n; i++) o[i] = Math.round(((raw[i * 2] << 8) | raw[i * 2 + 1]) / 257);
-    else if (depth === 32) { var dv = new DataView(raw.buffer, raw.byteOffset, raw.length); for (i = 0; i < n; i++) { var f = dv.getFloat32(i * 4, false); f = f <= 0 ? 0 : f >= 1 ? 1 : f; o[i] = Math.round((f <= 0.0031308 ? 12.92 * f : 1.055 * Math.pow(f, 1 / 2.4) - 0.055) * 255); } }
+    else if (depth === 32) { var dv = new DataView(raw.buffer, raw.byteOffset, raw.length); for (i = 0; i < n; i++) { var f = dv.getFloat32(i * 4, false); f = f <= 0 ? 0 : f >= 1 ? 1 : f; o[i] = Math.round((cover ? f : f <= 0.0031308 ? 12.92 * f : 1.055 * Math.pow(f, 1 / 2.4) - 0.055) * 255); } }
     else if (depth === 1) return raw;   // bitmap: still packed eight pixels a byte (read() unpacks it)
     return o;
   }
@@ -56264,16 +56273,17 @@ Lantern.RFB = (function () {
     var nch = r.u16(), H = r.u32(), W = r.u32(), depth = r.u16(), mode = r.u16();
     if (depth === 1 && mode !== 0) throw new Error("a 1-bit picture in a mode other than bitmap");
     var cmLen = r.u32(), palette = mode === 2 ? r.bytes(cmLen) : (r.o += cmLen, null);
-    var resEnd = r.u32(); resEnd += r.o; var dpi = 72;
+    var resEnd = r.u32(); resEnd += r.o; var dpi = 72, alphaIds = null, negCount = false, posCount = false, mtrn = false;
     while (r.o + 12 <= resEnd && r.str(4) === "8BIM") {
       var id = r.u16(), nl = r.u8(); r.o += nl + ((nl + 1) % 2); var sz = r.u32(), st = r.o;
       if (id === 1005) dpi = Math.round(r.u32() / 65536) || 72;
+      if (id === 1053) { alphaIds = []; for (var ai = 0; ai + 4 <= sz; ai += 4) alphaIds.push(r.u32()); }
       r.o = st + sz + (sz % 2);
     }
     r.o = resEnd;
     // a layer info structure (the count, each record, then every channel's data) ending at end: the records with their channels read
     function layerInfo(end) {
-        var count = Math.abs(r.s16()), recs = [];
+        var rawCount = r.s16(), count = Math.abs(rawCount), recs = []; if (rawCount < 0) negCount = true; if (rawCount > 0) posCount = true;
       for (var i = 0; i < count; i++) {
         var t = r.s32(), lft = r.s32(), btm = r.s32(), rgt = r.s32(), cn = r.u16(), chans = [];
         for (var c = 0; c < cn; c++) chans.push({ id: r.s16(), len: r.len(big) });
@@ -56295,7 +56305,7 @@ Lantern.RFB = (function () {
         var ch = {}, n = Math.max(0, rec.w) * Math.max(0, rec.h);
         rec.chans.forEach(function (c) {
           var end = r.o + c.len, isMask = c.id === -2 || c.id === -3, w = isMask && rec.mask ? rec.mask.w : rec.w, h = isMask && rec.mask ? rec.mask.h : rec.h;
-          if (c.len >= 2 && w > 0 && h > 0) { try { ch[c.id] = channel(r, w, h, depth, big, end); } catch (e) { notes.push("layer \u201c" + rec.name + "\u201d: " + e.message); } }
+          if (c.len >= 2 && w > 0 && h > 0) { try { ch[c.id] = channel(r, w, h, depth, big, end, c.id < 0); } catch (e) { notes.push("layer \u201c" + rec.name + "\u201d: " + e.message); } }
           r.o = end;
         });
         rec.ch = ch; rec.n = n;
@@ -56315,6 +56325,7 @@ Lantern.RFB = (function () {
         while (r.o + 12 <= lmEnd) {
           var sg = r.str(4); if (sg !== "8BIM" && sg !== "8B64") break;
           var kk = r.str(4), kl = r.len(big && /^(LMsk|Lr16|Lr32|Layr|Mt16|Mt32|Mtrn|Alph|FMsk|lnk2|FEid|FXid|PxSD)$/.test(kk)), ks = r.o;
+          if (/^(Mtrn|Mt16|Mt32)$/.test(kk)) mtrn = true;
           if ((kk === "Lr16" || kk === "Lr32" || kk === "Layr") && kl > 2) { build(layerInfo(ks + kl)); break; }
           r.o = ks + kl; while ((r.o - ks) % 2) r.o++;
         }
@@ -56352,15 +56363,18 @@ Lantern.RFB = (function () {
     var merged = null;
     if (r.o + 2 <= bytes.length) {
       try {
-        var comp = r.u16(), n = W * H, bpr = Math.ceil(W * depth / 8), planes = {}, cnt = Math.min(nch, mode === 4 ? 5 : 4), c;
+        var comp = r.u16(), n = W * H, bpr = Math.ceil(W * depth / 8), planes = {}, cnt = Math.min(nch, mode === 4 ? 5 : 4), c, aIdx = mode === 3 || mode === 9 ? 3 : mode === 4 ? 4 : 1;
         if (comp === 1) {
           var counts = []; for (var y = 0; y < H * nch; y++) counts.push(big ? r.u32() : r.u16());
-          for (c = 0; c < cnt; c++) { var raw = new Uint8Array(bpr * H); for (y = 0; y < H; y++) packbits(r.bytes(counts[c * H + y]), raw.subarray(y * bpr, (y + 1) * bpr), bpr); planes[c] = to8(raw, n, depth); }
-        } else if (comp === 0) { for (c = 0; c < cnt; c++) planes[c] = to8(r.bytes(bpr * H), n, depth); }
-        else { var all = inflateZ(r.bytes(bytes.length - r.o), bpr * H * nch); for (c = 0; c < cnt; c++) { var pl = all.subarray(c * bpr * H, (c + 1) * bpr * H); if (comp === 3) unpredict(pl, W, H, depth); planes[c] = to8(pl, n, depth); } }
+          for (c = 0; c < cnt; c++) { var raw = new Uint8Array(bpr * H); for (y = 0; y < H; y++) packbits(r.bytes(counts[c * H + y]), raw.subarray(y * bpr, (y + 1) * bpr), bpr); planes[c] = to8(raw, n, depth, c === aIdx); }
+        } else if (comp === 0) { for (c = 0; c < cnt; c++) planes[c] = to8(r.bytes(bpr * H), n, depth, c === aIdx); }
+        else { var all = inflateZ(r.bytes(bytes.length - r.o), bpr * H * nch); for (c = 0; c < cnt; c++) { var pl = all.subarray(c * bpr * H, (c + 1) * bpr * H); if (comp === 3) unpredict(pl, W, H, depth); planes[c] = to8(pl, n, depth, c === aIdx); } }
         if (mode === 0) { var bm = planes[0], pix = new Uint8Array(n); for (y = 0; y < H; y++) for (var x = 0; x < W; x++) pix[y * W + x] = (bm[y * bpr + (x >> 3)] >> (7 - (x & 7))) & 1 ? 0 : 255; planes = { 0: pix }; }
         var base = mode === 3 || mode === 9 ? 3 : mode === 4 ? 4 : 1;
-        if (nch > base && !layers.length) planes[-1] = planes[base];
+        // the channel after the colours is the picture's transparency when the file says so (psd-tools' rule, after Adobe's
+        // specification: Mtrn, a negative layer count, or extra channels not all named as saved selections in resource 1053)
+        var transp = mtrn || negCount || (nch > base && !(alphaIds && alphaIds.length && alphaIds.every(function (v) { return v > 0; })) && !posCount);
+        if (nch > base && !layers.length && transp) planes[-1] = planes[base];
         merged = rgba(planes, n, mode === 0 ? 1 : mode, palette);
         // Photoshop keeps the flattened picture's colour laid over white where it is see-through: taken off again here
         if (planes[-1]) for (var j = 0; j < n; j++) { var al = merged[j * 4 + 3]; if (al > 0 && al < 255) for (c = 0; c < 3; c++) merged[j * 4 + c] = Math.round((merged[j * 4 + c] - 255 * (1 - al / 255)) / (al / 255)); }
@@ -56568,6 +56582,7 @@ Lantern.RFB = (function () {
   }
   function read(bytes) {
     var b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), dv = new DataView(b.buffer, b.byteOffset, b.length), le = b[0] === 0x49, notes = [];
+    function word(a, o) { return le ? (a[o] | a[o + 1] << 8 | a[o + 2] << 16 | a[o + 3] << 24) >>> 0 : (a[o] << 24 | a[o + 1] << 16 | a[o + 2] << 8 | a[o + 3]) >>> 0; }
     if (!((b[0] === 0x49 && b[1] === 0x49) || (b[0] === 0x4d && b[1] === 0x4d))) throw new Error("not a TIFF file");
     function u16(o) { return dv.getUint16(o, le); } function u32(o) { return dv.getUint32(o, le); }
     if (u16(2) === 43) throw new Error("a BigTIFF (over 4 GB), which Lantern does not open");
@@ -56602,6 +56617,11 @@ Lantern.RFB = (function () {
       if (pred === 2 && bps === 16) for (yy = 0; yy < th; yy++) for (xx = chunkSpp; xx < tw * chunkSpp; xx++) {
         var po = yy * rowBytes + xx * 2, pp = po - chunkSpp * 2, v16 = ((le ? data[po] | data[po + 1] << 8 : data[po] << 8 | data[po + 1]) + (le ? data[pp] | data[pp + 1] << 8 : data[pp] << 8 | data[pp + 1])) & 0xffff;
         if (le) { data[po] = v16 & 255; data[po + 1] = v16 >> 8; } else { data[po] = v16 >> 8; data[po + 1] = v16 & 255; }
+      }
+      // 32-bit samples with the plain predictor: the same, on whole 32-bit words
+      if (pred === 2 && bps === 32) for (yy = 0; yy < th; yy++) for (xx = chunkSpp; xx < tw * chunkSpp; xx++) {
+        var p4 = yy * rowBytes + xx * 4, q4 = p4 - chunkSpp * 4, v32 = (word(data, p4) + word(data, q4)) >>> 0;
+        if (le) { data[p4] = v32 & 255; data[p4 + 1] = v32 >>> 8 & 255; data[p4 + 2] = v32 >>> 16 & 255; data[p4 + 3] = v32 >>> 24; } else { data[p4] = v32 >>> 24; data[p4 + 1] = v32 >>> 16 & 255; data[p4 + 2] = v32 >>> 8 & 255; data[p4 + 3] = v32 & 255; }
       }
       // 32-bit floating point (Adobe's TIFF Technical Note 3): each row's bytes summed along it, then put back from planes (most significant first)
       if (pred === 3 && bps === 32) {
@@ -56926,12 +56946,16 @@ Lantern.RFB = (function () {
     ["adj", "text", "shape", "fillSpec", "fx"].forEach(function (k2) { if (l[k2]) c[k2] = JSON.parse(JSON.stringify(l[k2])); });
     return c;
   }
+  // (a layer hidden only for a preview is not hidden in History)
+  function cloneKept(l) { var c = cloneLayer(l); delete c.previewHidden; delete c.cache; delete c.cacheKey; return c; }
   function snap(d) {
-    return { w: d.w, h: d.h, active: d.active, sel: d.sel, path: d.path || null, layers: d.layers.map(cloneLayer), channels: d.channels.slice(), guides: d.guides.slice() };
+    return { w: d.w, h: d.h, active: d.active, sel: d.sel, path: d.path || null, layers: d.layers.map(cloneKept), channels: d.channels.slice(), guides: d.guides.slice() };
   }
+  // (a group shut or opened by hand is not a step: Undo and Redo leave it as it is now)
   function restore(d, s) {
+    var openNow = {}; (d.layers || []).forEach(function (l) { if (l.kind === "group") openNow[l.id] = l.open; });
     d.w = s.w; d.h = s.h; d.active = s.active; d.sel = s.sel; d.path = s.path || null; d.layers = s.layers.map(cloneLayer); d.channels = s.channels.slice(); d.guides = s.guides.slice();
-    d.layers.forEach(function (l) { l.ver++; });
+    d.layers.forEach(function (l) { l.ver++; if (l.kind === "group" && openNow[l.id] !== undefined) l.open = openNow[l.id]; });
   }
   // the last 50 steps are kept, and always the state the picture was opened in (as Photoshop keeps its opening snapshot): the History
   // Brush paints from it however many steps follow
@@ -56990,7 +57014,7 @@ Lantern.RFB = (function () {
   function redo(d) {
     if (!d.redoStack.length) return false;
     var e = d.redoStack.pop(); d.hist.push(e);
-    keepChosen(d, function () { restore(d, e.state); }); d.ver++; notify(d);
+    restore(d, e.state); d.ver++; notify(d);
     return true;
   }
   // go to History state i (as clicking it in the History panel)
@@ -57071,7 +57095,8 @@ Lantern.RFB = (function () {
     // Linear Dodge (Add): the sum, at most white, laid on as the other modes are (the browser's "lighter" adds the layers'
     // see-through parts too, so a half-clear Add layer came out too bright and made what it lay on solid)
     "linear-dodge": function (b, s) { return Math.min(1, b + s); },
-    "vivid-light": function (b, s) { return s <= 0.5 ? burn(b, 2 * s) : dodge(b, 2 * s - 1); },
+    // (a pure black or white source wins, as psd-tools found Photoshop's renders do)
+    "vivid-light": function (b, s) { return s <= 0 ? 0 : s >= 1 ? 1 : s <= 0.5 ? burn(b, 2 * s) : dodge(b, 2 * s - 1); },
     "linear-light": function (b, s) { return Math.max(0, Math.min(1, b + 2 * s - 1)); },
     "pin-light": function (b, s) { return s <= 0.5 ? Math.min(b, 2 * s) : Math.max(b, 2 * s - 1); },
     "hard-mix": function (b, s) { return b + s >= 1 ? 1 : 0; },
@@ -57185,7 +57210,10 @@ Lantern.RFB = (function () {
   // where the picture can be split into "below" and "from here up" without cutting a group: the start of the outermost group holding i
   function splitAt(d, i) {
     if (i <= 0 || i >= d.layers.length) return i;
-    var t = unitTop(d, i, null); return t === i ? i : span(d, t);
+    var t = unitTop(d, i, null), s0 = t === i ? i : span(d, t);
+    // nor inside a clipping group: below its base
+    while (s0 > 0 && d.layers[unitTop(d, s0, null)].clip) { var pt = unitTop(d, s0 - 1, null); s0 = d.layers[pt].kind === "group" ? span(d, pt) : pt; }
+    return s0;
   }
   // a group's layers drawn on their own (clear) canvas, then its mask and styles: what a group that is not Pass Through lays down
   function groupAlone(d, h, lo) {
@@ -57209,6 +57237,15 @@ Lantern.RFB = (function () {
       if (l.kind === "group" && t >= hi) { t = -1; l = null; }   // a group cut by hi (only when asked for part of one): its layers as they are
       if (!l) { drawRange(d, g, k, hi, d.layers[unitTop(d, k, pid)].id, null); return base; }
       if (!l.clip) { base = { l: l, at: t, lo: k, on: l.visible }; baseOn = l.visible; }
+      // a layer with layers clipped to it (a clipping group, as Photoshop makes one): the clipped layers laid on the base's own
+      // colour taken as solid, then the base's transparency put back, and the whole laid down by the base's mode and opacity;
+      // so a soft edge shows the clipped colour faded, not the base's colour round it
+      var nxt = (l.kind === "group" ? t : end) + 1, clipped = [];
+      if (!l.clip && l.kind !== "adjust") while (nxt < hi) { var ct = unitTop(d, nxt, pid), cl = d.layers[ct]; if (!cl || !cl.clip || ct >= hi && cl.kind === "group") break; clipped.push([ct, nxt]); nxt = (cl.kind === "group" ? ct : nxt) + 1; }
+      if (clipped.length) {
+        if (l.visible && !l.previewHidden) drawClipGroup(d, g, l, t, k, clipped);
+        k = nxt; continue;
+      }
       if (l.visible && !l.previewHidden && !(l.clip && !baseOn)) {
         var clipTo = l.clip && base && base.l !== l ? (base.l.kind === "group" ? groupAlone(d, base.at, base.lo) : render(d, base.l)) : null;
         if (l.kind === "group") drawGroup(d, g, t, k, clipTo);
@@ -57223,16 +57260,37 @@ Lantern.RFB = (function () {
     }
     return base;
   }
+  function drawClipGroup(d, g, l, t, lo, clipped) {
+    var bc = l.kind === "group" ? groupAlone(d, t, lo) : render(d, l), cg = M.canvas(d.w, d.h), cx = M.ctx(cg), id = M.pixels(bc), a = id.data;
+    for (var j = 3; j < a.length; j += 4) if (a[j]) a[j] = 255;
+    cx.putImageData(id, 0, 0);
+    clipped.forEach(function (c) {
+      var u = d.layers[c[0]]; if (!u.visible || u.previewHidden) return;
+      if (u.kind === "group") drawGroup(d, cx, c[0], c[1], null);
+      else if (u.kind === "adjust") adjustInto(d, cx, u, null);
+      else P.blend.draw(cx, render(d, u), u.blend, (u.opacity == null ? 1 : u.opacity) * (u.fill == null ? 1 : u.fill), 0, 0);
+    });
+    cx.save(); cx.globalCompositeOperation = "destination-in"; cx.drawImage(bc, 0, 0); cx.restore();
+    P.blend.draw(g, cg, l.blend === "pass-through" ? "normal" : l.blend, (l.opacity == null ? 1 : l.opacity) * (l.fill == null ? 1 : l.fill), 0, 0);
+  }
   // Pass Through (a group's usual mode): its layers act on everything below as if loose, then its opacity and mask
   // fade that back towards what was below; any other mode: the group made alone, then laid down by its mode and opacity
   function drawGroup(d, g, h, lo, clipTo) {
     var G = d.layers[h], op = (G.opacity == null ? 1 : G.opacity) * (G.fill == null ? 1 : G.fill), masked = G.mask && G.mask.on;
     if (G.blend === "pass-through" && !G.fx && !clipTo) {
       if (op >= 1 && !masked) { drawRange(d, g, lo, h, G.id); return; }
-      var back = M.copy(g.canvas); drawRange(d, g, lo, h, G.id);
-      var over = M.copy(g.canvas); if (masked) maskInto(d, G, over);
-      g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = "copy"; g.globalAlpha = 1; g.drawImage(back, 0, 0);
-      g.globalCompositeOperation = "source-over"; g.globalAlpha = op; g.drawImage(over, 0, 0); g.restore();
+      // what was below and what the group made of it, mixed pixel by pixel in premultiplied colour by opacity x mask: where the
+      // group draws nothing, nothing changes (laid over itself, a half see-through pixel would grow more solid)
+      var back = M.pixels(g.canvas); drawRange(d, g, lo, h, G.id);
+      var od = g.getImageData(0, 0, d.w, d.h), o = od.data, b = back.data, mk = masked && P.doc.maskData ? P.doc.maskData(d, G) : null;
+      for (var j = 0, q = 0; q < o.length; j++, q += 4) {
+        var kk = op * (mk ? mk[j] / 255 : 1); if (kk >= 1) continue;
+        var ab = b[q + 3] / 255, ao = o[q + 3] / 255, pa = ab * (1 - kk) + ao * kk;
+        if (pa <= 0) { o[q] = o[q + 1] = o[q + 2] = o[q + 3] = 0; continue; }
+        for (var cc = 0; cc < 3; cc++) o[q + cc] = (b[q + cc] * ab * (1 - kk) + o[q + cc] * ao * kk) / pa;
+        o[q + 3] = pa * 255;
+      }
+      g.putImageData(od, 0, 0);
       return;
     }
     var cv = groupAlone(d, h, lo);
@@ -57418,7 +57476,7 @@ Lantern.RFB = (function () {
       return out;
     }
     d.layers.forEach(function (l) {
-      if (l.kind !== "pixel" && l.kind !== "adjust") O.rasterize(d, l);
+      if (l.kind !== "pixel" && l.kind !== "adjust" && l.kind !== "group") O.rasterize(d, l);   // (a group has no pixels: its mask turns with the rest)
       if (l.cv) { l.cv = turn(l.cv, l.x, l.y); l.x = 0; l.y = 0; l.cow = d.cmd; }
       if (l.mask) {
         var mk = M.canvas(ow, oh), mg = M.ctx(mk); if (l.mask.def === 255) { mg.fillStyle = "#000"; mg.fillRect(0, 0, ow, oh); mg.clearRect(l.mask.x, l.mask.y, l.mask.cv.width, l.mask.cv.height); }
@@ -57434,7 +57492,7 @@ Lantern.RFB = (function () {
     var W = d.w, H = d.h;
     function fl(cv, x, y) { var out = M.canvas(W, H), g = M.ctx(out); if (p.vertical) { g.translate(0, H); g.scale(1, -1); } else { g.translate(W, 0); g.scale(-1, 1); } g.drawImage(cv, x, y); return out; }
     d.layers.forEach(function (l) {
-      if (l.kind !== "pixel" && l.kind !== "adjust") O.rasterize(d, l);
+      if (l.kind !== "pixel" && l.kind !== "adjust" && l.kind !== "group") O.rasterize(d, l);   // (a group has no pixels: its mask turns with the rest)
       if (l.cv) { l.cv = fl(l.cv, l.x, l.y); l.x = 0; l.y = 0; l.cow = d.cmd; }
       if (l.mask) l.mask = { cv: fl(l.mask.cv, l.mask.x, l.mask.y), x: 0, y: 0, on: l.mask.on, def: l.mask.def };
       l.ver++;
@@ -57446,7 +57504,7 @@ Lantern.RFB = (function () {
     var W = Math.max(1, Math.round(p.w)), H = Math.max(1, Math.round(p.h)), a = (p.angle || 0) * Math.PI / 180, cx = p.x + p.w / 2, cy = p.y + p.h / 2;
     function cut(cv, x, y) { var out = M.canvas(W, H), g = M.ctx(out); g.imageSmoothingQuality = "high"; g.translate(W / 2, H / 2); g.rotate(-a); g.translate(-cx, -cy); g.drawImage(cv, x, y); return out; }
     d.layers.forEach(function (l) {
-      if (a && l.kind !== "pixel" && l.kind !== "adjust") O.rasterize(d, l);
+      if (a && l.kind !== "pixel" && l.kind !== "adjust" && l.kind !== "group") O.rasterize(d, l);
       if (!a) {
         l.x -= Math.round(p.x); l.y -= Math.round(p.y);
         if (l.text) { l.text.x -= p.x; l.text.y -= p.y; } if (l.shape) { l.shape.x -= p.x; l.shape.y -= p.y; }
@@ -57469,7 +57527,7 @@ Lantern.RFB = (function () {
     var W = Math.round(p.w), H = Math.round(p.h), m = R.homography([[0, 0], [W, 0], [W, H], [0, H]], p.quad);
     if (!m) throw new Error("those four corners do not make a shape that can be squared up");
     d.layers.forEach(function (l) {
-      if (l.kind !== "pixel" && l.kind !== "adjust") O.rasterize(d, l);
+      if (l.kind !== "pixel" && l.kind !== "adjust" && l.kind !== "group") O.rasterize(d, l);   // (a group has no pixels: its mask turns with the rest)
       if (l.cv) { var full = M.canvas(d.w, d.h); M.ctx(full).drawImage(l.cv, l.x, l.y); l.cv = canvasOf(R.perspective(M.pixels(full), m, W, H)); l.x = 0; l.y = 0; l.cow = d.cmd; }
       if (l.mask) { var mk = M.canvas(d.w, d.h); M.ctx(mk).drawImage(l.mask.cv, l.mask.x, l.mask.y); l.mask = { cv: canvasOf(R.perspective(M.pixels(mk), m, W, H)), x: 0, y: 0, on: l.mask.on, def: 0 }; }
       l.ver++;
@@ -57757,7 +57815,12 @@ Lantern.RFB = (function () {
     if (G.blend === "pass-through" && adj) d.notes.push("\u201c" + G.name + "\u201d had adjustment layers that changed what lay under the group; merged, they change only its own layers (as in Photoshop)");
   });
   // shut or open a group in the Layers panel (not a step in History)
-  O.def("toggleGroup", "Group", function (d, p) { var l = d.layers[p && p.index != null ? p.index : d.active]; if (!isGroup(l)) return false; l.open = !l.open; d.ver++; D.notify(d); }, { noHistory: true });
+  // (the state History is at learns it too, so an Undo that brings the group back brings it as the person left it)
+  O.def("toggleGroup", "Group", function (d, p) {
+    var l = d.layers[p && p.index != null ? p.index : d.active]; if (!isGroup(l)) return false; l.open = !l.open;
+    var st = d.hist.length && d.hist[d.hist.length - 1].state; if (st) st.layers.forEach(function (x) { if (x.id === l.id) x.open = l.open; });
+    d.ver++; D.notify(d);
+  }, { noHistory: true });
   // --- the layer commands, taught groups ---
   function step(d, i, dir) {
     var u = block(d, i), U = d.layers[i], pid = gidOf(U), n = u[1] - u[0] + 1, blk, X, t, V, lo;
@@ -57779,7 +57842,7 @@ Lantern.RFB = (function () {
     lo = isGroup(V) ? C.span(d, bl) : bl;
     blk = d.layers.splice(u[0], n); splice(d, lo, blk); return lo + n - 1;   // under the layer (or shut group) below
   }
-  var orig = {}; ["moveLayer", "deleteLayer", "duplicateLayer", "layerVia", "mergeDown", "mergeVisible", "moveBy"].forEach(function (k) { orig[k] = O.list[k] && O.list[k].fn; });
+  var orig = {}; ["moveLayer", "deleteLayer", "duplicateLayer", "layerVia", "mergeDown", "mergeVisible", "moveBy", "transform"].forEach(function (k) { orig[k] = O.list[k] && O.list[k].fn; });
   // p = {from, to}: each step of one place moves one layer or one whole group
   O.def("moveLayer", "Move Layer", function (d, p) {
     if (!any(d)) return orig.moveLayer(d, p);
@@ -57823,18 +57886,35 @@ Lantern.RFB = (function () {
     if (below && gidOf(below) !== gidOf(l)) throw new Error("this is the lowest layer in its group: nothing in the group lies under it to merge into");
     var g = gidOf(l), r = orig.mergeDown(d, p); d.layers[d.active].gid = g; return r;
   });
-  // Merge Visible: what shows, made one layer at the top level; hidden layers and groups kept as they are
+  // Merge Visible: what shows, made one layer at the top level; every hidden layer (or hidden group) kept as it is, those that
+  // were inside a group that showed coming out of it, just under the merged layer
   O.def("mergeVisible", "Merge Visible", function (d, p) {
     if (!any(d)) return orig.mergeVisible(d, p);
-    var keep = [], at = -1, name = null, k = 0;
-    while (k < d.layers.length) {
-      var t = C.unitTop(d, k, null), top = d.layers[t];
-      if (top.visible) { if (at < 0) at = keep.length; name = top.name; } else keep = keep.concat(d.layers.slice(k, t + 1));
-      k = t + 1;
+    var keep = [], inner = [], at = -1, name = null;
+    function walk(lo, hi, pid, top) {
+      var k = lo;
+      while (k < hi) {
+        var t = C.unitTop(d, k, pid), u = d.layers[t];
+        if (!u.visible) { var blk = d.layers.slice(k, t + 1); if (!top) blk[blk.length - 1].gid = null; (top ? keep : inner).push.apply(top ? keep : inner, blk); }
+        else { if (top) { if (at < 0) at = keep.length; name = u.name; } if (isGroup(u)) walk(k, t, u.id, false); }
+        k = t + 1;
+      }
     }
+    walk(0, d.layers.length, null, true);
     if (at < 0) return false;
     var m = D.layer({ name: name, cv: C.all(d), gid: null });
-    keep.splice(at, 0, m); d.layers = keep; d.active = at;
+    keep.splice.apply(keep, [at, 0].concat(inner).concat([m])); d.layers = keep; d.active = at + inner.length;
+  });
+  // Free Transform on a group: the same change to each of its layers (a selection is left where it is)
+  O.def("transform", "Free Transform", function (d, p) {
+    var G = D.active(d);
+    if (!isGroup(G)) return orig.transform(d, p);
+    var b = block(d, d.active), keepA = d.active, keepS = d.sel;
+    d.sel = null;
+    try { for (var k = b[0]; k < b[1]; k++) { var l = d.layers[k]; if (isGroup(l) || l.kind === "adjust" && !l.mask) continue; d.active = k; orig.transform(d, p); } }
+    finally { d.active = keepA; d.sel = keepS; }
+    if (G.mask) d.notes.push("\u201c" + G.name + "\u201d: its layers were transformed; the group\u2019s own mask was left as it was");
+    G.ver++;
   });
   // the Move tool on a group moves all of its layers (and its mask); a selection is left where it is
   O.def("moveBy", "Move", function (d, p) {
@@ -58312,14 +58392,15 @@ Lantern.RFB = (function () {
         var sto = e.opacity == null ? 0.5 : e.opacity, scol = e.color || [0, 0, 0], inv = e.invert !== false;
         for (j = 0; j < m.length; j++) { if (!q[j * 4 + 3]) continue; k = (inv ? 255 - df[j] : df[j]) / 255 * sto; for (c = 0; c < 3; c++) q[j * 4 + c] *= 1 - k * (1 - scol[c] / 255); }
       }
-      if (on("innerGlow")) {
+      // (a size of 0 reaches nothing in from the edge: no glow, no bevel)
+      if (on("innerGlow") && f.innerGlow.size !== 0) {
         e = f.innerGlow; var iv = new Uint8Array(m.length); for (j = 0; j < m.length; j++) iv[j] = 255 - m[j];
-        var gl = blur(iv, w, h, e.size || 10), gop = e.opacity == null ? 0.75 : e.opacity, gcol = e.color || [255, 255, 190];
+        var gl = blur(iv, w, h, e.size == null ? 10 : e.size), gop = e.opacity == null ? 0.75 : e.opacity, gcol = e.color || [255, 255, 190];
         for (j = 0; j < m.length; j++) { if (!q[j * 4 + 3] || !gl[j]) continue; k = gl[j] / 255 * gop; for (c = 0; c < 3; c++) q[j * 4 + c] += k * gcol[c] * (255 - q[j * 4 + c]) / 255; }
       }
       // Bevel & Emboss (inner bevel): the shape's alpha, softened by its size, is a height; faces turned to the light are lit (screen), the others shaded (multiply)
-      if (on("bevel")) {
-        e = f.bevel; var hm = blur(m, w, h, Math.max(1, e.size || 5)), la = (e.angle == null ? 120 : e.angle) * Math.PI / 180, alt = (e.altitude == null ? 30 : e.altitude) * Math.PI / 180, lx = Math.cos(la) * Math.cos(alt), ly = -Math.sin(la) * Math.cos(alt), lz = Math.sin(alt), dep = (e.depth == null ? 100 : e.depth) / 100;
+      if (on("bevel") && f.bevel.size !== 0) {
+        e = f.bevel; var hm = blur(m, w, h, Math.max(1, e.size == null ? 5 : e.size)), la = (e.angle == null ? 120 : e.angle) * Math.PI / 180, alt = (e.altitude == null ? 30 : e.altitude) * Math.PI / 180, lx = Math.cos(la) * Math.cos(alt), ly = -Math.sin(la) * Math.cos(alt), lz = Math.sin(alt), dep = (e.depth == null ? 100 : e.depth) / 100;
         var hop = e.hiOpacity == null ? 0.75 : e.hiOpacity, sop = e.shOpacity == null ? 0.75 : e.shOpacity, hc = e.highlight || [255, 255, 255], sc = e.shadowColor || [0, 0, 0];
         for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) {
           j = y * w + x; if (!q[j * 4 + 3]) continue;
@@ -58433,22 +58514,24 @@ Lantern.RFB = (function () {
       if (e.button !== 0 || !v.tool || !v.tool.down) return;
       cv.setPointerCapture(e.pointerId); e.preventDefault();
       v.pointer = e.pointerId;
-      v.tool.down(v.toDoc(e), e, api);
+      safe(function () { v.tool.down(v.toDoc(e), e, api); });
     }
+    // a tool that cannot do its work (a group chosen, a locked layer ...) says why, and leaves no change half made
+    function safe(fn) { try { fn(); } catch (err) { v.pointer = null; var dd = api.d || d; if (dd && dd.open && P.doc.cancel) P.doc.cancel(dd); if (api.status) api.status(err.message); v.render(); } }
     function onMove(e) {
       if (ptrs[e.pointerId]) ptrs[e.pointerId] = [e.clientX, e.clientY];
       if (pinch) { var ids = Object.keys(ptrs); if (ids.length === 2) { var a = ptrs[ids[0]], b = ptrs[ids[1]], r = cv.getBoundingClientRect(); v.zoomTo(pinch.zoom * Math.hypot(a[0] - b[0], a[1] - b[1]) / pinch.dist, (a[0] + b[0]) / 2 - r.left, (a[1] + b[1]) / 2 - r.top); } return; }
       if (pan) { v.ox = pan[2] - (e.clientX - pan[0]) / v.zoom; v.oy = pan[3] - (e.clientY - pan[1]) / v.zoom; v.render(); return; }
       var pt = v.toDoc(e);
       if (api.hover) api.hover(pt);
-      if (v.pointer === e.pointerId && v.tool && v.tool.move) { var evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e]; (evs.length ? evs : [e]).forEach(function (ce) { v.tool.move(v.toDoc(ce), ce, api); }); }
+      if (v.pointer === e.pointerId && v.tool && v.tool.move) { var evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e]; safe(function () { (evs.length ? evs : [e]).forEach(function (ce) { if (v.pointer === e.pointerId) v.tool.move(v.toDoc(ce), ce, api); }); }); }
       else if (v.tool && v.tool.hover) v.tool.hover(pt, e, api);
     }
     function onUp(e) {
       delete ptrs[e.pointerId];
       if (pinch) { if (Object.keys(ptrs).length < 2) pinch = null; return; }
       if (pan) { pan = null; return; }
-      if (v.pointer === e.pointerId) { v.pointer = null; if (v.tool && v.tool.up) v.tool.up(v.toDoc(e), e, api); }
+      if (v.pointer === e.pointerId) { v.pointer = null; if (v.tool && v.tool.up) safe(function () { v.tool.up(v.toDoc(e), e, api); }); }
     }
     cv.addEventListener("pointerdown", onDown); cv.addEventListener("pointermove", onMove); cv.addEventListener("pointerup", onUp); cv.addEventListener("pointercancel", onUp);
     cv.addEventListener("dblclick", function (e) { if (v.tool && v.tool.dbl) v.tool.dbl(v.toDoc(e), e, api); });
@@ -58763,7 +58846,7 @@ Lantern.RFB = (function () {
   T.def({ id: "measure", name: "Ruler", key: "I", group: "eyedropper", icon: "\ud83d\udccf", tip: "Drag to measure a distance and an angle; Straighten turns the picture level by it", opts: [],
     down: function (pt) { ruler = { a: pt, b: pt }; },
     move: function (pt, e, api) { if (!ruler) return; ruler.b = pt; var dx = pt[0] - ruler.a[0], dy = pt[1] - ruler.a[1], d = api.d; api.status("Length " + Math.hypot(dx, dy).toFixed(1) + " px (" + (Math.hypot(dx, dy) / d.dpi * 25.4).toFixed(1) + " mm at " + d.dpi + " ppi), angle " + (-Math.atan2(dy, dx) * 180 / Math.PI).toFixed(1) + "\u00b0"); api.view.render(); },
-    up: function (pt, e, api) { if (ruler) { api.lastRuler = ruler; } ruler = ruler && Math.hypot(ruler.b[0] - ruler.a[0], ruler.b[1] - ruler.a[1]) > 2 ? ruler : null; },
+    up: function (pt, e, api) { if (ruler) { api.lastRuler = ruler; api.d.ruler = ruler; } ruler = ruler && Math.hypot(ruler.b[0] - ruler.a[0], ruler.b[1] - ruler.a[1]) > 2 ? ruler : null; },
     overlay: function (g, v) { if (!ruler) return; g.lineWidth = 1.5 / v.zoom; g.strokeStyle = "#e11d48"; g.beginPath(); g.moveTo(ruler.a[0], ruler.a[1]); g.lineTo(ruler.b[0], ruler.b[1]); g.stroke(); } });
   T.def({ id: "hand", name: "Hand", key: "H", group: "view", icon: "\u270b", tip: "Drag to move round the picture (or hold Space with any tool)", cursor: "grab", opts: [] });
   T.def({ id: "zoom", name: "Zoom", key: "Z", group: "view", icon: "\ud83d\udd0d", tip: "Click to zoom in (Alt+click: out)", cursor: "zoom-in", opts: [],
@@ -59183,7 +59266,7 @@ Lantern.RFB = (function () {
     down: function (pt, e, api) {
       if (ty) { finishType(api); return; }
       var d = api.d, hit = null;
-      for (var i = d.layers.length - 1; i >= 0; i--) { var l = d.layers[i]; if (l.kind !== "text" || !l.visible) continue; var m = P.text.measure(l.text); if (pt[0] >= l.text.x - 4 && pt[0] <= l.text.x + m.w + 4 && pt[1] >= l.text.y - l.text.size && pt[1] <= l.text.y - l.text.size + m.h) { hit = i; break; } }
+      for (var i = d.layers.length - 1; i >= 0; i--) { var l = d.layers[i]; if (l.kind !== "text" || !l.visible) continue; var m = P.text.measure(l.text), lx = l.text.box ? l.text.x : l.text.align === "center" ? l.text.x - m.w / 2 : l.text.align === "right" ? l.text.x - m.w : l.text.x; if (pt[0] >= lx - 4 && pt[0] <= lx + (l.text.box ? l.text.box.w : m.w) + 4 && pt[1] >= l.text.y - l.text.size && pt[1] <= l.text.y - l.text.size + m.h) { hit = i; break; } }
       ty = { a: pt, x: pt[0], y: pt[1] + (+api.opts("type").size) * 0.8, drag: true, layer: hit };
       if (hit != null) {
         var tl = d.layers[hit]; ty.x = tl.text.x; ty.y = tl.text.y; ty.para = tl.text.box; ty.str = tl.text.str; d.active = hit; ty.own = tl.text;
@@ -59251,7 +59334,7 @@ Lantern.RFB = (function () {
     var b = bbox(d); if (!b) { api.status("this layer has nothing to transform"); return false; }
     var src = M.canvas(d.w, d.h), g = M.ctx(src); g.drawImage(P.compose.render(d, l), 0, 0);
     if (d.sel) { g.globalCompositeOperation = "destination-in"; g.drawImage(d.sel, 0, 0); }
-    st = { box: b, q: [[b.x, b.y], [b.x + b.w, b.y], [b.x + b.w, b.y + b.h], [b.x, b.y + b.h]], src: src, drag: null, hidden: d.sel ? null : l };
+    st = { box: b, q: [[b.x, b.y], [b.x + b.w, b.y], [b.x + b.w, b.y + b.h], [b.x, b.y + b.h]], src: src, drag: null, hidden: d.sel ? null : l, layer: l };
     if (st.hidden) { l.previewHidden = true; d.ver++; }
     return true;
   }
@@ -59267,6 +59350,7 @@ Lantern.RFB = (function () {
   function unhide(api) { if (st && st.hidden) { st.hidden.previewHidden = false; api.d.ver++; } }
   function commit(api) {
     if (!st) return; unhide(api); var s = st, b = s.box, q = s.q; st = null;
+    var at = api.d.layers.indexOf(s.layer); if (at >= 0) api.d.active = at;   // the layer it began on, whatever is chosen now
     var same = q.every(function (p, i) { var o = [[b.x, b.y], [b.x + b.w, b.y], [b.x + b.w, b.y + b.h], [b.x, b.y + b.h]][i]; return Math.abs(p[0] - o[0]) < 0.01 && Math.abs(p[1] - o[1]) < 0.01; });
     if (same) { api.view.render(); return; }
     if (parallel(q)) {
@@ -59296,9 +59380,11 @@ Lantern.RFB = (function () {
     // each Free Transform starts at 100 %, 100 %, 0 degrees
     enter: function (api) { api.setOpt("transform", "w", 100); api.setOpt("transform", "h", 100); api.setOpt("transform", "angle", 0); if (!start(api)) { api.setTool(api.prevTool || "move"); return; } api.status("Free Transform: Enter applies, Esc leaves it"); api.view.render(); },
     // another tool chosen part-way: the transform is applied, not lost (Esc first leaves the layer as it was)
+    active: function () { return !!st; },
     leave: function (api) { if (st) { commit(api); api.status("Free Transform applied (Esc, before choosing another tool, leaves the layer as it was)"); } unhide(api); st = null; api.view.render(); },
     optChange: function (api, o) {
-      if (!st) return; var b = st.box, c = [b.x + b.w / 2, b.y + b.h / 2], w = b.w * o.w / 100, h = b.h * o.h / 100, a = o.angle * Math.PI / 180;
+      // from where the box is now (a drag is kept); the sizes and the angle as typed, against the layer's own
+      if (!st) return; var b = st.box, c = centre(st.q), w = b.w * o.w / 100, h = b.h * o.h / 100, a = o.angle * Math.PI / 180;
       st.q = [[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]].map(function (p) { return [c[0] + p[0] * Math.cos(a) - p[1] * Math.sin(a), c[1] + p[0] * Math.sin(a) + p[1] * Math.cos(a)]; });
       api.view.render();
     },
@@ -59400,6 +59486,7 @@ Lantern.RFB = (function () {
     return { el: cv, paint: paint };
   }
   function dialog(api, spec) {
+    if (api.boxOpen && api.boxOpen()) { if (api.busy) api.busy(); return { close: function () {}, p: {} }; }   // one box at a time
     var p = {}, k, host = api.dialogHost(), timer = null, big = api.d ? api.d.w * api.d.h > 2500000 : false;
     for (k in (spec.init || {})) p[k] = typeof spec.init[k] === "object" && spec.init[k] ? JSON.parse(JSON.stringify(spec.init[k])) : spec.init[k];
     var prevOn = spec.preview !== false, box = el("div", { "class": "ph-dialog", role: "dialog", "aria-label": spec.title }), body = el("div", { "class": "ph-dbody" });
@@ -59587,6 +59674,7 @@ Lantern.RFB = (function () {
   // open the box for type: on the picture (asLayer false), as a new adjustment layer, or for the adjustment layer at layerIndex
   function open(api, type, asLayer, layerIndex) {
     var t = TYPES[type]; if (!t) return;
+    if (api.busy && api.busy()) return;   // one box at a time
     if (t.direct && layerIndex == null) asLayer = false;   // as in Photoshop, these three change the pixels and are not adjustment layers
     var d = api.d, init = t.init(api);
     if (layerIndex != null) init = JSON.parse(JSON.stringify(d.layers[layerIndex].adj.p || init));
@@ -59664,6 +59752,7 @@ Lantern.RFB = (function () {
   var last = null;
   function open(api, name, again) {
     var f = F[name]; if (!f) return;
+    if (api.busy && api.busy()) return;
     var cmd = name === "differenceClouds" ? "filter:differenceClouds" : P.ops.filterCmd(name, f[0]), init = {};
     f[1].forEach(function (x) { if (x.key) init[x.key] = x.def; });
     if (again && last && last.name === name) init = last.p;
@@ -59747,12 +59836,33 @@ Lantern.RFB = (function () {
   function dpiIn(b) {
     var i, v = 0;
     if (b[0] === 0x89 && b[1] === 0x50) { for (i = 8; i + 12 <= b.length;) { var ln = (b[i] << 24 | b[i + 1] << 16 | b[i + 2] << 8 | b[i + 3]) >>> 0, ty = String.fromCharCode(b[i + 4], b[i + 5], b[i + 6], b[i + 7]); if (ty === "pHYs" && b[i + 16] === 1) { v = ((b[i + 8] << 24 | b[i + 9] << 16 | b[i + 10] << 8 | b[i + 11]) >>> 0) * 0.0254; break; } if (ty === "IDAT") break; i += 12 + ln; } }
-    else if (b[0] === 0xff && b[1] === 0xd8 && b[6] === 0x4a && b[7] === 0x46 && b[8] === 0x49 && b[9] === 0x46) { var u = b[13], xd = b[14] << 8 | b[15]; v = u === 1 ? xd : u === 2 ? xd * 2.54 : 0; }
+    else if (b[0] === 0xff && b[1] === 0xd8) v = jpegDpi(b);
     else if (b[0] === 0x42 && b[1] === 0x4d && b.length > 42) v = (b[38] | b[39] << 8 | b[40] << 16 | b[41] << 24) * 0.0254;
     v = Math.round(v * 100) / 100; return v >= 1 && v < 100000 ? v : 72;
   }
   // a layer that shows: its eye open, and every group holding it shown too
   function shown(d, l) { var seen = 0; while (l && seen++ < 64) { if (!l.visible) return false; if (l.gid == null || !C.byId) return true; var h = C.byId(d, l.gid); l = h < 0 ? null : d.layers[h]; } return true; }
+  // a JPEG's resolution: its JFIF segment when that gives one in inches or centimetres, else its EXIF (as cameras write it)
+  function jpegDpi(b) {
+    var i = 2, jf = 0, ex = 0;
+    while (i + 4 < b.length && b[i] === 0xff) {
+      var mk = b[i + 1], ln = b[i + 2] << 8 | b[i + 3];
+      if (mk === 0xda || mk === 0xd9) break;
+      if (mk === 0xe0 && b[i + 4] === 0x4a && b[i + 5] === 0x46 && b[i + 6] === 0x49 && b[i + 7] === 0x46 && !jf) { var u = b[i + 11], xd = b[i + 12] << 8 | b[i + 13]; jf = u === 1 ? xd : u === 2 ? xd * 2.54 : 0; }
+      if (mk === 0xe1 && b[i + 4] === 0x45 && b[i + 5] === 0x78 && b[i + 6] === 0x69 && b[i + 7] === 0x66 && !ex) ex = exifDpi(b, i + 10);
+      i += 2 + ln;
+    }
+    return jf || ex;
+  }
+  // EXIF's first IFD: XResolution (282, a fraction) and ResolutionUnit (296: 2 inches, 3 centimetres)
+  function exifDpi(b, t) {
+    var le = b[t] === 0x49, u16 = function (o) { return le ? b[t + o] | b[t + o + 1] << 8 : b[t + o] << 8 | b[t + o + 1]; }, u32 = function (o) { return le ? (b[t + o] | b[t + o + 1] << 8 | b[t + o + 2] << 16 | b[t + o + 3] << 24) >>> 0 : (b[t + o] << 24 | b[t + o + 1] << 16 | b[t + o + 2] << 8 | b[t + o + 3]) >>> 0; };
+    try {
+      var ifd = u32(4), n = u16(ifd), xr = 0, unit = 2;
+      for (var k = 0; k < n; k++) { var e = ifd + 2 + k * 12, tag = u16(e); if (tag === 282) { var off = u32(e + 8), den = u32(off + 4); xr = den ? u32(off) / den : 0; } if (tag === 296) unit = u16(e + 8); }
+      return unit === 3 ? xr * 2.54 : unit === 2 ? xr : 0;
+    } catch (err) { return 0; }
+  }
   var CRC = null;
   function crc32(a) { if (!CRC) { CRC = new Int32Array(256); for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; CRC[n] = c; } } var x = -1; for (var i = 0; i < a.length; i++) x = CRC[(x ^ a[i]) & 255] ^ (x >>> 8); return (x ^ -1) >>> 0; }
   // the picture's resolution written into what the browser made: a pHYs chunk in a PNG, the JFIF density of a JPEG
@@ -59885,7 +59995,7 @@ Lantern.RFB = (function () {
     ctl.appendChild(blend); ctl.appendChild(el("label", { title: "Opacity" }, [el("span", { text: " Opacity " }), op, el("span", { text: "%" })]));
     ctl.appendChild(el("label", { title: "Lock transparent pixels" }, [lockA, el("span", { text: " Lock \u25a6" })])); ctl.appendChild(el("label", { title: "Clipping mask: show only where the layer below has pixels" }, [clip, el("span", { text: " Clip" })]));
     var adjSel = el("select", { title: "New adjustment layer", "aria-label": "New adjustment layer" }, [el("option", { value: "", text: "\u25d1 Adjust\u2026" })].concat(Object.keys(P.adjUI ? P.adjUI.TYPES : {}).filter(function (k) { return !P.adjUI.TYPES[k].direct; }).map(function (k) { return el("option", { value: k, text: P.adjUI.TYPES[k].title }); })));
-    adjSel.onchange = function () { var t = adjSel.value; adjSel.value = ""; if (t && P.adjUI) P.adjUI.open(api, t, true); };
+    adjSel.onchange = function () { var t = adjSel.value; adjSel.value = ""; if (api.busy && api.busy()) return;  if (t && P.adjUI) P.adjUI.open(api, t, true); };
     function btn(t, title, fn) { return el("button", { text: t, title: title, "aria-label": title, onclick: function () { try { fn(); } catch (e) { api.status(e.message); } } }); }
     var bar = el("div", { "class": "ph-lbar" }, [btn("+", "New layer", function () { api.exec("newLayer", {}); }), btn("\u29c9", "Duplicate layer", function () { api.exec("duplicateLayer", {}); }),
       btn("\u25d0", "Add a layer mask (from the selection, if there is one)", function () { api.exec("addMask", {}); }), adjSel, btn("fx", "Layer style", function () { styleDialog(api); }),
@@ -59914,16 +60024,16 @@ Lantern.RFB = (function () {
         var key = ly.id + ":" + ly.ver, th = thumbs[key];
         if (ly.kind === "group") th = el("span", { "class": "ph-thumb ph-adj", text: "\ud83d\udcc1" });
         else if (!th) { th = ly.kind === "adjust" ? el("span", { "class": "ph-thumb ph-adj", text: "\u25d1" }) : thumb(C.render(d, ly), d.w, d.h); thumbs[key] = th; }
-        th.onclick = function (e) { e.stopPropagation(); if (e.ctrlKey || e.metaKey) { api.exec("selectLayerAlpha", { index: i }); return; } d.active = i; d.editMask = false; api.refresh(); };
+        th.onclick = function (e) { e.stopPropagation(); if (api.busy && api.busy()) return; if (e.ctrlKey || e.metaKey) { api.exec("selectLayerAlpha", { index: i }); return; } d.active = i; d.editMask = false; api.refresh(); };
         if (ly.kind === "adjust") th.ondblclick = function (e) { e.stopPropagation(); if (P.adjUI) P.adjUI.open(api, ly.adj.type, true, i); };
         var name = el("span", { "class": "ph-lname", text: ly.name + (ly.kind === "text" ? "  T" : ly.kind === "shape" ? "  \u25b2" : "") + (ly.fx ? "  fx" : "") });
         name.ondblclick = function (e) { e.stopPropagation(); var inp = el("input", { type: "text", value: ly.name, style: "width:120px" }); name.replaceWith(inp); inp.focus(); inp.select(); inp.onkeydown = function (ev) { ev.stopPropagation(); if (ev.key === "Enter") inp.blur(); if (ev.key === "Escape") { inp.value = ly.name; inp.blur(); } }; inp.onblur = function () { if (inp.value && inp.value !== ly.name) api.exec("setLayer", { index: i, name: inp.value }); else { lastKey = ""; update(); } }; };
         row.appendChild(eye);
         if (ly.kind === "group") row.appendChild(el("button", { "class": "ph-eye ph-twist", text: ly.open ? "\u25be" : "\u25b8", title: ly.open ? "Shut the group" : "Open the group", "aria-label": (ly.open ? "Shut " : "Open ") + ly.name, "aria-expanded": ly.open ? "true" : "false", onclick: function (e) { e.stopPropagation(); api.exec("toggleGroup", { index: i }); api.refresh(); } }));
         row.appendChild(th);
-        if (ly.mask) { var mt = maskThumb(d, ly); mt.title = "Layer mask: click to paint on it (Shift+click turns it off)"; if (d.editMask && i === d.active) mt.classList.add("on"); if (!ly.mask.on) mt.style.opacity = "0.35"; mt.onclick = function (e) { e.stopPropagation(); if (e.shiftKey) { api.exec("setLayer", { index: i, maskOn: !ly.mask.on }); return; } d.active = i; d.editMask = true; api.refresh(); api.status("Painting on the mask: black hides, white shows"); }; row.appendChild(mt); }
+        if (ly.mask) { var mt = maskThumb(d, ly); mt.title = "Layer mask: click to paint on it (Shift+click turns it off)"; if (d.editMask && i === d.active) mt.classList.add("on"); if (!ly.mask.on) mt.style.opacity = "0.35"; mt.onclick = function (e) { e.stopPropagation(); if (api.busy && api.busy()) return;  if (e.shiftKey) { api.exec("setLayer", { index: i, maskOn: !ly.mask.on }); return; } d.active = i; d.editMask = true; api.refresh(); api.status("Painting on the mask: black hides, white shows"); }; row.appendChild(mt); }
         row.appendChild(name);
-        row.onclick = function () { d.active = i; d.editMask = false; api.refresh(); };
+        row.onclick = function () { if (api.busy && api.busy()) return; d.active = i; d.editMask = false; api.refresh(); };
         rows[i] = row; list.appendChild(row);
       })(i);
       var keep = {}; d.layers.forEach(function (ly) { keep[ly.id + ":" + ly.ver] = 1; }); for (var k in thumbs) if (!keep[k]) delete thumbs[k];
@@ -59932,6 +60042,7 @@ Lantern.RFB = (function () {
   }
   // Layer Style: the effects as boxes to tick, each with its settings
   function styleDialog(api) {
+    if (api.busy && api.busy()) return;
     var d = api.d, l = D.active(d); if (!l || l.kind === "adjust" || !P.fx) return;
     var before = l.fx ? JSON.parse(JSON.stringify(l.fx)) : null, cur = before ? JSON.parse(JSON.stringify(before)) : {};
     var defs = { shadow: ["Drop Shadow", [["opacity", 0, 1, 0.01], ["angle", -180, 180, 1], ["distance", 0, 300, 1], ["spread", 0, 100, 1], ["size", 0, 250, 1]]], glow: ["Outer Glow", [["opacity", 0, 1, 0.01], ["spread", 0, 100, 1], ["size", 0, 250, 1]]],
@@ -59963,10 +60074,10 @@ Lantern.RFB = (function () {
       var d = api.d; list.innerHTML = "";
       d.hist.forEach(function (h, i) {
         var src = el("button", { "class": "ph-hsrc", text: (d.historySource || 0) === i ? "\u25c9" : "\u25cb", title: "Set the History Brush to paint from here", onclick: function (e) { e.stopPropagation(); d.historySource = i; update(); } });
-        list.appendChild(el("div", { "class": "ph-hrow" + (i === d.hist.length - 1 ? " on" : ""), onclick: function () { D.goTo(d, i); api.refresh(); } }, [src, el("span", { text: h.label })]));
+        list.appendChild(el("div", { "class": "ph-hrow" + (i === d.hist.length - 1 ? " on" : ""), onclick: function () { if (api.busy && api.busy()) return; D.goTo(d, i); api.refresh(); } }, [src, el("span", { text: h.label })]));
       });
       // an undone step, greyed: a click goes forward to it (as Photoshop's History panel)
-      d.redoStack.slice().reverse().forEach(function (h, k) { list.appendChild(el("div", { "class": "ph-hrow undone", text: h.label, title: "Undone: click to go forward to it (or Ctrl+Shift+Z)", onclick: function () { for (var n = 0; n <= k; n++) D.redo(d); api.refresh(); } })); });
+      d.redoStack.slice().reverse().forEach(function (h, k) { list.appendChild(el("div", { "class": "ph-hrow undone", text: h.label, title: "Undone: click to go forward to it (or Ctrl+Shift+Z)", onclick: function () { if (api.busy && api.busy()) return; for (var n = 0; n <= k; n++) D.redo(d); api.refresh(); } })); });
       list.scrollTop = list.scrollHeight;
     }
     return { el: box, update: update };
@@ -60088,7 +60199,7 @@ Lantern.RFB = (function () {
   // the picture turned level by the Ruler's line; cropped (as Photoshop's Ruler does) to the largest box of the picture's own shape that
   // has no empty corner, or kept whole with its corners empty
   function straightenBy(api, crop) {
-    var r = api.lastRuler; if (!r) { api.status("draw a line along what should be level with the Ruler tool (I) first"); return; }
+    var r = api.d && api.d.ruler; if (!r) { api.status("draw a line along what should be level with the Ruler tool (I) first"); return; }
     var a = Math.atan2(r.b[1] - r.a[1], r.b[0] - r.a[0]) * 180 / Math.PI; if (a > 45) a -= 90; if (a < -45) a += 90;
     if (!crop) { api.exec("rotate", { angle: -a }); api.view.fit(); return; }
     var d = api.d, t = Math.abs(a) * Math.PI / 180, co = Math.cos(t), si = Math.sin(t), s = Math.min(d.w / (d.w * co + d.h * si), d.h / (d.w * si + d.h * co)), w = d.w * s, h = d.h * s;
@@ -60186,6 +60297,7 @@ Lantern.RFB = (function () {
             var sub = list(it.sub); sub.classList.add("ph-sub"); m.insertBefore(sub, row.nextSibling); if (openM) clampMenu(openM); return;
           }
           closeAll(); if (!api.d && !/New|Open/.test(it.label)) { api.status("open or make a picture first"); return; }
+          if (api.busy && api.busy()) return;
           try { it.run(); } catch (err) { api.status(err.message); }
         };
         m.appendChild(row);
@@ -60210,7 +60322,7 @@ Lantern.RFB = (function () {
     (function walk(items) { items.forEach(function (it) { if (found) return; if (it.sub) walk(it.sub); else if (it.key && canon(it.key) === want) found = it; }); })([].concat.apply([], menus(api).map(function (m) { return m[1]; })));
     if (!found || (!parts.length && k !== "Delete" && k !== "Q")) return false;
     if (!api.d && !/New|Open/.test(found.label)) return false;
-    e.preventDefault(); try { found.run(); } catch (err) { api.status(err.message); }
+    e.preventDefault(); if (api.busy && api.busy()) return true; try { found.run(); } catch (err) { api.status(err.message); }
     return true;
   }
   P.menus = menus; P.menuBar = menuBar; P.shortcut = shortcut; P.saveAs = save;
@@ -60329,7 +60441,7 @@ Lantern.RFB = (function () {
     ".ph-mkey{color:#6b7280;font-size:12px}.ph-msep{height:1px;background:var(--line);margin:4px 0}.ph-sub{position:static;box-shadow:none;margin:2px 0 2px 10px;border-style:dashed}" +
     ".ph-opts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:4px 2px;font-size:13px;min-height:30px}.ph-opts input[type=range]{width:90px}" +
     ".ph-main{display:flex;flex:1;min-height:0;gap:6px}.ph-tools{display:grid;grid-template-columns:repeat(2,34px);gap:3px;align-content:start;overflow:auto}" +
-    ".ph-tool{width:34px;height:34px;padding:0;font-size:16px;border-radius:7px}.ph-tool.on{background:#1e3a8a;color:#fff}" +
+    ".ph-root .ph-tool{width:34px;height:34px;min-width:0;min-height:0;padding:0;font-size:16px;border-radius:7px}.ph-root .ph-eye,.ph-root .ph-sw,.ph-root .ph-hsrc,.ph-root .ph-lbar button,.ph-root .ph-mitem{min-width:0;min-height:0}.ph-tool.on{background:#1e3a8a;color:#fff}" +
     ".ph-swatch{position:relative;width:70px;height:56px;margin:6px 0;grid-column:1/3}.ph-swatch input{position:absolute;width:34px;height:34px;padding:0;border:2px solid #fff;outline:1px solid #555}" +
     ".ph-center{flex:1;min-width:0;position:relative;display:flex;flex-direction:column}.ph-view{flex:1;min-height:200px;position:relative;overflow:hidden;border-radius:8px;outline:none}.ph-view canvas{display:block}" +
     ".ph-side{width:270px;flex:none;overflow:auto;display:flex;flex-direction:column;gap:6px}.ph-panel{border:1px solid var(--line);border-radius:8px;padding:6px;background:var(--soft)}" +
@@ -60339,28 +60451,35 @@ Lantern.RFB = (function () {
     ".ph-thumb.on{outline:2px solid #2563eb}.ph-lname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ph-lbar{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px}.ph-lbar button{padding:2px 7px}" +
     ".ph-hist{max-height:170px;overflow:auto;background:var(--bg,#fff);border-radius:6px;font-size:13px}.ph-hrow{display:flex;gap:6px;align-items:center;padding:2px 4px;cursor:pointer}.ph-hrow.on{background:#dbeafe}.ph-hrow.undone{color:#9ca3af}" +
     ".ph-hsrc{background:none;border:0;padding:0 2px}.ph-info{font-size:12px;margin:0;white-space:pre-wrap}.ph-status{font-size:12px;color:#374151;padding:3px 2px;min-height:18px}" +
-    ".ph-dialog{position:absolute;right:10px;top:10px;z-index:40;background:var(--bg,#fff);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.25);width:330px;max-width:calc(100% - 20px);max-height:calc(100% - 20px);overflow:auto;padding:10px}" +
+    ".ph-dialog{position:absolute;right:10px;top:10px;z-index:40;background:var(--bg,#fff);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.25);width:370px;max-width:calc(100% - 20px);max-height:calc(100% - 20px);overflow:auto;padding:10px}" +
     ".ph-dtitle{font-weight:700;margin-bottom:6px}.ph-drow{display:flex;align-items:center;gap:6px;margin:5px 0;font-size:13px;flex-wrap:wrap}.ph-drow>span:first-child{min-width:110px}.ph-drow input[type=range]{flex:1;min-width:90px}" +
     ".ph-dfoot{display:flex;gap:8px;align-items:center;margin-top:10px}.ph-note{font-size:12px;margin:4px 0}" +
     ".ph-typebox{position:absolute;z-index:30;background:rgba(255,255,255,.6);border:1px dashed #2563eb;resize:none;padding:0;line-height:1.2;overflow:hidden}" +
     ".ph-start{max-width:760px;margin:0 auto;padding:10px}.ph-drop{border:2px dashed var(--line);border-radius:12px;padding:24px;text-align:center;margin:12px 0}" +
     ".ph-print{display:none}@media print{body.ph-printing>*{display:none!important}body.ph-printing>.ph-print{display:block!important}.ph-print img{max-width:100%}}" +
-    "@media (max-height:900px) and (min-width:821px){.ph-tools{grid-template-columns:repeat(3,30px)}.ph-tool{width:30px;height:30px;font-size:15px}.ph-swatch{grid-column:1/4}}" +
+    "@media (max-height:900px) and (min-width:821px){.ph-tools{grid-template-columns:repeat(3,30px)}.ph-root .ph-tool{width:30px;height:30px;font-size:15px}.ph-swatch{grid-column:1/4}}" +
     ".ph-modal{position:absolute;inset:0;z-index:39;background:rgba(0,0,0,.04);cursor:not-allowed}" +
     "@media (max-width:820px){.ph-root{height:auto}.ph-main{flex-direction:column}.ph-tools{grid-template-columns:repeat(auto-fill,34px);grid-auto-flow:row}.ph-swatch{grid-column:auto}.ph-view{height:60vh;flex:none}.ph-side{width:auto}}";
   function style() { if (document.getElementById("ph-style")) return; var st = document.createElement("style"); st.id = "ph-style"; st.textContent = CSS; document.head.appendChild(st); }
-  var S = { d: null, root: null, view: null, tool: "move", prevTool: "move", panels: [], stat: null, opts: (L.store && L.store.get("photo.opts", {})) || {} };
+  var S = { d: null, root: null, view: null, tool: "move", prevTool: "move", panels: [], stat: null, lastIn: {}, opts: (L.store && L.store.get("photo.opts", {})) || {} };
   var api = {
     get d() { return S.d; }, get view() { return S.view; }, get prevTool() { return S.prevTool; },
     opts: function (id) { var t = T.byId[id], o = {}; (t && t.opts || []).forEach(function (f) { o[f.key] = f.def; }); var s = S.opts[id] || {}; for (var k in s) o[k] = s[k]; return o; },
     setOpt: function (id, k, v) { S.opts[id] = S.opts[id] || {}; S.opts[id][k] = v; if (L.store) L.store.set("photo.opts", S.opts); },
     status: function (t) { if (S.stat) S.stat.textContent = t || ""; },
-    exec: function (n, p) { if (api.boxOpen()) { api.status("finish the open box first (OK or Cancel)"); return null; } try { var r = P.ops.exec(S.d, n, p || {}); after(); if (S.d && S.d.notes && S.d.notes.length) api.status(S.d.notes.splice(0).join("; ")); return r; } catch (e) { api.status(e.message); after(); return null; } },
+    exec: function (n, p) { if (n !== "transform" && api.busy()) return null; try { var r = P.ops.exec(S.d, n, p || {}); after(); if (S.d && S.d.notes && S.d.notes.length) api.status(S.d.notes.splice(0).join("; ")); return r; } catch (e) { api.status(e.message); after(); return null; } },
     refresh: function () { after(); },
     showOpts: function () { paintOpts(); },
-    setTool: function (id) { if (!T.byId[id]) return; if (S.tool !== id && id === "transform") S.prevTool = S.tool; S.tool = id; if (S.view) S.view.setTool(T.byId[id]); paintTools(); paintOpts(); },
+    setTool: function (id) { if (!T.byId[id]) return; if (T.byId[id].key) S.lastIn[T.byId[id].key] = id; if (S.tool !== id && id === "transform") S.prevTool = S.tool; S.tool = id; if (S.view) S.view.setTool(T.byId[id]); paintTools(); paintOpts(); },
     dialogHost: function () { return S.dlg || S.startDlg; }, dialogClosed: function () { after(); },
     boxOpen: function () { var h = S.dlg || S.startDlg; return !!(h && h.querySelector(".ph-dialog")); },
+    // a box open or a Free Transform under way holds the picture: anything else asked for says so and does nothing
+    busy: function () {
+      var h = S.dlg || S.startDlg, box = h && h.querySelector(".ph-dialog");
+      if (box) { api.status("finish the \u201c" + ((box.querySelector(".ph-dtitle") || {}).textContent || "open") + "\u201d box first: OK or Cancel"); box.style.outline = "3px solid #2563eb"; setTimeout(function () { box.style.outline = ""; }, 400); return true; }
+      if (S.tool === "transform" && T.byId.transform && T.byId.transform.active && T.byId.transform.active()) { api.status("Free Transform is under way: Enter applies it, Esc leaves it"); return true; }
+      return false;
+    },
     hover: function (pt) { if (S.info) S.info.show(pt); },
     zoomed: function (z) { if (S.zl) S.zl.textContent = Math.round(z * 100) + "%"; },
     pickFile: function (place) { S.place = place; S.fileIn.click(); },
@@ -60379,9 +60498,9 @@ Lantern.RFB = (function () {
     openDoc: function (d) { S.d = d; D.on(d, function () { if (S.view) S.view.render(); }); build(); },
     paste: function (inPlace) {
       if (navigator.clipboard && navigator.clipboard.read) navigator.clipboard.read().then(function (items) {
-        var it = items.filter(function (x) { return x.types.some(function (t) { return /^image\//.test(t); }); })[0];
+        var it = items.filter(function (x) { return x.types.some(function (t) { return /^image\x2F/.test(t); }); })[0];
         if (!it) throw new Error("none");
-        return it.getType(it.types.filter(function (t) { return /^image\//.test(t); })[0]).then(function (b) { return b.arrayBuffer(); }).then(function (buf) { return P.files.open({ bytes: new Uint8Array(buf), name: "Pasted" }); }).then(function (d2) { api.exec("paste", { canvas: d2.layers[0].cv }); });
+        return it.getType(it.types.filter(function (t) { return /^image\x2F/.test(t); })[0]).then(function (b) { return b.arrayBuffer(); }).then(function (buf) { return P.files.open({ bytes: new Uint8Array(buf), name: "Pasted" }); }).then(function (d2) { api.exec("paste", { canvas: d2.layers[0].cv }); });
       }).catch(function () { api.exec("paste", { inPlace: inPlace }); });
       else api.exec("paste", { inPlace: inPlace });
     },
@@ -60426,7 +60545,7 @@ Lantern.RFB = (function () {
       var start = el("div", { "class": "ph-start" }, [el("h2", { text: "Photo" }), el("p", { "class": "muted", text: "Edit photos and pictures on this device, with no internet: layers and masks, selections, retouching, colour and light, filters, words and shapes, and Photoshop's own files (.psd) with their layers. Nothing you open leaves this device." })]);
       var drop = el("div", { "class": "ph-drop" }, [el("button", { "class": "primary", text: "Open a picture", onclick: function () { api.pickFile(false); } }), el("span", { text: "  " }), el("button", { text: "New\u2026", onclick: function () { newQuick(); } }),
         el("div", { "class": "muted", style: "margin-top:8px", text: "or drop a picture here (JPEG, PNG, GIF, WebP, TIFF, PSD, BMP, SVG), or paste one (Ctrl+V)" })]);
-      drop.addEventListener("dragover", function (e) { e.preventDefault(); }); drop.addEventListener("drop", function (e) { e.preventDefault(); if (e.dataTransfer.files[0]) openFile(e.dataTransfer.files[0]); });
+      drop.addEventListener("dragover", function (e) { e.preventDefault(); }); drop.addEventListener("drop", function (e) { e.preventDefault(); });   /* (opened by the tile-wide drop, once) */
       start.appendChild(drop); S.stat = el("div", { "class": "ph-status", "aria-live": "polite" }); start.appendChild(S.stat);
       S.startDlg = el("div", { style: "position:relative;min-height:0" }); start.appendChild(S.startDlg); r.appendChild(start); return;
     }
@@ -60481,11 +60600,12 @@ Lantern.RFB = (function () {
     if (typing) { if (e.key === "Enter" && tg.tagName === "INPUT" && !(tg.closest && tg.closest(".ph-dialog"))) tg.blur(); return; }
     if (tg && tg.tagName === "SELECT" && /^(Arrow|Page|Home|End)/.test(e.key)) return;
     if (e.key === "Escape" && document.querySelector(".ph-menu")) { if (P.closeMenus) P.closeMenus(); e.preventDefault(); return; }
-    if (api.boxOpen && api.boxOpen()) { var hb = S.dlg || S.startDlg, cb = hb && hb.querySelector(".ph-dialog .ph-dfoot button:not(.primary)"); if (e.key === "Escape" && cb) cb.click(); return; }
+    if (api.boxOpen && api.boxOpen()) { var hb = S.dlg || S.startDlg, cb = hb && hb.querySelector(".ph-dialog .ph-dfoot button:not(.primary)"); if (e.key === "Escape" && cb) cb.click(); var okb = hb && hb.querySelector(".ph-dialog .ph-dfoot button.primary"); if (e.key === "Enter" && okb) { e.preventDefault(); okb.click(); } return; }
     if (!S.d) { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") { e.preventDefault(); api.pickFile(false); } return; }
     if (e.key === " " && S.view) { S.view.spaceDown = true; e.preventDefault(); return; }
     var t = T.byId[S.tool];
     if (t && t.onKey && t.onKey(e.key, e, api)) { e.preventDefault(); return; }
+    if (S.d.open && e.key !== "Shift" && e.key !== "Alt" && e.key !== "Control") { e.preventDefault(); return; }   // a stroke or drag under way: no command till the button is let go
     if (P.shortcut(api, e)) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     var k = e.key.toUpperCase();
@@ -60493,14 +60613,13 @@ Lantern.RFB = (function () {
     if (k === "D") { S.d.fg = [0, 0, 0]; S.d.bg = [255, 255, 255]; paintTools(); return; }
     if (e.key === "[" || e.key === "]") { var o = api.opts(S.tool); if (o.size != null) { var s = Math.max(1, Math.round(o.size * (e.key === "]" ? 1.2 : 1 / 1.2) + (e.key === "]" ? 1 : -1))); api.setOpt(S.tool, "size", s); paintOpts(); S.view.render(); } return; }
     // a stroke or drag under way keeps its tool until the button is let go; Shift+letter moves along the letter's group (as Photoshop)
-    if (S.d.open) return;
-    var nt = T.byKey(k, e.shiftKey ? t : null); if (nt) { api.setTool(nt.id); e.preventDefault(); }
+    var nt = e.shiftKey ? T.byKey(k, t) : (t && t.key === k ? t : (S.lastIn[k] && T.byId[S.lastIn[k]]) || T.byKey(k, null)); if (nt) { api.setTool(nt.id); e.preventDefault(); }
   });
   document.addEventListener("keyup", function (e) { if (e.key === " " && S.view) S.view.spaceDown = false; });
   window.addEventListener("beforeunload", function (e) { if (S.d && !S.d.saved && S.d.hist.length > 1) { e.preventDefault(); e.returnValue = ""; } });
   document.addEventListener("paste", function (e) {
     if (!S.root || !document.contains(S.root) || document.body.getAttribute("data-app") !== "photo") return;
-    var f = e.clipboardData && Array.prototype.filter.call(e.clipboardData.files || [], function (x) { return /^image\//.test(x.type); })[0];
+    var f = e.clipboardData && Array.prototype.filter.call(e.clipboardData.files || [], function (x) { return /^image\x2F/.test(x.type); })[0];
     if (!f) return; e.preventDefault();
     if (!S.d) { openFile(f); return; }
     P.files.open(f).then(function (d2) { api.exec("paste", { canvas: P.compose.all(d2) }); });
@@ -60532,7 +60651,7 @@ Lantern.RFB = (function () {
     ["Colour and light", "<p><b>Image &gt; Adjustments</b>: Levels (Ctrl+L), Curves (Ctrl+M), Brightness/Contrast, Exposure, Vibrance, Hue/Saturation (Ctrl+U), Color Balance (Ctrl+B), Black &amp; White, Photo Filter, Channel Mixer, Selective Color, Invert (Ctrl+I), Posterize, Threshold, Gradient Map, Desaturate, Equalize; Auto Tone, Auto Contrast, Auto Color; and, on the pixels only (as in Photoshop), <b>Shadows/Highlights</b> (lift dark parts, tame bright ones), <b>Match Color</b> (take the colours of another layer), <b>Replace Color</b> (one colour moved, the rest left). Each box previews on the picture as you move its sliders, and holds the picture till OK or Cancel. The same as an adjustment layer can be changed later. <b>Edit &gt; Fade</b> right after lessens the last one. Example: a dull photo: Image &gt; Auto Tone, then Hue/Saturation with Saturation +15. The Info panel reads the colour under the pointer in RGB, HSB, Lab and CMYK (CMYK without a press's profile: ask the printer for theirs).</p>"],
     ["Filters", "<p>Blur (Gaussian, Box, Motion, Radial, Surface, Lens Blur with a round or six-bladed iris and bright lights that bloom, Average), Sharpen (Unsharp Mask, Smart Sharpen, which takes a Gaussian or lens blur back out, Sharpen, Sharpen More), Noise (Add Noise, Median, Dust &amp; Scratches, Reduce Noise), Distort (Twirl, Pinch, Spherize, Polar Coordinates, Ripple, Wave, ZigZag), Stylize (Find Edges, Glowing Edges, Emboss, Solarize, Oil Paint, Diffuse, Wind), Pixelate (Mosaic, Crystallize, Color Halftone), Render (Clouds, Difference Clouds), Other (High Pass, Minimum, Maximum, Offset, Custom) and Lens Correction (barrel and pincushion, vignette). Ctrl+Alt+F runs the last filter again. Example: an old scan with specks: Filter &gt; Noise &gt; Dust &amp; Scratches, radius 2, threshold 20.</p>"],
     ["Crop, size and transform", "<p>Crop (C): drag a box, drag outside it to turn it level, press Enter. Perspective Crop: click the four corners of a document or sign photographed at a slant, Enter. <b>Image Size</b> (Ctrl+Alt+I) resamples (Bicubic, Smoother for enlarging, Sharper for reducing, Lanczos, Nearest Neighbor for pixel art); <b>Canvas Size</b> adds room. <b>Free Transform</b> (Ctrl+T): drag inside to move, a corner to scale, outside to turn, Ctrl+corner to distort; Enter applies. The Ruler (I) measures; Image Rotation &gt; Straighten turns the picture level by its line and crops the empty corners (or keeps them, from its own menu line). Choosing another tool part-way through Free Transform applies it; Esc first leaves the layer as it was.</p>"],
-    ["Type, shapes and styles", "<p>Type (T): click and type a line, or drag a box for a paragraph; click away to finish; click the words again to change them. Font, size, bold, italic, alignment and tracking are on the options bar; the fonts are your computer's. Shape (U): rectangle (round corners), ellipse, polygon, star, line, arrow, and custom shapes (heart, speech balloon, tick, cross, lightning, block arrow, moon, drop). Layer Style (fx): Drop Shadow, Outer Glow, Stroke, Inner Shadow, Inner Glow, Bevel &amp; Emboss, Color and Gradient Overlay, kept live. In a saved .psd these become pixels. Clicking words to change them shows their own font, size and colour on the options bar; what you change there changes them.</p>"],
+    ["Type, shapes and styles", "<p>Type (T): click and type a line, or drag a box for a paragraph; click away to finish; click the words again to change them. Font, size, bold, italic, alignment and tracking are on the options bar; the fonts are your computer's. Shape (U): rectangle (round corners), ellipse, polygon, star, line, arrow, and custom shapes (heart, speech balloon, tick, cross, lightning, block arrow, moon, drop). Layer Style (fx): Drop Shadow, Outer Glow, Stroke, Inner Shadow, Inner Glow, Bevel &amp; Emboss, Color and Gradient Overlay, kept live. In a saved .psd these become pixels. Clicking words to change them shows their own font and size on the options bar (and types in their own colour); what you change there, or a new foreground colour picked while typing, changes them.</p>"],
     ["Liquify, paths and more", "<p><b>Filter &gt; Liquify</b> (Ctrl+Shift+X): push the picture about with Forward Warp, Pucker, Bloat, Twirl; Reconstruct and Restore All take it back; OK applies it. <b>The Pen</b> (P): click for corners, drag for curves, click the first point to close; then <b>Select &gt; Make Selection from Path</b> gives an exact, smooth selection round something curved, and <b>Edit &gt; Fill Path</b> or <b>Stroke Path</b> paints it. <b>Edit &gt; Content-Aware Scale</b> narrows a picture by taking out what matters least (sky, grass), keeping people and buildings in shape; tick Protect to keep the selection. <b>File &gt; Automate &gt; Merge Exposures</b>: choose shots of one scene taken darker and lighter (a tripod's best) and get one with detail in the shadows and the sky. <b>Fit Image</b> makes a picture fit a size, keeping its shape.</p>"],
     ["Actions and batches", "<p>The Actions panel: \u25cf Record, then use the menus; \u25a0 Stop keeps the steps. \u25b6 Play runs them on the open picture. <b>Batch</b> plays an action on many pictures and gives them back as one .zip, in the format chosen. Ready-made: \u201cWeb picture, 1200 px\u201d and \u201cBlack and white\u201d. Example: make 200 phone photos small enough to email: choose \u201cWeb picture, 1200 px\u201d, Batch, pick the photos, as JPEG.</p>"],
     ["History", "<p>Ctrl+Z undoes, Ctrl+Shift+Z redoes (the layer you chose stays chosen); the History panel lists the picture as opened and the last 50 steps: click one to go back to it, or a greyed one to go forward again. <b>Keys a browser keeps:</b> Ctrl+T, Ctrl+N and Ctrl+Shift+N open a tab or window in a browser before Lantern sees them; use the menus for those (Edit &gt; Free Transform, File &gt; New, Layer &gt; New Layer).</p>"],
@@ -70264,7 +70383,7 @@ Lantern.RFB = (function () {
   // change to route()). The review of 1.24.38: a recipe card was right 88 times in 100, but the place cards, picked on
   // "north", "west" or "how far ... from the well", far less often -- the shelf a kind of evidence names is counted too.
   // CALIBRATION - START
-  var SURETY = {"about": [7, 8], "about@0.1": [7, 8], "card-many": [9, 11], "card-many@4.2": [1, 1], "card-many@5.2": [2, 2], "card-many@5.3": [0, 2], "card-many@6.1": [6, 6], "card-one": [158, 177], "card-one@2.1": [17, 17], "card-one@4.1": [21, 23], "card-one@4.2": [15, 15], "card-one@5.1": [9, 9], "card-one@5.2": [21, 21], "card-one@5.3": [10, 10], "card-one@6.3": [5, 5], "card-one@6.4": [15, 18], "card-one@7.1": [23, 29], "card-one@7.3": [10, 10], "card-one@9.3": [12, 20], "func": [22, 57], "func@3.3": [4, 21], "func@5.1": [9, 11], "func@5.2": [0, 3], "func@5.3": [0, 1], "func@7.1": [2, 3], "func@7.3": [4, 7], "func@8.3": [3, 3], "func@9.3": [0, 8], "guard": [7, 8], "guard@6.1": [6, 7], "guard@7.1": [1, 1], "health": [37, 45], "health@6.1": [25, 31], "health@6.2": [6, 8], "health@6.3": [6, 6], "lantern-named": [9, 11], "lantern-named@0.1": [9, 11], "lesson-howto": [38, 47], "lesson-howto@0.1": [1, 4], "lesson-howto@0.3": [1, 1], "lesson-howto@1.2": [0, 1], "lesson-howto@2.3": [2, 2], "lesson-howto@3.1": [7, 7], "lesson-howto@4.1": [1, 1], "lesson-howto@5.2": [1, 1], "lesson-howto@5.4": [1, 2], "lesson-howto@6.2": [10, 11], "lesson-howto@6.4": [8, 10], "lesson-howto@8.3": [1, 2], "lesson-howto@8.4": [3, 3], "lesson-howto@9.3": [2, 2], "lesson-other": [70, 108], "lesson-other@0.1": [0, 10], "lesson-other@1.2": [1, 1], "lesson-other@2.3": [1, 2], "lesson-other@3.1": [3, 10], "lesson-other@4.1": [0, 1], "lesson-other@5.1": [2, 2], "lesson-other@5.2": [5, 11], "lesson-other@5.3": [9, 9], "lesson-other@5.4": [5, 10], "lesson-other@5.5": [5, 5], "lesson-other@5.6": [6, 6], "lesson-other@6.1": [8, 11], "lesson-other@6.2": [7, 7], "lesson-other@6.3": [3, 3], "lesson-other@6.4": [2, 5], "lesson-other@8.3": [2, 3], "lesson-other@8.4": [6, 7], "lesson-other@9.1": [2, 2], "lesson-other@9.3": [3, 3], "letters": [3, 4], "letters@3.3": [3, 4], "make-many": [8, 14], "make-many@3.2": [2, 6], "make-many@7.2": [2, 4], "make-many@8.1": [1, 1], "make-many@9.2": [3, 3], "make-one": [140, 158], "make-one@0.3": [23, 27], "make-one@2.2": [14, 15], "make-one@3.2": [29, 31], "make-one@7.2": [19, 21], "make-one@8.1": [15, 15], "make-one@8.2": [6, 6], "make-one@9.1": [12, 12], "make-one@9.2": [22, 31], "nothing": [106, 220], "numbers": [34, 97], "numbers@2.1": [3, 4], "numbers@4.1": [20, 82], "numbers@4.2": [2, 2], "numbers@7.1": [9, 9], "puzzle": [19, 19], "puzzle@1.1": [19, 19]};
+  var SURETY = {"about": [7, 8], "about@0.1": [7, 8], "card-many": [9, 11], "card-many@4.2": [1, 1], "card-many@5.2": [2, 2], "card-many@5.3": [0, 2], "card-many@6.1": [6, 6], "card-one": [158, 177], "card-one@2.1": [17, 17], "card-one@4.1": [21, 23], "card-one@4.2": [15, 15], "card-one@5.1": [9, 9], "card-one@5.2": [21, 21], "card-one@5.3": [10, 10], "card-one@6.3": [5, 5], "card-one@6.4": [15, 18], "card-one@7.1": [23, 29], "card-one@7.3": [10, 10], "card-one@9.3": [12, 20], "func": [22, 57], "func@3.3": [4, 21], "func@5.1": [9, 11], "func@5.2": [0, 3], "func@5.3": [0, 1], "func@7.1": [2, 3], "func@7.3": [4, 7], "func@8.3": [3, 3], "func@9.3": [0, 8], "guard": [7, 8], "guard@6.1": [6, 7], "guard@7.1": [1, 1], "health": [37, 45], "health@6.1": [25, 31], "health@6.2": [6, 8], "health@6.3": [6, 6], "lantern-named": [9, 11], "lantern-named@0.1": [9, 11], "lesson-howto": [38, 46], "lesson-howto@0.1": [1, 4], "lesson-howto@0.3": [1, 1], "lesson-howto@1.2": [0, 1], "lesson-howto@2.3": [2, 2], "lesson-howto@3.1": [7, 7], "lesson-howto@4.1": [1, 1], "lesson-howto@5.2": [1, 1], "lesson-howto@5.4": [1, 2], "lesson-howto@6.2": [10, 11], "lesson-howto@6.4": [8, 9], "lesson-howto@8.3": [1, 2], "lesson-howto@8.4": [3, 3], "lesson-howto@9.3": [2, 2], "lesson-other": [70, 108], "lesson-other@0.1": [0, 10], "lesson-other@1.2": [1, 1], "lesson-other@2.3": [1, 2], "lesson-other@3.1": [3, 10], "lesson-other@4.1": [0, 1], "lesson-other@5.1": [2, 2], "lesson-other@5.2": [5, 11], "lesson-other@5.3": [9, 9], "lesson-other@5.4": [5, 10], "lesson-other@5.5": [5, 5], "lesson-other@5.6": [6, 6], "lesson-other@6.1": [8, 11], "lesson-other@6.2": [7, 7], "lesson-other@6.3": [3, 3], "lesson-other@6.4": [2, 5], "lesson-other@8.3": [2, 3], "lesson-other@8.4": [6, 7], "lesson-other@9.1": [2, 2], "lesson-other@9.3": [3, 3], "letters": [3, 4], "letters@3.3": [3, 4], "make-many": [8, 14], "make-many@3.2": [2, 6], "make-many@7.2": [2, 4], "make-many@8.1": [1, 1], "make-many@9.2": [3, 3], "make-one": [140, 158], "make-one@0.3": [23, 27], "make-one@2.2": [14, 15], "make-one@3.2": [29, 31], "make-one@7.2": [19, 21], "make-one@8.1": [15, 15], "make-one@8.2": [6, 6], "make-one@9.1": [12, 12], "make-one@9.2": [22, 31], "nothing": [106, 221], "numbers": [34, 97], "numbers@2.1": [3, 4], "numbers@4.1": [20, 82], "numbers@4.2": [2, 2], "numbers@7.1": [9, 9], "puzzle": [19, 19], "puzzle@1.1": [19, 19]};
   // CALIBRATION - END
   // pct(ev, shelf): the kind's (right + 1) / (asked + 2); with a shelf, its own count, drawn toward the kind's by ten
   // questions' weight (a shelf seen twice is mostly the kind's; seen forty times, mostly its own -- the second review:

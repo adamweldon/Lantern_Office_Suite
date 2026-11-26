@@ -1,0 +1,238 @@
+PHOTO TILE (Lantern 1.24.42, after the mends of the first review) -- A FOURTH, INDEPENDENT REVIEW
+==============================================================================================
+Reviewer: a separate agent that did not write the tile or the mends. Date: 2026-11-26.
+Build tested: the frozen single file scratchpad/photo_r3/index.html (6,740,993 bytes), served over http, opened at
+#photo in Chromium (Playwright, headless), 1400 x 900 unless said; also 1366 x 768, 1920 x 1080 and 390 x 844.
+Driven as a person drives it: the menu bar, the tool column, the options bar, the Layers/History/Swatches panels,
+keys, drags and pointer moves on the picture, dropped files (DragEvent with a DataTransfer holding a File).
+The document's state (Lantern.photo.api.d, compose.all/render) is only READ, to check results. One spy is used:
+the drop check counts calls of Lantern.photo.api.openDoc (it changes nothing).
+
+Files here
+  run_review.py    every check: python3 run_review.py [path/to/index.html] [section ...]
+                   sections: groups groups2 boxes newboxes styles keys maglasso swatches drop typetool transform
+                   image mends sizes big. Prints PASS/FAIL per check and "N checks, M failed". ~4.5 minutes.
+  harness.py       the server, Chromium, and a person's actions (begun from photo_review2_1242/harness.py and
+                   extended: Layers rows by exact name, group triangles, renaming, drops, Place, sliders by label).
+  make_inputs.py   makes inputs/ (deterministic): a landscape, a dark-red blob on a busy striped noisy background
+                   (and its true mask), a flat grey picture, a dark square on white, a 5-degree horizon, a badge and
+                   an oversize picture to drop, colour bars, a backlit figure, warm/cool/orange-cast photos, a
+                   picture whose pixels encode their own x and y, a .psd with a group made by psd-tools. 832 KB.
+                   The 12-megapixel photo is made at run time.
+  cases.json       the full run on the frozen build, as found: 289 checks, 48 failed (every check, with what was
+                   seen, passes too). A run on any other build writes cases_last_run.json instead, so this record
+                   is not overwritten.
+  evidence/        laptop_1366x768.png (the tool column), phone_tools.png.
+
+HOW SURE: "certain" = reproduced in the browser and traced to the code; "high" = reproduced, and Photoshop's
+behaviour is documented or well known; "medium" = reproduced, but Photoshop's exact behaviour is from memory.
+Photoshop itself was not run.
+
+The full run was repeated: three runs of the final script gave the same 48 failures (see the end).
+
+----------------------------------------------------------------------------------------------
+FAILURES, MOST IMPORTANT FIRST
+----------------------------------------------------------------------------------------------
+
+1. A box is still not modal for the menu bar, the History panel and the Layers panel -- and one path loses an
+   earlier step for good. (The first review's finding 3 is mended only for the picture and the keys.)
+   With a box open (Image > Adjustments > Hue/Saturation, Hue +120 previewed on a copy layer):
+   a) Edit > Undo from the menu runs: a History step is undone under the open box.
+   b) Image > Adjustments > Levels... opens over it. The Hue/Saturation box is replaced without its Cancel, and
+      OK in Levels then drops the Hue/Saturation that was showing on the picture (no step for it).
+   c) File > Save writes a .psd: it holds the unconfirmed preview (pixel 50,50 = 228,73,131; as opened 95,151,226).
+   d) A click on a History step goes back (to "Open") behind the box.
+   e) A click on the Background's row in the Layers panel, then OK: the Hue/Saturation lands on the Background,
+      not on the copy it was previewed on (the copy is unchanged). What was previewed is not what is done.
+   f) The Layers panel's "Adjust..." list while the box is open:
+      - with a picture layer chosen: an uncaught error "Cannot read properties of null (reading 'p')";
+      - with an adjustment layer chosen (an Invert layer): a second box opens that previews the Invert layer as a
+        Threshold; Cancel in both boxes then DELETES THE INVERT LAYER (it undoes the person's last step) and
+        empties Redo, so Ctrl+Shift+Z cannot bring it back. Steps: open a photo; Adjust... > Invert; click the
+        Background; Image > Adjustments > Hue/Saturation; click the Invert layer's row; Adjust... > Threshold;
+        Cancel; Cancel. History is back to "Open" and the Invert layer is gone.
+   g) (smaller) After a click outside the box (on the picture, a tool, a panel), Enter no longer OKs it: the
+      box's own keydown listener only hears keys while the focus is inside it.
+   Traced: api.boxOpen() is checked only in api.exec, the keys and drops (PHOTO_TILE). The menu items that run
+   directly (Edit > Undo/Redo call D.undo/D.redo; every item that opens a box through P.dialog, which empties
+   the dialog host; File > Save/Export/Print), the History rows (D.goTo, D.redo) and the Layers rows (d.active =
+   i) do not ask. PHOTO_ADJ_UI open(): when exec("newAdjustment") is refused it still sets layerIndex = d.active
+   and made = d.hist.length, so its Cancel ("fresh && d.hist.length === made") undoes and pops the last real step.
+   Should: Photoshop's adjustment and filter dialogs are modal: nothing else in the window can be used until OK
+   or Cancel, and Enter is OK, Esc is Cancel, wherever the pointer was clicked. Sure: certain (behaviour), high
+   (Photoshop).
+
+2. With a group anywhere in the picture, the picture cannot be turned, flipped or straightened.
+   Steps: put any layer in a group (Ctrl+G); Image > Image Rotation > 90 deg Clockwise (or Flip Canvas
+   Horizontal, or Straighten by the Ruler line after drawing a Ruler line).
+   What happens: nothing changes; the line under the picture says '"Group 1" is a group: choose a layer in it
+   (or Layer > Merge Group)', whichever layer is chosen. A .psd from Photoshop with groups (most have them)
+   therefore cannot be rotated or straightened at all.
+   Traced: PHOTO_OPS_IMAGE rotate, flip, crop with an angle and perspectiveCrop call O.rasterize on every layer
+   whose kind is not pixel or adjust; rasterize throws for a group. (Crop with a turn and Perspective Crop were not
+   run with a group; they have the same line.) Image Size and Canvas Size do work with groups.
+   Should: these change every layer and leave groups as groups. Sure: certain.
+
+3. Free Transform leaks into the rest of the tile (five ways).
+   a) While Free Transform is on, the layer is hidden for the preview (previewHidden). Any command run meanwhile
+      by its key records that mark in History. Ctrl+T, Ctrl+I (it runs), Esc, Ctrl+I, Ctrl+Z: the layer is
+      INVISIBLE although its eye is on, and stays so whenever History comes back to that state.
+      Ctrl+T, Ctrl+J (Layer via Copy), Esc: the copy never shows.
+   b) Ctrl+T, then File > Quick Export as PNG: the exported PNG has no such layer in it (it was hidden).
+   c) Ctrl+T on a red layer, drag it 100 px, click the Background's row in the Layers panel, Enter: the
+      BACKGROUND is moved 100 px (an empty strip is left at its left edge); the red layer stays where it was.
+   d) Ctrl+T, drag the layer 100 px to the right, type Angle 10 on the options bar, Enter: the layer is turned
+      back where it started (centre x 150, not 250): typing a number rebuilds the box from the start (optChange)
+      and throws the drag away.
+   e) Ctrl+T on a group: the box can be dragged, then Enter says '"Group 1" is a group: choose a layer in it' and
+      nothing happens. Photoshop transforms every layer of the group.
+   Traced: PHOTO_TRANSFORM_UI marks the live layer (l.previewHidden); D.snap copies every field of a layer;
+   commit() transforms D.active(d), whatever is chosen at Enter; Edit > Free Transform and the keys are not
+   blocked while it runs. Should: Photoshop greys out most menu commands during Free Transform and keeps the
+   transform on the layer it began on; its W/H/Angle boxes act from where the box is now. Sure: certain
+   (behaviour), high (Photoshop, from memory).
+
+4. Ctrl+Z pressed while the mouse button is still held in a brush stroke loses two strokes.
+   Steps: paint a stroke (one "Brush" step); start a second stroke, and before letting go press Ctrl+Z; let go.
+   What happens: the FIRST stroke is undone, the second (being drawn) is lost too, an empty "Brush" step is
+   recorded, and Redo is emptied: neither stroke can be brought back.
+   Traced: PHOTO_TILE's keydown runs P.shortcut before its "a stroke is under way" test (S.d.open), so Undo runs
+   in the middle of D.begin ... D.end. (Other Ctrl keys pressed mid-stroke are likely the same; not tried.)
+   Should: no command while the button is held (Photoshop takes none then: from memory, medium-high). The first
+   review's mend for tool letters (6b) holds: M pressed mid-stroke keeps the stroke.
+
+5. With a group chosen, nine tools throw an error instead of saying no; six of them leave the tool keys dead.
+   Patch, Red Eye, Dodge, Burn, Sponge, Blur, Sharpen, Smudge and Paint Bucket, used on the picture with a group
+   chosen: nothing changes (right), but each throws an uncaught error and shows no message of its own (the line
+   under the picture keeps whatever it said before). Dodge, Burn, Sponge, Blur, Sharpen and Smudge also leave
+   the document "in a stroke" (D.begin with no end): after them, the tool letters do nothing (B does not pick the
+   Brush) until a stroke with another tool is finished. Brush, Pencil, Eraser, Clone Stamp, History Brush, Spot
+   Healing, Healing Brush and Gradient refuse plainly, as do the filters, adjustments, Shadows/Highlights and
+   Alt+Backspace. Traced: PHOTO_TOOLS_RETOUCH's dab tools call D.begin, then O.rasterize, which throws for a
+   group; the Patch, Red Eye and Bucket call pixelOp outside a try. Sure: certain.
+
+6. Merge Visible throws away hidden layers that sit inside a visible group.
+   Steps: a group with a visible layer and a hidden one; Layer > Merge Visible (Ctrl+Shift+E).
+   What happens: the picture is right, but the hidden layer is gone (only one layer is left). Without groups,
+   Merge Visible keeps hidden layers. Ctrl+Z brings it back. Traced: PHOTO_GROUPS mergeVisible keeps only hidden
+   top-level units. Should: Photoshop's Merge Visible leaves hidden layers alone (Adobe community answer:
+   it "will ignore any layer that has its visibility toggled off"). Sure: certain / high.
+
+7. Redo does not choose again the layer it brings back -- the mend for "Undo keeps the chosen layer" goes too far.
+   Steps: Layer > New Layer, Ctrl+Z, Ctrl+Shift+Z: the Background is chosen, not the new layer; the next stroke
+   goes on the Background. Worse: Duplicate Layer on a group, Ctrl+Z, Ctrl+Shift+Z, then the Delete button:
+   the FIRST group is deleted, not its copy (seen in this review's own run).
+   Traced: PHOTO_DOC keepChosen keeps the layer chosen before Redo whenever it still exists. Should: Redo returns
+   the state as it was after the step, the layer that step chose included (Photoshop's History: medium, from
+   memory). Undo keeping the chosen layer (the first review's finding 8) holds and is right.
+
+8. The tool column: every tool button is 40 x 40 in a 30 or 34 px cell, so the buttons overlap and the right-hand
+   column is cut in half at every desktop size.
+   Measured: 1366 x 768 and 1400 x 900 -- three 30 px columns, 24 overlapping pairs, 12 buttons cut at the
+   column's right edge (Eraser, Rectangular Marquee, Polygonal Lasso, Move, Hand, Spot Healing, Red Eye, Sponge,
+   Smudge, Crop, Shape, Quick Mask); 1920 x 1080 -- two 34 px columns, 18 overlaps, 18 cut; phone -- 32 overlaps.
+   At 1366 x 768 the last row (Swap, Default colours, Quick Mask) is also below the column's visible bottom
+   (600 px of column, 627 px of content: reachable only by scrolling the column).
+   evidence/laptop_1366x768.png shows the cut icons; evidence/phone_tools.png the overlaps.
+   Traced: Lantern's own stylesheet, line 408 of the build: button{min-height:40px;min-width:40px} wins over the
+   tile's .ph-tool{width:34px;height:34px} (and the 30 px of its max-height:900px rule). Sure: certain.
+
+9. Type: words aligned centre or right cannot be clicked to edit them.
+   Steps: Type tool, alignment "center" (or "right") on the options bar, click and type "Wide words", choose
+   Move; Type tool, click on the words' own letters (their left part).
+   What happens: a new, empty type box opens (a second type layer if anything is typed). Traced: PHOTO_TOOLS_MAKE
+   Type down() tests x from text.x to text.x + width, as if every line were left-aligned; centred words run
+   from x - w/2, right-aligned ones end at x. Left-aligned words (also after a move) do open. Sure: certain.
+
+10. Straighten by the Ruler line uses a line drawn on a different picture.
+    Steps: draw a Ruler line on one picture; open another; Image > Image Rotation > Straighten by the Ruler line.
+    What happens: the new picture is turned and cropped (640 -> 575 wide) by the old picture's line, with no
+    word. Traced: api.lastRuler is kept for the tile, not the picture. Should: ask for a line (as it does when
+    none was drawn). Sure: certain.
+
+11. Smaller.
+    a) Undo shuts a group the person opened: the triangle's open/shut state is kept in each History state, so
+       Ctrl+Z (or Undo past the point where it was shut) shuts it again. Opening is not a step, so Undo should not
+       change it. Medium (Photoshop, memory).
+    b) A picture dropped on the start screen's dashed box is opened twice (the box's own drop listener and the
+       tile-wide one both open it): harmless for a small file, twice the wait for a big .psd. Certain.
+    c) B with the Pencil in use goes back to the Brush. Photoshop's key picks the tool now showing in its group
+       (the Pencil); only Shift+B moves along. The help describes the tile's way, so a difference, not a broken
+       promise. Medium (memory).
+    d) The help says clicking words "shows their own font, size and colour on the options bar": the font and
+       size are shown; the options bar has no colour and the foreground colour box keeps the old colour (the
+       typing box does draw the words in their own colour). Low.
+    e) Image > Adjustments still lists "Invert..." though it opens no box (first review's 32). Trivial.
+
+----------------------------------------------------------------------------------------------
+WHAT WORKED (PASS in cases.json, briefly)
+----------------------------------------------------------------------------------------------
+- Groups: Ctrl+G (picture unchanged, one step), Layer > New Group (beside a chosen group, inside a group when a
+  layer in it is chosen), Ctrl+Shift+G, the triangle (not a step), up/down into an open group, past a shut one,
+  out at the top and bottom; New Layer above a shut group stays outside it; nesting (P in Group 2 in Group 3,
+  set in twice as far); duplicate (the copy's layers belong to the copied groups) and delete of a group; Merge
+  Group by Ctrl+E (the menu then says "Merge Group"), keeping the look at 50% group opacity, staying inside its
+  parent group in its own mode; pass through only for groups; Pass Through vs Normal with an Invert adjustment
+  layer inside (as the help says); Move tool on a group; a mask on a group; Brush, filters, adjustments and
+  fills refused plainly with a group chosen. Undo and Redo give back the exact layers and picture through each of
+  12 group commands tried one by one. Saved .psd: psd-tools reads the groups, nesting, 60% opacity, Multiply, a hidden
+  group and the same picture (within 3 levels); opened again the tile has the same layers and picture. A .psd
+  with a group made by psd-tools opens as a group with its hidden layer hidden.
+- Boxes: a click on the picture paints nothing and says to finish the box; Ctrl+I, Ctrl+Z, Select > All refused;
+  Esc and Cancel leave every layer exactly as before; Enter in a box's number field OKs; the Layers panel's
+  Adjust... and Layer > New Adjustment Layer then Cancel or Esc leave nothing (no layer, no step, no Redo).
+  Shadows/Highlights lifts a dark figure (+15 levels or more) with the sky within 6, Highlights darkens the sky,
+  OK equals the preview, not offered as an adjustment layer; Match Color from another layer moves the mean colour
+  most of the way, Neutralize reduces an orange cast; Replace Color turns the red bar and leaves the others within
+  3; Selective Color starts Relative, takes red from reds only, Absolute more than Relative, Cancel leaves
+  nothing. Layer Style: Inner Glow, Bevel & Emboss (lit top-left, shaded bottom-right), Satin, Pattern Overlay
+  after Edit > Define Pattern (repeated from the picture's corner); Cancel leaves no style; OK is one step.
+- Keys: after ticking Lock, moving a slider, choosing from a list, or Enter in an options-bar number box, the
+  tool keys, [ ] and Ctrl+Z work; B stays on Brush, Shift+B goes to Pencil; a tool letter mid-stroke keeps the
+  stroke; Delete and Backspace with nothing selected do nothing and say so; Alt+Backspace / Ctrl+Backspace fill
+  with the foreground / background colour; Ctrl+Shift+Alt+W opens Export As; Esc closes a menu (with its
+  submenu open); Esc mid-marquee drops it; Polygonal Lasso Backspace, Esc, Enter; renaming by double-click.
+- Magnetic Lasso: L, Shift+L, Shift+L reaches it; round a square 3 px off its edge, overlap 0.999; 8 px off,
+  still on the edge; round a blob on a busy striped noisy background with a 4 px unsteady hand, overlap 0.997;
+  Esc, Backspace to nothing, Backspace twice, double-click, a click on the first point, the pointer leaving the
+  picture and coming back, Shift at the first click adds; a flat picture gives about the polygon drawn.
+- Swatches: click = foreground, Ctrl+click = background, + keeps a colour (still there after the page is opened
+  again), right-click removes a kept one and leaves the built-in ones; keys work after a swatch click.
+- Drops: on the start screen (in and outside the box), on an open picture (a layer in the middle at its own
+  size), a bigger picture made to fit, refused while a box is open, a text file refused with a message: every
+  dragover and drop cancelled. The start screen's New... box (Esc, and 300 x 200 transparent).
+- Type: the words keep their size and colour when the bar was changed before clicking them; size and colour
+  changed while editing are taken; words moved with the Move tool open again.
+- Free Transform: W/H/Angle start at 100/100/0 each time; W 50 halves the layer; choosing another tool applies;
+  Esc leaves the layer exactly; type stays type (or says so).
+- Straighten by the Ruler line: level within 2 px, no see-through pixel, 564 x 352 as computed; keeping the
+  corners: level, 672 x 454. Crop 1:1 dragged in each of the four directions keeps its corner. Quick Mask with
+  nothing selected starts all-selected and black paint takes away. History Brush after 53 steps paints the
+  picture as opened; from a clicked circle it paints that step; History keeps Open + 50; a greyed step clicked
+  goes forward to it; Undo keeps the chosen layer.
+- Mends of the first review that hold: Shift+Alt before a marquee drag intersects; Quick Selection's first
+  stroke starts anew; a mask from the selection drops the selection; the Pencil is hard-edged; History names as
+  the menus (Unsharp Mask, Dust & Scratches, Motion Blur, Brightness/Contrast); the Histogram heading.
+- Phone 390 x 844: no sideways scrolling; every menu and every submenu with its shortcut column inside the
+  screen; Shadows/Highlights and Layer Style boxes fit; every button within the width (but see 8).
+- 12-megapixel photo (4000 x 3000), over the runs: opens in 0.5-0.6 s; Ctrl+G 0.3 s; moving into a group 0.4 s;
+  Merge Group 0.4 s; Magnetic Lasso first click 0.6-0.75 s, 0.08-0.10 s a move, Enter 0.7-0.9 s, selection within
+  4 px of the red block; Shadows/Highlights preview 1.6-2.7 s, OK 1.4-1.9 s.
+
+----------------------------------------------------------------------------------------------
+WHAT I COULD NOT TEST
+----------------------------------------------------------------------------------------------
+- A real drag of a file from the desktop, and what the browser does with an uncancelled one (only that the page
+  cancels the events).
+- The keys a browser keeps (Ctrl+T, Ctrl+N, Ctrl+Shift+N) in a real Chrome window, and a Mac's Cmd/Option.
+- The Magnetic Lasso on a touch screen: it follows the pointer moving with no button held, which a finger cannot
+  do (taps fix points); not tried with real touch.
+- Scroll bars: Playwright's headless Chromium hides them, so whether the 1366 x 768 tool column shows one is
+  not known; the numbers in finding 8 are measured.
+- How the effects and pictures look to a person (Adam's to judge); only numbers were compared.
+- Opening the tile's .psd in Photoshop, GIMP or Krita (only psd-tools and the tile itself read it back).
+- Crop with a turn and Perspective Crop with a group in the picture (finding 2 is from the code for those two).
+- Photoshop itself was not run: its behaviour is cited from Adobe's pages where so marked, else from memory.
+
+Runs: full run 1 (before the last checks were added) 230 checks, 32 failed; full runs 2, 3 and 4 on the frozen
+build: 289 checks, 48 failed each time, the same checks failing; about 4.5 minutes a run.

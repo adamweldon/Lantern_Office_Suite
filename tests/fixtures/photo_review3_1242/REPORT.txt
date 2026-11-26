@@ -1,0 +1,228 @@
+PHOTO TILE (Lantern 1.24.42) -- THIRD INDEPENDENT REVIEW: THE NEWEST PARTS
+==========================================================================
+Reviewer: a separate agent that did not write the tile. Date: 2026-11-26.
+Build tested: the frozen build photo_r2/index.html (Lantern.version 1.24.42), in headless Chromium (Playwright).
+Scope (as asked): layer groups; the PSD reader and writer at 16 and 32 bits (Lr16/Lr32, ZIP with prediction), the
+flattened picture of a see-through document, Mac Roman names, Curves with "Crv ", Selective Color; TIFF predictors;
+resolution in PNG/JPEG/BMP; the new adjustments' arithmetic; blend modes (Linear Dodge first); Expand/Contract/Border;
+the layer styles Satin, Pattern Overlay, Bevel & Emboss, Inner Glow.
+
+Files here
+  run_review.py   python3 run_review.py [path/to/index.html] [section ...] [--json cases.json]
+                  sections: groups psd tiff dpi adjust blend select fx. One "PASS ..."/"FAIL ..." line a check (and a
+                  few "INFO" lines that record without judging), last line "N checks, M failed". A full run takes ~15 s.
+  core.py         server, Chromium page, helpers; a .psd writer built by hand from Adobe's Photoshop File Format
+                  Specification (16/32-bit, Lr16/Lr32, raw/RLE/ZIP/ZIP-with-prediction), so inputs never come from Lantern.
+  pics.py         test pictures (numpy) and CIE Lab by the published formulas.
+  sec_*.py        the checks, one file a section.
+  inputs/         the TIFFs (written by ImageMagick/libtiff, two by hand from Adobe's TIFF Technical Note 3) and the
+                  hand-made .psd files (rewritten on each run, byte for byte the same). 88 KB.
+  cases.json      the run as found: 425 checks, 19 failed, plus 8 INFO rows. Each row: what was checked, what Lantern
+                  gave, what is right, how that is known, how sure.
+
+References used (never the tile's own comments): psd-tools 1.27 (its reader, and its compositor, whose blend modes and
+adjustments say in their comments which readings are pinned against Photoshop's renders), PIL 12, tifffile, ImageMagick
+6.9 / libtiff, scipy (exact Euclidean distance transform), numpy; Adobe's PSD spec, TIFF 6.0 and TIFF Technical Note 3,
+the PNG and JFIF specifications, W3C Compositing and Blending Level 1, Adobe's Photoshop help text where quoted.
+Every hand-made input is first read back by an independent reader ("input check" rows) before Lantern is judged on it.
+
+HOW SURE: "sure" = arithmetic or a published rule, reproduced; "high" = reproduced and an independent program that
+claims Photoshop fidelity agrees; "medium" = reproduced, but what Photoshop does is the reviewer's memory or another
+program's word.
+
+-----------------------------------------------------------------------------------------------------------------------
+FAILURES, MOST IMPORTANT FIRST
+-----------------------------------------------------------------------------------------------------------------------
+
+1. A pass-through group at less than 100% opacity, or with a mask, makes every half see-through pixel under it more
+   solid -- even where the group has nothing in it.                                               [sure]
+   Steps: a document with no background; a layer whose pixels are half see-through (alpha 128); above it a group
+   (Pass Through, Photoshop's usual) at 50% holding a layer that covers only the left half. (Checks "picture: pass-
+   through group at 50% opacity over a half see-through picture", "... with a mask over a half see-through picture",
+   and the psd-tools-made file "a pass-through group at opacity 100 over a half see-through layer".)
+   What happens: on the right half, where the group draws nothing, alpha goes 128 -> 160 (50% opacity) and 128 -> 192
+   (a mask, at 100%); with a group at 80% it would be 179. The colour stays; the pixel just gets more solid.
+   What is right: 128 -- a group that draws nothing over a pixel changes nothing there. psd-tools interpolates
+   between the backdrop and the group's result in premultiplied colour, so the backdrop counts once.
+   Why: PHOTO_COMPOSITE drawGroup(), pass-through branch: it copies the canvas (back), draws the group's layers onto it
+   (over, which already contains back), then lays over on back by source-over at the group's opacity -- the backdrop is
+   laid on itself, and source-over of a half see-through pixel on itself is more solid. A fix that keeps the backdrop
+   once: result = back x (1 - k) + over x k in premultiplied terms, k = opacity x mask (e.g. draw back, take k x mask
+   out of it with destination-out, then add over, masked and at alpha k, with "lighter").
+   Who meets it: anyone making a cut-out, logo or sticker on a transparent background who puts a group at less than
+   100% (or masks it): soft edges and shadows under the group thicken, in the PNG and in the .psd's flattened picture,
+   and the .psd then looks different in psd-tools/Photoshop than in Lantern. Opaque pictures are not affected.
+
+2. A layer clipped to a soft-edged layer picks up the base layer's own colour along the soft edge.   [high]
+   Steps: a soft disc (its edge fades over 4 px) on a picture; a solid layer above it with Clip on. The same at the top
+   level, inside a group, and with a group as the base (three checks).
+   What happens: at a pixel where the disc is 57% solid, Lantern shows (97,148,163); psd-tools shows (61,201,163),
+   which is 57% clipped colour over the picture with none of the disc's colour.
+   What is right: Photoshop's clipping mask composites the clipped layers onto the base and then uses the base's
+   transparency; psd-tools computes the clipped colour with the base taken as solid, then applies the base's alpha, so
+   a solid clipped layer hides the base's colour completely. (Adobe help: "the content of the base layer clips (masks)
+   the layers above it".)
+   Why: PHOTO_COMPOSITE drawRange(): the clipped layer is cut to the base's alpha (destination-in) and then laid by
+   source-over on a canvas that already holds the base, so at a half-solid edge it covers only half of the base. Not
+   new code: the first review's clipping test used a hard-edged base, where the two ways agree.
+   Who meets it: clipping a colour or texture layer to a soft brush stroke, a feathered cut-out, or anti-aliased text
+   leaves a halo of the base's colour round the edge.
+
+3. A flattened .psd with a saved selection (an "Alpha 1" channel) opens see-through, with its colours changed. [high]
+   Steps: inputs/flat_with_alpha_channel.psd -- no layers, RGB plus one extra channel, named in image resources 1006
+   ("Alpha 1") and 1053 (its id), as Photoshop saves a flattened picture (Background) with a saved selection.
+   What happens: the saved selection is used as transparency (alpha 0 to 253) and the colours are "un-matted" from
+   white (colour off by up to 226).
+   What is right: a solid picture with its colours as stored; the extra channel is a selection, not transparency (a
+   Background has none). psd-tools reads it so (its has_transparency() looks for a Mtrn/Mt16/Mt32 block or a negative
+   layer count, and treats channels named in 1053 as saved alpha channels).
+   Why: PHOTO_PSD_READ read(): "if (nch > base && !layers.length) planes[-1] = planes[base]" takes any extra channel
+   of a layerless file as transparency, and the new un-matting then follows it. Suggest: take it as transparency only
+   when the file says so (Mtrn/Mt16/Mt32, or a negative layer count), not when resources 1006/1053 name alpha channels.
+   Who meets it: print and product-photo work, where flattened PSDs with saved clipping selections are common.
+
+4. 32-bit .psd: transparency and layer masks are put through the sRGB colour curve.                  [sure]
+   Steps: inputs/lr32_c0.psd (alpha 0.5 at one pixel), a 32-bit layer with a layer mask of 0.5, and a layerless 32-bit
+   file with an alpha channel (three checks).
+   What happens: alpha 0.5 -> 188 (74% solid), mask 0.5 -> 188, layerless alpha 127/255 -> 187.
+   What is right: 128. Alpha and masks are coverage, never gamma-encoded; psd-tools reads all three as 0.5.
+   Why: PHOTO_PSD_READ to8() applies the linear-to-sRGB curve to every 32-bit channel, alpha (-1), masks (-2/-3) and
+   the flattened picture's alpha included. Colour channels are a separate question (finding 6).
+
+5. Hue/Saturation with a colour range (Reds, Blues ...) changes the Lightness of near-greys fully.      [high]
+   Steps: Hue/Saturation, Blues, Lightness -50, on (250,250,255) (white with a faint cool cast) and other near-greys;
+   Reds, Lightness +60, on (180,178,178).
+   What happens: (250,250,255) -> (125,125,128); (200,200,205) -> (100,100,103); (180,178,178) -> (225,224,224).
+   What is right: a few levels at most. psd-tools (its model fitted to Photoshop's renders) gives (249,249,252),
+   (199,199,202) and (180,179,179): a range's Lightness is scaled by how saturated the pixel is, so greys stay grey.
+   Why: PHOTO_ADJ_COLOR hueSat(): a range's weight is taken in full whenever the pixel's saturation is above 0
+   ("if (w && hh[1] > 0)"), and light() then moves the colour toward black or white by the whole amount.
+   Who meets it: darkening a blue sky with Blues -50 also turns white clouds, paper and snow with a slight blue cast
+   grey; brightening Reds lifts warm greys and skin shadows. (The range's Hue and Saturation are not affected the
+   same way: they act through the pixel's own saturation.)
+
+6. A 32-bit float means different things in a TIFF and in a PSD.                    [sure they differ; unsure which is right]
+   0.5 opens as 128 from a 32-bit TIFF and as 188 from a 32-bit PSD; 0.21404 as 55 and 128. PHOTO_TIFF sample()
+   multiplies by 255 (as libtiff/ImageMagick do); PHOTO_PSD_READ to8() applies the sRGB curve (as a display of
+   Photoshop's linear 32-bit documents would). Either may be defended; one picture should not come out two ways.
+
+7. Inner Glow size 0 draws a size-10 glow; Bevel & Emboss size 0 draws a size-5 bevel.                [medium]
+   The tile's own sliders offer 0 to 250. At 0 Lantern's picture is exactly the one size 10 (glow) or size 5 (bevel)
+   gives. In Photoshop the Size is how far the effect reaches in from the edge; at 0 it shows nothing (reviewer's
+   memory). Why: PHOTO_FX apply(): "e.size || 10" and "Math.max(1, e.size || 5)" read 0 as missing.
+
+8. A camera JPEG (resolution only in its EXIF, no JFIF segment) opens at 72 ppi.                     [medium]
+   A JPEG with EXIF XResolution/YResolution 300, ResolutionUnit inches (as cameras write), no APP0: Lantern 72; PIL
+   reads 300. PHOTO_FILES dpiIn() reads JFIF only, and only when the APP0 segment comes straight after the start
+   marker. Photoshop takes such a file's resolution from EXIF (reviewer's memory). Saving then stamps 72 into the copy.
+
+9. A 32-bit float TIFF with the horizontal predictor (2) opens as wrong pixels, without a word.          [sure]
+   inputs/t32_zip_p2.tif (ImageMagick/libtiff; libtiff reads it back exactly). Lantern: every pixel after the first
+   of a row is wrong (e.g. (29,0,0) for (29,103,177)). PHOTO_TIFF read() undoes predictor 2 only at 8 and 16 bits.
+   It should undo it on the 32-bit words too, or refuse the file plainly. Rare (most float TIFFs use predictor 3).
+
+10. Vivid Light with a pure black or pure white source.                                              [medium]
+   White (255) over black (0): Lantern 0, psd-tools 255; black over white: Lantern 255, psd-tools 0. psd-tools says
+   "inside Vivid Light the source extreme wins ... pinned against Photoshop's own render (#189)". Lantern takes the
+   backdrop's special cases of Color Dodge/Burn (PHOTO_BLEND burn()/dodge()). Not seen in Photoshop by this reviewer.
+
+11. Undo of a later step reopens a group that was shut by hand.                                       [medium]
+   Shut a group (toggleGroup, rightly not a History step), do anything else, Undo: the group is open again, because the
+   History states keep each layer's open flag. In Photoshop, opening and shutting groups is outside History (memory).
+
+-----------------------------------------------------------------------------------------------------------------------
+RECORDED, NOT JUDGED (the sources disagree, or Photoshop's behaviour is not known to the reviewer)
+-----------------------------------------------------------------------------------------------------------------------
+- Hard Mix where backdrop + source = 255 exactly: Lantern gives 255 (Adobe's help: "255 or greater ... 255");
+  psd-tools gives 0 unless the backdrop is above half, saying Photoshop's renders do so (#189).
+- A group clipped to the layer below: Lantern clips it and saves the flag; psd-tools ignores a group's clipping flag
+  ("In Photoshop, clipping groups are not supported"), so other programs may show the group unclipped.
+- Expand on a feathered selection makes its edge hard (255 out to the 50% line + r, then 0): the feather is lost.
+  Whether Photoshop keeps the feather is not known to the reviewer.
+- Legacy Brightness/Contrast at contrast 100: input 127 -> 0 (psd-tools 127, its line at an infinite slope); every
+  other setting tried matches psd-tools within 1.
+- Hue/Saturation colour ranges otherwise against psd-tools' fitted model: Reds hue+30/sat+40 within 5 (mean 0.6),
+  Greens sat -100 within 2; only the Lightness on near-greys (finding 5) is far off.
+- Pattern Overlay with no pattern defined yet leaves the layer as it was and says nothing (the dialog's label says to
+  define one first).
+- From reading the writer, not a check: a non-ASCII layer name's Pascal (old) name is written with one "?" for each
+  UTF-8 byte ("Café" -> "Caf??"); readers use the Unicode name (luni), which is right, so only programs that ignore
+  luni see it.
+
+-----------------------------------------------------------------------------------------------------------------------
+WHAT WAS RIGHT (briefly)
+-----------------------------------------------------------------------------------------------------------------------
+Groups: 21 of 26 grouped pictures match psd-tools' compositor on the .psd Lantern saves, within 4 levels: pass-through
+  and Normal groups with Multiply/Screen/Overlay layers inside, groups in Multiply/Difference/Hard Light, group
+  opacity over opaque pictures, group masks over opaque pictures, nested groups (three pass-through levels at 70%),
+  hidden groups and hidden layers, Invert/Levels/Curves adjustment layers inside pass-through groups (changing what is
+  under) and inside Normal groups (changing only the group), a layer clipped to a pass-through group, empty groups.
+  The saved tree (names in Unicode, nesting, modes, opacity, eyes, open/shut) is what psd-tools reads, also for 30
+  random trees up to four deep, and Lantern reopens its own files to the same tree. psd-tools-made grouped files open
+  with the same tree and the same picture (4 of 5; the fifth is finding 1).
+  Group Layers (one layer, a range holding a group; refuses a range that is not side by side), New Group (empty, saved
+  empty), Ungroup (nested: one level up; picture kept), Merge Group (five kinds: picture kept), toggle open/shut (no
+  History step, saved shut), Delete group (with its layers), Duplicate nested group (the copies belong to the copies,
+  pixels independent, saved as two whole groups), Move Layer into an open group / over a shut one / out at the top and
+  bottom / a whole group up and down, the tree whole after every move of 30 random trees, every move undone by the
+  opposite move, the Move tool moving a whole group, Merge Visible and Merge Down with groups, Undo and Redo of seven
+  group commands (tree and picture exact).
+PSD: 16-bit files with layers in Lr16 (raw, ZIP, ZIP with prediction): values exactly round(v/257), places, a group,
+  a multiply layer at opacity 200, Mac Roman name. 32-bit Lr32: raw, ZIP and ZIP-with-prediction give the same
+  pixels (psd-tools decodes the same hand-made bytes to the same floats). Layerless see-through 8- and 16-bit files:
+  the white taken off again (within 1.5 on colour x alpha). Lantern's own flattened picture: laid over white with its
+  alpha channel, as psd-tools expects. Mac Roman names: all 128 high bytes as Apple's table (Python's mac_roman, the
+  euro at 0xDB); luni preferred. Curves: written with both the old section and "Crv " (psd-tools reads the same points
+  in both, three cases, and composites as Lantern shows within 3); a hand-made Curves layer opens live. Selective
+  Color: relative and absolute written as Adobe's spec (first record zero, values clamped to +-100), psd-tools reads
+  them, Lantern reopens them; a hand-made one with a junk first record opens right. Hue/Saturation (master and
+  Colorize) and legacy Brightness/Contrast blocks read by psd-tools with the same settings.
+TIFF: 16-bit with the horizontal predictor: LZW and Deflate, little and big endian, chunky and planar, several strips,
+  16x16 tiles, grey and RGBA: exactly round(v/257) (RGBA within 1.5 on colour x alpha). 32-bit float with the
+  floating-point predictor: Deflate and LZW (libtiff's), and by hand per Technical Note 3 (grey in 2-row strips; RGBA
+  big-endian with alpha 0.5): all within 1 of round(v x 255); uncompressed float too.
+Resolution: PNG (one pHYs before IDAT, right CRC), JPEG (one JFIF, dots per inch), BMP (pixels per metre) and TIFF at
+  72, 72.5, 96, 150, 300, 600 ppi: PIL reads them back. Opening PIL's PNG/JPEG/BMP at 96, 240, 300: right (96.01 from a
+  PNG, which holds whole pixels per metre); pHYs unit 0 -> 72; JFIF in dots/cm -> 299.72. A 300 ppi PNG saved as PNG,
+  JPEG, BMP, TIFF and PSD stays 300.
+Adjustments: Hue/Saturation master hue/saturation/lightness and Colorize, 17 settings, match psd-tools within 3;
+  neutral changes nothing; saturation -100 gives the HSL-lightness grey; lightness +-100 white/black; greys stay grey;
+  alpha kept. Legacy Brightness/Contrast, 8 settings, within 1 of psd-tools. Shadows/Highlights: 0/0 changes nothing,
+  alpha kept, greys stay grey, shadows lift only the dark half, highlights darken only the light half, hues kept,
+  1 x 1 works. Match Color: no source changes nothing (within 1), Fade 100 changes nothing, matched picture takes the
+  source's Lab mean and spread (Reinhard), Neutralize removes a cast, alpha kept, a fully clear picture is left alone.
+  Replace Color: neutral changes nothing, colours beyond the fuzziness untouched, alpha kept, hue +120 turns the red
+  green. Selective Color: neutral changes nothing; each colour range leaves greys and the far colours untouched;
+  Adobe's own example right (50% + 10%: 55% relative, 60% absolute); relative cannot change pure white; absolute
+  whites cyan +50 gives 50% cyan; black (K) keeps greys grey; alpha kept; Reds magenta -100% makes red yellow.
+Blend modes: Linear Dodge (Add) at 100, 70, 50, 25% over solid and see-through backdrops matches min(1, b + s) laid on
+  by source-over (W3C 5.1) within 2, alpha as source-over's. All 26 other modes match psd-tools on every value pair
+  with both layers solid (within 2, three known disagreements set aside) and, at 100% and 70% over see-through
+  layers, on every pixel that is not on a knife edge (pixels whose blend jumps by more than 4 levels when a colour
+  moves 2 levels -- the canvas keeps a see-through colour only to about that -- are left out and counted in each
+  check's name). Dissolve: every pixel wholly source or backdrop, in proportion to the opacity.
+Selections: Expand by 1, 3, 10 of a rectangle, disc, ring and one pixel takes every pixel within r and nothing past
+  r + 1 (scipy's exact distance); straight edges move exactly r, hard; one pixel by 3 gives the 29 pixels. Contract
+  likewise; a too-big contract leaves no selection and no error. Expand 4 then Contract 4 gives the rectangle back.
+  Border 4, 7, 10: a band astride the edge, as wide as asked, nothing past it. The menu command equals the function.
+Layer styles: Satin, Pattern Overlay, Bevel & Emboss and Inner Glow at their defaults and at sizes 0, 1, 250 and 5000,
+  distances 0 and 250, depths 1 and 1000, altitudes 0 and 90, scales 1 and 1000: no error and the layer's alpha
+  exactly kept (the soft edge too), each visibly changing the inside at its defaults. Pattern Overlay tiles the
+  defined pattern from the document's corner exactly. All four on a 1 x 1 document, an empty layer, a 300 x 1 half
+  see-through line, together, and on a group: no error, alpha kept.
+
+-----------------------------------------------------------------------------------------------------------------------
+WHAT COULD NOT BE TESTED
+-----------------------------------------------------------------------------------------------------------------------
+- Photoshop itself. Where Photoshop's behaviour is named it is psd-tools' word (its comments say which readings are
+  pinned against Photoshop's renders) or the reviewer's memory, marked so.
+- Satin, Bevel & Emboss, Inner Glow and Pattern Overlay against any renderer: psd-tools draws none of them, so they
+  were judged only by the rules (inside only, alpha kept, no breakage), not by how they look.
+- Selective Color, Shadows/Highlights and Match Color against Photoshop's own numbers (proprietary; psd-tools has
+  none of them); they were held to the published examples and to rules.
+- Big pictures and speed: every input is small (at most 100 x 7 for the blend grid, 60 x 40 for selections).
+- 16-bit PSD channels packed with PackBits (the hand-made writer packs PackBits at 8 bits only); 32-bit float TIFF
+  with LZW in big-endian order (ImageMagick 6.9 wrote files that libtiff itself reads back as zeros, so they could not
+  serve as inputs; big-endian float with the predictor was tested with a hand-made Deflate file instead).
+- Group commands through the menus, keys and Layers panel: the commands were run through Lantern.photo.ops.exec only
+  (the second review drove the panel by clicks).

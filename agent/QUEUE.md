@@ -25,7 +25,7 @@ reviewer who did not write it, with right replies above all; replay
    into a block dropped (2); a PLC program's AT variables put in a VAR block
    of their own (1); a right sum kept when only the typed ANSWER disagrees
    (2). Drawings (a hidden shape brought forward, 2; the sunset sky Lantern
-   already wrote out, 1) wait for Adam's answer (QUESTIONS 1).
+   already wrote out, 1) wait for Adam's answer (QUESTIONS 2).
 5. The catalog and OPEN only where the model has a real choice; sums and
    things to make get the short prompt (the 0.8B: tool questions 17 of 21 on
    the short prompt, 10 on the library one, same processor).
@@ -76,13 +76,12 @@ slant is marked a box a letter. A PDF's maker's limits: said, and the work done 
 **Photo track: picture work to Photoshop's reach** (Adam, 2026-11-26: "Lantern
 should also offer the same for photoshop"). 1.24.42 is the Photo tile: of 57
 things from Adobe's Photoshop user guide (a PDF to Adam, "Lantern and
-Photoshop") it does 31, part of 19, not 4; 3 need Adobe's servers. Two reviews
+Photoshop") it does 36, part of 14, not 4; 3 need Adobe's servers. Two reviews
 (files and arithmetic; as a person uses it) found 75 failures, mended or kept
 with their reasons in tests/review_photo_1242.py; a second round tries the
-mended build. Left, in order: Smart Sharpen and Lens Blur; the Magnetic Lasso;
-a Swatches panel; text on a path; Warp's mesh and Puppet Warp; panoramas
-(Photomerge: matching features, then a homography each); custom shapes; rulers
-along the edges; camera RAW (L, each maker's own format); 16-bit editing (L).
+mended build. Left, in order: text on a path; Warp's mesh and Puppet Warp; panoramas
+(Photomerge: matching features, then a homography each); Lens Blur's depth
+map and the Blur Gallery; rulers along the edges; camera RAW (L, each maker's own format); 16-bit editing (L).
 The Hue/Saturation, Brightness/Contrast and Colorize arithmetic follows
 psd-tools' reading of Photoshop's files: a Photoshop to try them on would
 settle them.
@@ -255,7 +254,7 @@ tried by a reviewer:
   `tests/review2_pptx_1233.py`). EMF pictures drawn by Lantern (EMF_DRAW:
   Adam's Visio menus), a slide's pictures put together as they sat. Adam's ITW deck is
   ITW's training material: tried in the session, never committed. Waits on
-  Adam (QUESTIONS 1): whether PowerPoint opens the saves without a repair,
+  Adam (QUESTIONS 2): whether PowerPoint opens the saves without a repair,
   and whether Slides should keep a slide as PowerPoint lays it out. Left:
   where each box sat; WMF pictures (old clip art) and EMF+ only pictures;
   a chart drawn, not only its numbers; fonts and sizes; .odp; an old .ppt
@@ -323,8 +322,8 @@ tried by a reviewer:
    "Some practical steps here are not in these sources" where they are
    many); WHO's 2005 diarrhoea manual and the Sphere 2018 PDF, which no
    checker could open; the same for the Food tile's lessons and the other
-   tiles' (a lesson's `sources`, any tile); a trained reader (QUESTIONS 12);
-   the medicines (QUESTIONS 13). Check again when a named guideline is
+   tiles' (a lesson's `sources`, any tile); a trained reader (QUESTIONS 13);
+   the medicines (QUESTIONS 14). Check again when a named guideline is
    replaced (the NHS hypothermia page was past its review date).
 
 1. **The one-link starter: what 1.24.19 leaves** (`tools/starter`,
@@ -342,11 +341,11 @@ tried by a reviewer:
    the icons made without PowerShell, the Windows build not stripped,
    another Lantern or program on 8080 handled. **Still flagged** on Adam's
    home laptop with Windows's own protection (Bearfoos.A!ml: the copy of
-   itself and its icons). Adam: no signing for now (QUESTIONS 4). The free
+   itself and its icons). Adam: no signing for now (QUESTIONS 5). The free
    thing left to try: a starter that does not copy itself (its icons to the
    kit's Start Lantern), and the kit's downloads in the starter itself (Go),
    not the setup run hidden through PowerShell. Left:
-   - Adam's first real double-click (QUESTIONS 3): what SmartScreen and
+   - Adam's first real double-click (QUESTIONS 4): what SmartScreen and
      Gatekeeper show, how the corner button looks to him;
    - the page under the starter in a real browser (Playwright on the Linux
      job: the corner button, the list, Add, Stop), not only jsdom;
@@ -354,7 +353,7 @@ tried by a reviewer:
      run without `--plan small`, perhaps by hand: 3 GB more);
    - an offer's download for real (the library's 12 GB is too big for a
      run; the shelves' 5 GB perhaps);
-   - signing (QUESTIONS 4); a Mac icon in the Dock/Applications after the
+   - signing (QUESTIONS 5); a Mac icon in the Dock/Applications after the
      first run; Windows on ARM and an Intel Mac, built but not run;
    - an update: the starter could offer a newer Lantern.zip when the release
      has one (today it sets up the newest once, and Lantern.zip is laid over
@@ -478,7 +477,7 @@ tried by a reviewer:
      checks stay.
    - **Commands for constructions Lantern knows** (a sunset sky, a road to
      the horizon, a parallel bank of resistors, a note from the chord):
-     this is Adam's "words for things" (QUESTIONS 6); waits on his answer
+     this is Adam's "words for things" (QUESTIONS 7); waits on his answer
      there for drawings, not for circuits or music.
    - **State-tracking tools: already there.** `die-four-moves` has TURN:
      Die and passes; the brief's `die-four-moves-alone` is the same puzzle
@@ -910,7 +909,7 @@ with, and twenty questions tried in the search.
 
 | Tile | What it is | Audited | Notes |
 |---|---|---|---|
-| Photo | A picture editor (Photoshop's tools, PSD both ways) | new, 1.24.42, two reviews | 59 modules; see the Photo track above |
+| Photo | A picture editor (Photoshop's tools, PSD both ways) | new, 1.24.42, four reviews | 53 modules; see the Photo track above |
 | Health | First aid, water, survival | yes, 1.24.4 | 42 lessons (28 new, 13 corrected), a breath and pulse counter, bleach for water, Print, Chat gives the lesson for a health need. Left: no medicine (questions for Adam), no pictures, not read by a trained person; nothing yet on long illnesses (tuberculosis, HIV, diabetes, high blood pressure, epilepsy, asthma), skin and eye disease, family planning, care of the dying and the dead, disability |
 | Food | Nutrition, cooking, preserving | yes, 1.24.5, against two sources only | 10 lessons (2 new, 8 revised), the tables corrected (no oil covering; temperatures), no number for a child in the sum, a help guide, three bench conversations. Checked against the CDC's and the US home-preserving centre's pages only. Left: five lessons drafted on `wip-2026-11-06` (cassava and beans, storing grain, deficiency illnesses, bread, fuel); figures not read on a page (kcal and protein a day, vitamin C, calcium, the plate, cellar storage, the sum's equation); nothing on canning (not without pressure, time and acidity from a source) |
 | Farming | Organic growing, seed saving | no | |
