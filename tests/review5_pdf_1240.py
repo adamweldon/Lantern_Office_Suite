@@ -12,9 +12,9 @@
 import os, re, subprocess, sys, tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = os.path.join(ROOT, "tests", "fixtures", "pdf_review5_1240")
-SITE = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "site", "index.html")
+SITE = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(ROOT, "site", "index.html")
 OUT = tempfile.mkdtemp(prefix="review5_1240_")
-OLD = sys.argv[2] if len(sys.argv) > 2 else os.path.join(OUT, "r4.html")
+OLD = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 else os.path.join(OUT, "r4.html")
 if not os.path.exists(OLD):
     old = subprocess.run(["git", "show", "35d11bf:site/index.html"], cwd=ROOT, capture_output=True)
     open(OLD, "wb").write(old.stdout)
