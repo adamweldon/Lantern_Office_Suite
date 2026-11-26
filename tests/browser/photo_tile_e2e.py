@@ -272,6 +272,12 @@ with sync_playwright() as pw:
     gl = [pix(151, 140), pix(200, 140), pix(140, 140)]
     check("Inner Glow: light just inside the edge, the middle and the outside as they were", gl[0][0] > 140 and gl[1][:4] == [128, 128, 128, 255] and gl[2][3] == 0, gl)
     check("...Layer Style is one History step each time", hist()[-1] == "Layer Style" and hist()[-2] == "Layer Style", hist()[-3:])
+    J("Lantern.photo.api.exec('setFx', {fx: {satin: Lantern.photo.fx.defaults('satin')}})")
+    sa = [pix(x, 140) for x in range(152, 250, 6)] + [pix(140, 140)]
+    check("Satin: the grey square shaded inside, darker in places and never lighter, the outside left clear", min(p_[0] for p_ in sa[:-1]) < 110 and max(p_[0] for p_ in sa[:-1]) <= 128 and sa[-1][3] == 0, [p_[0] for p_ in sa])
+    J("(() => { var api = Lantern.photo.api, d = api.d, keep = d.active; d.active = 0; api.exec('selectShape', {x: 0, y: 0, w: 8, h: 8}); api.exec('definePattern', {}); api.exec('deselect'); d.active = keep; api.exec('setFx', {fx: {pattern: Lantern.photo.fx.defaults('pattern')}}); })()")
+    pat = J("(() => { var d = Lantern.photo.api.d, p = d.pattern.getContext('2d').getImageData(0, 0, 8, 8).data; return [p[0], p[1], p[2]]; })()")
+    check("Pattern Overlay: the square filled with the pattern made by Edit > Define Pattern", pix(160, 104)[:3] == pat and pix(140, 140)[3] == 0, (pix(160, 104), pat))
     # --- Groups: Ctrl+G, the Layers panel, Pass Through against Normal, saved for psd-tools, a psd-tools file with groups opened ---
     J("(() => { var api = Lantern.photo.api; api.exec('newLayer', {name: 'Square'}); api.exec('selectShape', {x: 20, y: 20, w: 60, h: 60}); api.exec('fill', {use: 'color', color: [0, 0, 255]}); api.exec('deselect'); })()")
     pg.keyboard.press("Control+g"); pg.wait_for_timeout(250)
@@ -302,6 +308,23 @@ with sync_playwright() as pw:
         gs = J("Lantern.photo.api.d.layers.map(function (l) { return [l.name, l.kind, l.blend, l.open]; })")
         check("a .psd psd-tools made with a group in a group opens with both groups, their modes, the inner one shut", [x[:3] for x in gs] == [["Back", "pixel", "normal"], ["Blue", "pixel", "normal"], ["Red", "pixel", "multiply"], ["Inner", "group", "pass-through"], ["Outer", "group", "normal"]] and gs[3][3] is False, gs)
         check("...and looks as psd-tools makes it (within 2 levels)", all(abs(flat(x, y)[c] - groups_comp[y, x][c]) <= 2 for x, y in [(20, 35), (60, 40), (100, 70), (5, 5)] for c in range(3)), [(flat(x, y)[:3], list(groups_comp[y, x])) for x, y in [(20, 35), (60, 40), (100, 70), (5, 5)]])
+    # --- Magnetic Lasso: one click on a disc's edge, the pointer moved round it up to 6 px off the edge, Enter ---
+    J("""() => { var P = Lantern.photo, M = P.math, cv = M.canvas(400, 300), g = M.ctx(cv), s = 7; g.fillStyle = '#d8d0c0'; g.fillRect(0, 0, 400, 300);
+      for (var i = 0; i < 3000; i++) { s = (s * 16807) % 2147483647; var x = s % 400; s = (s * 16807) % 2147483647; g.fillStyle = 'rgba(0,0,0,0.05)'; g.fillRect(x, s % 300, 3, 3); }
+      g.fillStyle = '#304060'; g.beginPath(); g.arc(200, 150, 80, 0, Math.PI * 2); g.fill(); P.api.openDoc(P.doc.fromCanvas(cv, 'disc')); }""")
+    pg.wait_for_timeout(600); tool("magLasso"); pg.mouse.click(*scr(280, 150))
+    import math
+    for k_ in range(1, 61):
+        t_ = 2 * math.pi * k_ / 60; rr = 80 + 6 * math.sin(k_ * 1.7); pg.mouse.move(*scr(200 + rr * math.cos(t_), 150 + rr * math.sin(t_)))
+    pg.keyboard.press("Enter"); pg.wait_for_timeout(300)
+    iou = J("""() => { var d = Lantern.photo.api.d, m = Lantern.photo.doc.selMask(d); if (!m) return 0; var a = 0, u = 0; for (var y = 0; y < d.h; y++) for (var x = 0; x < d.w; x++) { var p = m[y * d.w + x] > 127, q = (x - 200) * (x - 200) + (y - 150) * (y - 150) <= 6400; if (p && q) a++; if (p || q) u++; } return a / u; }""")
+    check("Magnetic Lasso: the line keeps to the disc's edge though the pointer wanders 6 px off it (overlap %.3f), one step \u201cMagnetic Lasso\u201d" % iou, iou > 0.97 and hist()[-1] == "Magnetic Lasso", (iou, hist()[-2:]))
+    # --- Swatches: a click sets the foreground colour, + keeps it ---
+    J("Array.prototype.forEach.call(document.querySelectorAll('.ph-side details'), function (x) { x.open = true; })")
+    pg.click(".ph-sw[aria-label='Swatch #ff8000']"); pg.wait_for_timeout(100)
+    fg1 = J("Lantern.photo.api.d.fg")
+    pg.click(".ph-sw[aria-label='Swatch #0000ff']", modifiers=["Control"]); bg1 = J("Lantern.photo.api.d.bg")
+    check("Swatches: a click gives the foreground colour, Ctrl+click the background", fg1 == [255, 128, 0] and bg1 == [0, 0, 255], (fg1, bg1))
     # --- Actions: record, play, batch ---
     J("Array.prototype.forEach.call(document.querySelectorAll('.ph-side details'), function (x) { x.open = true; })")
     J("(() => { Lantern.photo.api.d.active = 0; Lantern.photo.api.refresh(); })()")   # a picture layer (the file just opened has a group on top)
@@ -316,7 +339,8 @@ with sync_playwright() as pw:
     check("Batch: two pictures in, a zip of two out", len(z.namelist()) == 2, z.namelist())
     # --- keys and a phone ---
     pg.keyboard.press("b"); check("B picks the Brush", J("Lantern.photo.api.view.tool.id") == "brush")
-    pg.keyboard.press("b"); check("B again: the Pencil", J("Lantern.photo.api.view.tool.id") == "pencil")
+    pg.keyboard.press("b"); check("B again stays on the Brush (only Shift+B moves along, as Photoshop's default)", J("Lantern.photo.api.view.tool.id") == "brush")
+    pg.keyboard.press("Shift+B"); check("Shift+B: the Pencil", J("Lantern.photo.api.view.tool.id") == "pencil")
     pg.set_viewport_size({"width": 390, "height": 844}); pg.wait_for_timeout(400)
     check("on a phone: no sideways scrolling", J("document.documentElement.scrollWidth <= window.innerWidth + 1"), J("[document.documentElement.scrollWidth, window.innerWidth]"))
     check("no page errors", not errs, errs[:5])

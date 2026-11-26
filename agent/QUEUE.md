@@ -73,6 +73,20 @@ right; review 4's finding 14); a comb flattened by another program is read as
 separate digits (Redact's "Not found" says to drag over them); a word on a
 slant is marked a box a letter. A PDF's maker's limits: said, and the work done as the person asks (Adam, 2026-11-26; 1.24.41).
 
+**Photo track: picture work to Photoshop's reach** (Adam, 2026-11-26: "Lantern
+should also offer the same for photoshop"). 1.24.42 is the Photo tile: of 57
+things from Adobe's Photoshop user guide (a PDF to Adam, "Lantern and
+Photoshop") it does 31, part of 19, not 4; 3 need Adobe's servers. Two reviews
+(files and arithmetic; as a person uses it) found 75 failures, mended or kept
+with their reasons in tests/review_photo_1242.py; a second round tries the
+mended build. Left, in order: Smart Sharpen and Lens Blur; the Magnetic Lasso;
+a Swatches panel; text on a path; Warp's mesh and Puppet Warp; panoramas
+(Photomerge: matching features, then a homography each); custom shapes; rulers
+along the edges; camera RAW (L, each maker's own format); 16-bit editing (L).
+The Hue/Saturation, Brightness/Contrast and Colorize arithmetic follows
+psd-tools' reading of Photoshop's files: a Photoshop to try them on would
+settle them.
+
 Bench checks the gradebook found: die-four-moves fails "5, 4, 1" (the numbers
 in the order asked; the check wants the words); a right QUOTE refused on the
 0.8B's doc-oil-change (to trace); a choking child given the recovery-position
@@ -896,6 +910,7 @@ with, and twenty questions tried in the search.
 
 | Tile | What it is | Audited | Notes |
 |---|---|---|---|
+| Photo | A picture editor (Photoshop's tools, PSD both ways) | new, 1.24.42, two reviews | 59 modules; see the Photo track above |
 | Health | First aid, water, survival | yes, 1.24.4 | 42 lessons (28 new, 13 corrected), a breath and pulse counter, bleach for water, Print, Chat gives the lesson for a health need. Left: no medicine (questions for Adam), no pictures, not read by a trained person; nothing yet on long illnesses (tuberculosis, HIV, diabetes, high blood pressure, epilepsy, asthma), skin and eye disease, family planning, care of the dying and the dead, disability |
 | Food | Nutrition, cooking, preserving | yes, 1.24.5, against two sources only | 10 lessons (2 new, 8 revised), the tables corrected (no oil covering; temperatures), no number for a child in the sum, a help guide, three bench conversations. Checked against the CDC's and the US home-preserving centre's pages only. Left: five lessons drafted on `wip-2026-11-06` (cassava and beans, storing grain, deficiency illnesses, bread, fuel); figures not read on a page (kcal and protein a day, vitamin C, calcium, the plate, cellar storage, the sum's equation); nothing on canning (not without pressure, time and acidity from a source) |
 | Farming | Organic growing, seed saving | no | |

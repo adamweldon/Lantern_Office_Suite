@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.24.41 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.24.42 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0, or the
 // Zero-Clause BSD licence, 0BSD, if you prefer: LICENSE).
@@ -188,7 +188,7 @@
 //          Lantern.lists = {level(el), type(el), mark(type, n), css(scope)}
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.24.41",
+  version: "1.24.42",
   apps: {},
   order: []
 };
@@ -54454,6 +54454,8 @@ Lantern.RFB = (function () {
   // Curves: a natural cubic spline through the points [[in, out], ...] (0-255), flat beyond the end points, as a table of 256
   function curve(pts) {
     pts = pts.slice().sort(function (a, b) { return a[0] - b[0]; });
+    // two points at one input: the later one stands (a curve gives one output for each input)
+    pts = pts.filter(function (p, i) { return i === pts.length - 1 || pts[i + 1][0] !== p[0]; });
     var n = pts.length, lut = new Uint8ClampedArray(256), x, k;
     if (n === 0) { for (x = 0; x < 256; x++) lut[x] = x; return lut; }
     if (n === 1) { for (x = 0; x < 256; x++) lut[x] = clamp(pts[0][1]); return lut; }
@@ -54549,7 +54551,8 @@ Lantern.RFB = (function () {
     var lut = new Uint8ClampedArray(256), br = (p.brightness || 0), co = (p.contrast || 0);
     for (var x = 0; x < 256; x++) {
       var v;
-      if (p.legacy) v = (x + br - 127.5) * (co >= 0 ? (co >= 100 ? 255 : 100 / (100 - co)) : (100 + co) / 100) + 127.5;
+      // Legacy: a line through 127; more contrast steepens it after the brightness shift, less flattens it before (as psd-tools has it)
+      if (p.legacy) v = co >= 100 ? (x + br >= 128 ? 255 : 0) : co > 0 ? (x + br - 127) * 100 / (100 - co) + 127 : (x - 127) * (100 + co) / 100 + 127 + br;
       else {
         var b = Math.max(-1, Math.min(1, br / 150)), c = Math.max(-1, Math.min(1, co / 100)), u = x / 255;
         u = b < 0 ? u * (1 + b) : u + (1 - u) * b;
@@ -54597,8 +54600,10 @@ Lantern.RFB = (function () {
     for (var i = 0; i < a.length; i += 4) { var v = Math.round((Math.max(a[i], a[i + 1], a[i + 2]) + Math.min(a[i], a[i + 1], a[i + 2])) / 2); a[i] = a[i + 1] = a[i + 2] = v; }
   }
   // the values that leave clip (a fraction) of the pixels darker and lighter
+  // clip: the share of the darkest and lightest pixels let go (0.001, as Photoshop's 0.1%); a command's {clip} or {} works too
+  function clipOf(c) { if (c && typeof c === "object") c = c.clip; return typeof c === "number" && c >= 0 && c < 0.5 ? c : 0.001; }
   function clipPoints(hist, n, clip) {
-    var lo = 0, hi = 255, c = 0, cut = n * (clip == null ? 0.001 : clip);
+    var lo = 0, hi = 255, c = 0, cut = n * clipOf(clip);
     while (lo < 255 && c + hist[lo] <= cut) c += hist[lo++];
     c = 0; while (hi > 0 && c + hist[hi] <= cut) c += hist[hi--];
     return hi > lo ? [lo, hi] : [0, 255];
@@ -54664,22 +54669,28 @@ Lantern.RFB = (function () {
     if (p.colorize) return colorize(d, { hue: p.hue || 0, saturation: p.saturation == null ? 25 : p.saturation, lightness: p.lightness || 0 });
     var a = d.data, names = Object.keys(RANGES).filter(function (k) { return p[k]; });
     for (var i = 0; i < a.length; i += 4) {
-      var c = [a[i], a[i + 1], a[i + 2]], hh = M.hsl(c[0], c[1], c[2]), dh = p.hue || 0, ds = (p.saturation || 0) / 100, dl = (p.lightness || 0) / 100;
+      // the master Lightness first, then hue and saturation, then a colour range's lightness (the order psd-tools found Photoshop's files to need)
+      var c = [a[i], a[i + 1], a[i + 2]], ml = (p.lightness || 0) / 100;
+      if (ml) c = light(c, Math.max(-1, Math.min(1, ml)));
+      var hh = M.hsl(c[0], c[1], c[2]), dh = p.hue || 0, ms = (p.saturation || 0) / 100, ds = 0, dl = 0;
       for (var k = 0; k < names.length; k++) {
         var w = rangeWeight(hh[0], RANGES[names[k]]), q = p[names[k]];
         if (w && hh[1] > 0) { dh += w * (q.hue || 0); ds += w * (q.saturation || 0) / 100; dl += w * (q.lightness || 0) / 100; }
       }
-      if (dh) { var h2 = M.hsl(c[0], c[1], c[2]); c = M.rgbOfHsl(h2[0] + dh, h2[1], h2[2]); }
+      // the master Saturation works on HSL saturation, s / (1 - amount) up and s x (1 + amount) down (psd-tools' fit to Photoshop's files)
+      if (dh || ms) { var h2 = M.hsl(c[0], c[1], c[2]), s2 = h2[1]; if (ms > 0) s2 = Math.min(1, s2 / (1 - ms + 0.01)); else if (ms < 0) s2 = s2 * (1 + ms); c = M.rgbOfHsl(h2[0] + dh, s2, h2[2]); }
       if (ds) c = sat(c, Math.max(-1, Math.min(1, ds)));
       if (dl) c = light(c, Math.max(-1, Math.min(1, dl)));
       a[i] = clamp(c[0]); a[i + 1] = clamp(c[1]); a[i + 2] = clamp(c[2]);
     }
   }
   // Colorize: one hue, the saturation given, each pixel's own lightness (moved by lightness)
+  // (each pixel keeps its HSL lightness, as psd-tools, worked out from Photoshop's own files, has it; Black & White's Tint keeps the
+  // brightness the eye sees instead)
   function colorize(d, p) {
     var a = d.data, s = (p.saturation == null ? 25 : p.saturation) / 100, dl = (p.lightness || 0) / 100;
     for (var i = 0; i < a.length; i += 4) {
-      var l = M.lum(a[i], a[i + 1], a[i + 2]) / 255;
+      var l = (Math.max(a[i], a[i + 1], a[i + 2]) + Math.min(a[i], a[i + 1], a[i + 2])) / 510;
       l = dl < 0 ? l * (1 + dl) : l + (1 - l) * dl;
       var c = M.rgbOfHsl(p.hue || 0, s, l);
       a[i] = c[0]; a[i + 1] = c[1]; a[i + 2] = c[2];
@@ -54738,7 +54749,7 @@ Lantern.RFB = (function () {
   }
   // p = {r: [fromR, fromG, fromB, constant] (percent), g, b, mono: bool (the red row makes a grey)}
   function channelMixer(d, p) {
-    var rows = p.mono ? [p.r, p.r, p.r] : [p.r || [100, 0, 0, 0], p.g || [0, 100, 0, 0], p.b || [0, 0, 100, 0]], a = d.data;
+    var rows = p.mono ? [p.r || [40, 40, 20, 0], p.r || [40, 40, 20, 0], p.r || [40, 40, 20, 0]] : [p.r || [100, 0, 0, 0], p.g || [0, 100, 0, 0], p.b || [0, 0, 100, 0]], a = d.data;
     for (var i = 0; i < a.length; i += 4) {
       var c = [a[i], a[i + 1], a[i + 2]];
       for (var j = 0; j < 3; j++) { var q = rows[j]; a[i + j] = clamp((c[0] * q[0] + c[1] * q[1] + c[2] * q[2]) / 100 + 255 * (q[3] || 0) / 100); }
@@ -55666,12 +55677,13 @@ Lantern.RFB = (function () {
   }
   function expand(m, w, h, r) {
     var dd = distance(m, w, h, function (v) { return v >= 128; }), o = new Uint8Array(m.length);
-    for (var j = 0; j < m.length; j++) { var t = Math.sqrt(dd[j]); o[j] = t <= r - 0.5 ? 255 : t >= r + 0.5 ? m[j] : Math.max(m[j], clamp(255 * (r + 0.5 - t))); }
+    // distances run centre to centre, so the r-th ring out from an edge is at r: rings 1 to r are taken whole, the next in part where it is slanted
+    for (var j = 0; j < m.length; j++) { var t = Math.sqrt(dd[j]); o[j] = t <= r ? 255 : t >= r + 1 ? m[j] : Math.max(m[j], clamp(255 * (r + 1 - t))); }
     return o;
   }
   function contract(m, w, h, r) {
     var dd = distance(m, w, h, function (v) { return v < 128; }), o = new Uint8Array(m.length);
-    for (var j = 0; j < m.length; j++) { var t = Math.sqrt(dd[j]); o[j] = t <= r - 0.5 ? 0 : t >= r + 0.5 ? m[j] : Math.min(m[j], clamp(255 * (t - r + 0.5))); }
+    for (var j = 0; j < m.length; j++) { var t = Math.sqrt(dd[j]); o[j] = t <= r ? 0 : t >= r + 1 ? m[j] : Math.min(m[j], clamp(255 * (t - r))); }
     return o;
   }
   // a band of width px centred on the edge
@@ -56019,7 +56031,11 @@ Lantern.RFB = (function () {
       var names = ["rgb", "r", "g", "b"], bits = 0;
       names.forEach(function (n, k) { if (p[n] && p[n].length) bits |= 1 << k; });
       a.push(0); put16(a, 1); a.push(0, 0, 0, bits);
-      names.forEach(function (n) { if (!(p[n] && p[n].length)) return; var pts = p[n].slice().sort(function (x, y) { return x[0] - y[0]; }); put16(a, pts.length); pts.forEach(function (pt) { put16(a, pt[1]); put16(a, pt[0]); }); });
+      var used = names.filter(function (n) { return p[n] && p[n].length; }), sorted = function (n) { return p[n].slice().sort(function (x, y) { return x[0] - y[0]; }); };
+      used.forEach(function (n) { var pts = sorted(n); put16(a, pts.length); pts.forEach(function (pt) { put16(a, pt[1]); put16(a, pt[0]); }); });
+      // then the same curves again in the newer form Photoshop always adds ("Crv ", version 4, each with its channel's number)
+      a.push(0x43, 0x72, 0x76, 0x20); put16(a, 4); a.push(0, 0, used.length >> 8, used.length & 255);
+      used.forEach(function (n) { var pts = sorted(n); put16(a, names.indexOf(n)); put16(a, pts.length); pts.forEach(function (pt) { put16(a, pt[1]); put16(a, pt[0]); }); });
       return { key: "curv", bytes: a };
     }
     if (t === "hueSat") {
@@ -56054,7 +56070,8 @@ Lantern.RFB = (function () {
 // grayscale, indexed, CMYK (by the plain conversion, with no press profile),
 // Lab and bitmap pictures open; 16- and 32-bit channels are brought to 8.
 // Groups open as groups (nested ones too), with their hiding, opacity,
-// blending mode (Pass Through or another) and mask. Text, shapes and smart objects open as the pixels Photoshop drew
+// blending mode (Pass Through or another) and mask. 16- and 32-bit
+// documents' layers are read from where Photoshop keeps them (Lr16, Lr32). Text, shapes and smart objects open as the pixels Photoshop drew
 // for them; adjustment layers of the plain kinds open live. What is not
 // carried over is listed in notes, for the tile to say.
 (function () {
@@ -56103,6 +56120,16 @@ Lantern.RFB = (function () {
     var bpr = w * depth / 8, x, y;
     if (depth === 8) for (y = 0; y < h; y++) for (x = 1; x < w; x++) raw[y * bpr + x] = (raw[y * bpr + x] + raw[y * bpr + x - 1]) & 255;
     else if (depth === 16) for (y = 0; y < h; y++) for (x = 1; x < w; x++) { var o = y * bpr + x * 2, v = ((raw[o] << 8 | raw[o + 1]) + (raw[o - 2] << 8 | raw[o - 1])) & 0xffff; raw[o] = v >> 8; raw[o + 1] = v & 255; }
+    // 32-bit (Photoshop's way): each row holds every value's first byte, then every second byte ..., the row's bytes summed along it
+    else if (depth === 32) {
+      var row = new Uint8Array(bpr);
+      for (y = 0; y < h; y++) {
+        var off = y * bpr, k;
+        for (k = 1; k < bpr; k++) raw[off + k] = (raw[off + k] + raw[off + k - 1]) & 255;
+        for (x = 0; x < w; x++) for (k = 0; k < 4; k++) row[x * 4 + k] = raw[off + k * w + x];
+        raw.set(row, off);
+      }
+    }
   }
   function to8(raw, n, depth) {
     if (depth === 8) return raw;
@@ -56127,6 +56154,9 @@ Lantern.RFB = (function () {
     }
     return o;
   }
+  // a layer's own name (the Pascal string) is in Mac Roman when no Unicode name comes with it
+  var MAC = "\u00c4\u00c5\u00c7\u00c9\u00d1\u00d6\u00dc\u00e1\u00e0\u00e2\u00e4\u00e3\u00e5\u00e7\u00e9\u00e8\u00ea\u00eb\u00ed\u00ec\u00ee\u00ef\u00f1\u00f3\u00f2\u00f4\u00f6\u00f5\u00fa\u00f9\u00fb\u00fc\u2020\u00b0\u00a2\u00a3\u00a7\u2022\u00b6\u00df\u00ae\u00a9\u2122\u00b4\u00a8\u2260\u00c6\u00d8\u221e\u00b1\u2264\u2265\u00a5\u00b5\u2202\u2211\u220f\u03c0\u222b\u00aa\u00ba\u03a9\u00e6\u00f8\u00bf\u00a1\u00ac\u221a\u0192\u2248\u2206\u00ab\u00bb\u2026\u00a0\u00c0\u00c3\u00d5\u0152\u0153\u2013\u2014\u201c\u201d\u2018\u2019\u00f7\u25ca\u00ff\u0178\u2044\u20ac\u2039\u203a\ufb01\ufb02\u2021\u00b7\u201a\u201e\u2030\u00c2\u00ca\u00c1\u00cb\u00c8\u00cd\u00ce\u00cf\u00cc\u00d3\u00d4\uf8ff\u00d2\u00da\u00db\u00d9\u0131\u02c6\u02dc\u00af\u02d8\u02d9\u02da\u00b8\u02dd\u02db\u02c7";
+  function macRoman(s) { var o = ""; for (var i = 0; i < s.length; i++) { var c = s.charCodeAt(i); o += c < 128 ? s.charAt(i) : MAC.charAt(c - 128); } return o; }
   function read(bytes) {
     var r = new Reader(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)), notes = [];
     if (r.str(4) !== "8BPS") throw new Error("not a Photoshop file (it does not start 8BPS)");
@@ -56141,38 +56171,56 @@ Lantern.RFB = (function () {
       r.o = st + sz + (sz % 2);
     }
     r.o = resEnd;
+    // a layer info structure (the count, each record, then every channel's data) ending at end: the records with their channels read
+    function layerInfo(end) {
+        var count = Math.abs(r.s16()), recs = [];
+      for (var i = 0; i < count; i++) {
+        var t = r.s32(), lft = r.s32(), btm = r.s32(), rgt = r.s32(), cn = r.u16(), chans = [];
+        for (var c = 0; c < cn; c++) chans.push({ id: r.s16(), len: r.len(big) });
+        r.o += 4; var key = r.str(4), op = r.u8(), clip = r.u8(), flags = r.u8(); r.o++;
+        var exLen = r.u32(), exEnd = r.o + exLen, rec = { top: t, left: lft, w: rgt - lft, h: btm - t, chans: chans, blend: A.MODE[key] || "normal", opacity: op / 255, clip: clip === 1, visible: !(flags & 2), extra: {} };
+        var mLen = r.u32(), mEnd = r.o + mLen;
+        if (mLen >= 20) { var mt = r.s32(), ml = r.s32(), mb = r.s32(), mr = r.s32(), def = r.u8(), mf = r.u8(); rec.mask = { x: ml, y: mt, w: mr - ml, h: mb - mt, def: def, on: !(mf & 2), rel: !!(mf & 1) }; }
+        r.o = mEnd; var brLen = r.u32(); r.o += brLen;   // (the length read first: r.o += r.u32() would add to the old place)
+        var nlen = r.u8(); rec.name = macRoman(r.str(nlen)); r.o += (4 - ((nlen + 1) % 4)) % 4;
+        while (r.o + 12 <= exEnd) {
+          var sig = r.str(4); if (sig !== "8BIM" && sig !== "8B64") break;
+          var k2 = r.str(4), bigKey = big && /^(LMsk|Lr16|Lr32|Layr|Mt16|Mt32|Mtrn|Alph|FMsk|lnk2|FEid|FXid|PxSD)$/.test(k2), l2 = r.len(bigKey), s2 = r.o;
+          rec.extra[k2] = r.bytes(l2); r.o = s2 + l2;
+        }
+        if (rec.extra.luni) { var ub = rec.extra.luni, un = ((ub[0] << 24) | (ub[1] << 16) | (ub[2] << 8) | ub[3]) >>> 0, s = ""; for (var q = 0; q < un; q++) s += String.fromCharCode((ub[4 + q * 2] << 8) | ub[5 + q * 2]); rec.name = s.replace(/\u0000+$/, ""); }
+        r.o = exEnd; recs.push(rec);
+      }
+      recs.forEach(function (rec) {
+        var ch = {}, n = Math.max(0, rec.w) * Math.max(0, rec.h);
+        rec.chans.forEach(function (c) {
+          var end = r.o + c.len, isMask = c.id === -2 || c.id === -3, w = isMask && rec.mask ? rec.mask.w : rec.w, h = isMask && rec.mask ? rec.mask.h : rec.h;
+          if (c.len >= 2 && w > 0 && h > 0) { try { ch[c.id] = channel(r, w, h, depth, big, end); } catch (e) { notes.push("layer \u201c" + rec.name + "\u201d: " + e.message); } }
+          r.o = end;
+        });
+        rec.ch = ch; rec.n = n;
+      });
+      return recs;
+    }
     var lmLen = r.len(big), lmEnd = r.o + lmLen, layers = [];
     if (lmLen > 0) {
       var liLen = r.len(big), liEnd = r.o + liLen;
       if (liLen > 0) {
-        var count = Math.abs(r.s16()), recs = [];
-        for (var i = 0; i < count; i++) {
-          var t = r.s32(), lft = r.s32(), btm = r.s32(), rgt = r.s32(), cn = r.u16(), chans = [];
-          for (var c = 0; c < cn; c++) chans.push({ id: r.s16(), len: r.len(big) });
-          r.o += 4; var key = r.str(4), op = r.u8(), clip = r.u8(), flags = r.u8(); r.o++;
-          var exLen = r.u32(), exEnd = r.o + exLen, rec = { top: t, left: lft, w: rgt - lft, h: btm - t, chans: chans, blend: A.MODE[key] || "normal", opacity: op / 255, clip: clip === 1, visible: !(flags & 2), extra: {} };
-          var mLen = r.u32(), mEnd = r.o + mLen;
-          if (mLen >= 20) { var mt = r.s32(), ml = r.s32(), mb = r.s32(), mr = r.s32(), def = r.u8(), mf = r.u8(); rec.mask = { x: ml, y: mt, w: mr - ml, h: mb - mt, def: def, on: !(mf & 2), rel: !!(mf & 1) }; }
-          r.o = mEnd; var brLen = r.u32(); r.o += brLen;   // (the length read first: r.o += r.u32() would add to the old place)
-          var nlen = r.u8(); rec.name = r.str(nlen); r.o += (4 - ((nlen + 1) % 4)) % 4;
-          while (r.o + 12 <= exEnd) {
-            var sig = r.str(4); if (sig !== "8BIM" && sig !== "8B64") break;
-            var k2 = r.str(4), bigKey = big && /^(LMsk|Lr16|Lr32|Layr|Mt16|Mt32|Mtrn|Alph|FMsk|lnk2|FEid|FXid|PxSD)$/.test(k2), l2 = r.len(bigKey), s2 = r.o;
-            rec.extra[k2] = r.bytes(l2); r.o = s2 + l2;
-          }
-          if (rec.extra.luni) { var ub = rec.extra.luni, un = ((ub[0] << 24) | (ub[1] << 16) | (ub[2] << 8) | ub[3]) >>> 0, s = ""; for (var q = 0; q < un; q++) s += String.fromCharCode((ub[4 + q * 2] << 8) | ub[5 + q * 2]); rec.name = s.replace(/\u0000+$/, ""); }
-          r.o = exEnd; recs.push(rec);
+        build(layerInfo(liEnd));
+      }
+      // 16- and 32-bit documents: Photoshop keeps their layers in a block of their own (Lr16, Lr32) after the global mask info
+      r.o = liEnd;
+      if (!layers.length && r.o + 4 <= lmEnd) {
+        var gl = r.u32(); r.o += gl;
+        while (r.o + 12 <= lmEnd) {
+          var sg = r.str(4); if (sg !== "8BIM" && sg !== "8B64") break;
+          var kk = r.str(4), kl = r.len(big && /^(LMsk|Lr16|Lr32|Layr|Mt16|Mt32|Mtrn|Alph|FMsk|lnk2|FEid|FXid|PxSD)$/.test(kk)), ks = r.o;
+          if ((kk === "Lr16" || kk === "Lr32" || kk === "Layr") && kl > 2) { build(layerInfo(ks + kl)); break; }
+          r.o = ks + kl; while ((r.o - ks) % 2) r.o++;
         }
-        recs.forEach(function (rec) {
-          var ch = {}, n = Math.max(0, rec.w) * Math.max(0, rec.h);
-          rec.chans.forEach(function (c) {
-            var end = r.o + c.len, isMask = c.id === -2 || c.id === -3, w = isMask && rec.mask ? rec.mask.w : rec.w, h = isMask && rec.mask ? rec.mask.h : rec.h;
-            if (c.len >= 2 && w > 0 && h > 0) { try { ch[c.id] = channel(r, w, h, depth, big, end); } catch (e) { notes.push("layer \u201c" + rec.name + "\u201d: " + e.message); } }
-            r.o = end;
-          });
-          rec.ch = ch; rec.n = n;
-        });
-        r.o = liEnd;
+      }
+    }
+    function build(recs) {
         var stack = [], groupNo = 0;
         recs.forEach(function (rec) {
           var div = rec.extra.lsct || rec.extra.lsdk, dt = div ? (((div[0] << 24) | (div[1] << 16) | (div[2] << 8) | div[3]) >>> 0) : 0;
@@ -56199,13 +56247,12 @@ Lantern.RFB = (function () {
           if (rec.mask && mk) lay.mask = { x: rec.mask.x, y: rec.mask.y, w: rec.mask.w, h: rec.mask.h, data: mk, def: rec.mask.def, on: rec.mask.on };
           (stack.length ? stack[stack.length - 1] : layers).push(lay);
         });
-      }
     }
     r.o = lmEnd;
     var merged = null;
     if (r.o + 2 <= bytes.length) {
       try {
-        var comp = r.u16(), n = W * H, bpr = Math.ceil(W * depth / 8), planes = {}, cnt = Math.min(nch, mode === 4 ? 5 : 4);
+        var comp = r.u16(), n = W * H, bpr = Math.ceil(W * depth / 8), planes = {}, cnt = Math.min(nch, mode === 4 ? 5 : 4), c;
         if (comp === 1) {
           var counts = []; for (var y = 0; y < H * nch; y++) counts.push(big ? r.u32() : r.u16());
           for (c = 0; c < cnt; c++) { var raw = new Uint8Array(bpr * H); for (y = 0; y < H; y++) packbits(r.bytes(counts[c * H + y]), raw.subarray(y * bpr, (y + 1) * bpr), bpr); planes[c] = to8(raw, n, depth); }
@@ -56215,6 +56262,8 @@ Lantern.RFB = (function () {
         var base = mode === 3 || mode === 9 ? 3 : mode === 4 ? 4 : 1;
         if (nch > base && !layers.length) planes[-1] = planes[base];
         merged = rgba(planes, n, mode === 0 ? 1 : mode, palette);
+        // Photoshop keeps the flattened picture's colour laid over white where it is see-through: taken off again here
+        if (planes[-1]) for (var j = 0; j < n; j++) { var al = merged[j * 4 + 3]; if (al > 0 && al < 255) for (c = 0; c < 3; c++) merged[j * 4 + c] = Math.round((merged[j * 4 + c] - 255 * (1 - al / 255)) / (al / 255)); }
       } catch (e) { notes.push("the flattened picture: " + e.message); }
     }
     return { w: W, h: H, dpi: dpi, mode: mode, depth: depth, layers: layers, merged: merged, notes: notes };
@@ -56346,6 +56395,8 @@ Lantern.RFB = (function () {
     w.u32(0);
     w.at(lmPos, w.length - lmPos - 4);
     w.u16(1);
+    // the flattened picture: where it is see-through, its colour is kept laid over white (as Photoshop keeps it, and readers expect)
+    if (hasAlpha) { var cw = new Uint8ClampedArray(comp); for (k = 0; k < n; k++) { var al = cw[k * 4 + 3] / 255; if (al < 1) for (var cc = 0; cc < 3; cc++) cw[k * 4 + cc] = Math.round(cw[k * 4 + cc] * al + 255 * (1 - al)); } comp = cw; }
     var planes = [0, 1, 2].concat(hasAlpha ? [3] : []).map(function (c) { return rle(plane(comp, n, c), Wd, Hd); });
     planes.forEach(function (p) { for (var y = 0; y < p.counts.length; y++) w.u16(p.counts[y]); });
     planes.forEach(function (p) { w.put(p.data); });
@@ -56447,6 +56498,21 @@ Lantern.RFB = (function () {
       else if (comp === 8 || comp === 32946) data = L.inflate ? L.inflate(raw.subarray(2), len) : null;
       if (!data) throw new Error("a TIFF packed in a way Lantern does not read (" + comp + ")");
       if (pred === 2 && bps === 8) for (var yy = 0; yy < th; yy++) for (var xx = chunkSpp; xx < tw * chunkSpp; xx++) data[yy * rowBytes + xx] = (data[yy * rowBytes + xx] + data[yy * rowBytes + xx - chunkSpp]) & 255;
+      // 16-bit: the same, sample by sample, in the file's byte order
+      if (pred === 2 && bps === 16) for (yy = 0; yy < th; yy++) for (xx = chunkSpp; xx < tw * chunkSpp; xx++) {
+        var po = yy * rowBytes + xx * 2, pp = po - chunkSpp * 2, v16 = ((le ? data[po] | data[po + 1] << 8 : data[po] << 8 | data[po + 1]) + (le ? data[pp] | data[pp + 1] << 8 : data[pp] << 8 | data[pp + 1])) & 0xffff;
+        if (le) { data[po] = v16 & 255; data[po + 1] = v16 >> 8; } else { data[po] = v16 >> 8; data[po + 1] = v16 & 255; }
+      }
+      // 32-bit floating point (Adobe's TIFF Technical Note 3): each row's bytes summed along it, then put back from planes (most significant first)
+      if (pred === 3 && bps === 32) {
+        var wc = tw * chunkSpp, tmp = new Uint8Array(wc * 4);
+        for (yy = 0; yy < th; yy++) {
+          var ro = yy * rowBytes, k3, by3;
+          for (k3 = chunkSpp; k3 < wc * 4; k3++) data[ro + k3] = (data[ro + k3] + data[ro + k3 - chunkSpp]) & 255;
+          tmp.set(data.subarray(ro, ro + wc * 4));
+          for (k3 = 0; k3 < wc; k3++) for (by3 = 0; by3 < 4; by3++) data[ro + k3 * 4 + (le ? 3 - by3 : by3)] = tmp[by3 * wc + k3];
+        }
+      }
       var plane = planar === 2 ? Math.floor(ci / per) : 0, idx = ci % per, cx = (idx % across) * tw, cy = Math.floor(idx / across) * th, dst = planar === 2 ? planes[plane] : full, dstRow = Math.ceil(w * chunkSpp * bps / 8);
       for (yy = 0; yy < th && cy + yy < h; yy++) {
         var srcO = yy * rowBytes, dstO = (cy + yy) * dstRow + Math.ceil(cx * chunkSpp * bps / 8), nB = Math.min(rowBytes, dstRow - Math.ceil(cx * chunkSpp * bps / 8));
@@ -56616,11 +56682,11 @@ Lantern.RFB = (function () {
     return new Uint8Array(o);
   }
   // a 32-bit BMP (BITMAPV4 header so its alpha is read as alpha)
-  function bmp(w, h, rgba) {
+  function bmp(w, h, rgba, dpi) {
     var hdr = 14 + 108, size = hdr + w * h * 4, b = new Uint8Array(size), dv = new DataView(b.buffer);
     b[0] = 0x42; b[1] = 0x4d; dv.setUint32(2, size, true); dv.setUint32(10, hdr, true);
     dv.setUint32(14, 108, true); dv.setInt32(18, w, true); dv.setInt32(22, h, true); dv.setUint16(26, 1, true); dv.setUint16(28, 32, true); dv.setUint32(30, 3, true);
-    dv.setUint32(34, w * h * 4, true); dv.setUint32(38, 2835, true); dv.setUint32(42, 2835, true);
+    dv.setUint32(34, w * h * 4, true); var ppm = Math.round((dpi || 72) / 0.0254); dv.setUint32(38, ppm, true); dv.setUint32(42, ppm, true);
     dv.setUint32(54, 0x00ff0000, true); dv.setUint32(58, 0x0000ff00, true); dv.setUint32(62, 0x000000ff, true); dv.setUint32(66, 0xff000000, true); dv.setUint32(70, 0x73524742, true);
     for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) {
       var s = (y * w + x) * 4, d = hdr + ((h - 1 - y) * w + x) * 4;
@@ -56767,6 +56833,17 @@ Lantern.RFB = (function () {
     d.w = s.w; d.h = s.h; d.active = s.active; d.sel = s.sel; d.path = s.path || null; d.layers = s.layers.map(cloneLayer); d.channels = s.channels.slice(); d.guides = s.guides.slice();
     d.layers.forEach(function (l) { l.ver++; });
   }
+  // the last 50 steps are kept, and always the state the picture was opened in (as Photoshop keeps its opening snapshot): the History
+  // Brush paints from it however many steps follow
+  function trim(d) {
+    while (d.hist.length > KEEP + 1) { d.hist.splice(1, 1); if (d.historySource > 1) d.historySource--; else if (d.historySource === 1) d.historySource = 0; }
+  }
+  // the layer chosen stays chosen through Undo and Redo when it is still there (choosing a layer is not a step of its own)
+  function keepChosen(d, fn) {
+    var l = d.layers[d.active], id = l && l.id, em = d.editMask; fn();
+    if (id == null) return;
+    for (var k = 0; k < d.layers.length; k++) if (d.layers[k].id === id) { d.active = k; d.editMask = em && !!d.layers[k].mask; return; }
+  }
   // every change: fn() changes d; History gets the state after it, labelled
   function run(d, label, fn) {
     d.cmd++;
@@ -56775,22 +56852,22 @@ Lantern.RFB = (function () {
     try { out = fn(); } catch (e) { restore(d, d.hist[d.hist.length - 1].state); if (a0 < d.layers.length) d.active = a0; notify(d); throw e; }
     if (out === false) return out;
     d.hist.push({ label: label, state: snap(d) });
-    while (d.hist.length > KEEP + 1) d.hist.shift();
+    trim(d);
     d.redoStack = []; d.ver++; d.saved = false;
     notify(d);
     return out;
   }
   // a change made over time (a brush stroke, a drag): begin() at the press, end(label) at the release, cancel() on Escape
-  function begin(d) { d.cmd++; d.open = true; }
+  function begin(d) { d.cmd++; d.open = true; d.notesAt = d.notes ? d.notes.length : 0; }
   function end(d, label) {
     if (!d.open) return;
     d.open = false;
     d.hist.push({ label: label, state: snap(d) });
-    while (d.hist.length > KEEP + 1) d.hist.shift();
+    trim(d);
     d.redoStack = []; d.ver++; d.saved = false; notify(d);
   }
   // (the layer chosen since that step stays chosen: choosing a layer is not a step of its own)
-  function cancel(d) { if (!d.open) return; var a = d.active, m = d.editMask; d.open = false; restore(d, d.hist[d.hist.length - 1].state); if (a < d.layers.length) { d.active = a; d.editMask = m; } d.ver++; notify(d); }
+  function cancel(d) { if (!d.open) return; var a = d.active, m = d.editMask; d.open = false; if (d.notes && d.notesAt != null) d.notes.length = Math.min(d.notes.length, d.notesAt); restore(d, d.hist[d.hist.length - 1].state); if (a < d.layers.length) { d.active = a; d.editMask = m; } d.ver++; notify(d); }
   // the layer's canvas, ready to change: a copy the first time in this change (copy on write)
   function touch(d, l) {
     if (!l.cv) { l.cv = M.canvas(d.w, d.h); l.x = 0; l.y = 0; }
@@ -56807,13 +56884,13 @@ Lantern.RFB = (function () {
   function undo(d) {
     if (d.hist.length < 2) return false;
     d.redoStack.push(d.hist.pop());
-    restore(d, d.hist[d.hist.length - 1].state); d.ver++; notify(d);
+    keepChosen(d, function () { restore(d, d.hist[d.hist.length - 1].state); }); d.ver++; notify(d);
     return true;
   }
   function redo(d) {
     if (!d.redoStack.length) return false;
     var e = d.redoStack.pop(); d.hist.push(e);
-    restore(d, e.state); d.ver++; notify(d);
+    keepChosen(d, function () { restore(d, e.state); }); d.ver++; notify(d);
     return true;
   }
   // go to History state i (as clicking it in the History panel)
@@ -56885,12 +56962,15 @@ Lantern.RFB = (function () {
   if (!P || !P.math || !P.filter || !P.filter.random) return;
   var M = P.math, clamp = M.clamp;
   var CANVAS = { normal: "source-over", darken: "darken", multiply: "multiply", "color-burn": "color-burn", lighten: "lighten", screen: "screen", "color-dodge": "color-dodge",
-    "linear-dodge": "lighter", overlay: "overlay", "soft-light": "soft-light", "hard-light": "hard-light", difference: "difference", exclusion: "exclusion",
+    overlay: "overlay", "soft-light": "soft-light", "hard-light": "hard-light", difference: "difference", exclusion: "exclusion",
     hue: "hue", saturation: "saturation", color: "color", luminosity: "luminosity" };
   function burn(b, s) { return b >= 1 ? 1 : s <= 0 ? 0 : 1 - Math.min(1, (1 - b) / s); }
   function dodge(b, s) { return b <= 0 ? 0 : s >= 1 ? 1 : Math.min(1, b / (1 - s)); }
   var SEP = {
     "linear-burn": function (b, s) { return Math.max(0, b + s - 1); },
+    // Linear Dodge (Add): the sum, at most white, laid on as the other modes are (the browser's "lighter" adds the layers'
+    // see-through parts too, so a half-clear Add layer came out too bright and made what it lay on solid)
+    "linear-dodge": function (b, s) { return Math.min(1, b + s); },
     "vivid-light": function (b, s) { return s <= 0.5 ? burn(b, 2 * s) : dodge(b, 2 * s - 1); },
     "linear-light": function (b, s) { return Math.max(0, Math.min(1, b + 2 * s - 1)); },
     "pin-light": function (b, s) { return s <= 0.5 ? Math.min(b, 2 * s) : Math.max(b, 2 * s - 1); },
@@ -57370,7 +57450,9 @@ Lantern.RFB = (function () {
   if (!P || !P.ops || !P.compose) return;
   var O = P.ops, D = P.doc, M = P.math, C = P.compose;
   function idx(d, p) { return p && p.index != null ? p.index : d.active; }
-  O.def("newLayer", "New Layer", function (d, p) { D.add(d, D.layer({ name: p.name || "Layer " + (d.layers.length + 1), cv: M.canvas(d.w, d.h), blend: p.blend, opacity: p.opacity })); });
+  function nextName(d) { var k = 1; while (d.layers.some(function (l) { return l.name === "Layer " + k; })) k++; return "Layer " + k; }
+  O.nextName = nextName;
+  O.def("newLayer", "New Layer", function (d, p) { D.add(d, D.layer({ name: p.name || nextName(d), cv: M.canvas(d.w, d.h), blend: p.blend, opacity: p.opacity })); });
   // p = {cut}: a new layer of what the selection holds of this layer
   O.def("layerVia", function (p) { return p.cut ? "Layer Via Cut" : "Layer Via Copy"; }, function (d, p) {
     var l = D.active(d); if (!l || l.kind === "adjust") throw new Error("choose a picture layer first");
@@ -57378,7 +57460,7 @@ Lantern.RFB = (function () {
     O.rasterize(d, l);
     var cv = M.canvas(d.w, d.h), g = M.ctx(cv); g.drawImage(l.cv, l.x, l.y); g.globalCompositeOperation = "destination-in"; g.drawImage(d.sel, 0, 0);
     if (p.cut) { var t = D.touch(d, l), tg = M.ctx(t); tg.globalCompositeOperation = "destination-out"; tg.drawImage(d.sel, -l.x, -l.y); }
-    D.add(d, D.layer({ name: "Layer " + (d.layers.length + 1), cv: cv }));
+    D.add(d, D.layer({ name: nextName(d), cv: cv }));
   });
   O.def("duplicateLayer", "Duplicate Layer", function (d, p) { D.duplicate(d, idx(d, p)); });
   O.def("deleteLayer", "Delete Layer", function (d, p) { D.remove(d, idx(d, p)); });
@@ -57408,17 +57490,17 @@ Lantern.RFB = (function () {
     var m = mergeInto(d, vis), first = d.layers.indexOf(vis[0]);
     d.layers = d.layers.filter(function (l) { return !l.visible; }); d.layers.splice(Math.min(first, d.layers.length), 0, m); d.active = d.layers.indexOf(m);
   });
-  O.def("stampVisible", "Stamp Visible", function (d) { D.add(d, D.layer({ name: "Layer " + (d.layers.length + 1), cv: C.all(d) }), d.layers.length); });
+  O.def("stampVisible", "Stamp Visible", function (d) { D.add(d, D.layer({ name: nextName(d), cv: C.all(d) }), d.layers.length); });
   // p = {type, p (settings), name}: an adjustment layer above the active one, its mask the selection when there is one
   O.def("newAdjustment", function (p) { return "New " + (p.name || p.type) + " Layer"; }, function (d, p) {
     var l = D.add(d, D.layer({ kind: "adjust", name: p.name || p.type, adj: { type: p.type, p: p.p || {} } }));
-    if (d.sel) l.mask = { cv: M.copy(d.sel), x: 0, y: 0, on: true, def: 0 };
+    if (d.sel) { l.mask = { cv: M.copy(d.sel), x: 0, y: 0, on: true, def: 0 }; d.sel = null; }   // the selection is now the mask (and no longer a selection)
   });
   O.def("setAdjustment", "Modify Adjustment Layer", function (d, p) { var l = d.layers[idx(d, p)]; if (!l || l.kind !== "adjust") return false; l.adj = { type: l.adj.type, p: p.p }; l.ver++; });
   // p = {fillSpec: {type: "solid", color} | {type: "gradient", ...} | {type: "pattern", ...}, name}
   O.def("newFill", function (p) { return "New Fill Layer"; }, function (d, p) {
     var l = D.add(d, D.layer({ kind: "fill", name: p.name || "Fill", fillSpec: p.fillSpec }));
-    if (d.sel) l.mask = { cv: M.copy(d.sel), x: 0, y: 0, on: true, def: 0 };
+    if (d.sel) { l.mask = { cv: M.copy(d.sel), x: 0, y: 0, on: true, def: 0 }; d.sel = null; }
   });
   // p = {how: "reveal" | "hide" | "selection" | "transparency"}
   O.def("addMask", "Add Layer Mask", function (d, p) {
@@ -57428,6 +57510,7 @@ Lantern.RFB = (function () {
     else if (how === "selection" && d.sel) g.drawImage(d.sel, 0, 0);
     else if (how === "transparency") g.drawImage(C.render(d, l), 0, 0);
     l.mask = { cv: cv, x: 0, y: 0, on: true, def: 0 }; l.ver++;
+    if (how === "selection") d.sel = null;   // as Photoshop: the selection became the mask
     if (how === "transparency" && l.cv) { var t = D.touch(d, l), tg = M.ctx(t), id = tg.getImageData(0, 0, t.width, t.height); for (var j = 3; j < id.data.length; j += 4) if (id.data[j]) id.data[j] = 255; tg.putImageData(id, 0, 0); }
   });
   O.def("deleteMask", "Delete Layer Mask", function (d) { var l = D.active(d); if (!l || !l.mask) return false; l.mask = null; d.editMask = false; l.ver++; });
@@ -57707,7 +57790,7 @@ Lantern.RFB = (function () {
   O.def("reselect", "Reselect", function (d) { if (!d.lastSel) return false; d.sel = d.lastSel; });
   O.def("inverse", "Inverse", function (d) { var m = D.selMask(d), n = d.w * d.h, o = new Uint8Array(n); for (var j = 0; j < n; j++) o[j] = 255 - (m ? m[j] : 255); D.setSel(d, o); });
   // p = {shape: "rect" | "ellipse" | "poly", x, y, w, h, points: [[x, y], ...], mode, feather, antialias}
-  O.def("selectShape", function (p) { return p.shape === "ellipse" ? "Elliptical Marquee" : p.shape === "poly" ? "Lasso" : "Rectangular Marquee"; }, function (d, p) {
+  O.def("selectShape", function (p) { return p.label ? p.label : p.shape === "ellipse" ? "Elliptical Marquee" : p.shape === "poly" ? "Lasso" : "Rectangular Marquee"; }, function (d, p) {
     var cv = M.canvas(d.w, d.h), g = M.ctx(cv);
     g.fillStyle = "#000"; g.imageSmoothingEnabled = p.antialias !== false;
     g.beginPath();
@@ -57810,8 +57893,10 @@ Lantern.RFB = (function () {
     try { O.list.fill.fn(d, { use: p.use || "foreground", color: p.color, opacity: p.opacity }); } finally { d.sel = keep; }
   });
   // Delete: the selection emptied (on a layer that keeps its transparency, filled with the background colour)
-  O.def("clear", "Clear", function (d) {
+  O.def("clear", "Clear", function (d, p) {
     var l = D.active(d);
+    // Delete with nothing selected does not empty the whole layer (a slip of the finger would lose the picture): p.all asks for that
+    if (!d.sel && !(p && p.all)) throw new Error("nothing is selected: select what to clear first (Ctrl+A selects all of it)");
     if (l && l.lockAlpha) return O.list.fill.fn(d, { use: "background" });
     O.pixelOp(d, function (id, ctx) {
       var a = id.data;
@@ -57838,7 +57923,7 @@ Lantern.RFB = (function () {
   O.def("paste", "Paste", function (d, p) {
     var cv = p.canvas || clip.cv; if (!cv) throw new Error("nothing has been copied yet");
     var x = p.inPlace && !p.canvas ? clip.x : Math.round((d.w - cv.width) / 2), y = p.inPlace && !p.canvas ? clip.y : Math.round((d.h - cv.height) / 2);
-    D.add(d, D.layer({ name: "Layer " + (d.layers.length + 1), cv: M.copy(cv), x: x, y: y }));
+    D.add(d, D.layer({ name: O.nextName ? O.nextName(d) : "Layer " + (d.layers.length + 1), cv: M.copy(cv), x: x, y: y }));
   });
   O.def("definePattern", "Define Pattern", function (d) { var g = grab(d, true); if (!g) return false; d.pattern = g.cv; return false; }, { noHistory: true });
   // p = {opacity, blend}: the last step's change to the active layer lessened, or laid on by another mode
@@ -58030,7 +58115,7 @@ Lantern.RFB = (function () {
 // Exports: Lantern.photo.fx = {apply(d, l, cv) -> canvas, defaults(kind)}
 // ===========================================================================
 // Layer styles (fx): Drop Shadow, Outer Glow, Stroke, Inner Shadow, Inner
-// Glow, Bevel & Emboss, Color Overlay and Gradient Overlay, drawn from the layer's own shape each time
+// Glow, Bevel & Emboss, Satin, Color, Gradient and Pattern Overlay, drawn from the layer's own shape each time
 // it changes. A shadow is the shape in the shadow's colour, spread (made
 // solid out to spread% of its size), blurred by its size, and moved by its
 // distance away from the light's angle (Photoshop's default light comes from
@@ -58050,7 +58135,9 @@ Lantern.RFB = (function () {
       overlay: { on: true, color: [255, 0, 0], opacity: 1, blend: "normal" },
       gradient: { on: true, opacity: 1, angle: 90, stops: [[0, [0, 0, 0], 1], [1, [255, 255, 255], 1]] },
       innerGlow: { on: true, color: [255, 255, 190], opacity: 0.75, size: 10 },
-      bevel: { on: true, depth: 100, size: 5, angle: 120, altitude: 30, highlight: [255, 255, 255], hiOpacity: 0.75, shadowColor: [0, 0, 0], shOpacity: 0.75 } }[kind];
+      bevel: { on: true, depth: 100, size: 5, angle: 120, altitude: 30, highlight: [255, 255, 255], hiOpacity: 0.75, shadowColor: [0, 0, 0], shOpacity: 0.75 },
+      satin: { on: true, color: [0, 0, 0], opacity: 0.5, angle: 19, distance: 11, size: 14, invert: true },
+      pattern: { on: true, opacity: 1, scale: 100 } }[kind];
   }
   function alphaOf(cv) { var a = M.pixels(cv).data, m = new Uint8Array(cv.width * cv.height); for (var j = 0; j < m.length; j++) m[j] = a[j * 4 + 3]; return m; }
   function blur(m, w, h, r) { if (!(r > 0.3)) return m; var pl = new Float32Array(m.length), j; for (j = 0; j < m.length; j++) pl[j] = m[j]; var b = P.filter.blurPlane(pl, w, h, r / 2), o = new Uint8Array(m.length); for (j = 0; j < m.length; j++) o[j] = M.clamp(b[j]); return o; }
@@ -58069,7 +58156,7 @@ Lantern.RFB = (function () {
   function apply(d, l, cv) {
     var f = l.fx; if (!f) return cv;
     var on = function (k) { return f[k] && f[k].on !== false; };
-    if (!["shadow", "glow", "stroke", "inner", "overlay", "gradient", "innerGlow", "bevel"].some(on)) return cv;
+    if (!["shadow", "glow", "stroke", "inner", "overlay", "gradient", "innerGlow", "bevel", "satin", "pattern"].some(on)) return cv;
     var w = cv.width, h = cv.height, m = alphaOf(cv), out = M.canvas(w, h), g = M.ctx(out), e, j;
     if (on("shadow")) {
       e = f.shadow; var an = (e.angle == null ? 120 : e.angle) * Math.PI / 180, dist = e.distance || 0;
@@ -58088,6 +58175,8 @@ Lantern.RFB = (function () {
       if (P.shapes) P.shapes.gradient(gg, { stops: e.stops, style: e.style || "linear", reverse: e.reverse }, cx + Math.cos(ga) * r, cy + Math.sin(ga) * r, cx - Math.cos(ga) * r, cy - Math.sin(ga) * r, w, h);
       bg.save(); bg.globalCompositeOperation = "source-atop"; bg.globalAlpha = e.opacity == null ? 1 : e.opacity; bg.drawImage(gc, 0, 0); bg.restore();
     }
+    // Pattern Overlay: the pattern made with Edit > Define Pattern, repeated over the shape at its scale
+    if (on("pattern") && d && d.pattern) { e = f.pattern; var sc = (e.scale || 100) / 100; bg.save(); bg.globalCompositeOperation = "source-atop"; bg.globalAlpha = e.opacity == null ? 1 : e.opacity; bg.scale(sc, sc); bg.fillStyle = bg.createPattern(d.pattern, "repeat"); bg.fillRect(0, 0, w / sc, h / sc); bg.restore(); }
     if (on("overlay")) { e = f.overlay; bg.save(); bg.globalCompositeOperation = "source-atop"; bg.globalAlpha = e.opacity == null ? 1 : e.opacity; bg.fillStyle = M.hex(e.color || [255, 0, 0]); bg.fillRect(0, 0, w, h); bg.restore(); }
     if (on("inner")) {
       e = f.inner; var inv = new Uint8Array(m.length); for (j = 0; j < m.length; j++) inv[j] = 255 - m[j];
@@ -58095,8 +58184,17 @@ Lantern.RFB = (function () {
       bg.save(); bg.globalCompositeOperation = "source-atop"; bg.drawImage(sh, 0, 0); bg.restore();
     }
     // Inner Glow and Bevel & Emboss are worked on the pixels, so the shape's own edge (and its soft edge) keeps its alpha
-    if (on("innerGlow") || on("bevel")) {
+    if (on("innerGlow") || on("bevel") || on("satin")) {
       var bd = bg.getImageData(0, 0, w, h), q = bd.data, k, c;
+      // Satin: the shape moved its distance one way and the other along the angle, the difference softened by its size (and
+      // turned over when Invert is on), laid on by Multiply: the shading of folded silk
+      if (on("satin")) {
+        e = f.satin; var sa = (e.angle == null ? 19 : e.angle) * Math.PI / 180, sdx = Math.round(Math.cos(sa) * (e.distance == null ? 11 : e.distance)), sdy = Math.round(-Math.sin(sa) * (e.distance == null ? 11 : e.distance)), df = new Uint8Array(m.length);
+        for (var yy = 0; yy < h; yy++) for (var xx = 0; xx < w; xx++) { var x1 = xx - sdx, y1 = yy - sdy, x2 = xx + sdx, y2 = yy + sdy, m1 = x1 >= 0 && x1 < w && y1 >= 0 && y1 < h ? m[y1 * w + x1] : 0, m2 = x2 >= 0 && x2 < w && y2 >= 0 && y2 < h ? m[y2 * w + x2] : 0; df[yy * w + xx] = Math.abs(m1 - m2); }
+        df = blur(df, w, h, e.size == null ? 14 : e.size);
+        var sto = e.opacity == null ? 0.5 : e.opacity, scol = e.color || [0, 0, 0], inv = e.invert !== false;
+        for (j = 0; j < m.length; j++) { if (!q[j * 4 + 3]) continue; k = (inv ? 255 - df[j] : df[j]) / 255 * sto; for (c = 0; c < 3; c++) q[j * 4 + c] *= 1 - k * (1 - scol[c] / 255); }
+      }
       if (on("innerGlow")) {
         e = f.innerGlow; var iv = new Uint8Array(m.length); for (j = 0; j < m.length; j++) iv[j] = 255 - m[j];
         var gl = blur(iv, w, h, e.size || 10), gop = e.opacity == null ? 0.75 : e.opacity, gcol = e.color || [255, 255, 190];
@@ -58311,7 +58409,7 @@ Lantern.RFB = (function () {
     var s = Math.max(1, size), key = s.toFixed(1) + ":" + hard + ":" + (pencil ? 1 : 0);
     if (tipCache[key]) return tipCache[key];
     var n = Math.ceil(s) + 2, cv = M.canvas(n, n), g = M.ctx(cv), r = s / 2, c = n / 2;
-    if (pencil || s <= 1.5) { g.fillStyle = "#000"; if (s <= 2) g.fillRect(Math.floor(c - r), Math.floor(c - r), Math.max(1, Math.round(s)), Math.max(1, Math.round(s))); else { g.beginPath(); g.arc(c, c, r, 0, Math.PI * 2); g.fill(); } }
+    if (pencil || s <= 1.5) { g.fillStyle = "#000"; if (s <= 2) g.fillRect(Math.floor(c - r), Math.floor(c - r), Math.max(1, Math.round(s)), Math.max(1, Math.round(s))); else { var im = g.createImageData(g.canvas.width, g.canvas.height), W0 = g.canvas.width; for (var yy = 0; yy < g.canvas.height; yy++) for (var xx = 0; xx < W0; xx++) if ((xx + 0.5 - c) * (xx + 0.5 - c) + (yy + 0.5 - c) * (yy + 0.5 - c) <= r * r) im.data[(yy * W0 + xx) * 4 + 3] = 255; g.putImageData(im, 0, 0); } }   // every pixel in or out: no soft edge (the Pencil's)
     else {
       var h = Math.max(0, Math.min(0.99, hard / 100)), gr = g.createRadialGradient(c, c, 0, c, c, r);
       gr.addColorStop(0, "rgba(0,0,0,1)"); gr.addColorStop(h, "rgba(0,0,0,1)");
@@ -58458,7 +58556,10 @@ Lantern.RFB = (function () {
     var drag = null;
     T.def({ id: id, name: name, key: "M", group: "marquee", icon: shape === "ellipse" ? "\u25ef" : "\u25ad", tip: "Drag to select (Shift adds, Alt takes away)", opts: [SELMODE, FEATHER],
       down: function (pt, e, api) { drag = { a: pt, b: pt, mode: mode(e, api.opts(id)), alt: e.altKey && !e.shiftKey }; },
-      move: function (pt, e, api) { if (!drag) return; drag.b = pt; drag.square = e.shiftKey && drag.mode !== "add"; drag.centre = e.altKey && drag.mode !== "subtract"; api.view.render(); },
+      // Esc while dragging drops the box (as Photoshop's)
+      onKey: function (k, e, api) { if (k === "Escape" && drag) { drag = null; api.view.render(); return true; } return false; },
+      // Shift or Alt held from before the drag chose the mode (add, take away, both: intersect); held during it, they square and centre
+      move: function (pt, e, api) { if (!drag) return; drag.b = pt; drag.square = e.shiftKey && drag.mode !== "add" && drag.mode !== "intersect"; drag.centre = e.altKey && drag.mode !== "subtract" && drag.mode !== "intersect"; api.view.render(); },
       up: function (pt, e, api) {
         if (!drag) return; var r = rect(drag); drag = null;
         if (r.w < 1 || r.h < 1) { if (api.d.sel) api.exec("deselect"); api.view.render(); return; }
@@ -58483,7 +58584,7 @@ Lantern.RFB = (function () {
     up: function (pt, e, api) { if (!lasso) return; var l = lasso; lasso = null; if (l.pts.length < 3) { api.view.render(); return; } api.exec("selectShape", { shape: "poly", points: l.pts.map(function (p) { return [Math.round(p[0] * 10) / 10, Math.round(p[1] * 10) / 10]; }), mode: l.mode, feather: +api.opts("lasso").feather || 0 }); },
     overlay: function (g, v) { if (!lasso) return; g.lineWidth = 1 / v.zoom; g.strokeStyle = "#000"; g.beginPath(); lasso.pts.forEach(function (p, i) { if (i) g.lineTo(p[0], p[1]); else g.moveTo(p[0], p[1]); }); g.stroke(); } });
   var poly = null;
-  function closePoly(api) { var p = poly; poly = null; if (p && p.pts.length >= 3) api.exec("selectShape", { shape: "poly", points: p.pts, mode: p.mode, feather: +api.opts("polyLasso").feather || 0 }); api.view.render(); }
+  function closePoly(api) { var p = poly; poly = null; if (p && p.pts.length >= 3) api.exec("selectShape", { shape: "poly", label: "Polygonal Lasso", points: p.pts, mode: p.mode, feather: +api.opts("polyLasso").feather || 0 }); api.view.render(); }
   T.def({ id: "polyLasso", name: "Polygonal Lasso", key: "L", group: "lasso", icon: "\u2b20", tip: "Click corner after corner; double-click (or click the first corner) to close", opts: [SELMODE, FEATHER],
     down: function (pt, e, api) {
       if (!poly) { poly = { pts: [pt], mode: mode(e, api.opts("polyLasso")), at: pt }; return; }
@@ -58494,14 +58595,24 @@ Lantern.RFB = (function () {
     dbl: function (pt, e, api) { closePoly(api); },
     leave: function () { poly = null; },
     cancel: function (api) { poly = null; api.view.render(); },
+    // Backspace or Delete takes back the last corner, Esc drops the polygon (as Photoshop's); Enter closes it
+    onKey: function (k, e, api) {
+      if (!poly) return false;
+      if (k === "Backspace" || k === "Delete") { poly.pts.pop(); if (!poly.pts.length) poly = null; api.view.render(); return true; }
+      if (k === "Escape") { poly = null; api.view.render(); return true; }
+      if (k === "Enter") { closePoly(api); return true; }
+      return false;
+    },
     overlay: function (g, v) { if (!poly) return; g.lineWidth = 1 / v.zoom; g.strokeStyle = "#000"; g.beginPath(); poly.pts.concat([poly.at]).forEach(function (p, i) { if (i) g.lineTo(p[0], p[1]); else g.moveTo(p[0], p[1]); }); g.stroke(); } });
   T.def({ id: "wand", name: "Magic Wand", key: "W", group: "wand", icon: "\u2728", tip: "Click a colour to select it", opts: [SELMODE, { key: "tolerance", label: "Tolerance", type: "number", min: 0, max: 255, def: 32 },
     { key: "contiguous", label: "Contiguous", type: "check", def: true }, { key: "antialias", label: "Anti-alias", type: "check", def: true }, { key: "all", label: "Sample all layers", type: "check", def: false }],
     down: function (pt, e, api) { var o = api.opts("wand"); api.exec("wand", { x: Math.floor(pt[0]), y: Math.floor(pt[1]), tolerance: +o.tolerance, contiguous: !!o.contiguous, antialias: !!o.antialias, all: !!o.all, mode: mode(e, o) }); } });
   // Quick Selection: each dab adds what joins it within the tolerance (Alt: takes it away)
   var qs = null;
+  var qsLast = null;
   T.def({ id: "quickSelect", name: "Quick Selection", key: "W", group: "wand", icon: "\u270d", tip: "Paint over what to select; it spreads to like colours (Alt takes away)", opts: [{ key: "size", label: "Size", type: "range", min: 2, max: 200, def: 20 }, { key: "tolerance", label: "Tolerance", type: "number", min: 1, max: 100, def: 24 }],
-    down: function (pt, e, api) { qs = { mode: e.altKey ? "subtract" : "add", last: null }; P.doc.begin(api.d); this.move(pt, e, api); },
+    // the first stroke starts a new selection (unless Shift adds to the one there); the strokes after it add (as Photoshop's)
+    down: function (pt, e, api) { qs = { mode: e.altKey ? "subtract" : "add", last: null }; P.doc.begin(api.d); if (!e.shiftKey && !e.altKey && api.d.sel && api.d.sel !== qsLast) P.doc.setSel(api.d, null); this.move(pt, e, api); },
     move: function (pt, e, api) {
       if (!qs || (qs.last && Math.hypot(pt[0] - qs.last[0], pt[1] - qs.last[1]) < api.opts("quickSelect").size / 3)) return;
       qs.last = pt; var o = api.opts("quickSelect"), d = api.d, src = P.compose.flatPixels(d), r = o.size / 2, seeds = [];
@@ -58512,7 +58623,7 @@ Lantern.RFB = (function () {
       for (var j = 0; j < old.length; j++) out[j] = qs.mode === "add" ? Math.max(old[j], m[j]) : (m[j] ? 0 : old[j]);
       P.doc.setSel(d, P.sel.feather(out, d.w, d.h, 0.6)); api.view.render();
     },
-    up: function (pt, e, api) { if (!qs) return; qs = null; P.doc.end(api.d, "Quick Selection"); } });
+    up: function (pt, e, api) { if (!qs) return; qs = null; P.doc.end(api.d, "Quick Selection"); qsLast = api.d.sel; } });
   // Move: drags the layer (what is selected of it, if anything is); the arrow keys move it by 1 (Shift: 10)
   var mv = null;
   T.def({ id: "move", name: "Move", key: "V", group: "move", icon: "\u2725", tip: "Drag the layer (or what is selected of it); arrow keys nudge", cursor: "move", opts: [{ key: "autoSelect", label: "Auto-select layer", type: "check", def: false }],
@@ -58542,6 +58653,112 @@ Lantern.RFB = (function () {
     down: function (pt, e, api) { var v = api.view, s = v.toScreen(pt[0], pt[1]); v.zoomTo(v.zoom * (e.altKey ? 0.5 : 2), s[0], s[1]); } });
 })();
 // MODULE: PHOTO_TOOLS_SEL - END
+// MODULE: PHOTO_MAGNETIC - START
+// Depends: PHOTO_TOOLS, PHOTO_OPS_SELECT (selectShape), PHOTO_COMPOSITE (flatPixels)
+// Exports: tool "magLasso"; Lantern.photo.magnetic = {edges(imageData) -> cost, path(cost, w, h, a, b, margin) -> [[x, y] ...]}
+// ===========================================================================
+// The Magnetic Lasso (L, in the lasso group): click once on the edge of the
+// thing to select, then move the pointer along it without holding the
+// button: the line clings to the strongest edge near the pointer (the
+// cheapest path between the last fixed point and the pointer, where a pixel
+// on a sharp change of brightness is cheap: Mortensen and Barrett's
+// "intelligent scissors", 1995). Points are fixed as it goes (Frequency:
+// more, sooner); a click fixes one by hand; Backspace takes the last one
+// back; double-click or Enter closes it, or a click on the first point; Esc
+// drops it all. Width is how far from the pointer it looks for an edge.
+(function () {
+  var L = window.Lantern, P = L && L.photo;
+  if (!P || !P.tools || !P.ops || !P.compose) return;
+  var T = P.tools, M = P.math;
+  // the cost of passing through each pixel: low on a strong edge (Sobel on the brightness), high on flat colour
+  function edges(id) {
+    var w = id.width, h = id.height, a = id.data, l = new Float32Array(w * h), g = new Float32Array(w * h), mx = 1e-6, j, x, y;
+    for (j = 0; j < w * h; j++) l[j] = 0.299 * a[j * 4] + 0.587 * a[j * 4 + 1] + 0.114 * a[j * 4 + 2];
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+      var x0 = Math.max(0, x - 1), x1 = Math.min(w - 1, x + 1), y0 = Math.max(0, y - 1), y1 = Math.min(h - 1, y + 1);
+      var gx = l[y0 * w + x1] + 2 * l[y * w + x1] + l[y1 * w + x1] - l[y0 * w + x0] - 2 * l[y * w + x0] - l[y1 * w + x0];
+      var gy = l[y1 * w + x0] + 2 * l[y1 * w + x] + l[y1 * w + x1] - l[y0 * w + x0] - 2 * l[y0 * w + x] - l[y0 * w + x1];
+      j = y * w + x; g[j] = Math.sqrt(gx * gx + gy * gy); if (g[j] > mx) mx = g[j];
+    }
+    for (j = 0; j < g.length; j++) g[j] = 1 - g[j] / mx + 0.02;
+    return g;
+  }
+  // the cheapest 8-way path from a to b over cost, looked for in their box widened by margin (Dijkstra, a binary heap)
+  function path(cost, w, h, a, b, margin) {
+    var ax = Math.round(a[0]), ay = Math.round(a[1]), bx = Math.round(b[0]), by = Math.round(b[1]);
+    ax = Math.max(0, Math.min(w - 1, ax)); ay = Math.max(0, Math.min(h - 1, ay)); bx = Math.max(0, Math.min(w - 1, bx)); by = Math.max(0, Math.min(h - 1, by));
+    var x0 = Math.max(0, Math.min(ax, bx) - margin), y0 = Math.max(0, Math.min(ay, by) - margin), x1 = Math.min(w - 1, Math.max(ax, bx) + margin), y1 = Math.min(h - 1, Math.max(ay, by) + margin);
+    var W = x1 - x0 + 1, H = y1 - y0 + 1, n = W * H;
+    if (n > 400000) return [[ax, ay], [bx, by]];   // too far to look in one go: a straight piece (points are fixed more often)
+    var dist = new Float32Array(n), prev = new Int32Array(n), done = new Uint8Array(n), heap = new Int32Array(n * 4 + 8), hs = 0, k;
+    for (k = 0; k < n; k++) { dist[k] = 1e30; prev[k] = -1; }
+    function push(i) { var p = hs++; heap[p] = i; while (p > 0) { var q = (p - 1) >> 1; if (dist[heap[q]] <= dist[heap[p]]) break; var t = heap[q]; heap[q] = heap[p]; heap[p] = t; p = q; } }
+    function pop() { var top = heap[0]; heap[0] = heap[--hs]; var p = 0; for (;;) { var l = 2 * p + 1, r = l + 1, m = p; if (l < hs && dist[heap[l]] < dist[heap[m]]) m = l; if (r < hs && dist[heap[r]] < dist[heap[m]]) m = r; if (m === p) break; var t = heap[m]; heap[m] = heap[p]; heap[p] = t; p = m; } return top; }
+    var s = (ay - y0) * W + (ax - x0), goal = (by - y0) * W + (bx - x0), DX = [1, -1, 0, 0, 1, 1, -1, -1], DY = [0, 0, 1, -1, 1, -1, 1, -1];
+    dist[s] = 0; push(s);
+    while (hs) {
+      var i = pop(); if (done[i]) continue; done[i] = 1; if (i === goal) break;
+      var cx = i % W, cy = (i - cx) / W;
+      for (k = 0; k < 8; k++) {
+        var nx = cx + DX[k], ny = cy + DY[k]; if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        var ni = ny * W + nx; if (done[ni]) continue;
+        var nd = dist[i] + cost[(ny + y0) * w + nx + x0] * (k < 4 ? 1 : 1.4142);
+        if (nd < dist[ni]) { dist[ni] = nd; prev[ni] = i; if (hs < heap.length) push(ni); }
+      }
+    }
+    var out = [], c = goal; if (prev[c] < 0 && c !== s) return [[ax, ay], [bx, by]];
+    while (c >= 0) { out.push([c % W + x0, Math.floor(c / W) + y0]); if (c === s) break; c = prev[c]; }
+    return out.reverse();
+  }
+  var mg = null, costCache = { key: "", cost: null, w: 0, h: 0 };
+  function costOf(d) {
+    var key = d.ver + ":" + d.w + "x" + d.h;
+    if (costCache.key !== key) { costCache = { key: key, cost: edges(P.compose.flatPixels(d)), w: d.w, h: d.h }; }
+    return costCache;
+  }
+  function close(api) {
+    var m = mg; mg = null; if (!m) return;
+    var pts = m.fixed.concat(m.live.slice(1));
+    if (pts.length >= 3) api.exec("selectShape", { shape: "poly", label: "Magnetic Lasso", points: pts.map(function (p) { return [p[0] + 0.5, p[1] + 0.5]; }), mode: m.mode, feather: +api.opts("magLasso").feather || 0 });
+    api.view.render();
+  }
+  function fix(m, upto) { var seg = m.live.slice(1, upto + 1); m.fixed = m.fixed.concat(seg); m.anchors.push(m.fixed.length - 1); m.live = [m.fixed[m.fixed.length - 1]]; }
+  T.def({ id: "magLasso", name: "Magnetic Lasso", key: "L", group: "lasso", icon: "\u29bf", tip: "Click on an edge, then move along it (no button held); double-click or Enter closes; Backspace takes back a point, Esc drops it",
+    opts: [{ key: "mode", label: "", type: "select", options: ["new", "add", "subtract", "intersect"], def: "new" }, { key: "feather", label: "Feather", type: "number", min: 0, max: 250, def: 0 },
+      { key: "width", label: "Width", type: "number", min: 1, max: 256, def: 10 }, { key: "frequency", label: "Frequency", type: "number", min: 0, max: 100, def: 57 }],
+    down: function (pt, e, api) {
+      var o = api.opts("magLasso");
+      if (!mg) { var c = costOf(api.d), s = [Math.round(Math.max(0, Math.min(c.w - 1, pt[0]))), Math.round(Math.max(0, Math.min(c.h - 1, pt[1])))]; mg = { fixed: [s], live: [s], anchors: [0], mode: e.shiftKey && e.altKey ? "intersect" : e.shiftKey ? "add" : e.altKey ? "subtract" : (o.mode || "new") }; return; }
+      var f = mg.fixed[0]; if (mg.fixed.length > 8 && Math.hypot(pt[0] - f[0], pt[1] - f[1]) * api.view.zoom < 8) { this.hover(f, e, api); close(api); return; }
+      this.hover(pt, e, api); fix(mg, mg.live.length - 1);
+    },
+    hover: function (pt, e, api) {
+      if (!mg) return; var o = api.opts("magLasso"), c = costOf(api.d), last = mg.fixed[mg.fixed.length - 1];
+      mg.live = path(c.cost, c.w, c.h, last, pt, Math.max(2, +o.width || 10));
+      // a point fixed by itself once the live line is long (Frequency 100: every 20 pixels; 0: every 120)
+      var every = 20 + (100 - Math.max(0, Math.min(100, +o.frequency || 0))), len = 0;
+      for (var k = 1; k < mg.live.length; k++) { len += Math.hypot(mg.live[k][0] - mg.live[k - 1][0], mg.live[k][1] - mg.live[k - 1][1]); if (len > every) { fix(mg, Math.max(1, Math.floor(k * 0.6))); mg.live = path(c.cost, c.w, c.h, mg.fixed[mg.fixed.length - 1], pt, Math.max(2, +o.width || 10)); break; } }
+      api.view.render();
+    },
+    dbl: function (pt, e, api) { close(api); },
+    leave: function () { mg = null; },
+    cancel: function (api) { mg = null; api.view.render(); },
+    onKey: function (k, e, api) {
+      if (!mg) return false;
+      if (k === "Escape") { mg = null; api.view.render(); return true; }
+      if (k === "Enter") { close(api); return true; }
+      if (k === "Backspace" || k === "Delete") { if (mg.anchors.length <= 1) { mg = null; } else { mg.anchors.pop(); var at = mg.anchors[mg.anchors.length - 1]; mg.fixed = mg.fixed.slice(0, at + 1); mg.live = [mg.fixed[at]]; } api.view.render(); return true; }
+      return false;
+    },
+    overlay: function (g, v) {
+      if (!mg) return; g.lineWidth = 1.5 / v.zoom; g.strokeStyle = "#000"; g.beginPath();
+      mg.fixed.concat(mg.live.slice(1)).forEach(function (p, i) { if (i) g.lineTo(p[0] + 0.5, p[1] + 0.5); else g.moveTo(p[0] + 0.5, p[1] + 0.5); }); g.stroke();
+      var hs = 4 / v.zoom; g.fillStyle = "#fff"; g.strokeStyle = "#000";
+      mg.anchors.forEach(function (i) { var p = mg.fixed[i]; g.fillRect(p[0] + 0.5 - hs / 2, p[1] + 0.5 - hs / 2, hs, hs); g.strokeRect(p[0] + 0.5 - hs / 2, p[1] + 0.5 - hs / 2, hs, hs); });
+    } });
+  P.magnetic = { edges: edges, path: path };
+})();
+// MODULE: PHOTO_MAGNETIC - END
 // MODULE: PHOTO_TOOLS_RETOUCH - START
 // Depends: PHOTO_TOOLS, PHOTO_BRUSH, PHOTO_HEAL, PHOTO_OPS_EDIT, PHOTO_SEL_OPS
 // Exports: tools spotHeal, heal, patch, redEye, dodge, burn, sponge, blurTool, sharpenTool, smudge
@@ -58788,7 +59005,13 @@ Lantern.RFB = (function () {
         if (k.indexOf("t") >= 0) { b.y = dr.box.y + dy; b.h = dr.box.h - dy; } if (k.indexOf("b") >= 0) b.h = dr.box.h + dy;
       }
       var rt = o.ratio === "original" ? d.w / d.h : o.ratio !== "free" ? (function (s) { var p = s.split(":"); return +p[0] / +p[1]; })(o.ratio) : 0;
-      if (rt && dr.kind !== "move" && dr.kind !== "turn") b.h = b.w / rt;
+      // a fixed ratio: the height follows the width, and the box keeps the corner (or side) the drag holds still
+      if (rt && dr.kind !== "move" && dr.kind !== "turn") {
+        var nh = b.w / rt;
+        if (dr.kind === "new") { if (pt[1] < dr.a[1]) b.y = dr.a[1] - nh; }
+        else if (dr.kind.indexOf("t") >= 0) b.y = dr.box.y + dr.box.h - nh;
+        b.h = nh;
+      }
       api.status("Crop " + Math.round(Math.abs(b.w)) + " \u00d7 " + Math.round(Math.abs(b.h)) + (cr.angle ? ", turned " + (cr.angle * 180 / Math.PI).toFixed(1) + "\u00b0" : "") + " \u2014 Enter to crop");
       api.view.render();
     },
@@ -58824,8 +59047,16 @@ Lantern.RFB = (function () {
   var ty = null;
   function finishType(api) {
     if (!ty) return; var t = ty; ty = null; if (t.box && t.box.parentNode) t.box.parentNode.removeChild(t.box);
+    if (!t.box) { api.view.render(); return; }   // (the box was never opened: nothing typed)
     var str = t.box.value; if (!str.trim()) { api.view.render(); return; }
     var o = api.opts("type"), spec = { str: str, x: t.x, y: t.y, font: o.font, size: +o.size, color: api.d.fg.slice(), bold: !!o.bold, italic: !!o.italic, align: o.align, tracking: +o.tracking || 0, box: t.para ? { w: t.para.w, h: t.para.h } : null, angle: 0 };
+    // words edited keep their own settings; only what was changed on the options bar (or the colour) while editing changes them
+    if (t.layer != null && t.own) {
+      var keep = JSON.parse(JSON.stringify(t.own)); keep.str = str;
+      ["font", "size", "bold", "italic", "align", "tracking"].forEach(function (k) { if (String(o[k]) !== String(t.o0[k])) keep[k] = spec[k]; });
+      if (api.d.fg.join() !== t.fg0.join()) keep.color = api.d.fg.slice();
+      spec = keep;
+    }
     if (t.layer != null) api.exec("setText", { index: t.layer, text: spec }); else api.exec("newText", { text: spec });
   }
   T.def({ id: "type", name: "Type", key: "T", group: "type", icon: "T", cursor: "text", tip: "Click to type a line, or drag a box for a paragraph; click away to finish", opts: [{ key: "font", label: "", type: "select", options: P.text.FONTS, def: "Arial" },
@@ -58837,7 +59068,12 @@ Lantern.RFB = (function () {
       var d = api.d, hit = null;
       for (var i = d.layers.length - 1; i >= 0; i--) { var l = d.layers[i]; if (l.kind !== "text" || !l.visible) continue; var m = P.text.measure(l.text); if (pt[0] >= l.text.x - 4 && pt[0] <= l.text.x + m.w + 4 && pt[1] >= l.text.y - l.text.size && pt[1] <= l.text.y - l.text.size + m.h) { hit = i; break; } }
       ty = { a: pt, x: pt[0], y: pt[1] + (+api.opts("type").size) * 0.8, drag: true, layer: hit };
-      if (hit != null) { var tl = d.layers[hit]; ty.x = tl.text.x; ty.y = tl.text.y; ty.para = tl.text.box; ty.str = tl.text.str; d.active = hit; }
+      if (hit != null) {
+        var tl = d.layers[hit]; ty.x = tl.text.x; ty.y = tl.text.y; ty.para = tl.text.box; ty.str = tl.text.str; d.active = hit; ty.own = tl.text;
+        // the options bar shows the words' own settings while they are edited (as Photoshop's)
+        ["font", "size", "bold", "italic", "align", "tracking"].forEach(function (k) { if (tl.text[k] != null) api.setOpt("type", k, tl.text[k]); });
+        if (api.showOpts) api.showOpts(); ty.o0 = api.opts("type"); ty.fg0 = d.fg.slice();   // (the foreground colour is left as it is: a new colour picked while editing recolours the words)
+      }
     },
     move: function (pt, e, api) { if (ty && ty.drag && ty.layer == null) { var w = pt[0] - ty.a[0], h = pt[1] - ty.a[1]; ty.para = w > 10 && h > 10 ? { w: w, h: h } : null; api.view.render(); } },
     up: function (pt, e, api) {
@@ -58845,7 +59081,7 @@ Lantern.RFB = (function () {
       var o = api.opts("type"), v = api.view, s = v.toScreen(ty.para ? ty.a[0] : ty.x, ty.para ? ty.a[1] : ty.y - o.size * 0.9), box = document.createElement("textarea");
       if (ty.para) ty.y = ty.a[1] + o.size * 0.9;
       box.className = "ph-typebox"; box.value = ty.str || ""; box.style.left = s[0] + "px"; box.style.top = s[1] + "px";
-      box.style.font = (o.italic ? "italic " : "") + (o.bold ? "bold " : "") + Math.max(8, o.size * v.zoom) + "px " + o.font; box.style.color = M.hex(api.d.fg);
+      box.style.font = (o.italic ? "italic " : "") + (o.bold ? "bold " : "") + Math.max(8, o.size * v.zoom) + "px " + o.font; box.style.color = M.hex(ty.own && ty.own.color ? ty.own.color : api.d.fg);
       if (ty.para) { box.style.width = ty.para.w * v.zoom + "px"; box.style.height = ty.para.h * v.zoom + "px"; } else { box.rows = 1; box.style.width = Math.max(120, (ty.str || "").length * o.size * 0.6 * v.zoom + 40) + "px"; }
       box.addEventListener("keydown", function (ev) { ev.stopPropagation(); if (ev.key === "Escape") { box.value = ty && ty.str || ""; finishType(api); } if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey || ev.location === 3)) { ev.preventDefault(); finishType(api); } });
       box.addEventListener("input", function () { if (!ty.para) { box.rows = box.value.split("\n").length; } });
@@ -58940,8 +59176,10 @@ Lantern.RFB = (function () {
   }
   T.def({ id: "transform", name: "Free Transform", key: null, hidden: true, icon: "\u2922", tip: "Drag corners to scale, outside to turn, Ctrl+corner to distort; Enter applies", cursor: "default",
     opts: [{ key: "w", label: "W %", type: "number", min: 1, max: 10000, def: 100, live: true }, { key: "h", label: "H %", type: "number", min: 1, max: 10000, def: 100, live: true }, { key: "angle", label: "Angle", type: "number", min: -360, max: 360, def: 0, live: true }],
-    enter: function (api) { if (!start(api)) { api.setTool(api.prevTool || "move"); return; } api.status("Free Transform: Enter applies, Esc leaves it"); api.view.render(); },
-    leave: function (api) { unhide(api); st = null; api.view.render(); },
+    // each Free Transform starts at 100 %, 100 %, 0 degrees
+    enter: function (api) { api.setOpt("transform", "w", 100); api.setOpt("transform", "h", 100); api.setOpt("transform", "angle", 0); if (!start(api)) { api.setTool(api.prevTool || "move"); return; } api.status("Free Transform: Enter applies, Esc leaves it"); api.view.render(); },
+    // another tool chosen part-way: the transform is applied, not lost (Esc first leaves the layer as it was)
+    leave: function (api) { if (st) { commit(api); api.status("Free Transform applied (Esc, before choosing another tool, leaves the layer as it was)"); } unhide(api); st = null; api.view.render(); },
     optChange: function (api, o) {
       if (!st) return; var b = st.box, c = [b.x + b.w / 2, b.y + b.h / 2], w = b.w * o.w / 100, h = b.h * o.h / 100, a = o.angle * Math.PI / 180;
       st.q = [[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]].map(function (p) { return [c[0] + p[0] * Math.cos(a) - p[1] * Math.sin(a), c[1] + p[0] * Math.sin(a) + p[1] * Math.cos(a)]; });
@@ -59045,7 +59283,7 @@ Lantern.RFB = (function () {
     return { el: cv, paint: paint };
   }
   function dialog(api, spec) {
-    var p = {}, k, host = api.dialogHost(), timer = null, big = api.d.w * api.d.h > 2500000;
+    var p = {}, k, host = api.dialogHost(), timer = null, big = api.d ? api.d.w * api.d.h > 2500000 : false;
     for (k in (spec.init || {})) p[k] = typeof spec.init[k] === "object" && spec.init[k] ? JSON.parse(JSON.stringify(spec.init[k])) : spec.init[k];
     var prevOn = spec.preview !== false, box = el("div", { "class": "ph-dialog", role: "dialog", "aria-label": spec.title }), body = el("div", { "class": "ph-dbody" });
     function changed() {
@@ -59082,15 +59320,19 @@ Lantern.RFB = (function () {
     });
     function rebuild() { close(true); spec.init = p; dialog(api, spec); }
     var pv = el("input", { type: "checkbox" }); pv.checked = prevOn;
-    pv.onchange = function () { prevOn = pv.checked; if (prevOn) changed(); else if (api.d.open) { D.cancel(api.d); api.view.render(); } };
-    var okB = el("button", { "class": "primary", text: "OK", onclick: function () { close(); if (api.d.open) D.cancel(api.d); try { if (spec.ok) spec.ok(p); else if (spec.cmd) api.exec(spec.cmd, p); } catch (e) { api.status(e.message); } } });
-    var noB = el("button", { text: "Cancel", onclick: function () { close(); if (api.d.open) D.cancel(api.d); if (spec.cancel) spec.cancel(); api.view.render(); } });
+    pv.onchange = function () { prevOn = pv.checked; if (prevOn) changed(); else if (api.d && api.d.open) { D.cancel(api.d); api.view.render(); } };
+    var okB = el("button", { "class": "primary", text: "OK", onclick: function () { close(); if (api.d && api.d.open) D.cancel(api.d); try { if (spec.ok) spec.ok(p); else if (spec.cmd) api.exec(spec.cmd, p); } catch (e) { api.status(e.message); } } });
+    var noB = el("button", { text: "Cancel", onclick: function () { close(); if (api.d && api.d.open) D.cancel(api.d); if (spec.cancel) spec.cancel(); if (api.view) api.view.render(); } });
     box.appendChild(el("div", { "class": "ph-dtitle", text: spec.title }));
     box.appendChild(body);
     box.appendChild(el("div", { "class": "ph-dfoot" }, [spec.cmd || spec.change ? el("label", {}, [pv, el("span", { text: " Preview" })]) : null, el("span", { style: "flex:1" }), noB, okB]));
     box.addEventListener("keydown", function (e) { e.stopPropagation(); if (e.key === "Escape") noB.click(); if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") okB.click(); });
-    function close(keep) { clearTimeout(timer); if (box.parentNode) box.parentNode.removeChild(box); if (!keep && api.dialogClosed) api.dialogClosed(); }
-    host.innerHTML = ""; host.appendChild(box);
+    // the box holds the picture while it is open (as Photoshop's): a click on the picture says so and changes nothing, and no other
+    // command runs till OK or Cancel (a tool may be chosen meanwhile)
+    var shade = el("div", { "class": "ph-modal", title: "Finish the box first: OK or Cancel" });
+    shade.addEventListener("pointerdown", function (e) { e.preventDefault(); e.stopPropagation(); api.status("finish the \u201c" + spec.title + "\u201d box first: OK or Cancel"); box.style.outline = "3px solid #2563eb"; setTimeout(function () { box.style.outline = ""; }, 400); });
+    function close(keep) { clearTimeout(timer); if (box.parentNode) box.parentNode.removeChild(box); if (shade.parentNode) shade.parentNode.removeChild(shade); if (!keep && api.dialogClosed) api.dialogClosed(); }
+    host.innerHTML = ""; host.appendChild(shade); host.appendChild(box);
     setTimeout(function () { var f = box.querySelector("input,select,button"); if (f) f.focus(); }, 0);
     if (prevOn && !spec.noInitialPreview) changed();
     return { close: close, p: p };
@@ -59237,13 +59479,15 @@ Lantern.RFB = (function () {
       P.dialog(api, { title: t.title, fields: t.fields(api), init: init, cmd: cmd });
       return;
     }
-    if (layerIndex == null) { api.exec("newAdjustment", { type: type, p: init, name: t.title }); layerIndex = d.active; }
+    var fresh = layerIndex == null, made = d.hist.length;
+    if (fresh) { api.exec("newAdjustment", { type: type, p: init, name: t.title }); layerIndex = d.active; made = d.hist.length; }
     var l = d.layers[layerIndex], before = JSON.parse(JSON.stringify(l.adj.p));
     if (!t.fields(api).length) return;
     P.dialog(api, { title: t.title + " (adjustment layer)", fields: t.fields(api), init: init,
       change: function (p) { l.adj = { type: type, p: JSON.parse(JSON.stringify(p)) }; l.ver++; d.ver++; api.view.render(); },
       ok: function (p) { l.adj = { type: type, p: before }; api.exec("setAdjustment", { index: d.layers.indexOf(l), p: p }); },
-      cancel: function () { l.adj = { type: type, p: before }; l.ver++; d.ver++; api.view.render(); } });
+      // Cancel on a layer just made takes the layer away again (a box's Cancel leaves nothing behind)
+      cancel: function () { l.adj = { type: type, p: before }; l.ver++; d.ver++; if (fresh && d.hist.length === made && P.doc.undo(d)) { d.redoStack.pop(); api.refresh(); } api.view.render(); } });
   }
   P.adjUI = { TYPES: TYPES, open: open };
 })();
@@ -59377,7 +59621,36 @@ Lantern.RFB = (function () {
         return d;
       }
       if (k === "tif") { var t = P.tiff.read(b); d = D.fromCanvas(canvasOfRGBA(t.w, t.h, t.rgba), name, { dpi: t.dpi }); d.notes = t.notes.slice(); d.exif = P.exif ? P.exif(b) : []; return d; }
-      return decode(b, k === "svg" ? "image/svg+xml" : "").then(function (cv) { var dd = D.fromCanvas(cv, name); dd.exif = P.exif ? P.exif(b) : []; return dd; });
+      return decode(b, k === "svg" ? "image/svg+xml" : "").then(function (cv) { var dd = D.fromCanvas(cv, name, { dpi: dpiIn(b) }); dd.exif = P.exif ? P.exif(b) : []; return dd; });
+    });
+  }
+  // the resolution a PNG (pHYs), JPEG (JFIF) or BMP file says it has, else 72
+  function dpiIn(b) {
+    var i, v = 0;
+    if (b[0] === 0x89 && b[1] === 0x50) { for (i = 8; i + 12 <= b.length;) { var ln = (b[i] << 24 | b[i + 1] << 16 | b[i + 2] << 8 | b[i + 3]) >>> 0, ty = String.fromCharCode(b[i + 4], b[i + 5], b[i + 6], b[i + 7]); if (ty === "pHYs" && b[i + 16] === 1) { v = ((b[i + 8] << 24 | b[i + 9] << 16 | b[i + 10] << 8 | b[i + 11]) >>> 0) * 0.0254; break; } if (ty === "IDAT") break; i += 12 + ln; } }
+    else if (b[0] === 0xff && b[1] === 0xd8 && b[6] === 0x4a && b[7] === 0x46 && b[8] === 0x49 && b[9] === 0x46) { var u = b[13], xd = b[14] << 8 | b[15]; v = u === 1 ? xd : u === 2 ? xd * 2.54 : 0; }
+    else if (b[0] === 0x42 && b[1] === 0x4d && b.length > 42) v = (b[38] | b[39] << 8 | b[40] << 16 | b[41] << 24) * 0.0254;
+    v = Math.round(v * 100) / 100; return v >= 1 && v < 100000 ? v : 72;
+  }
+  // a layer that shows: its eye open, and every group holding it shown too
+  function shown(d, l) { var seen = 0; while (l && seen++ < 64) { if (!l.visible) return false; if (l.gid == null || !C.byId) return true; var h = C.byId(d, l.gid); l = h < 0 ? null : d.layers[h]; } return true; }
+  var CRC = null;
+  function crc32(a) { if (!CRC) { CRC = new Int32Array(256); for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; CRC[n] = c; } } var x = -1; for (var i = 0; i < a.length; i++) x = CRC[(x ^ a[i]) & 255] ^ (x >>> 8); return (x ^ -1) >>> 0; }
+  // the picture's resolution written into what the browser made: a pHYs chunk in a PNG, the JFIF density of a JPEG
+  function stampDpi(blob, fmt, dpi) {
+    if (!dpi || !blob.arrayBuffer) return Promise.resolve(blob);
+    return blob.arrayBuffer().then(function (ab) {
+      var b = new Uint8Array(ab), out = b;
+      if (fmt === "png" && b[12] === 0x49 && b[13] === 0x48) {
+        var ppm = Math.round(dpi / 0.0254), ch = new Uint8Array(21), w4 = function (o, v) { ch[o] = v >>> 24 & 255; ch[o + 1] = v >>> 16 & 255; ch[o + 2] = v >>> 8 & 255; ch[o + 3] = v & 255; };
+        w4(0, 9); ch.set([0x70, 0x48, 0x59, 0x73], 4); w4(8, ppm); w4(12, ppm); ch[16] = 1; w4(17, crc32(ch.subarray(4, 17)));
+        out = new Uint8Array(b.length + 21); out.set(b.subarray(0, 33)); out.set(ch, 33); out.set(b.subarray(33), 54);
+      } else if (fmt === "jpg" && b[0] === 0xff && b[1] === 0xd8) {
+        var dd = Math.min(65535, Math.round(dpi));
+        if (b[2] === 0xff && b[3] === 0xe0 && b[6] === 0x4a && b[7] === 0x46 && b[8] === 0x49 && b[9] === 0x46) { out = new Uint8Array(b); out[13] = 1; out[14] = dd >> 8; out[15] = dd & 255; out[16] = dd >> 8; out[17] = dd & 255; }
+        else { var app = [0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 1, dd >> 8, dd & 255, dd >> 8, dd & 255, 0, 0]; out = new Uint8Array(b.length + app.length); out.set(b.subarray(0, 2)); out.set(app, 2); out.set(b.subarray(2), 2 + app.length); }
+      }
+      return new Blob([out], { type: blob.type });
     });
   }
   function blobOf(cv, type, q) { return new Promise(function (ok, no) { cv.toBlob(function (b) { if (b && b.type === type) ok(b); else no(new Error("this browser cannot write " + type.replace("image/", "").toUpperCase() + " pictures")); }, type, q); }); }
@@ -59404,15 +59677,15 @@ Lantern.RFB = (function () {
     opt = opt || {};
     var comp = C.all(d), name = (d.name || "Untitled") + "." + fmt;
     function flatOn(c) { var cv = M.canvas(d.w, d.h), g = M.ctx(cv); g.fillStyle = M.hex(c || [255, 255, 255]); g.fillRect(0, 0, d.w, d.h); g.drawImage(comp, 0, 0); return cv; }
-    if (fmt === "png") return blobOf(comp, "image/png").then(function (b) { return { blob: b, name: name }; });
-    if (fmt === "jpg") return blobOf(flatOn(opt.bg), "image/jpeg", Math.max(1, Math.min(12, opt.quality || 10)) / 12).then(function (b) { return { blob: b, name: name }; });
+    if (fmt === "png") return blobOf(comp, "image/png").then(function (b) { return stampDpi(b, "png", d.dpi); }).then(function (b) { return { blob: b, name: name }; });
+    if (fmt === "jpg") return blobOf(flatOn(opt.bg), "image/jpeg", Math.max(1, Math.min(12, opt.quality || 10)) / 12).then(function (b) { return stampDpi(b, "jpg", d.dpi); }).then(function (b) { return { blob: b, name: name }; });
     if (fmt === "webp") return blobOf(comp, "image/webp", (opt.quality || 10) / 12).then(function (b) { return { blob: b, name: name }; });
     var bytes;
-    if (fmt === "bmp") bytes = P.bmp(d.w, d.h, M.pixels(comp).data);
+    if (fmt === "bmp") bytes = P.bmp(d.w, d.h, M.pixels(comp).data, d.dpi);
     else if (fmt === "tif") bytes = P.tiff.write(d.w, d.h, M.pixels(comp).data, { lzw: opt.lzw !== false, dpi: d.dpi });
     else if (fmt === "pdf") bytes = pdf(flatOn(opt.bg), d.dpi);
     else if (fmt === "gif") {
-      var frames = opt.animate ? d.layers.filter(function (l) { return l.kind !== "adjust"; }).map(function (l) { var cv = M.canvas(d.w, d.h), g = M.ctx(cv); g.drawImage(C.render(d, l), 0, 0); return { rgba: M.pixels(cv).data, delay: opt.delay || 20, colors: opt.colors, dither: opt.dither }; })
+      var frames = opt.animate ? d.layers.filter(function (l) { return l.kind !== "adjust" && l.kind !== "group" && shown(d, l); }).map(function (l) { var cv = M.canvas(d.w, d.h), g = M.ctx(cv); g.drawImage(C.render(d, l), 0, 0); return { rgba: M.pixels(cv).data, delay: opt.delay || 20, colors: opt.colors, dither: opt.dither }; })
         : [{ rgba: M.pixels(comp).data, colors: opt.colors || 256, dither: opt.dither }];
       bytes = P.gif.write(frames, d.w, d.h, { loop: 0 });
     } else if (fmt === "psd") {
@@ -59429,6 +59702,12 @@ Lantern.RFB = (function () {
         var o = { name: l.name, visible: l.visible, opacity: l.opacity * (l.fill == null ? 1 : l.fill), blend: l.blend, clip: l.clip };
         if (l.kind === "group") { o.group = true; o.open = l.open !== false; if (l.fx) d.notes.push("group \u201c" + l.name + "\u201d keeps its layers in the .psd, but not its layer style"); }
         else if (l.kind === "adjust" && P.psdAdj.write(l.adj || {})) { o.adj = l.adj; }
+        else if (l.kind === "pixel" && !l.fx && l.cv) {
+          // a plain picture layer goes in as its own pixels, at its own place: what lies off the canvas is kept, as Photoshop keeps it
+          var lp = M.pixels(l.cv).data, lw = l.cv.width, lb = P.sel.bounds((function () { var m = new Uint8Array(lw * l.cv.height); for (var j = 0; j < m.length; j++) m[j] = lp[j * 4 + 3] ? 1 : 0; return m; })(), lw, l.cv.height) || { x: 0, y: 0, w: 0, h: 0 };
+          o.x = l.x + lb.x; o.y = l.y + lb.y; o.w = lb.w; o.h = lb.h;
+          if (lb.w) { var ls = M.canvas(lb.w, lb.h); M.ctx(ls).drawImage(l.cv, -lb.x, -lb.y); o.rgba = M.pixels(ls).data; }
+        }
         else {
           var keepMask = l.mask; l.mask = null; l.ver++;
           var cv = l.kind === "adjust" ? null : C.render(d, l); l.mask = keepMask; l.ver++;
@@ -59495,8 +59774,17 @@ Lantern.RFB = (function () {
       btn("\u2913", "Merge down (a group: Merge Group)", function () { var l = D.active(api.d); api.exec(l && l.kind === "group" && P.ops.list.mergeGroup ? "mergeGroup" : "mergeDown", {}); }), btn("\u2191", "Move up", function () { var d = api.d; if (d.active < d.layers.length - 1) api.exec("moveLayer", { to: d.active + 1 }); }),
       btn("\u2193", "Move down", function () { var d = api.d; if (d.active > 0) api.exec("moveLayer", { to: d.active - 1 }); }), btn("\ud83d\uddd1", "Delete layer", function () { api.exec("deleteLayer", {}); })]);
     box.appendChild(el("div", { "class": "ph-ptitle", text: "Layers" })); box.appendChild(ctl); box.appendChild(list); box.appendChild(bar);
+    var lastKey = "", rows = [];
     function update() {
-      var d = api.d, l = D.active(d); list.innerHTML = "";
+      var d = api.d, l = D.active(d);
+      // only the chosen layer changed: the rows stay as they are (rebuilt, a double-click on a name would land on a new row and never rename)
+      var key = d.layers.map(function (x) { return [x.id, x.ver, x.visible ? 1 : 0, x.name, x.kind, x.clip ? 1 : 0, x.fx ? 1 : 0, x.gid, x.open ? 1 : 0, x.mask ? (x.mask.on ? 1 : 0) : "-"].join(","); }).join("|") + "#" + (d.editMask ? d.active : -1);
+      if (key === lastKey && rows.length === d.layers.length) {
+        rows.forEach(function (r, i) { if (r) r.classList.toggle("on", i === d.active); });
+        if (l) { blend.options[0].hidden = blend.options[0].disabled = l.kind !== "group"; blend.value = l.blend; op.value = Math.round(l.opacity * 100); lockA.checked = !!l.lockAlpha; clip.checked = !!l.clip; }
+        return;
+      }
+      lastKey = key; rows = []; list.innerHTML = "";
       if (l) { blend.options[0].hidden = blend.options[0].disabled = l.kind !== "group"; blend.value = l.blend; op.value = Math.round(l.opacity * 100); lockA.checked = !!l.lockAlpha; clip.checked = !!l.clip; }
       for (var i = d.layers.length - 1; i >= 0; i--) (function (i) {
         var ly = d.layers[i], G = P.groups;
@@ -59510,14 +59798,14 @@ Lantern.RFB = (function () {
         th.onclick = function (e) { e.stopPropagation(); if (e.ctrlKey || e.metaKey) { api.exec("selectLayerAlpha", { index: i }); return; } d.active = i; d.editMask = false; api.refresh(); };
         if (ly.kind === "adjust") th.ondblclick = function (e) { e.stopPropagation(); if (P.adjUI) P.adjUI.open(api, ly.adj.type, true, i); };
         var name = el("span", { "class": "ph-lname", text: ly.name + (ly.kind === "text" ? "  T" : ly.kind === "shape" ? "  \u25b2" : "") + (ly.fx ? "  fx" : "") });
-        name.ondblclick = function (e) { e.stopPropagation(); var inp = el("input", { type: "text", value: ly.name, style: "width:120px" }); name.replaceWith(inp); inp.focus(); inp.select(); inp.onkeydown = function (ev) { ev.stopPropagation(); if (ev.key === "Enter") inp.blur(); if (ev.key === "Escape") { inp.value = ly.name; inp.blur(); } }; inp.onblur = function () { if (inp.value && inp.value !== ly.name) api.exec("setLayer", { index: i, name: inp.value }); else update(); }; };
+        name.ondblclick = function (e) { e.stopPropagation(); var inp = el("input", { type: "text", value: ly.name, style: "width:120px" }); name.replaceWith(inp); inp.focus(); inp.select(); inp.onkeydown = function (ev) { ev.stopPropagation(); if (ev.key === "Enter") inp.blur(); if (ev.key === "Escape") { inp.value = ly.name; inp.blur(); } }; inp.onblur = function () { if (inp.value && inp.value !== ly.name) api.exec("setLayer", { index: i, name: inp.value }); else { lastKey = ""; update(); } }; };
         row.appendChild(eye);
         if (ly.kind === "group") row.appendChild(el("button", { "class": "ph-eye ph-twist", text: ly.open ? "\u25be" : "\u25b8", title: ly.open ? "Shut the group" : "Open the group", "aria-label": (ly.open ? "Shut " : "Open ") + ly.name, "aria-expanded": ly.open ? "true" : "false", onclick: function (e) { e.stopPropagation(); api.exec("toggleGroup", { index: i }); api.refresh(); } }));
         row.appendChild(th);
         if (ly.mask) { var mt = maskThumb(d, ly); mt.title = "Layer mask: click to paint on it (Shift+click turns it off)"; if (d.editMask && i === d.active) mt.classList.add("on"); if (!ly.mask.on) mt.style.opacity = "0.35"; mt.onclick = function (e) { e.stopPropagation(); if (e.shiftKey) { api.exec("setLayer", { index: i, maskOn: !ly.mask.on }); return; } d.active = i; d.editMask = true; api.refresh(); api.status("Painting on the mask: black hides, white shows"); }; row.appendChild(mt); }
         row.appendChild(name);
         row.onclick = function () { d.active = i; d.editMask = false; api.refresh(); };
-        list.appendChild(row);
+        rows[i] = row; list.appendChild(row);
       })(i);
       var keep = {}; d.layers.forEach(function (ly) { keep[ly.id + ":" + ly.ver] = 1; }); for (var k in thumbs) if (!keep[k]) delete thumbs[k];
     }
@@ -59529,7 +59817,8 @@ Lantern.RFB = (function () {
     var before = l.fx ? JSON.parse(JSON.stringify(l.fx)) : null, cur = before ? JSON.parse(JSON.stringify(before)) : {};
     var defs = { shadow: ["Drop Shadow", [["opacity", 0, 1, 0.01], ["angle", -180, 180, 1], ["distance", 0, 300, 1], ["spread", 0, 100, 1], ["size", 0, 250, 1]]], glow: ["Outer Glow", [["opacity", 0, 1, 0.01], ["spread", 0, 100, 1], ["size", 0, 250, 1]]],
       stroke: ["Stroke", [["size", 1, 250, 1], ["opacity", 0, 1, 0.01]]], inner: ["Inner Shadow", [["opacity", 0, 1, 0.01], ["angle", -180, 180, 1], ["distance", 0, 300, 1], ["size", 0, 250, 1]]], overlay: ["Color Overlay", [["opacity", 0, 1, 0.01]]], gradient: ["Gradient Overlay", [["opacity", 0, 1, 0.01], ["angle", -180, 180, 1]]],
-      innerGlow: ["Inner Glow", [["opacity", 0, 1, 0.01], ["size", 0, 250, 1]]], bevel: ["Bevel & Emboss", [["depth", 1, 1000, 1], ["size", 0, 250, 1], ["angle", -180, 180, 1], ["altitude", 0, 90, 1], ["hiOpacity", 0, 1, 0.01], ["shOpacity", 0, 1, 0.01]]] };
+      innerGlow: ["Inner Glow", [["opacity", 0, 1, 0.01], ["size", 0, 250, 1]]], bevel: ["Bevel & Emboss", [["depth", 1, 1000, 1], ["size", 0, 250, 1], ["angle", -180, 180, 1], ["altitude", 0, 90, 1], ["hiOpacity", 0, 1, 0.01], ["shOpacity", 0, 1, 0.01]]],
+      satin: ["Satin", [["opacity", 0, 1, 0.01], ["angle", -180, 180, 1], ["distance", 1, 250, 1], ["size", 0, 250, 1]]], pattern: ["Pattern Overlay (Edit > Define Pattern first)", [["opacity", 0, 1, 0.01], ["scale", 1, 1000, 1]]] };
     P.dialog(api, { title: "Layer Style", init: {}, fields: [{ type: "custom", make: function (p, changed) {
       var wrap = el("div");
       Object.keys(defs).forEach(function (k) {
@@ -59557,7 +59846,8 @@ Lantern.RFB = (function () {
         var src = el("button", { "class": "ph-hsrc", text: (d.historySource || 0) === i ? "\u25c9" : "\u25cb", title: "Set the History Brush to paint from here", onclick: function (e) { e.stopPropagation(); d.historySource = i; update(); } });
         list.appendChild(el("div", { "class": "ph-hrow" + (i === d.hist.length - 1 ? " on" : ""), onclick: function () { D.goTo(d, i); api.refresh(); } }, [src, el("span", { text: h.label })]));
       });
-      d.redoStack.slice().reverse().forEach(function (h) { list.appendChild(el("div", { "class": "ph-hrow undone", text: h.label, title: "Undone: Ctrl+Shift+Z brings it back" })); });
+      // an undone step, greyed: a click goes forward to it (as Photoshop's History panel)
+      d.redoStack.slice().reverse().forEach(function (h, k) { list.appendChild(el("div", { "class": "ph-hrow undone", text: h.label, title: "Undone: click to go forward to it (or Ctrl+Shift+Z)", onclick: function () { for (var n = 0; n <= k; n++) D.redo(d); api.refresh(); } })); });
       list.scrollTop = list.scrollHeight;
     }
     return { el: box, update: update };
@@ -59608,7 +59898,28 @@ Lantern.RFB = (function () {
     }
     return { el: box, update: update };
   }
-  P.panels = { layers: layers, history: history, histogram: histogram, info: info, channels: channels, styleDialog: styleDialog };
+  // Swatches: click one for the foreground colour, Ctrl+click for the background; + keeps the foreground colour as a swatch;
+  // right-click takes a kept one away. The kept ones stay on this device (not in the picture)
+  var BASE = ["#000000", "#404040", "#808080", "#c0c0c0", "#ffffff", "#ff0000", "#ffff00", "#00ff00", "#00ffff", "#0000ff", "#ff00ff", "#ff8000", "#804000", "#008000", "#000080", "#800080",
+    "#f2c6a0", "#d9a066", "#8f563b", "#5b6ee1", "#99e550", "#fbf236", "#d77bba", "#76428a"];
+  function swatches(api) {
+    var box = el("div", { "class": "ph-panel" }), grid = el("div", { style: "display:flex;flex-wrap:wrap;gap:3px" });
+    function kept() { try { return (L.store && L.store.get("photo.swatches", [])) || []; } catch (e) { return []; } }
+    function keep(a) { try { if (L.store) L.store.set("photo.swatches", a); } catch (e) { /* kept for this visit only */ } }
+    function update() {
+      grid.innerHTML = "";
+      BASE.concat(kept()).forEach(function (hx, i) {
+        var own = i >= BASE.length, b = el("button", { "class": "ph-sw", title: hx + (own ? " (yours: right-click to take it away)" : "") + " \u2014 click: foreground, Ctrl+click: background", "aria-label": "Swatch " + hx, style: "width:18px;height:18px;padding:0;border:1px solid #6b7280;border-radius:3px;background:" + hx });
+        b.onclick = function (e) { var c = M.rgbOfHex(hx); if (e.ctrlKey || e.metaKey) api.d.bg = c; else api.d.fg = c; api.refresh(); };
+        if (own) b.oncontextmenu = function (e) { e.preventDefault(); var a = kept(); a.splice(i - BASE.length, 1); keep(a); update(); };
+        grid.appendChild(b);
+      });
+      grid.appendChild(el("button", { text: "+", title: "Keep the foreground colour as a swatch", "aria-label": "Keep the foreground colour as a swatch", style: "width:18px;height:18px;padding:0;line-height:1", onclick: function () { var a = kept(), hx = M.hex(api.d.fg); if (a.indexOf(hx) < 0 && BASE.indexOf(hx) < 0) { a.push(hx); keep(a); } update(); } }));
+    }
+    box.appendChild(el("div", { "class": "ph-ptitle", text: "Swatches" })); box.appendChild(grid); update();
+    return { el: box, update: function () { if (!grid.childNodes.length) update(); } };
+  }
+  P.panels = { layers: layers, history: history, histogram: histogram, info: info, channels: channels, styleDialog: styleDialog, swatches: swatches };
 })();
 // MODULE: PHOTO_PANELS - END
 // MODULE: PHOTO_MENUS - START
@@ -59655,7 +59966,17 @@ Lantern.RFB = (function () {
       });
   }
   function adjItems(api, asLayer) { return Object.keys(P.adjUI.TYPES).filter(function (k) { return !(asLayer && P.adjUI.TYPES[k].direct); }).map(function (k) { return { label: P.adjUI.TYPES[k].title + (asLayer ? "" : "\u2026"), key: { levels: "Ctrl+L", curves: "Ctrl+M", hueSat: "Ctrl+U", invert: "Ctrl+I", blackWhite: "Ctrl+Alt+Shift+B", colorBalance: "Ctrl+B" }[k] && !asLayer ? { levels: "Ctrl+L", curves: "Ctrl+M", hueSat: "Ctrl+U", invert: "Ctrl+I", blackWhite: "Ctrl+Alt+Shift+B", colorBalance: "Ctrl+B" }[k] : null, run: function () { P.adjUI.open(api, k, asLayer); } }; }); }
+  // the picture turned level by the Ruler's line; cropped (as Photoshop's Ruler does) to the largest box of the picture's own shape that
+  // has no empty corner, or kept whole with its corners empty
+  function straightenBy(api, crop) {
+    var r = api.lastRuler; if (!r) { api.status("draw a line along what should be level with the Ruler tool (I) first"); return; }
+    var a = Math.atan2(r.b[1] - r.a[1], r.b[0] - r.a[0]) * 180 / Math.PI; if (a > 45) a -= 90; if (a < -45) a += 90;
+    if (!crop) { api.exec("rotate", { angle: -a }); api.view.fit(); return; }
+    var d = api.d, t = Math.abs(a) * Math.PI / 180, co = Math.cos(t), si = Math.sin(t), s = Math.min(d.w / (d.w * co + d.h * si), d.h / (d.w * si + d.h * co)), w = d.w * s, h = d.h * s;
+    api.exec("crop", { x: d.w / 2 - w / 2, y: d.h / 2 - h / 2, w: w, h: h, angle: a }); api.view.fit();
+  }
   function menus(api) {
+    var straighten = function (crop) { straightenBy(api, crop); };
     var X = function (n, p) { return function () { api.exec(n, p || {}); }; };
     return [
       ["File", [{ label: "New\u2026", key: "Ctrl+N", run: function () { newBox(api); } }, { label: "Open\u2026", key: "Ctrl+O", run: function () { api.pickFile(false); } }, { label: "Place\u2026 (as a layer)", run: function () { api.pickFile(true); } },
@@ -59669,7 +59990,7 @@ Lantern.RFB = (function () {
       ["Edit", [{ label: "Undo", key: "Ctrl+Z", run: function () { D.undo(api.d); api.refresh(); } }, { label: "Redo", key: "Ctrl+Shift+Z", run: function () { D.redo(api.d); api.refresh(); } },
         { label: "Fade\u2026", key: "Ctrl+Shift+F", run: function () { dlg(api, "Fade", [{ key: "opacity", label: "Opacity (%)", type: "range", min: 0, max: 100 }, { key: "blend", label: "Mode", type: "select", options: D.BLENDS }], { opacity: 50, blend: "normal" }, function (p) { api.exec("fade", { opacity: p.opacity / 100, blend: p.blend }); }); } },
         { sep: 1 }, { label: "Cut", key: "Ctrl+X", run: X("cut") }, { label: "Copy", key: "Ctrl+C", run: X("copy") }, { label: "Copy Merged", key: "Ctrl+Shift+C", run: X("copy", { merged: true }) },
-        { label: "Paste", key: "Ctrl+V", run: function () { api.paste(false); } }, { label: "Paste in Place", key: "Ctrl+Shift+V", run: function () { api.paste(true); } }, { label: "Clear", key: "Delete", run: X("clear") },
+        { label: "Paste", key: "Ctrl+V", run: function () { api.paste(false); } }, { label: "Paste in Place", key: "Ctrl+Shift+V", run: function () { api.paste(true); } }, { label: "Clear", key: "Delete", run: X("clear") }, { label: "Fill with Foreground", key: "Alt+Delete", run: X("fill", { use: "foreground" }) }, { label: "Fill with Background", key: "Ctrl+Delete", run: X("fill", { use: "background" }) },
         { sep: 1 }, { label: "Fill\u2026", key: "Shift+F5", run: function () { dlg(api, "Fill", [{ key: "use", label: "Contents", type: "select", options: [["foreground", "Foreground Color"], ["background", "Background Color"], ["color", "Color\u2026"], ["content", "Content-Aware"], ["pattern", "Pattern"], ["black", "Black"], ["gray", "50% Gray"], ["white", "White"]] }, { key: "color", label: "Color", type: "color" }, { key: "opacity", label: "Opacity (%)", type: "range", min: 1, max: 100 }, { key: "blend", label: "Mode", type: "select", options: D.BLENDS }], { use: "foreground", color: api.d.fg, opacity: 100, blend: "normal" }, function (p) { api.status(p.use === "content" ? "filling from round the selection\u2026" : ""); setTimeout(function () { api.exec("fill", { use: p.use, color: p.color, opacity: p.opacity / 100, blend: p.blend }); }, 20); }); } },
         { label: "Content-Aware Fill", run: function () { api.status("filling from round the selection\u2026"); setTimeout(function () { api.exec("fill", { use: "content" }); }, 20); } },
         { label: "Content-Aware Scale\u2026", key: "Ctrl+Alt+Shift+C", run: function () { var d = api.d; dlg(api, "Content-Aware Scale", [num("w", "Width (px)", 1, d.w), num("h", "Height (px)", 1, d.h), { key: "protectSelection", label: "Protect the selection", type: "check" }, { type: "note", label: "Takes out the paths of pixels that matter least, so people and buildings keep their shape. Smaller only." }], { w: Math.round(d.w * 0.8), h: d.h, protectSelection: !!d.sel }, function (p) { api.status("taking out seams\u2026"); setTimeout(function () { api.exec("contentAwareScale", p); api.view.fit(); }, 20); }); } },
@@ -59688,7 +60009,7 @@ Lantern.RFB = (function () {
         { label: "Canvas Size\u2026", key: "Ctrl+Alt+C", run: function () { var d = api.d; dlg(api, "Canvas Size", [num("w", "Width (px)", 1, 30000), num("h", "Height (px)", 1, 30000), { key: "anchor", label: "Anchor", type: "select", options: [["0,0", "Top left"], ["0.5,0", "Top"], ["1,0", "Top right"], ["0,0.5", "Left"], ["0.5,0.5", "Centre"], ["1,0.5", "Right"], ["0,1", "Bottom left"], ["0.5,1", "Bottom"], ["1,1", "Bottom right"]] }], { w: d.w, h: d.h, anchor: "0.5,0.5" }, function (p) { api.exec("canvasSize", { w: p.w, h: p.h, anchor: p.anchor.split(",").map(Number) }); api.view.fit(); }); } },
         { label: "Image Rotation", sub: [{ label: "180\u00b0", run: function () { api.exec("rotate", { angle: 180 }); api.view.fit(); } }, { label: "90\u00b0 Clockwise", run: function () { api.exec("rotate", { angle: 90 }); api.view.fit(); } }, { label: "90\u00b0 Counter Clockwise", run: function () { api.exec("rotate", { angle: -90 }); api.view.fit(); } },
           { label: "Arbitrary\u2026", run: function () { dlg(api, "Rotate Canvas", [num("angle", "Angle (\u00b0, clockwise)", -359.99, 359.99, 0.01)], { angle: 0 }, function (p) { api.exec("rotate", { angle: p.angle }); api.view.fit(); }); } },
-          { label: "Straighten by the Ruler line", run: function () { var r = api.lastRuler; if (!r) { api.status("draw a line along what should be level with the Ruler tool (I) first"); return; } var a = Math.atan2(r.b[1] - r.a[1], r.b[0] - r.a[0]) * 180 / Math.PI; if (a > 45) a -= 90; if (a < -45) a += 90; api.exec("rotate", { angle: -a }); api.view.fit(); } },
+          { label: "Straighten by the Ruler line", run: function () { straighten(true); } }, { label: "Straighten by the Ruler line, keeping the corners", run: function () { straighten(false); } },
           { sep: 1 }, { label: "Flip Canvas Horizontal", run: X("flip", { horizontal: true }) }, { label: "Flip Canvas Vertical", run: X("flip", { vertical: true }) }] },
         { label: "Crop (to the selection)", run: function () { var d = api.d, r = d.sel && P.sel.bounds(D.selMask(d), d.w, d.h); if (!r) { api.status("select what to keep first, or use the Crop tool (C)"); return; } api.exec("crop", r); api.view.fit(); } },
         { label: "Trim\u2026", run: function () { dlg(api, "Trim", [{ key: "by", label: "Based on", type: "select", options: [["transparent", "Transparent Pixels"], ["topleft", "Top Left Pixel Color"], ["bottomright", "Bottom Right Pixel Color"]] }], { by: "transparent" }, function (p) { api.exec("trim", p); api.view.fit(); }); } },
@@ -59704,7 +60025,7 @@ Lantern.RFB = (function () {
         { label: "Rasterize", run: X("rasterizeLayer") }, { sep: 1 },
         { label: "Align to the selection or canvas", sub: [["left", "Left Edges"], ["hcenter", "Horizontal Centers"], ["right", "Right Edges"], ["top", "Top Edges"], ["vcenter", "Vertical Centers"], ["bottom", "Bottom Edges"]].map(function (a) { return { label: a[1], run: X("alignLayers", { how: a[0] }) }; }) },
         { label: "Stack Mode (visible layers)", sub: [["median", "Median (takes away what moves)"], ["mean", "Mean (less noise)"], ["max", "Maximum"], ["min", "Minimum"]].map(function (a) { return { label: a[1], run: X("stack", { mode: a[0] }) }; }) },
-        { sep: 1 }, { label: "Merge Down (a group: Merge Group)", key: "Ctrl+E", run: function () { var l = D.active(api.d); api.exec(l && l.kind === "group" && P.ops.list.mergeGroup ? "mergeGroup" : "mergeDown", {}); } }, { label: "Merge Visible", key: "Ctrl+Shift+E", run: X("mergeVisible") }, { label: "Stamp Visible", key: "Ctrl+Alt+Shift+E", run: X("stampVisible") }, { label: "Flatten Image", run: X("flatten") }]],
+        { sep: 1 }, { label: api.d && D.active(api.d) && D.active(api.d).kind === "group" ? "Merge Group" : "Merge Down", key: "Ctrl+E", run: function () { var l = D.active(api.d); api.exec(l && l.kind === "group" && P.ops.list.mergeGroup ? "mergeGroup" : "mergeDown", {}); } }, { label: "Merge Visible", key: "Ctrl+Shift+E", run: X("mergeVisible") }, { label: "Stamp Visible", key: "Ctrl+Alt+Shift+E", run: X("stampVisible") }, { label: "Flatten Image", run: X("flatten") }]],
       ["Select", [{ label: "All", key: "Ctrl+A", run: X("selectAll") }, { label: "Deselect", key: "Ctrl+D", run: X("deselect") }, { label: "Reselect", key: "Ctrl+Shift+D", run: X("reselect") }, { label: "Inverse", key: "Ctrl+Shift+I", run: X("inverse") },
         { sep: 1 }, { label: "Subject (on a plain background)", run: function () { api.exec("selectSubject", { tolerance: 24 }); } },
         { label: "Color Range\u2026", run: function () { dlg(api, "Color Range", [{ key: "color", label: "Colour to select", type: "color" }, { key: "fuzziness", label: "Fuzziness", type: "range", min: 0, max: 200 }, { type: "note", label: "Tip: pick the colour with the Eyedropper (I) first; it fills in here." }], { color: api.d.fg, fuzziness: 40 }, function (p) { api.exec("colorRange", { colors: [p.color], fuzziness: p.fuzziness }); }); } },
@@ -59725,6 +60046,12 @@ Lantern.RFB = (function () {
   function menuBar(api) {
     var bar = el("div", { "class": "ph-menubar", role: "menubar" }), openM = null;
     function closeAll() { if (openM) { openM.remove(); openM = null; } }
+    // a menu kept inside the window (a phone is narrow), again whenever a submenu opens in it
+    function clampMenu(mn) {
+      var vw = document.documentElement.clientWidth || window.innerWidth, left = mn.owner ? mn.owner.offsetLeft : 0; mn.style.left = left + "px";
+      var mr = mn.getBoundingClientRect(), over = mr.right - vw + 4; if (over > 0) mn.style.left = Math.max(-bar.getBoundingClientRect().left + 2, left - over) + "px";
+    }
+    P.closeMenus = closeAll;
     document.addEventListener("pointerdown", function (e) { if (openM && !openM.contains(e.target) && !bar.contains(e.target)) closeAll(); });
     function list(items, x, y) {
       var m = el("div", { "class": "ph-menu", role: "menu" });
@@ -59737,7 +60064,7 @@ Lantern.RFB = (function () {
             var mine = row.nextSibling && row.nextSibling.classList && row.nextSibling.classList.contains("ph-sub");
             Array.prototype.forEach.call(m.querySelectorAll(":scope > .ph-sub"), function (x) { x.remove(); });
             if (mine) return;
-            var sub = list(it.sub); sub.classList.add("ph-sub"); m.insertBefore(sub, row.nextSibling); return;
+            var sub = list(it.sub); sub.classList.add("ph-sub"); m.insertBefore(sub, row.nextSibling); if (openM) clampMenu(openM); return;
           }
           closeAll(); if (!api.d && !/New|Open/.test(it.label)) { api.status("open or make a picture first"); return; }
           try { it.run(); } catch (err) { api.status(err.message); }
@@ -59748,7 +60075,8 @@ Lantern.RFB = (function () {
     }
     menus(api).forEach(function (mn) {
       var b = el("button", { "class": "ph-mbtn", text: mn[0], role: "menuitem", "aria-haspopup": "true" });
-      b.onclick = function () { var was = openM && openM.owner === b; closeAll(); if (was) return; openM = list(menus(api).filter(function (x) { return x[0] === mn[0]; })[0][1]); openM.owner = b; openM.style.left = b.offsetLeft + "px"; bar.appendChild(openM); };
+      b.onclick = function () { var was = openM && openM.owner === b; closeAll(); if (was) return; openM = list(menus(api).filter(function (x) { return x[0] === mn[0]; })[0][1]); openM.owner = b; openM.style.left = b.offsetLeft + "px"; bar.appendChild(openM);
+        openM.style.maxWidth = "calc(100vw - 8px)"; clampMenu(openM); };
       bar.appendChild(b);
     });
     return bar;
@@ -59757,8 +60085,10 @@ Lantern.RFB = (function () {
   function shortcut(api, e) {
     var parts = []; if (e.ctrlKey || e.metaKey) parts.push("Ctrl"); if (e.altKey) parts.push("Alt"); if (e.shiftKey) parts.push("Shift");
     var k = e.key.length === 1 ? e.key.toUpperCase() : e.key; if (k === "+") k = "="; if (k === "_") k = "-"; if (k === "Backspace") k = "Delete"; if (k === "\x22") k = "'";
-    var want = parts.concat([k]).join("+"), found = null;
-    (function walk(items) { items.forEach(function (it) { if (found) return; if (it.sub) walk(it.sub); else if (it.key && it.key.toUpperCase() === want.toUpperCase()) found = it; }); })([].concat.apply([], menus(api).map(function (m) { return m[1]; })));
+    // a shortcut as written in the menu (Ctrl+Shift+Alt+W) and as pressed (Ctrl+Alt+Shift+W) are the same keys in any order
+    var canon = function (s) { var ps = s.toUpperCase().split("+"), key = ps.pop(); return ["CTRL", "ALT", "SHIFT"].filter(function (m) { return ps.indexOf(m) >= 0; }).concat([key]).join("+"); };
+    var want = canon(parts.concat([k]).join("+")), found = null;
+    (function walk(items) { items.forEach(function (it) { if (found) return; if (it.sub) walk(it.sub); else if (it.key && canon(it.key) === want) found = it; }); })([].concat.apply([], menus(api).map(function (m) { return m[1]; })));
     if (!found || (!parts.length && k !== "Delete" && k !== "Q")) return false;
     if (!api.d && !/New|Open/.test(found.label)) return false;
     e.preventDefault(); try { found.run(); } catch (err) { api.status(err.message); }
@@ -59896,6 +60226,8 @@ Lantern.RFB = (function () {
     ".ph-typebox{position:absolute;z-index:30;background:rgba(255,255,255,.6);border:1px dashed #2563eb;resize:none;padding:0;line-height:1.2;overflow:hidden}" +
     ".ph-start{max-width:760px;margin:0 auto;padding:10px}.ph-drop{border:2px dashed var(--line);border-radius:12px;padding:24px;text-align:center;margin:12px 0}" +
     ".ph-print{display:none}@media print{body.ph-printing>*{display:none!important}body.ph-printing>.ph-print{display:block!important}.ph-print img{max-width:100%}}" +
+    "@media (max-height:900px) and (min-width:821px){.ph-tools{grid-template-columns:repeat(3,30px)}.ph-tool{width:30px;height:30px;font-size:15px}.ph-swatch{grid-column:1/4}}" +
+    ".ph-modal{position:absolute;inset:0;z-index:39;background:rgba(0,0,0,.04);cursor:not-allowed}" +
     "@media (max-width:820px){.ph-root{height:auto}.ph-main{flex-direction:column}.ph-tools{grid-template-columns:repeat(auto-fill,34px);grid-auto-flow:row}.ph-swatch{grid-column:auto}.ph-view{height:60vh;flex:none}.ph-side{width:auto}}";
   function style() { if (document.getElementById("ph-style")) return; var st = document.createElement("style"); st.id = "ph-style"; st.textContent = CSS; document.head.appendChild(st); }
   var S = { d: null, root: null, view: null, tool: "move", prevTool: "move", panels: [], stat: null, opts: (L.store && L.store.get("photo.opts", {})) || {} };
@@ -59904,10 +60236,12 @@ Lantern.RFB = (function () {
     opts: function (id) { var t = T.byId[id], o = {}; (t && t.opts || []).forEach(function (f) { o[f.key] = f.def; }); var s = S.opts[id] || {}; for (var k in s) o[k] = s[k]; return o; },
     setOpt: function (id, k, v) { S.opts[id] = S.opts[id] || {}; S.opts[id][k] = v; if (L.store) L.store.set("photo.opts", S.opts); },
     status: function (t) { if (S.stat) S.stat.textContent = t || ""; },
-    exec: function (n, p) { try { var r = P.ops.exec(S.d, n, p || {}); after(); return r; } catch (e) { api.status(e.message); after(); return null; } },
+    exec: function (n, p) { if (api.boxOpen()) { api.status("finish the open box first (OK or Cancel)"); return null; } try { var r = P.ops.exec(S.d, n, p || {}); after(); if (S.d && S.d.notes && S.d.notes.length) api.status(S.d.notes.splice(0).join("; ")); return r; } catch (e) { api.status(e.message); after(); return null; } },
     refresh: function () { after(); },
+    showOpts: function () { paintOpts(); },
     setTool: function (id) { if (!T.byId[id]) return; if (S.tool !== id && id === "transform") S.prevTool = S.tool; S.tool = id; if (S.view) S.view.setTool(T.byId[id]); paintTools(); paintOpts(); },
-    dialogHost: function () { return S.dlg; }, dialogClosed: function () { after(); },
+    dialogHost: function () { return S.dlg || S.startDlg; }, dialogClosed: function () { after(); },
+    boxOpen: function () { var h = S.dlg || S.startDlg; return !!(h && h.querySelector(".ph-dialog")); },
     hover: function (pt) { if (S.info) S.info.show(pt); },
     zoomed: function (z) { if (S.zl) S.zl.textContent = Math.round(z * 100) + "%"; },
     pickFile: function (place) { S.place = place; S.fileIn.click(); },
@@ -59937,7 +60271,7 @@ Lantern.RFB = (function () {
       document.body.appendChild(box); document.body.classList.add("ph-printing");
       setTimeout(function () { window.print(); setTimeout(function () { document.body.classList.remove("ph-printing"); box.remove(); }, 500); }, 100);
     },
-    quickMask: function () { var d = S.d; d.quickMask = !d.quickMask; if (d.quickMask && !d.sel) D.setSel(d, new Uint8Array(d.w * d.h)); api.status(d.quickMask ? "Quick Mask: paint white to select, black to unselect; Q again to finish" : ""); paintTools(); S.view.render(); }
+    quickMask: function () { var d = S.d; d.quickMask = !d.quickMask; if (d.quickMask && !d.sel) { var all = new Uint8Array(d.w * d.h); all.fill(255); D.setSel(d, all); }   /* nothing selected is everything selected: no red, black paint takes away */ api.status(d.quickMask ? "Quick Mask: paint white to select, black to unselect; Q again to finish" : ""); paintTools(); S.view.render(); }
   };
   P.api = api;
   function after() { if (!S.d || !S.root) return; S.panels.forEach(function (p) { try { p.update(); } catch (e) { /* a panel's trouble stays its own */ } }); paintTools(); if (S.view) S.view.render(); if (S.title) S.title.textContent = S.d.name + " \u2014 " + S.d.w + " \u00d7 " + S.d.h + (S.d.saved ? "" : " *"); }
@@ -59974,7 +60308,8 @@ Lantern.RFB = (function () {
       var drop = el("div", { "class": "ph-drop" }, [el("button", { "class": "primary", text: "Open a picture", onclick: function () { api.pickFile(false); } }), el("span", { text: "  " }), el("button", { text: "New\u2026", onclick: function () { newQuick(); } }),
         el("div", { "class": "muted", style: "margin-top:8px", text: "or drop a picture here (JPEG, PNG, GIF, WebP, TIFF, PSD, BMP, SVG), or paste one (Ctrl+V)" })]);
       drop.addEventListener("dragover", function (e) { e.preventDefault(); }); drop.addEventListener("drop", function (e) { e.preventDefault(); if (e.dataTransfer.files[0]) openFile(e.dataTransfer.files[0]); });
-      start.appendChild(drop); S.stat = el("div", { "class": "ph-status", "aria-live": "polite" }); start.appendChild(S.stat); r.appendChild(start); return;
+      start.appendChild(drop); S.stat = el("div", { "class": "ph-status", "aria-live": "polite" }); start.appendChild(S.stat);
+      S.startDlg = el("div", { style: "position:relative;min-height:0" }); start.appendChild(S.startDlg); r.appendChild(start); return;
     }
     S.title = el("span", { "class": "muted", style: "font-size:12px;margin-left:auto;padding:4px 8px" });
     var mb = P.menuBar(api); mb.appendChild(S.title); r.appendChild(mb);
@@ -59996,13 +60331,22 @@ Lantern.RFB = (function () {
     center.appendChild(el("div", { "class": "ph-status" }, [S.zl, el("span", { text: "  " }), S.stat]));
     var side = el("div", { "class": "ph-side" }); main.appendChild(side);
     var lay = P.panels.layers(api), his = P.panels.history(api), hg = P.panels.histogram(api); S.info = P.panels.info(api);
-    S.panels = [lay, his, hg, S.info, P.panels.channels(api)].concat(P.actions ? [P.actions.panel(api)] : []);
-    S.panels.forEach(function (p, i) { side.appendChild(i < 2 ? p.el : el("details", i === 3 ? { open: "open" } : {}, [el("summary", { text: p.el.querySelector(".ph-ptitle").textContent }), p.el])); });
+    S.panels = [lay, his, hg, S.info, P.panels.channels(api)].concat(P.panels.swatches ? [P.panels.swatches(api)] : []).concat(P.actions ? [P.actions.panel(api)] : []);
+    S.panels.forEach(function (p, i) { side.appendChild(i < 2 ? p.el : el("details", i === 3 ? { open: "open" } : {}, [el("summary", { text: (p.el.querySelector(".ph-ptitle").firstChild || {}).textContent || p.el.querySelector(".ph-ptitle").textContent }), p.el])); });
     api.setTool(T.byId[S.tool] && !T.byId[S.tool].hidden ? S.tool : "move");
     setTimeout(function () { S.view.fit(); api.zoomed(S.view.zoom); after(); }, 0);
     if (S.d.notes && S.d.notes.length) api.status(S.d.notes.splice(0).join("; "));
   }
   function newQuick() { var m = P.menus(api)[0][1][0]; m.run(); }
+  // a picture dropped anywhere on the tile: opened, or placed as a layer on the picture open (as Photoshop places one); never left to
+  // the browser, which would open the file in place of Lantern and lose the work
+  function dropped(e) {
+    if (!S.root || !document.contains(S.root) || document.body.getAttribute("data-app") !== "photo") return;
+    var dt = e.dataTransfer; if (!dt || Array.prototype.indexOf.call(dt.types || [], "Files") < 0) return;
+    e.preventDefault();
+    if (e.type === "drop" && dt.files && dt.files[0]) { if (api.boxOpen()) { api.status("finish the open box first (OK or Cancel)"); return; } openFile(dt.files[0], !!S.d); }
+  }
+  document.addEventListener("dragover", dropped); document.addEventListener("drop", dropped);
   function openFile(f, place) {
     api.status("opening " + (f.name || "") + "\u2026");
     P.files.open(f).then(function (d) {
@@ -60013,8 +60357,12 @@ Lantern.RFB = (function () {
   P.open = function (f) { if (S.root && document.contains(S.root)) openFile(f); else P.pending = f; };
   document.addEventListener("keydown", function (e) {
     if (!S.root || !document.contains(S.root) || document.body.getAttribute("data-app") !== "photo") return;
-    var tg = e.target, typing = tg && (tg.tagName === "INPUT" || tg.tagName === "TEXTAREA" || tg.tagName === "SELECT" || tg.isContentEditable);
-    if (typing) return;
+    // only a field being typed in keeps the keys (a ticked box, a slider or a chosen list item gives them back to the picture)
+    var tg = e.target, ty = tg && tg.tagName === "INPUT" ? (tg.type || "text").toLowerCase() : "", typing = tg && (tg.tagName === "TEXTAREA" || tg.isContentEditable || (tg.tagName === "INPUT" && /^(text|number|search|email|url|password|tel)$/.test(ty)));
+    if (typing) { if (e.key === "Enter" && tg.tagName === "INPUT" && !(tg.closest && tg.closest(".ph-dialog"))) tg.blur(); return; }
+    if (tg && tg.tagName === "SELECT" && /^(Arrow|Page|Home|End)/.test(e.key)) return;
+    if (e.key === "Escape" && document.querySelector(".ph-menu")) { if (P.closeMenus) P.closeMenus(); e.preventDefault(); return; }
+    if (api.boxOpen && api.boxOpen()) { var hb = S.dlg || S.startDlg, cb = hb && hb.querySelector(".ph-dialog .ph-dfoot button:not(.primary)"); if (e.key === "Escape" && cb) cb.click(); return; }
     if (!S.d) { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") { e.preventDefault(); api.pickFile(false); } return; }
     if (e.key === " " && S.view) { S.view.spaceDown = true; e.preventDefault(); return; }
     var t = T.byId[S.tool];
@@ -60025,7 +60373,9 @@ Lantern.RFB = (function () {
     if (k === "X") { var c = S.d.fg; S.d.fg = S.d.bg; S.d.bg = c; paintTools(); return; }
     if (k === "D") { S.d.fg = [0, 0, 0]; S.d.bg = [255, 255, 255]; paintTools(); return; }
     if (e.key === "[" || e.key === "]") { var o = api.opts(S.tool); if (o.size != null) { var s = Math.max(1, Math.round(o.size * (e.key === "]" ? 1.2 : 1 / 1.2) + (e.key === "]" ? 1 : -1))); api.setOpt(S.tool, "size", s); paintOpts(); S.view.render(); } return; }
-    var nt = T.byKey(k, t); if (nt) { api.setTool(nt.id); e.preventDefault(); }
+    // a stroke or drag under way keeps its tool until the button is let go; Shift+letter moves along the letter's group (as Photoshop)
+    if (S.d.open) return;
+    var nt = T.byKey(k, e.shiftKey ? t : null); if (nt) { api.setTool(nt.id); e.preventDefault(); }
   });
   document.addEventListener("keyup", function (e) { if (e.key === " " && S.view) S.view.spaceDown = false; });
   window.addEventListener("beforeunload", function (e) { if (S.d && !S.d.saved && S.d.hist.length > 1) { e.preventDefault(); e.returnValue = ""; } });
@@ -60039,6 +60389,7 @@ Lantern.RFB = (function () {
   function mount(ws) {
     style();
     S.root = el("div", { "class": "ph-root" }); ws.appendChild(S.root);
+    S.root.addEventListener("change", function (e) { var x = e.target; if (x && !(x.closest && x.closest(".ph-dialog")) && (x.tagName === "SELECT" || (x.tagName === "INPUT" && /^(checkbox|radio|range|color)$/.test(x.type)))) setTimeout(function () { x.blur(); }, 0); });
     build();
     if (P.pending) { var f = P.pending; P.pending = null; openFile(f); }
   }
@@ -60054,19 +60405,19 @@ Lantern.RFB = (function () {
   if (!L || !L.guide || !L.guide.add) return;
   L.guide.add("photo", "Photo", [
     ["What it does", "<p>The Photo tile edits photos and pictures on this device with no internet, the way Photoshop does: layers and masks, selections, retouching, colour and light, filters, words and shapes, layer styles, actions and batches, and Photoshop's own files (.psd) with their layers. Nothing you open leaves the device. <b>Example:</b> open a photo of a fence with a wire across the sky, choose the Spot Healing Brush (J), paint over the wire, and let go: the wire is gone, filled from the sky round it.</p>"],
-    ["Open and save", "<p><b>File &gt; Open</b> (Ctrl+O), or drop or paste a picture: JPEG, PNG, GIF, WebP, BMP, SVG, TIFF and PSD/PSB. A PSD opens with its layers, masks, blending modes and the plain adjustment layers (Levels, Curves, Hue/Saturation, Brightness/Contrast, Invert, Posterize, Threshold); its words, smart objects and effects open as the pixels Photoshop drew for them, and the line under the picture says so. <b>File &gt; Save</b> (Ctrl+S) keeps a .psd with the layers (Photoshop, GIMP, Photopea and Krita open it). <b>Export As</b> saves PNG, JPEG (quality 1 to 12), WebP, GIF (one picture, or each layer a frame of an animation), TIFF, BMP or PDF. <b>File Info</b> shows the camera's details; nothing you save carries them. <b>Open as PDF in the PDF tile</b> puts the picture on a page of its print size.</p>"],
-    ["Layers", "<p>The Layers panel: the eye shows or hides a layer; click a layer to work on it; double-click its name to rename it; the mode and opacity above apply to the chosen layer. <b>Ctrl+J</b> makes a layer of what is selected; <b>Ctrl+E</b> merges it down; <b>Stamp Visible</b> (Ctrl+Alt+Shift+E) makes one new layer of everything. A <b>mask</b> (the half-moon button) hides parts of a layer without erasing them: click the mask's picture and paint black to hide, white to show; Shift+click turns it off. <b>Clip</b> shows a layer only where the layer under it has pixels. <b>Adjust\u2026</b> adds an adjustment layer: double-click it to change its settings any time. <b>Stack Mode &gt; Median</b> on several shots of one scene takes away the people walking through it. Example: put a photo of a sky above a landscape, add a mask, and paint the land black on it.</p>"],
-    ["Selections", "<p>Marquee (M): drag a rectangle or ellipse (Shift: square or circle; Alt: from the centre). Lasso (L): draw round; Polygonal Lasso: click corners, double-click to close. Magic Wand (W): click a colour (Tolerance, Contiguous); Quick Selection: paint, and it spreads to like colours. While drawing, Shift adds, Alt takes away, both keep the overlap. <b>Select</b> menu: All (Ctrl+A), Deselect (Ctrl+D), Inverse (Ctrl+Shift+I), Color Range, Modify (Feather, Expand, Contract, Border, Smooth), Grow, Similar, Save and Load Selection (Channels). <b>Subject</b> works for a thing on a plain background (a product on white). <b>Quick Mask</b> (Q): paint the selection itself, white in, black out.</p>"],
-    ["Painting", "<p>Brush (B), Pencil, Eraser (E), Paint Bucket and Gradient (G), Eyedropper (I). Size, Hardness, Opacity and Flow are on the options bar; [ and ] change the size; Shift+click draws a straight line; Alt+click picks a colour. D sets black and white, X swaps them. The History Brush (Y) paints back the picture as it was opened (or at the History step whose circle you click). Painting stays inside the selection.</p>"],
+    ["Open and save", "<p><b>File &gt; Open</b> (Ctrl+O), or drop or paste a picture (dropped on a picture already open, it comes in as a layer): JPEG, PNG, GIF, WebP, BMP, SVG, TIFF and PSD/PSB. A PSD opens with its layers, groups, masks, blending modes and the plain adjustment layers (Levels, Curves, Hue/Saturation, Brightness/Contrast, Invert, Posterize, Threshold, Selective Color); 16- and 32-bit files open at 8 bits; its words, smart objects and effects open as the pixels Photoshop drew for them, and the line under the picture says so. <b>File &gt; Save</b> (Ctrl+S) keeps a .psd with the layers and groups (Photoshop, GIMP, Photopea and Krita open it). <b>Export As</b> saves PNG, JPEG (quality 1 to 12), WebP, GIF (one picture, or each layer that shows a frame of an animation), TIFF, BMP or PDF; PNG, JPEG, TIFF, BMP and PSD keep the picture's resolution (ppi). Colours of nearly see-through pixels can move by a few levels (the browser keeps them multiplied by their see-through amount); solid pixels stay exact. <b>File Info</b> shows the camera's details; nothing you save carries them. <b>Open as PDF in the PDF tile</b> puts the picture on a page of its print size.</p>"],
+    ["Layers", "<p>The Layers panel: the eye shows or hides a layer; click a layer to work on it; double-click its name to rename it; the mode and opacity above apply to the chosen layer. <b>Ctrl+J</b> makes a layer of what is selected; <b>Ctrl+E</b> merges it down; <b>Groups</b>: <b>Ctrl+G</b> puts the layer in a new group, Ctrl+Shift+G takes the group away; the triangle shuts or opens a group, and the up and down buttons move a layer into an open group or past a shut one. A group in <b>Pass Through</b> lets an adjustment layer in it change everything below; set it to Normal and the adjustment changes only the group. Ctrl+E on a group merges it into one layer; <b>Stamp Visible</b> (Ctrl+Alt+Shift+E) makes one new layer of everything. A <b>mask</b> (the half-moon button) hides parts of a layer without erasing them: click the mask's picture and paint black to hide, white to show; Shift+click turns it off. <b>Clip</b> shows a layer only where the layer under it has pixels. <b>Adjust\u2026</b> adds an adjustment layer: double-click it to change its settings any time. <b>Stack Mode &gt; Median</b> on several shots of one scene takes away the people walking through it. Example: put a photo of a sky above a landscape, add a mask, and paint the land black on it.</p>"],
+    ["Selections", "<p>Marquee (M): drag a rectangle or ellipse (Shift: square or circle; Alt: from the centre). Lasso (L): draw round; Polygonal Lasso: click corners, double-click (or Enter) to close; Backspace takes back the last corner, Esc drops them all. Magic Wand (W): click a colour (Tolerance, Contiguous); Quick Selection: paint, and it spreads to like colours. Shift held before you start adds, Alt takes away, both keep the overlap; held while dragging, Shift makes a square and Alt draws from the centre. <b>Select</b> menu: All (Ctrl+A), Deselect (Ctrl+D), Inverse (Ctrl+Shift+I), Color Range, Modify (Feather, Expand, Contract, Border, Smooth), Grow, Similar, Save and Load Selection (Channels). <b>Subject</b> works for a thing on a plain background (a product on white). <b>Quick Mask</b> (Q): paint the selection itself, white in, black out (with nothing selected it starts with everything selected). <b>Delete</b> clears what is selected; with nothing selected it does nothing (Ctrl+A first selects all of it). Alt+Backspace fills the selection with the foreground colour, Ctrl+Backspace with the background colour. On a layer with no other under it, cleared or erased parts are see-through (Photoshop's Background fills them with the background colour); a JPEG saved from it shows white there.</p>"],
+    ["Painting", "<p>Brush (B), Pencil (hard-edged, pixel by pixel; Shift+B moves from one to the other, as Shift+letter does in every group), Eraser (E), Paint Bucket and Gradient (G), Eyedropper (I). Size, Hardness, Opacity and Flow are on the options bar; [ and ] change the size; Shift+click draws a straight line; Alt+click picks a colour. D sets black and white, X swaps them. The History Brush (Y) paints back the picture as it was opened, however many steps follow (or the History step whose circle you click). Painting stays inside the selection.</p>"],
     ["Retouching", "<p><b>Spot Healing Brush</b> (J): paint over a speck, blemish or wire. <b>Healing Brush</b>: Alt+click a clean place, then paint over the flaw: the copy takes the light and colour of where it goes. <b>Patch</b>: draw round the flaw, then drag it onto a clean area. <b>Clone Stamp</b> (S): Alt+click, then paint an exact copy. <b>Red Eye</b>: click the pupil. <b>Content-Aware Fill</b> (Edit menu): select a thing and it is filled from round it. These work from the picture's own texture: they suit sky, grass, walls, water, skin and specks, not a missing face (that needs a trained model, which Lantern does not have). Dodge, Burn and Sponge (O) lighten, darken and change colour strength under the brush; Blur, Sharpen and Smudge (R) too.</p>"],
-    ["Colour and light", "<p><b>Image &gt; Adjustments</b>: Levels (Ctrl+L), Curves (Ctrl+M), Brightness/Contrast, Exposure, Vibrance, Hue/Saturation (Ctrl+U), Color Balance (Ctrl+B), Black &amp; White, Photo Filter, Channel Mixer, Invert (Ctrl+I), Posterize, Threshold, Gradient Map, Desaturate, Equalize; Auto Tone, Auto Contrast, Auto Color. Each box previews on the picture as you move its sliders. The same as an adjustment layer can be changed later. <b>Edit &gt; Fade</b> right after lessens the last one. Example: a dull photo: Image &gt; Auto Tone, then Hue/Saturation with Saturation +15. The Info panel reads the colour under the pointer in RGB, HSB, Lab and CMYK (CMYK without a press's profile: ask the printer for theirs).</p>"],
+    ["Colour and light", "<p><b>Image &gt; Adjustments</b>: Levels (Ctrl+L), Curves (Ctrl+M), Brightness/Contrast, Exposure, Vibrance, Hue/Saturation (Ctrl+U), Color Balance (Ctrl+B), Black &amp; White, Photo Filter, Channel Mixer, Selective Color, Invert (Ctrl+I), Posterize, Threshold, Gradient Map, Desaturate, Equalize; Auto Tone, Auto Contrast, Auto Color; and, on the pixels only (as in Photoshop), <b>Shadows/Highlights</b> (lift dark parts, tame bright ones), <b>Match Color</b> (take the colours of another layer), <b>Replace Color</b> (one colour moved, the rest left). Each box previews on the picture as you move its sliders, and holds the picture till OK or Cancel. The same as an adjustment layer can be changed later. <b>Edit &gt; Fade</b> right after lessens the last one. Example: a dull photo: Image &gt; Auto Tone, then Hue/Saturation with Saturation +15. The Info panel reads the colour under the pointer in RGB, HSB, Lab and CMYK (CMYK without a press's profile: ask the printer for theirs).</p>"],
     ["Filters", "<p>Blur (Gaussian, Box, Motion, Radial, Surface, Average), Sharpen (Unsharp Mask, Sharpen, Sharpen More), Noise (Add Noise, Median, Dust &amp; Scratches, Reduce Noise), Distort (Twirl, Pinch, Spherize, Polar Coordinates, Ripple, Wave, ZigZag), Stylize (Find Edges, Glowing Edges, Emboss, Solarize, Oil Paint, Diffuse, Wind), Pixelate (Mosaic, Crystallize, Color Halftone), Render (Clouds, Difference Clouds), Other (High Pass, Minimum, Maximum, Offset, Custom) and Lens Correction (barrel and pincushion, vignette). Ctrl+Alt+F runs the last filter again. Example: an old scan with specks: Filter &gt; Noise &gt; Dust &amp; Scratches, radius 2, threshold 20.</p>"],
-    ["Crop, size and transform", "<p>Crop (C): drag a box, drag outside it to turn it level, press Enter. Perspective Crop: click the four corners of a document or sign photographed at a slant, Enter. <b>Image Size</b> (Ctrl+Alt+I) resamples (Bicubic, Smoother for enlarging, Sharper for reducing, Lanczos, Nearest Neighbor for pixel art); <b>Canvas Size</b> adds room. <b>Free Transform</b> (Ctrl+T): drag inside to move, a corner to scale, outside to turn, Ctrl+corner to distort; Enter applies. The Ruler (I) measures; Image Rotation &gt; Straighten turns the picture level by its line.</p>"],
-    ["Type, shapes and styles", "<p>Type (T): click and type a line, or drag a box for a paragraph; click away to finish; click the words again to change them. Font, size, bold, italic, alignment and tracking are on the options bar; the fonts are your computer's. Shape (U): rectangle (round corners), ellipse, polygon, star, line, arrow. Layer Style (fx): Drop Shadow, Outer Glow, Stroke, Inner Shadow, Color and Gradient Overlay, kept live. In a saved .psd these become pixels.</p>"],
+    ["Crop, size and transform", "<p>Crop (C): drag a box, drag outside it to turn it level, press Enter. Perspective Crop: click the four corners of a document or sign photographed at a slant, Enter. <b>Image Size</b> (Ctrl+Alt+I) resamples (Bicubic, Smoother for enlarging, Sharper for reducing, Lanczos, Nearest Neighbor for pixel art); <b>Canvas Size</b> adds room. <b>Free Transform</b> (Ctrl+T): drag inside to move, a corner to scale, outside to turn, Ctrl+corner to distort; Enter applies. The Ruler (I) measures; Image Rotation &gt; Straighten turns the picture level by its line and crops the empty corners (or keeps them, from its own menu line). Choosing another tool part-way through Free Transform applies it; Esc first leaves the layer as it was.</p>"],
+    ["Type, shapes and styles", "<p>Type (T): click and type a line, or drag a box for a paragraph; click away to finish; click the words again to change them. Font, size, bold, italic, alignment and tracking are on the options bar; the fonts are your computer's. Shape (U): rectangle (round corners), ellipse, polygon, star, line, arrow. Layer Style (fx): Drop Shadow, Outer Glow, Stroke, Inner Shadow, Inner Glow, Bevel &amp; Emboss, Color and Gradient Overlay, kept live. In a saved .psd these become pixels. Clicking words to change them shows their own font, size and colour on the options bar; what you change there changes them.</p>"],
     ["Liquify, paths and more", "<p><b>Filter &gt; Liquify</b> (Ctrl+Shift+X): push the picture about with Forward Warp, Pucker, Bloat, Twirl; Reconstruct and Restore All take it back; OK applies it. <b>The Pen</b> (P): click for corners, drag for curves, click the first point to close; then <b>Select &gt; Make Selection from Path</b> gives an exact, smooth selection round something curved, and <b>Edit &gt; Fill Path</b> or <b>Stroke Path</b> paints it. <b>Edit &gt; Content-Aware Scale</b> narrows a picture by taking out what matters least (sky, grass), keeping people and buildings in shape; tick Protect to keep the selection. <b>File &gt; Automate &gt; Merge Exposures</b>: choose shots of one scene taken darker and lighter (a tripod's best) and get one with detail in the shadows and the sky. <b>Fit Image</b> makes a picture fit a size, keeping its shape.</p>"],
     ["Actions and batches", "<p>The Actions panel: \u25cf Record, then use the menus; \u25a0 Stop keeps the steps. \u25b6 Play runs them on the open picture. <b>Batch</b> plays an action on many pictures and gives them back as one .zip, in the format chosen. Ready-made: \u201cWeb picture, 1200 px\u201d and \u201cBlack and white\u201d. Example: make 200 phone photos small enough to email: choose \u201cWeb picture, 1200 px\u201d, Batch, pick the photos, as JPEG.</p>"],
-    ["History", "<p>Ctrl+Z undoes, Ctrl+Shift+Z redoes; the History panel lists the last 50 steps: click one to go back to it.</p>"],
-    ["What it cannot do", "<p>Photoshop's generative and neural features (Generative Fill and Expand, Select Subject on busy photos, Sky Replacement, Neural Filters, colourising, AI upscaling) need trained picture models on Adobe's servers; Lantern does them only where plain arithmetic can (Content-Aware Fill; Subject on a plain background). Not here: camera RAW files, ICC colour profiles and soft proofing, 16- and 32-bit editing (such files open at 8 bits), smart objects, artboards, text on a path, Puppet Warp, panoramas (Photomerge), video and 3D, cloud documents.</p>"]
+    ["History", "<p>Ctrl+Z undoes, Ctrl+Shift+Z redoes (the layer you chose stays chosen); the History panel lists the picture as opened and the last 50 steps: click one to go back to it, or a greyed one to go forward again. <b>Keys a browser keeps:</b> Ctrl+T, Ctrl+N and Ctrl+Shift+N open a tab or window in a browser before Lantern sees them; use the menus for those (Edit &gt; Free Transform, File &gt; New, Layer &gt; New Layer).</p>"],
+    ["What it cannot do", "<p>Photoshop's generative and neural features (Generative Fill and Expand, Select Subject on busy photos, Sky Replacement, Neural Filters, colourising, AI upscaling) need trained picture models on Adobe's servers; Lantern does them only where plain arithmetic can (Content-Aware Fill; Subject on a plain background). Not here: camera RAW files, ICC colour profiles and soft proofing, 16- and 32-bit editing (such files open at 8 bits), smart objects, artboards, text on a path, Puppet Warp, panoramas (Photomerge), video and 3D, cloud documents. Hue/Saturation, Brightness/Contrast and Colorize follow psd-tools' reading of Photoshop's files, not Photoshop itself (not tried here): a few levels can differ.</p>"]
   ]);
 })();
 // MODULE: GUIDE_PHOTO - END

@@ -130,8 +130,10 @@ if have_scipy:
     edt_out = ndimage.distance_transform_edt(blob == 0); edt_in = ndimage.distance_transform_edt(blob > 0)
     check("Selection distance: SciPy's exact Euclidean distance transform", np.abs(np.sqrt(np.array(r["d"], float)).reshape(H, W) - edt_out).max() < 1e-6)
     e = np.array(r["e"]).reshape(H, W); c = np.array(r["c"]).reshape(H, W)
-    check("Expand 6 px: every pixel within 5.5 px chosen, none beyond 6.5", (e[edt_out <= 5.5] == 255).all() and (e[edt_out >= 6.5] == 0).all())
-    check("Contract 6 px: none within 5.5 px of the edge, all beyond 6.5", (c[(blob > 0) & (edt_in <= 5.5)] == 0).all() and (c[edt_in >= 6.5] == 255).all())
+    # (distances centre to centre: the 6th ring out from an edge is 6 away, and Expand 6 takes it whole, as Photoshop's 6 px; review 1, 2026-11-26)
+    check("Expand 6 px: every pixel 6 px or nearer chosen whole, none 7 or more away", (e[edt_out <= 6] == 255).all() and (e[edt_out >= 7] == 0).all())
+    check("Contract 6 px: none 6 px or nearer the edge, all 7 or more in", (c[(blob > 0) & (edt_in <= 6)] == 0).all() and (c[edt_in >= 7] == 255).all())
+    check("...a block 60 rows high: Expand 6 makes it 72 rows, Contract 6 makes it 48", int((e[:, 60] == 255).sum()) == 72 and int((c[:, 60] == 255).sum()) == 48, (int((e[:, 60] == 255).sum()), int((c[:, 60] == 255).sum())))
 try:
     from skimage.segmentation import flood
     r = run("""var d = load('photo'), m = P.sel.wand(d, {x: 80, y: 60, tolerance: 40, contiguous: true, antialias: false}); return Array.prototype.slice.call(m);""")

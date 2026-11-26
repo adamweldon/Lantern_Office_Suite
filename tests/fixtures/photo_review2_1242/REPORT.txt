@@ -1,0 +1,261 @@
+PHOTO TILE (Lantern 1.24.42) -- AN INDEPENDENT REVIEW BY A PERSON'S USE
+=======================================================================
+Reviewer: a separate agent that did not write the tile. Date: 2026-11-26.
+Build tested: the frozen build photo_r1/index.html (its PHOTO_* and GUIDE_PHOTO modules are byte-for-byte those of
+src/lantern.inner.html on branch lantern-1.24.42, commit 68b87e2). Chromium (Playwright), headless, 1400 x 900
+unless said; also 1366 x 768 and 390 x 844.
+
+Files here
+  make_inputs.py   makes inputs/ (a camera-like JPEG with EXIF, the same with EXIF orientation 6, a logo with
+                   soft transparency, a grey scan, a screenshot, 1x1, 6000x40, 40x6000, a horizon tilted 5 deg,
+                   a slanted document, three shots with a walker, a red-eye face, a layered PSD by psd-tools,
+                   three small batch files). 432 KB in all. The 12 MP photo is made at run time.
+  harness.py       the server, Chromium, and a person's actions (menus by click, tools by click, drags, keys,
+                   typing into boxes, the Layers panel). State is only READ, to check results.
+  run_review.py    every check. python3 run_review.py [build.html] [section ...]
+                   sections: sel move paint retouch make crop transform menus history layers files actions keys
+                   robust phone. Prints PASS/FAIL per check and "N checks, M failed". A full run takes ~25 min.
+  cases.json       the run as found: 274 checks, 38 failed (every check, PASS or FAIL, with what was seen).
+                   One full run, plus two type-layer checks added after it and run on the same build.
+  evidence/        screenshots: the 1366x768 tool column cut off, the phone menu off the right edge, others.
+
+HOW SURE: "certain" = reproduced in the browser and traced to the code; "high" = reproduced, Photoshop's behaviour
+well known; "medium" = reproduced, but Photoshop's exact behaviour is from memory and could differ in some version.
+
+-----------------------------------------------------------------------
+THE MOST IMPORTANT FINDINGS FIRST
+-----------------------------------------------------------------------
+
+1. Dropping a picture onto an open picture is not caught: the browser opens the file instead, and the work is lost.
+   Steps: open any picture, paint a stroke, drag another picture file from the desktop onto the picture.
+   What happens: nothing in the tile (or Lantern) cancels 'dragover' or 'drop' outside the start screen's dashed box
+   (check "Drop a picture on an open picture": defaultPrevented false for both). In Chrome and Edge an uncancelled
+   drop of a file navigates the tab to that file: Lantern is replaced by the picture, the unsaved edit is gone.
+   The same happens on the start screen if the file is dropped anywhere but inside the dashed box.
+   Should: the help says "drop or paste a picture"; Photoshop places a file dropped on an open document as a new
+   layer (File > Place Embedded). At least the page must cancel dragover/drop everywhere in the tile.
+   Sure: high (the event part is certain; the navigation is the browser's documented default and could not be
+   watched in headless Playwright).
+
+2. The start screen's "New..." button does nothing and throws an error.
+   Steps: open the Photo tile with no picture; click "New...". (Ctrl+N there does nothing either.)
+   What happens: page error "Cannot read properties of null (reading 'w')" -- P.dialog reads api.d.w and the
+   dialog host (S.dlg) only exists once a picture is open. No box appears.
+   Should: the New box (size, resolution, background), as File > New does once a picture is open.
+   A person with no photo cannot start a blank picture. Sure: certain.
+
+3. A box (Levels, Hue/Saturation, any filter) is not modal: what it previews gets baked into the next thing done
+   on the picture, and Cancel can no longer take it away.
+   Steps: Image > Adjustments > Hue/Saturation, move Hue (the sky turns purple in the preview); without closing the
+   box, pick the Brush and paint a stroke on the picture; then press Cancel in the box.
+   What happens: the sky stays purple ([157,95,226] where it was [95,151,226]); History shows one step "Brush"
+   and no Hue/Saturation step -- the previewed change was folded into the brush stroke (the stroke ends the open
+   preview state with D.end). Undo of "Brush" is the only way back.
+   Should: Photoshop's adjustment and filter boxes are modal (the picture cannot be painted while one is open);
+   Cancel "leaves the picture as it was" (the tile's own PHOTO_DIALOGS comment). Sure: certain.
+
+4. Renaming a layer by double-clicking its name never works, and the letters typed then go to the tool keys.
+   Steps: in the Layers panel double-click a layer's name; type "Sky paint"; Enter.
+   What happens: no text box appears (the first click rebuilds the whole list with innerHTML = "", so the second
+   click lands on a new element and no dblclick event is ever fired -- counted 0 dblclick events). The typed
+   letters switch tools (the "t" of "paint" chose the Type tool, "p", "a", "i" ...).
+   Should: the help: "double-click its name to rename it"; Photoshop opens the name for editing.
+   (Double-clicking an adjustment layer's picture does work: those thumbnails are cached, the names are not.)
+   Sure: certain.
+
+5. Backspace or Delete with nothing selected wipes the whole layer to see-through -- also while placing the
+   corners of a Polygonal Lasso.
+   Steps: (a) open a photo, press Delete (or Backspace). (b) Polygonal Lasso: click three corners, press Backspace
+   to take back the last one, as in Photoshop.
+   What happens: Edit > Clear runs on the whole layer: the photo becomes fully transparent (History "Clear"). In
+   (b) the corners stay and the layer is wiped; the polygon is not shortened.
+   Should: Photoshop's Polygonal Lasso: Backspace/Delete removes the last corner, Esc cancels the polygon. Photoshop
+   does not empty a whole layer from Delete with no selection (on a Background layer it offers the Fill box).
+   Ctrl+Z does restore it, but a person who does not notice saves an empty picture. Sure: high.
+
+6. After clicking any checkbox, slider or list on the options bar or in the Layers panel, the keys stop working
+   until the picture is clicked.
+   Steps: tick "Lock" in the Layers panel (or move a slider, or choose a blend mode), then press ] or B or D or
+   Ctrl+Z. Also: type a Size on the options bar and press Enter, then press E.
+   What happens: nothing -- PHOTO_TILE's keydown treats every INPUT and SELECT as typing (checkboxes and range
+   sliders included) and returns; focus stays there after Enter.
+   Should: in Photoshop the tool keys and [ ] keep working after a panel checkbox; Enter in an options-bar field
+   commits and gives the keys back to the picture. Only text and number fields being typed in should hold keys.
+   Sure: certain (the behaviour); high (Photoshop).
+
+6b. A tool letter pressed in the middle of a brush stroke leaves the stroke half-made; the next box cancelled
+   then erases it.
+   Steps: Brush, press the mouse and paint; while still holding the button press M (or any tool letter); let go.
+   Then Image > Adjustments > Levels... and Cancel.
+   What happens: the red stroke shows, but no History step is made and the document stays "open" (d.open true:
+   the Brush's up() is never called because the tool in hand changed). Cancelling the Levels box (D.cancel)
+   then silently wipes the stroke; Ctrl+Z cannot bring it back.
+   Should: the stroke ends as one "Brush" step when the button is let go, whatever key was pressed. In Photoshop a
+   tool key during a stroke does not lose the stroke. Sure: certain.
+
+7. On a 1366 x 768 laptop window the tool column is cut off: Crop, Perspective Crop, Type, Shape, both colour
+   swatches, Swap, Default colours and Quick Mask are below the bottom edge (swatch top at 848 px, column ends at
+   754 px), with no visible scroll bar. evidence/laptop_1366x768_tools_cut_off.jpg.
+   Should: every tool and the colours visible, as Photoshop's toolbar (two columns, or a smaller layout).
+   1366 x 768 is the commonest laptop screen. Sure: certain.
+
+8. Ctrl+Z also changes which layer is chosen, so the next command changes a layer the person did not choose.
+   Steps: Layer via Copy (the copy is chosen), Deselect, click the Background in the Layers panel, Image >
+   Adjustments > Invert, Ctrl+Z, Invert again.
+   What happens: after Ctrl+Z the copy layer is chosen again, and the second Invert inverts the copy, not the
+   Background the person picked. The tile's own Cancel keeps the chosen layer ("choosing a layer is not a step
+   of its own", PHOTO_DOC) but Undo does not.
+   Sure: certain (the behaviour); medium that Photoshop never does this (Photoshop's History states do carry the
+   target layer in some cases), but the tile is inconsistent with its own rule.
+
+9. Editing words already on the picture applies the options bar's current size and colour to them.
+   Steps: Type tool, size 40, blue, click and type "Hello", choose Move. Then pick red and size 12 on the bar,
+   Type tool, click the words, add "!", click away.
+   What happens: the layer becomes "Hello!" at size 12 and red (font, bold, italic, alignment, tracking too:
+   finishType builds the spec from the bar and d.fg).
+   Should: Photoshop loads the type layer's own settings into the options bar when it is edited and keeps them;
+   the bar's values change the words only when chosen while the words are selected. Sure: certain.
+
+10. After moving words with the Move tool, clicking them with the Type tool starts new empty words instead of
+    editing them (the hit test uses the text's original x/y, not where the layer now is).
+    Steps: make "Hello!", Move it 100 px right and down, Type tool, click on it. A new empty box opens there.
+    Sure: certain.
+
+11. Type layers are made into pixels silently.
+    (a) Free Transform (Ctrl+T, drag a corner, Enter) on a type layer turns it into a pixel layer; the status line
+        still says "Free Transform: Enter applies, Esc leaves it". Photoshop scales and turns type and keeps it
+        editable.
+    (b) Image > Adjustments (e.g. Invert) on a type layer makes it pixels with no message at that time; the note
+        is only shown at the next Save -- and a note is also queued by a box's PREVIEW, so after Gaussian Blur's
+        box is Cancelled (the layer still words) Ctrl+S says "Saved photo.psd -- "Sky" was made into pixels".
+        PHOTO_OPS says "the tile says so"; Photoshop asks first.
+    Sure: certain.
+
+12. Free Transform: choosing another tool part-way drops the transform without a word.
+    Steps: Ctrl+T, drag the layer 100 px, click the Brush. The layer is back where it was, no History step.
+    Should: Photoshop asks "Apply the transformation?" (Apply / Cancel / Don't Apply). Sure: high.
+
+13. Free Transform: the W %, H % and Angle boxes keep the last values typed. After one transform with W 50, the
+    next Ctrl+T shows W 50 while the box is at 100%; typing an angle then also halves the width.
+    Should: each Free Transform starts at 100%, 100%, 0 deg. Sure: certain.
+
+14. Quick Mask with nothing selected starts with NOTHING selected (the whole picture red); Photoshop starts with
+    everything selected (no red), so black paint takes the stroke away. Here black paint does nothing and Q
+    again selects all. The help ("paint the selection itself, white in, black out") then works only half.
+    Sure: high.
+
+15. Keys the menus show that do not work:
+    - Export As shows Ctrl+Shift+Alt+W; pressing it does nothing (the key matcher builds "Ctrl+Alt+Shift+W" and
+      compares strings). Certain.
+    - Ctrl+T (Free Transform), Ctrl+N (New) and Ctrl+Shift+N (New Layer) are taken by Chrome and Edge (new tab,
+      new window, private window) before any page sees them; they cannot work in a browser tab. Not testable in
+      Playwright (it delivers keys to the page directly); from Chromium's documented reserved keys. High.
+    - Alt+Backspace / Ctrl+Backspace (fill with foreground / background), among Photoshop's most used keys,
+      do nothing. High.
+    - Esc does not close an open menu. Certain.
+
+16. History Brush after more than 50 steps paints from a later state, not the picture as opened.
+    Steps: open a photo, Invert, nudge with the arrow keys 52 times, History Brush over the photo.
+    What happens: it paints the inverted picture back (History keeps 50 states and drops the oldest; the
+    brush's source is an index into that list, and the tile keeps no "as opened" snapshot).
+    Should: Photoshop's History Brush paints from the opening snapshot, which is kept however many steps follow;
+    the help says "paints back the picture as it was opened". Sure: certain.
+
+17. History panel: the undone steps are listed greyed but cannot be clicked to go forward again (only Ctrl+Shift+Z
+    brings them). Photoshop lets a click on a later (greyed) state go to it. Sure: certain / high.
+
+-----------------------------------------------------------------------
+SMALLER FINDINGS
+-----------------------------------------------------------------------
+18. Marquee: Shift+Alt held before dragging (intersect, as the help says) also makes the shape a centred square,
+    so the overlap is wrong (got the first rectangle back unchanged). Photoshop: Shift+Alt before the drag only
+    intersects. Certain.
+19. Polygonal Lasso: Esc does not cancel the corners placed so far (they stay, and the next click continues the
+    polygon). Photoshop: Esc cancels. Certain.
+20. Crop with a ratio (1:1), dragged up and to the left: the box does not keep its corner where the drag began
+    (b.y is taken from the pointer but the height from the width), so a different area is cropped. Certain.
+21. Pencil is soft-edged at sizes above 2 px (alpha values 24, 162, 234 ... along a 6 px line). Photoshop's
+    Pencil is always hard-edged. Certain.
+22. Move with a selection on the Background (and the Eraser on it) leaves see-through pixels; Photoshop fills the
+    Background's hole with the background colour (the Background cannot be see-through). The tile has no
+    special Background layer; a JPEG export then shows white there. Medium (a design choice to note).
+23. Image > Image Rotation > Straighten by the Ruler line: the horizon comes out level (pass), but the corners are
+    left see-through; Photoshop's Ruler "Straighten Layer" crops them away, and Arbitrary rotation fills the
+    Background's corners with the background colour. Medium.
+24. A phone (390 x 844): the Filter menu runs past the right edge (menu right at 415 px), the page scrolls sideways
+    while it is open, and the shortcut column is cut. evidence/phone_menu.png. Everything else checked was
+    reachable. Certain.
+25. History names are not the menu's names: "Hue Sat", "Gaussian", "Box", "Motion", "Radial", "Surface",
+    "Unsharp", "Dust", "Brightness", "Polar", "Halftone", "Lens" (Photoshop: "Hue/Saturation", "Gaussian Blur",
+    "Unsharp Mask", "Dust & Scratches", "Brightness/Contrast" ...). Actions list them the same way. Certain.
+26. Layers panel "Adjust..." then Cancel in its box leaves the new adjustment layer (and its History step) behind.
+    A box with a Cancel button should leave nothing. Certain.
+27. Layer mask from a selection keeps the selection active; Photoshop drops it. Because it stays, the next
+    adjustment layer silently gets a mask from it (seen in this review). Medium-high.
+28. Quick Selection: the first stroke adds to a marquee selection made before; Photoshop's first stroke starts a
+    new selection ("New selection" mode, then "Add to"). Medium.
+29. A tool letter pressed twice moves to the next tool of its group (B, B -> Pencil). Photoshop's default is that
+    only Shift+letter cycles (Preferences > Use Shift Key for Tool Switch). The tile's help says so itself, so
+    this is a difference, not a contradiction. High.
+30. The first new layer is "Layer 2" (Photoshop: "Layer 1"). Trivial.
+31. Esc in the middle of a marquee drag does not drop it (the selection is made on release). I am not sure
+    Photoshop drops it either: listed as a FAIL in cases.json but low confidence, low importance.
+32. Cosmetic: the collapsed Histogram panel's heading reads "Histogram" with "LuminosityRedGreenBlue" under it
+    (the select's option texts copied into the summary). Invert is listed as "Invert..." though it opens no box.
+
+-----------------------------------------------------------------------
+WHAT WORKED (PASS in cases.json)
+-----------------------------------------------------------------------
+- Marquee/ellipse drag, Shift and Alt during the drag, Shift (add) and Alt (subtract) before it, the options bar's
+  modes, Feather; Lasso; Polygonal Lasso closing on its first corner and by double-click; Magic Wand and its
+  Tolerance; Quick Selection; Inverse, Reselect, Modify (Expand, Contract, Border, Feather), Color Range.
+- Move (drag, arrows, Shift+arrows, with a selection, Auto-select); Layer via Copy/Cut with a soft selection.
+- Brush size/hardness, Opacity vs Flow (a stroke crossing itself stays at 50% opacity; flow builds), Shift+click
+  line, Alt+click pick, painting inside a selection, Lock transparency, masks (paint, Shift+click off), Eraser,
+  Quick Mask painting white, D and X.
+- Clone Stamp, Healing Brush, Spot Healing Brush, Patch (the wire across the sky taken out by each), Red Eye,
+  Dodge, Burn, Sponge, Blur, Smudge.
+- Paint Bucket; Gradient: linear, radial, angle, reflected, diamond, Shift to 45 deg; Type: point, paragraph that
+  wraps, Esc, keys typed into the box stay there; Shape: every kind.
+- Crop: box, side handle, Esc, 1:1, turning outside the box levels a tilted horizon; Perspective Crop; Eyedropper
+  with Alt; Ruler angle and Straighten level; Zoom, Hand, Space-drag.
+- Free Transform: move, corner keeps proportions, Shift frees, side handle, turn, Ctrl+corner distort, Esc exact,
+  W % typed.
+- All 54 adjustments and filters from the menus, on the Background with a layer above: with Preview on, OK gives
+  exactly what was previewed; Cancel leaves every layer exactly as it was with no History step; only the chosen
+  layer changes; Ctrl+Z gives back the exact pixels. Fade, Last Filter (Ctrl+Alt+F).
+- Undo and redo exact for: crop, Image Size, Canvas Size, rotate 90, arbitrary rotation, flip, flatten, merge,
+  mask from selection, Free Transform, adjustment layer, Stamp Visible.
+- Layers: new, duplicate, delete, up/down, eye, Multiply, opacity, Clip, mask apply/delete, adjustment layers
+  (made, changed by double-click, undone), Drop Shadow (live when moved), Stamp/Merge Down/Merge Visible/Flatten
+  with the picture unchanged, Place, Stack Mode Median (the walker gone).
+- Files: drop on the start screen's box, paste as a layer, EXIF orientation 6 upright, grey PNG, a psd-tools PSD
+  with hidden and Multiply layers; File Info with the camera's details; Ctrl+S .psd read back by psd-tools (every
+  layer, Screen mode, mask, its picture equal to the tile's within 3 levels) and by ImageMagick; Export As each of
+  psd, png, jpg, webp, gif, tif, bmp, pdf opened by PIL/psd-tools/poppler at the right size, JPEG without the
+  camera's details, JPEG quality makes a difference; Print; Open as PDF in the PDF tile.
+- Actions: record two menu commands, play them on another picture (identical), delete; Batch of three files
+  through "Black and white" to JPEG: a zip of three grey JPEGs at their own sizes.
+- Keys: every tool letter, Shift+letter cycling, zoom keys, grid, Ctrl+A, Ctrl+C/V, Ctrl+L/M/U/B, Ctrl+Alt+Shift+B,
+  Ctrl+Alt+I/C, Shift+F5, Ctrl+Shift+R, Ctrl+Alt+Shift+I; keys typed inside a box stay in it; Esc/Enter in a box.
+- Robustness: a 12 MP JPEG (4000 x 3000) opened in 0.5 s; a long brush stroke 3.6 s; Gaussian Blur 5 with its
+  preview and OK 10.7 s, OK equal to the preview; two undos 0.6 s; Image Size kept proportions. 1 x 1 (brush,
+  crop, blur, Image Size to 64), 6000 x 40 and 40 x 6000 (fit, rotate), a logo's transparency (Magic Wand),
+  20 quick clicks = 20 steps and 20 quick undos, leaving the tile and coming back (picture, layers, History and
+  keys all still there).
+- Phone 390 x 844: no sideways scroll on opening, every button within the width, the Levels box fits and its OK
+  can be pressed, the picture and the swatches are there (but see finding 24).
+- No uncaught page errors except the start screen's New... (finding 2).
+
+-----------------------------------------------------------------------
+WHAT I COULD NOT TEST
+-----------------------------------------------------------------------
+- A real drag of a file from the desktop (only that the page does not cancel the drop; finding 1).
+- The browser's reserved keys (Ctrl+T, Ctrl+N, Ctrl+Shift+N) in a real Chrome window; a Mac's Cmd and Option keys
+  (Option+letter gives other characters in e.key, which the key matcher may not read).
+- The real system clipboard from another program (navigator.clipboard.read needs a permission prompt); the paste
+  was tested with a paste event carrying a file.
+- A pen's pressure, two-finger pinch on a real touch screen, the printed paper.
+- How results look to a person (Adam's to judge): only numbers were compared, apart from the screenshots.
+- Photoshop itself was not run here: its behaviour is cited from Adobe's documentation as I know it; where I am
+  less sure it says "medium".

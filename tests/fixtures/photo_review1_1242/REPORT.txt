@@ -1,0 +1,207 @@
+PHOTO TILE (1.24.42) -- INDEPENDENT REVIEW 1: FILES AND ARITHMETIC
+=====================================================================
+Reviewer: a separate agent that did not write the tile. Date: 2026-11-26.
+Build tested: the frozen build photo_r1/index.html; its PHOTO_* and GUIDE_PHOTO modules are word for word
+src/lantern.inner.html lines 54381-59634 on branch lantern-1.24.42. Note: Lantern.version in that page says "1.24.41".
+
+How to re-run:   python3 run_review.py [path/to/index.html] [--only psd,tiff,export,adjust,filter,blend,select,inpaint] [--json out.json]
+Result as found: 455 checks, 37 failed (cases.json holds every row: check, pass, what Lantern gave, what is right).
+Run time: about 80 s in Chromium (Playwright), on this cloud machine.
+
+Inputs were made by PIL 12.3, numpy, psd-tools 1.27, ImageMagick 6.9.12 (libtiff 4.5.1), and by hand from Adobe's
+Photoshop File Format Specification (review_core.write_psd; psd-tools reads every hand-made file and gives back the
+same pixels, which checks the writer). Judges: psd-tools (its reading and its compositor), ImageMagick/libtiff,
+PIL, poppler (pdfinfo, pdftoppm), qpdf, SciPy, OpenCV, scikit-image, and textbook formulas written here.
+Big pictures (12 MP, 6 MP, 2400 x 1600) are made at run time; inputs/ holds the small ones (1.1 MB).
+
+----------------------------------------------------------------------------------------------------------
+FAILURES, MOST IMPORTANT FIRST
+----------------------------------------------------------------------------------------------------------
+
+1. Image > Auto Tone, Auto Contrast and Auto Color do nothing when run from the menu.      [sure: high]
+   Input: a dull photo-like picture, values 60..180 (made with numpy). The menu runs
+   api.exec(P.ops.adjustCmd("autoContrast"), {}); adjustCmd calls P.adjust.autoContrast(imageData, {}), so the
+   params object {} arrives as the "clip" fraction; clipPoints computes n * {} = NaN, finds no cut points and
+   returns [0, 255], and Levels 0..255 is no change.
+   Lantern gave: range 60..180 after Auto Tone and Auto Contrast (unchanged); Auto Color 48..190 (only its gamma step).
+   Right: about 0..255 (called with no second argument, autoContrast does stretch to [0, 255] -- shown in the run).
+   Also hit: the ready-made action "Black and white" (its second step is adjust:autoContrast {}), and the Batch.
+   Where: PHOTO_ADJ_TONE autoTone/autoContrast/autoColor take (d, clip); PHOTO_OPS adjustCmd passes p.
+
+2. 16-bit Photoshop files saved by Photoshop open without their layers.                    [sure: high]
+   Input: inputs/h_16bit_Lr16.psd -- 16-bit RGB, two layers, written per Adobe's spec the way Photoshop writes
+   16- and 32-bit documents: the layer info section is empty and the layers are in the "Lr16" tagged block after
+   the global layer mask info. psd-tools reads both layers from it.
+   Lantern gave: one layer "Background" (the flattened picture) and no note saying layers were dropped.
+   Right: layers L64x48 and L16x16, as psd-tools reads them. The same for "Lr32" (h_32bit_zippred_Lr32.psd).
+   The same file with the layers in the plain section (h_16bit_plain.psd, as ImageMagick and psd-tools write)
+   opens right, so it is only Photoshop's own 16/32-bit files -- the ones scanner and RAW workflows produce.
+   Where: PHOTO_PSD_READ read(): nothing after the global layer mask info is read.
+
+3. 16-bit TIFFs with the horizontal predictor (LZW or Deflate) open as noise.               [sure: high]
+   Input: im_16_lzw_pred.tif, im_16_zip_pred.tif (RGB) and im_gray16.tif (ImageMagick writes predictor 2 by
+   default for 16-bit LZW), made by ImageMagick/libtiff 4.5.1.
+   Lantern gave: e.g. pixel (12, 4) [6, 0, 252]; libtiff (ImageMagick) gives [255, 255, 251]; max diff 255.
+   Right: the libtiff pixels. Plain and unpredicted 16-bit open right (im_16.tif, im_16_bigendian.tif).
+   Where: PHOTO_TIFF read(): "if (pred === 2 && bps === 8)" -- the predictor is undone for 8-bit only. Photoshop
+   offers LZW/ZIP with prediction for 16-bit TIFFs, so these are common. Lantern neither refuses nor says.
+   Also: 32-bit float with the floating-point predictor (3) opens black (im_float32_zip_pred3.tif). [sure: high]
+
+4. 32-bit PSD layers packed "ZIP with prediction" open wrong.                              [sure: high]
+   Input: h_32bit_zippred_plain.psd (one 32-bit float layer, Photoshop's byte-shuffled prediction; psd-tools
+   decodes it to the exact floats, max error 3e-8).
+   Lantern gave: layer "Float" with max diff 255 from the picture. Raw 32-bit (h_32bit_raw.psd) opens right.
+   Where: PHOTO_PSD_READ unpredict() handles depth 8 and 16 only. Photoshop packs 32-bit layers this way.
+
+5. Linear Dodge (Add) is the browser's "lighter", which is not Photoshop's Linear Dodge.   [sure: high]
+   Input: random backdrops and sources (sec_blend.py), Lantern.photo.blend.draw.
+   With opacity below 100%: backdrop [158, 210, 105] opaque, source [127, 142, 253] at 60%:
+     Lantern [234, 255, 255]; Photoshop's rule min(1, b + s) laid on with source-over: [216, 237, 195].
+   Over a see-through backdrop: backdrop [86, 237, 16, alpha 128], source [169, 123, 215, alpha 180] at 70%:
+     Lantern alpha 254; right alpha 191 (as + ab(1 - as)); colour off by up to 59.
+   "lighter" adds premultiplied colour and alpha, so an Add layer at 50% over a bright area clips to white early,
+   and two half-clear layers become solid. The other 25 modes agree with W3C / the published Photoshop formulas
+   (within the canvas's own rounding) on opaque and see-through pixels, at 100% and below.
+
+6. The flattened picture inside a PSD: Photoshop's convention (colour stored over white) is
+   not followed, either way.                                                               [sure: medium-high]
+   psd-tools (numpy_io._remove_background / _restore_background, with its fixture evidence) and Photoshop store
+   the merged image's colour already composited over white when the document has transparency.
+   a) Reading: h_merged_alpha.psd (no layers, merged RGBA, red 200,40,40 stored over white). Lantern gave
+      [239, 200, 200, alpha 65]; psd-tools [200, 39, 39, alpha 65]. Affects flat PSDs with transparency only.
+   b) Writing: a see-through picture saved by Lantern; psd-tools reads the stored flattened colour at alpha 65 as
+      [39, 0, 0] for a picture of [200, 40, 40]. Viewers that show the PSD's flattened picture (Quick Look,
+      thumbnails, programs without layer support) will show see-through parts too dark. Layers are not affected.
+
+7. Saving a PSD loses parts of the document that Photoshop keeps.                          [sure: high, by design?]
+   a) A layer partly off the canvas is cut to the canvas: pt_layers.psd "Off canvas" bbox (-30,-20,50,40)
+      comes back (0,0,50,40). The off-canvas pixels are gone after Open -> Save (Photoshop keeps them).
+      Where: PHOTO_FILES save(): each layer is rendered onto a document-sized canvas before it is written.
+   b) Groups are not written: h_groups.psd (two groups) opened and saved has 0 groups (layers flattened into the
+      list). Neither the help nor the module header says groups are lost on save.
+   c) Curves adjustment layers are written with the legacy record only (no "Crv " block). psd-tools logs "Failed to
+      read CurvesExtraMarker" and composites the file without the curve (28 levels off). Photoshop's own files
+      always carry the "Crv " block; whether Photoshop needs it was not tested (no Photoshop here). [sure: medium]
+
+8. Animated GIF includes hidden layers.                                                     [sure: high]
+   PHOTO_FILES' header says "each visible layer a frame of an animation". pt_layers.psd has 8 layers, one hidden:
+   Lantern wrote 8 frames (PIL n_frames = 8); right: 7. Where: save(), frames = layers filtered by kind only.
+
+9. Resolution is lost through JPEG and PNG, so "a page of its print size" is wrong for them. [sure: high]
+   - A 300-dpi JPEG (photo_small.jpg, JFIF density 300 written by PIL) opens with dpi 72; a 300-dpi PNG (pHYs)
+     too. So File > Export PDF / Open as PDF gives a 480 x 360 pt page for a 480 x 360 px, 300-dpi picture
+     (right: 115.2 x 86.4 pt). TIFF and PSD resolutions are read right (a 300-dpi TIFF gives 14.64 x 8.88 pt).
+   - PNG and JPEG exports carry no resolution (PIL finds no dpi); BMP always says 72 (2835 px/m). Photoshop writes
+     pHYs / JFIF density / BMP pixels-per-metre from the document's resolution.
+
+10. Expand and Contract are half a pixel short.                                              [sure: high]
+    Input: a 41 x 41 square selection (rows 10..50). Expand 5: rows 5 and 55 are 128 (half chosen), not 255;
+    Expand 1: the next row is 128. Contract 5 leaves 33 x 33 with a half-chosen ring (1089 pixels >= 128;
+    right: 31 x 31 = 961, as Photoshop's Contract 5 px). Distances are measured centre to centre, so the r-th ring
+    sits exactly at t = r and gets 255 * (r + 0.5 - t) = 128. Expanding a single point gives the right disc
+    (that convention fits a point but not an edge). Border inherits it.
+
+11. Colours of nearly clear pixels drift.                                                     [sure: high; minor]
+    A PNG/TIFF with soft alpha opened and read back: where alpha is 20-63 colours move by up to 6 levels; up to 2
+    where alpha >= 64. Cause: layers live in 2D canvases, which hold colour premultiplied by alpha. Alpha itself is
+    kept exactly. Photoshop keeps the colours exactly. Worth a line in the help if it stays.
+
+12. Smaller things.
+    - Hue/Saturation and Brightness/Contrast disagree with psd-tools' compositor, which is itself reverse-
+      engineered from Photoshop files (its own TODOs say "improve accuracy"):                [sure: low-medium]
+        * Colorize: Lantern uses Rec.601 luminance for the lightness; psd-tools keeps HSL lightness. Pure yellow
+          with hue 200 / sat 60: Lantern [208, 232, 243], psd-tools [51, 153, 204] (142 levels apart on a test
+          gradient). I believe Photoshop's Colorize keeps HSL lightness (psd-tools' way), but could not check it.
+        * Master hue +40 / sat +30 / lightness -10: up to 27 levels apart (psd-tools applies master lightness
+          first, Lantern last).
+        * Legacy Brightness/Contrast with negative contrast (-20, -40): Lantern [39, 39, 192], psd-tools
+          [30, 30, 183]: psd-tools adds the brightness after the flattening when contrast < 0, Lantern before.
+    - Threshold: agrees with psd-tools except at pixels within 1 level of the threshold (weights/rounding).
+    - Curves with two points at the same input (128) gives a table of zeros (NaN): only matters if the dialog or
+      Chat can make such a pair (not checked).
+    - P.adjust.channelMixer({mono: true}) without rows throws a TypeError. The dialog always sets the red row, so
+      only Chat/actions calling it directly would hit it.
+    - Layer names written without "luni" (psd-tools writes none) are read as Latin-1: "Grüße été" (MacRoman in the
+      file) became "Gr\x9f§e \x8et\x8e". Photoshop always writes luni, so this only touches other programs' files.
+    - CCITT Group 4 TIFF (bilevel scans, faxes) is refused with a plain message; the module never claimed it.
+
+----------------------------------------------------------------------------------------------------------
+WHAT IS RIGHT (briefly)
+----------------------------------------------------------------------------------------------------------
+PSD reading: psd-tools' layered file (8 layers: names, order, bounds incl. off-canvas, pixels, opacity, visibility,
+blend modes, masks, ZIP and ZIP-predicted 8-bit channels) and ImageMagick's layered file match psd-tools'
+composite within 3 levels. Hand-made edge cases right: mask with default colour 255 (outside the mask rectangle
+shows), disabled mask, clipping, groups (hidden group hides, half-opaque group), empty layer, layers far off and
+half off the canvas, 16-bit with layers in the plain section, 16-bit ZIP+prediction, grayscale, CMYK (plain),
+Lab (matches scikit-image's conversion of the stored values), indexed, bitmap, PSB with layers, raw channels,
+Unicode names beyond the BMP (emoji) from luni. Adjustment layers levl, curv, brit (+), nvrt, post read with the
+right settings and composite as psd-tools does.
+PSD writing: psd-tools and ImageMagick read Lantern's files; layer count, names (incl. Unicode), order, opacity,
+visibility, blend modes, masks kept; psd-tools' composite of Lantern's file equals Lantern's picture; the stored
+flattened picture equals Lantern's picture for an opaque document; Lantern -> PSD -> Lantern is the same picture;
+levels/hue2/brit/post/thrs/nvrt written as live adjustment layers psd-tools reads (Levels settings exact).
+TIFF reading: none, LZW, LZW+predictor, Deflate (+predictor), PackBits, tiles, planar (strips and tiles), big-endian
+(incl. LZW+predictor), 3 rows per strip, 16-bit unpredicted (both byte orders), 32-bit float unpredicted, grey
+both ways, 4-bit grey, 1-bit, palette 8 and 4-bit, CMYK, associated and unassociated alpha, grey+alpha, multi-page
+(first page and a note), resolution in inches and centimetres, PIL's LZW/Deflate/PackBits/raw, PIL I;16; a
+1500 x 1000 noisy LZW+predictor picture is exact. JPEG-packed TIFF is refused with the promised message.
+TIFF writing: LZW and plain, RGB and RGBA, read exactly by PIL and libtiff with no warning; a 1500 x 1000 noisy LZW
+(many dictionary clears) is exact.
+Exports: PNG exact (alpha exact); JPEG quality scale sensible (q12 57.6 dB, q10 41.5 dB, q1 29.4 dB), see-through
+flattened on white or on the chosen colour; WebP keeps alpha; BMP V4 32-bit read exactly with alpha by PIL and
+ImageMagick; GIF of a 40-colour picture with rare colours is exact, a photo at 256 colours is fine, transparency
+under half solid is clear, ImageMagick reads it cleanly; animated GIF delay and loop right; PDF passes qpdf and
+poppler renders the picture.
+Adjustments (formula checks): neutral settings are identities; Levels (incl. channel then master, in = out step);
+Curves = SciPy natural spline, through its points, flat beyond; Posterize; Threshold; Invert; Desaturate (HSL);
+Equalize = OpenCV equalizeHist; legacy Brightness/Contrast (+); Exposure in linear light with offset and gamma;
+Channel Mixer; Gradient Map; Black & White defaults (pure colours give 40/60/40/60/20/80 % of 255, greys stay);
+Hue/Sat hue +120, saturation -100 = HSL lightness, reds range, lightness +-100; Vibrance favours dull colours;
+Photo Filter keeps luminosity; Auto Color (called directly) neutralises a cast; greys stay grey and alpha is
+untouched in every one tried; extremes (exposure +20, contrast 100, gamma 0) give no garbage.
+Filters: Gaussian = SciPy gaussian_filter (nearest edges) at radius 0.3-20 on 203 x 151 within 1 level; the
+six-box path within 0.5-1.8 levels (2400 x 1600 r10 in 2.7 s, 3000 x 4000 r2 in 3.0 s, 1000 x 800 r60), well
+inside its claim of 4; 1 x 1, 1 x 57, 57 x 1, 2 x 3 fine; no dark fringe on a red disc on clear (Gaussian, box,
+motion, resize). Box = uniform_filter; Median, Minimum, Maximum exactly = SciPy; Unsharp and High Pass = the
+formulas; flat colour stays flat under 12 filters (edges included); motion blur runs along its angle; Add Noise
+uniform statistics, mono, repeatable. Resize: Lantern equals a textbook separable resampler (independent float
+code) within 1 level for bilinear, bicubic (a = -0.5) and Lanczos 3, up and down; PIL differs at a handful of
+pixels (it rounds and clips between passes; mean 0.2); Mitchell = ImageMagick's within 2; nearest exact; 300 x 1 ok.
+Rotate 90/-90/180 exact; 30 degrees grows the canvas right and matches PIL's bicubic (mean <= 3). Homography =
+OpenCV getPerspectiveTransform; perspective warp = OpenCV warpPerspective (bilinear) once the half-pixel
+convention is matched.
+Blending: 25 of 27 modes right (see 5); Dissolve takes ~30% at 30%, none blended.
+Selections: wand tolerance inclusive (100 +32 in, +33 out), contiguous and not, tolerance 0; colour range
+fuzziness rule exact; feather = Gaussian sigma r; border, smooth, grow, similar behave; Layer Via Copy of a
+feathered selection: alpha = selection, colours kept, picture unchanged; a filter inside a feathered selection is
+old + (new - old) x selection.
+Content-Aware Fill / healing: a pole across sky and grass is removed, sky filled with sky and grass with grass,
+every pixel outside the hole unchanged; 12 MP picture: 24 x 24 hole in 0.6 s, 600 x 400 hole in 13.6 s, nothing
+outside the selection changed, the dark block gone. Healing a patch 50 levels darker onto a gradient takes the
+gradient's light (mean error <= 2) and leaves the outside alone.
+
+----------------------------------------------------------------------------------------------------------
+NOT TESTED / COULD NOT TEST
+----------------------------------------------------------------------------------------------------------
+- Photoshop itself (not available): every "as Photoshop does" is judged by Adobe's specification, psd-tools,
+  ImageMagick and published formulas. Whether Photoshop accepts Lantern's PSD (no blending ranges written, legacy-
+  only curves, 8-byte brit block) is untested; GIMP, Krita and Photopea were not available either.
+- pytoshop was not tried (psd-tools 1.27 plus hand-made bytes covered the cases).
+- Duotone and multichannel PSDs, vector masks with a user mask ("real" mask rectangle, channel -3), layer masks
+  with the "relative to layer" flag, mask parameters (flag bit 4), PSB above 4 GB.
+- TIFF: 2-bit, 16-bit palette, 32-bit integer, YCbCr, old-style JPEG, BigTIFF (refused by design), orientation
+  tag, FillOrder 2, files over a few MB of LZW (the decoder builds arrays per code; speed on a 100 MB TIFF untested).
+- Phone photos with Exif orientation (the browser decoder handles it; not checked), HEIC/AVIF, SVG.
+- The UI dialogs themselves (Curves point dragging, Levels boxes) -- only the commands they call.
+- Distort filters (twirl, pinch, spherize, polar, wave, zigzag, lens), Stylize beyond emboss/find edges on flat
+  colour, Pixelate, Render: no public definition to hold them to; only flat-colour sanity was checked for a few.
+- Add Noise Gaussian: Lantern's std is amount/2 (12.7 for 10%); Photoshop's definition is not published.
+
+----------------------------------------------------------------------------------------------------------
+FILES
+----------------------------------------------------------------------------------------------------------
+run_review.py      the runner (prints PASS/FAIL per check, then "N checks, M failed"; --json writes the rows)
+review_core.py     server, page helper, bookkeeping, the PSD/PSB writer from Adobe's spec, adjustment blocks
+sec_psd.py sec_tiff.py sec_export.py sec_adjust.py sec_filter.py sec_blend.py sec_select.py sec_inpaint.py
+inputs/            the small inputs (made by the scripts; missing ones are re-made on the next run)
+cases.json         this run as found (455 checks, 37 failed)
