@@ -46,4 +46,12 @@ function promptDigests(L) {
   try { if (was) P.setMode(was); } catch (e) { /* as it was */ }
   return out;
 }
-module.exports = { sha: sha, savedReplies: savedReplies, buildDigest: buildDigest, promptDigests: promptDigests };
+// freezeDate(window, y, m, d): the page's today fixed (noon that day), so a reply that says "today" or "one week from
+// today" is read as on the day a guard was made, whatever day the test runs (1.24.39)
+function freezeDate(W, y, m, d) {
+  var RD = W.Date, T = new RD(y, m, d, 12, 0, 0).getTime();
+  function D() { if (!(this instanceof D)) return new RD(T).toString(); var a = [null].concat([].slice.call(arguments)); return arguments.length ? new (Function.prototype.bind.apply(RD, a))() : new RD(T); }
+  D.prototype = RD.prototype; D.now = function () { return T; }; D.UTC = RD.UTC; D.parse = RD.parse;
+  W.Date = D;
+}
+module.exports = { sha: sha, savedReplies: savedReplies, buildDigest: buildDigest, promptDigests: promptDigests, freezeDate: freezeDate };

@@ -5,7 +5,7 @@ file in the same commit as the work. Read `CLAUDE.md` first.
 
 ## Next, in order
 
-**First: protocol v1, the changes before it is frozen (1.24.39).** From the
+**First: protocol v1, the changes before it is frozen (after the PDF track below; Adam asked for that on 2026-11-25).** From the
 gradebook of 1.24.38's six runs (`agent/reports/2026-11-24-1.24.38.md`, "After
 the release"; `tests/fixtures/gradebook_1.24.38.json`). Each change tried by a
 reviewer who did not write it, with right replies above all; replay
@@ -52,7 +52,8 @@ tick are not drawn or read; a FreeText comment, a note and a highlight are
 not drawn (no code reads /Annots). In order, each a version, Lantern's own
 code, a reviewer before it goes in, test PDFs made with reportlab/pypdf in
 tests/fixtures/:
-1. Read everything: decrypt (RC4, AES-128, AES-256 R6; no question for an
+1. Done in 1.24.39 (but the PDF view, the measuring, JBIG2 and JPX, which
+   follow): read everything: decrypt (RC4, AES-128, AES-256 R6; no question for an
    owner password only, ask for a user password); draw annotations' and form
    widgets' appearance streams (/AP /N, as forms are drawn already) and read
    field values into the text; a PDF view (thumbnails, zoom, find with

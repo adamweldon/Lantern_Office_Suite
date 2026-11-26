@@ -16,7 +16,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.24.38 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.24.39 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0, or the
 // Zero-Clause BSD licence, 0BSD, if you prefer: LICENSE).
@@ -195,7 +195,7 @@
 //          Lantern.lists = {level(el), type(el), mark(type, n), css(scope)}
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.24.38",
+  version: "1.24.39",
   apps: {},
   order: []
 };
@@ -47419,8 +47419,9 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // MODULE: PDF_PARSE - START
 // Depends: CORE (window.Lantern) -- feature-detected
-// Exports: Lantern.pdf.parse(bytes) -> doc {get(num), resolve(v), catalog,
-//          stream(obj) -> Promise<Uint8Array>, latin1(bytes)}; Lantern.pdf.
+// Exports: Lantern.pdf.parse(bytes, {password}) -> doc {get(num), resolve(v),
+//          catalog, stream(obj) -> Promise<Uint8Array>, latin1(bytes), locked,
+//          crypt, needPassword}; Lantern.pdf.
 //          isName / num / str helpers
 // ===========================================================================
 // Reading a PDF file's structure, with no library: a PDF is a numbered list
@@ -47434,6 +47435,10 @@ Lantern.RFB = (function () {
 // JPEG 2000 pictures are reported as not readable here.
 // Objects: dictionary -> plain object (keys without the slash); name ->
 // "/Name"; string -> {s: "bytes as latin1"}; reference -> {r: num, g: gen}.
+// A locked PDF (1.24.39) is opened through Lantern.pdf.unlock (PDF_CRYPT)
+// when it is there: each object's strings and streams are unscrambled as
+// they are read, with no password when the PDF is locked only against
+// changes, with opts.password when it needs one.
 (function () {
   var L = window.Lantern;
   if (!L) return;
@@ -47537,11 +47542,21 @@ Lantern.RFB = (function () {
   };
   function isRef(v) { return v && typeof v === "object" && v.r !== undefined && v.g !== undefined; }
   // parse(bytes) -> doc
-  function parse(bytes) {
-    var s = latin1(bytes), offs = {}, re = /(\d+)\s+(\d+)\s+obj\b/g, m, cache = {}, packed = {};
+  function parse(bytes, opts) {
+    opts = opts || {};
+    var s = latin1(bytes), offs = {}, gens = {}, re = /(\d+)\s+(\d+)\s+obj\b/g, m, cache = {}, packed = {};
     if (s.slice(0, 1024).indexOf("%PDF") < 0) throw new Error("this file is not a PDF");
-    while ((m = re.exec(s))) offs[m[1]] = m.index + m[0].length;   // later copies (updates) win
-    var doc = { bytes: bytes, s: s, offs: offs };
+    while ((m = re.exec(s))) { offs[m[1]] = m.index + m[0].length; gens[m[1]] = +m[2]; }   // later copies (updates) win
+    var doc = { bytes: bytes, s: s, offs: offs, gens: gens };
+    // a locked PDF's strings, unscrambled with their object's key (not inside object streams: the stream as a whole is)
+    function unlockStrings(v, num) {
+      if (v && typeof v === "object") {
+        if (v.s !== undefined && typeof v.s === "string") return { s: doc.crypt.string(+num, gens[num] || 0, v.s), hex: v.hex };
+        if (Array.isArray(v)) return v.map(function (x) { return unlockStrings(x, num); });
+        if (v.r === undefined && v.op === undefined) { var o = {}; for (var k in v) if (v.hasOwnProperty(k)) o[k] = unlockStrings(v[k], num); return o; }
+      }
+      return v;
+    }
     function get(num) {
       num = String(num);
       if (cache.hasOwnProperty(num)) return cache[num];
@@ -47560,8 +47575,8 @@ Lantern.RFB = (function () {
             end = e2 < 0 ? s.length : e2;
             while (end > p && (s[end - 1] === "\n" || s[end - 1] === "\r")) end--;
           }
-          v = { dict: v, start: p, end: end, stream: true };
-        } else lx.p = save;
+          v = { dict: doc.crypt && num !== doc.cryptSkip ? unlockStrings(v, num) : v, start: p, end: end, stream: true, num: +num, gen: gens[num] || 0 };
+        } else { lx.p = save; if (doc.crypt && num !== doc.cryptSkip) v = unlockStrings(v, num); }
       } else if (packed[num]) v = packed[num]();
       cache[num] = v;
       return v;
@@ -47573,8 +47588,131 @@ Lantern.RFB = (function () {
     }
     doc.get = get; doc.resolve = resolve;
     // objects packed inside object streams (PDF 1.5 and later)
+    // the trailer the last startxref names: after a classic cross-reference table, or a cross-reference stream's
+    // dictionary (looked for a few bytes either side, as some files are off by a line ending)
+    function trailerAtStart() {
+      var sx = s.lastIndexOf("startxref"), m = sx >= 0 ? /^startxref\s+(\d+)/.exec(s.slice(sx, sx + 40)) : null;
+      if (!m) return null;
+      var off = +m[1];
+      for (var d = 0; d <= 20; d++) for (var sg = -1; sg <= 1; sg += 2) {
+        var o = off + d * sg;
+        if (o < 0 || o >= s.length) continue;
+        if (s.substr(o, 4) === "xref") {
+          var t = s.indexOf("trailer", o);
+          if (t < 0) return null;
+          var lx1 = new Lexer(s); lx1.p = t + 7; var v1 = lx1.value();
+          return v1 && typeof v1 === "object" && !Array.isArray(v1) ? v1 : null;
+        }
+        var mo = /^(\d+)\s+(\d+)\s+obj\b/.exec(s.substr(o, 40));
+        if (mo && (o === 0 || /\s/.test(s.charAt(o - 1)))) {
+          var lx2 = new Lexer(s); lx2.p = o + mo[0].length; var v2 = lx2.value();
+          return v2 && v2.Type === "/XRef" ? v2 : null;
+        }
+        if (!d) break;
+      }
+      return null;
+    }
+    function mergedTrailers(nums, first) {
+      var tlist = [], at0 = s.indexOf("trailer");
+      while (at0 >= 0) {
+        try { var tl0 = new Lexer(s); tl0.p = at0 + 7; var tv = tl0.value(); if (tv && typeof tv === "object" && !Array.isArray(tv) && (tv.Size !== undefined || tv.Root)) tlist.push({ at: at0, d: tv }); } catch (e0) { }
+        at0 = s.indexOf("trailer", at0 + 7);
+      }
+      if (s.indexOf("/XRef") >= 0) nums.forEach(function (n) {
+        var lx0 = new Lexer(s); lx0.p = offs[n];
+        var sv0 = lx0.p, t0 = lx0.token();
+        if (!t0 || t0.t !== "<<") return;
+        lx0.p = sv0;
+        var d0 = lx0.value();
+        if (d0 && d0.Type === "/XRef") tlist.push({ at: offs[n], d: d0 });
+      });
+      tlist.sort(function (a, b) { return a.at - b.at; });
+      var merged = {};
+      tlist.forEach(function (t1) { for (var k1 in t1.d) if (t1.d.hasOwnProperty(k1) && t1.d[k1] != null) merged[k1] = t1.d[k1]; });
+      if (first) for (var k2 in first) if (first.hasOwnProperty(k2) && first[k2] != null) merged[k2] = first[k2];
+      return merged;
+    }
+    // (1.24.39, found by the third review) the cross-reference sections the last startxref names, newest first along
+    // /Prev (and a hybrid file's /XRefStm): where each object of the newest revision is. Objects are otherwise found by
+    // scanning the file for "n g obj", a later copy winning -- which took a PDF attached unpacked inside another for the
+    // document itself. An entry is used only where the object at its place says it is that object; the scan stays for
+    // what the sections do not name and for a damaged file.
+    async function xrefChain() {
+      var sx = s.lastIndexOf("startxref"), m0 = sx >= 0 ? /^startxref\s+(\d+)/.exec(s.slice(sx, sx + 40)) : null;
+      if (!m0) return null;
+      var one = {}, two = {}, seen = {}, queue = [+m0[1]], n = 0, raw = null, pos = 0;
+      function fld(len, dflt) { if (!len) return dflt; var v = 0; for (var b = 0; b < len; b++) v = v * 256 + raw[pos++]; return v; }
+      function isObj(o) { return /^\d+\s+\d+\s+obj\b/.test(s.substr(o, 40)) && (o === 0 || /\s/.test(s.charAt(o - 1))); }
+      function near(off) { for (var d = 0; d <= 20; d++) for (var sg = -1; sg <= 1; sg += 2) { var o = off + d * sg; if (o >= 0 && o < s.length && (s.substr(o, 4) === "xref" || isObj(o))) return o; if (!d) break; } return -1; }
+      function num(v) { v = resolve(v); return typeof v === "number" ? v : null; }
+      while (queue.length && n++ < 500) {
+        var off = queue.shift();
+        if (off == null || seen[off]) continue;
+        seen[off] = 1;
+        var at = near(off), dict;
+        if (at < 0) return n > 1 ? { one: one, two: two } : null;
+        if (s.substr(at, 4) === "xref") {
+          var t = s.indexOf("trailer", at);
+          if (t < 0) return null;
+          var tk = s.slice(at + 4, t).trim().split(/\s+/), j = 0;
+          while (j + 1 < tk.length) {
+            var st = +tk[j], cnt = +tk[j + 1]; j += 2;
+            if (!(st >= 0) || !(cnt >= 0) || j + 3 * cnt > tk.length) return null;
+            for (var e = 0; e < cnt; e++, j += 3) { var k1 = String(st + e); if (tk[j + 2] === "n" && one[k1] === undefined && two[k1] === undefined) one[k1] = +tk[j]; }
+          }
+          var lt = new Lexer(s); lt.p = t + 7; dict = lt.value();
+          if (!dict || typeof dict !== "object" || Array.isArray(dict)) return null;
+          if (num(dict.XRefStm) != null) queue.unshift(num(dict.XRefStm));
+        } else {
+          var mo = /^(\d+)\s+(\d+)\s+obj\b/.exec(s.substr(at, 40)), key = "xref@" + at;
+          offs[key] = at + mo[0].length;
+          var xo = get(key);
+          delete offs[key]; delete cache[key];
+          if (!xo || !xo.stream || xo.dict.Type !== "/XRef") return null;
+          dict = xo.dict;
+          var w = (resolve(dict.W) || []).map(num), idx = (resolve(dict.Index) || [0, num(dict.Size) || 0]).map(num), rw = (w[0] || 0) + (w[1] || 0) + (w[2] || 0);
+          raw = await stream(xo); pos = 0;
+          if (w.length < 3 || !rw) return null;
+          for (var ii = 0; ii + 1 < idx.length; ii += 2) for (var e2 = 0; e2 < idx[ii + 1] && pos + rw <= raw.length; e2++) {
+            var ty = fld(w[0], 1), f2 = fld(w[1], 0), f3 = fld(w[2], 0), k2 = String(idx[ii] + e2);
+            if (one[k2] !== undefined || two[k2] !== undefined) continue;
+            if (ty === 1) one[k2] = f2; else if (ty === 2) two[k2] = [f2, f3];
+          }
+        }
+        if (num(dict.Prev) != null) queue.push(num(dict.Prev));
+      }
+      return { one: one, two: two };
+    }
     doc.ready = (async function () {
       var nums = Object.keys(offs);
+      // (1.24.39) the trailer: the one of the cross-reference section the file's last "startxref" names -- the newest
+      // (an update's), which holds every entry (ISO 32000 7.5.6); in a linearized PDF ("Fast Web View", as Acrobat
+      // saves) that is the first page's, near the top, which names the lock, the catalog and the details. A trailer is
+      // never itself scrambled by a lock. Only when that cannot be read (a damaged file): every trailer and every
+      // cross-reference stream's dictionary in the file, in file order, a later one naming a thing over an earlier.
+      var trl = trailerAtStart(), xr = null;
+      if (trl && trl.Root) { try { xr = await xrefChain(); } catch (ex) { xr = null; } }
+      if (xr) {
+        for (var k1 in xr.one) {
+          var at1 = xr.one[k1], m1 = at1 >= 0 ? /^(\d+)\s+(\d+)\s+obj\b/.exec(s.substr(at1, 40)) : null;
+          if (m1 && m1[1] === k1) { offs[k1] = at1 + m1[0].length; gens[k1] = +m1[2]; }
+        }
+        for (var ck0 in cache) if (cache.hasOwnProperty(ck0)) delete cache[ck0];
+      }
+      var two = xr ? xr.two : {};
+      if (!trl || !trl.Root) trl = mergedTrailers(nums, trl);
+      doc.trailer = trl;
+      // a locked PDF: its key first, before any string or stream is read
+      if (trl && trl.Encrypt) {
+        doc.locked = true;
+        if (P.unlock) {
+          var enc = resolve(trl.Encrypt), ids = resolve(trl.ID), id0 = ids && resolve(ids[0]);
+          if (trl.Encrypt.r !== undefined) doc.cryptSkip = String(trl.Encrypt.r);
+          var u = enc ? P.unlock(enc, id0 && id0.s || "", opts.password, resolve) : { ok: false };
+          if (u.ok) { doc.crypt = u; for (var ck in cache) if (cache.hasOwnProperty(ck) && ck !== doc.cryptSkip) delete cache[ck]; }
+          else { doc.needPassword = !!u.needPassword; doc.wrongPassword = !!u.wrong; doc.lockKind = u.unsupported || ""; }
+        }
+      }
       for (var i = 0; i < nums.length; i++) {
         var lx = new Lexer(s); lx.p = offs[nums[i]];
         var save = lx.p, t = lx.token();
@@ -47585,24 +47723,30 @@ Lantern.RFB = (function () {
         try {
           var raw = await stream(get(nums[i])), txt = latin1(raw), first = resolve(d.First) || 0, hl = new Lexer(txt.slice(0, first)), pairs = [];
           for (var k = 0; k < (resolve(d.N) || 0); k++) { var a = hl.token(), b = hl.token(); if (!a || !b) break; pairs.push([a.v, b.v]); }
-          pairs.forEach(function (pr) {
+          // (1.24.39, found by the review of 1.24.40: each object stream's own text and start, not the last one's -- a PDF with
+          // more than one object stream opened as no pages, in 1.24.38 too)
+          // (an object the newest cross-reference section puts in an object stream is read from that one, over any
+          // older copy standing on its own)
+          (function (txt, first, sn) { pairs.forEach(function (pr) {
             var key = String(pr[0]);
-            if (offs[key] !== undefined || packed[key]) return;
+            if (two[key]) { if (String(two[key][0]) !== sn) return; delete offs[key]; delete cache[key]; }
+            else if (offs[key] !== undefined || packed[key]) return;
             packed[key] = function () { var l2 = new Lexer(txt); l2.p = first + pr[1]; return l2.value(); };
-          });
+          }); })(txt, first, String(nums[i]));
         } catch (e) { }
       }
       // the catalog: from the trailer (or the cross-reference stream), else
       // the last object that says it is one
-      var root = null, tr = s.lastIndexOf("trailer");
-      if (tr >= 0) { var tl = new Lexer(s); tl.p = tr + 7; var td = tl.value(); if (td && td.Root) root = resolve(td.Root); }
+      var root = trl.Root ? resolve(trl.Root) : null, tr = s.lastIndexOf("trailer");
       if (!root) Object.keys(offs).concat(Object.keys(packed)).forEach(function (n) {
         var o = get(n), d2 = o && o.stream ? o.dict : o;
         if (d2 && d2.Type === "/XRef" && d2.Root && !root) root = resolve(d2.Root);
         if (d2 && d2.Type === "/Catalog") root = root || d2;
       });
       doc.catalog = root;
-      doc.encrypted = tr >= 0 && /\/Encrypt\b/.test(s.slice(tr, tr + 2000)) || /\/Encrypt\s/.test(s.slice(Math.max(0, s.length - 4000)));
+      // "encrypted" means: locked, and Lantern cannot open it (no PDF_CRYPT, a password needed, or a certificate lock)
+      // (a trailer read whole says itself whether there is a lock; a guess from the file's last bytes only for a damaged one)
+      doc.encrypted = doc.locked ? !doc.crypt : trl.Root ? false : (tr >= 0 && /\/Encrypt\b/.test(s.slice(tr, tr + 2000)) || /\/Encrypt\s/.test(s.slice(Math.max(0, s.length - 4000))));
       return doc;
     })();
     // stream(obj, upTo) -> Promise<Uint8Array> with its filters undone
@@ -47611,8 +47755,12 @@ Lantern.RFB = (function () {
       if (!o || !o.stream) return new Uint8Array(0);
       var data = bytes.subarray(o.start, o.end), f = resolve(o.dict.Filter), pr = resolve(o.dict.DecodeParms);
       var fl = f ? (Array.isArray(f) ? f : [f]) : [], pl = pr ? (Array.isArray(pr) ? pr : [pr]) : [];
+      // (1.24.39) a locked PDF's stream: unscrambled before its filters (a cross-reference stream never is scrambled)
+      if (doc.crypt && o.num !== undefined && String(o.num) !== doc.cryptSkip && resolve(o.dict.Type) !== "/XRef" && fl.map(resolve).indexOf("/Crypt") < 0)
+        data = doc.crypt.stream(o.num, o.gen, data, resolve(o.dict.Type) === "/Metadata");
       for (var i = 0; i < fl.length; i++) {
         var name = resolve(fl[i]), parm = resolve(pl[i]) || {};
+        if (name === "/Crypt") continue;
         if (name === "/FlateDecode" || name === "/Fl") data = predict(await inflate(data), parm);
         else if (name === "/LZWDecode" || name === "/LZW") data = predict(lzw(data, parm.EarlyChange == null ? 1 : resolve(parm.EarlyChange)), parm);
         else if (name === "/ASCIIHexDecode" || name === "/AHx") data = ahx(data);
@@ -47725,6 +47873,441 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: PDF_PARSE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: PDF_CRYPT_CORE - START
+// Depends: CORE (window.Lantern) -- feature-detected
+// Exports: Lantern.pdf.cryptCore = {md5(bytes), rc4(key, bytes), u8(n)} --
+//          Uint8Array in and out; AES is PDF_CRYPT_AES, SHA-2 PDF_CRYPT_SHA
+// ===========================================================================
+// The sums a PDF's lock is made of, written out with no library (1.24.39).
+// A PDF that is locked -- with a password, or only against printing and
+// copying, which every viewer opens without asking -- has every string and
+// stream scrambled with RC4 or AES, under a key made from the password with
+// MD5 or SHA-2. These are the published algorithms (RFC 1321 for MD5,
+// FIPS 197 for AES, FIPS 180-4 for SHA-2), checked against their own test
+// values in tests/pdf_crypt.js.
+(function () {
+  var L = window.Lantern;
+  if (!L) return;
+  var P = window.Lantern.pdf = window.Lantern.pdf || {};
+  function u8(n) { return new Uint8Array(n); }
+  // --- MD5 -------------------------------------------------------------------
+  var MS = [7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21], MK = [];
+  for (var i0 = 0; i0 < 64; i0++) MK.push(Math.floor(Math.abs(Math.sin(i0 + 1)) * 4294967296) | 0);
+  function md5(b) {
+    var n = b.length, len = ((n + 8) >> 6) + 1 << 6, m = u8(len), w = new Int32Array(16), i, j;
+    m.set(b); m[n] = 128;
+    var bits = n * 8;
+    for (i = 0; i < 4; i++) m[len - 8 + i] = (bits >>> (8 * i)) & 255;
+    m[len - 4] = Math.floor(n / 536870912) & 255;
+    var a0 = 1732584193, b0 = -271733879, c0 = -1732584194, d0 = 271733878;
+    for (var o = 0; o < len; o += 64) {
+      for (j = 0; j < 16; j++) w[j] = m[o + 4 * j] | (m[o + 4 * j + 1] << 8) | (m[o + 4 * j + 2] << 16) | (m[o + 4 * j + 3] << 24);
+      var A = a0, B = b0, C = c0, D = d0;
+      for (i = 0; i < 64; i++) {
+        var F, g;
+        if (i < 16) { F = (B & C) | (~B & D); g = i; }
+        else if (i < 32) { F = (D & B) | (~D & C); g = (5 * i + 1) & 15; }
+        else if (i < 48) { F = B ^ C ^ D; g = (3 * i + 5) & 15; }
+        else { F = C ^ (B | ~D); g = (7 * i) & 15; }
+        var s = MS[(i >> 4) * 4 + (i & 3)], t = (A + F + MK[i] + w[g]) | 0;
+        A = D; D = C; C = B; B = (B + ((t << s) | (t >>> (32 - s)))) | 0;
+      }
+      a0 = (a0 + A) | 0; b0 = (b0 + B) | 0; c0 = (c0 + C) | 0; d0 = (d0 + D) | 0;
+    }
+    var out = u8(16);
+    [a0, b0, c0, d0].forEach(function (v, k) { for (var q = 0; q < 4; q++) out[4 * k + q] = (v >>> (8 * q)) & 255; });
+    return out;
+  }
+  // --- RC4 -------------------------------------------------------------------
+  function rc4(key, b) {
+    var S = u8(256), i, j = 0, t, out = u8(b.length);
+    for (i = 0; i < 256; i++) S[i] = i;
+    for (i = 0; i < 256; i++) { j = (j + S[i] + key[i % key.length]) & 255; t = S[i]; S[i] = S[j]; S[j] = t; }
+    i = 0; j = 0;
+    for (var k = 0; k < b.length; k++) {
+      i = (i + 1) & 255; j = (j + S[i]) & 255; t = S[i]; S[i] = S[j]; S[j] = t;
+      out[k] = b[k] ^ S[(S[i] + S[j]) & 255];
+    }
+    return out;
+  }
+  P.cryptCore = { md5: md5, rc4: rc4, u8: u8 };
+})();
+// ===========================================================================
+// MODULE: PDF_CRYPT_CORE - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: PDF_CRYPT_AES - START
+// Depends: PDF_CRYPT_CORE (Lantern.pdf.cryptCore) -- feature-detected
+// Exports: Lantern.pdf.cryptCore.aesDecrypt(key, bytes, iv, unpad),
+//          .aesEncrypt(key, bytes, iv, pad) -- CBC, 128- or 256-bit keys
+// ===========================================================================
+// AES (FIPS 197) in CBC mode: how PDFs from Acrobat 7 on scramble their
+// strings and streams (1.24.39). Each 16 bytes are mixed with the 16 before;
+// a PDF puts the first 16 (the starting vector) in front of the data.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.pdf || !L.pdf.cryptCore) return;
+  var C = L.pdf.cryptCore, u8 = C.u8;
+  var SB = u8(256), IS = u8(256), X2 = u8(256);
+  (function () {
+    var p = 1, q = 1;
+    function rotl(v, s) { return ((v << s) | (v >> (8 - s))) & 255; }
+    do {
+      p = (p ^ (p << 1) ^ (p & 128 ? 27 : 0)) & 255;
+      q = (q ^ (q << 1)) & 255; q = (q ^ (q << 2)) & 255; q = (q ^ (q << 4)) & 255;
+      if (q & 128) q ^= 9;
+      var x = q ^ rotl(q, 1) ^ rotl(q, 2) ^ rotl(q, 3) ^ rotl(q, 4);
+      SB[p] = (x ^ 99) & 255;
+    } while (p !== 1);
+    SB[0] = 99;
+    for (var k = 0; k < 256; k++) { IS[SB[k]] = k; X2[k] = ((k << 1) ^ (k & 128 ? 27 : 0)) & 255; }
+  })();
+  function gm(a, b) { var r = 0; while (b) { if (b & 1) r ^= a; a = X2[a]; b >>= 1; } return r; }
+  function expand(key) {
+    var nk = key.length / 4, nr = nk + 6, w = u8(16 * (nr + 1)), rc = 1, i;
+    w.set(key);
+    for (i = nk; i < 4 * (nr + 1); i++) {
+      var t = [w[4 * i - 4], w[4 * i - 3], w[4 * i - 2], w[4 * i - 1]];
+      if (i % nk === 0) { t = [SB[t[1]] ^ rc, SB[t[2]], SB[t[3]], SB[t[0]]]; rc = X2[rc]; }
+      else if (nk > 6 && i % nk === 4) t = t.map(function (v) { return SB[v]; });
+      for (var k = 0; k < 4; k++) w[4 * i + k] = w[4 * (i - nk) + k] ^ t[k];
+    }
+    return { w: w, nr: nr };
+  }
+  function encBlock(ks, s) {
+    var w = ks.w, nr = ks.nr, r, c, t = u8(16);
+    for (c = 0; c < 16; c++) s[c] ^= w[c];
+    for (r = 1; r <= nr; r++) {
+      for (c = 0; c < 16; c++) t[c] = SB[s[(c + 4 * (c % 4)) % 16]];
+      for (c = 0; c < 4; c++) {
+        var a0 = t[4 * c], a1 = t[4 * c + 1], a2 = t[4 * c + 2], a3 = t[4 * c + 3];
+        if (r < nr) {
+          s[4 * c] = X2[a0] ^ X2[a1] ^ a1 ^ a2 ^ a3; s[4 * c + 1] = a0 ^ X2[a1] ^ X2[a2] ^ a2 ^ a3;
+          s[4 * c + 2] = a0 ^ a1 ^ X2[a2] ^ X2[a3] ^ a3; s[4 * c + 3] = X2[a0] ^ a0 ^ a1 ^ a2 ^ X2[a3];
+        } else { s[4 * c] = a0; s[4 * c + 1] = a1; s[4 * c + 2] = a2; s[4 * c + 3] = a3; }
+      }
+      for (c = 0; c < 16; c++) s[c] ^= w[16 * r + c];
+    }
+    return s;
+  }
+  function decBlock(ks, s) {
+    var w = ks.w, nr = ks.nr, r, c, t = u8(16);
+    for (c = 0; c < 16; c++) s[c] ^= w[16 * nr + c];
+    for (r = nr - 1; r >= 0; r--) {
+      for (c = 0; c < 16; c++) t[(c + 4 * (c % 4)) % 16] = IS[s[c]];
+      for (c = 0; c < 16; c++) t[c] ^= w[16 * r + c];
+      for (c = 0; c < 4; c++) {
+        var a0 = t[4 * c], a1 = t[4 * c + 1], a2 = t[4 * c + 2], a3 = t[4 * c + 3];
+        if (r > 0) {
+          s[4 * c] = gm(a0, 14) ^ gm(a1, 11) ^ gm(a2, 13) ^ gm(a3, 9); s[4 * c + 1] = gm(a0, 9) ^ gm(a1, 14) ^ gm(a2, 11) ^ gm(a3, 13);
+          s[4 * c + 2] = gm(a0, 13) ^ gm(a1, 9) ^ gm(a2, 14) ^ gm(a3, 11); s[4 * c + 3] = gm(a0, 11) ^ gm(a1, 13) ^ gm(a2, 9) ^ gm(a3, 14);
+        } else { s[4 * c] = a0; s[4 * c + 1] = a1; s[4 * c + 2] = a2; s[4 * c + 3] = a3; }
+      }
+    }
+    return s;
+  }
+  // aesDecrypt(key, data, iv, unpad): CBC; with no iv the first 16 bytes are it (as in a PDF)
+  function aesDecrypt(key, b, iv, unpad) {
+    if (!iv) { if (b.length < 16) return u8(0); iv = b.subarray(0, 16); b = b.subarray(16); }
+    var ks = expand(key), n = b.length - b.length % 16, out = u8(n), prev = u8(16), blk = u8(16), i, k;
+    prev.set(iv);
+    for (i = 0; i < n; i += 16) {
+      blk.set(b.subarray(i, i + 16));
+      var ct = b.subarray(i, i + 16);
+      decBlock(ks, blk);
+      for (k = 0; k < 16; k++) out[i + k] = blk[k] ^ prev[k];
+      prev.set(ct);
+    }
+    if (unpad !== false && n) { var pd = out[n - 1]; if (pd >= 1 && pd <= 16) return out.subarray(0, n - pd); }
+    return out;
+  }
+  // aesEncrypt(key, data, iv, pad): CBC; pad false for data a whole number of blocks long
+  function aesEncrypt(key, b, iv, pad) {
+    var n = b.length, p = pad === false ? 0 : 16 - n % 16, m = u8(n + p), ks = expand(key), prev = u8(16), i, k;
+    m.set(b); for (i = n; i < n + p; i++) m[i] = p;
+    prev.set(iv);
+    for (i = 0; i < m.length; i += 16) {
+      for (k = 0; k < 16; k++) m[i + k] ^= prev[k];
+      encBlock(ks, m.subarray(i, i + 16));
+      prev = m.subarray(i, i + 16);
+    }
+    return m;
+  }
+  C.aesDecrypt = aesDecrypt; C.aesEncrypt = aesEncrypt;
+})();
+// ===========================================================================
+// MODULE: PDF_CRYPT_AES - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: PDF_CRYPT_SHA - START
+// Depends: PDF_CRYPT_CORE (Lantern.pdf.cryptCore) -- feature-detected
+// Exports: Lantern.pdf.cryptCore.sha256(bytes), .sha384(bytes), .sha512(bytes)
+// ===========================================================================
+// SHA-256, -384 and -512 (FIPS 180-4): the 256-bit AES lock of newer PDFs
+// makes its key from the password with rounds of all three (1.24.39). The
+// 64-bit words of SHA-512 are pairs of 32-bit halves here.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.pdf || !L.pdf.cryptCore) return;
+  var C = L.pdf.cryptCore, u8 = C.u8;
+  // the round constants (the first bits of the cube and square roots of the first primes), 8 hex digits a word
+  function words(h) { var o = []; for (var i = 0; i < h.length; i += 8) o.push(parseInt(h.substr(i, 8), 16) | 0); return o; }
+  function pad64(b, block, lenBytes) {
+    var n = b.length, len = Math.ceil((n + 1 + lenBytes) / block) * block, m = u8(len);
+    m.set(b); m[n] = 128;
+    var bits = n * 8;
+    for (var i = 0; i < 4; i++) m[len - 1 - i] = (bits >>> (8 * i)) & 255;
+    m[len - 5] = Math.floor(n / 536870912) & 255;
+    return m;
+  }
+  var K256 = words("428a2f9871374491b5c0fbcfe9b5dba53956c25b59f111f1923f82a4ab1c5ed5d807aa9812835b01243185be550c7dc3" +
+    "72be5d7480deb1fe9bdc06a7c19bf174e49b69c1efbe47860fc19dc6240ca1cc2de92c6f4a7484aa5cb0a9dc76f988da" +
+    "983e5152a831c66db00327c8bf597fc7c6e00bf3d5a7914706ca63511429296727b70a852e1b21384d2c6dfc53380d13" +
+    "650a7354766a0abb81c2c92e92722c85a2bfe8a1a81a664bc24b8b70c76c51a3d192e819d6990624f40e3585106aa070" +
+    "19a4c1161e376c082748774c34b0bcb5391c0cb34ed8aa4a5b9cca4f682e6ff3748f82ee78a5636f84c878148cc70208" +
+    "90befffaa4506cebbef9a3f7c67178f2");
+  function sha256(b) {
+    var m = pad64(b, 64, 8), H = [1779033703, -1150833019, 1013904242, -1521486534, 1359893119, -1694144372, 528734635, 1541459225], w = new Int32Array(64), i;
+    for (var o = 0; o < m.length; o += 64) {
+      for (i = 0; i < 16; i++) w[i] = (m[o + 4 * i] << 24) | (m[o + 4 * i + 1] << 16) | (m[o + 4 * i + 2] << 8) | m[o + 4 * i + 3];
+      for (i = 16; i < 64; i++) {
+        var x = w[i - 15], y = w[i - 2];
+        var s0 = ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3), s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10);
+        w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+      }
+      var a = H[0], bb = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+      for (i = 0; i < 64; i++) {
+        var S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7)), ch = (e & f) ^ (~e & g);
+        var t1 = (h + S1 + ch + K256[i] + w[i]) | 0;
+        var S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10)), mj = (a & bb) ^ (a & c) ^ (bb & c);
+        var t2 = (S0 + mj) | 0;
+        h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = bb; bb = a; a = (t1 + t2) | 0;
+      }
+      H[0] = (H[0] + a) | 0; H[1] = (H[1] + bb) | 0; H[2] = (H[2] + c) | 0; H[3] = (H[3] + d) | 0;
+      H[4] = (H[4] + e) | 0; H[5] = (H[5] + f) | 0; H[6] = (H[6] + g) | 0; H[7] = (H[7] + h) | 0;
+    }
+    var out = u8(32);
+    for (i = 0; i < 8; i++) for (var q = 0; q < 4; q++) out[4 * i + q] = (H[i] >>> (24 - 8 * q)) & 255;
+    return out;
+  }
+  var K512 = words("428a2f98d728ae227137449123ef65cdb5c0fbcfec4d3b2fe9b5dba58189dbbc3956c25bf348b53859f111f1b605d019" +
+    "923f82a4af194f9bab1c5ed5da6d8118d807aa98a303024212835b0145706fbe243185be4ee4b28c550c7dc3d5ffb4e2" +
+    "72be5d74f27b896f80deb1fe3b1696b19bdc06a725c71235c19bf174cf692694e49b69c19ef14ad2efbe4786384f25e3" +
+    "0fc19dc68b8cd5b5240ca1cc77ac9c652de92c6f592b02754a7484aa6ea6e4835cb0a9dcbd41fbd476f988da831153b5" +
+    "983e5152ee66dfaba831c66d2db43210b00327c898fb213fbf597fc7beef0ee4c6e00bf33da88fc2d5a79147930aa725" +
+    "06ca6351e003826f142929670a0e6e7027b70a8546d22ffc2e1b21385c26c9264d2c6dfc5ac42aed53380d139d95b3df" +
+    "650a73548baf63de766a0abb3c77b2a881c2c92e47edaee692722c851482353ba2bfe8a14cf10364a81a664bbc423001" +
+    "c24b8b70d0f89791c76c51a30654be30d192e819d6ef5218d69906245565a910f40e35855771202a106aa07032bbd1b8" +
+    "19a4c116b8d2d0c81e376c085141ab532748774cdf8eeb9934b0bcb5e19b48a8391c0cb3c5c95a634ed8aa4ae3418acb" +
+    "5b9cca4f7763e373682e6ff3d6b2b8a3748f82ee5defb2fc78a5636f43172f6084c87814a1f0ab728cc702081a6439ec" +
+    "90befffa23631e28a4506cebde82bde9bef9a3f7b2c67915c67178f2e372532bca273eceea26619cd186b8c721c0c207" +
+    "eada7dd6cde0eb1ef57d4f7fee6ed17806f067aa72176fba0a637dc5a2c898a6113f9804bef90dae1b710b35131c471b" +
+    "28db77f523047d8432caab7b40c724933c9ebe0a15c9bebc431d67c49c100d4c4cc5d4becb3e42b6597f299cfc657e2a" +
+    "5fcb6fab3ad6faec6c44198c4a475817");
+  var H512 = words("6a09e667f3bcc908bb67ae8584caa73b3c6ef372fe94f82ba54ff53a5f1d36f1510e527fade682d19b05688c2b3e6c1f" +
+    "1f83d9abfb41bd6b5be0cd19137e2179");
+  var H384 = words("cbbb9d5dc1059ed8629a292a367cd5079159015a3070dd17152fecd8f70e593967332667ffc00b318eb44a8768581511" +
+    "db0c2e0d64f98fa747b5481dbefa4fa4");
+  function sha512(b, is384) {
+    var m = pad64(b, 128, 16), len = m.length, i, T = 4294967296;
+    var H = (is384 ? H384 : H512).map(function (v) { return v | 0; }), w = new Int32Array(160);
+    for (var o = 0; o < len; o += 128) {
+      for (i = 0; i < 32; i++) w[i] = (m[o + 4 * i] << 24) | (m[o + 4 * i + 1] << 16) | (m[o + 4 * i + 2] << 8) | m[o + 4 * i + 3];
+      for (i = 16; i < 80; i++) {
+        var xh = w[2 * (i - 15)], xl = w[2 * (i - 15) + 1], yh = w[2 * (i - 2)], yl = w[2 * (i - 2) + 1];
+        var s0h = ((xh >>> 1) | (xl << 31)) ^ ((xh >>> 8) | (xl << 24)) ^ (xh >>> 7);
+        var s0l = ((xl >>> 1) | (xh << 31)) ^ ((xl >>> 8) | (xh << 24)) ^ ((xl >>> 7) | (xh << 25));
+        var s1h = ((yh >>> 19) | (yl << 13)) ^ ((yl >>> 29) | (yh << 3)) ^ (yh >>> 6);
+        var s1l = ((yl >>> 19) | (yh << 13)) ^ ((yh >>> 29) | (yl << 3)) ^ ((yl >>> 6) | (yh << 26));
+        var lo = (w[2 * (i - 16) + 1] >>> 0) + (s0l >>> 0) + (w[2 * (i - 7) + 1] >>> 0) + (s1l >>> 0);
+        w[2 * i] = (w[2 * (i - 16)] + s0h + w[2 * (i - 7)] + s1h + Math.floor(lo / T)) | 0; w[2 * i + 1] = lo | 0;
+      }
+      var ah = H[0], al = H[1], bh = H[2], bl = H[3], ch = H[4], cl = H[5], dh = H[6], dl = H[7];
+      var eh = H[8], el = H[9], fh = H[10], fl = H[11], gh = H[12], gl = H[13], hh = H[14], hl = H[15];
+      for (i = 0; i < 80; i++) {
+        var S1h = ((eh >>> 14) | (el << 18)) ^ ((eh >>> 18) | (el << 14)) ^ ((el >>> 9) | (eh << 23));
+        var S1l = ((el >>> 14) | (eh << 18)) ^ ((el >>> 18) | (eh << 14)) ^ ((eh >>> 9) | (el << 23));
+        var chh = (eh & fh) ^ (~eh & gh), chl = (el & fl) ^ (~el & gl);
+        var t1l = (hl >>> 0) + (S1l >>> 0) + (chl >>> 0) + (K512[2 * i + 1] >>> 0) + (w[2 * i + 1] >>> 0);
+        var t1h = (hh + S1h + chh + K512[2 * i] + w[2 * i] + Math.floor(t1l / T)) | 0;
+        t1l = t1l | 0;
+        var S0h = ((ah >>> 28) | (al << 4)) ^ ((al >>> 2) | (ah << 30)) ^ ((al >>> 7) | (ah << 25));
+        var S0l = ((al >>> 28) | (ah << 4)) ^ ((ah >>> 2) | (al << 30)) ^ ((ah >>> 7) | (al << 25));
+        var mjh = (ah & bh) ^ (ah & ch) ^ (bh & ch), mjl = (al & bl) ^ (al & cl) ^ (bl & cl);
+        var t2l = (S0l >>> 0) + (mjl >>> 0), t2h = (S0h + mjh + Math.floor(t2l / T)) | 0;
+        t2l = t2l | 0;
+        hh = gh; hl = gl; gh = fh; gl = fl; fh = eh; fl = el;
+        var e2 = (dl >>> 0) + (t1l >>> 0); eh = (dh + t1h + Math.floor(e2 / T)) | 0; el = e2 | 0;
+        dh = ch; dl = cl; ch = bh; cl = bl; bh = ah; bl = al;
+        var a2 = (t1l >>> 0) + (t2l >>> 0); ah = (t1h + t2h + Math.floor(a2 / T)) | 0; al = a2 | 0;
+      }
+      var cur = [ah, al, bh, bl, ch, cl, dh, dl, eh, el, fh, fl, gh, gl, hh, hl];
+      for (var k = 0; k < 16; k += 2) {
+        var lo2 = (H[k + 1] >>> 0) + (cur[k + 1] >>> 0);
+        H[k] = (H[k] + cur[k] + Math.floor(lo2 / T)) | 0; H[k + 1] = lo2 | 0;
+      }
+    }
+    var out = u8(is384 ? 48 : 64);
+    for (i = 0; i < out.length; i++) out[i] = (H[i >> 2] >>> (24 - 8 * (i & 3))) & 255;
+    return out;
+  }
+  C.sha256 = sha256; C.sha384 = function (b) { return sha512(b, true); }; C.sha512 = function (b) { return sha512(b, false); };
+})();
+// ===========================================================================
+// MODULE: PDF_CRYPT_SHA - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: PDF_CRYPT - START
+// Depends: PDF_CRYPT_CORE, PDF_CRYPT_AES, PDF_CRYPT_SHA (Lantern.pdf.
+//          cryptCore); PDF_PAGES (pdfDocBytes, for older locks' passwords)
+//          -- feature-detected
+// Exports: Lantern.pdf.unlock(encrypt, id, password, resolve) -> {ok,
+//          needPassword, wrong, owner, rev, method, permissions: {print,
+//          change, copy, comment, fill, assemble}, string(num, gen, s),
+//          stream(num, gen, bytes, isMetadata)} (used by PDF_PARSE)
+// ===========================================================================
+// Opening a locked PDF (1.24.39). Most locked PDFs are locked only against
+// changes, printing or copying: they have an "owner" password but an empty
+// "user" password, and every PDF viewer opens them without asking. Lantern
+// opens them the same way and says what the maker asked. A PDF with a user
+// password needs it: either password opens it. The standard security
+// handler of the PDF standard (ISO 32000-2, 7.6.4): revisions 2 to 4 (RC4
+// or AES-128, keys made with MD5) and 5 and 6 (AES-256, keys made with
+// SHA-2), each object's strings and streams scrambled with its own key.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.pdf || !L.pdf.cryptCore || !L.pdf.cryptCore.aesDecrypt || !L.pdf.cryptCore.sha256) return;
+  var P = L.pdf, C = P.cryptCore, u8 = C.u8;
+  var PAD = [40, 191, 78, 94, 78, 117, 138, 65, 100, 0, 78, 86, 255, 250, 1, 8, 46, 46, 0, 182, 208, 104, 62, 128, 47, 12, 169, 254, 100, 83, 105, 122];
+  function bytes(s) { var b = u8(s.length); for (var i = 0; i < s.length; i++) b[i] = s.charCodeAt(i) & 255; return b; }
+  function str(b) { var o = []; for (var i = 0; i < b.length; i += 8192) o.push(String.fromCharCode.apply(null, b.subarray(i, Math.min(b.length, i + 8192)))); return o.join(""); }
+  function cat() {
+    var parts = Array.prototype.slice.call(arguments).map(function (p) { return p instanceof Uint8Array ? p : new Uint8Array(p); }), n = 0, o = 0;
+    parts.forEach(function (p) { n += p.length; });
+    var out = u8(n);
+    parts.forEach(function (p) { out.set(p, o); o += p.length; });
+    return out;
+  }
+  function same(a, b, n) { if (a.length < n || b.length < n) return false; for (var i = 0; i < n; i++) if (a[i] !== b[i]) return false; return true; }
+  // a password as PDFDocEncoding (revisions 2-4) or UTF-8 (5-6), at most 127 bytes
+  function latin(pw) { var b = u8(pw.length); for (var i = 0; i < pw.length; i++) { var c = pw.charCodeAt(i); b[i] = c < 256 ? c : 63; } return b; }
+  function utf8(pw) { var s = unescape(encodeURIComponent(pw.normalize ? pw.normalize("NFKC") : pw)); return bytes(s).subarray(0, 127); }
+  function padded(pw) { var b = u8(32); b.set(pw.subarray(0, 32)); for (var i = Math.min(32, pw.length); i < 32; i++) b[i] = PAD[i - pw.length]; return b; }
+  function xorKey(k, v) { var o = u8(k.length); for (var i = 0; i < k.length; i++) o[i] = k[i] ^ v; return o; }
+  // revisions 2-4: the file key from a padded password (algorithm 2), checked against U (algorithms 4 and 5)
+  function fileKey(pw32, d) {
+    var p = d.P, h = C.md5(cat(pw32, d.O.subarray(0, 32), [p & 255, (p >> 8) & 255, (p >> 16) & 255, (p >>> 24) & 255], d.id, d.R >= 4 && !d.meta ? [255, 255, 255, 255] : []));
+    if (d.R >= 3) for (var i = 0; i < 50; i++) h = C.md5(h.subarray(0, d.n));
+    return h.subarray(0, d.n);
+  }
+  function userOk(key, d) {
+    if (d.R === 2) return same(C.rc4(key, new Uint8Array(PAD)), d.U, 32);
+    var x = C.rc4(key, C.md5(cat(PAD, d.id)));
+    for (var i = 1; i < 20; i++) x = C.rc4(xorKey(key, i), x);
+    return same(x, d.U, 16);
+  }
+  // the owner password opens the user password from O (algorithm 7)
+  function ownerToUser(pw, d) {
+    var h = C.md5(padded(pw)), i;
+    if (d.R >= 3) for (i = 0; i < 50; i++) h = C.md5(h);
+    var k = h.subarray(0, d.n), x = d.O.subarray(0, 32);
+    if (d.R === 2) return C.rc4(k, x);
+    for (i = 19; i >= 0; i--) x = C.rc4(xorKey(k, i), x);
+    return x;
+  }
+  // revisions 5 and 6: SHA-256 of password, salt and (for the owner) U; revision 6 then mixes it in at least 64 rounds
+  function hash6(pw, salt, udata, rev) {
+    var k = C.sha256(cat(pw, salt, udata));
+    if (rev < 6) return k;
+    var i = 0, e;
+    do {
+      var k1 = cat(pw, k, udata), big = u8(k1.length * 64), j, s = 0;
+      for (j = 0; j < 64; j++) big.set(k1, j * k1.length);
+      e = C.aesEncrypt(k.subarray(0, 16), big, k.subarray(16, 32), false);
+      for (j = 0; j < 16; j++) s += e[j];
+      k = s % 3 === 0 ? C.sha256(e) : s % 3 === 1 ? C.sha384(e) : C.sha512(e);
+      i++;
+    } while (i < 64 || e[e.length - 1] > i - 32);
+    return k.subarray(0, 32);
+  }
+  function unlock(enc, id, password, R) {
+    R = R || function (v) { return v; };
+    function num(v) { return +R(v) || 0; }
+    function bs(v) { v = R(v); return v && v.s !== undefined ? bytes(v.s) : u8(0); }
+    var V = num(enc.V), rev = num(enc.R), filter = R(enc.Filter), cf = R(enc.CF) || {}, n = 5, d, i;
+    if (filter && filter !== "/Standard") return { ok: false, unsupported: filter === "/Adobe.PubSec" ? "a certificate lock (it opens only with the certificate it was made for, not a password)" : "a kind of lock Lantern does not know (" + String(filter).slice(1) + ")" };
+    function method(name) {
+      name = R(name);
+      if (V < 4) return "rc4";
+      if (!name || name === "/Identity") return "none";
+      var f = R(cf[String(name).slice(1)]) || {}, m = R(f.CFM), ln = num(f.Length);
+      if (m === "/AESV2" || m === "/AESV3") return "aes";
+      if (m === "/None") return "none";
+      n = ln ? (ln > 32 ? ln / 8 : ln) : (num(enc.Length) || 128) / 8;   // (no length in the crypt filter: the lock's, else 128 bits)
+      return "rc4";
+    }
+    var strM = method(enc.StrF), stmM = method(enc.StmF);
+    if (V === 2 || V === 3) n = (num(enc.Length) || 40) / 8;
+    if (V === 4 && (strM === "aes" || stmM === "aes")) n = 16;
+    d = { R: rev, O: bs(enc.O), U: bs(enc.U), P: num(enc.P) | 0, id: bytes(id || ""), meta: R(enc.EncryptMetadata) !== false, n: Math.max(5, Math.min(16, n)) };
+    var pw = password == null ? "" : String(password), key = null, owner = false;
+    // a lock without its password checks (damaged) opens with no password at all: say so, do not ask for one
+    if (d.U.length < 32 || d.O.length < 32 || (V >= 5 || rev >= 5) && (d.U.length < 48 || d.O.length < 48 || bs(enc.UE).length < 32 || bs(enc.OE).length < 32))
+      return { ok: false, unsupported: "a damaged lock (its password checks are missing, so no password can open it)" };
+    if (V >= 5 || rev >= 5) {
+      var U = d.U, O = d.O, zero = u8(16), pbs = [utf8(pw)], raw = bytes(unescape(encodeURIComponent(pw))).subarray(0, 127);
+      if (str(raw) !== str(pbs[0])) pbs.push(raw);   // (as typed, not made alike: qpdf stores it so)
+      pbs.forEach(function (pb) {
+        if (key) return;
+        if (U.length >= 48 && same(hash6(pb, U.subarray(32, 40), u8(0), rev), U, 32)) key = C.aesDecrypt(hash6(pb, U.subarray(40, 48), u8(0), rev), bs(enc.UE), zero, false);
+        else if (O.length >= 48 && same(hash6(pb, O.subarray(32, 40), U.subarray(0, 48), rev), O, 32)) { key = C.aesDecrypt(hash6(pb, O.subarray(40, 48), U.subarray(0, 48), rev), bs(enc.OE), zero, false); owner = true; }
+      });
+      if (key && key.length !== 32) key = null;
+    } else {
+      // older locks take the password in the PDF's own letters (PDFDocEncoding: the Euro is 0xA0); some makers use
+      // UTF-8 instead: each is tried, the person's password then the owner's
+      var tries = [latin(pw)], seen = {};
+      if (P.pdfDocBytes) { var pd = P.pdfDocBytes(pw); if (pd) tries.unshift(bytes(pd)); }
+      if (/[^\x00-\x7f]/.test(pw)) {
+        tries.push(bytes(unescape(encodeURIComponent(pw))));
+        // and in Windows' own letters (cp1252), which some makers store: the Euro 0x80, dashes, curly quotes ...
+        var W = "\u20ac\u0081\u201a\u0192\u201e\u2026\u2020\u2021\u02c6\u2030\u0160\u2039\u0152\u008d\u017d\u008f\u0090\u2018\u2019\u201c\u201d\u2022\u2013\u2014\u02dc\u2122\u0161\u203a\u0153\u009d\u017e\u0178", wb = "", okW = true;
+        for (var wi = 0; wi < pw.length; wi++) { var wc = pw.charCodeAt(wi), wk = W.indexOf(pw.charAt(wi)); if (wc < 128 || wc >= 160 && wc < 256) wb += pw.charAt(wi); else if (wk >= 0) wb += String.fromCharCode(128 + wk); else { okW = false; break; } }
+        if (okW) tries.push(bytes(wb));
+      }
+      tries.forEach(function (tb) {
+        var sk = str(tb); if (key || seen[sk]) return; seen[sk] = true;
+        var k = fileKey(padded(tb), d);
+        if (userOk(k, d)) key = k;
+        else { k = fileKey(ownerToUser(tb, d), d); if (userOk(k, d)) { key = k; owner = true; } }
+      });
+    }
+    if (!key) return { ok: false, needPassword: true, wrong: pw !== "" };
+    function objKey(o, g, aes) {
+      if (key.length === 32) return key;
+      var h = C.md5(cat(key, [o & 255, (o >> 8) & 255, (o >> 16) & 255, g & 255, (g >> 8) & 255], aes ? [115, 65, 108, 84] : []));
+      return h.subarray(0, Math.min(key.length + 5, 16));
+    }
+    function run(m, o, g, b) {
+      if (m === "none") return b;
+      if (m === "aes") return C.aesDecrypt(objKey(o, g, true), b);
+      return C.rc4(objKey(o, g, false), b);
+    }
+    var p = d.P;
+    return {
+      ok: true, owner: owner, rev: rev, method: stmM === "aes" ? (key.length === 32 ? "AES-256" : "AES-128") : stmM === "rc4" ? "RC4-" + 8 * key.length : "none",
+      userPassword: pw !== "" && !owner,
+      permissions: { print: !!(p & 4), change: !!(p & 8), copy: !!(p & 16), comment: !!(p & 32), fill: !!(p & 256), assemble: !!(p & 1024) },
+      string: function (o, g, s) { return str(run(strM, o, g, bytes(s))); },
+      stream: function (o, g, b, isMeta) { return isMeta && !d.meta ? b : run(stmM, o, g, b); }
+    };
+  }
+  P.unlock = unlock;
+})();
+// ===========================================================================
+// MODULE: PDF_CRYPT - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: PDF_CCITT - START
@@ -47870,10 +48453,11 @@ Lantern.RFB = (function () {
 // ===========================================================================
 // MODULE: PDF_PAGES - START
 // Depends: PDF_PARSE, PDF_CCITT (Lantern.pdf) -- feature-detected
-// Exports: Lantern.pdf.open(blobOrBytes) -> Promise<pdf {pages: [{w, h,
-//          rotate, images, hasText}], count, title}>, Lantern.pdf.pageImage(
+// Exports: Lantern.pdf.open(blobOrBytes, {password}) -> Promise<pdf {pages:
+//          [{w, h, rotate, ref, node}], count, title, security}>, Lantern.pdf.pageImage(
 //          pdf, i, {maxSide}) -> Promise<canvas|null>; pageProgram,
-//          textString, decodeImage(pdf, obj, maxPixels) (PDF_DRAW, 1.22.6)
+//          textString, decodeImage(pdf, obj, maxPixels) (PDF_DRAW, 1.22.6);
+//          pdfDocBytes(text) -> PDFDocEncoding bytes or null (PDF_CRYPT)
 // ===========================================================================
 // The pages of a scanned PDF as pictures Text Reader can read. A scanner's
 // PDF is a picture per page (sometimes a few strips), placed on the page by
@@ -47887,32 +48471,67 @@ Lantern.RFB = (function () {
   var L = window.Lantern;
   if (!L || !L.pdf || !L.pdf.parse) return;
   var P = L.pdf;
-  async function open(src) {
+  // open(src, {password}): a locked PDF that needs a password fails with err.needPassword (and err.wrongPassword)
+  async function open(src, opts) {
+    opts = opts || {};
     var bytes = src instanceof Uint8Array ? src : new Uint8Array(src.arrayBuffer ? await src.arrayBuffer() : src);
-    var doc = P.parse(bytes);
+    var doc = P.parse(bytes, opts);
     await doc.ready;
-    if (doc.encrypted) throw new Error("this PDF is locked (encrypted), so Lantern cannot read its pages");
+    if (doc.encrypted) {
+      var er = new Error(doc.needPassword ? (doc.wrongPassword ? "that password does not open this PDF" : "this PDF needs its password to open") :
+        doc.lockKind ? "this PDF is locked with " + doc.lockKind + ", which Lantern cannot open" : "this PDF is locked (encrypted), so Lantern cannot read its pages");
+      er.needPassword = !!doc.needPassword; er.wrongPassword = !!doc.wrongPassword;
+      throw er;
+    }
     var R = doc.resolve, pages = [];
     if (!doc.catalog) throw new Error("this PDF has no page list Lantern can find");
     // walk the page tree; resources, size and turn can be inherited
     function walk(node, inh, depth) {
+      var ref = node && node.r !== undefined ? node.r : null;
       node = R(node);
       if (!node || depth > 40) return;
       var inh2 = { Resources: node.Resources || inh.Resources, MediaBox: node.MediaBox || inh.MediaBox, CropBox: node.CropBox || inh.CropBox, Rotate: node.Rotate != null ? node.Rotate : inh.Rotate };
       if (node.Type === "/Pages" || node.Kids) { (R(node.Kids) || []).forEach(function (k) { walk(k, inh2, depth + 1); }); return; }
       var box = (R(inh2.CropBox) || R(inh2.MediaBox) || [0, 0, 612, 792]).map(function (v) { return +R(v) || 0; });
-      pages.push({ node: node, res: R(inh2.Resources) || {}, box: box, w: Math.abs(box[2] - box[0]), h: Math.abs(box[3] - box[1]), rotate: ((+R(inh2.Rotate) || 0) % 360 + 360) % 360 });
+      pages.push({ node: node, ref: ref, res: R(inh2.Resources) || {}, box: box, w: Math.abs(box[2] - box[0]), h: Math.abs(box[3] - box[1]), rotate: ((+R(inh2.Rotate) || 0) % 360 + 360) % 360 });
     }
     walk(doc.catalog.Pages, {}, 0);
     var info = null;
-    try { var tr = doc.s.lastIndexOf("trailer"); if (tr >= 0) { var lx = new P.Lexer(doc.s); lx.p = tr + 7; var td = lx.value(); info = td && R(td.Info); } } catch (e) { }
+    // the document's details: from its trailer (every trailer and cross-reference stream, PDF_PARSE), else the last one
+    if (doc.trailer && doc.trailer.Info) info = R(doc.trailer.Info);
+    else if (!(doc.trailer && doc.trailer.Root)) try { var tr = doc.s.lastIndexOf("trailer"); if (tr >= 0) { var lx = new P.Lexer(doc.s); lx.p = tr + 7; var td = lx.value(); info = td && R(td.Info); } } catch (e) { }
     var title = info && R(info.Title) && R(info.Title).s ? text(R(info.Title).s) : "";
-    return { doc: doc, pages: pages, count: pages.length, title: title };
+    // (1.24.39) what the lock was, and what its maker asked (no printing, no copying ...)
+    var security = doc.crypt ? { locked: true, method: doc.crypt.method, owner: doc.crypt.owner, userPassword: doc.crypt.userPassword, permissions: doc.crypt.permissions } : null;
+    return { doc: doc, pages: pages, count: pages.length, title: title, security: security };
   }
-  // PDF text strings: UTF-16 with a byte-order mark, else Latin-1
+  // PDF text strings (ISO 32000-2, 7.9.2.2): UTF-16 with a byte-order mark; UTF-8 with its mark (PDF 2.0); else the
+  // PDF's own letters, PDFDocEncoding: Latin-1 but for accents at 0x18-0x1F and, at 0x80-0xA0, the bullet, daggers,
+  // dashes, curly quotes, fi, fl, the Euro ... (1.24.39; pypdf writes bookmark titles and form values so)
+  var DOC1 = [0x2d8, 0x2c7, 0x2c6, 0x2d9, 0x2dd, 0x2db, 0x2da, 0x2dc], DOC2 = [0x2022, 0x2020, 0x2021, 0x2026, 0x2014, 0x2013, 0x192, 0x2044, 0x2039, 0x203a, 0x2212, 0x2030,
+    0x201e, 0x201c, 0x201d, 0x2018, 0x2019, 0x201a, 0x2122, 0xfb01, 0xfb02, 0x141, 0x152, 0x160, 0x178, 0x17d, 0x131, 0x142, 0x153, 0x161, 0x17e, 0, 0x20ac];
   function text(s) {
-    if (s.charCodeAt(0) === 254 && s.charCodeAt(1) === 255) { var o = ""; for (var i = 2; i + 1 < s.length; i += 2) o += String.fromCharCode(s.charCodeAt(i) * 256 + s.charCodeAt(i + 1)); return o; }
-    return s;
+    var o = "", i, c;
+    if (s.charCodeAt(0) === 254 && s.charCodeAt(1) === 255 || s.charCodeAt(0) === 255 && s.charCodeAt(1) === 254) {
+      var be = s.charCodeAt(0) === 254;   // (little-endian, FF FE, is not the standard's, but some makers write it)
+      for (i = 2; i + 1 < s.length; i += 2) o += String.fromCharCode(be ? s.charCodeAt(i) * 256 + s.charCodeAt(i + 1) : s.charCodeAt(i + 1) * 256 + s.charCodeAt(i));
+      return o.replace(/\x1b[^\x1b]{0,6}\x1b/g, "");   // a language mark (ESC en ESC) is not text
+    }
+    if (s.charCodeAt(0) === 239 && s.charCodeAt(1) === 187 && s.charCodeAt(2) === 191) { try { return decodeURIComponent(escape(s.slice(3))); } catch (e) { return s.slice(3); } }
+    for (i = 0; i < s.length; i++) { c = s.charCodeAt(i); o += c >= 0x18 && c <= 0x1f ? String.fromCharCode(DOC1[c - 0x18]) : c >= 0x80 && c <= 0xa0 && DOC2[c - 0x80] ? String.fromCharCode(DOC2[c - 0x80]) : s.charAt(i); }
+    return o;
+  }
+  // the other way: a text in PDFDocEncoding bytes (a byte string), or null when a letter has no place there
+  function docBytes(t) {
+    var o = "", i, c, k;
+    for (i = 0; i < t.length; i++) {
+      c = t.charCodeAt(i);
+      if (c < 0x18 || c > 0x1f && c < 0x80 || c > 0xa0 && c < 0x100 && c !== 0xad) { o += t.charAt(i); continue; }
+      k = DOC2.indexOf(c); if (k >= 0 && c) { o += String.fromCharCode(0x80 + k); continue; }
+      k = DOC1.indexOf(c); if (k >= 0) { o += String.fromCharCode(0x18 + k); continue; }
+      return null;
+    }
+    return o;
   }
   // the page's drawing program: which picture is drawn where (q/Q, cm, Do)
   async function contents(pdf, pg) {
@@ -47921,9 +48540,10 @@ Lantern.RFB = (function () {
     return parts.join("\n");
   }
   function mul(a, b) { return [a[0] * b[0] + a[1] * b[2], a[0] * b[1] + a[1] * b[3], a[2] * b[0] + a[3] * b[2], a[2] * b[1] + a[3] * b[3], a[4] * b[0] + a[5] * b[2] + b[4], a[4] * b[1] + a[5] * b[3] + b[5]]; }
-  // draws(pdf, program, resources, ctm, out, depth) -> pictures drawn
-  async function draws(pdf, prog, res, ctm, out, depth) {
+  // draws(pdf, program, resources, ctm, out, depth, page's resources) -> pictures drawn
+  async function draws(pdf, prog, res, ctm, out, depth, pres) {
     var R = pdf.doc.resolve, lx = new P.Lexer(prog), stack = [], m = ctm.slice(), args = [], xo = R(res.XObject) || {}, textOps = 0;
+    var mc = [], off = 0;   // (1.24.39) a picture in a layer that is off is not drawn (marked content, or the picture's own /OC)
     for (;;) {
       var t = lx.token();
       if (!t) break;
@@ -47935,14 +48555,21 @@ Lantern.RFB = (function () {
       if (op === "q") stack.push(m.slice());
       else if (op === "Q") { if (stack.length) m = stack.pop(); }
       else if (op === "cm" && args.length >= 6) m = mul(args.slice(-6).map(Number), m);
-      else if (op === "Do" && args.length) {
+      else if (op === "BDC") {
+        var hide = false;
+        if (args[0] === "/OC" && P.ocVisible) { var pr = args[1]; if (typeof pr === "string") pr = (R(res.Properties) || {})[pr.slice(1)] || (R(pres && pres.Properties) || {})[pr.slice(1)]; hide = !P.ocVisible(pdf, pr); }
+        mc.push(hide); if (hide) off++;
+      }
+      else if (op === "BMC") mc.push(false);
+      else if (op === "EMC") { if (mc.length && mc.pop()) off--; }
+      else if (op === "Do" && args.length && !off) {
         var x = xo[String(args[args.length - 1]).slice(1)], o = x && x.r !== undefined ? pdf.doc.get(x.r) : null;
-        if (o && o.stream) {
+        if (o && o.stream && !(o.dict.OC && P.ocVisible && !P.ocVisible(pdf, o.dict.OC))) {
           var st = R(o.dict.Subtype);
           if (st === "/Image") out.push({ obj: o, m: m.slice() });
           else if (st === "/Form" && depth < 4) {
             var fm = (R(o.dict.Matrix) || [1, 0, 0, 1, 0, 0]).map(Number);
-            try { textOps += await draws(pdf, P.latin1(await pdf.doc.stream(o)), R(o.dict.Resources) || res, mul(fm, m), out, depth + 1); } catch (e) { }
+            try { textOps += await draws(pdf, P.latin1(await pdf.doc.stream(o)), R(o.dict.Resources) || res, mul(fm, m), out, depth + 1, pres); } catch (e) { }
           }
         }
       } else if (op === "BI") { var e = prog.indexOf("EI", lx.p); lx.p = e < 0 ? prog.length : e + 2; }
@@ -48054,7 +48681,7 @@ Lantern.RFB = (function () {
   async function pageImage(pdf, i, opts) {
     opts = opts || {};
     var pg = pdf.pages[i], R = pdf.doc.resolve, ims = [];
-    pg.textOps = await draws(pdf, await contents(pdf, pg), pg.res, [1, 0, 0, 1, 0, 0], ims, 0);
+    pg.textOps = await draws(pdf, await contents(pdf, pg), pg.res, [1, 0, 0, 1, 0, 0], ims, 0, pg.res);
     pg.hasText = pg.textOps > 0;
     pg.images = ims.length;
     if (!ims.length) return null;
@@ -48094,10 +48721,310 @@ Lantern.RFB = (function () {
     }
     return cv;
   }
-  P.open = open; P.pageImage = pageImage; P.pageProgram = contents; P.textString = text; P.decodeImage = decode;
+  P.open = open; P.pageImage = pageImage; P.pageProgram = contents; P.textString = text; P.pdfDocBytes = docBytes; P.decodeImage = decode;
 })();
 // ===========================================================================
 // MODULE: PDF_PAGES - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: PDF_ANNOTS - START
+// Depends: PDF_PARSE, PDF_PAGES (Lantern.pdf.open, textString) -- feature-detected
+// Exports: Lantern.pdf.annots(pdf, i) -> [{sub, rect, hidden, print, apRef,
+//          apMatrix, contents, author, color, interior, opacity, quads, ink,
+//          line, vertices, border, fontSize, textColor, align, name, oc,
+//          field: {name, type, value, checked, password, multiline}}];
+//          Lantern.pdf.fields(pdf) -> [{name, type, value, page}];
+//          Lantern.pdf.layers(pdf) -> [{key, name, on}];
+//          Lantern.pdf.ocVisible(pdf, ocRefOrDict) -> bool (pdf.layerOn
+//          = {key: true|false} holds a viewer's choices)
+// ===========================================================================
+// What lies on top of a PDF page rather than in it (1.24.39): what was typed
+// into a form, the comments and highlights people added, stamps, signatures.
+// Each is an annotation of the page, usually with its own small drawing (its
+// "appearance") made by the program that added it; some have none, and a
+// viewer must draw them from what they say (a highlight's corners, a
+// field's value). And the layers of a drawing (optional content): which are
+// on, as the PDF opens, and as the person turns them on and off. Adam's PDF
+// test, 2026-11-25: a filled form showed blank and a comment was missing.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.pdf || !L.pdf.open) return;
+  var P = L.pdf;
+  function tx(v) { return v && v.s !== undefined ? (P.textString ? P.textString(v.s) : v.s) : typeof v === "string" ? v.replace(/^\x2F/, "") : ""; }
+  function nums(a, R) { return Array.isArray(a) ? a.map(function (v) { return +R(v) || 0; }) : null; }
+  function colorOf(a, R) {
+    a = nums(R(a), R);
+    if (!a || !a.length) return null;
+    if (a.length === 1) return [a[0], a[0], a[0]];
+    if (a.length === 4) return [(1 - a[0]) * (1 - a[3]), (1 - a[1]) * (1 - a[3]), (1 - a[2]) * (1 - a[3])];
+    return a.slice(0, 3);
+  }
+  // a field's own or inherited entry, and its full name (parent.child)
+  // (a damaged form whose /Parent leads back round is followed once round, not 30 times)
+  function inherit(d, key, R) { for (var k = 0, seen = []; d && k < 30 && seen.indexOf(d) < 0; k++, seen.push(d), d = R(d.Parent)) if (d[key] !== undefined) return R(d[key]); return undefined; }
+  function fullName(d, R) { var parts = []; for (var k = 0, seen = []; d && k < 30 && seen.indexOf(d) < 0; k++, seen.push(d), d = R(d.Parent)) if (d.T !== undefined) parts.unshift(tx(R(d.T))); return parts.join("."); }
+  // /DA "0 g /Helv 12 Tf": the size and colour a field or a typed comment writes in
+  function da(s) {
+    var o = { size: 0, color: [0, 0, 0] }, m = /([\d.]+)\s+Tf/.exec(s || "");
+    if (m) o.size = +m[1];
+    var c = /([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+rg/.exec(s || ""), g = /([\d.]+)\s+g(?![a-z])/.exec(s || "");
+    if (c) o.color = [+c[1], +c[2], +c[3]]; else if (g) o.color = [+g[1], +g[1], +g[1]];
+    return o;
+  }
+  function field(d, R, acro) {
+    var ft = inherit(d, "FT", R), ff = +inherit(d, "Ff", R) || 0, v = inherit(d, "V", R), f = { name: fullName(d, R), value: "" };
+    var ap = R(d.AP), n = ap && R(ap.N), as = R(d.AS);
+    if (ft === "/Btn") {
+      f.type = ff & 65536 ? "button" : ff & 32768 ? "radio" : "check";
+      // its "on" name: from its drawings, else (none drawn) what it is set to
+      var on = n && typeof n === "object" && !n.stream ? Object.keys(n).filter(function (k) { return k !== "Off"; })[0] : null;
+      if (!on) on = as && as !== "/Off" ? String(as).slice(1) : v && typeof v === "string" && v !== "/Off" ? v.slice(1) : null;
+      f.checked = as ? as !== "/Off" : (v && v !== "/Off" && (!on || v === "/" + on));
+      try { if (on && /[\x80-\xff]/.test(on)) on = decodeURIComponent(escape(on)); } catch (en) { }   // (a name in UTF-8, PDF 2.0)
+      f.value = f.type === "button" ? "" : f.checked ? (on || "Yes") : "Off";
+      // buttons named by number, with their values in /Opt (as Acrobat writes a group whose buttons share a value)
+      var bo = inherit(d, "Opt", R);
+      if (f.checked && Array.isArray(bo) && /^\d+$/.test(on || "") && bo[+on] !== undefined) f.value = tx(R(bo[+on]));
+    } else if (ft === "/Ch") {
+      f.type = "choice";
+      var opt = R(inherit(d, "Opt", R)) || [], vals = Array.isArray(v) ? v.map(R) : v !== undefined ? [v] : [];
+      f.value = vals.map(function (x) {
+        var t = tx(x);
+        opt.forEach(function (o) { o = R(o); if (Array.isArray(o) && tx(R(o[0])) === t) t = tx(R(o[1])); });
+        return t;
+      }).join(", ");
+    } else if (ft === "/Sig") { f.type = "signature"; f.value = v ? "signed" : ""; }
+    else { f.type = "text"; f.value = tx(v); if (v && v.stream) f.vStream = v; f.multiline = !!(ff & 4096); f.password = !!(ff & 8192); f.maxLen = +inherit(d, "MaxLen", R) || 0; f.comb = !!(ff & 16777216) && f.maxLen > 0; }
+    var dstr = inherit(d, "DA", R) || (acro && R(acro.DA));
+    f.da = da(tx(dstr));
+    f.align = +(inherit(d, "Q", R) || (acro && R(acro.Q)) || 0);
+    return f;
+  }
+  // annots(pdf, i): the page's annotations, each with what it takes to draw it and to read it
+  async function annots(pdf, i) {
+    var pg = pdf.pages[i], R = pdf.doc.resolve, list = R(pg.node.Annots) || [], out = [];
+    var acro = pdf.doc.catalog && R(pdf.doc.catalog.AcroForm), need = !!(acro && R(acro.NeedAppearances));
+    if (!Array.isArray(list)) return out;
+    list.forEach(function (ref) {
+      var d = R(ref);
+      if (!d || typeof d !== "object") return;
+      var sub = String(R(d.Subtype) || "").slice(1), rect = nums(R(d.Rect), R), fl = +R(d.F) || 0;
+      if (!rect || rect.length < 4) return;
+      rect = [Math.min(rect[0], rect[2]), Math.min(rect[1], rect[3]), Math.max(rect[0], rect[2]), Math.max(rect[1], rect[3])];
+      var a = { sub: sub, rect: rect, flags: fl, hidden: !!(fl & 2) || !!(fl & 32) || sub === "Popup", print: !!(fl & 4), oc: d.OC,
+        contents: tx(R(d.Contents)), author: tx(R(d.T)), color: colorOf(d.C, R), interior: colorOf(d.IC, R), opacity: d.CA !== undefined ? +R(d.CA) : 1,
+        name: tx(R(d.Name)), ref: ref && ref.r !== undefined ? ref.r : null };
+      if (sub === "Widget" || (sub === "" && d.FT)) { a.sub = "Widget"; a.field = field(d, R, acro); }
+      var ap = R(d.AP), n = ap && ap.N, nr = R(n);
+      if (nr && typeof nr === "object" && !nr.stream) { var st = R(d.AS); n = st ? nr[String(st).slice(1)] : null; }
+      // a viewer told to redraw fields (NeedAppearances) draws their values itself
+      if (n && n.r !== undefined && !(need && a.field && (a.field.type === "text" || a.field.type === "choice"))) {
+        var o = pdf.doc.get(n.r);
+        if (o && o.stream) {
+          a.apRef = n;
+          var bb = nums(R(o.dict.BBox), R) || [0, 0, rect[2] - rect[0], rect[3] - rect[1]], fm = nums(R(o.dict.Matrix), R) || [1, 0, 0, 1, 0, 0];
+          var xs = [], ys = [];
+          [[bb[0], bb[1]], [bb[2], bb[1]], [bb[2], bb[3]], [bb[0], bb[3]]].forEach(function (q) { xs.push(fm[0] * q[0] + fm[2] * q[1] + fm[4]); ys.push(fm[1] * q[0] + fm[3] * q[1] + fm[5]); });
+          var x0 = Math.min.apply(null, xs), y0 = Math.min.apply(null, ys), sx = (rect[2] - rect[0]) / (Math.max.apply(null, xs) - x0 || 1), sy = (rect[3] - rect[1]) / (Math.max.apply(null, ys) - y0 || 1);
+          a.apMatrix = [sx, 0, 0, sy, rect[0] - x0 * sx, rect[1] - y0 * sy];
+        }
+      }
+      var qp = nums(R(d.QuadPoints), R);
+      if (qp) { a.quads = []; for (var k = 0; k + 7 < qp.length; k += 8) a.quads.push(qp.slice(k, k + 8)); }
+      var ink = R(d.InkList);
+      if (Array.isArray(ink)) a.ink = ink.map(function (p) { return nums(R(p), R) || []; });
+      a.line = nums(R(d.L), R); a.vertices = nums(R(d.Vertices), R);
+      var bs = R(d.BS), bo = nums(R(d.Border), R);
+      a.border = bs && bs.W !== undefined ? +R(bs.W) : bo && bo.length > 2 ? bo[2] : 1;
+      var dd = da(tx(R(d.DA)) || (a.field ? "" : ""));
+      a.fontSize = a.field ? a.field.da.size : dd.size;
+      a.textColor = a.field ? a.field.da.color : dd.color;
+      a.align = a.field ? a.field.align : +R(d.Q) || 0;
+      out.push(a);
+    });
+    // a text field's value may be kept in a stream of its own (ISO 32000 12.7.4.3): read here
+    for (var q = 0; q < out.length; q++) if (out[q].field && out[q].field.vStream) {
+      try { out[q].field.value = tx({ s: P.latin1(await pdf.doc.stream(out[q].field.vStream)) }); } catch (e) { }
+      delete out[q].field.vStream;
+    }
+    return out;
+  }
+  // fields(pdf): every form field and its value, once each, in the order of the pages (a group of radio buttons, or a
+  // value shown on two pages, is one field: the radio group's value is the button that is on)
+  async function fields(pdf) {
+    var out = [], at = {};
+    for (var i = 0; i < pdf.count; i++) (await annots(pdf, i)).forEach(function (a) {
+      var f = a.field;
+      if (!f || f.type === "button") return;
+      var key = f.name || "#" + a.ref, v = f.password ? "" : f.value;
+      if (at[key] === undefined) { at[key] = out.length; out.push({ name: f.name, type: f.type, value: v, page: i + 1 }); }
+      else if ((f.type === "radio" || f.type === "check") && f.checked) out[at[key]].value = v;
+    });
+    return out;
+  }
+  // --- layers (optional content) ---------------------------------------------
+  function layerKey(v) { return v && v.r !== undefined ? "r" + v.r : null; }
+  function defaults(pdf) {
+    if (pdf._ocd) return pdf._ocd;
+    var R = pdf.doc.resolve, cat = pdf.doc.catalog || {}, ocp = R(cat.OCProperties), d = { list: [], on: {} };
+    if (ocp) {
+      // (a damaged file may give a dictionary where a list belongs: read as no list)
+      var D = R(ocp.D) || {}, base = R(D.BaseState) || "/ON", ons = {}, offs = {};
+      function arr(v) { v = R(v); return Array.isArray(v) ? v : []; }
+      arr(D.ON).forEach(function (r) { var k = layerKey(r); if (k) ons[k] = 1; });
+      arr(D.OFF).forEach(function (r) { var k = layerKey(r); if (k) offs[k] = 1; });
+      arr(ocp.OCGs).forEach(function (r) {
+        var k = layerKey(r), g = R(r);
+        if (!k || !g) return;
+        d.on[k] = base === "/OFF" ? !!ons[k] : !offs[k];
+        d.list.push({ key: k, name: tx(R(g.Name)) || "Layer", on: d.on[k] });
+      });
+    }
+    pdf._ocd = d;
+    return d;
+  }
+  function layers(pdf) {
+    var d = defaults(pdf), on = pdf.layerOn || {};
+    return d.list.map(function (l) { return { key: l.key, name: l.name, on: on[l.key] !== undefined ? !!on[l.key] : l.on }; });
+  }
+  function isOn(pdf, ref) {
+    var k = layerKey(ref), d = defaults(pdf), on = pdf.layerOn || {};
+    if (!k) return true;
+    if (on[k] !== undefined) return !!on[k];
+    return d.on[k] !== undefined ? d.on[k] : true;
+  }
+  // ocVisible: an optional-content group (OCG), or a membership dictionary (OCMD: any or all of some groups on or off)
+  function ocVisible(pdf, oc) {
+    var R = pdf.doc.resolve, o = R(oc);
+    if (!o || typeof o !== "object") return true;
+    if (R(o.Type) === "/OCMD") {
+      // a visibility expression (/VE [/And|/Or|/Not ...], PDF 1.6) comes before /OCGs and /P when there is one
+      var ve = R(o.VE);
+      if (Array.isArray(ve) && ve.length) { var memo = { calls: 0 }; return expr(o.VE, 0); }
+      var g = o.OCGs, gs = Array.isArray(R(g)) ? R(g) : g ? [g] : [];
+      if (!gs.length) return true;
+      var vals = gs.map(function (r) { return isOn(pdf, r); }), pol = R(o.P) || "/AnyOn";
+      if (pol === "/AllOn") return vals.every(Boolean);
+      if (pol === "/AnyOff") return vals.some(function (v) { return !v; });
+      if (pol === "/AllOff") return vals.every(function (v) { return !v; });
+      return vals.some(Boolean);
+    }
+    return isOn(pdf, oc);
+    function expr(e, depth) {
+      var v = R(e), key = e && e.r !== undefined ? "r" + e.r : null;
+      if (!Array.isArray(v)) return v ? isOn(pdf, e) : true;
+      if (depth > 30 || !v.length) return true;
+      if (key) { if (memo[key] === "busy") return true; if (memo[key] !== undefined) return memo[key]; memo[key] = "busy"; }
+      if (++memo.calls > 5000) return true;   // (a damaged file's expression too big to work out: shown)
+      var op = R(v[0]), rest = v.slice(1).map(function (x) { return expr(x, depth + 1); }), res;
+      res = op === "/Not" ? !rest[0] : op === "/And" ? rest.every(Boolean) : op === "/Or" ? rest.some(Boolean) : true;
+      if (key) memo[key] = res;
+      return res;
+    }
+  }
+  P.annots = annots; P.fields = fields; P.layers = layers; P.ocVisible = ocVisible;
+})();
+// ===========================================================================
+// MODULE: PDF_ANNOTS - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: PDF_NAV - START
+// Depends: PDF_PAGES (Lantern.pdf.open, textString) -- feature-detected
+// Exports: Lantern.pdf.outline(pdf) -> [{title, page, uri, kids}];
+//          Lantern.pdf.links(pdf, i) -> [{rect, page, uri}];
+//          Lantern.pdf.dest(pdf, dest) -> page index or -1
+// ===========================================================================
+// A PDF's bookmarks (its outline: chapters and sections, each going to a
+// page) and the links on its pages (to another page, or to a web address),
+// so a viewer can offer them (1.24.39). A link goes to a page by the page's
+// own object, or by a name looked up in the PDF's table of names.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.pdf || !L.pdf.open) return;
+  var P = L.pdf;
+  function tx(v) { return v && v.s !== undefined ? (P.textString ? P.textString(v.s) : v.s) : typeof v === "string" ? v.slice(1) : ""; }
+  function pageOf(pdf, ref) {
+    if (!pdf._pix) { pdf._pix = {}; pdf.pages.forEach(function (p, i) { if (p.ref != null) pdf._pix[p.ref] = i; }); }
+    if (ref && ref.r !== undefined) return pdf._pix[ref.r] !== undefined ? pdf._pix[ref.r] : -1;
+    return typeof ref === "number" && ref >= 0 && ref < pdf.count ? ref : -1;
+  }
+  function nameTree(R, node, key, depth) {
+    node = R(node);
+    if (!node || depth > 20) return null;
+    var names = R(node.Names);
+    // (a name is bytes, compared and sorted as stored, ISO 32000 7.9.6: not turned into letters first)
+    function raw(v) { v = R(v); return v && v.s !== undefined ? v.s : typeof v === "string" ? v : ""; }
+    if (Array.isArray(names)) for (var i = 0; i + 1 < names.length; i += 2) if (raw(names[i]) === key) return R(names[i + 1]);
+    var kids = R(node.Kids);
+    if (Array.isArray(kids)) for (var k = 0; k < kids.length; k++) {
+      var kid = R(kids[k]), lim = kid && R(kid.Limits);
+      if (Array.isArray(lim) && lim.length === 2 && (key < raw(lim[0]) || key > raw(lim[1]))) continue;
+      var v = nameTree(R, kid, key, depth + 1);
+      if (v) return v;
+    }
+    return null;
+  }
+  function dest(pdf, d) {
+    var R = pdf.doc.resolve, cat = pdf.doc.catalog || {};
+    d = R(d);
+    if (d && (d.s !== undefined || typeof d === "string")) {
+      var key = tx(d), names = R(cat.Names), hit = null;
+      if (typeof d === "string" && R(cat.Dests)) hit = R(R(cat.Dests)[key]);
+      if (!hit && names && names.Dests) hit = nameTree(R, names.Dests, d.s !== undefined ? d.s : key, 0);
+      d = R(hit);
+      if (d && !Array.isArray(d) && d.D) d = R(d.D);
+    }
+    return Array.isArray(d) && d.length ? pageOf(pdf, d[0]) : -1;
+  }
+  function action(pdf, a, o) {
+    var R = pdf.doc.resolve;
+    a = R(a);
+    if (!a) return o;
+    var s = R(a.S);
+    if (s === "/GoTo") o.page = dest(pdf, a.D);
+    else if (s === "/URI") { o.uri = R(a.URI) && R(a.URI).s !== undefined ? R(a.URI).s : tx(R(a.URI)); try { if (/[\x80-\xff]/.test(o.uri)) o.uri = decodeURIComponent(escape(o.uri)); } catch (eu) { } }   // (an address in UTF-8 bytes, as some makers write it)
+    else if (s === "/Named") o.named = tx(R(a.N));
+    else if (s === "/GoToR" || s === "/Launch") o.file = tx(R(R(a.F) && R(a.F).F || a.F));
+    return o;
+  }
+  function outline(pdf) {
+    var R = pdf.doc.resolve, root = pdf.doc.catalog && R(pdf.doc.catalog.Outlines), seen = {}, n = 0;
+    function items(first, depth) {
+      var out = [], it = first;
+      while (it && depth < 100 && n < 5000) {
+        var key = it.r !== undefined ? it.r : null;
+        if (key !== null) { if (seen[key]) break; seen[key] = 1; }
+        var d = R(it);
+        if (!d) break;
+        n++;
+        var o = { title: tx(R(d.Title)).replace(/\s+/g, " ").trim(), page: -1 };
+        if (d.Dest) o.page = dest(pdf, d.Dest); else if (d.A) action(pdf, d.A, o);
+        o.kids = d.First ? items(d.First, depth + 1) : [];
+        out.push(o);
+        it = d.Next;
+      }
+      return out;
+    }
+    return root && root.First ? items(root.First, 0) : [];
+  }
+  async function links(pdf, i) {
+    var R = pdf.doc.resolve, list = R(pdf.pages[i].node.Annots) || [], out = [];
+    if (!Array.isArray(list)) return out;
+    list.forEach(function (ref) {
+      var d = R(ref);
+      if (!d || R(d.Subtype) !== "/Link") return;
+      var r = (R(d.Rect) || []).map(function (v) { return +R(v) || 0; });
+      if (r.length < 4) return;
+      var o = { rect: [Math.min(r[0], r[2]), Math.min(r[1], r[3]), Math.max(r[0], r[2]), Math.max(r[1], r[3])], page: -1 };
+      if (d.Dest) o.page = dest(pdf, d.Dest); else if (d.A) action(pdf, d.A, o);
+      out.push(o);
+    });
+    return out;
+  }
+  P.outline = outline; P.links = links; P.dest = dest;
+})();
+// ===========================================================================
+// MODULE: PDF_NAV - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: PDF_TEXT - START
@@ -48202,9 +49129,12 @@ Lantern.RFB = (function () {
     var fontsRes = R(pg.res.Font) || {}, fcache = {};
     async function run(prog, res, ctm0, depth) {
       var lx = new P.Lexer(prog), args = [], ctm = ctm0.slice(), stack = [], tm = [1, 0, 0, 1, 0, 0], tlm = tm.slice(), F = null, fs = 10, tl = 0, tc = 0, tw = 0, tz = 1, fr = R(res.Font) || fontsRes;
+      var mc = [], off = 0;   // (1.24.39) marked content: words in a layer that is off are not read
       function mul(a, b) { return [a[0] * b[0] + a[1] * b[2], a[0] * b[1] + a[1] * b[3], a[2] * b[0] + a[3] * b[2], a[2] * b[1] + a[3] * b[3], a[4] * b[0] + a[5] * b[2] + b[4], a[4] * b[1] + a[5] * b[3] + b[5]]; }
       function show(s) {
         if (!F) return;
+        // a part in a layer that is off is not read, but the pen still moves past it (the words either side stay apart)
+        if (off) { var ad0 = 0; F.codes(s).forEach(function (c) { ad0 += (F.width(c) / 1000 * fs + tc + (c === 32 && F.bytes === 1 ? tw : 0)) * tz; }); tm = mul([1, 0, 0, 1, ad0, 0], tm); return; }
         var m = mul(tm, ctm), size = fs * Math.hypot(m[2], m[3]), x0 = m[4], y0 = m[5], txt = "", adv = 0;
         F.codes(s).forEach(function (c) {
           var u = F.uni(c);
@@ -48255,18 +49185,45 @@ Lantern.RFB = (function () {
             }
           });
         }
-        else if (op === "Do" && a.length && depth < 3) {
+        else if (op === "Do" && a.length && depth < 3 && !off) {   // (a form drawn inside a hidden part is hidden too)
           var xo = R(res.XObject) || R(pg.res.XObject) || {}, ref = xo[String(a[a.length - 1]).slice(1)], o = ref && ref.r !== undefined ? pdf.doc.get(ref.r) : null;
-          if (o && o.stream && R(o.dict.Subtype) === "/Form") {
+          if (o && o.stream && R(o.dict.Subtype) === "/Form" && !(o.dict.OC && P.ocVisible && !P.ocVisible(pdf, o.dict.OC))) {
             var fm = (R(o.dict.Matrix) || [1, 0, 0, 1, 0, 0]).map(Number);
             try { await run(P.latin1(await pdf.doc.stream(o)), R(o.dict.Resources) || res, mul(fm, ctm), depth + 1); } catch (e) { }
           }
         }
         else if (op === "BI") { var ei = prog.indexOf("EI", lx.p); lx.p = ei < 0 ? prog.length : ei + 2; }
+        else if (op === "BDC") {
+          var hide = false;
+          if (a[0] === "/OC" && P.ocVisible) { var pr = a[1]; if (typeof pr === "string") pr = (R(res.Properties) || R(pg.res.Properties) || {})[pr.slice(1)]; hide = !P.ocVisible(pdf, pr); }
+          mc.push(hide); if (hide) off++;
+        }
+        else if (op === "BMC") mc.push(false);
+        else if (op === "EMC") { if (mc.length && mc.pop()) off--; }
         args = [];
       }
     }
     await run(prog, pg.res, [1, 0, 0, 1, 0, 0], 0);
+    // the page's own letters, before what lies on it is added (Text Reader reads a scan with only a note on it)
+    var ownLetters = 0;
+    items.forEach(function (it) { if (it.text) ownLetters += it.text.replace(/\s/g, "").length; });
+    // (1.24.39) what lies on the page (PDF_ANNOTS): a form field's value sits on its own line where it is drawn, next to
+    // its label ("[x]" for a ticked box); a typed comment where it is; notes and other comments after the page's words
+    var notes = [];
+    if (P.annots) {
+      var al = [];
+      try { al = await P.annots(pdf, i); } catch (e) { }
+      al.forEach(function (an) {
+        if (an.hidden || an.sub === "Link" || (an.oc && P.ocVisible && !P.ocVisible(pdf, an.oc))) return;
+        var r = an.rect, h = r[3] - r[1], sz = Math.max(4, Math.min(h * 0.7, an.fontSize || 12)), say = (an.contents || "").replace(/\s+/g, " ").trim();
+        if (an.field) {
+          var f = an.field, v = f.type === "check" || f.type === "radio" ? (f.checked ? "[x]" : "[ ]") : f.password || f.type === "signature" ? "" : String(f.value || "").replace(/\s+/g, " ").trim();
+          if (v) items.push({ x: r[0] + 1, y: (r[1] + r[3]) / 2 - 0.35 * sz, x1: r[2], size: sz, text: v });
+        } else if (an.sub === "FreeText" && say) items.push({ x: r[0], y: r[3] - sz, x1: r[2], size: sz, text: say });
+        else if (say) notes.push((an.sub === "Text" ? "Note" : an.sub === "Highlight" ? "Highlighted" : an.sub === "Stamp" ? "Stamp" : "Comment") + (an.author ? " (" + an.author + ")" : "") + ": " + say);
+        else if (an.sub === "Stamp" && an.name) notes.push("Stamp: " + an.name.replace(/([a-z])([A-Z])/g, "$1 $2"));
+      });
+    }
     // pieces -> lines (top to bottom), words joined where the pen jumped
     var pieces = items.filter(function (it) { return !it.gap && it.text.replace(/\s/g, "").length; }), gaps = items.filter(function (it) { return it.gap; });
     var lines = [];
@@ -48293,7 +49250,8 @@ Lantern.RFB = (function () {
       if (prev && prev.y - ln.y > 1.8 * Math.max(ln.size, prev.size)) out.push("");
       out.push(ln.text); prev = ln;
     });
-    return { text: out.join("\n"), lines: lines.map(function (l) { return { y: l.y, text: l.text, size: l.size }; }), items: pieces.length };
+    if (notes.length) { out.push("", "Comments on this page:"); notes.forEach(function (nt) { out.push(nt); }); }
+    return { text: out.join("\n"), lines: lines.map(function (l) { return { y: l.y, text: l.text, size: l.size }; }), items: pieces.length, notes: notes, ownLetters: ownLetters };
   }
   P.pageText = pageText; P.cmap = cmap; P.textFont = font; P.glyphUni = glyph;
 })();
@@ -48326,6 +49284,10 @@ Lantern.RFB = (function () {
   var L = window.Lantern;
   if (!L || !L.pdf || !L.pdf.open || !L.pdf.pageProgram) return;
   var P = L.pdf;
+  // PDF blend modes as the canvas names them
+  var BLEND = { Normal: "source-over", Compatible: "source-over", Multiply: "multiply", Screen: "screen", Overlay: "overlay", Darken: "darken", Lighten: "lighten",
+    ColorDodge: "color-dodge", ColorBurn: "color-burn", HardLight: "hard-light", SoftLight: "soft-light", Difference: "difference", Exclusion: "exclusion",
+    Hue: "hue", Saturation: "saturation", Color: "color", Luminosity: "luminosity" };
   var STD = (".notdef space exclam quotedbl numbersign dollar percent ampersand quoteright parenleft parenright asterisk plus comma hyphen period slash zero one two " +
     "three four five six seven eight nine colon semicolon less equal greater question at A B C D E F G H I J K L M N O P Q R S T U V W X Y Z bracketleft " +
     "backslash bracketright asciicircum underscore quoteleft a b c d e f g h i j k l m n o p q r s t u v w x y z braceleft bar braceright asciitilde " +
@@ -48707,7 +49669,7 @@ Lantern.RFB = (function () {
                 var f = flex;
                 flex = null;
                 if (f.length >= 7) { cmds.push(["C", f[1][0], f[1][1], f[2][0], f[2][1], f[3][0], f[3][1]]); cmds.push(["C", f[4][0], f[4][1], f[5][0], f[5][1], f[6][0], f[6][1]]); x = f[6][0]; y = f[6][1]; }
-                ps = [y, x];
+                ps = [x, y];   // (setcurrentpoint after the flex: the end point, x then y; [y, x] tore LaTeX's letters)
               }
               else if (oth === 3) ps = [3];
               else ps = args.reverse();
@@ -48830,17 +49792,49 @@ Lantern.RFB = (function () {
     var scale = Math.min(opts.scale || 2, (opts.maxSide || 3400) / Math.max(pg.w, pg.h, 1));
     var W = Math.max(1, Math.round(pg.w * scale)), H = Math.max(1, Math.round(pg.h * scale)), cv = document.createElement("canvas");
     cv.width = W; cv.height = H;
-    var x = cv.getContext("2d"), fonts = {}, gcache = {}, ops = 0;
-    x.fillStyle = "#fff"; x.fillRect(0, 0, W, H);
+    var x = cv.getContext("2d"), fonts = {}, gcache = {}, ops = 0, hidden = 0;
+    // (1.24.39) a layer turned off: nothing in it is painted, while what it sets (a clip, a blend, q and Q that need not
+    // nest with it) still counts, on the page itself
+    function hide(on) { if (on) hidden++; else if (hidden > 0) hidden--; }
+    // a blend mode works on what the page itself has drawn (a page is a group of its own, ISO 32000 11.4.7), not on the
+    // paper: where one is used that white paper would change (Screen, Lighten, Difference ...; not Multiply or Darken,
+    // as highlights are), the page is drawn on nothing and the white put under it at the end; else on white, as always
+    var al = [], acro = pdf.doc.catalog && R(pdf.doc.catalog.AcroForm), dr = acro && R(acro.DR) || {};
+    if (P.annots && opts.annots !== false) { try { al = await P.annots(pdf, i); } catch (e7) { } }
+    // (each resource dictionary and each form is looked at once, however deep or however often listed: LibreOffice
+    // gives every form of a file one shared dictionary listing them all; and a Type 3 font's letters have resources too)
+    var seenK = {}, seenO = [];
+    function blends(res) {
+      if (res && res.r !== undefined) { if (seenK["r" + res.r]) return false; seenK["r" + res.r] = 1; }
+      res = R(res);
+      if (!res || typeof res !== "object") return false;
+      if (seenO.indexOf(res) >= 0) return false;
+      seenO.push(res);
+      var gs = R(res.ExtGState) || {}, xo0 = R(res.XObject) || {}, fo0 = R(res.Font) || {};
+      for (var gk in gs) { var g0 = R(gs[gk]), bm0 = g0 && R(g0.BM); if (bm0 != null && (Array.isArray(bm0) ? bm0.map(R) : [bm0]).some(function (v) { return ["/Normal", "/Compatible", "/Multiply", "/Darken"].indexOf(String(v)) < 0; })) return true; }
+      for (var xk in xo0) {
+        var xr = xo0[xk];
+        if (!xr || xr.r === undefined || seenK["x" + xr.r]) continue;
+        seenK["x" + xr.r] = 1;
+        var xob = pdf.doc.get(xr.r);
+        if (xob && xob.stream && R(xob.dict.Subtype) === "/Form" && blends(xob.dict.Resources)) return true;
+      }
+      for (var fk in fo0) { var fd = R(fo0[fk]); if (fd && typeof fd === "object" && R(fd.Subtype) === "/Type3" && blends(fd.Resources)) return true; }
+      return false;
+    }
+    var group = blends(pg.res) || al.some(function (an) { var ao = an.apRef && an.apRef.r !== undefined ? pdf.doc.get(an.apRef.r) : null; return ao && ao.stream && blends(ao.dict.Resources); });
+    if (!group) { x.fillStyle = "#fff"; x.fillRect(0, 0, W, H); }
     var page = [scale, 0, 0, -scale, -pg.box[0] * scale, (pg.h + pg.box[1]) * scale];
     async function fontOf(res, nm) {
       var fr = R(res && res.Font) || R(pg.res.Font) || {}, ref = fr[nm], key = ref && ref.r !== undefined ? "r" + ref.r : nm + ":" + (res === pg.res ? "p" : Math.random());
       if (!fonts[key]) { try { fonts[key] = await loadFont(pdf, ref); fonts[key].id = key; } catch (e) { fonts[key] = null; } }
       return fonts[key];
     }
+    // ga: an annotation's own see-through-ness (/CA), over everything its drawing paints
+    var ga = 1;
     async function run(prog, res, ctm0, depth) {
       var lx = new P.Lexer(prog), args = [], S = { ctm: ctm0.slice(), fill: "#000", stroke: "#000", lw: 1, cap: "butt", join: "miter", dash: [], dashOff: 0, fa: 1, sa: 1, fsp: "", ssp: "",
-        font: null, fs: 10, tc: 0, tw: 0, tz: 1, tl: 0, rise: 0, tr: 0 }, stack = [], path = null, cur = [0, 0], start = [0, 0], clip = null, tm = [1, 0, 0, 1, 0, 0], tlm = tm.slice();
+        font: null, fs: 10, tc: 0, tw: 0, tz: 1, tl: 0, rise: 0, tr: 0 }, stack = [], path = null, cur = [0, 0], start = [0, 0], clip = null, tm = [1, 0, 0, 1, 0, 0], tlm = tm.slice(), mc = [];
       var xo = R(res && res.XObject) || {}, gsr = R(res && res.ExtGState) || {}, csr = R(res && res.ColorSpace) || {};
       function pt(px, py) { var m = S.ctm; return [m[0] * px + m[2] * py + m[4], m[1] * px + m[3] * py + m[5]]; }
       function np() { if (!path) path = new Path2D(); return path; }
@@ -48849,12 +49843,12 @@ Lantern.RFB = (function () {
         x.lineWidth = Math.max(1, S.lw * scaleOf(S.ctm)); x.lineCap = S.cap; x.lineJoin = S.join;
         var k = scaleOf(S.ctm);
         x.setLineDash(S.dash.length ? S.dash.map(function (v) { return Math.max(0.5, v * k); }) : []); x.lineDashOffset = S.dashOff * k;
-        x.strokeStyle = S.stroke; x.globalAlpha = S.sa;
+        x.strokeStyle = S.stroke; x.globalAlpha = S.sa * ga;
       }
       function paint(fill, stroke, eo) {
         if (path) {
-          if (fill) { x.fillStyle = S.fill; x.globalAlpha = S.fa; x.fill(path, eo ? "evenodd" : "nonzero"); }
-          if (stroke) { strokeStyle(); x.stroke(path); }
+          if (fill && !hidden) { x.fillStyle = S.fill; x.globalAlpha = S.fa * ga; x.fill(path, eo ? "evenodd" : "nonzero"); }
+          if (stroke && !hidden) { strokeStyle(); x.stroke(path); }
           x.globalAlpha = 1;
           if (clip) x.clip(path, clip);
         }
@@ -48876,7 +49870,7 @@ Lantern.RFB = (function () {
           if (S.tr !== 3 && S.tr !== 7) {
             if (F.sub === "/Type3") {
               var pn = F.key(c), pr = pn && F.procs[pn];
-              if (pr && depth < 6) {
+              if (pr && depth < 6 && !hidden) {
                 x.save();
                 var sv = S.fill;
                 await run(pr, F.res || res, mul(F.matrix, trm), depth + 1);
@@ -48889,18 +49883,18 @@ Lantern.RFB = (function () {
               if (p2) {
                 var gm = mul(F.prog.matrix, trm);
                 x.setTransform(gm[0], gm[1], gm[2], gm[3], gm[4], gm[5]);
-                if (S.tr === 0 || S.tr === 2 || S.tr === 4 || S.tr === 6) { x.fillStyle = S.fill; x.globalAlpha = S.fa; x.fill(p2); }
-                if (S.tr === 1 || S.tr === 2 || S.tr === 5 || S.tr === 6) { x.strokeStyle = S.stroke; x.lineWidth = S.lw / Math.max(1e-6, Math.hypot(gm[0], gm[1])); x.stroke(p2); }
+                if (!hidden && (S.tr === 0 || S.tr === 2 || S.tr === 4 || S.tr === 6)) { x.fillStyle = S.fill; x.globalAlpha = S.fa * ga; x.fill(p2); }
+                if (!hidden && (S.tr === 1 || S.tr === 2 || S.tr === 5 || S.tr === 6)) { x.strokeStyle = S.stroke; x.globalAlpha = S.sa * ga; x.lineWidth = S.lw / Math.max(1e-6, Math.hypot(gm[0], gm[1])); x.stroke(p2); }
                 x.setTransform(1, 0, 0, 1, 0, 0); x.globalAlpha = 1;
               }
             } else {   // a font the PDF does not carry: the browser's nearest
               var u = F.info.uni(c), sz = Math.hypot(trm[2], trm[3]);
               if (u && sz > 0.5) {
                 x.setTransform(trm[0] / sz, trm[1] / sz, -trm[2] / sz, -trm[3] / sz, trm[4], trm[5]);
-                x.font = F.css.replace("SIZE", sz.toFixed(2)); x.fillStyle = S.fill;
-                if (u.trim()) x.fillText(u, 0, 0);
+                x.font = F.css.replace("SIZE", sz.toFixed(2)); x.fillStyle = S.fill; x.globalAlpha = S.fa * ga;
+                if (u.trim() && !hidden) x.fillText(u, 0, 0);
                 if (F.noWidths) mw = x.measureText(u).width / sz * 1000;
-                x.setTransform(1, 0, 0, 1, 0, 0);
+                x.setTransform(1, 0, 0, 1, 0, 0); x.globalAlpha = 1;
               }
             }
           }
@@ -48928,7 +49922,15 @@ Lantern.RFB = (function () {
           case "J": S.cap = ["butt", "round", "square"][n[0]] || "butt"; break;
           case "j": S.join = ["miter", "round", "bevel"][n[0]] || "miter"; break;
           case "d": S.dash = Array.isArray(a[0]) ? a[0].map(function (v) { return +R(v); }) : []; S.dashOff = n[1] || 0; break;
-          case "gs": { var g = R(gsr[String(a[0]).slice(1)]) || {}; if (g.LW != null) S.lw = +R(g.LW); if (g.CA != null) S.sa = +R(g.CA); if (g.ca != null) S.fa = +R(g.ca); break; }
+          case "gs": {
+            var g = R(gsr[String(a[0]).slice(1)]) || {}; if (g.LW != null) S.lw = +R(g.LW); if (g.CA != null) S.sa = +R(g.CA); if (g.ca != null) S.fa = +R(g.ca);
+            // (1.24.39) a blend mode: Acrobat's highlights are yellow multiplied over the words, which then show through
+            if (g.BM != null) {   // (a list: the first mode known, ISO 32000 11.3.5)
+              var bm = R(g.BM), bl = (Array.isArray(bm) ? bm.map(R) : [bm]).map(function (v) { return BLEND[String(v).slice(1)]; }).filter(Boolean);
+              x.globalCompositeOperation = bl[0] || "source-over";
+            }
+            break;
+          }
           case "g": S.fill = colour(n); S.fsp = ""; break;
           case "G": S.stroke = colour(n); S.ssp = ""; break;
           case "rg": S.fill = colour(n); S.fsp = ""; break;
@@ -48983,7 +49985,9 @@ Lantern.RFB = (function () {
           case "Do": {
             var ref = xo[String(a[0]).slice(1)], ob = ref && ref.r !== undefined ? pdf.doc.get(ref.r) : null;
             if (!ob || !ob.stream) break;
+            if (ob.dict.OC && P.ocVisible && !P.ocVisible(pdf, ob.dict.OC)) break;   // a picture or drawing in a layer that is off
             var st2 = R(ob.dict.Subtype);
+            if (hidden) break;   // (a picture or a drawing in a hidden part: not painted; a form's state ends with it)
             if (st2 === "/Image" && P.decodeImage) {
               try {
                 var ic = await P.decodeImage(pdf, ob, 16e6), m2 = S.ctm;
@@ -48997,7 +50001,7 @@ Lantern.RFB = (function () {
                 x.save();
                 x.setTransform(m2[0], m2[1], m2[2], m2[3], m2[4], m2[5]);
                 x.transform(1 / ic.width, 0, 0, -1 / ic.height, 0, 1);
-                x.globalAlpha = S.fa;
+                x.globalAlpha = S.fa * ga;
                 x.drawImage(ic, 0, 0);
                 x.restore();
               } catch (e5) { }
@@ -49015,11 +50019,49 @@ Lantern.RFB = (function () {
             break;
           }
           case "BI": { var ei = prog.indexOf("EI", lx.p); lx.p = ei < 0 ? prog.length : ei + 2; break; }
+          // (1.24.39) marked content: a part in a layer (optional content) that is off is not drawn
+          case "BDC": {
+            var off = false;
+            if (a[0] === "/OC" && P.ocVisible) {
+              var pr = a[1];
+              if (typeof pr === "string") { var props = R(res && res.Properties) || R(pg.res.Properties) || {}; pr = props[pr.slice(1)]; }
+              off = !P.ocVisible(pdf, pr);
+            }
+            mc.push(off); if (off) hide(true);
+            break;
+          }
+          case "BMC": mc.push(false); break;
+          case "EMC": if (mc.length && mc.pop()) hide(false); break;
           default: break;
         }
       }
+      while (mc.length) if (mc.pop()) hide(false);
+      // a q left open (a common fault) is closed here, so its clip does not reach what is drawn after this program
+      while (stack.length) { stack.pop(); x.restore(); }
     }
+    // the page's drawing in a state of its own: a clip or a blend it leaves set does not reach what lies on it (each
+    // annotation's drawing starts from the default state, ISO 32000 12.5.5)
+    x.save();
     await run(await P.pageProgram(pdf, pg), pg.res, page, 0);
+    x.restore(); x.globalCompositeOperation = "source-over"; x.globalAlpha = 1; hidden = 0;
+    // (1.24.39) what lies on the page: form fields, comments, highlights, stamps -- each by its own drawing (its
+    // appearance) when it has one, else drawn here from what it says (PDF_ANNOTS); opts.annots false leaves them off,
+    // opts.print draws only those meant to be printed
+    if (P.annots && opts.annots !== false) {
+      for (var ai = 0; ai < al.length; ai++) {
+        var an = al[ai];
+        if (an.hidden || an.sub === "Link" || (opts.print && !an.print)) continue;
+        if (an.oc && P.ocVisible && !P.ocVisible(pdf, an.oc)) continue;
+        try {
+          if (an.apRef) {
+            x.save(); ga = an.opacity >= 0 && an.opacity < 1 ? an.opacity : 1;
+            try { await run("/LanternAP Do", { XObject: { LanternAP: an.apRef }, Font: R(dr.Font) || {} }, mul(an.apMatrix, page), 1); } finally { ga = 1; x.restore(); }
+          }
+          else if (P.drawPlainAnnot) P.drawPlainAnnot(x, an, page);
+        } catch (e8) { }
+      }
+    }
+    if (group) { x.save(); x.setTransform(1, 0, 0, 1, 0, 0); x.globalAlpha = 1; x.globalCompositeOperation = "destination-over"; x.fillStyle = "#fff"; x.fillRect(0, 0, W, H); x.restore(); }
     if (pg.rotate) {
       var rc = document.createElement("canvas"), turned = pg.rotate === 90 || pg.rotate === 270;
       rc.width = turned ? H : W; rc.height = turned ? W : H;
@@ -49034,6 +50076,129 @@ Lantern.RFB = (function () {
 })();
 // ===========================================================================
 // MODULE: PDF_DRAW - END
+// ===========================================================================
+// ===========================================================================
+// MODULE: PDF_ANNOT_DRAW - START
+// Depends: PDF_ANNOTS (an annotation as Lantern.pdf.annots gives it) --
+//          feature-detected; called by PDF_DRAW
+// Exports: Lantern.pdf.drawPlainAnnot(ctx, annotation, pageMatrix)
+// ===========================================================================
+// Drawing an annotation that came without its own drawing (1.24.39), as a
+// PDF viewer must: a highlight over its words, an underline or strike-out,
+// boxes, circles, lines and pen strokes, a typed comment's words, a sticky
+// note's icon, a stamp's name, and a form field's value or tick. Programs
+// that add comments often leave the drawing to the viewer (pypdf does), and
+// a form marked "NeedAppearances" asks the viewer to draw every value.
+(function () {
+  var L = window.Lantern;
+  if (!L || !L.pdf) return;
+  var P = L.pdf;
+  function css(c, a) {
+    c = c || [0, 0, 0];
+    return "rgba(" + Math.round(255 * c[0]) + "," + Math.round(255 * c[1]) + "," + Math.round(255 * c[2]) + "," + (a == null ? 1 : a) + ")";
+  }
+  // words cut into lines that fit a width (measured in the canvas's own font)
+  function wrap(x, text, width) {
+    var out = [];
+    String(text).split(/\r\n|\r|\n/).forEach(function (para) {
+      var line = "";
+      para.split(/\s+/).forEach(function (w) {
+        var t = line ? line + " " + w : w;
+        if (line && x.measureText(t).width > width) { out.push(line); line = w; } else line = t;
+      });
+      out.push(line);
+    });
+    return out;
+  }
+  function stampName(n) { return String(n || "Stamp").replace(/^SB/, "").replace(/([a-z])([A-Z])/g, "$1 $2").toUpperCase(); }
+  function drawPlainAnnot(x, an, m) {
+    var k = Math.abs(m[0]) || 1, r = an.rect, col = an.color, op = an.opacity == null ? 1 : an.opacity;
+    function dv(px, py) { return [m[0] * px + m[2] * py + m[4], m[1] * px + m[3] * py + m[5]]; }
+    function poly(pts, close) { var p = new Path2D(); pts.forEach(function (q, i) { var d = dv(q[0], q[1]); if (i) p.lineTo(d[0], d[1]); else p.moveTo(d[0], d[1]); }); if (close) p.closePath(); return p; }
+    function pairs(a) { var o = []; for (var i = 0; i + 1 < (a || []).length; i += 2) o.push([a[i], a[i + 1]]); return o; }
+    var lw = Math.max(1, (an.border || 1) * k);
+    x.save();
+    x.globalAlpha = op;
+    var sub = an.sub, quads = an.quads && an.quads.length ? an.quads : [[r[0], r[3], r[2], r[3], r[0], r[1], r[2], r[1]]];
+    if (sub === "Highlight") {
+      x.globalCompositeOperation = "multiply";
+      x.fillStyle = css(col || [1, 1, 0]);
+      quads.forEach(function (q) { x.fill(poly([[q[0], q[1]], [q[2], q[3]], [q[6], q[7]], [q[4], q[5]]], true)); });
+    } else if (sub === "Underline" || sub === "StrikeOut" || sub === "Squiggly") {
+      x.strokeStyle = css(col || (sub === "StrikeOut" ? [1, 0, 0] : [0, 0, 1]));
+      quads.forEach(function (q) {
+        var h = Math.abs(q[1] - q[5]) || 10, t = sub === "StrikeOut" ? 0.5 : 0.08;
+        x.lineWidth = Math.max(1, h / 14 * k);
+        if (sub === "Squiggly") x.setLineDash([2 * k, 2 * k]);
+        x.stroke(poly([[q[4] + (q[0] - q[4]) * t, q[5] + (q[1] - q[5]) * t], [q[6] + (q[2] - q[6]) * t, q[7] + (q[3] - q[7]) * t]]));
+      });
+    } else if (sub === "Square" || sub === "Circle") {
+      var b = (an.border || 1) / 2, d0 = dv(r[0] + b, r[3] - b), d1 = dv(r[2] - b, r[1] + b), p = new Path2D();
+      if (sub === "Square") p.rect(Math.min(d0[0], d1[0]), Math.min(d0[1], d1[1]), Math.abs(d1[0] - d0[0]), Math.abs(d1[1] - d0[1]));
+      else p.ellipse((d0[0] + d1[0]) / 2, (d0[1] + d1[1]) / 2, Math.abs(d1[0] - d0[0]) / 2, Math.abs(d1[1] - d0[1]) / 2, 0, 0, 2 * Math.PI);
+      if (an.interior) { x.fillStyle = css(an.interior); x.fill(p); }
+      if (an.border > 0) { x.lineWidth = lw; x.strokeStyle = css(col || [1, 0, 0]); x.stroke(p); }
+    } else if (sub === "Line" && an.line) {
+      x.lineWidth = lw; x.strokeStyle = css(col || [1, 0, 0]); x.stroke(poly(pairs(an.line)));
+    } else if (sub === "Ink" && an.ink) {
+      x.lineWidth = lw; x.lineCap = "round"; x.lineJoin = "round"; x.strokeStyle = css(col || [0, 0, 1]);
+      an.ink.forEach(function (path) { x.stroke(poly(pairs(path))); });
+    } else if ((sub === "Polygon" || sub === "PolyLine") && an.vertices) {
+      var pp = poly(pairs(an.vertices), sub === "Polygon");
+      if (an.interior && sub === "Polygon") { x.fillStyle = css(an.interior); x.fill(pp); }
+      x.lineWidth = lw; x.strokeStyle = css(col || [1, 0, 0]); x.stroke(pp);
+    } else if (sub === "FreeText") {
+      var size = (an.fontSize || 12), tl = dv(r[0], r[3]), br = dv(r[2], r[1]);
+      if (an.border > 0 && col) { x.lineWidth = lw; x.strokeStyle = css(col); x.strokeRect(tl[0], tl[1], br[0] - tl[0], br[1] - tl[1]); }
+      x.fillStyle = css(an.textColor || [0, 0, 0]);
+      x.font = Math.round(size * k) + "px Helvetica, Arial, sans-serif";
+      x.textBaseline = "top";
+      wrap(x, an.contents, br[0] - tl[0] - 4 * k).forEach(function (ln, i) { x.fillText(ln, tl[0] + 2 * k, tl[1] + 2 * k + i * size * 1.2 * k); });
+    } else if (sub === "Text") {
+      var s0 = dv(r[0], r[3]), w0 = 18 * k;
+      x.fillStyle = css(col || [1, 0.85, 0.2]); x.strokeStyle = "rgba(60,50,20,1)"; x.lineWidth = Math.max(1, k * 0.8);
+      x.fillRect(s0[0], s0[1], w0, w0 * 0.85); x.strokeRect(s0[0], s0[1], w0, w0 * 0.85);
+      for (var li = 1; li < 4; li++) { x.beginPath(); x.moveTo(s0[0] + w0 * 0.2, s0[1] + w0 * 0.2 * li); x.lineTo(s0[0] + w0 * 0.8, s0[1] + w0 * 0.2 * li); x.stroke(); }
+    } else if (sub === "Stamp" || sub === "FileAttachment") {
+      var a0 = dv(r[0], r[3]), a1 = dv(r[2], r[1]), name = sub === "Stamp" ? stampName(an.name) : "FILE";
+      x.strokeStyle = x.fillStyle = css(col || [0.8, 0.1, 0.1]); x.lineWidth = Math.max(2, 2 * k);
+      x.strokeRect(a0[0], a0[1], a1[0] - a0[0], a1[1] - a0[1]);
+      x.font = "bold " + Math.round(Math.min((a1[1] - a0[1]) * 0.55, (a1[0] - a0[0]) / Math.max(4, name.length) * 1.6)) + "px Helvetica, Arial, sans-serif";
+      x.textAlign = "center"; x.textBaseline = "middle"; x.fillText(name, (a0[0] + a1[0]) / 2, (a0[1] + a1[1]) / 2);
+    } else if (sub === "Widget" && an.field) {
+      var f = an.field, h = r[3] - r[1], c0 = dv(r[0], r[3]), c1 = dv(r[2], r[1]);
+      x.fillStyle = x.strokeStyle = css(an.textColor || [0, 0, 0]);
+      if (f.type === "check" || f.type === "radio") {
+        if (f.checked) {
+          var cw = c1[0] - c0[0], ch = c1[1] - c0[1];
+          if (f.type === "radio") { x.beginPath(); x.arc(c0[0] + cw / 2, c0[1] + ch / 2, Math.min(cw, ch) * 0.28, 0, 2 * Math.PI); x.fill(); }
+          else { x.lineWidth = Math.max(1.5, Math.min(cw, ch) * 0.12); x.beginPath(); x.moveTo(c0[0] + cw * 0.2, c0[1] + ch * 0.55); x.lineTo(c0[0] + cw * 0.42, c0[1] + ch * 0.78); x.lineTo(c0[0] + cw * 0.8, c0[1] + ch * 0.22); x.stroke(); }
+        }
+      } else if (f.value && f.type !== "signature") {
+        var fs = an.fontSize || (f.multiline ? 10 : Math.max(6, Math.min(12, h * 0.7))), val = f.password ? new Array(f.value.length + 1).join("*") : f.value;
+        x.font = Math.round(fs * k) + "px Helvetica, Arial, sans-serif";
+        if (f.comb && !f.multiline) {
+          // a comb field: one letter in the middle of each of its cells (a date, a number written box by box)
+          var cell = (c1[0] - c0[0]) / f.maxLen;
+          x.textBaseline = "middle"; x.textAlign = "center";
+          val.slice(0, f.maxLen).split("").forEach(function (ch1, i) { x.fillText(ch1, c0[0] + cell * (i + 0.5), (c0[1] + c1[1]) / 2); });
+        } else if (f.multiline) {
+          x.textBaseline = "top";
+          wrap(x, val, c1[0] - c0[0] - 4 * k).forEach(function (ln, i) { x.fillText(ln, c0[0] + 2 * k, c0[1] + 2 * k + i * fs * 1.15 * k); });
+        } else {
+          x.textBaseline = "middle";
+          x.textAlign = an.align === 1 ? "center" : an.align === 2 ? "right" : "left";
+          var tx0 = an.align === 1 ? (c0[0] + c1[0]) / 2 : an.align === 2 ? c1[0] - 2 * k : c0[0] + 2 * k;
+          x.fillText(val, tx0, (c0[1] + c1[1]) / 2);
+        }
+      }
+    }
+    x.restore();
+  }
+  P.drawPlainAnnot = drawPlainAnnot;
+})();
+// ===========================================================================
+// MODULE: PDF_ANNOT_DRAW - END
 // ===========================================================================
 // ===========================================================================
 // MODULE: PDF_WRITE - START
@@ -53869,7 +55034,18 @@ Lantern.RFB = (function () {
     if (files.length === 1 && isPdf(files[0])) {
       if (!L.pdf || !L.pdf.open) throw new Error("this copy of Lantern has no PDF reader");
       doc.kind = "pdf";
-      doc.pdf = await L.pdf.open(files[0]);
+      // (1.24.39) a PDF locked with a password asks for it (opts.password first, then opts.askPassword(tries, wrong)); one
+      // locked only against changes opens with no question, and doc.pdf.security says what its maker asked
+      var pw = opts.password, tries = 0;
+      for (;;) {
+        try { doc.pdf = await L.pdf.open(files[0], pw ? { password: pw } : {}); break; }
+        catch (e) {
+          if (!e.needPassword || tries >= 5) throw e;
+          var ask = opts.askPassword || function (n, wrong) { return typeof window.prompt === "function" ? window.prompt((wrong ? "That password does not open it. " : "") + "This PDF is locked with a password. Type it to open the PDF:", "") : null; };
+          pw = await ask(++tries, e.wrongPassword);
+          if (pw == null || pw === "") throw new Error("this PDF needs its password to open");
+        }
+      }
       // the file's own name (a PDF's stored title is often "untitled" or a
       // scanner's default)
       doc.pdfTitle = doc.pdf.title || "";
@@ -53892,7 +55068,16 @@ Lantern.RFB = (function () {
   // picture(doc, i) -> Promise<canvas|null>: page i as a picture again
   async function picture(doc, i) {
     // (1.22.6) a page with no picture -- lines, shapes and words in the PDF's own fonts -- drawn as it looks (PDF_DRAW)
-    if (doc.kind === "pdf") { var pi = await L.pdf.pageImage(doc.pdf, i); return pi || (L.pdf.pageDraw ? L.pdf.pageDraw(doc.pdf, i, { scale: 2.5, maxSide: 3400 }) : null); }
+    if (doc.kind === "pdf") {
+      // (1.24.39) a scanned page with something on top of it (a filled form, a comment) is drawn whole, not just its scan
+      var on = [];
+      if (L.pdf.annots && L.pdf.pageDraw) { try { on = (await L.pdf.annots(doc.pdf, i)).filter(function (a) { return !a.hidden && a.sub !== "Link"; }); } catch (e) { } }
+      var pi = await L.pdf.pageImage(doc.pdf, i);
+      if (pi && !on.length) return pi;
+      // drawn whole, as sharp as its scan (when it is one) and no less than 2.5 dots a point (a small logo is not a scan)
+      var pw = doc.pdf.pages[i], side = pw.rotate === 90 || pw.rotate === 270 ? pw.h : pw.w;
+      return L.pdf.pageDraw ? L.pdf.pageDraw(doc.pdf, i, { scale: pi ? Math.max(2.5, pi.width / side) : 2.5, maxSide: 3400 }) : pi;
+    }
     return TR.image.load(doc.files[i]);
   }
   // readSection(doc, k, {onPage(i, page), onStep, signal, keep}) -> reads
@@ -53909,7 +55094,8 @@ Lantern.RFB = (function () {
       try {
         if (doc.kind === "pdf") {
           var own = await L.pdf.pageText(doc.pdf, i);
-          if (own && own.text.replace(/\s/g, "").length >= 30) {
+          // (1.24.39) its own words: those of the page itself, not a note or a field's value on top of a scan
+          if (own && (own.ownLetters != null ? own.ownLetters : own.text.replace(/\s/g, "").length) >= 30) {
             pg.text = own.text; pg.conf = 1; pg.own = true; pg.done = true;
             if (opts.onPage) opts.onPage(i, pg);
             continue;
@@ -53919,6 +55105,8 @@ Lantern.RFB = (function () {
         if (!cv) { pg.text = ""; pg.conf = 0; pg.done = true; pg.empty = true; if (opts.onPage) opts.onPage(i, pg); continue; }
         var rd = await TR.read(cv, { onStep: opts.onStep });
         pg.read = rd; pg.text = rd.text; pg.conf = rd.conf; pg.done = true; pg.unsure = rd.unsure;
+        // the notes on a scanned page are not in its picture: their words after what was read
+        if (own && own.notes && own.notes.length) pg.text += "\n\nComments on this page:\n" + own.notes.join("\n");
         if (doc.kind === "pdf") pg.pt = { w: doc.pdf.pages[i].w, h: doc.pdf.pages[i].h };
       } catch (e) { pg.error = (e && e.message) || String(e); pg.done = true; }
       if (opts.onPage) opts.onPage(i, pg);
@@ -54283,6 +55471,12 @@ Lantern.RFB = (function () {
       if (ctrl) ctrl.abort();
       status("opening\u2026");
       doc = await D.open(files, { per: L.store ? +L.store.get("textReader.per", 10) : 10 });
+      // (1.24.39) a locked PDF opened: say so, and what its maker asked
+      var sec0 = doc.pdf && doc.pdf.security, no = [];
+      if (sec0) {
+        if (!sec0.permissions.print) no.push("printed"); if (!sec0.permissions.copy) no.push("copied"); if (!sec0.permissions.change) no.push("changed");
+        doc.lockNote = "This PDF is locked" + (sec0.userPassword || sec0.owner ? " with a password" : " against changes") + (no.length ? "; its maker asked that it not be " + no.join(", ").replace(/, ([a-z]+)$/, " or $1") + "." : ".");
+      }
       // (1.22.6) a PDF of printed music: its notes are a music font's letters, nonsense as words -- read it as music
       if (doc.kind === "pdf" && L.sheetMusic && L.sheetMusic.pdfMusic) {
         status("looking at the PDF\u2026");
@@ -54302,7 +55496,7 @@ Lantern.RFB = (function () {
       onPage: function (i) { status("read page " + (i + 1) + " of " + doc.pages.length + "\u2026"); paintPages(); } });
     ctrl = null;
     var done = doc.pages.filter(function (p) { return p.done; }).length;
-    status("Done: " + done + " of " + doc.pages.length + " page" + (doc.pages.length === 1 ? "" : "s") + " read (" + Math.round((Date.now() - t0) / 100) / 10 + " s).");
+    status("Done: " + done + " of " + doc.pages.length + " page" + (doc.pages.length === 1 ? "" : "s") + " read (" + Math.round((Date.now() - t0) / 100) / 10 + " s)." + (doc.lockNote ? " " + doc.lockNote : ""));
     paintDoc();
   }
   function paintDoc() {
@@ -56775,6 +57969,8 @@ Lantern.RFB = (function () {
       "<p>Example: photograph a motor's nameplate, open it, and the plate's lines come back as text (MODEL PX-2200, 400V 3PH 50HZ ...).</p>"],
     ["Long documents", "<p>A long PDF is read in <b>sections</b> (10 pages unless you choose 5, 20 or 50). Each section is a button: tap one to read those pages. Pictures of earlier sections are let go, so a whole manual can be worked through on a small device. <b>Stop</b> halts reading.</p>" +
       "<p>Pages of a PDF that already carry their own words (made on a computer, or scanned and read before) use those words: exact and instant. Only pages that are pictures are read; a page with no picture and no words (its letters drawn as shapes) is drawn as it looks and read like a picture.</p>"],
+    ["Locked PDFs, forms and comments", "<p>A PDF locked only against changes, printing or copying opens with no question, as in any PDF viewer; when it is done Text Reader says it was locked and what its maker asked. A PDF locked with a password asks for it: the person's password or the owner's opens it. Example: a maker's manual that will not let you copy its text opens and reads like any other.</p>" +
+      "<p>What was typed into a form is drawn on the page and read beside its label (<b>Name: ADAM WELDON</b>; a ticked box reads <b>[x]</b>); a password field is never read out. Comments, highlights, stamps and sticky notes are drawn, and their words come after the page under <b>Comments on this page</b>. Layers a drawing keeps turned off stay hidden.</p>"],
     ["How sure it is", "<p>Each page shows the picture with a box round every word: <b>green</b> sure, <b>amber</b> fairly sure, <b>red</b> guessing, and how sure Lantern is of the page. A page scanned sideways or upside down is turned first; italic print is stood upright.</p>" +
       "<p>Correct the text in the box under the picture and press <b>Keep my corrections</b>: words you add are learnt and remembered for next time.</p>"],
     ["Second reader", "<p>When the AI in use can see pictures, <b>Second reader (AI)</b> asks it to read the same page on its own. Lantern lines the two readings up word by word and marks every place they differ in yellow; tap one to take the AI's words there.</p>"],

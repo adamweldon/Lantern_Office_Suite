@@ -158,7 +158,12 @@ module.exports = { sig: sig, text: text };
     say(id, bb, j.sev);
   });
   // electronics replies the harvest sees now but did not on 22b1c03 (a block newly read as electronics)
-  Object.keys(now).filter(function (k) { return now[k].anyEl && !(GBEFORE[k] && GBEFORE[k].anyEl); }).forEach(function (k) { say("guard:" + k, ["read as electronics now, not on 22b1c03"], "high"); });
+  // (1.24.39) the saved replies this review was last replayed with (files_1238.json: the bench_run files at the release of
+  // 1.24.38); a reply saved later (a later bench run's fixture) is another review's to guard, counted, not judged
+  var KNOWN = {}; JSON.parse(fs.readFileSync(path.join(__dirname, "files_1238.json"), "utf8")).forEach(function (f) { KNOWN[f.replace(/\.json$/, "")] = 1; });
+  var later = Object.keys(now).filter(function (k) { return !KNOWN[k.split("/")[0]]; });
+  if (later.length) console.log("(" + later.length + " replies saved after 1.24.38: not judged here)");
+  Object.keys(now).filter(function (k) { return now[k].anyEl && KNOWN[k.split("/")[0]] && !(GBEFORE[k] && GBEFORE[k].anyEl); }).forEach(function (k) { say("guard:" + k, ["read as electronics now, not on 22b1c03"], "high"); });
 
   out.forEach(function (l) { console.log(l); });
   console.log((nA + nD) + " cases: " + nA + " AGREE, " + nD + " DISAGREE");

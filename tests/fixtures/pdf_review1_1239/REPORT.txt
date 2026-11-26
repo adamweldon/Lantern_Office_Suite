@@ -1,0 +1,154 @@
+PDF reading in 1.24.39 -- an independent review (locks, forms, annotations, layers, bookmarks)
+2026-11-25. Reviewer did not write the code. src/lantern.inner.html as of sha256 09ff7ac386c420d3 (branch lantern-1.24.39,
+uncommitted). Run in Chromium (Playwright), the page being src/lantern.inner.html itself; "before" = the committed
+site/index.html (1.24.38). 56 PDFs made here (make_fixtures.py: reportlab 5.0.1, pypdf 6.17.0, qpdf 11.9, pdftk-java, and
+byte by byte); every one passes `qpdf --check`. Oracles: qpdf's unlocked copy (lock_base_decrypted.pdf) for text and
+pixels; poppler (pdftotext, pdftoppm) for layers, comb fields and the Multiply highlight; ISO 32000 otherwise.
+
+RESULT: 373 cases, 330 pass, 43 fail. Every case is in cases.json. To repeat:
+  python3 make_fixtures.py ; LANTERN_OLD=<old index.html> python3 run_review.py
+
+=====================================================================================================================
+FAILURES (most serious first). Each: smallest reproduction, what happened, likely cause.
+=====================================================================================================================
+
+1. A LINEARIZED ("Fast Web View") LOCKED PDF OPENS AS BLANK PAGES, WITH NO ERROR AND NO PASSWORD ASKED   [9 cases]
+   Repro: qpdf --linearize --encrypt "" ownpw 128 --use-aes=y -- lock_base.pdf lin_aes128_owner.pdf
+          Lantern.pdf.open(that) -> security null, pageText "" on both pages, pageDraw all white.
+          lin_rc4_128_owner.pdf the same. lin_aes256_user.pdf (user password "lantern") opens WITHOUT asking and
+          shows blank pages; given the password, still blank.
+   Cause: PDF_PARSE doc.ready, src line 47588-47597: the lock is looked for only in the LAST "trailer"
+          (s.lastIndexOf("trailer")). In a linearized file the last trailer is the main section's, holding only
+          /Size and /ID; /Encrypt, /Root and /Info are in the first-page trailer near the top of the file. The XRef-
+          stream scan does not apply (classic tables). The fall-back test at line 47636 looks at the same last trailer
+          and the last 4000 bytes, so the file is not even refused. Linearized is what Acrobat writes for "Fast Web
+          View", so this is likely the commonest locked PDF a person meets. (lin_objstm_aes256_owner.pdf, linearized
+          with cross-reference streams, PASSES.) A fix would read every trailer (or follow /Prev) for /Encrypt, /ID,
+          /Root and /Info.
+   Same cause, already in 1.24.38: the Info title of a linearized PDF is "" (lin_plain.pdf; PDF_PAGES open,
+          line 48364).
+
+2. TEXT STRINGS IN PDFDocEncoding OR UTF-8 ARE MISREAD (bookmark titles, field values)   [8 cases]
+   Repro: a field /V (Bay 3 \205 East)  -> pageText "Bay: Bay 3 <U+0085> East" (expected "Bay 3 – East").
+          pypdf's own outline items "Safety – first “quoted”", "Spare parts • list" -> "Safety <85> first <8D>quoted<8E>",
+          "Spare parts <80> list"; reportlab+pypdf "Wiring – main panel" the same. pypdf WRITES every text string in
+          PDFDocEncoding when it can, so this hits ordinary files (nav_rl_pypdf.pdf, form_hand.pdf, nav_deep.pdf).
+          PDF 2.0 UTF-8 strings (EF BB BF ...) come out as mojibake: "ï»¿Wiring â panel Ã©tÃ©" (pdf20_utf8_strings.pdf).
+   Cause: PDF_PAGES text(), line 48371-48374: UTF-16BE with BOM, else Latin-1. Bytes 0x80-0x9F (bullet, dagger,
+          en/em dash, curly quotes, fi/fl, Euro at 0xA0 ...) need the PDFDocEncoding table; EF BB BF needs UTF-8.
+          Used by PDF_ANNOTS tx(), PDF_NAV tx() and the Info title.
+
+3. A HIGHLIGHT WITH ITS OWN DRAWING IN MULTIPLY BLEND (AS ACROBAT MAKES THEM) HIDES THE WORDS UNDER SOLID YELLOW   [1]
+   Repro: annots_hand.pdf, a /Highlight whose /AP is "/GS0 gs 1 1 0 rg <rect> re f" with GS0 << /BM /Multiply /ca 1 >>
+          over 16 pt black words. Lantern: region all yellow (255,255,0), 0% dark. poppler: 33% dark (words show).
+   Cause: PDF_DRAW "gs" operator, line 49683: /BM (blend mode) is ignored, so an opaque Multiply fill paints over.
+          (PDF_ANNOT_DRAW's own plain highlight does use multiply; only the appearance-stream path is wrong.)
+          Line 49801 also sets globalAlpha 1 for every appearance, so an annotation's /CA is ignored there.
+
+4. TEXT INSIDE A FORM XOBJECT THAT IS DRAWN IN A HIDDEN LAYER IS STILL READ   [1]
+   Repro: content "/OC /B BDC /FmB Do EMC" with layer B off and FmB drawing "FORM-IN-B": pageText contains FORM-IN-B;
+          pageDraw correctly leaves it out (layers_ocmd.pdf).
+   Cause: PDF_TEXT pageText run(), line 48926: the hidden-count (mc, off) is local to each run(); the Do branch at
+          line 48980 starts a nested run() with off = 0 and does not check the caller's off.
+
+5. OPTIONAL-CONTENT VISIBILITY EXPRESSIONS (/VE) ARE IGNORED   [5]
+   Repro: layers_ocmd.pdf, B off: OCMD << /VE [/And A B] >> -> shown (poppler hides it); OCMD with /OCGs [A B] /P /AnyOn
+          AND /VE [/And A B] -> shown (VE must take precedence: hidden); with B turned on, OCMD /VE [/Not B] stays shown.
+   Cause: PDF_ANNOTS ocVisible(), line 48707-48720: only /OCGs and /P are read; an OCMD with /VE and no /OCGs
+          returns true. (/VE is PDF 1.6; less common than /P, but it is what Acrobat writes for some layer logic.)
+
+6. A SCANNED PAGE'S PICTURE IN A LAYER THAT IS OFF IS STILL PAINTED FOR TEXT READER   [2]
+   Repro: layers_scan_off.pdf: a full-page scan plus "/OC /Off BDC ... /Mark Do EMC" (layer off). pageDraw leaves the
+          black mark out (PASS); pageImage and Text Reader's picture(doc, 0) paint it black.
+   Cause: PDF_PAGES draws(), line 48383-48411, follows q/Q/cm/Do with no BDC/EMC or XObject /OC check; Text Reader's
+          picture() (line 54809-54811) takes pageImage whenever the page has no annotations. Already so in 1.24.38;
+          the new layer rule reaches pageDraw and pageText only.
+
+7. fields() LISTS A RADIO GROUP ONCE PER BUTTON   [3]
+   Repro: form_rl.pdf (reportlab radio "colour", green chosen) -> [{colour, Off}, {colour, green}, {colour, Off}];
+          form_hand.pdf "shift" -> ["Off", "Night", "Off"]. Expected one field "colour" = "green".
+   Cause: PDF_ANNOTS fields(), line 48672-48676, walks widgets, not fields (a field with several widgets -- radio
+          buttons, or one value shown on two pages -- appears once per widget). pageText is right ("Colour: [ ] [x] [ ]").
+
+8. A TICKED CHECK BOX WITH NO DRAWING OF ITS OWN REPORTS "Yes" WHATEVER ITS ON-NAME   [2]
+   Repro: form_hand.pdf: << /FT /Btn /T (onbox) /V /On /AS /On >> (no /AP) -> fields() value "Yes" (expected "On").
+          (With an /AP whose on-state is /Ja the value is right: "Ja".)
+   Cause: PDF_ANNOTS field(), line 48609-48611: the on-name comes only from /AP /N keys; with none it falls back to
+          "Yes" instead of /AS or /V.
+
+9. A COMB FIELD WITH NO DRAWING IS DRAWN AS ORDINARY LEFT-ALIGNED TEXT   [2]
+   Repro: form_hand.pdf: /Ff 16777216 (Comb) /MaxLen 5 /V (74070) in a 200 pt box, NeedAppearances true. The last
+          cell (310-350) is blank in Lantern; poppler spaces the digits one per cell (last cell inked).
+   Cause: PDF_ANNOT_DRAW, Widget branch at line 49909: no Comb/MaxLen handling (field() does not keep Ff or MaxLen).
+          The value is read correctly. (reportlab's own comb appearance is left-aligned too; Lantern draws that as
+          given, matching poppler -- PASS.)
+
+10. BOOKMARKS DEEPER THAN 12 LEVELS ARE DROPPED SILENTLY   [2]
+   Repro: nav_deep.pdf, 15 nested items: Deep 13-15 missing.   Cause: PDF_NAV outline(), line 48788 (depth < 12).
+   Minor; a stated limit, but nothing tells the viewer items were left out.
+
+11. A USER PASSWORD WITH A EURO SIGN DOES NOT OPEN A REVISION 2-4 LOCK   [1]
+   Repro: qpdf --encrypt "€uro-5" ownpw 128 --use-aes=y (qpdf stores € as PDFDocEncoding 0xA0) ->
+          open(.., {password:"€uro-5"}) -> "that password does not open this PDF". (The AES-256 copy opens.)
+   Cause: PDF_CRYPT latin(), line 48081: characters above 255 become "?"; revisions 2-4 want PDFDocEncoding
+          (€ 0xA0, – 0x85, “ 0x8D ...). Same table as failure 2.
+
+12. MESSAGES FOR LOCKS LANTERN CANNOT OPEN   [4, all minor]
+   - Any non-Standard handler is called "a certificate": "this PDF is locked with a FOPN_foweb lock (a certificate,
+     not a password)" (unknown_handler.pdf); and "a Adobe.PubSec lock" reads wrongly (cert_pubsec.pdf). PDF_CRYPT
+     unlock(), line 48126. (Both refuse cleanly, no crash, no password asked -- PASS.)
+   - A damaged lock (O/U missing; revision 6 with no UE) asks for a password no one can give: needPassword true
+     (damaged_lock_no_OU.pdf, damaged_lock_r6_no_UE.pdf). PDF_CRYPT line 48152; Text Reader would ask 5 times.
+
+13. INFO TITLE OF A PDF WITH A CROSS-REFERENCE STREAM IS ""   [2, already so in 1.24.38]
+   Repro: qpdf --object-streams=generate lock_base.pdf -> pdf.title "" (also when locked: qpdf_aes128_objstm.pdf).
+   Cause: PDF_PAGES open(), line 48364, reads /Info only after the keyword "trailer".
+
+14. A FIELD WHOSE /Parent POINTS TO ITSELF IS NAMED "loop.loop.loop..." (29 times)   [1, damaged file, minor]
+   PDF_ANNOTS fullName()/inherit(), line 48594-48595: a 30-step cap but no seen-set. No hang.
+
+=====================================================================================================================
+WHAT PASSED (330 cases)
+=====================================================================================================================
+Locks: pdftk RC4-40 and RC4-128 (owner only; with user passwords; a Latin-1 user password "façade"; a 40-character
+  password), pypdf AES-128 / AES-256 R5 / AES-256 R6 (non-ASCII user "Café-Ñandú" and owner "Größe-Ø"; the same password
+  typed decomposed (NFD); a password set with a no-break space opened with an ordinary space), qpdf AES-128/256 and
+  RC4 V4 with --cleartext-metadata (XMP comes out as XML in every case, scrambled or clear), --force-V4, --force-R5,
+  object streams with a user password, no-print/no-copy permissions: each opens (or asks, refuses a wrong password
+  with wrongPassword, opens with user or owner password, security.owner/userPassword right), and its text equals the
+  unlocked text EXACTLY and both pages are pixel-identical to the unlocked PDF; Info title and UTF-16 bookmark decrypt.
+  Incremental updates appended after the lock (AES-128, RC4-128, AES-256, and a classic update on an xref-stream file):
+  the new scrambled content and title are read and drawn, untouched page 2 identical. A locked form whose values sit in
+  object streams (not unscrambled twice) and a locked reportlab form read and draw identically to unlocked. Certificate
+  and unknown handlers are refused with an error, no crash. Text Reader: asks, says the first try was wrong, opens with
+  the second and reads; Cancel gives a plain error.
+Forms: reportlab fields with appearances (text, check, radio, combo export->display, multi-select list, comb, read-only,
+  page 2), hand-made fields with no appearances (hierarchical a.b.c names, a value inherited by widgets on two pages,
+  radio group, list box exports, /Ja on-state, UTF-16 value, Q=1 centring, hidden field neither drawn nor read),
+  pypdf-filled with and without NeedAppearances, a /Rotate 90 page (value beside its label, drawn in the right place).
+Annotations: Text icon, FreeText, Line, Square/Circle fills, Polygon, PolyLine, Highlight (plain), Links not drawn,
+  Underline/StrikeOut/Squiggly colours, Ink, Stamp by name and by appearance, Hidden/NoView (with or without an
+  appearance) and Popup (even /Open true) never drawn or read, an annotation in an off layer hidden and shown again via
+  pdf.layerOn, appearances with a far-off BBox, a turning /Matrix and a small BBox all mapped onto /Rect correctly,
+  /CA 0.5 on a plain box, comments read with author under "Comments on this page:", popup text not doubled.
+Layers: OCMD /AllOn /AnyOn /AnyOff /AllOff, a single-ref /OCGs, nested BDC/BMC inside a hidden part, a Form XObject
+  with /OC = OCMD, an image inside a hidden BDC (pageDraw), BaseState /OFF with /ON, turning layers on and off.
+Bookmarks/links: /Dests dict, Names tree with Kids/Limits (incl. a name equal to a bound, an unknown name -> -1, a
+  << /D >> value), GoTo by string and by name, URI, UTF-16 titles, cycles in /Next and /First and a self-loop (no hang,
+  each item once, under 1 ms).
+Older PDFs (tests/fixtures/text_reader, pdf_open, sheets/ode_clarinet.pdf, docs/*.pdf, up to 40 pages): no errors;
+  text and the first three pages' drawings identical to 1.24.38 except on pages that carry annotations or layers that
+  are off (where the change is the intended one). Damaged PDF (null/junk annotations, short arrays, missing AP, OCGs not
+  an array, broken outline items): nothing throws. No uncaught page errors in the whole run.
+
+=====================================================================================================================
+NOT TESTED
+=====================================================================================================================
+- PDFs from Acrobat itself (no Acrobat, no downloads): the linearized and Multiply-highlight cases were made with qpdf
+  and by hand in Acrobat's form.
+- A real certificate-locked file (only its /Encrypt dictionary was made); named crypt filters other than Identity on
+  single streams (/Crypt with a name); EncryptMetadata false under AES-256 made by Acrobat.
+- Signed signature fields, XFA forms, rich-text (/RC) comments, widget /MK rotation, NoRotate/NoZoom notes on turned
+  pages, /D (down) appearances, print-only drawing (opts.print).
+- The node (jsdom) path: everything ran in Chromium only.
+- How any page looks to a person (Adam's call): only ink share and colour in regions were measured.

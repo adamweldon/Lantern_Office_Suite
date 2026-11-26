@@ -1,0 +1,202 @@
+PDF reading in 1.24.39 -- a second independent review (after the first review's 14 mends)
+2026-11-25. The reviewer did not write the code and did not see the first review's drafting. src/lantern.inner.html as of
+sha256 e1733e0503385bfa (branch lantern-1.24.39, uncommitted; unchanged during the review). Run in Chromium (Playwright),
+the page being src/lantern.inner.html itself; "1.24.38" = `git show HEAD:site/index.html`. Node + jsdom for a few checks.
+115 PDFs made here, 0.8 MB (attach_locked_pdf.pdf is the base of attach_locked_pdf_saved.pdf; scan_small_plain.pdf is the
+control of the small-print check) (make_fixtures.py: reportlab 5.0.1, pypdf 6.17.0, pikepdf 10.16 / qpdf 11.9, and byte by byte); every
+one passes `qpdf --check` (with its password, given as the stored bytes where they are not UTF-8). Oracles: qpdf (titles,
+objects, every lock), poppler (pdfinfo, pdftotext, pdftoppm pixels at 72 dpi), pypdf's PDFDocEncoding table, ISO 32000-2.
+
+RESULT: 376 checks: 325 pass, 26 FAIL, 25 informational (beyond the standard; reported, not counted as failures).
+Every check is in cases.json (group, file, check, expected, got, pass, kind). To repeat:
+  python3 make_fixtures.py
+  git show HEAD:site/index.html > /tmp/old.html ; LANTERN_OLD=/tmp/old.html python3 run_review.py    (about 20 minutes: OCR)
+  node node_probe.js                                                                                  (12 checks, 1 fails)
+
+=====================================================================================================================
+FAILURES, most serious first. Each: what happened, smallest reproduction, likely cause. "REGRESSION" = 1.24.38 did right.
+=====================================================================================================================
+
+1. TEXT READER NO LONGER READS A SCANNED PAGE THAT HAS A COMMENT OR A FILLED FIELD ON IT              REGRESSION [2]
+   scan_note.pdf: one scanned page (a picture, no text layer) + a sticky note "Checked by the night shift, see the log book".
+     1.24.38: Text Reader reads the scan: "INSPECTION REPORT / PUMP STATION TWO / WET WELL CLEAN / FLOATS TESTED OK / ...".
+     1.24.39: the page's whole text is "Comments on this page: Note (Adam): Checked by the night shift, see the log book".
+              The scan is never read (page.own = true). Nothing says so.
+   scan_fields.pdf: the same scan + three filled fields -> the page's text is only "Grace Hopper / 2026-11-25 / Lift
+     Station Two". A scanned paper form with typed-in values loses every printed word on it.
+   Cause: Text Reader readSection(), line 54923, takes a page's own words when pageText gives 30 or more letters, and
+     pageText now adds field values (PDF_TEXT line 49084) and "Comments on this page" (line 49086, 49116). On a scan those
+     are all the "words" there are. Any note of a few words, or two or three filled fields, crosses 30 letters ("Comments
+     on this page:" alone is 19). A fix: decide "own words" on the page content's text only, then add values and notes
+     after the OCR text.
+   Also (informational, not counted): picture(), line 54904, now draws any page with an annotation by pageDraw at scale 2.5
+     instead of pageImage. A 300-dpi scan with one EMPTY field is read from 1530 x 1980 pixels instead of its own 2550 x
+     3300 (scan_emptyfield.pdf). Clean 6-point print still read 100% of words both ways (scan_small_emptyfield.pdf), so no
+     loss was shown; noisy real scans were not tried.
+
+2. THE TRAILER IS NOW ASSEMBLED FROM EVERY "trailer" WORD ANYWHERE IN THE FILE                         REGRESSION [5]
+   a. about_trailers.pdf: an ordinary, unlocked one-page PDF whose (uncompressed) page shows the text
+        "trailer << /Size 9 /Root 1 0 R /Encrypt 6 0 R /Info 7 0 R >>"   (a lesson on the PDF format).
+      1.24.38 opens and reads it; qpdf and pdfinfo open it. 1.24.39 refuses it: "this PDF is locked with a damaged lock
+      (its password checks are missing ...)". The /Encrypt in the page's words was merged into the real trailer.
+   b. incr_drop_info.pdf: an update whose trailer leaves out /Info (the document details removed). qpdf, pdfinfo and
+      1.24.38: no title. 1.24.39: "Pump Station Manual" (the old /Info, revived from the earlier trailer).
+   c. attach_locked_pdf_saved.pdf: a plain PDF carrying a locked PDF as an attachment, unpacked (pypdf's add_attachment).
+      poppler reads "Binder page: see the attached locked manual". 1.24.39 asks for a password ("needs its password");
+      the attachment's own password does not open it either. (1.24.38 opened it but read a blank page: its object scan,
+      line 47540, already takes the attachment's "1 0 obj" over the binder's; not new, but now it asks for a password
+      no one has.)
+   Cause: PDF_PARSE doc.ready, line 47590-47605: s.indexOf("trailer") over the whole file, including page content,
+     strings and unpacked attachments, and every dictionary found is merged key by key, older keys surviving where a
+     newer trailer left them out. The standard (7.5.6) says the newest trailer holds every entry. A fix: read the trailer
+     of the cross-reference section the last startxref names (in a linearized file that IS the first-page trailer, so
+     the linearized case is still right), and use the whole-file scan only when that fails.
+   (The linearized cases the mend was for all pass, below.)
+
+3. BLEND MODES OTHER THAN MULTIPLY AND DARKEN ARE WRONG OVER EMPTY PARTS OF A PAGE                     REGRESSION [4]
+   blend_page.pdf: boxes drawn with /BM /Screen (blue), /Lighten (green), /Difference (white), half over a black bar,
+     half over empty page. poppler, over the empty page: blue, green, white. 1.24.38 (which ignored /BM): blue, green,
+     white -- right. 1.24.39: white, white, black -- the Screen and Lighten boxes vanish, the Difference box turns black.
+   blend_annots.pdf: an annotation's own drawing with /BM /Screen: poppler solid blue; 1.24.39 white wherever the page is
+     empty (mean (221,221,255)).
+   Cause: PDF_DRAW pageDraw paints the canvas white first (line 49664) and then blends against it (line 49766). A page is
+     an isolated group (ISO 32000 11.4.7): its drawing blends against a transparent backdrop, then goes onto the white
+     paper. Multiply and Darken come out the same either way (white is neutral for them), which is why highlights are
+     right. A fix: draw on a transparent canvas and put the white under it at the end ("destination-over").
+
+4. A DAMAGED VISIBILITY EXPRESSION FREEZES THE TAB; DAMAGED LAYER SETTINGS MAKE THE WHOLE PAGE UNREADABLE   [3]
+   a. ve_cycle.pdf: an OCMD whose /VE is "7 0 obj [/And 7 0 R 7 0 R]". The first run took 652 s for one probe (the tab
+      busy throughout); the final run's separate process was killed at 60 s still busy. A legal /VE whose sub-arrays are
+      shared 22 levels deep (ve_shared_dag.pdf) took 3.7 s; each extra level doubles it.
+      Cause: PDF_ANNOTS ocVisible() expr(), line 48784: depth is capped at 30 but every branch is followed, 2^30 calls.
+      A fix: remember each array's result by object number (and treat one met again on the way down as visible).
+   b. damaged_ocgs_dict.pdf (/OCProperties /OCGs a dictionary) and damaged_onoff_dict.pdf (/D /ON and /OFF dictionaries):
+      pageText, pageDraw and layers() all throw "(R(...) || []).forEach is not a function"; the page can be neither read
+      nor drawn. 1.24.38 read "Damaged layers page / ODD-VE / A-PART". (Node + jsdom: the same.)  REGRESSION (damaged files)
+      Cause: PDF_ANNOTS defaults(), lines 48745-48747: R(x) || [] then .forEach without Array.isArray.
+
+5. STATE LEAKS BETWEEN DRAWINGS: A CLIP AND A BLEND MODE THAT SHOULD HAVE ENDED, DO NOT                         [5]
+   a. interleave_clip.pdf: "q 0 0 50 50 re W n /OC /Off BDC Q EMC" then a red box and words. poppler and 1.24.38 draw both;
+      1.24.39 draws nothing after it: the rest of the page is blank.                                  REGRESSION [2]
+      Cause: PDF_DRAW hide(), line 49660: a hidden part swaps the canvas for a 1x1 sink, so the Q inside it (line 49757)
+      restores the sink, not the page; the page keeps the clip for ever. (Legal: BDC/EMC must nest with each other, not
+      with q/Q.) A fix: while hidden, keep drawing to the page's canvas and skip only the painting operators.
+   b. blend_annots.pdf page 2: the page content sets /BM /Multiply at its top level (no q/Q). A field-like annotation
+      whose drawing is a white box with a word, over a black band: poppler shows white; 1.24.39 black (multiplied).
+   c. blend_annots.pdf page 3: the page content leaves a clip at its top level. A red annotation outside it: poppler red;
+      1.24.39 not drawn.
+      Cause of b and c: the annotation loop (line 49887) x.save()s on top of whatever the page content left in the canvas;
+      each appearance should start from the default graphics state (ISO 32000 12.5.5). A fix: x.save() before the page
+      content and x.restore() before the annotations.
+   d. hidden_gs.pdf: /BM /Multiply set inside a hidden part (gs is a state operator: it still applies; ISO 32000, optional content in content streams); poppler
+      multiplies the later yellow box over the black bar (black); 1.24.39 yellow. Same cause as a (state set on the sink).
+      Not a regression (1.24.38 ignored /BM).
+
+6. A V4 RC4 LOCK WITHOUT A KEY LENGTH IN ITS CRYPT FILTER ASKS FOR A PASSWORD                                  [1]
+   v4_rc4_nocflen.pdf: qpdf's --force-V4 RC4-128 lock with the crypt filter's "/Length 16" blanked (the lock's own
+   /Length 128 kept). qpdf opens it with no password and reads it; 1.24.39 says "this PDF needs its password to open".
+   Cause: PDF_CRYPT unlock() method(), line 48141-48149: for V 4 with RC4 the key length comes only from the crypt
+   filter's /Length, else stays 5 bytes (40 bits). pdf.js uses the lock's /Length, else 128 bits. (How common: not known;
+   the standard calls the crypt filter's /Length optional.)
+
+7. A NAMED DESTINATION WHOSE NAME HOLDS A BYTE 0x80-0xA0 IS NOT FOUND IN A NAME TREE                           [1]
+   nav_names_bytes.pdf: names tree, kid with /Limits [(caf) (caf\245)] holding (caf), (caf\205), (caf\245), sorted byte
+   by byte as 7.9.6 asks. A link /Dest (caf\205) -> page -1 (should be page 3). (caf\245) is found.
+   Cause: PDF_NAV nameTree(), line 48829: keys and limits are compared after textString() (PDFDocEncoding: \205 becomes
+   U+2013, above \245 = U+00A5), so the key seems past the upper limit and the kid is skipped. Names are bytes, not text:
+   compare R(x).s. (Appears with UTF-8 names: "à" is C3 A0, "–" is E2 80 93.)
+
+8. FORMS: A RADIO GROUP'S /Opt, AND A VALUE KEPT IN A TEXT STREAM                                              [3]
+   forms2.pdf: radio "dir" with /Opt [(Upstream) (Downstream) (Bypass)] and on-names /0 /1 /2 (as Acrobat writes when
+   it uses /Opt), the middle one on: fields() says "1", not "Downstream" (pageText's "[ ] [x] [ ]" is right).
+   Cause: PDF_ANNOTS field(), line 48662-48665: /Opt is not read for buttons (ISO 32000, radio button fields).
+   forms2.pdf: a text field whose /V is a text stream ("Value kept in a stream", allowed for text fields by ISO 32000): fields() "" and
+   pageText "Stream:" with nothing after. Cause: field(), line 48675, tx(v) of a stream is "".
+
+9. AN ANNOTATION'S /CA IS NOT APPLIED TO WORDS IN A FONT THE PDF DOES NOT CARRY                                [1]
+   blend_annots.pdf: a FreeText whose own drawing writes "FADED NOTE" in /Helv (Helvetica, not embedded -- the usual case
+   for typed comments), /CA 0.3: the words are drawn solid black (10% dark pixels); 30% black over white has none. The
+   same /CA on a filled box and on a picture is right (half strength). Poppler ignores /CA on any annotation that has its
+   own drawing, so the standard (12.5.2) is the oracle here. Cause: PDF_DRAW glyphs(), the browser-font branch, line
+   49731-49733: fillText with no globalAlpha (S.fa * ga) set. (Mend 4 says "every alpha"; this one was missed.)
+
+10. A BLEND-MODE ARRAY WHOSE FIRST NAME IS UNKNOWN                                                             [1]
+   blend_page.pdf: /BM [/NoSuchMode /Multiply]: poppler multiplies (11.3.5: use the first mode the reader knows); 1.24.39
+   draws Normal. Line 49766 takes only bm[0]. Minor.
+
+=====================================================================================================================
+INFORMATIONAL (beyond the standard, or where readers disagree; not counted as failures)                       [25]
+=====================================================================================================================
+- Passwords stored in the Windows code page (cp1252) for revisions 2-4: "€uro-5" (0x80), "en–dash" (0x96), "“q”",
+  "Œuvre", as user and owner passwords (10 files, pw_*_cp1252_*.pdf) do not open. The standard says PDFDocEncoding,
+  which works. Which makers write cp1252 is not known here; trying it is one more line in PDF_CRYPT's tries (line 48163).
+- AES-256 passwords that SASLprep changes ("Brand™", "x²y", "Cafe" + combining accent), made by qpdf, which stores them
+  unnormalized: they do not open (pwq_R6_tm/sup2/nfd.pdf). pypdf and Acrobat normalize; qpdf and poppler do not, and
+  poppler cannot open pypdf's copies. Lantern opens pypdf's (pwp_R6_*.pdf). Trying the raw UTF-8 too would open both.
+- UTF-16LE strings with an FF FE mark, and UTF-16 strings with a language escape (001B "en" 001B): shown as bytes / with
+  the escape (8 checks: bookmark, field value, pageText, note). pdf.js decodes both; the standard has neither as text.
+- A check box on-name in UTF-8 (/S#C3#AD) reads "SÃ­", not "Sí"; a URI written as UTF-8 bytes reads ".../cafÃ©"
+  (pdf.js decodes it as UTF-8).
+- hidden_marks.pdf HID-5: a form's BDC naming a property only in the PAGE's resources is hidden by pageDraw and pageText
+  (they fall back to the page's /Properties) but painted by pageImage (PDF_PAGES draws(), line 48442, no fall-back).
+- scan_emptyfield.pdf: the smaller picture noted under failure 1.
+
+=====================================================================================================================
+WHAT PASSED (325)
+=====================================================================================================================
+Linearized ("Fast Web View"), 69 of 71: qpdf --linearize plain, RC4-40 user, RC4-128 owner and user, AES-128 user,
+  AES-256 owner, AES-256 revision 5 user, with object streams (plain, RC4 user, AES-128 owner): text of all three pages
+  exactly the plain file's, all three pages pixel-identical, title (from the first-page trailer) and bookmarks, the
+  method named, user password asked, wrong one refused as wrong, owner password opens as owner. Linearized forms (plain,
+  AES-256 user, RC4 + object streams): text, fields() and both pages identical. Updates after linearizing: a new title
+  and a new content stream; a new catalog under a new number (its outline used); an update written as a cross-reference
+  STREAM after a classic linearized file; locked + linearized + a scrambled update (RC4 owner, AES-128 user, AES-256
+  owner): new title, new line, the other pages pixel-identical. A non-linearized update replacing the catalog. Hybrid-
+  reference files (trailer with /XRefStm, Info only in an object stream -- poppler misses that title, qpdf and Lantern
+  read it) and an update to one.
+Text strings, 53 of 53 that the standard defines: every PDFDocEncoding code that differs from Latin-1 (0x18-0x1F,
+  0x80-0x9E, 0xA0) against pypdf's table; Latin-1 0xA1-0xFF unchanged (and the same title as 1.24.38); PDFDocEncoding mixed
+  with Latin-1; UTF-16BE with a surrogate pair; FE FF alone; FE FF with an odd byte; UTF-8 with its mark (and a 4-byte
+  letter); EF BB BF alone; empty strings -- as bookmark titles, field values (fields() and beside the label), note words
+  and authors, a list box's display text, a layer name, Info titles (pdfinfo agrees on each).
+Passwords, 47 of 48: revisions 2, 3, 4 with Latin-1 ("façade"), with PDFDocEncoding letters outside Latin-1 (€, –, “ ”, Œ)
+  stored as PDFDocEncoding, and the same stored as UTF-8; Cyrillic and Chinese as UTF-8; each as user and as owner
+  password; qpdf's choices for revision 4 (PDFDocEncoding when it can, UTF-8 for Cyrillic, Chinese, an emoji, a
+  decomposed accent); AES-256 by pypdf (SASLprep: ™, ², decomposed é, emoji) and by qpdf (Cyrillic, Chinese, emoji, mixed
+  €–“”). A near-miss non-ASCII password is refused as wrong.
+Blend and see-through, 22 of 30: Normal, Multiply, Darken, Difference over black, [/Multiply /Normal], /Compatible, Multiply
+  with ca 0.5, all as poppler; the blend mode ends at Q; /BM /Normal (as Word writes) draws as before; a highlight's own
+  drawing in [/Multiply] and a Darken box over words as poppler; /CA 0.5 on a filled appearance and on a picture: half
+  strength.
+Layers, 79 of 85: 17 visibility expressions (And, Or, Not, nested 10 deep, indirect sub-arrays, /VE by reference, empty
+  /VE falling back to /OCGs + /P, three operands, /VE over /P) in three layer states (as the PDF opens; B on; A off and D
+  on), each read and drawn as expected, and poppler's pdftotext agrees on all 17 in the default state. Pictures and forms
+  in hidden parts on a scanned page: in a form inside a hidden BDC, an image whose own /OC is an OCMD /VE, a form with its
+  own /OC off, a BDC inside a visible form, nested forms -- each left out of pageDraw, pageImage and pageText, a visible
+  control kept, and all shown and read when the layer is turned on. A shared 22-deep legal /VE in 3.7 s. A /VE with a
+  number, a string and empty /Not and /Or: no error (poppler also hides that part).
+Forms, 28 of 31: a radio group across two pages (one field, "East"; page 1 "[ ] [ ]", page 2 "[x]"); check-box on-names
+  /On#20Site, /0, /YES; a box with no drawing (/AS only, /V only); two boxes of one field with different on-names (one
+  field, "B"); comb fields with MaxLen 1, 4 (short value), 6, 10 (longer value), MaxLen and Ff on the parent: every cell
+  inked where poppler inks it; comb + multiline not combed; one field on two pages listed once with the field's value.
+Text Reader, 5 of 7: a 300-dpi scan with no annotation drawn at its own size and read; 6-point print read 100% both ways.
+Before/after, 20 of 22: ord_reportlab.pdf (see-through fills, dashed see-through line, a picture, a clip, turned words, a
+  /Rotate 90 page), ord_extgstate_normal.pdf (/BM /Normal, /Compatible, [/Normal], ca 0.6), plain3, lin2_plain,
+  lin2_objstm_plain, hybrid_plain, title_latin1, title_utf16, scan_plain, lin2_incr_title: text of every page and pages
+  1-3 pixel for pixel the same as 1.24.38. No uncaught errors in the page during the whole run.
+Node + jsdom (node_probe.js, 11 of 12): six linearized files (plain and locked) read as the plain file, a password asked,
+  every standard string in strings.pdf, ve_shapes and forms2 as in the browser. The one failure is 4b (same throw).
+
+=====================================================================================================================
+NOT TESTED
+=====================================================================================================================
+- Files from Acrobat, Word or InDesign (none here, no downloads): which makers write cp1252 passwords, V4 RC4 without a
+  crypt-filter /Length, Screen/Lighten in page art, or q/BDC/Q/EMC interleaving is not known; each case was made by hand
+  or with qpdf/pypdf to the standard's letter.
+- Noisy or low-contrast real scans for the smaller Text Reader picture (failure 1, informational part).
+- Encrypted hybrid-reference files (Lantern was given only an unlocked hybrid and an unlocked update to it).
+- Opening time on very large files: the new parse also reads the dictionary of every object once more when the file
+  contains "/XRef" (line 47595), and lexes after every "trailer" word; not measured above a few hundred kB.
+- Transparency groups (/Group, isolated or knockout), soft masks, blend modes inside forms with their own group.
+- How any page looks to a person (Adam's call): only colours and ink shares in regions were measured.
+- The first review's 373 checks were not rerun here (its own harness covers them).

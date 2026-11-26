@@ -1,0 +1,196 @@
+PDF reading in 1.24.39 -- a third independent review (after the second review's mends)
+2026-11-25. The reviewer did not write the code and had not seen the mends' drafting. Run in Chromium (Playwright), the page
+being src/lantern.inner.html itself; "1.24.38" = `git show HEAD:site/index.html`. src changed while this review ran (an
+object-stream fix in PDF_PARSE, "found by the review of 1.24.40", src line 47659): every result below is from the final run,
+on src sha256 cd0f38cffa59caa6. Line numbers are that file's.
+73 PDFs made here, 0.9 MB (make_fixtures.py: byte by byte with counted offsets; reportlab 5.0.1, pikepdf 10.16 / qpdf 11.9,
+PIL; and real makers: LibreOffice 7 (soffice --convert-to pdf), cairo (rsvg-convert 2.58), pdfTeX (TikZ, ocgx2), matplotlib
+3.11). Every file passes `qpdf --check` but the 18 whose damage is the point (startxref offsets moved, junk after %%EOF, two
+files glued). Oracles: ISO 32000-2, qpdf, poppler 24.02 (pdfinfo, pdftotext, pdftoppm pixels at 72 dpi), 1.24.38.
+
+RESULT: 182 checks: 144 pass, 20 FAIL, 18 informational (damaged files, or beyond the standard; reported, not counted).
+Every check is in cases.json (group, file, check, expected, got, pass, kind). To repeat:
+  python3 make_fixtures.py                     (about 1 minute: LibreOffice, pdfTeX)
+  git show HEAD:site/index.html > /tmp/old.html ; LANTERN_OLD=/tmp/old.html python3 run_review.py      (about 10 minutes)
+  python3 confirm.py                           (draws with two COPIES of src changed in one place each: causes 1 and 9)
+run_review.py groups: trailer, hidden, blend, textreader, forms, sweep (`python3 run_review.py blend` runs one).
+
+=====================================================================================================================
+FAILURES, most serious first. "REGRESSION" = 1.24.38 did right (or did not do this at all).
+=====================================================================================================================
+
+1. LIBREOFFICE PDFs: EVERY PAGE TAKES SECONDS TO MINUTES TO DRAW (the blend-mode look-ahead)            REGRESSION [2]
+   lo_transp_60.pdf / lo_transp_90.pdf: a LibreOffice Draw page with 60 / 90 see-through shapes (made by soffice from an
+   .fodg; LibreOffice draws each see-through thing as a form XObject). Drawing page 1 (pageDraw, scale 1):
+        1.24.38:  19 ms / 28 ms          1.24.39:  2.0-2.5 s / 10.5-12.7 s        (120 shapes: 31.8 s; 1.24.38 ~30 ms)
+   Same pixels both ways. It grows as the fourth power of the number of forms, and the forms counted are the WHOLE
+   DOCUMENT's: LibreOffice writes ONE resource dictionary (here 9 0 R) that every page and every form shares, listing every
+   form of the file. A 40-slide Impress deck with three see-through shapes a slide (120 forms) would take ~30 s for every
+   page drawn. Who draws: Text Reader picture() for any page with fewer than 30 letters of its own (src 54992), and the
+   music reader's pdfMusic (src 57689), which draws every page of a PDF that is not music.
+   Cause: PDF_DRAW pageDraw blends(), src 49732-49739: each form's /Resources is followed again from every form that lists
+   it, 3 levels deep, with no record of what was already looked at: N forms -> N^3 visits of N entries each.
+   Confirmed: confirm.py A, the same code remembering the resource dictionaries it has seen (5 lines), draws them in 28 and
+   15 ms, pixel for pixel as now.
+
+2. A BLEND MODE MORE THAN THREE FORMS DEEP (OR IN A TYPE 3 FONT) WIPES ITS DRAWING OFF EMPTY PAPER       REGRESSION [2]
+   blend_deep.pdf: a blue box drawn with /BM /Screen, half over a black bar, half over empty paper.
+     page 1, the Screen ExtGState in a form 3 deep: right (blue over both), as poppler.
+     page 2, the same box in a form 4 deep (page -> form -> form -> form -> form): over the paper 1.24.39 draws WHITE
+       (nothing); poppler blue; 1.24.38 blue (it drew /BM as Normal).
+     page 4, in an annotation's own drawing 3 forms in: white over the paper; poppler blue.
+     (page 3, Screen in a Type 3 letter's resources: white; 1.24.38 blue; poppler draws nothing at all: informational.)
+   Cause: blends() stops at depth > 3 (src 49734) and does not look in a Type 3 font's /Resources, so the page is drawn on
+   white (src 49741) and the "gs" (src 49843) then screens blue against white = white. A fix that also mends 1: no depth
+   limit, each resource dictionary looked at once; take in Type 3 fonts' resources (or: when a gs sets a mode that white
+   paper changes on a page drawn on white, note it and redraw on a clear canvas).
+   (Real makers here did not reach it: cairo/rsvg nests see-through groups but draws the blended box in a group of its own,
+   so Lantern draws it Normal, as 1.24.38 did -- cairo_screen_depth3/4.pdf, informational in spirit, pass on time.)
+
+3. A PAGE THAT LEAVES A CLIP AND AN OPEN q: SEE-THROUGH PAPER, AND ITS ANNOTATIONS CUT OFF          REGRESSION [3]
+   state_unbalanced.pdf, page 1: "0 0 300 300 re W n q /GS1 gs ... f" with no closing Q (GS1 a Screen blend, so the page
+   is drawn on nothing and white is put under at the end): everything outside the 300 x 300 clip comes back FULLY
+   TRANSPARENT (alpha 0; read as black (0,0,0) by anything that reads the pixels, e.g. OCR), and a Square annotation
+   outside the clip is not drawn. poppler and 1.24.38: white paper; poppler draws the annotation red.
+   page 3, the same with no blend mode anywhere (page drawn on white): the annotation outside the clip is not drawn -- the
+   mend's "annotations are drawn from a clean state" does not hold.
+   Cause: run() calls x.save() for every q (src 49833) and x.restore() only for a Q that comes (src 49834); the page wrapper
+   (src 49957-49959) restores ONE level, so the clip set before the open q survives into the annotation loop and into the
+   white fill of src 49977. A fix: at the end of run(), x.restore() once for each entry still on its own `stack` (that also
+   mends the older form case below).
+   Strictly, ISO 32000 8.4.2 asks q and Q to balance, so this file is non-conforming; but an unclosed q is among the most
+   common faults in real PDFs, poppler and pdf.js tolerate it, and 1.24.38 drew this page white.
+   Informational, already in 1.24.38: page 2, a form whose content leaves a q open: its /BBox clip stays on for the rest of
+   the page (the page's red box after it is not drawn; poppler draws it). Same cause, at src 49925-49932.
+
+4. TEXT READER: A PAGE WITH A SMALL LOGO IS READ FROM A 72-DPI PICTURE                                             [2]
+   tr_logo_field.pdf: a typed page with a 48-pixel logo (drawn 54 pt wide), "Site log" (7 letters of its own) and a filled
+   field "Pump two tripped at three in the morning; reset it and checked the floats". picture() draws it at scale 1
+   (612 x 792), real OCR reads "Pump wee tripped at t[]ree Ir] t[]e rflorr1Ir]g; reset It a[]d cl]ecked t[]e floats".
+   tr_nologo_field.pdf, the same page without the logo: drawn at 2.5 (1530 x 1980), every word read.
+   1.24.38 read nothing of either value (it OCR'd only the logo), so not a regression -- but the new rule "draw at the
+   scan's own resolution" takes the biggest picture as the scan whatever its size.
+   Cause: src 54992, scale = max(1, pi.width / side), pageImage's sharpness being the biggest picture's (src 48625). A fix:
+   Math.max(2.5, pi.width / side) (a real scan is sharper than 2.5 dots a point anyway at 200 dpi and up).
+   Also seen, already in 1.24.38: the same page with no annotation returns pageImage (src 54989) -- only the logo -- so
+   its printed words are never read.
+
+5. AN UPDATE THAT DROPS THE DOCUMENT DETAILS KEEPS THE OLD TITLE WHEN IT IS A CROSS-REFERENCE STREAM               [6]
+   tr_xs_dropinfo_{exact,p1,p2,m1,m3,p5}.pdf: a classic file ("Old Title"), updated with a cross-reference-STREAM section
+   whose dictionary has no /Info (and a new catalog). qpdf and pdfinfo: no title. 1.24.39: "Old Title" -- with the
+   startxref exact too. (The new catalog and its outline are found in every case, so PDF_PARSE's window works.)
+   Cause: not PDF_PARSE: PDF_PAGES open(), src 48431-48432 -- when doc.trailer has no /Info it falls back to the LAST
+   "trailer" word in the file, i.e. the first revision's classic trailer. The same fall-back reads an attached PDF's
+   trailer (finding 6). A fix: no fall-back when doc.trailer was read whole (it has /Root). 1.24.38 the same.
+
+6. A PDF CARRYING ANOTHER PDF AS AN UNPACKED ATTACHMENT IS READ AS THE ATTACHMENT                                  [1]
+   tr_xs_noinfo_attached_pdf.pdf: a one-page binder ("Binder page: the manual is attached.") with a PDF attached unpacked
+   (as pypdf's add_attachment writes it). poppler reads the binder. Lantern reads "Inner page", title "Inner Attachment
+   Title", no bookmarks -- the attachment's objects 1-6 replace the binder's. 1.24.38 the same.
+   Cause: PDF_PARSE src 47542: objects are found by scanning the whole file for "n g obj", a later copy winning, and the
+   attachment's copies come later. (Review 2 saw this under attach_locked_pdf_saved.pdf.) Now that the trailer is read at
+   the last startxref, the cross-reference sections it names (with /Prev) could give each object's offset, the scan kept
+   for damaged files.
+
+7. WORDS ON EITHER SIDE OF A HIDDEN PART OF ONE LINE ARE READ AS ONE WORD                                          [1]
+   oc_parts.pdf page 1: "BT ... (AAAA) Tj /OC /off BDC (BBBBBBBB) Tj EMC (CCCC) Tj ET": pageText "AAAACCCC"; pdftotext
+   "AAAA CCCC". The drawing is right (CCCC where it belongs). TJ and the quote operator read right.
+   Cause: PDF_TEXT show(), src 49065: returns before the pen is moved when the part is hidden. A fix: work out the advance
+   and move tm, and push no item. Not a regression (1.24.38 read the hidden words too). pdfTeX's layers (ocgx2) close
+   the text object around each layer, so they read right (ord_pdftex_ocgx2.pdf passes).
+
+8. OUTLINED LETTERS IGNORE THE STROKE'S SEE-THROUGH (/CA), AND AN ANNOTATION'S                                     [2]
+   stroke_alpha.pdf (reportlab, DejaVu Sans Bold embedded): "OUTLINE" in render mode 1 (outline) and 2 (fill + outline)
+   with /CA 0.3: poppler faint (mean 235, no dark pixels); Lantern solid (mean 192, 23% dark), as with /CA 1.
+   Cause: PDF_DRAW glyphs(), src 49802: x.stroke(p2) with no x.globalAlpha = S.sa * ga (mode 1 strokes at 1, mode 2 at
+   the FILL alpha). The mend's "an annotation's /CA multiplies every alpha" misses this one. 1.24.38 the same.
+
+9. LaTeX PDFs (pdfTeX's Computer Modern, Type 1 with flex) DRAW WITH BROKEN LETTERS          (seen in passing; 1.24.38 too) [1]
+   ord_pdftex_ocgx2.pdf / ord_pdftex.pdf: letters with flex hints (r, h, n, y, w, p, S, W ...) are drawn torn and
+   displaced: seen_pdftex_type1_glyphs.png (1.24.39) against seen_pdftex_type1_glyphs_flexfix.png. Ink of one line 5.6%
+   against poppler's 4.2%; the spill even reaches the empty place of a hidden layer (informational there).
+   Cause: PDF_DRAW type1(), src 49600: after othersubr 0 (flex end) the two `pop`s hand back [y, x], so setcurrentpoint
+   puts the pen at (y, x). With ps = [x, y] every letter is drawn whole (confirm.py B; ink 3.5%). Not one of the mends,
+   but every LaTeX PDF Lantern draws (a page of < 30 letters for Text Reader, a viewer) is affected; worth its own test.
+
+=====================================================================================================================
+INFORMATIONAL                                                                                                      [18]
+=====================================================================================================================
+- Damaged files where the startxref cannot be followed (tr_cls_dropinfo_p40/m60: offset 40/60 bytes out;
+  tr_prefix300_dropinfo: 300 bytes of mail header before %PDF; tr_tail_dummyxref_dropinfo: "startxref 0 %%EOF" after the
+  end): every trailer is merged in file order, and an /Info that the newest trailer dropped comes back ("Old Title").
+  qpdf and pdfinfo (after their repair) and 1.24.38: no title. The catalog is right. Only damaged files.
+- tr_startxref_oldtable.pdf (damaged: the last startxref names the FIRST revision's table): Lantern follows it, as qpdf
+  and pdfinfo do ("Old Title", Rev1 outline) -- passes.
+- tr_concat_ab / tr_concat_aa (two PDFs glued): the second's page and title as poppler -- pass.
+- blend_deep.pdf page 3 (Screen in a Type 3 letter): see 2.
+- inline_img.pdf: an inline picture (BI ... ID ... EI) is never drawn, shown or hidden (src 49936 skips it; 1.24.38 the
+  same; poppler draws it). Ghostscript and some scanners write small pictures this way.
+- state_unbalanced.pdf page 2: see 3.
+- forms3.pdf "dir2": a radio group with /Opt and on-names /Up /Down: value "Down"; the standard (12.7.5.2.4) makes Opt[i]
+  the i-th widget's on state as text ("Downstream"). Only numbered on-names are looked up (src 48716-48717).
+- ord_pdftex_ocgx2.pdf hidden-layer region: see 9.
+- Poppler differs from the standard twice here, and Lantern follows the standard: poppler draws Type 3 letters inside a
+  hidden part, and lets a hidden part left open in one annotation's drawing hide the next annotation (and an annotation
+  after page content that ended inside a hidden part).
+
+=====================================================================================================================
+WHAT PASSED (144)
+=====================================================================================================================
+Trailers, 21 of 28: an update (new catalog and outline, new page text, no /Info) with the last startxref exact and off by
+  -1, +1, -2, +2, -7, +7, -15, +15, +19, -19 bytes: no title, the new outline, the new text, every time. An update as a
+  cross-reference stream (object 123) exact and off by +1, +2 (into its number), -1, -3, +5: the new catalog found.
+  Updates that name a new Info (classic and stream): the new title. Junk before %PDF: 12 bytes with two revisions, 300
+  bytes with one. 2 kB of NULs and a mail footer after %%EOF. A hybrid file (Info in an object stream named by /XRefStm)
+  updated without /Info: no title. A qpdf-linearized file updated by a cross-reference stream without /Info: no title,
+  both page lines. Page text in the update showing "trailer << ... /Encrypt 7 0 R >>", "startxref", "%%EOF": opens.
+Hidden parts, 46 of 48 (poppler pixels): one text object running through a hidden part -- Tj, TJ with kerning, the quote
+  operator -- every word after it drawn where it belongs; Type 3 squares before, in and after a hidden part; a clip set
+  inside a hidden part still clipping until its Q; q, clip, Q inside one; the picture's cm, the colour and the text
+  position set inside one, applied after it (pageDraw and pageImage); a shown form holding a form with /OC off; a form in
+  a hidden part, and a form in that; a shown form (/OC on) with a hidden part; a form whose hidden part never closes (the
+  page after it drawn); annotations' drawings with hidden parts (property in their own resources; only in the page's --
+  hidden, as poppler), one never closed (the next annotation drawn), an annotation with /OC off; a page that ends inside a
+  hidden part (its annotation drawn); an inline picture in a hidden part. pdfTeX + ocgx2 (a real maker): the hidden
+  layer's words neither drawn nor read, the rest read; 1.24.38 read them.
+Blend modes, see-through, clean state, ordinary files, 26 of 35: TikZ (pdfTeX) blend mode=screen, blue and green over a
+  black bar and over paper, as poppler (page drawn on nothing, white under); Screen in a form 3 deep; inside the clip of
+  page 1 of state_unbalanced; outlines at /CA 1. Pixel for pixel as 1.24.38: pdfTeX (words, maths, a table, TikZ with
+  see-through fills, links), matplotlib (Type 3 letters, see-through bars), cairo (nested see-through groups), LibreOffice
+  Writer, LibreOffice Draw with 30, 60 and 90 see-through shapes. Time no worse than 5x 1.24.38 (or 1.5 s): all but
+  LibreOffice's 60 and 90.
+Text Reader, 37 of 39 (with Text Reader's reader replaced by a stand-in that reports the picture's size, and real OCR on
+  four): a 150-dpi scan with a sticky note, with two filled fields; 300-dpi scans with a stamp that has no words of its
+  own ("Stamp: Approved") and with a commented highlight; a scan with only a link and a popup (pageImage used); a scan on
+  a /Rotate 90 page with a note -- each OCR'd from a picture exactly pageImage's size (1275 x 1650, 2550 x 3300), the
+  comments after the OCR text, once. A scan already read (invisible text layer) with a note: its own words + the note.
+  Typed pages: 4 letters + a field, 29 letters + a note -> OCR at 2.5 (1530 x 1980); 30 and 31 letters + a note -> own
+  words + the note. Real OCR: the scan with a note read whole and the note after it (review 2's regression mended); the
+  scan with filled fields read whole, values included.
+Forms, names, strings, locks, 14 of 14: radio with /Opt and on-names /0 /1 /2 ("Downstream"); radio with export values
+  1 2 3 and no /Opt ("2"); a check box with /Opt [(Ja)]; a text value kept in a compressed stream (fields() and beside
+  its place); UTF-16BE with a language+country escape; UTF-16LE with FF FE; check-box on-names in UTF-8 ("Sí") and in
+  Latin-1 bytes (kept, "Sí"); web addresses in UTF-8 bytes, in Latin-1 bytes and %-escaped. Named destinations whose
+  names are PDFDocEncoding (0x84), UTF-8 and UTF-16BE bytes in a two-kid name tree with byte-sorted hex and literal
+  /Limits, and a /Dests name with UTF-8 bytes. Titles in UTF-16LE, UTF-16BE with a language escape mid-string, and
+  PDFDocEncoding (em dash, Euro). AES-256 user passwords stored as typed by qpdf with a soft hyphen and with a no-break
+  space (asked for, then opened); a V4 RC4 lock whose crypt filter gives its length in bits (/Length 128).
+Sweep (informational): all 233 other PDFs under tests/fixtures (pdf_open, pdf_edit, text_reader, sheets, the first and
+  second reviews of 1.24.39, the review of 1.24.40) opened by 1.24.38 and by 1.24.39, text of 3 pages and drawings of 2
+  pages (annotations off) compared: 59 differences, listed in sweep_diffs.json, and every one by design -- field values,
+  typed comments and notes now read; layers now hidden; locked files now opened (3 asking for the password 1.24.38 never
+  asked for, showing blank pages); blend and see-through text of review 2's files. No other text or pixel changed, no
+  page slower, no error. No uncaught error in either page during the whole run.
+
+=====================================================================================================================
+NOT TESTED
+=====================================================================================================================
+- Node + jsdom (tests/pdf_open.js's way of loading Lantern); only Chromium.
+- Files from Acrobat, Word, InDesign, Illustrator (none here, no downloads): whether their blend modes sit deeper than
+  three forms (2), or their pages leave an open q after a clip (3), is not known. LibreOffice Impress decks made from real
+  templates (Draw was used); LibreOffice form fields, whose appearance streams may share the same dictionary (the loop at
+  src 49740 would then multiply finding 1 by the number of fields) -- not measured.
+- An update that adds /Encrypt (not allowed by the standard); encrypted hybrid files; very large files' opening time.
+- OCR on noisy or low-contrast scans; scans above 300 dpi.
+- How any page looks to a person (Adam's call): only colours, ink shares, see-through shares and times were measured.
+- The first and second reviews' own runners were not rerun (their files were, in the sweep, before against after).

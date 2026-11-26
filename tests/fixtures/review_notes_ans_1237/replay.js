@@ -12,6 +12,7 @@ var CASES = require("./cases.js");
 var file = process.argv[2] || path.join(__dirname, "..", "..", "..", "src", "lantern.inner.html");
 var GUARD = JSON.parse(fs.readFileSync(path.join(__dirname, "guard_50f9ceb.json"), "utf8"));
 var o = load(file);
+lib.freezeDate(o.w, 2026, 10, 24);   // (1.24.39) the day the guard was made: "one week from today" read as of then
 
 function cut(s, n) { s = String(s); return s.length > n ? s.slice(0, n) + "…" : s; }
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
@@ -107,12 +108,17 @@ T.calc = async function (c, L) {
     else { d++; console.log("DISAGREE " + id + " " + cut(bad.join("; "), 900).replace(/\s+/g, " ") + " [" + (harm || "medium") + "]"); }
   }
   // the guards first, on a fresh page, in the order gen_guard.js built them
-  var pairs = lib.savedReplies(path.join(__dirname, "..")), byFile = {}, order = [];
-  pairs.forEach(function (p, k) {
-    var now = lib.buildDigest(L, p.text, p.q, p.file), was = GUARD.builds[k], f = p.file;
+  // (1.24.39) the guard is the replies saved when it was made, found by their own key: a reply saved since (a later
+  // bench run's fixture) is another review's to guard, and is counted, not judged
+  var pairs = lib.savedReplies(path.join(__dirname, "..")), byFile = {}, order = [], byKey = {}, later = 0, found = 0;
+  GUARD.builds.forEach(function (g, k) { byKey[g.key] = { g: g, k: k }; });
+  pairs.forEach(function (p) {
+    var key = lib.sha(p.q + "\u0000" + p.text), hit = byKey[key];
+    if (!hit) { later++; return; }
+    found++;
+    var now = lib.buildDigest(L, p.text, p.q, p.file), was = hit.g, k = hit.k, f = was.file || p.file;   // (its file as when the guard was made)
     if (!byFile[f]) { byFile[f] = { n: 0, bad: [] }; order.push(f); }
     byFile[f].n++;
-    if (!was || was.key !== now.key) { byFile[f].bad.push("reply " + k + " is not in the guard (run gen_guard.js on 50f9ceb again)"); return; }
     var diff = [];
     ["err", "none", "ok"].forEach(function (x) { if (JSON.stringify(was[x]) !== JSON.stringify(now[x])) diff.push(x + " " + JSON.stringify(was[x]) + " -> " + JSON.stringify(now[x])); });
     if (JSON.stringify(was.problems) !== JSON.stringify(now.problems)) diff.push("problems " + cut(JSON.stringify(was.problems), 200) + " -> " + cut(JSON.stringify(now.problems), 200));
@@ -120,7 +126,8 @@ T.calc = async function (c, L) {
     if (!diff.length && was.plan !== now.plan) diff.push("the plan differs");
     if (diff.length) byFile[f].bad.push("reply " + k + " (" + p.field + ", " + cut(p.q, 60) + "): " + diff.join("; "));
   });
-  if (pairs.length !== GUARD.builds.length) say("guard-count", ["saved replies: " + pairs.length + ", guard: " + GUARD.builds.length], "medium");
+  if (found !== GUARD.builds.length) say("guard-count", ["saved replies of the guard found: " + found + ", guard: " + GUARD.builds.length], "medium");
+  if (later) console.log("(" + later + " replies saved after the guard was made: not judged here)");
   order.forEach(function (f) { say("guard-" + f.replace(/\.json$/, "") + "-" + byFile[f].n, byFile[f].bad, "high"); });
   var pn = lib.promptDigests(L), pb = Object.keys(GUARD.prompts).filter(function (k) { return pn[k] !== GUARD.prompts[k]; });
   if (Object.keys(pn).length !== Object.keys(GUARD.prompts).length) pb.push("count " + Object.keys(pn).length + " vs " + Object.keys(GUARD.prompts).length);
