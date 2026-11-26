@@ -1,14 +1,15 @@
 # photo_algos.py -- the Photo tile's arithmetic (1.24.42) against other programs' own: SciPy's filters and distance transform,
 # PIL's resampling, OpenCV's perspective warp, scikit-image's flood fill, psd-tools reading Lantern's .psd and Lantern reading
 # psd-tools', PIL reading Lantern's TIFF, GIF and BMP and Lantern reading PIL's TIFFs, and the formulas Photoshop documents
-# (Levels, Posterize, Desaturate, Black & White's defaults, Exposure in stops). The modules run in Node, taken from
+# (Levels, Posterize, Desaturate, Black & White's defaults, Exposure in stops), and what Shadows/Highlights, Match Color,
+# Replace Color and Selective Color must leave alone. The modules run in Node, taken from
 # src/lantern.inner.html between their markers. Each that needs a program not on the machine says SKIP.
 # Usage: python3 tests/photo_algos.py
 import os, re, sys, json, subprocess, tempfile
 import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SRC = open(os.path.join(ROOT, "src", "lantern.inner.html"), encoding="utf-8").read()
-NAMES = ["PHOTO_MATH", "PHOTO_ADJ_TONE", "PHOTO_ADJ_COLOR", "PHOTO_FILT_BLUR", "PHOTO_FILT_SHARPEN", "PHOTO_FILT_NOISE", "PHOTO_FILT_DISTORT", "PHOTO_FILT_STYLE",
+NAMES = ["PHOTO_MATH", "PHOTO_ADJ_TONE", "PHOTO_ADJ_COLOR", "PHOTO_FILT_BLUR", "PHOTO_FILT_SHARPEN", "PHOTO_ADJ_MORE", "PHOTO_FILT_NOISE", "PHOTO_FILT_DISTORT", "PHOTO_FILT_STYLE",
          "PHOTO_FILT_PIXELATE", "PHOTO_RESAMPLE", "PHOTO_SEL_OPS", "PHOTO_HEAL", "PHOTO_INPAINT", "PHOTO_PSD_ADJ", "PHOTO_PSD_READ", "PHOTO_PSD_WRITE", "PHOTO_TIFF", "PHOTO_GIF",
          "PHOTO_LIQUIFY", "PHOTO_FUSE_SEAMS"]
 code = "".join(re.search(r"// MODULE: %s - START\n.*?// MODULE: %s - END\n" % (n, n), SRC, re.S).group(0) for n in NAMES)
@@ -183,6 +184,13 @@ try:
     lv = ls[2].data[0] if hasattr(ls[2], "data") else None
     check("...the Levels layer's settings", lv is not None and lv.input_floor == 10 and lv.input_ceiling == 240 and lv.gamma == 130, lv)
     check("...the flattened picture", np.abs(np.asarray(p.topil().convert("RGB"), float) - photo).max() == 0)
+    r = run("""var d = load('photo'), sc = {relative: false, reds: [-30, 10, 0, 5], blues: [0, 0, 20, 0], neutrals: [0, -7, 0, 0]};
+      var b = P.psd.write({w: d.width, h: d.height, dpi: 72, composite: d.data, layers: [{name: 'Back', x: 0, y: 0, w: d.width, h: d.height, rgba: d.data, visible: true, opacity: 1, blend: 'normal'},
+        {name: 'Sel', adj: {type: 'selectiveColor', p: sc}, visible: true, opacity: 1, blend: 'normal'}]});
+      fs.writeFileSync(OUT + '/selc.psd', Buffer.from(b)); var back = P.psd.read(new Uint8Array(b)).layers[1]; return back.adj || null;""")
+    sl = list(PSDImage.open(os.path.join(OUT, "selc.psd")))[1]
+    check("Lantern's .psd: a Selective Color layer is one psd-tools reads as Photoshop's own (absolute; reds, blues, neutrals)", sl.kind == "selectivecolor" and sl.method == 1 and tuple(sl.data[1]) == (-30, 10, 0, 5) and tuple(sl.data[5]) == (0, 0, 20, 0) and tuple(sl.data[8]) == (0, -7, 0, 0) and tuple(sl.data[0]) == (0, 0, 0, 0), (sl.kind, getattr(sl, "method", None), getattr(sl, "data", None)))
+    check("...and Lantern reads it back as it wrote it", r and r["type"] == "selectiveColor" and r["p"]["relative"] is False and r["p"]["reds"] == [-30, 10, 0, 5] and r["p"]["neutrals"] == [0, -7, 0, 0] and r["p"]["greens"] == [0, 0, 0, 0], r)
     # psd-tools' own layered PSD read by Lantern
     q = PSDImage.new("RGB", (W, H))
     from psd_tools.api.layers import PixelLayer
@@ -198,6 +206,40 @@ try:
     check("...its pixels and masks, as psd-tools reads them", same)
 except ImportError:
     print("SKIP  psd-tools not here: .psd not checked")
+# --- Shadows/Highlights, Match Color, Replace Color, Selective Color: what each must change and what it must leave alone ---
+r = run("""var out = {}, d = load('photo'), j, c;
+  var greys = {width: 256, height: 1, data: new Uint8ClampedArray(1024)}; for (j = 0; j < 256; j++) { greys.data[j * 4] = greys.data[j * 4 + 1] = greys.data[j * 4 + 2] = j; greys.data[j * 4 + 3] = 255; }
+  var g1 = {width: 256, height: 1, data: new Uint8ClampedArray(greys.data)}; P.adjust.selectiveColor(g1, {reds: [-60, 40, 30, 20], greens: [50, -50, 0, 0], blues: [0, 30, -70, 10], yellows: [20, 20, 20, 20], cyans: [-30, 0, 0, 0], magentas: [0, 0, 80, 0]});
+  out.greysKept = Array.prototype.every.call(g1.data, function (v, i) { return v === greys.data[i]; });
+  var z = load('photo'); P.adjust.selectiveColor(z, {reds: [0, 0, 0, 0], neutrals: [0, 0, 0, 0]}); out.zeroKept = Array.prototype.every.call(z.data, function (v, i) { return v === d.data[i]; });
+  var pr = {width: 3, height: 1, data: new Uint8ClampedArray([255,0,0,255, 0,255,0,255, 0,0,255,255])}; P.adjust.selectiveColor(pr, {neutrals: [50, 50, 50, 50]}); out.pureKept = Array.prototype.slice.call(pr.data);
+  var rr = {width: 2, height: 1, data: new Uint8ClampedArray([200,30,30,255, 30,30,200,255])}; P.adjust.selectiveColor(rr, {reds: [-100, 0, 0, 0], relative: false}); out.redLess = Array.prototype.slice.call(rr.data);
+  // shadows: a dark half and a light half
+  var sh = {width: 64, height: 32, data: new Uint8ClampedArray(64 * 32 * 4)}; for (j = 0; j < 64 * 32; j++) { var x = j % 64, v = x < 32 ? [40, 30, 20] : [220, 200, 180]; for (c = 0; c < 3; c++) sh.data[j * 4 + c] = v[c]; sh.data[j * 4 + 3] = 255; }
+  var s2 = {width: 64, height: 32, data: new Uint8ClampedArray(sh.data)}; P.adjust.shadowsHighlights(s2, {shadows: 50, shadowTone: 50, highlights: 0, radius: 4}); out.shDark = Array.prototype.slice.call(s2.data, (16 * 64 + 4) * 4, (16 * 64 + 4) * 4 + 3); out.shLight = Array.prototype.slice.call(s2.data, (16 * 64 + 60) * 4, (16 * 64 + 60) * 4 + 3);
+  var s3 = {width: 64, height: 32, data: new Uint8ClampedArray(sh.data)}; P.adjust.shadowsHighlights(s3, {shadows: 0, highlights: 50, highlightTone: 50, radius: 4}); out.hiDark = Array.prototype.slice.call(s3.data, (16 * 64 + 4) * 4, (16 * 64 + 4) * 4 + 3); out.hiLight = Array.prototype.slice.call(s3.data, (16 * 64 + 60) * 4, (16 * 64 + 60) * 4 + 3);
+  // replace colour: far colours untouched, the colour itself moved as Hue/Saturation moves it
+  var rc = load('photo'); P.adjust.replaceColor(rc, {color: [200, 120, 90], fuzziness: 40, hue: 90, saturation: 20, lightness: 0}); var far = 0, farMoved = 0;
+  for (j = 0; j < d.data.length; j += 4) { var dd = Math.max(Math.abs(d.data[j] - 200), Math.abs(d.data[j + 1] - 120), Math.abs(d.data[j + 2] - 90)); if (dd >= 40) { far++; if (rc.data[j] !== d.data[j] || rc.data[j + 1] !== d.data[j + 1] || rc.data[j + 2] !== d.data[j + 2]) farMoved++; } }
+  out.far = [far, farMoved];
+  var one = {width: 1, height: 1, data: new Uint8ClampedArray([200, 120, 90, 255])}, hs = {width: 1, height: 1, data: new Uint8ClampedArray([200, 120, 90, 255])}; P.adjust.replaceColor(one, {color: [200, 120, 90], fuzziness: 40, hue: 90, saturation: 20}); P.adjust.hueSat(hs, {hue: 90, saturation: 20});
+  out.exact = [Array.prototype.slice.call(one.data, 0, 3), Array.prototype.slice.call(hs.data, 0, 3)];
+  // match colour: its own numbers change nothing; another picture's make its mean and spread
+  var m1 = load('photo'), st = P.adjust.stats(m1); P.adjust.matchColor(m1, {source: st}); var dmax = 0; for (j = 0; j < d.data.length; j++) if (j % 4 !== 3) dmax = Math.max(dmax, Math.abs(m1.data[j] - d.data[j])); out.selfMax = dmax;
+  var tgt = {width: 80, height: 60, data: new Uint8ClampedArray(80 * 60 * 4)}; for (j = 0; j < 4800; j++) { var t = (j % 80) / 80, u = Math.floor(j / 80) / 60; tgt.data[j * 4] = 150 + 60 * t; tgt.data[j * 4 + 1] = 110 + 40 * u; tgt.data[j * 4 + 2] = 70 + 30 * t * u; tgt.data[j * 4 + 3] = 255; }
+  var ts = P.adjust.stats(tgt), m2 = load('photo'); P.adjust.matchColor(m2, {source: ts}); var ms = P.adjust.stats(m2); out.match = [ts.mean, ms.mean, ts.sd, ms.sd];
+  return out;""")
+check("Selective Color moves no grey for any colour range", r["greysKept"])
+check("...and with every amount 0 changes nothing", r["zeroKept"])
+check("...its Neutrals leave pure red, green and blue as they are", r["pureKept"] == [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255], r["pureKept"])
+check("...less cyan in the reds makes a red redder and leaves a blue alone", r["redLess"][0] > 200 and r["redLess"][1:3] == [30, 30] and r["redLess"][4:7] == [30, 30, 200], r["redLess"])
+check("Shadows/Highlights: Shadows lightens the dark part, keeps its colour's balance, leaves the light part", r["shDark"][0] > 60 and r["shDark"][0] > r["shDark"][1] > r["shDark"][2] and r["shLight"] == [220, 200, 180], (r["shDark"], r["shLight"]))
+check("...Highlights darkens the light part and leaves the dark part", r["hiLight"][0] < 210 and r["hiDark"] == [40, 30, 20], (r["hiDark"], r["hiLight"]))
+check("Replace Color leaves every colour farther than its fuzziness alone (%d pixels)" % r["far"][0], r["far"][0] > 1000 and r["far"][1] == 0, r["far"])
+check("...and moves the colour picked exactly as Hue/Saturation moves it", r["exact"][0] == r["exact"][1], r["exact"])
+check("Match Color with the picture's own numbers changes it by at most 2 levels (%d)" % r["selfMax"], r["selfMax"] <= 2, r["selfMax"])
+tm, mm, ts_, ms_ = r["match"]
+check("...with another picture's, its Lab mean and spread become that picture's", all(abs(tm[i] - mm[i]) < 3 for i in range(3)) and all(abs(ts_[i] - ms_[i]) < max(2, 0.15 * ts_[i]) for i in range(3)), r["match"])
 try:
     from PIL import Image
     im = Image.fromarray(photo.astype(np.uint8))

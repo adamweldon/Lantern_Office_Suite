@@ -1,7 +1,7 @@
 # photo_tile_e2e.py -- the Photo tile (1.24.42) in a real browser (Chromium via Playwright), driven as a person drives it:
 # open pictures made here by PIL, ImageMagick and psd-tools; the tools by mouse (marquee, wand, brush, eraser, crop, free transform,
 # type, shape, gradient, bucket, clone, spot healing, patch, red eye); the menus and their boxes (Levels, Curves, Gaussian Blur ...);
-# layers, masks, adjustment layers, styles; undo and History; Actions recorded, played and batched; every save format opened again
+# layers, masks, adjustment layers, styles (Bevel & Emboss, Inner Glow); the adjustments Photoshop applies only to pixels; undo and History; Actions recorded, played and batched; every save format opened again
 # by PIL, psd-tools and ImageMagick; keys; a phone-sized window. Usage: python3 tests/browser/photo_tile_e2e.py [site/index.html]
 import os, sys, io, json, re, threading, http.server, socketserver, tempfile, subprocess, zipfile
 from playwright.sync_api import sync_playwright
@@ -243,6 +243,23 @@ with sync_playwright() as pw:
     J("""async () => { var fs = []; for (var n of ["scene_dark.png", "scene.png", "scene_light.png"]) { var b = await (await fetch("/" + n)).blob(); fs.push(new File([b], n, { type: "image/png" })); } Lantern.photo.api.mergeExposures(fs); }""")
     pg.wait_for_function("Lantern.photo.api.d.name === 'Merged exposures'", timeout=60000)
     check("Merge Exposures: three shots make one new picture of their size, its sky between the darkest and lightest shots'", J("[Lantern.photo.api.d.w, Lantern.photo.api.d.h]") == [W, H] and 80 <= flat(100, 20)[0] <= 255, flat(100, 20))
+    # --- Image > Adjustments: Shadows/Highlights, Replace Color, Selective Color, Match Color; each one History step under Photoshop's name ---
+    for lab in ["Shadows/Highlights\u2026", "Replace Color\u2026", "Selective Color\u2026", "Match Color\u2026"]:
+        menu("Image", "Adjustments", lab); vis = pg.is_visible(".ph-dialog"); ok()
+        check("Image > Adjustments > %s: its box, OK, one History step named so" % lab[:-1], vis and hist()[-1] == lab[:-1], hist()[-2:])
+    sky0 = flat(100, 20); menu("Image", "Adjustments", "Shadows/Highlights\u2026")
+    J("(() => { var r = document.querySelectorAll('.ph-dialog input[type=range]'); r[0].value = 0; r[0].dispatchEvent(new Event('input')); r[2].value = 80; r[2].dispatchEvent(new Event('input')); r[3].value = 100; r[3].dispatchEvent(new Event('input')); })()"); ok()
+    check("...Shadows/Highlights with Highlights 80 over every tone darkens the sky", flat(100, 20)[2] < sky0[2], (sky0, flat(100, 20)))
+    adj_opts = J("Array.prototype.map.call(document.querySelectorAll('.ph-side select[aria-label=\"New adjustment layer\"] option'), function (o) { return o.textContent; })")
+    check("the Layers panel offers Selective Color as an adjustment layer, and not the three Photoshop applies only to pixels", "Selective Color" in adj_opts and not any(x in adj_opts for x in ["Shadows/Highlights", "Match Color", "Replace Color"]), adj_opts)
+    # --- Layer Style: Bevel & Emboss and Inner Glow on a grey square ---
+    J("(() => { var api = Lantern.photo.api; api.exec('newLayer', {}); api.exec('selectShape', {x: 150, y: 100, w: 100, h: 80}); api.exec('fill', {use: 'gray'}); api.exec('deselect'); api.exec('setFx', {fx: {bevel: Lantern.photo.fx.defaults('bevel')}}); })()")
+    bev = [pix(153, 140), pix(246, 140), pix(200, 102), pix(200, 177), pix(200, 140), pix(140, 140)]
+    check("Bevel & Emboss: the square's top and left edges lit, bottom and right shaded, the middle and the outside as they were", bev[0][0] > 150 and bev[2][0] > 150 and bev[1][0] < 100 and bev[3][0] < 100 and bev[4][:4] == [128, 128, 128, 255] and bev[5][3] == 0, bev)
+    J("Lantern.photo.api.exec('setFx', {fx: {innerGlow: Lantern.photo.fx.defaults('innerGlow')}})")
+    gl = [pix(151, 140), pix(200, 140), pix(140, 140)]
+    check("Inner Glow: light just inside the edge, the middle and the outside as they were", gl[0][0] > 140 and gl[1][:4] == [128, 128, 128, 255] and gl[2][3] == 0, gl)
+    check("...Layer Style is one History step each time", hist()[-1] == "Layer Style" and hist()[-2] == "Layer Style", hist()[-3:])
     # --- Actions: record, play, batch ---
     J("Array.prototype.forEach.call(document.querySelectorAll('.ph-side details'), function (x) { x.open = true; })")
     pg.click("button:text-is('● Record')"); J("Lantern.photo.ops.adjustCmd('invert'); Lantern.photo.api.exec('adjust:invert', {})"); pg.click("button:text-is('■ Stop')")

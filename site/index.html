@@ -54989,6 +54989,104 @@ Lantern.RFB = (function () {
   F.surface = surface; F.unsharp = unsharp; F.sharpen = sharpen; F.sharpenMore = sharpenMore; F.highPass = highPass; F.conv3 = conv3;
 })();
 // MODULE: PHOTO_FILT_SHARPEN - END
+// MODULE: PHOTO_ADJ_MORE - START
+// Depends: PHOTO_MATH, PHOTO_ADJ_COLOR, PHOTO_FILT_BLUR (blurPlane)
+// Exports: Lantern.photo.adjust += {shadowsHighlights, matchColor, replaceColor, selectiveColor, stats(d)}
+// ===========================================================================
+// The last four of Image > Adjustments. Shadows/Highlights lightens the dark
+// parts and darkens the light ones by how dark or light their surroundings
+// are (the picture's lightness blurred by the radius), so a backlit face
+// comes out of its shadow while the sky keeps its colour; each pixel's
+// colour is scaled with its lightness, so hues stay. Match Color gives a
+// picture the colouring of another (Reinhard's transfer of the mean and
+// spread of each Lab channel), with Photoshop's Luminance, Color Intensity
+// and Fade, and Neutralize to take a cast away. Replace Color moves the hue,
+// saturation and lightness of the colours near the one chosen (within
+// fuzziness). Selective Color adds or takes away cyan, magenta, yellow and
+// black in one colour range (reds ... blacks): relative changes the ink
+// there by its own share, absolute by the amount given. Photoshop does not
+// publish its own sums for these; these are Lantern's, said so in the tile.
+(function () {
+  var L = window.Lantern, P = L && L.photo;
+  if (!P || !P.math || !P.adjust || !P.filter || !P.filter.blurPlane) return;
+  var M = P.math, A = P.adjust, clamp = M.clamp;
+  // p = {shadows: amount 0-100, shadowTone 0-100, highlights 0-100, highlightTone 0-100, radius px}
+  function shadowsHighlights(d, p) {
+    var a = d.data, w = d.width, h = d.height, n = w * h, lum = new Float32Array(n), j;
+    for (j = 0; j < n; j++) lum[j] = M.lum(a[j * 4], a[j * 4 + 1], a[j * 4 + 2]) / 255;
+    var base = P.filter.blurPlane(lum, w, h, Math.max(0.5, p.radius == null ? 30 : p.radius)), sa = (p.shadows == null ? 35 : p.shadows) / 100, ha = (p.highlights || 0) / 100;
+    var st = Math.max(0.05, (p.shadowTone == null ? 50 : p.shadowTone) / 100), ht = Math.max(0.05, (p.highlightTone == null ? 50 : p.highlightTone) / 100);
+    for (j = 0; j < n; j++) {
+      var l = lum[j], b = base[j], ws = Math.max(0, Math.min(1, (st - b) / st)), wh = Math.max(0, Math.min(1, (b - (1 - ht)) / ht)), l2 = l;
+      ws = ws * ws * (3 - 2 * ws); wh = wh * wh * (3 - 2 * wh);
+      if (sa && ws) l2 = Math.pow(l2, 1 / (1 + 2 * sa * ws));
+      if (ha && wh) l2 = 1 - Math.pow(1 - l2, 1 / (1 + 2 * ha * wh));
+      if (l2 === l) continue;
+      var k = l > 0.004 ? l2 / l : 0;
+      for (var c = 0; c < 3; c++) { var v = a[j * 4 + c]; a[j * 4 + c] = clamp(l > 0.004 ? v * k : l2 * 255); }
+    }
+  }
+  // the mean and spread of each Lab channel of the solid pixels
+  function stats(d) {
+    var a = d.data, s = [0, 0, 0], s2 = [0, 0, 0], n = 0, step = Math.max(1, Math.floor(a.length / 4 / 200000));
+    for (var j = 0; j < a.length; j += 4 * step) { if (a[j + 3] < 128) continue; var lb = M.lab(a[j], a[j + 1], a[j + 2]); for (var c = 0; c < 3; c++) { s[c] += lb[c]; s2[c] += lb[c] * lb[c]; } n++; }
+    if (!n) return null;
+    return { mean: s.map(function (v) { return v / n; }), sd: s2.map(function (v, c) { return Math.sqrt(Math.max(1e-6, v / n - (s[c] / n) * (s[c] / n))); }) };
+  }
+  // p = {source: stats of the picture to match (from stats()), luminance 1-200, intensity 1-200, fade 0-100, neutralize}.
+  // With no source the picture is matched to itself, so only Luminance, Color Intensity and Neutralize change it (as in Photoshop)
+  function matchColor(d, p) {
+    var me = stats(d); if (!me) return;
+    var src = p.source || me, lu = (p.luminance == null ? 100 : p.luminance) / 100, ci = (p.intensity == null ? 100 : p.intensity) / 100, fade = (p.fade || 0) / 100, a = d.data;
+    if (p.neutralize) src = { mean: [src.mean[0], 0, 0], sd: src.sd };
+    for (var j = 0; j < a.length; j += 4) {
+      var lb = M.lab(a[j], a[j + 1], a[j + 2]), o = [];
+      o[0] = ((lb[0] - me.mean[0]) * src.sd[0] / me.sd[0] + src.mean[0]) * lu;
+      for (var c = 1; c < 3; c++) o[c] = ((lb[c] - me.mean[c]) * src.sd[c] / me.sd[c] + src.mean[c]) * ci;
+      var rgb = M.rgbOfLab(Math.max(0, Math.min(100, o[0])), o[1], o[2]);
+      for (c = 0; c < 3; c++) a[j + c] = clamp(rgb[c] + (a[j + c] - rgb[c]) * fade);
+    }
+  }
+  // p = {color [r, g, b], fuzziness 0-200, hue, saturation, lightness}
+  function replaceColor(d, p) {
+    var a = d.data, col = p.color || [255, 0, 0], fz = Math.max(1, p.fuzziness == null ? 40 : p.fuzziness), q = { hue: p.hue || 0, saturation: p.saturation || 0, lightness: p.lightness || 0 }, memo = new Map(), one = { width: 1, height: 1, data: new Uint8ClampedArray(4) };
+    for (var j = 0; j < a.length; j += 4) {
+      var dd = Math.max(Math.abs(a[j] - col[0]), Math.abs(a[j + 1] - col[1]), Math.abs(a[j + 2] - col[2])), wgt = dd <= fz / 2 ? 1 : dd >= fz ? 0 : (fz - dd) / (fz / 2);
+      if (!wgt) continue;
+      // each colour is changed once and remembered (a photograph repeats its colours many times)
+      var key = a[j] << 16 | a[j + 1] << 8 | a[j + 2], got = memo.get(key);
+      if (got === undefined) { one.data[0] = a[j]; one.data[1] = a[j + 1]; one.data[2] = a[j + 2]; one.data[3] = 255; A.hueSat(one, q); got = one.data[0] << 16 | one.data[1] << 8 | one.data[2]; memo.set(key, got); }
+      var nc = [got >> 16 & 255, got >> 8 & 255, got & 255];
+      for (var c = 0; c < 3; c++) a[j + c] = clamp(a[j + c] + (nc[c] - a[j + c]) * wgt);
+    }
+  }
+  // p = {reds: [c, m, y, k] (percent -100..100), ..., whites, neutrals, blacks, relative (default true)}
+  var SC = ["reds", "yellows", "greens", "cyans", "blues", "magentas", "whites", "neutrals", "blacks"];
+  function selectiveColor(d, p) {
+    var a = d.data, rel = p.relative !== false, used = SC.filter(function (k) { return p[k] && p[k].some(function (v) { return v; }); });
+    if (!used.length) return;
+    for (var j = 0; j < a.length; j += 4) {
+      var v = [a[j] / 255, a[j + 1] / 255, a[j + 2] / 255], mx = Math.max(v[0], v[1], v[2]), mn = Math.min(v[0], v[1], v[2]), md = v[0] + v[1] + v[2] - mx - mn, out = v.slice();
+      used.forEach(function (k) {
+        var amt = 0;
+        if (k === "reds" && mx === v[0]) amt = mx - md; else if (k === "greens" && mx === v[1]) amt = mx - md; else if (k === "blues" && mx === v[2]) amt = mx - md;
+        else if (k === "yellows" && mn === v[2]) amt = md - mn; else if (k === "cyans" && mn === v[0]) amt = md - mn; else if (k === "magentas" && mn === v[1]) amt = md - mn;
+        else if (k === "whites") amt = mn > 0.5 ? (mn - 0.5) * 2 : 0; else if (k === "blacks") amt = mx < 0.5 ? (0.5 - mx) * 2 : 0; else if (k === "neutrals") amt = Math.max(0, 1 - (Math.abs(mx - 0.5) + Math.abs(mn - 0.5)));
+        if (amt <= 0) return;
+        var adj = p[k].map(function (x) { return (x || 0) / 100; });
+        for (var c = 0; c < 3; c++) {
+          var ink = 1 - out[c], ink2 = rel ? ink + ink * adj[c] : ink + adj[c];
+          ink2 = rel ? ink2 + (adj[3] > 0 ? (1 - ink2) * adj[3] * ink : ink2 * adj[3]) : ink2 + adj[3];
+          ink2 = Math.max(0, Math.min(1, ink2));
+          out[c] = out[c] + ((1 - ink2) - out[c]) * amt;
+        }
+      });
+      for (var c = 0; c < 3; c++) a[j + c] = clamp(out[c] * 255);
+    }
+  }
+  A.shadowsHighlights = shadowsHighlights; A.matchColor = matchColor; A.replaceColor = replaceColor; A.selectiveColor = selectiveColor; A.stats = stats; A.SELECTIVE = SC;
+})();
+// MODULE: PHOTO_ADJ_MORE - END
 // MODULE: PHOTO_FILT_NOISE - START
 // Depends: PHOTO_MATH, PHOTO_FILT_BLUR
 // Exports: Lantern.photo.filter += {addNoise, median, dust, reduceNoise, minimum, maximum, random(seed)}
@@ -55854,7 +55952,7 @@ Lantern.RFB = (function () {
 // the four-letter keys of the blending modes, and the adjustment layers whose
 // settings are kept in the plain binary blocks Adobe's file format
 // specification describes (Levels "levl", Curves "curv", Hue/Saturation
-// "hue2", Brightness/Contrast "brit", Invert "nvrt", Posterize "post",
+// "hue2", Selective Color "selc", Brightness/Contrast "brit", Invert "nvrt", Posterize "post",
 // Threshold "thrs"), so that they open in Photoshop as live adjustment
 // layers and Photoshop's open in Lantern. Others (Color Balance, Black &
 // White ...) are kept in Adobe's descriptor format, which Lantern does not
@@ -55871,7 +55969,7 @@ Lantern.RFB = (function () {
   function u16(b, o) { return (b[o] << 8) | b[o + 1]; }
   function s16(b, o) { var v = u16(b, o); return v > 32767 ? v - 65536 : v; }
   function put16(a, v) { v = Math.round(v) & 0xffff; a.push(v >> 8, v & 255); }
-  var RANGE_NAMES = ["reds", "yellows", "greens", "cyans", "blues", "magentas"];
+  var RANGE_NAMES = ["reds", "yellows", "greens", "cyans", "blues", "magentas"], SEL_NAMES = ["reds", "yellows", "greens", "cyans", "blues", "magentas", "whites", "neutrals", "blacks"];
   function read(key, b) {
     try {
       if (key === "nvrt") return { type: "invert", p: {} };
@@ -55899,6 +55997,12 @@ Lantern.RFB = (function () {
         else { q.hue = s16(b, 10); q.saturation = s16(b, 12); q.lightness = s16(b, 14); }
         for (var r = 0; r < 6; r++) { var off = 16 + r * 14 + 8, h = s16(b, off), s = s16(b, off + 2), l = s16(b, off + 4); if (h || s || l) q[RANGE_NAMES[r]] = { hue: h, saturation: s, lightness: l }; }
         return { type: "hueSat", p: q };
+      }
+      // Selective Color: version, method (0 relative, 1 absolute), ten sets of cyan, magenta, yellow, black (-100 to 100); the first set is not used
+      if (key === "selc") {
+        var sc = { relative: u16(b, 2) === 0 };
+        SEL_NAMES.forEach(function (k, i) { var o = 4 + (i + 1) * 8; sc[k] = [s16(b, o), s16(b, o + 2), s16(b, o + 4), s16(b, o + 6)]; });
+        return { type: "selectiveColor", p: sc };
       }
     } catch (e) { return null; }
     return null;
@@ -55931,6 +56035,11 @@ Lantern.RFB = (function () {
       put16(a, p.colorize ? 0 : p.hue || 0); put16(a, p.colorize ? 0 : p.saturation || 0); put16(a, p.colorize ? 0 : p.lightness || 0);
       for (var r = 0; r < 6; r++) { var rr = HUE_RANGES[r], q = p[RANGE_NAMES[r]] || {}; rr.forEach(function (v) { put16(a, v); }); put16(a, q.hue || 0); put16(a, q.saturation || 0); put16(a, q.lightness || 0); }
       return { key: "hue2", bytes: a };
+    }
+    if (t === "selectiveColor") {
+      put16(a, 1); put16(a, p.relative === false ? 1 : 0); for (var z = 0; z < 4; z++) put16(a, 0);
+      SEL_NAMES.forEach(function (k) { var v = p[k] || [0, 0, 0, 0]; for (var c = 0; c < 4; c++) put16(a, Math.max(-100, Math.min(100, v[c] || 0))); });
+      return { key: "selc", bytes: a };
     }
     return null;
   }
@@ -56968,14 +57077,17 @@ Lantern.RFB = (function () {
   OPS = P.ops = { def: def, exec: exec, list: REG, onExec: [], pixelOp: pixelOp, rasterize: rasterize, selIn: selIn };
   // adjustments and filters as commands: "adjust:levels", "filter:gaussian" ...
   function cap(s) { return s.replace(/([A-Z])/g, " $1").replace(/^./, function (c) { return c.toUpperCase(); }); }
-  OPS.adjustCmd = function (type) {
+  // label: the name History shows (Photoshop's: "Hue/Saturation", "Gaussian Blur"); a command made first without one is named again when one comes
+  OPS.adjustCmd = function (type, label) {
     var n = "adjust:" + type;
-    if (!REG[n]) def(n, cap(type), function (d, p) { pixelOp(d, function (id) { P.adjust[type](id, p); }); });
+    if (REG[n] && label) REG[n].label = label;
+    if (!REG[n]) def(n, label || cap(type), function (d, p) { pixelOp(d, function (id) { P.adjust[type](id, p); }); });
     return n;
   };
-  OPS.filterCmd = function (type) {
+  OPS.filterCmd = function (type, label) {
     var n = "filter:" + type;
-    if (!REG[n]) def(n, cap(type), function (d, p) {
+    if (REG[n] && label) REG[n].label = label;
+    if (!REG[n]) def(n, label || cap(type), function (d, p) {
       pixelOp(d, function (id) { var q = {}; for (var k in p) q[k] = p[k]; if (q.fg === undefined) q.fg = d.fg; if (q.bg === undefined) q.bg = d.bg; P.filter[type](id, q); });
     });
     return n;
@@ -57685,8 +57797,8 @@ Lantern.RFB = (function () {
 // Depends: PHOTO_MATH, PHOTO_FILT_BLUR (blurPlane), PHOTO_SEL_OPS (expand, contract), PHOTO_BLEND
 // Exports: Lantern.photo.fx = {apply(d, l, cv) -> canvas, defaults(kind)}
 // ===========================================================================
-// Layer styles (fx): Drop Shadow, Outer Glow, Stroke, Inner Shadow, Color
-// Overlay and Gradient Overlay, drawn from the layer's own shape each time
+// Layer styles (fx): Drop Shadow, Outer Glow, Stroke, Inner Shadow, Inner
+// Glow, Bevel & Emboss, Color Overlay and Gradient Overlay, drawn from the layer's own shape each time
 // it changes. A shadow is the shape in the shadow's colour, spread (made
 // solid out to spread% of its size), blurred by its size, and moved by its
 // distance away from the light's angle (Photoshop's default light comes from
@@ -57704,7 +57816,9 @@ Lantern.RFB = (function () {
       stroke: { on: true, color: [0, 0, 0], opacity: 1, size: 3, position: "outside" },
       inner: { on: true, color: [0, 0, 0], opacity: 0.75, angle: 120, distance: 5, size: 5 },
       overlay: { on: true, color: [255, 0, 0], opacity: 1, blend: "normal" },
-      gradient: { on: true, opacity: 1, angle: 90, stops: [[0, [0, 0, 0], 1], [1, [255, 255, 255], 1]] } }[kind];
+      gradient: { on: true, opacity: 1, angle: 90, stops: [[0, [0, 0, 0], 1], [1, [255, 255, 255], 1]] },
+      innerGlow: { on: true, color: [255, 255, 190], opacity: 0.75, size: 10 },
+      bevel: { on: true, depth: 100, size: 5, angle: 120, altitude: 30, highlight: [255, 255, 255], hiOpacity: 0.75, shadowColor: [0, 0, 0], shOpacity: 0.75 } }[kind];
   }
   function alphaOf(cv) { var a = M.pixels(cv).data, m = new Uint8Array(cv.width * cv.height); for (var j = 0; j < m.length; j++) m[j] = a[j * 4 + 3]; return m; }
   function blur(m, w, h, r) { if (!(r > 0.3)) return m; var pl = new Float32Array(m.length), j; for (j = 0; j < m.length; j++) pl[j] = m[j]; var b = P.filter.blurPlane(pl, w, h, r / 2), o = new Uint8Array(m.length); for (j = 0; j < m.length; j++) o[j] = M.clamp(b[j]); return o; }
@@ -57723,7 +57837,7 @@ Lantern.RFB = (function () {
   function apply(d, l, cv) {
     var f = l.fx; if (!f) return cv;
     var on = function (k) { return f[k] && f[k].on !== false; };
-    if (!["shadow", "glow", "stroke", "inner", "overlay", "gradient"].some(on)) return cv;
+    if (!["shadow", "glow", "stroke", "inner", "overlay", "gradient", "innerGlow", "bevel"].some(on)) return cv;
     var w = cv.width, h = cv.height, m = alphaOf(cv), out = M.canvas(w, h), g = M.ctx(out), e, j;
     if (on("shadow")) {
       e = f.shadow; var an = (e.angle == null ? 120 : e.angle) * Math.PI / 180, dist = e.distance || 0;
@@ -57747,6 +57861,28 @@ Lantern.RFB = (function () {
       e = f.inner; var inv = new Uint8Array(m.length); for (j = 0; j < m.length; j++) inv[j] = 255 - m[j];
       var ia = (e.angle == null ? 120 : e.angle) * Math.PI / 180, idist = e.distance || 0, sh = paint(blur(inv, w, h, e.size || 5), w, h, e.color || [0, 0, 0], e.opacity == null ? 0.75 : e.opacity, -Math.cos(ia) * idist, Math.sin(ia) * idist);
       bg.save(); bg.globalCompositeOperation = "source-atop"; bg.drawImage(sh, 0, 0); bg.restore();
+    }
+    // Inner Glow and Bevel & Emboss are worked on the pixels, so the shape's own edge (and its soft edge) keeps its alpha
+    if (on("innerGlow") || on("bevel")) {
+      var bd = bg.getImageData(0, 0, w, h), q = bd.data, k, c;
+      if (on("innerGlow")) {
+        e = f.innerGlow; var iv = new Uint8Array(m.length); for (j = 0; j < m.length; j++) iv[j] = 255 - m[j];
+        var gl = blur(iv, w, h, e.size || 10), gop = e.opacity == null ? 0.75 : e.opacity, gcol = e.color || [255, 255, 190];
+        for (j = 0; j < m.length; j++) { if (!q[j * 4 + 3] || !gl[j]) continue; k = gl[j] / 255 * gop; for (c = 0; c < 3; c++) q[j * 4 + c] += k * gcol[c] * (255 - q[j * 4 + c]) / 255; }
+      }
+      // Bevel & Emboss (inner bevel): the shape's alpha, softened by its size, is a height; faces turned to the light are lit (screen), the others shaded (multiply)
+      if (on("bevel")) {
+        e = f.bevel; var hm = blur(m, w, h, Math.max(1, e.size || 5)), la = (e.angle == null ? 120 : e.angle) * Math.PI / 180, alt = (e.altitude == null ? 30 : e.altitude) * Math.PI / 180, lx = Math.cos(la) * Math.cos(alt), ly = -Math.sin(la) * Math.cos(alt), lz = Math.sin(alt), dep = (e.depth == null ? 100 : e.depth) / 100;
+        var hop = e.hiOpacity == null ? 0.75 : e.hiOpacity, sop = e.shOpacity == null ? 0.75 : e.shOpacity, hc = e.highlight || [255, 255, 255], sc = e.shadowColor || [0, 0, 0];
+        for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) {
+          j = y * w + x; if (!q[j * 4 + 3]) continue;
+          var gx = (hm[y * w + Math.min(w - 1, x + 1)] - hm[y * w + Math.max(0, x - 1)]) / 255 * dep * 4, gy = (hm[Math.min(h - 1, y + 1) * w + x] - hm[Math.max(0, y - 1) * w + x]) / 255 * dep * 4;
+          var dot = (-gx * lx - gy * ly + lz) / Math.sqrt(gx * gx + gy * gy + 1) - lz;
+          if (dot > 0) { k = Math.min(1, dot * 2) * hop; for (c = 0; c < 3; c++) q[j * 4 + c] += k * hc[c] * (255 - q[j * 4 + c]) / 255; }
+          else if (dot < 0) { k = Math.min(1, -dot * 2) * sop; for (c = 0; c < 3; c++) q[j * 4 + c] *= 1 - k * (1 - sc[c] / 255); }
+        }
+      }
+      bg.putImageData(bd, 0, 0);
     }
     g.drawImage(body, 0, 0);
     if (stroke && stroke.position !== "outside") g.drawImage(paint(ring, w, h, stroke.color || [0, 0, 0], stroke.opacity == null ? 1 : stroke.opacity), 0, 0);
@@ -58739,7 +58875,8 @@ Lantern.RFB = (function () {
 // Curves (per channel, the curve dragged), Brightness/Contrast, Exposure,
 // Vibrance, Hue/Saturation (all colours or one range, or Colorize), Color
 // Balance (shadows, midtones, highlights), Black & White, Photo Filter,
-// Channel Mixer, Invert, Posterize, Threshold and Gradient Map. The same
+// Channel Mixer, Shadows/Highlights, Match Color, Replace Color, Selective
+// Color, Invert, Posterize, Threshold and Gradient Map. The same
 // box changes the picture (Image > Adjustments) or an adjustment layer
 // (Layer > New Adjustment Layer, and a double-click on one), which can be
 // changed again at any time without loss.
@@ -58828,6 +58965,24 @@ Lantern.RFB = (function () {
         wrap.appendChild(chooser("Output channel", [["r", "Red"], ["g", "Green"], ["b", "Blue"]], out, function (v) { out = v; draw(); }));
         var mono = el("input", { type: "checkbox" }); mono.checked = !!p.mono; mono.onchange = function () { p.mono = mono.checked; if (p.mono) { out = "r"; p.r = [40, 40, 20, 0]; } draw(); changed(); };
         wrap.appendChild(sl); wrap.appendChild(el("label", { "class": "ph-drow" }, [mono, el("span", { text: " Monochrome" })])); draw(); return wrap; } }]; } },
+    shadowsHighlights: { title: "Shadows/Highlights", direct: true, init: function () { return { shadows: 35, shadowTone: 50, highlights: 0, highlightTone: 50, radius: 30 }; },
+      fields: function () { return [{ key: "shadows", label: "Shadows: amount (%)", type: "range", min: 0, max: 100 }, { key: "shadowTone", label: "Shadows: tone (%)", type: "range", min: 1, max: 100 },
+        { key: "highlights", label: "Highlights: amount (%)", type: "range", min: 0, max: 100 }, { key: "highlightTone", label: "Highlights: tone (%)", type: "range", min: 1, max: 100 }, { key: "radius", label: "Radius (px)", type: "range", min: 1, max: 500 }]; } },
+    matchColor: { title: "Match Color", direct: true, init: function () { return { luminance: 100, intensity: 100, fade: 0, neutralize: false, source: null }; },
+      fields: function (api) { var d = api.d; return [{ type: "custom", make: function (p, changed) {
+        var opts = [["", "(none: Neutralize only)"]].concat(d.layers.map(function (l, i) { return [String(i), "Layer: " + l.name]; }).filter(function (o, i) { return d.layers[i].kind !== "adjust"; }));
+        return chooser("Take the colours of", opts, "", function (v) { p.source = v === "" ? null : P.adjust.stats(M.pixels(P.compose.render(d, d.layers[+v]))); changed(); });
+      } }, { key: "luminance", label: "Luminance", type: "range", min: 1, max: 200 }, { key: "intensity", label: "Color Intensity", type: "range", min: 1, max: 200 }, { key: "fade", label: "Fade", type: "range", min: 0, max: 100 }, { key: "neutralize", label: "Neutralize", type: "check" }]; } },
+    replaceColor: { title: "Replace Color", direct: true, init: function (api) { return { color: api.d.fg.slice(), fuzziness: 40, hue: 0, saturation: 0, lightness: 0 }; },
+      fields: function () { return [{ key: "color", label: "Colour to change", type: "color" }, { key: "fuzziness", label: "Fuzziness", type: "range", min: 0, max: 200 }, { key: "hue", label: "Hue", type: "range", min: -180, max: 180 },
+        { key: "saturation", label: "Saturation", type: "range", min: -100, max: 100 }, { key: "lightness", label: "Lightness", type: "range", min: -100, max: 100 }, { type: "note", label: "Tip: pick the colour with the Eyedropper (I) first; it fills in here." }]; } },
+    selectiveColor: { title: "Selective Color", init: function () { var o = { relative: true }; P.adjust.SELECTIVE.forEach(function (k) { o[k] = [0, 0, 0, 0]; }); return o; },
+      fields: function () { return [{ type: "custom", make: function (p, changed) {
+        var which = "reds", wrap = el("div"), sl = el("div");
+        function draw() { sl.innerHTML = ""; sl.appendChild(sliders(function () { return p[which]; }, [{ key: 0, label: "Cyan", min: -100, max: 100 }, { key: 1, label: "Magenta", min: -100, max: 100 }, { key: 2, label: "Yellow", min: -100, max: 100 }, { key: 3, label: "Black", min: -100, max: 100 }], changed)); }
+        wrap.appendChild(chooser("Colors", P.adjust.SELECTIVE.map(function (k) { return [k, k.charAt(0).toUpperCase() + k.slice(1)]; }), which, function (v) { which = v; draw(); }));
+        wrap.appendChild(sl); wrap.appendChild(chooser("Method", [["relative", "Relative"], ["absolute", "Absolute"]], p.relative === false ? "absolute" : "relative", function (v) { p.relative = v === "relative"; changed(); }));
+        draw(); return wrap; } }]; } },
     invert: { title: "Invert", init: function () { return {}; }, fields: function () { return []; } },
     posterize: { title: "Posterize", init: function () { return { levels: 4 }; }, fields: function () { return [{ key: "levels", label: "Levels", type: "range", min: 2, max: 255 }]; } },
     threshold: { title: "Threshold", init: function () { return { level: 128 }; }, fields: function () { return [{ key: "level", label: "Threshold level", type: "range", min: 1, max: 255 }]; } },
@@ -58840,10 +58995,11 @@ Lantern.RFB = (function () {
   // open the box for type: on the picture (asLayer false), as a new adjustment layer, or for the adjustment layer at layerIndex
   function open(api, type, asLayer, layerIndex) {
     var t = TYPES[type]; if (!t) return;
+    if (t.direct && layerIndex == null) asLayer = false;   // as in Photoshop, these three change the pixels and are not adjustment layers
     var d = api.d, init = t.init(api);
     if (layerIndex != null) init = JSON.parse(JSON.stringify(d.layers[layerIndex].adj.p || init));
     if (!asLayer && layerIndex == null) {
-      var cmd = P.ops.adjustCmd(type);
+      var cmd = P.ops.adjustCmd(type, t.title);
       if (!t.fields(api).length) { api.exec(cmd, init); return; }
       P.dialog(api, { title: t.title, fields: t.fields(api), init: init, cmd: cmd });
       return;
@@ -58912,7 +59068,7 @@ Lantern.RFB = (function () {
   var last = null;
   function open(api, name, again) {
     var f = F[name]; if (!f) return;
-    var cmd = name === "differenceClouds" ? "filter:differenceClouds" : P.ops.filterCmd(name), init = {};
+    var cmd = name === "differenceClouds" ? "filter:differenceClouds" : P.ops.filterCmd(name, f[0]), init = {};
     f[1].forEach(function (x) { if (x.key) init[x.key] = x.def; });
     if (again && last && last.name === name) init = last.p;
     if (!f[1].length || again) { api.exec(cmd, init); last = { name: name, p: init }; return; }
@@ -59082,7 +59238,7 @@ Lantern.RFB = (function () {
     clip.onchange = function () { api.exec("setLayer", { clip: clip.checked }); };
     ctl.appendChild(blend); ctl.appendChild(el("label", { title: "Opacity" }, [el("span", { text: " Opacity " }), op, el("span", { text: "%" })]));
     ctl.appendChild(el("label", { title: "Lock transparent pixels" }, [lockA, el("span", { text: " Lock \u25a6" })])); ctl.appendChild(el("label", { title: "Clipping mask: show only where the layer below has pixels" }, [clip, el("span", { text: " Clip" })]));
-    var adjSel = el("select", { title: "New adjustment layer", "aria-label": "New adjustment layer" }, [el("option", { value: "", text: "\u25d1 Adjust\u2026" })].concat(Object.keys(P.adjUI ? P.adjUI.TYPES : {}).map(function (k) { return el("option", { value: k, text: P.adjUI.TYPES[k].title }); })));
+    var adjSel = el("select", { title: "New adjustment layer", "aria-label": "New adjustment layer" }, [el("option", { value: "", text: "\u25d1 Adjust\u2026" })].concat(Object.keys(P.adjUI ? P.adjUI.TYPES : {}).filter(function (k) { return !P.adjUI.TYPES[k].direct; }).map(function (k) { return el("option", { value: k, text: P.adjUI.TYPES[k].title }); })));
     adjSel.onchange = function () { var t = adjSel.value; adjSel.value = ""; if (t && P.adjUI) P.adjUI.open(api, t, true); };
     function btn(t, title, fn) { return el("button", { text: t, title: title, "aria-label": title, onclick: function () { try { fn(); } catch (e) { api.status(e.message); } } }); }
     var bar = el("div", { "class": "ph-lbar" }, [btn("+", "New layer", function () { api.exec("newLayer", {}); }), btn("\u29c9", "Duplicate layer", function () { api.exec("duplicateLayer", {}); }),
@@ -59117,7 +59273,8 @@ Lantern.RFB = (function () {
     var d = api.d, l = D.active(d); if (!l || l.kind === "adjust" || !P.fx) return;
     var before = l.fx ? JSON.parse(JSON.stringify(l.fx)) : null, cur = before ? JSON.parse(JSON.stringify(before)) : {};
     var defs = { shadow: ["Drop Shadow", [["opacity", 0, 1, 0.01], ["angle", -180, 180, 1], ["distance", 0, 300, 1], ["spread", 0, 100, 1], ["size", 0, 250, 1]]], glow: ["Outer Glow", [["opacity", 0, 1, 0.01], ["spread", 0, 100, 1], ["size", 0, 250, 1]]],
-      stroke: ["Stroke", [["size", 1, 250, 1], ["opacity", 0, 1, 0.01]]], inner: ["Inner Shadow", [["opacity", 0, 1, 0.01], ["angle", -180, 180, 1], ["distance", 0, 300, 1], ["size", 0, 250, 1]]], overlay: ["Color Overlay", [["opacity", 0, 1, 0.01]]], gradient: ["Gradient Overlay", [["opacity", 0, 1, 0.01], ["angle", -180, 180, 1]]] };
+      stroke: ["Stroke", [["size", 1, 250, 1], ["opacity", 0, 1, 0.01]]], inner: ["Inner Shadow", [["opacity", 0, 1, 0.01], ["angle", -180, 180, 1], ["distance", 0, 300, 1], ["size", 0, 250, 1]]], overlay: ["Color Overlay", [["opacity", 0, 1, 0.01]]], gradient: ["Gradient Overlay", [["opacity", 0, 1, 0.01], ["angle", -180, 180, 1]]],
+      innerGlow: ["Inner Glow", [["opacity", 0, 1, 0.01], ["size", 0, 250, 1]]], bevel: ["Bevel & Emboss", [["depth", 1, 1000, 1], ["size", 0, 250, 1], ["angle", -180, 180, 1], ["altitude", 0, 90, 1], ["hiOpacity", 0, 1, 0.01], ["shOpacity", 0, 1, 0.01]]] };
     P.dialog(api, { title: "Layer Style", init: {}, fields: [{ type: "custom", make: function (p, changed) {
       var wrap = el("div");
       Object.keys(defs).forEach(function (k) {
@@ -59242,7 +59399,7 @@ Lantern.RFB = (function () {
         api.openDoc(D.create(p.w, p.h, { name: p.name || "Untitled", dpi: p.dpi, fill: fill }));
       });
   }
-  function adjItems(api, asLayer) { return Object.keys(P.adjUI.TYPES).map(function (k) { return { label: P.adjUI.TYPES[k].title + (asLayer ? "" : "\u2026"), key: { levels: "Ctrl+L", curves: "Ctrl+M", hueSat: "Ctrl+U", invert: "Ctrl+I", blackWhite: "Ctrl+Alt+Shift+B", colorBalance: "Ctrl+B" }[k] && !asLayer ? { levels: "Ctrl+L", curves: "Ctrl+M", hueSat: "Ctrl+U", invert: "Ctrl+I", blackWhite: "Ctrl+Alt+Shift+B", colorBalance: "Ctrl+B" }[k] : null, run: function () { P.adjUI.open(api, k, asLayer); } }; }); }
+  function adjItems(api, asLayer) { return Object.keys(P.adjUI.TYPES).filter(function (k) { return !(asLayer && P.adjUI.TYPES[k].direct); }).map(function (k) { return { label: P.adjUI.TYPES[k].title + (asLayer ? "" : "\u2026"), key: { levels: "Ctrl+L", curves: "Ctrl+M", hueSat: "Ctrl+U", invert: "Ctrl+I", blackWhite: "Ctrl+Alt+Shift+B", colorBalance: "Ctrl+B" }[k] && !asLayer ? { levels: "Ctrl+L", curves: "Ctrl+M", hueSat: "Ctrl+U", invert: "Ctrl+I", blackWhite: "Ctrl+Alt+Shift+B", colorBalance: "Ctrl+B" }[k] : null, run: function () { P.adjUI.open(api, k, asLayer); } }; }); }
   function menus(api) {
     var X = function (n, p) { return function () { api.exec(n, p || {}); }; };
     return [
