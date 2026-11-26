@@ -319,6 +319,9 @@ with sync_playwright() as pw:
     pg.keyboard.press("Enter"); pg.wait_for_timeout(300)
     iou = J("""() => { var d = Lantern.photo.api.d, m = Lantern.photo.doc.selMask(d); if (!m) return 0; var a = 0, u = 0; for (var y = 0; y < d.h; y++) for (var x = 0; x < d.w; x++) { var p = m[y * d.w + x] > 127, q = (x - 200) * (x - 200) + (y - 150) * (y - 150) <= 6400; if (p && q) a++; if (p || q) u++; } return a / u; }""")
     check("Magnetic Lasso: the line keeps to the disc's edge though the pointer wanders 6 px off it (overlap %.3f), one step \u201cMagnetic Lasso\u201d" % iou, iou > 0.97 and hist()[-1] == "Magnetic Lasso", (iou, hist()[-2:]))
+    # --- custom shapes: a heart dragged with the Shape tool, filled; inside it coloured, the corners of its box left clear ---
+    J("(() => { var api = Lantern.photo.api; api.d.fg = [200, 0, 60]; api.exec('newShape', {name: 'Heart', shape: {type: 'heart', x: 40, y: 40, w: 100, h: 90, fill: [200, 0, 60], fillOn: true}}); })()")
+    check("Custom shape (heart): coloured inside, its box's corners and the dip at its top left clear", pix(90, 80)[:3] == [200, 0, 60] and pix(42, 128)[3] == 0 and pix(90, 42)[3] == 0, (pix(90, 80), pix(42, 128), pix(90, 42)))
     # --- Swatches: a click sets the foreground colour, + keeps it ---
     J("Array.prototype.forEach.call(document.querySelectorAll('.ph-side details'), function (x) { x.open = true; })")
     pg.click(".ph-sw[aria-label='Swatch #ff8000']"); pg.wait_for_timeout(100)

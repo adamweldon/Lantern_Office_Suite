@@ -55098,6 +55098,99 @@ Lantern.RFB = (function () {
   A.shadowsHighlights = shadowsHighlights; A.matchColor = matchColor; A.replaceColor = replaceColor; A.selectiveColor = selectiveColor; A.stats = stats; A.SELECTIVE = SC;
 })();
 // MODULE: PHOTO_ADJ_MORE - END
+// MODULE: PHOTO_FILT_LENS - START
+// Depends: PHOTO_MATH, PHOTO_FILT_BLUR (blurPlane)
+// Exports: Lantern.photo.filter += {lensBlur(d, {radius, iris, brightness, threshold}), smartSharpen(d, {amount, radius, remove, noise, iterations}),
+//          irisSpans(r, iris) -> half-widths by row, irisPlane(plane, w, h, r, iris) -> plane}
+// ===========================================================================
+// Filter > Blur > Lens Blur: the blur of a camera lens out of focus. Each
+// point of light spreads into the shape of the lens's opening (the iris: a
+// circle, or a hexagon as six blades make), evenly, not as a bell curve, so
+// a bright light becomes a disc (bokeh). It is worked in linear light (the
+// picture's numbers turned back into amounts of light), and lights at or over
+// Threshold are made brighter first (Specular Highlights), so they bloom as a
+// lens shows them. Each output pixel is the mean over the iris; the iris is
+// summed row by row from running totals, so a big one costs no more than a
+// small one per row. Edges are taken as their own nearest pixels.
+// Filter > Sharpen > Smart Sharpen: blur taken back out rather than edges
+// drawn on. Richardson and Lucy's way (1972, 1974): guess the sharp picture,
+// blur the guess as the camera did (a bell curve of Radius, or the lens's
+// disc), compare with the picture, and correct the guess by how far it is
+// out, ten times over. Amount is how much of the correction is kept (100%:
+// all of it); Reduce Noise softens what is finer than a pixel or two after.
+(function () {
+  var L = window.Lantern, P = L && L.photo;
+  if (!P || !P.math || !P.filter || !P.filter.blurPlane) return;
+  var F = P.filter, clamp = P.math.clamp;
+  // the iris as half-widths for each row dy = -R..R: a circle holds (dx, dy) with dx*dx + dy*dy <= r*r; a hexagon (points left and
+  // right, flat top and bottom) holds |dy| <= r*sqrt(3)/2 and |dx| <= r - |dy|/sqrt(3)
+  function irisSpans(r, iris) {
+    var R = Math.floor(r), out = [];
+    for (var dy = -R; dy <= R; dy++) {
+      var hw;
+      if (iris === "hexagon") hw = Math.abs(dy) > r * Math.sqrt(3) / 2 ? -1 : Math.floor(r - Math.abs(dy) / Math.sqrt(3) + 1e-9);
+      else hw = Math.floor(Math.sqrt(Math.max(0, r * r - dy * dy)) + 1e-9);
+      out.push(hw);
+    }
+    return out;
+  }
+  // a plane (Float32Array, w x h) averaged over the iris at every pixel
+  function irisPlane(p, w, h, r, iris) {
+    if (!(r >= 1)) return p;
+    var sp = irisSpans(r, iris), R = (sp.length - 1) / 2, mx = 0, k, n = 0;
+    for (k = 0; k < sp.length; k++) { if (sp[k] > mx) mx = sp[k]; if (sp[k] >= 0) n += 2 * sp[k] + 1; }
+    var W = w + 2 * mx + 1, S = new Float64Array(h * W), o = new Float32Array(w * h), x, y;
+    // running totals of each row, the row padded with its own end pixels
+    for (y = 0; y < h; y++) { var row = y * w, base = y * W, acc = 0; S[base] = 0; for (x = 1; x < W; x++) { var sx = x - 1 - mx; acc += p[row + (sx < 0 ? 0 : sx >= w ? w - 1 : sx)]; S[base + x] = acc; } }
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+      var sum = 0;
+      for (k = 0; k < sp.length; k++) {
+        var hw = sp[k]; if (hw < 0) continue;
+        var yy = y + k - R; yy = yy < 0 ? 0 : yy >= h ? h - 1 : yy;
+        var b = yy * W; sum += S[b + x + mx + hw + 1] - S[b + x + mx - hw];
+      }
+      o[y * w + x] = sum / n;
+    }
+    return o;
+  }
+  var LIN = new Float32Array(256); for (var i = 0; i < 256; i++) { var c = i / 255; LIN[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+  function srgb(v) { v = v <= 0 ? 0 : v >= 1 ? 1 : v; return 255 * (v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055); }
+  // p = {radius 0-100, iris: "circle" | "hexagon", brightness 0-100, threshold 0-255}
+  function lensBlur(d, p) {
+    var r = Math.max(0, +p.radius || 0), w = d.width, h = d.height, a = d.data, n = w * h, j, c;
+    if (r < 1) return;
+    var al = new Float32Array(n), bright = (+p.brightness || 0) / 100, thr = p.threshold == null ? 255 : +p.threshold;
+    for (j = 0; j < n; j++) al[j] = a[j * 4 + 3] / 255;
+    var hot = new Uint8Array(n);
+    if (bright > 0) for (j = 0; j < n; j++) if (0.299 * a[j * 4] + 0.587 * a[j * 4 + 1] + 0.114 * a[j * 4 + 2] >= thr) hot[j] = 1;
+    var A = irisPlane(al, w, h, r, p.iris);
+    for (c = 0; c < 3; c++) {
+      var pl = new Float32Array(n);
+      for (j = 0; j < n; j++) pl[j] = LIN[a[j * 4 + c]] * al[j] * (hot[j] ? 1 + 4 * bright : 1);
+      var b = irisPlane(pl, w, h, r, p.iris);
+      for (j = 0; j < n; j++) a[j * 4 + c] = A[j] > 1e-6 ? clamp(srgb(b[j] / A[j])) : a[j * 4 + c];
+    }
+    for (j = 0; j < n; j++) a[j * 4 + 3] = clamp(A[j] * 255);
+  }
+  // p = {amount 0-500 (%), radius 0.1-64, remove: "gaussian" | "lens", noise 0-100 (%), iterations (10)}; worked on the brightness
+  // (0.299 R + 0.587 G + 0.114 B), the change then added to each channel alike, so no colour fringes are made
+  function smartSharpen(d, p) {
+    var w = d.width, h = d.height, a = d.data, n = w * h, r = Math.max(0.1, +p.radius || 1), amt = (p.amount == null ? 100 : +p.amount) / 100, it = Math.max(1, Math.min(50, p.iterations || 10)), nz = (+p.noise || 0) / 100, j, c, k;
+    var blur = p.remove === "lens" ? function (pl) { return irisPlane(pl, w, h, Math.max(1, r), "circle"); } : function (pl) { return F.blurPlane(pl, w, h, r); };
+    var obs = new Float32Array(n); for (j = 0; j < n; j++) obs[j] = 0.299 * a[j * 4] + 0.587 * a[j * 4 + 1] + 0.114 * a[j * 4 + 2] + 1;   // (+1: the arithmetic needs no zeros)
+    var est = new Float32Array(obs), ratio = new Float32Array(n);
+    for (k = 0; k < it; k++) {
+      var bl = blur(est);
+      for (j = 0; j < n; j++) ratio[j] = obs[j] / (bl[j] > 1e-6 ? bl[j] : 1e-6);
+      var cr = blur(ratio);
+      for (j = 0; j < n; j++) est[j] *= cr[j];
+    }
+    if (nz > 0) { var sm = F.blurPlane(est, w, h, 0.7); for (j = 0; j < n; j++) est[j] += (sm[j] - est[j]) * nz; }
+    for (j = 0; j < n; j++) { var dl = (est[j] - obs[j]) * amt; if (dl) for (c = 0; c < 3; c++) a[j * 4 + c] = clamp(a[j * 4 + c] + dl); }
+  }
+  F.lensBlur = lensBlur; F.smartSharpen = smartSharpen; F.irisSpans = irisSpans; F.irisPlane = irisPlane;
+})();
+// MODULE: PHOTO_FILT_LENS - END
 // MODULE: PHOTO_FILT_NOISE - START
 // Depends: PHOTO_MATH, PHOTO_FILT_BLUR
 // Exports: Lantern.photo.filter += {addNoise, median, dust, reduceNoise, minimum, maximum, random(seed)}
@@ -58033,7 +58126,8 @@ Lantern.RFB = (function () {
 // Shape layers and fill layers. A shape stays a shape (its corners, sides,
 // colours and line can change without loss) until its pixels are changed:
 // rectangle (with round corners), ellipse, polygon of n sides, star, line
-// and arrow, each with a fill colour and a line (stroke) of a width. A fill
+// and arrow, and custom shapes (heart, speech balloon, tick, cross,
+// lightning, block arrow, moon, drop), each with a fill colour and a line (stroke) of a width. A fill
 // layer is a solid colour, a gradient or a pattern over the whole picture,
 // usually seen through its mask. The gradient is also the Gradient tool's:
 // linear, radial, angle, reflected and diamond, between colour stops, each
@@ -58041,7 +58135,18 @@ Lantern.RFB = (function () {
 (function () {
   var L = window.Lantern, P = L && L.photo;
   if (!P || !P.math) return;
-  var M = P.math, TYPES = ["rect", "ellipse", "polygon", "star", "line", "arrow"];
+  // custom shapes, drawn in a box of 1 x 1 and stretched to the shape's box: M move, L line, C curve (two handles, then the point), Z close
+  var CUSTOM = {
+    heart: [["M", 0.5, 0.95], ["C", 0.1, 0.65, 0, 0.42, 0, 0.27], ["C", 0, 0.1, 0.13, 0, 0.27, 0], ["C", 0.38, 0, 0.47, 0.07, 0.5, 0.18], ["C", 0.53, 0.07, 0.62, 0, 0.73, 0], ["C", 0.87, 0, 1, 0.1, 1, 0.27], ["C", 1, 0.42, 0.9, 0.65, 0.5, 0.95], ["Z"]],
+    speech: [["M", 0.12, 0], ["L", 0.88, 0], ["C", 0.95, 0, 1, 0.05, 1, 0.12], ["L", 1, 0.6], ["C", 1, 0.67, 0.95, 0.72, 0.88, 0.72], ["L", 0.4, 0.72], ["L", 0.15, 1], ["L", 0.2, 0.72], ["L", 0.12, 0.72], ["C", 0.05, 0.72, 0, 0.67, 0, 0.6], ["L", 0, 0.12], ["C", 0, 0.05, 0.05, 0, 0.12, 0], ["Z"]],
+    check: [["M", 0, 0.55], ["L", 0.14, 0.41], ["L", 0.38, 0.65], ["L", 0.86, 0.1], ["L", 1, 0.24], ["L", 0.38, 0.93], ["Z"]],
+    cross: [["M", 0.35, 0], ["L", 0.65, 0], ["L", 0.65, 0.35], ["L", 1, 0.35], ["L", 1, 0.65], ["L", 0.65, 0.65], ["L", 0.65, 1], ["L", 0.35, 1], ["L", 0.35, 0.65], ["L", 0, 0.65], ["L", 0, 0.35], ["L", 0.35, 0.35], ["Z"]],
+    lightning: [["M", 0.55, 0], ["L", 0.15, 0.55], ["L", 0.45, 0.55], ["L", 0.3, 1], ["L", 0.85, 0.4], ["L", 0.55, 0.4], ["L", 0.75, 0], ["Z"]],
+    "block arrow": [["M", 0, 0.3], ["L", 0.6, 0.3], ["L", 0.6, 0], ["L", 1, 0.5], ["L", 0.6, 1], ["L", 0.6, 0.7], ["L", 0, 0.7], ["Z"]],
+    moon: [["M", 0.6, 0], ["C", 0.25, 0.05, 0, 0.27, 0, 0.5], ["C", 0, 0.78, 0.25, 1, 0.6, 1], ["C", 0.35, 0.85, 0.25, 0.68, 0.25, 0.5], ["C", 0.25, 0.32, 0.35, 0.15, 0.6, 0], ["Z"]],
+    drop: [["M", 0.5, 0], ["C", 0.6, 0.25, 0.9, 0.45, 0.9, 0.65], ["C", 0.9, 0.87, 0.72, 1, 0.5, 1], ["C", 0.28, 1, 0.1, 0.87, 0.1, 0.65], ["C", 0.1, 0.45, 0.4, 0.25, 0.5, 0], ["Z"]]
+  };
+  var M = P.math, TYPES = ["rect", "ellipse", "polygon", "star", "line", "arrow"].concat(Object.keys(CUSTOM));
   function rgba(c, a) { return "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + (a == null ? (c[3] == null ? 1 : c[3] / 255) : a) + ")"; }
   function path(g, s) {
     var x = s.x, y = s.y, w = s.w, h = s.h, cx = x + w / 2, cy = y + h / 2;
@@ -58054,6 +58159,11 @@ Lantern.RFB = (function () {
         if (i) g.lineTo(px, py); else g.moveTo(px, py);
       }
       g.closePath();
+    } else if (CUSTOM[s.type]) {
+      CUSTOM[s.type].forEach(function (c) {
+        var X = function (u) { return x + u * w; }, Y = function (v) { return y + v * h; };
+        if (c[0] === "M") g.moveTo(X(c[1]), Y(c[2])); else if (c[0] === "L") g.lineTo(X(c[1]), Y(c[2])); else if (c[0] === "C") g.bezierCurveTo(X(c[1]), Y(c[2]), X(c[3]), Y(c[4]), X(c[5]), Y(c[6])); else g.closePath();
+      });
     } else if (s.type === "line" || s.type === "arrow") {
       g.moveTo(x, y); g.lineTo(x + w, y + h);
     } else {
@@ -59519,6 +59629,8 @@ Lantern.RFB = (function () {
     radial: ["Radial Blur", [R("amount", "Amount", 1, 100, 10), { key: "method", label: "Method", type: "select", options: ["spin", "zoom"], def: "spin" }, { key: "quality", label: "Quality", type: "select", options: ["draft", "good"], def: "good" }]],
     surface: ["Surface Blur", [R("radius", "Radius", 1, 40, 5), R("threshold", "Threshold (levels)", 2, 255, 15)]], average: ["Average", []],
     unsharp: ["Unsharp Mask", [R("amount", "Amount (%)", 1, 500, 100), R("radius", "Radius (pixels)", 0.1, 250, 1, 0.1), R("threshold", "Threshold (levels)", 0, 255, 0)]],
+    lensBlur: ["Lens Blur", [R("radius", "Radius", 1, 100, 15), { key: "iris", label: "Iris shape", type: "select", options: [["circle", "Circle"], ["hexagon", "Hexagon (6 blades)"]], def: "circle" }, R("brightness", "Specular highlights: brightness", 0, 100, 0), R("threshold", "Specular highlights: threshold", 0, 255, 255)]],
+    smartSharpen: ["Smart Sharpen", [R("amount", "Amount (%)", 1, 500, 100), R("radius", "Radius (pixels)", 0.1, 64, 1, 0.1), { key: "remove", label: "Remove", type: "select", options: [["gaussian", "Gaussian Blur"], ["lens", "Lens Blur"]], def: "gaussian" }, R("noise", "Reduce Noise (%)", 0, 100, 10)]],
     sharpen: ["Sharpen", []], sharpenMore: ["Sharpen More", []], highPass: ["High Pass", [R("radius", "Radius (pixels)", 0.1, 250, 10, 0.1)]],
     addNoise: ["Add Noise", [R("amount", "Amount (%)", 0.1, 400, 12.5, 0.1), { key: "gaussian", label: "Gaussian (else uniform)", type: "check", def: false }, { key: "mono", label: "Monochromatic", type: "check", def: false }, R("seed", "Seed", 1, 9999, 1)]],
     median: ["Median", [R("radius", "Radius (pixels)", 1, 100, 1)]], dust: ["Dust & Scratches", [R("radius", "Radius (pixels)", 1, 100, 1), R("threshold", "Threshold (levels)", 0, 255, 0)]],
@@ -59546,7 +59658,7 @@ Lantern.RFB = (function () {
       return grid; } }, R("scale", "Scale", 1, 9999, 1), R("offset", "Offset", -9999, 9999, 0)]]
   };
   P.ops.def("filter:differenceClouds", "Difference Clouds", function (d, p) { P.ops.pixelOp(d, function (id) { P.filter.clouds(id, { seed: p.seed, fg: d.fg, bg: d.bg, difference: true }); }); });
-  var MENU = [["Blur", ["gaussian", "box", "motion", "radial", "surface", "average"]], ["Sharpen", ["unsharp", "sharpen", "sharpenMore"]], ["Noise", ["addNoise", "median", "dust", "reduceNoise"]],
+  var MENU = [["Blur", ["gaussian", "box", "motion", "radial", "surface", "lensBlur", "average"]], ["Sharpen", ["unsharp", "smartSharpen", "sharpen", "sharpenMore"]], ["Noise", ["addNoise", "median", "dust", "reduceNoise"]],
     ["Distort", ["twirl", "pinch", "spherize", "polar", "ripple", "wave", "zigzag"]], ["Stylize", ["findEdges", "glowingEdges", "emboss", "solarize", "oilPaint", "diffuse", "wind"]],
     ["Pixelate", ["mosaic", "crystallize", "halftone"]], ["Render", ["clouds", "differenceClouds"]], ["Other", ["highPass", "minimum", "maximum", "offset", "custom"]]];
   var last = null;
@@ -60414,13 +60526,13 @@ Lantern.RFB = (function () {
     ["What it does", "<p>The Photo tile edits photos and pictures on this device with no internet, the way Photoshop does: layers and masks, selections, retouching, colour and light, filters, words and shapes, layer styles, actions and batches, and Photoshop's own files (.psd) with their layers. Nothing you open leaves the device. <b>Example:</b> open a photo of a fence with a wire across the sky, choose the Spot Healing Brush (J), paint over the wire, and let go: the wire is gone, filled from the sky round it.</p>"],
     ["Open and save", "<p><b>File &gt; Open</b> (Ctrl+O), or drop or paste a picture (dropped on a picture already open, it comes in as a layer): JPEG, PNG, GIF, WebP, BMP, SVG, TIFF and PSD/PSB. A PSD opens with its layers, groups, masks, blending modes and the plain adjustment layers (Levels, Curves, Hue/Saturation, Brightness/Contrast, Invert, Posterize, Threshold, Selective Color); 16- and 32-bit files open at 8 bits; its words, smart objects and effects open as the pixels Photoshop drew for them, and the line under the picture says so. <b>File &gt; Save</b> (Ctrl+S) keeps a .psd with the layers and groups (Photoshop, GIMP, Photopea and Krita open it). <b>Export As</b> saves PNG, JPEG (quality 1 to 12), WebP, GIF (one picture, or each layer that shows a frame of an animation), TIFF, BMP or PDF; PNG, JPEG, TIFF, BMP and PSD keep the picture's resolution (ppi). Colours of nearly see-through pixels can move by a few levels (the browser keeps them multiplied by their see-through amount); solid pixels stay exact. <b>File Info</b> shows the camera's details; nothing you save carries them. <b>Open as PDF in the PDF tile</b> puts the picture on a page of its print size.</p>"],
     ["Layers", "<p>The Layers panel: the eye shows or hides a layer; click a layer to work on it; double-click its name to rename it; the mode and opacity above apply to the chosen layer. <b>Ctrl+J</b> makes a layer of what is selected; <b>Ctrl+E</b> merges it down; <b>Groups</b>: <b>Ctrl+G</b> puts the layer in a new group, Ctrl+Shift+G takes the group away; the triangle shuts or opens a group, and the up and down buttons move a layer into an open group or past a shut one. A group in <b>Pass Through</b> lets an adjustment layer in it change everything below; set it to Normal and the adjustment changes only the group. Ctrl+E on a group merges it into one layer; <b>Stamp Visible</b> (Ctrl+Alt+Shift+E) makes one new layer of everything. A <b>mask</b> (the half-moon button) hides parts of a layer without erasing them: click the mask's picture and paint black to hide, white to show; Shift+click turns it off. <b>Clip</b> shows a layer only where the layer under it has pixels. <b>Adjust\u2026</b> adds an adjustment layer: double-click it to change its settings any time. <b>Stack Mode &gt; Median</b> on several shots of one scene takes away the people walking through it. Example: put a photo of a sky above a landscape, add a mask, and paint the land black on it.</p>"],
-    ["Selections", "<p>Marquee (M): drag a rectangle or ellipse (Shift: square or circle; Alt: from the centre). Lasso (L): draw round; Polygonal Lasso: click corners, double-click (or Enter) to close; Backspace takes back the last corner, Esc drops them all. Magic Wand (W): click a colour (Tolerance, Contiguous); Quick Selection: paint, and it spreads to like colours. Shift held before you start adds, Alt takes away, both keep the overlap; held while dragging, Shift makes a square and Alt draws from the centre. <b>Select</b> menu: All (Ctrl+A), Deselect (Ctrl+D), Inverse (Ctrl+Shift+I), Color Range, Modify (Feather, Expand, Contract, Border, Smooth), Grow, Similar, Save and Load Selection (Channels). <b>Subject</b> works for a thing on a plain background (a product on white). <b>Quick Mask</b> (Q): paint the selection itself, white in, black out (with nothing selected it starts with everything selected). <b>Delete</b> clears what is selected; with nothing selected it does nothing (Ctrl+A first selects all of it). Alt+Backspace fills the selection with the foreground colour, Ctrl+Backspace with the background colour. On a layer with no other under it, cleared or erased parts are see-through (Photoshop's Background fills them with the background colour); a JPEG saved from it shows white there.</p>"],
-    ["Painting", "<p>Brush (B), Pencil (hard-edged, pixel by pixel; Shift+B moves from one to the other, as Shift+letter does in every group), Eraser (E), Paint Bucket and Gradient (G), Eyedropper (I). Size, Hardness, Opacity and Flow are on the options bar; [ and ] change the size; Shift+click draws a straight line; Alt+click picks a colour. D sets black and white, X swaps them. The History Brush (Y) paints back the picture as it was opened, however many steps follow (or the History step whose circle you click). Painting stays inside the selection.</p>"],
+    ["Selections", "<p>Marquee (M): drag a rectangle or ellipse (Shift: square or circle; Alt: from the centre). Lasso (L): draw round; Polygonal Lasso: click corners, double-click (or Enter) to close; Backspace takes back the last corner, Esc drops them all. Magnetic Lasso (Shift+L to reach it): click on the edge of a thing, then move along it without holding the button; the line clings to the edge. Magic Wand (W): click a colour (Tolerance, Contiguous); Quick Selection: paint, and it spreads to like colours. Shift held before you start adds, Alt takes away, both keep the overlap; held while dragging, Shift makes a square and Alt draws from the centre. <b>Select</b> menu: All (Ctrl+A), Deselect (Ctrl+D), Inverse (Ctrl+Shift+I), Color Range, Modify (Feather, Expand, Contract, Border, Smooth), Grow, Similar, Save and Load Selection (Channels). <b>Subject</b> works for a thing on a plain background (a product on white). <b>Quick Mask</b> (Q): paint the selection itself, white in, black out (with nothing selected it starts with everything selected). <b>Delete</b> clears what is selected; with nothing selected it does nothing (Ctrl+A first selects all of it). Alt+Backspace fills the selection with the foreground colour, Ctrl+Backspace with the background colour. On a layer with no other under it, cleared or erased parts are see-through (Photoshop's Background fills them with the background colour); a JPEG saved from it shows white there.</p>"],
+    ["Painting", "<p>Brush (B), Pencil (hard-edged, pixel by pixel; Shift+B moves from one to the other, as Shift+letter does in every group), Eraser (E), Paint Bucket and Gradient (G), Eyedropper (I). Size, Hardness, Opacity and Flow are on the options bar; [ and ] change the size; Shift+click draws a straight line; Alt+click picks a colour. D sets black and white, X swaps them. The Swatches panel: click one for the foreground colour, Ctrl+click for the background, + keeps the foreground colour there. The History Brush (Y) paints back the picture as it was opened, however many steps follow (or the History step whose circle you click). Painting stays inside the selection.</p>"],
     ["Retouching", "<p><b>Spot Healing Brush</b> (J): paint over a speck, blemish or wire. <b>Healing Brush</b>: Alt+click a clean place, then paint over the flaw: the copy takes the light and colour of where it goes. <b>Patch</b>: draw round the flaw, then drag it onto a clean area. <b>Clone Stamp</b> (S): Alt+click, then paint an exact copy. <b>Red Eye</b>: click the pupil. <b>Content-Aware Fill</b> (Edit menu): select a thing and it is filled from round it. These work from the picture's own texture: they suit sky, grass, walls, water, skin and specks, not a missing face (that needs a trained model, which Lantern does not have). Dodge, Burn and Sponge (O) lighten, darken and change colour strength under the brush; Blur, Sharpen and Smudge (R) too.</p>"],
     ["Colour and light", "<p><b>Image &gt; Adjustments</b>: Levels (Ctrl+L), Curves (Ctrl+M), Brightness/Contrast, Exposure, Vibrance, Hue/Saturation (Ctrl+U), Color Balance (Ctrl+B), Black &amp; White, Photo Filter, Channel Mixer, Selective Color, Invert (Ctrl+I), Posterize, Threshold, Gradient Map, Desaturate, Equalize; Auto Tone, Auto Contrast, Auto Color; and, on the pixels only (as in Photoshop), <b>Shadows/Highlights</b> (lift dark parts, tame bright ones), <b>Match Color</b> (take the colours of another layer), <b>Replace Color</b> (one colour moved, the rest left). Each box previews on the picture as you move its sliders, and holds the picture till OK or Cancel. The same as an adjustment layer can be changed later. <b>Edit &gt; Fade</b> right after lessens the last one. Example: a dull photo: Image &gt; Auto Tone, then Hue/Saturation with Saturation +15. The Info panel reads the colour under the pointer in RGB, HSB, Lab and CMYK (CMYK without a press's profile: ask the printer for theirs).</p>"],
-    ["Filters", "<p>Blur (Gaussian, Box, Motion, Radial, Surface, Average), Sharpen (Unsharp Mask, Sharpen, Sharpen More), Noise (Add Noise, Median, Dust &amp; Scratches, Reduce Noise), Distort (Twirl, Pinch, Spherize, Polar Coordinates, Ripple, Wave, ZigZag), Stylize (Find Edges, Glowing Edges, Emboss, Solarize, Oil Paint, Diffuse, Wind), Pixelate (Mosaic, Crystallize, Color Halftone), Render (Clouds, Difference Clouds), Other (High Pass, Minimum, Maximum, Offset, Custom) and Lens Correction (barrel and pincushion, vignette). Ctrl+Alt+F runs the last filter again. Example: an old scan with specks: Filter &gt; Noise &gt; Dust &amp; Scratches, radius 2, threshold 20.</p>"],
+    ["Filters", "<p>Blur (Gaussian, Box, Motion, Radial, Surface, Lens Blur with a round or six-bladed iris and bright lights that bloom, Average), Sharpen (Unsharp Mask, Smart Sharpen, which takes a Gaussian or lens blur back out, Sharpen, Sharpen More), Noise (Add Noise, Median, Dust &amp; Scratches, Reduce Noise), Distort (Twirl, Pinch, Spherize, Polar Coordinates, Ripple, Wave, ZigZag), Stylize (Find Edges, Glowing Edges, Emboss, Solarize, Oil Paint, Diffuse, Wind), Pixelate (Mosaic, Crystallize, Color Halftone), Render (Clouds, Difference Clouds), Other (High Pass, Minimum, Maximum, Offset, Custom) and Lens Correction (barrel and pincushion, vignette). Ctrl+Alt+F runs the last filter again. Example: an old scan with specks: Filter &gt; Noise &gt; Dust &amp; Scratches, radius 2, threshold 20.</p>"],
     ["Crop, size and transform", "<p>Crop (C): drag a box, drag outside it to turn it level, press Enter. Perspective Crop: click the four corners of a document or sign photographed at a slant, Enter. <b>Image Size</b> (Ctrl+Alt+I) resamples (Bicubic, Smoother for enlarging, Sharper for reducing, Lanczos, Nearest Neighbor for pixel art); <b>Canvas Size</b> adds room. <b>Free Transform</b> (Ctrl+T): drag inside to move, a corner to scale, outside to turn, Ctrl+corner to distort; Enter applies. The Ruler (I) measures; Image Rotation &gt; Straighten turns the picture level by its line and crops the empty corners (or keeps them, from its own menu line). Choosing another tool part-way through Free Transform applies it; Esc first leaves the layer as it was.</p>"],
-    ["Type, shapes and styles", "<p>Type (T): click and type a line, or drag a box for a paragraph; click away to finish; click the words again to change them. Font, size, bold, italic, alignment and tracking are on the options bar; the fonts are your computer's. Shape (U): rectangle (round corners), ellipse, polygon, star, line, arrow. Layer Style (fx): Drop Shadow, Outer Glow, Stroke, Inner Shadow, Inner Glow, Bevel &amp; Emboss, Color and Gradient Overlay, kept live. In a saved .psd these become pixels. Clicking words to change them shows their own font, size and colour on the options bar; what you change there changes them.</p>"],
+    ["Type, shapes and styles", "<p>Type (T): click and type a line, or drag a box for a paragraph; click away to finish; click the words again to change them. Font, size, bold, italic, alignment and tracking are on the options bar; the fonts are your computer's. Shape (U): rectangle (round corners), ellipse, polygon, star, line, arrow, and custom shapes (heart, speech balloon, tick, cross, lightning, block arrow, moon, drop). Layer Style (fx): Drop Shadow, Outer Glow, Stroke, Inner Shadow, Inner Glow, Bevel &amp; Emboss, Color and Gradient Overlay, kept live. In a saved .psd these become pixels. Clicking words to change them shows their own font, size and colour on the options bar; what you change there changes them.</p>"],
     ["Liquify, paths and more", "<p><b>Filter &gt; Liquify</b> (Ctrl+Shift+X): push the picture about with Forward Warp, Pucker, Bloat, Twirl; Reconstruct and Restore All take it back; OK applies it. <b>The Pen</b> (P): click for corners, drag for curves, click the first point to close; then <b>Select &gt; Make Selection from Path</b> gives an exact, smooth selection round something curved, and <b>Edit &gt; Fill Path</b> or <b>Stroke Path</b> paints it. <b>Edit &gt; Content-Aware Scale</b> narrows a picture by taking out what matters least (sky, grass), keeping people and buildings in shape; tick Protect to keep the selection. <b>File &gt; Automate &gt; Merge Exposures</b>: choose shots of one scene taken darker and lighter (a tripod's best) and get one with detail in the shadows and the sky. <b>Fit Image</b> makes a picture fit a size, keeping its shape.</p>"],
     ["Actions and batches", "<p>The Actions panel: \u25cf Record, then use the menus; \u25a0 Stop keeps the steps. \u25b6 Play runs them on the open picture. <b>Batch</b> plays an action on many pictures and gives them back as one .zip, in the format chosen. Ready-made: \u201cWeb picture, 1200 px\u201d and \u201cBlack and white\u201d. Example: make 200 phone photos small enough to email: choose \u201cWeb picture, 1200 px\u201d, Batch, pick the photos, as JPEG.</p>"],
     ["History", "<p>Ctrl+Z undoes, Ctrl+Shift+Z redoes (the layer you chose stays chosen); the History panel lists the picture as opened and the last 50 steps: click one to go back to it, or a greyed one to go forward again. <b>Keys a browser keeps:</b> Ctrl+T, Ctrl+N and Ctrl+Shift+N open a tab or window in a browser before Lantern sees them; use the menus for those (Edit &gt; Free Transform, File &gt; New, Layer &gt; New Layer).</p>"],

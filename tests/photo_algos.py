@@ -9,7 +9,7 @@ import os, re, sys, json, subprocess, tempfile
 import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SRC = open(os.path.join(ROOT, "src", "lantern.inner.html"), encoding="utf-8").read()
-NAMES = ["PHOTO_MATH", "PHOTO_ADJ_TONE", "PHOTO_ADJ_COLOR", "PHOTO_FILT_BLUR", "PHOTO_FILT_SHARPEN", "PHOTO_ADJ_MORE", "PHOTO_FILT_NOISE", "PHOTO_FILT_DISTORT", "PHOTO_FILT_STYLE",
+NAMES = ["PHOTO_MATH", "PHOTO_ADJ_TONE", "PHOTO_ADJ_COLOR", "PHOTO_FILT_BLUR", "PHOTO_FILT_SHARPEN", "PHOTO_ADJ_MORE", "PHOTO_FILT_LENS", "PHOTO_FILT_NOISE", "PHOTO_FILT_DISTORT", "PHOTO_FILT_STYLE",
          "PHOTO_FILT_PIXELATE", "PHOTO_RESAMPLE", "PHOTO_SEL_OPS", "PHOTO_HEAL", "PHOTO_INPAINT", "PHOTO_PSD_ADJ", "PHOTO_PSD_READ", "PHOTO_PSD_WRITE", "PHOTO_TIFF", "PHOTO_GIF",
          "PHOTO_LIQUIFY", "PHOTO_FUSE_SEAMS"]
 code = "".join(re.search(r"// MODULE: %s - START\n.*?// MODULE: %s - END\n" % (n, n), SRC, re.S).group(0) for n in NAMES)
@@ -225,6 +225,41 @@ try:
     check("...its pixels and masks, as psd-tools reads them", same)
 except ImportError:
     print("SKIP  psd-tools not here: .psd not checked")
+# --- Lens Blur and Smart Sharpen against SciPy ---
+if have_scipy:
+    r = run("""var d = load('photo'); P.filter.lensBlur(d, {radius: 6, iris: 'circle'}); save('lens6', d);
+      d = load('photo'); P.filter.lensBlur(d, {radius: 7, iris: 'hexagon'}); save('hex7', d);
+      d = load('photo'); P.filter.smartSharpen(d, {amount: 100, radius: 1.5, remove: 'gaussian', noise: 0}); save('ss', d);
+      var dot = {width: 61, height: 61, data: new Uint8ClampedArray(61 * 61 * 4)}; for (var j = 0; j < 61 * 61; j++) { var v = j === 30 * 61 + 30 ? 255 : 20; dot.data[j * 4] = dot.data[j * 4 + 1] = dot.data[j * 4 + 2] = v; dot.data[j * 4 + 3] = 255; }
+      var d0 = {width: 61, height: 61, data: new Uint8ClampedArray(dot.data)}, d1 = {width: 61, height: 61, data: new Uint8ClampedArray(dot.data)};
+      P.filter.lensBlur(d0, {radius: 10, brightness: 0, threshold: 200}); P.filter.lensBlur(d1, {radius: 10, brightness: 100, threshold: 200}); save('dot0', d0); save('dot1', d1);
+      return 1;""")
+    lin = np.where(photo / 255 <= 0.04045, photo / 255 / 12.92, ((photo / 255 + 0.055) / 1.055) ** 2.4)
+    def to_srgb(v): v = np.clip(v, 0, 1); return 255 * np.where(v <= 0.0031308, 12.92 * v, 1.055 * v ** (1 / 2.4) - 0.055)
+    def kern(rad, iris):
+        R = int(rad); yy_, xx_ = np.mgrid[-R:R + 1, -R:R + 1]
+        if iris == "circle": k = (xx_ ** 2 + yy_ ** 2 <= rad * rad)
+        else: k = (np.abs(yy_) <= rad * np.sqrt(3) / 2) & (np.abs(xx_) <= np.floor(rad - np.abs(yy_) / np.sqrt(3) + 1e-9))
+        return k.astype(float) / k.sum()
+    for nm, rad, iris in [("lens6", 6, "circle"), ("hex7", 7, "hexagon")]:
+        ref = to_srgb(np.dstack([ndimage.convolve(lin[..., c], kern(rad, iris), mode="nearest") for c in range(3)]))
+        dd = np.abs(get(nm)[..., :3] - ref)
+        check("Lens Blur, %s iris radius %d: SciPy's convolution with that iris in linear light, within 1 level (max %.2f)" % (iris, rad, dd.max()), dd.max() <= 1.01, dd.max())
+    lum = 0.299 * photo[..., 0] + 0.587 * photo[..., 1] + 0.114 * photo[..., 2] + 1
+    g_ = lambda a_: ndimage.gaussian_filter(a_, 1.5, mode="nearest", truncate=3.0)
+    est = lum.copy()
+    for _ in range(10): est = est * g_(lum / np.maximum(g_(est), 1e-6))
+    ref = np.clip(photo + (est - lum)[..., None], 0, 255)
+    dd = np.abs(get("ss")[..., :3] - ref)
+    check("Smart Sharpen (Remove Gaussian Blur 1.5): Richardson-Lucy, ten rounds, written here with SciPy's Gaussian, within 1 level (max %.2f)" % dd.max(), dd.max() <= 1.01, dd.max())
+    d0 = get("dot0")[..., 0]; d1 = get("dot1")[..., 0]
+    check("Lens Blur: one bright point becomes a flat disc of the iris's radius (a lens's bokeh), brighter with Specular Highlights", abs(d0[30, 30] - d0[30, 39]) <= 1 and d0[30, 42] <= 21 and d1[30, 30] > d0[30, 30] + 10, (d0[30, 30], d0[30, 39], d0[30, 42], d1[30, 30]))
+    sharp = np.zeros((60, 80)); sharp[:, 40:] = 200; sharp += 20; sharpimg = np.dstack([sharp] * 3); blurred = np.dstack([ndimage.gaussian_filter(sharp, 1.5, mode="nearest")] * 3)
+    put("blurstep", np.round(blurred))
+    run("""var d = load('blurstep'); P.filter.smartSharpen(d, {amount: 100, radius: 1.5, remove: 'gaussian'}); save('unblur', d); return 1;""")
+    ub = get("unblur")[..., 0]; bb = np.round(blurred)[..., 0]
+    e0 = np.abs(bb - sharp)[:, 34:46].mean(); e1 = np.abs(ub - sharp)[:, 34:46].mean(); s0 = np.abs(np.diff(bb[30])).max(); s1 = np.abs(np.diff(ub[30])).max()
+    check("Smart Sharpen takes a Gaussian blur back out of a step: steeper (%.0f a pixel against %.0f) and nearer the sharp step beside it (error %.1f against %.1f)" % (s1, s0, e1, e0), s1 > s0 * 1.3 and e1 < e0 * 0.85, (s1, s0, e1, e0))
 # --- Shadows/Highlights, Match Color, Replace Color, Selective Color: what each must change and what it must leave alone ---
 r = run("""var out = {}, d = load('photo'), j, c;
   var greys = {width: 256, height: 1, data: new Uint8ClampedArray(1024)}; for (j = 0; j < 256; j++) { greys.data[j * 4] = greys.data[j * 4 + 1] = greys.data[j * 4 + 2] = j; greys.data[j * 4 + 3] = 255; }
