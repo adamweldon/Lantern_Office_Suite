@@ -15,7 +15,7 @@ CJ = os.path.join(HERE, os.environ.get("CJNAME") or ("cases.json" if not GROUPS 
 C = Cases(CJ)
 FX = HERE
 FXROOT = os.path.join(ROOT, "tests", "fixtures")
-EV = os.path.join(HERE, "evidence")
+EV = os.environ.get("R3EV") or os.path.join(HERE, "evidence")   # (a replay writes its pictures elsewhere: R3EV)
 os.makedirs(EV, exist_ok=True)
 def F(f): return f if os.path.isabs(f) else os.path.join(FX, f)
 _B = {}
@@ -627,7 +627,7 @@ if on("sweep"):
                 except Exception as e:
                     C(G, rel, "p%d: drawing compared" % (i + 1), False, "compared", str(e)[:200])
         if fi % 25 == 0: print("== sweep", fi, len(files), flush=True); C.save()
-    json.dump(summ, open(os.path.join(HERE, "sweep_summary.json"), "w"), indent=1)
+    json.dump(summ, open(os.path.join(OUT if os.environ.get("R3EV") else HERE, "sweep_summary.json"), "w"), indent=1)
 
 # =====================================================================================================================
 # redsweep: on page 1 of every PDF under tests/fixtures, two words poppler reads (6 letters or more, once on the page)
@@ -711,7 +711,7 @@ if on("redsweep"):
         nk = sum(1 for wd, bx in allw)
         C(G, rel, "words away from the marks still read in place by poppler (lost %d of %d)" % (len(lost), nk), len(lost) <= max(1, 0.02 * nk), "<= 2%", lost[:10])
         if fi % 25 == 0: print("== redsweep", fi, len(files), flush=True); C.save()
-    json.dump(tot, open(os.path.join(HERE, "redsweep_summary.json"), "w"), indent=1, ensure_ascii=False)
+    json.dump(tot, open(os.path.join(OUT if os.environ.get("R3EV") else HERE, "redsweep_summary.json"), "w"), indent=1, ensure_ascii=False)
 
 # =====================================================================================================================
 # fold: what a person types against what the page shows -- Redact's search (redactMarks, grouped) counted against the
