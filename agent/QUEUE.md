@@ -42,6 +42,31 @@ Then the training track (Adam, 2026-11-24; CLAUDE.md "The combined system"):
 - D. A LoRA adapter for each small model (0.8B, 2B, 4B) on Adam's laptop
   (`train/`, a pilot) or a rented GPU, free tools; merged and made GGUF for
   the stick; the bench run with and without it, on set B.
+**Next track: PDF work to Acrobat Pro's reach** (Adam, 2026-11-25: "Lantern
+should have all the capabilities that adobe acrobat pro has"). Checked on
+1.24.38 against Adobe's Pro list (a PDF to Adam, "Lantern and Acrobat Pro"):
+of 42 things Lantern does 4, part of 6, not 29; 3 are Adobe cloud services.
+Tested in Chromium: an owner-password-only PDF (AES and RC4; any viewer opens
+it) is refused (PDF_PAGES: "this PDF is locked"); a filled form's value and
+tick are not drawn or read; a FreeText comment, a note and a highlight are
+not drawn (no code reads /Annots). In order, each a version, Lantern's own
+code, a reviewer before it goes in, test PDFs made with reportlab/pypdf in
+tests/fixtures/:
+1. Read everything: decrypt (RC4, AES-128, AES-256 R6; no question for an
+   owner password only, ask for a user password); draw annotations' and form
+   widgets' appearance streams (/AP /N, as forms are drawn already) and read
+   field values into the text; a PDF view (thumbnails, zoom, find with
+   highlights, bookmarks, links, optional-content layers, print, read
+   aloud); measure on drawings (scale from a known length); JBIG2, then JPX.
+2. Change a PDF, always as a new copy: pages (combine, split, extract,
+   delete, rotate, reorder, insert, crop); comments; fill and flatten forms;
+   drawn or typed signature; header, footer, page numbers, watermark, Bates;
+   redaction by making the area a picture with nothing under it, and
+   removing metadata; password (AES-256) and permissions; compress.
+3. Compare two versions (words, and a two-colour overlay for drawings);
+   export pages as pictures, tables to Sheets; certificate signatures; guided
+   actions on many files; PDF/A, tags, preflight last.
+
 Bench checks the gradebook found: die-four-moves fails "5, 4, 1" (the numbers
 in the order asked; the check wants the words); a right QUOTE refused on the
 0.8B's doc-oil-change (to trace); a choking child given the recovery-position
