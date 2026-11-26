@@ -54773,9 +54773,10 @@ Lantern.RFB = (function () {
 //          planes, unplanes, sample, boxPass}
 // ===========================================================================
 // Filter > Blur. A Gaussian blur's radius is its
-// standard deviation in pixels, as Photoshop's is; up to a radius of 6 it is
-// the exact bell curve, beyond that three box blurs in a row, which differ
-// from it by at most 4 levels in 255 (under 1 on average). Edges are extended (the pixel at the edge stands for
+// standard deviation in pixels, as Photoshop's is. It is the exact bell curve
+// wherever that is quick (a radius up to 6 on a picture of about a million
+// pixels, up to 1.5 on twelve million); beyond, six box blurs in a row,
+// which differ from it by at most 4 levels in 255 (under 1 on average). Edges are extended (the pixel at the edge stands for
 // what lies beyond it), and a layer with see-through parts is blurred with its
 // colours weighted by how solid they are, so no dark fringe creeps in from
 // the empty pixels.
@@ -54802,57 +54803,81 @@ Lantern.RFB = (function () {
     for (i = 0; i < k.length; i++) k[i] /= sum;
     return k;
   }
+  // one pass of the kernel along rows: the inside without clamping, the two ends with it
   function convH(src, dst, w, h, k) {
-    var r = (k.length - 1) / 2;
+    var r = (k.length - 1) / 2, kl = k.length, x, i, acc, xx;
     for (var y = 0; y < h; y++) {
       var o = y * w;
-      for (var x = 0; x < w; x++) {
-        var s = 0;
-        for (var i = -r; i <= r; i++) { var xx = x + i; xx = xx < 0 ? 0 : xx >= w ? w - 1 : xx; s += src[o + xx] * k[i + r]; }
-        dst[o + x] = s;
+      for (x = 0; x < w; x++) {
+        acc = 0;
+        if (x >= r && x < w - r) { var p = o + x - r; for (i = 0; i < kl; i++) acc += src[p + i] * k[i]; }
+        else for (i = 0; i < kl; i++) { xx = x + i - r; xx = xx < 0 ? 0 : xx >= w ? w - 1 : xx; acc += src[o + xx] * k[i]; }
+        dst[o + x] = acc;
       }
     }
   }
+  // along columns, a row at a time (the memory read in order)
   function convV(src, dst, w, h, k) {
-    var r = (k.length - 1) / 2;
-    for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) {
-      var s = 0;
-      for (var i = -r; i <= r; i++) { var yy = y + i; yy = yy < 0 ? 0 : yy >= h ? h - 1 : yy; s += src[yy * w + x] * k[i + r]; }
-      dst[y * w + x] = s;
+    var r = (k.length - 1) / 2, kl = k.length, acc = new Float32Array(w);
+    for (var y = 0; y < h; y++) {
+      acc.fill(0);
+      for (var i = 0; i < kl; i++) { var yy = y + i - r; yy = yy < 0 ? 0 : yy >= h ? h - 1 : yy; var kv = k[i], p = yy * w; for (var x = 0; x < w; x++) acc[x] += src[p + x] * kv; }
+      dst.set(acc, y * w);
     }
   }
-  // a running-sum box of half-width r along rows (dir 0) or columns (dir 1), edges extended
+  // a running-sum box of half-width r along rows (dir 0) or columns (dir 1), edges extended; the columns are
+  // summed a whole row at a time, so memory is read in order
   function boxPass(src, dst, w, h, r, dir) {
-    var len = dir ? h : w, lines = dir ? w : h, step = dir ? w : 1, line = dir ? 1 : w, d = 2 * r + 1;
-    for (var l = 0; l < lines; l++) {
-      var o = l * line, s = 0, i;
-      for (i = -r; i <= r; i++) s += src[o + Math.min(len - 1, Math.max(0, i)) * step];
-      for (i = 0; i < len; i++) {
-        dst[o + i * step] = s / d;
-        s += src[o + Math.min(len - 1, i + r + 1) * step] - src[o + Math.max(0, i - r) * step];
+    var d = 2 * r + 1, x, y, i, s;
+    if (!dir) {
+      for (y = 0; y < h; y++) {
+        var o = y * w, first = src[o], last = src[o + w - 1];
+        s = 0; for (i = -r; i <= r; i++) s += i < 0 ? first : i >= w ? last : src[o + i];
+        for (x = 0; x < w; x++) {
+          dst[o + x] = s / d;
+          var add = x + r + 1, sub = x - r;
+          s += (add < w ? src[o + add] : last) - (sub > 0 ? src[o + sub] : first);
+        }
       }
+      return;
+    }
+    var acc = new Float64Array(w);
+    for (i = -r; i <= r; i++) { var row = Math.min(h - 1, Math.max(0, i)) * w; for (x = 0; x < w; x++) acc[x] += src[row + x]; }
+    for (y = 0; y < h; y++) {
+      var ro = y * w, ra = Math.min(h - 1, y + r + 1) * w, rs = Math.max(0, y - r) * w;
+      for (x = 0; x < w; x++) { dst[ro + x] = acc[x] / d; acc[x] += src[ra + x] - src[rs + x]; }
     }
   }
-  // sizes of three boxes that together blur like a Gaussian of sigma s (Kutskir / Wells)
-  function boxes(s) {
-    var wl = Math.floor(Math.sqrt(12 * s * s / 3 + 1)); if (wl % 2 === 0) wl--;
-    var wu = wl + 2, m = Math.round((12 * s * s - 3 * wl * wl - 12 * wl - 9) / (-4 * wl - 4)), out = [];
-    for (var i = 0; i < 3; i++) out.push(((i < m ? wl : wu) - 1) / 2);
+  // sizes of n boxes that together blur like a Gaussian of sigma s (Wells; Kutskir)
+  function boxes(s, n) {
+    var wl = Math.floor(Math.sqrt(12 * s * s / n + 1)); if (wl % 2 === 0) wl--;
+    var wu = wl + 2, m = Math.round((12 * s * s - n * wl * wl - 4 * n * wl - 3 * n) / (-4 * wl - 4)), out = [];
+    for (var i = 0; i < n; i++) out.push(((i < m ? wl : wu) - 1) / 2);
     return out;
   }
   function blurPlane(p, w, h, s) {
     if (!(s > 0.05)) return p;
     var t = new Float32Array(p.length), o = new Float32Array(p.length);
-    if (s <= 6) { var k = kernel(s); convH(p, t, w, h, k); convV(t, o, w, h, k); return o; }
+    // the exact bell curve while it costs under about a quarter of a second a plane; beyond that six boxes
+    if ((2 * Math.ceil(s * 3) + 1) * w * h <= 2.5e8) { var k = kernel(s); convH(p, t, w, h, k); convV(t, o, w, h, k); return o; }
     // the boxes run on the plane padded by its own edge pixels, so the edges blur as one Gaussian of the original's would
-    var bx = boxes(s), pd = Math.ceil(s * 3), W = w + 2 * pd, H = h + 2 * pd, a = new Float32Array(W * H), x, y;
+    var bx = boxes(s, 6), pd = Math.ceil(s * 3), W = w + 2 * pd, H = h + 2 * pd, a = new Float32Array(W * H), x, y;
     for (y = 0; y < H; y++) { var sy = Math.min(h - 1, Math.max(0, y - pd)) * w; for (x = 0; x < W; x++) a[y * W + x] = p[sy + Math.min(w - 1, Math.max(0, x - pd))]; }
     t = new Float32Array(W * H); o = new Float32Array(W * H);
-    for (var i = 0; i < 3; i++) { boxPass(a, t, W, H, bx[i], 0); boxPass(t, a, W, H, bx[i], 1); }
+    for (var i = 0; i < bx.length; i++) { if (!bx[i]) continue; boxPass(a, t, W, H, bx[i], 0); boxPass(t, a, W, H, bx[i], 1); }
     for (y = 0; y < h; y++) for (x = 0; x < w; x++) o[y * w + x] = a[(y + pd) * W + x + pd];
     return o.subarray(0, w * h);
   }
-  function gaussian(d, q) { var p = planes(d), r = q.radius || 1; unplanes(p.map(function (x) { return blurPlane(x, d.width, d.height, r); }), d); }
+  // a picture with no see-through pixels (most photos) is blurred channel by channel, its alpha left alone
+  function opaque(d) { var a = d.data; for (var i = 3; i < a.length; i += 4) if (a[i] !== 255) return false; return true; }
+  function gaussian(d, q) {
+    var r = q.radius || 1, w = d.width, h = d.height, a = d.data, n = w * h;
+    if (opaque(d)) {
+      for (var c = 0; c < 3; c++) { var pl = new Float32Array(n), j; for (j = 0; j < n; j++) pl[j] = a[j * 4 + c]; var b = blurPlane(pl, w, h, r); for (j = 0; j < n; j++) a[j * 4 + c] = b[j]; }
+      return;
+    }
+    var p = planes(d); unplanes(p.map(function (x) { return blurPlane(x, w, h, r); }), d);
+  }
   function box(d, q) {
     var p = planes(d), r = Math.max(1, Math.round(q.radius || 1)), w = d.width, h = d.height;
     unplanes(p.map(function (x) { var t = new Float32Array(x.length), o = new Float32Array(x.length); boxPass(x, t, w, h, r, 0); boxPass(t, o, w, h, r, 1); return o; }), d);
@@ -54896,7 +54921,7 @@ Lantern.RFB = (function () {
     if (!n) return;
     for (i = 0; i < a.length; i += 4) { a[i] = clamp(s[0] / n); a[i + 1] = clamp(s[1] / n); a[i + 2] = clamp(s[2] / n); }
   }
-  F.planes = planes; F.unplanes = unplanes; F.blurPlane = blurPlane; F.boxPass = boxPass; F.sample = sample; F.gaussian = gaussian; F.box = box; F.motion = motion; F.radial = radial;
+  F.planes = planes; F.unplanes = unplanes; F.opaque = opaque; F.blurPlane = blurPlane; F.boxPass = boxPass; F.sample = sample; F.gaussian = gaussian; F.box = box; F.motion = motion; F.radial = radial;
   F.average = average;
 })();
 // MODULE: PHOTO_FILT_BLUR - END
@@ -56791,7 +56816,7 @@ Lantern.RFB = (function () {
 // Depends: PHOTO_MATH, PHOTO_DOC, PHOTO_BLEND, PHOTO_ADJ_TONE; PHOTO_ADJ_COLOR, PHOTO_FX, PHOTO_TEXT,
 //          PHOTO_SHAPES -- feature-detected
 // Exports: Lantern.photo.compose = {render(d, l) -> doc-sized canvas, all(d, opt) -> canvas,
-//          from(d, below, i) -> canvas, flatPixels(d) -> ImageData, adjustInto(d, g, l, base)}
+//          from(d, below, i, {until, into}) -> canvas, flatPixels(d) -> ImageData, adjustInto(d, g, l, base)}
 // ===========================================================================
 // What the picture looks like: every visible layer, bottom to top, each
 // drawn as it is (its pixels, words, shape or fill), through its mask, with
@@ -56808,6 +56833,8 @@ Lantern.RFB = (function () {
   function render(d, l) {
     var key = l.ver + ":" + d.w + "x" + d.h + ":" + (l.mask ? (l.mask.on ? 1 : 0) : 2);
     if (l.cache && l.cacheKey === key) return l.cache;
+    // a plain picture layer that covers the document exactly is its own drawing (no copy: twelve megapixels a brush dab would be slow)
+    if (l.kind === "pixel" && l.cv && !l.fx && !(l.mask && l.mask.on) && l.x === 0 && l.y === 0 && l.cv.width === d.w && l.cv.height === d.h) return l.cv;
     var cv = M.canvas(d.w, d.h), g = M.ctx(cv);
     if (l.kind === "text" && P.text && P.text.draw) P.text.draw(d, l, g);
     else if (l.kind === "shape" && P.shapes && P.shapes.draw) P.shapes.draw(d, l, g);
@@ -56844,7 +56871,8 @@ Lantern.RFB = (function () {
   // layers i.. onto a copy of below (null: a clear canvas); opt.until stops before that index
   function from(d, below, i, opt) {
     opt = opt || {};
-    var out = M.canvas(d.w, d.h), g = M.ctx(out), n = opt.until == null ? d.layers.length : opt.until, base = null, baseOn = true;
+    var out = opt.into && opt.into.width === d.w && opt.into.height === d.h ? opt.into : M.canvas(d.w, d.h), g = M.ctx(out), n = opt.until == null ? d.layers.length : opt.until, base = null, baseOn = true;
+    if (opt.into === out) { g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = "source-over"; g.clearRect(0, 0, d.w, d.h); }
     if (below) g.drawImage(below, 0, 0);
     for (var k = 0; k < i; k++) if (!d.layers[k].clip) { base = d.layers[k]; baseOn = base.visible; }
     for (k = i; k < n; k++) {
@@ -57762,7 +57790,7 @@ Lantern.RFB = (function () {
     function composite() {
       if (v.preview) return v.preview;
       var k = key();
-      if (v.below && v.belowAt === d.active) return C.from(d, v.below, d.active);
+      if (v.below && v.belowAt === d.active) { v.scratch = C.from(d, v.below, d.active, { into: v.scratch }); return v.scratch; }
       if (v.comp && v.compKey === k) return v.comp;
       v.comp = C.all(d); v.compKey = k; return v.comp;
     }
@@ -57939,7 +57967,7 @@ Lantern.RFB = (function () {
         M.ctx(big).drawImage(target, tx - x0, ty - y0); l.cv = target = big; l.x = tx = x0; l.y = ty = y0;
       }
     }
-    var W = target.width, H = target.height, orig = M.copy(target), buf = M.canvas(W, H), bg = M.ctx(buf), tg = M.ctx(target), last = null, dirty = null, rest = 0;
+    var W = target.width, H = target.height, orig = M.copy(target), buf = M.canvas(W, H), bg = M.ctx(buf), tg = M.ctx(target), last = null, dirty = null, rest = 0, piece = null;
     var selC = d.sel && kind !== "sel" ? d.sel : null, grey = kind !== "layer" ? Math.round(M.lum(how.color[0], how.color[1], how.color[2])) : 0;
     var dab = M.canvas(4, 4), dg = M.ctx(dab);
     function addDirty(x, y, r) { var b = [Math.floor(x - r - 1), Math.floor(y - r - 1), Math.ceil(x + r + 1), Math.ceil(y + r + 1)]; dirty = dirty ? [Math.min(dirty[0], b[0]), Math.min(dirty[1], b[1]), Math.max(dirty[2], b[2]), Math.max(dirty[3], b[3])] : b; }
@@ -57953,9 +57981,11 @@ Lantern.RFB = (function () {
       bg.globalAlpha = how.flow == null ? 1 : how.flow; bg.drawImage(dab, px, py); bg.globalAlpha = 1;
       addDirty(x - tx, y - ty, n / 2);
     }
+    // only what the dabs since the last flush touched is laid again (the rest of the stroke is already on the layer)
     function flush() {
       if (!dirty) return;
       var x = Math.max(0, dirty[0]), y = Math.max(0, dirty[1]), w = Math.min(W, dirty[2]) - x, h = Math.min(H, dirty[3]) - y;
+      dirty = null;
       if (w <= 0 || h <= 0) return;
       var piece = buf;
       if (selC) { piece = M.canvas(w, h); var pg = M.ctx(piece); pg.drawImage(buf, -x, -y); pg.globalCompositeOperation = "destination-in"; pg.drawImage(selC, -x - tx, -y - ty); }
