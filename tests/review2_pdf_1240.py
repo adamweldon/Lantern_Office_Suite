@@ -38,7 +38,9 @@ KEEP = [
     ("[text] r_symbol.pdf: this build reads 'Ω = 4.7 κ' as one line", "Symbol's W is read as Adobe's glyph list names it, the ohm sign (U+2126), as poppler reads it; the check's phrase is typed with the Greek capital omega"),
     ("[text] r_symbol.pdf: this build reads '✔✓■' as one line", "Lantern reads the three with the spaces the page has between them; poppler runs dingbats together"),
 ]
-r = subprocess.run([sys.executable, os.path.join(FX, "run_review.py"), SITE, OLD, OUT], cwd=FX, capture_output=True, text=True, timeout=6000)
+# (the sweeps leave out the fixtures of later reviews, made after this one and replayed by their own tests)
+env = dict(os.environ, SWEEP_SKIP=r"pdf_review[3-9]_1240|pdf_review\d\d_1240")
+r = subprocess.run([sys.executable, os.path.join(FX, "run_review.py"), SITE, OLD, OUT], cwd=FX, env=env, capture_output=True, text=True, timeout=6000)
 out = r.stdout
 m = re.search(r"^(\d+) checks, (\d+) failed", out, re.M)
 fails = []

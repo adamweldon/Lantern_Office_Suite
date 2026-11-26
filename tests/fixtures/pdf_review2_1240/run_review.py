@@ -309,7 +309,7 @@ if on("find"):
 # =====================================================================================================================
 if on("sweep"):
     B = browser("new")
-    files = sorted(glob.glob(os.path.join(FXROOT, "**", "*.pdf"), recursive=True))
+    files = [f for f in sorted(glob.glob(os.path.join(FXROOT, "**", "*.pdf"), recursive=True)) if not (os.environ.get("SWEEP_SKIP") and re.search(os.environ["SWEEP_SKIP"], f))]   # (a replay leaves out later reviews' fixtures, which have replays of their own: SWEEP_SKIP)
     files = [p for p in files if os.path.getsize(p) < 6e6 and not os.path.basename(p).startswith("sweep_")]
     bad = []
     for p in files:
@@ -519,7 +519,7 @@ def gray_diff(png_a, png_b):
 POPPLER_LOOPS = {"ve_cycle.pdf"}   # pdftotext and pdftoppm never end on it (optional content that names itself)
 if on("regress"):
     G = "regress"
-    files = sorted(glob.glob(os.path.join(FXROOT, "**", "*.pdf"), recursive=True))
+    files = [f for f in sorted(glob.glob(os.path.join(FXROOT, "**", "*.pdf"), recursive=True)) if not (os.environ.get("SWEEP_SKIP") and re.search(os.environ["SWEEP_SKIP"], f))]   # (a replay leaves out later reviews' fixtures, which have replays of their own: SWEEP_SKIP)
     files = [p for p in files if os.path.getsize(p) < 6e6 and not re.match(r"(sweep_|redact|inv_|parse_|helv_|radio|comb|form_|crop_|title_|chrome_|table_|xe_|lo_find|scan_|ops_|qopen_|orphan_|symbol_|manual_|latex_)", os.path.basename(p))]
     rows = []
     for p in files:
