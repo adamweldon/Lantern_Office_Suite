@@ -183,6 +183,10 @@ People will act on what Lantern says with nobody to ask. So:
   takes a name Excel does not use (LORE for the Lorentz factor, POWERW for
   watts). Check a new function's name against Excel's list before adding
   it.
+- **A file's maker's limits** (a PDF's "do not print", "do not copy", "do
+  not change"): Lantern says what the maker asked and does what the person
+  asks, in a new copy (Adam, 2026-11-26: "say so and do what the person
+  wants").
 - **Numbers the AI can use.** A table or formula a person needs is better as a
   formula function or a lesson the AI can reach (LESSON:, LOOKUP:) than as
   prose only.

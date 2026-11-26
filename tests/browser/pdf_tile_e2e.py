@@ -1,6 +1,6 @@
 # pdf_tile_e2e.py -- the PDF tile (1.24.40) in a real browser (Chromium via Playwright): open, find, go to a page,
 # the side panels; and every tool that changes a PDF, each result checked by qpdf, pypdf or poppler: pages, stamp,
-# comment, sign, fill in, flatten, save, undo, a password asked in the page, Text Reader taking the PDF; redaction
+# comment, sign, fill in, flatten, save, undo, a maker's limits said and the work done, a password asked in the page, Text Reader taking the PDF; redaction
 # (what is marked gone from the whole file, poppler's own word boxes inside the marks, a turned page kept turned)
 # and removing hidden information; export (PNG, JPEG, a zip, the words); compare two versions; a picture combined
 # as a page; pictures made smaller; a PDF's own words changed; a PDF made into a form. PDFs: tests/fixtures/pdf_open, pdf_review1_1239, pdf_edit (make_fixtures.py there says how).
@@ -135,6 +135,23 @@ with sync_playwright() as p:
     pg.click(".pv-bar button:text-is('Measure')")
     check("measure: its bar opens", pg.is_visible("text=Set scale"), "")
     pg.click("button:text-is('Done')")
+    # (1.24.41) a PDF whose maker asked that it not be printed or changed (Adam, 2026-11-26: "say so and do what the
+    # person wants"): no question asked; the line under the toolbar says what its maker asked, and it is done
+    dlg = []
+    pg.on("dialog", lambda d: dlg.append(d.message))
+    open_pdf("owner_aes_256_noprint.pdf"); wait_stat(r"maker asked that it not be printed")
+    pg.click(".pv-bar button:text-is('Stamp')"); pg.click("text=Apply"); wait_stat("Stamped")
+    t = pg.evaluate("Lantern.pdfView.api.textOf(0).then(function (t) { return t.text; })")
+    wl = pg.evaluate("(document.querySelector('.pv-wish')||{}).textContent||''")
+    check("a maker's 'no changes': the stamp made with no question asked", re.search(r"Page 1 of \d", t) is not None and not dlg, (dlg, t[:200]))
+    check("a maker's 'no changes': said on its own line", "asked that this PDF not be changed; done as you asked, in a new copy" in wl, wl)
+    pg.evaluate("window.__printed = 0; window.print = function () { window.__printed++; }")
+    pg.click(".pv-bar button:text-is('Print')"); pg.wait_for_function("window.__printed > 0", timeout=60000)
+    wl = pg.evaluate("(document.querySelector('.pv-wish')||{}).textContent||''")
+    check("a maker's 'no printing': printed with no question asked, and said", not dlg and "not be printed; printed as you asked" in wl and "not be changed" in wl, (dlg, wl))
+    open_pdf("plain.pdf"); wait_stat(r"2 pages\.")
+    wl = pg.evaluate("(document.querySelector('.pv-wish')||{}).textContent||''")
+    check("another PDF opened: the line is gone", wl == "", wl)
     # a PDF with a password: asked in the page, a wrong one refused
     open_pdf("user_aes_256.pdf"); pg.wait_for_selector("input[aria-label=Password]")
     pg.fill("input[aria-label=Password]", "nope"); pg.click(".pv-pw button"); pg.wait_for_selector("text=That password does not open it")

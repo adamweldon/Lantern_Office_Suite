@@ -71,7 +71,7 @@ reason in tests/review*_pdf_1240.py): in the tile's preview only, a field
 value with its own drawing is marked 2.5 pt left of the drawing (the copy is
 right; review 4's finding 14); a comb flattened by another program is read as
 separate digits (Redact's "Not found" says to drag over them); a word on a
-slant is marked a box a letter. Adam: what a PDF's maker asks (QUESTIONS 1).
+slant is marked a box a letter. A PDF's maker's limits: said, and the work done as the person asks (Adam, 2026-11-26; 1.24.41).
 
 Bench checks the gradebook found: die-four-moves fails "5, 4, 1" (the numbers
 in the order asked; the check wants the words); a right QUOTE refused on the

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.24.41 — A PDF's maker's limits said, and the work done as the person asks (2026-11-26)
+
+**What was asked.** A PDF can say its maker asked that it not be printed, copied, changed, commented on or filled in. 1.24.40 opened such a PDF as any viewer does and said what its maker asked, then asked the person once before printing it or before each kind of change ("Do it anyway, in a new copy?"). Adam was asked which way Lantern should go (to keep asking, to obey as Acrobat does, or to say so and do it), and answered (2026-11-26): "say so and do what the person wants."
+
+**What changed.** The PDF tile asks nothing. The first time a tool does what the maker asked not be done (a stamp, a page turned, a comment, a field filled, the lock taken off, printing), a line under the toolbar says it: "Its maker asked that this PDF not be changed; done as you asked, in a new copy." It stays while that PDF is open, and goes when another is opened. What the maker asked is kept with the PDF as it was opened, so printing a changed copy (which carries no lock) still says it. "Take the lock off" no longer needs the owner's password for a lock with limits: it says so and takes it off. The PDF that was opened is never changed; every change is a new copy, as before. The tile's help says the same.
+
+**Tested.** `tests/browser/pdf_tile_e2e.py` (85 checks, 0 failed): on a PDF locked by its owner against everything, a stamp and a print go ahead with no question, the line says both, and opening another PDF clears it. `npm test`: ALL CHECKS PASS (181 steps). **Not tested:** a real printer.
+
 ## 1.24.40 — The PDF tile: a PDF read, found in, measured and printed as in Acrobat, and changed as Acrobat Pro changes one -- pages, combine, stamps and Bates numbers, forms filled and made, comments, signatures, its own words, passwords, redaction, export, compare, a smaller file (2026-11-25)
 
 **What was asked.** Adam, 2026-11-25: "make lantern so that it can perform everything acrobat pro does as much as is possible". 1.24.39 read every PDF as a viewer does; this is the rest of the plan's first two steps, and part of its third, in one tile. Everything runs on the device with no internet, in Lantern's own code (ES5, no library), and every change makes a new copy: the PDF opened is never changed.
