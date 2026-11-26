@@ -56042,7 +56042,8 @@ Lantern.RFB = (function () {
 // MODULE: PHOTO_PSD_READ - START
 // Depends: PHOTO_MATH, PHOTO_PSD_ADJ; INFLATE (Lantern.inflate, for ZIP-packed channels) -- feature-detected
 // Exports: Lantern.photo.psd.read(bytes) -> {w, h, dpi, mode, depth, layers: [{name, x, y, w, h,
-//          rgba, visible, opacity, blend, clip, mask: {x, y, w, h, data, def, on}, adj, group}],
+//          rgba, visible, opacity, blend, clip, mask: {x, y, w, h, data, def, on}, adj, pgid}, and groups:
+//          {group: true, rid, name, visible, opacity, blend, open, mask, pgid} just above their layers (pgid = the rid of the group holding it)],
 //          merged: rgba | null, notes: []}
 // ===========================================================================
 // Opens a Photoshop file (.psd, and the large-document .psb) as Adobe's file
@@ -56052,8 +56053,8 @@ Lantern.RFB = (function () {
 // prediction), and the flattened picture Photoshop saves beside them. RGB,
 // grayscale, indexed, CMYK (by the plain conversion, with no press profile),
 // Lab and bitmap pictures open; 16- and 32-bit channels are brought to 8.
-// Groups open as their layers in order (a group's hiding and opacity passed
-// to each). Text, shapes and smart objects open as the pixels Photoshop drew
+// Groups open as groups (nested ones too), with their hiding, opacity,
+// blending mode (Pass Through or another) and mask. Text, shapes and smart objects open as the pixels Photoshop drew
 // for them; adjustment layers of the plain kinds open live. What is not
 // carried over is listed in notes, for the tile to say.
 (function () {
@@ -56172,15 +56173,20 @@ Lantern.RFB = (function () {
           rec.ch = ch; rec.n = n;
         });
         r.o = liEnd;
-        var stack = [];
+        var stack = [], groupNo = 0;
         recs.forEach(function (rec) {
           var div = rec.extra.lsct || rec.extra.lsdk, dt = div ? (((div[0] << 24) | (div[1] << 16) | (div[2] << 8) | div[3]) >>> 0) : 0;
           if (dt === 3) { stack.push([]); return; }
           if (dt === 1 || dt === 2) {
-            var kids = stack.pop() || [];
-            kids.forEach(function (k) { k.visible = k.visible && rec.visible; k.opacity *= rec.opacity; k.group = rec.name + (k.group ? " / " + k.group : ""); });
-            (stack.length ? stack[stack.length - 1] : layers).push.apply(stack.length ? stack[stack.length - 1] : layers, kids);
-            if (rec.blend !== "pass-through" && rec.blend !== "normal") notes.push("group \u201c" + rec.name + "\u201d had its own blending mode, which its layers do not keep");
+            // a group: its own record (above its layers, as Lantern keeps it), its layers marked as its (pgid), nested groups kept
+            var kids = stack.pop() || [], gno = ++groupNo, gb = rec.blend;
+            if (div.length >= 12 && String.fromCharCode(div[4], div[5], div[6], div[7]) === "8BIM") { var gk = String.fromCharCode(div[8], div[9], div[10], div[11]); if (A.MODE[gk]) gb = A.MODE[gk]; }
+            kids.forEach(function (k) { if (k.pgid == null) k.pgid = gno; });
+            var hdr = { group: true, rid: gno, name: rec.name || "Group", x: 0, y: 0, w: 0, h: 0, visible: rec.visible, opacity: rec.opacity, blend: gb, clip: rec.clip, open: dt === 1 };
+            var gm = rec.ch[-2] || rec.ch[-3];
+            if (rec.mask && gm) hdr.mask = { x: rec.mask.x, y: rec.mask.y, w: rec.mask.w, h: rec.mask.h, data: gm, def: rec.mask.def, on: rec.mask.on };
+            kids.push(hdr);
+            var into = stack.length ? stack[stack.length - 1] : layers; into.push.apply(into, kids);
             return;
           }
           var lay = { name: rec.name || "Layer", x: rec.left, y: rec.top, w: rec.w, h: rec.h, visible: rec.visible, opacity: rec.opacity, blend: rec.blend === "pass-through" ? "normal" : rec.blend, clip: rec.clip };
@@ -56231,7 +56237,8 @@ Lantern.RFB = (function () {
 // in as the pixels they draw (PHOTO_DOC passes them so), and the tile says so.
 // layers: bottom first, each {name, x, y, w, h, rgba (w*h*4) or null, visible,
 // opacity 0-1, blend, clip, mask: {x, y, w, h, data (w*h), def, on} or null,
-// adj: {type, p} or null}.
+// adj: {type, p} or null}; a group is {group: true, name, visible, opacity, blend, open, mask}
+// above its layers, with {divider: true} under them (as Photoshop writes them).
 (function () {
   var L = window.Lantern, P = L && L.photo;
   if (!P || !P.psdAdj) return;
@@ -56315,7 +56322,7 @@ Lantern.RFB = (function () {
       w.u32(y0); w.u32(x0); w.u32(y0 + lh); w.u32(x0 + lw);
       w.u16(chans.length);
       chans.forEach(function (c) { w.u16(c.id); w.u32(c.bytes.length); });
-      w.str("8BIM"); w.str(A.BLEND[ly.blend] || "norm");
+      w.str("8BIM"); w.str(ly.divider ? "norm" : A.BLEND[ly.blend] || "norm");
       w.u8(Math.round((ly.opacity == null ? 1 : ly.opacity) * 255)); w.u8(ly.clip ? 1 : 0);
       w.u8((ly.visible === false ? 2 : 0) | 8); w.u8(0);
       var exPos = w.length; w.u32(0);
@@ -56327,6 +56334,9 @@ Lantern.RFB = (function () {
       for (var i = 0; i < nm.length; i++) ub.push(nm.charCodeAt(i) >> 8, nm.charCodeAt(i) & 255);
       block(w, "luni", ub, 4);
       if (ly.adj) { var ad = A.write(ly.adj); if (ad) block(w, ad.key, ad.bytes, 2); }
+      // a group's records (Adobe's section divider, "lsct"): 3 closes a group (under its layers); 1 (open) or 2 (shut) is the group itself, with its mode
+      if (ly.divider) block(w, "lsct", [0, 0, 0, 3], 2);
+      else if (ly.group) { var gk = A.BLEND[ly.blend] || "pass", gb = [0, 0, 0, ly.open === false ? 2 : 1]; "8BIM".split("").concat(gk.split("")).forEach(function (c) { gb.push(c.charCodeAt(0)); }); block(w, "lsct", gb, 2); }
       w.at(exPos, w.length - exPos - 4);
       chanData.push(chans);
     });
@@ -56707,7 +56717,8 @@ Lantern.RFB = (function () {
 // A picture being edited: its size, its layers (bottom first), which one is
 // being worked on, the selection, the foreground and background colours,
 // and the History. A layer is pixels ("pixel"), an adjustment ("adjust"),
-// words ("text"), a shape ("shape") or a colour or gradient fill ("fill");
+// words ("text"), a shape ("shape"), a colour or gradient fill ("fill") or a
+// group ("group": it sits just above its own layers, whose gid is its id);
 // each has a name, a place (x, y), visibility, opacity, a blending mode,
 // a mask (a doc-sized canvas whose alpha is the mask: white shows, black
 // hides), clipping to the layer below, locks, and layer styles (fx).
@@ -56725,7 +56736,7 @@ Lantern.RFB = (function () {
     o = o || {};
     return { id: uid++, name: o.name || "Layer", kind: o.kind || "pixel", cv: o.cv || null, x: o.x || 0, y: o.y || 0, visible: o.visible !== false, opacity: o.opacity == null ? 1 : o.opacity,
       fill: o.fill == null ? 1 : o.fill, blend: o.blend || "normal", mask: o.mask || null, clip: !!o.clip, lockAlpha: !!o.lockAlpha, locked: !!o.locked,
-      adj: o.adj || null, text: o.text || null, shape: o.shape || null, fillSpec: o.fillSpec || null, fx: o.fx || null, ver: 1 };
+      adj: o.adj || null, text: o.text || null, shape: o.shape || null, fillSpec: o.fillSpec || null, fx: o.fx || null, ver: 1, gid: o.gid, open: o.open !== false };
   }
   function create(w, h, opt) {
     opt = opt || {};
@@ -56810,7 +56821,8 @@ Lantern.RFB = (function () {
     while (d.hist.length - 1 > i) undo(d);
   }
   function active(d) { return d.layers[d.active] || null; }
-  function add(d, l, at) { at = at == null ? d.active + 1 : at; d.layers.splice(at, 0, l); d.active = at; return l; }
+  // a new layer joins the group of the layer just under it (a group's own place is in the group that holds it)
+  function add(d, l, at) { at = at == null ? d.active + 1 : at; if (l.gid === undefined) { var b = d.layers[at - 1]; l.gid = b ? b.gid : null; } d.layers.splice(at, 0, l); d.active = at; return l; }
   function remove(d, i) { d.layers.splice(i, 1); if (!d.layers.length) d.layers.push(layer({ cv: M.canvas(d.w, d.h) })); d.active = Math.max(0, Math.min(d.active, d.layers.length - 1)); }
   function move(d, from, to) { to = Math.max(0, Math.min(d.layers.length - 1, to)); var l = d.layers.splice(from, 1)[0]; d.layers.splice(to, 0, l); d.active = to; }
   function duplicate(d, i) {
@@ -56918,14 +56930,18 @@ Lantern.RFB = (function () {
 // Depends: PHOTO_MATH, PHOTO_DOC, PHOTO_BLEND, PHOTO_ADJ_TONE; PHOTO_ADJ_COLOR, PHOTO_FX, PHOTO_TEXT,
 //          PHOTO_SHAPES -- feature-detected
 // Exports: Lantern.photo.compose = {render(d, l) -> doc-sized canvas, all(d, opt) -> canvas,
-//          from(d, below, i, {until, into}) -> canvas, flatPixels(d) -> ImageData, adjustInto(d, g, l, base)}
+//          from(d, below, i, {until, into}) -> canvas, flatPixels(d) -> ImageData, adjustInto(d, g, l, base),
+//          splitAt(d, i), span(d, h), unitTop(d, k, pid), inside(d, l, gid), byId(d, gid)}
 // ===========================================================================
 // What the picture looks like: every visible layer, bottom to top, each
 // drawn as it is (its pixels, words, shape or fill), through its mask, with
 // its layer styles, clipped to the layer under it when clipping is on, and
 // laid on what is below by its blending mode and opacity. An adjustment
 // layer changes what is below it, as much as its opacity and its mask let
-// it (and only within the layer it is clipped to). A layer's own drawing is
+// it (and only within the layer it is clipped to). A group in Pass Through
+// (Photoshop's usual) lets its layers act on everything below; in any other
+// mode its layers are made alone and the result laid down by that mode, so an
+// adjustment layer inside changes only the group. A layer's own drawing is
 // kept until the layer changes, so a stroke on one layer redraws only it.
 (function () {
   var L = window.Lantern, P = L && L.photo;
@@ -56933,6 +56949,7 @@ Lantern.RFB = (function () {
   var M = P.math;
   // the layer drawn over the whole document: content, styles, mask
   function render(d, l) {
+    if (l.kind === "group") { var h = d.layers.indexOf(l); return h < 0 ? M.canvas(d.w, d.h) : groupAlone(d, h); }
     var key = l.ver + ":" + d.w + "x" + d.h + ":" + (l.mask ? (l.mask.on ? 1 : 0) : 2);
     if (l.cache && l.cacheKey === key) return l.cache;
     // a plain picture layer that covers the document exactly is its own drawing (no copy: twelve megapixels a brush dab would be slow)
@@ -56970,28 +56987,93 @@ Lantern.RFB = (function () {
     }
     g.putImageData(id, 0, 0);
   }
+  // --- groups: a "group" layer sits just above its layers (theirs is gid = the group's id), as in a .psd ---
+  function byId(d, id) { for (var k = 0; k < d.layers.length; k++) if (d.layers[k].kind === "group" && d.layers[k].id === id) return k; return -1; }
+  // the group (by its index in the list) that holds l at the level of the group pid (null: the top), or l's own index
+  function unitTop(d, k, pid) {
+    var l = d.layers[k], seen = 0;
+    while (l.gid != null && l.gid !== pid && seen++ < 64) { var h = byId(d, l.gid); if (h < 0) break; k = h; l = d.layers[h]; }
+    return k;
+  }
+  // the first index of group h's layers (h itself for an empty group)
+  function span(d, h) {
+    var id = d.layers[h].id, k = h - 1;
+    while (k >= 0 && inside(d, d.layers[k], id)) k--;
+    return k + 1;
+  }
+  function inside(d, l, id) { var seen = 0; while (l && l.gid != null && seen++ < 64) { if (l.gid === id) return true; var h = byId(d, l.gid); l = h < 0 ? null : d.layers[h]; } return false; }
+  // where the picture can be split into "below" and "from here up" without cutting a group: the start of the outermost group holding i
+  function splitAt(d, i) {
+    if (i <= 0 || i >= d.layers.length) return i;
+    var t = unitTop(d, i, null); return t === i ? i : span(d, t);
+  }
+  // a group's layers drawn on their own (clear) canvas, then its mask and styles: what a group that is not Pass Through lays down
+  function groupAlone(d, h, lo) {
+    var G = d.layers[h], cv = M.canvas(d.w, d.h), g = M.ctx(cv);
+    drawRange(d, g, lo == null ? span(d, h) : lo, h, G.id);
+    if (G.mask && G.mask.on) maskInto(d, G, cv);
+    if (G.fx && P.fx && P.fx.apply) cv = P.fx.apply(d, G, cv) || cv;
+    return cv;
+  }
+  function maskInto(d, l, cv) {
+    var mg = M.ctx(cv); mg.save(); mg.globalCompositeOperation = "destination-in";
+    if (l.mask.def === 255) { var mk = M.canvas(d.w, d.h), kg = M.ctx(mk); kg.fillStyle = "#000"; kg.fillRect(0, 0, d.w, d.h); kg.clearRect(l.mask.x, l.mask.y, l.mask.cv.width, l.mask.cv.height); kg.drawImage(l.mask.cv, l.mask.x, l.mask.y); mg.drawImage(mk, 0, 0); }
+    else mg.drawImage(l.mask.cv, l.mask.x, l.mask.y);
+    mg.restore();
+  }
+  // layers lo..hi-1 that sit in group pid (null: the top level), each group among them as one, onto g
+  function drawRange(d, g, lo, hi, pid, base0) {
+    var base = base0 || null, baseOn = base ? base.on : true, k = lo;
+    while (k < hi) {
+      var t = unitTop(d, k, pid), l = d.layers[t], end = Math.max(k, Math.min(t, hi - 1));
+      if (l.kind === "group" && t >= hi) { t = -1; l = null; }   // a group cut by hi (only when asked for part of one): its layers as they are
+      if (!l) { drawRange(d, g, k, hi, d.layers[unitTop(d, k, pid)].id, null); return base; }
+      if (!l.clip) { base = { l: l, at: t, lo: k, on: l.visible }; baseOn = l.visible; }
+      if (l.visible && !l.previewHidden && !(l.clip && !baseOn)) {
+        var clipTo = l.clip && base && base.l !== l ? (base.l.kind === "group" ? groupAlone(d, base.at, base.lo) : render(d, base.l)) : null;
+        if (l.kind === "group") drawGroup(d, g, t, k, clipTo);
+        else if (l.kind === "adjust") adjustInto(d, g, l, clipTo);
+        else {
+          var src = render(d, l);
+          if (clipTo) { var c2 = M.copy(src), tg = M.ctx(c2); tg.globalCompositeOperation = "destination-in"; tg.drawImage(clipTo, 0, 0); src = c2; }
+          P.blend.draw(g, src, l.blend, (l.opacity == null ? 1 : l.opacity) * (l.fill == null ? 1 : l.fill), 0, 0);
+        }
+      }
+      k = (l.kind === "group" ? t : end) + 1;
+    }
+    return base;
+  }
+  // Pass Through (a group's usual mode): its layers act on everything below as if loose, then its opacity and mask
+  // fade that back towards what was below; any other mode: the group made alone, then laid down by its mode and opacity
+  function drawGroup(d, g, h, lo, clipTo) {
+    var G = d.layers[h], op = (G.opacity == null ? 1 : G.opacity) * (G.fill == null ? 1 : G.fill), masked = G.mask && G.mask.on;
+    if (G.blend === "pass-through" && !G.fx && !clipTo) {
+      if (op >= 1 && !masked) { drawRange(d, g, lo, h, G.id); return; }
+      var back = M.copy(g.canvas); drawRange(d, g, lo, h, G.id);
+      var over = M.copy(g.canvas); if (masked) maskInto(d, G, over);
+      g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = "copy"; g.globalAlpha = 1; g.drawImage(back, 0, 0);
+      g.globalCompositeOperation = "source-over"; g.globalAlpha = op; g.drawImage(over, 0, 0); g.restore();
+      return;
+    }
+    var cv = groupAlone(d, h, lo);
+    if (clipTo) { var tg = M.ctx(cv); tg.globalCompositeOperation = "destination-in"; tg.drawImage(clipTo, 0, 0); }
+    P.blend.draw(g, cv, G.blend === "pass-through" ? "normal" : G.blend, op, 0, 0);
+  }
   // layers i.. onto a copy of below (null: a clear canvas); opt.until stops before that index
   function from(d, below, i, opt) {
     opt = opt || {};
-    var out = opt.into && opt.into.width === d.w && opt.into.height === d.h ? opt.into : M.canvas(d.w, d.h), g = M.ctx(out), n = opt.until == null ? d.layers.length : opt.until, base = null, baseOn = true;
+    var out = opt.into && opt.into.width === d.w && opt.into.height === d.h ? opt.into : M.canvas(d.w, d.h), g = M.ctx(out), n = opt.until == null ? d.layers.length : opt.until;
     if (opt.into === out) { g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = "source-over"; g.clearRect(0, 0, d.w, d.h); }
     if (below) g.drawImage(below, 0, 0);
-    for (var k = 0; k < i; k++) if (!d.layers[k].clip) { base = d.layers[k]; baseOn = base.visible; }
-    for (k = i; k < n; k++) {
-      var l = d.layers[k];
-      if (!l.clip) { base = l; baseOn = l.visible; }
-      if (!l.visible || l.previewHidden || (l.clip && !baseOn)) continue;
-      var clipTo = l.clip && base && base !== l ? render(d, base) : null;
-      if (l.kind === "adjust") { adjustInto(d, g, l, clipTo); continue; }
-      var src = render(d, l);
-      if (clipTo) { var t = M.copy(src), tg = M.ctx(t); tg.globalCompositeOperation = "destination-in"; tg.drawImage(clipTo, 0, 0); src = t; }
-      P.blend.draw(g, src, l.blend, (l.opacity == null ? 1 : l.opacity) * (l.fill == null ? 1 : l.fill), 0, 0);
-    }
+    // the layer a clipped layer at i would clip to: the last unclipped one below i at the top level
+    var base = null;
+    if (i > 0) { var k = 0; while (k < i) { var t = unitTop(d, k, null), l = d.layers[t]; if (!l.clip) base = { l: l, at: t, lo: k, on: l.visible }; k = (l.kind === "group" ? t : k) + 1; } }
+    drawRange(d, g, i, n, null, base);
     return out;
   }
   function all(d, opt) { return from(d, null, 0, opt); }
   function flatPixels(d) { return M.pixels(all(d)); }
-  P.compose = { render: render, adjustInto: adjustInto, from: from, all: all, flatPixels: flatPixels };
+  P.compose = { render: render, adjustInto: adjustInto, from: from, all: all, flatPixels: flatPixels, splitAt: splitAt, span: span, unitTop: unitTop, inside: inside, byId: byId };
 })();
 // MODULE: PHOTO_COMPOSITE - END
 // MODULE: PHOTO_OPS - START
@@ -57036,6 +57118,7 @@ Lantern.RFB = (function () {
   // words, a shape or a fill turned into the pixels they draw (styles and mask stay as they are)
   function rasterize(d, l) {
     if (l.kind === "pixel" || l.kind === "adjust") return false;
+    if (l.kind === "group") throw new Error("\u201c" + l.name + "\u201d is a group: choose a layer in it (or Layer > Merge Group)");
     var keep = { fx: l.fx, mask: l.mask }; l.fx = null; l.mask = null; l.ver++;
     var cv = M.copy(P.compose.render(d, l));
     l.fx = keep.fx; l.mask = keep.mask; l.kind = "pixel"; l.cv = cv; l.x = 0; l.y = 0; l.text = l.shape = l.fillSpec = null; l.ver++; l.cow = d.cmd;
@@ -57048,6 +57131,7 @@ Lantern.RFB = (function () {
     if (!l) throw new Error("there is no layer to change");
     if (l.locked) throw new Error("the layer \u201c" + l.name + "\u201d is locked");
     var onMask = d.editMask && l.mask;
+    if (!onMask && l.kind === "group") throw new Error("\u201c" + l.name + "\u201d is a group: choose a layer in it to change its pixels (or paint on the group\u2019s mask)");
     if (!onMask && l.kind === "adjust") throw new Error("an adjustment layer has no pixels of its own: choose a picture layer (or paint on its mask)");
     if (!onMask) rasterize(d, l);
     var cv = onMask ? D.touchMask(d, l) : D.touch(d, l), x = onMask ? l.mask.x : l.x, y = onMask ? l.mask.y : l.y, g = M.ctx(cv), w = cv.width, h = cv.height;
@@ -57429,6 +57513,161 @@ Lantern.RFB = (function () {
   O.def("place", "Place", function (d, p) { D.add(d, D.layer({ name: p.name || "Placed", cv: p.canvas, x: p.x == null ? Math.round((d.w - p.canvas.width) / 2) : p.x, y: p.y == null ? Math.round((d.h - p.canvas.height) / 2) : p.y })); });
 })();
 // MODULE: PHOTO_OPS_LAYER - END
+// MODULE: PHOTO_GROUPS - START
+// Depends: PHOTO_DOC, PHOTO_OPS, PHOTO_COMPOSITE (span, unitTop, inside, byId), PHOTO_OPS_LAYER (the commands it teaches groups)
+// Exports: commands newGroup, groupLayers, ungroupLayers, mergeGroup, toggleGroup; moveLayer, deleteLayer, duplicateLayer, layerVia,
+//          mergeDown, mergeVisible and moveBy taught groups; Lantern.photo.groups = {block(d, i) -> [lo, hi], depth(d, l), hidden(d, l)}
+// ===========================================================================
+// Layer groups, as Photoshop's: Layer > New Group, Group Layers (Ctrl+G),
+// Ungroup Layers (Ctrl+Shift+G), Merge Group (Ctrl+E with a group chosen).
+// A group is a layer of its own that sits just above its layers (a .psd
+// keeps them so too); it has a name, an eye, opacity, a blending mode (Pass
+// Through unless another is chosen), a mask and styles, and it can be shut
+// in the Layers panel. Moving a layer up or down steps over a shut group
+// and into an open one, and out at a group's top or bottom; moving, copying
+// or deleting a group takes its layers with it.
+(function () {
+  var L = window.Lantern, P = L && L.photo;
+  if (!P || !P.ops || !P.compose || !P.compose.span || !P.ops.list.moveLayer) return;
+  var O = P.ops, D = P.doc, C = P.compose, M = P.math;
+  function gidOf(l) { return l && l.gid != null ? l.gid : null; }
+  function isGroup(l) { return !!l && l.kind === "group"; }
+  function any(d) { return d.layers.some(isGroup); }
+  // the layers that move with layer i: itself, or a group with all of its layers: [lo, hi], both included
+  function block(d, i) { return isGroup(d.layers[i]) ? [C.span(d, i), i] : [i, i]; }
+  function depth(d, l) { var k = 0, seen = 0; while (l && l.gid != null && seen++ < 64) { var h = C.byId(d, l.gid); if (h < 0) break; l = d.layers[h]; k++; } return k; }
+  // inside a shut group (the Layers panel leaves it out)
+  function hidden(d, l) { var seen = 0; while (l && l.gid != null && seen++ < 64) { var h = C.byId(d, l.gid); if (h < 0) return false; l = d.layers[h]; if (!l.open) return true; } return false; }
+  function freshName(d) { var k = 1; while (d.layers.some(function (l) { return l.name === "Group " + k; })) k++; return "Group " + k; }
+  function makeGroup(d, name, gid) { return D.layer({ kind: "group", name: name || freshName(d), blend: "pass-through", gid: gid }); }
+  function splice(d, at, list) { Array.prototype.splice.apply(d.layers, [at, 0].concat(list)); }
+  O.def("newGroup", "New Group", function (d, p) {
+    var b = d.layers.length ? block(d, d.active) : [-1, -1], g = makeGroup(d, p && p.name, b[1] < 0 ? null : gidOf(d.layers[b[1]]));
+    d.layers.splice(b[1] + 1, 0, g); d.active = b[1] + 1;
+  });
+  // p = {lo, hi} (indices, both included) to group several layers side by side; else the layer chosen (with its layers, if a group)
+  O.def("groupLayers", "Group Layers", function (d, p) {
+    var b = p && p.lo != null ? [Math.min(p.lo, p.hi), Math.max(p.lo, p.hi)] : block(d, d.active), pid = gidOf(d.layers[b[1]]), k;
+    for (k = b[0]; k <= b[1]; k++) {
+      var t = C.unitTop(d, k, pid);
+      if (t > b[1] || gidOf(d.layers[t]) !== pid || (isGroup(d.layers[t]) && C.span(d, t) < b[0])) throw new Error("those layers are not side by side in one group: choose layers next to each other");
+    }
+    var g = makeGroup(d, p && p.name, pid);
+    for (k = b[0]; k <= b[1]; k++) if (gidOf(d.layers[k]) === pid) d.layers[k].gid = g.id;
+    d.layers.splice(b[1] + 1, 0, g); d.active = b[1] + 1;
+  });
+  O.def("ungroupLayers", "Ungroup Layers", function (d) {
+    var h = d.active, G = d.layers[h];
+    if (!isGroup(G)) throw new Error("choose a group to ungroup");
+    d.layers.forEach(function (l) { if (l.gid === G.id) l.gid = gidOf(G); });
+    d.layers.splice(h, 1); d.active = Math.max(0, h - 1);
+    if (!d.layers.length) d.layers.push(D.layer({ name: "Layer 1", cv: M.canvas(d.w, d.h) }));
+  });
+  // the group made one picture layer: what it lays down alone, with its mask and styles; its opacity and mode kept
+  O.def("mergeGroup", "Merge Group", function (d) {
+    var h = d.active, G = d.layers[h];
+    if (!isGroup(G)) throw new Error("choose a group to merge");
+    var b = block(d, h), cv = M.copy(C.render(d, G)), m = D.layer({ name: G.name, cv: cv, opacity: G.opacity, blend: G.blend === "pass-through" ? "normal" : G.blend, gid: gidOf(G) }), adj = false;
+    for (var k = b[0]; k < b[1]; k++) if (d.layers[k].kind === "adjust" && d.layers[k].visible) adj = true;
+    m.visible = G.visible;
+    d.layers.splice(b[0], b[1] - b[0] + 1, m); d.active = b[0];
+    if (G.blend === "pass-through" && adj) d.notes.push("\u201c" + G.name + "\u201d had adjustment layers that changed what lay under the group; merged, they change only its own layers (as in Photoshop)");
+  });
+  // shut or open a group in the Layers panel (not a step in History)
+  O.def("toggleGroup", "Group", function (d, p) { var l = d.layers[p && p.index != null ? p.index : d.active]; if (!isGroup(l)) return false; l.open = !l.open; d.ver++; D.notify(d); }, { noHistory: true });
+  // --- the layer commands, taught groups ---
+  function step(d, i, dir) {
+    var u = block(d, i), U = d.layers[i], pid = gidOf(U), n = u[1] - u[0] + 1, blk, X, t, V, lo;
+    if (dir > 0) {
+      var a = u[1] + 1; if (a >= d.layers.length) return -1;
+      X = d.layers[a];
+      if (pid != null && X.id === pid && isGroup(X)) {   // the top of its group: out above it
+        blk = d.layers.splice(u[0], n); splice(d, a - n + 1, blk); U.gid = gidOf(X); return a;
+      }
+      t = C.unitTop(d, a, pid); V = d.layers[t];
+      if (isGroup(V) && V.open) { U.gid = V.id; return i; }   // into an open group, at its bottom
+      blk = d.layers.splice(u[0], n); splice(d, t - n + 1, blk); return t;   // over the layer (or shut group) above
+    }
+    var bl = u[0] - 1; if (bl < 0) return -1;
+    X = d.layers[bl];
+    if (pid != null && !C.inside(d, X, pid)) { U.gid = gidOf(d.layers[C.byId(d, pid)]); return i; }   // the bottom of its group: out under it
+    V = X;
+    if (isGroup(V) && V.open) { blk = d.layers.splice(u[0], n); splice(d, bl, blk); U.gid = V.id; return bl + n - 1; }   // into an open group, at its top
+    lo = isGroup(V) ? C.span(d, bl) : bl;
+    blk = d.layers.splice(u[0], n); splice(d, lo, blk); return lo + n - 1;   // under the layer (or shut group) below
+  }
+  var orig = {}; ["moveLayer", "deleteLayer", "duplicateLayer", "layerVia", "mergeDown", "mergeVisible", "moveBy"].forEach(function (k) { orig[k] = O.list[k] && O.list[k].fn; });
+  // p = {from, to}: each step of one place moves one layer or one whole group
+  O.def("moveLayer", "Move Layer", function (d, p) {
+    if (!any(d)) return orig.moveLayer(d, p);
+    var at = p.from == null ? d.active : p.from, steps = Math.abs(p.to - at), dir = p.to > at ? 1 : -1, moved = false;
+    for (var s = 0; s < steps; s++) { var r = step(d, at, dir); if (r < 0) break; at = r; moved = true; }
+    if (!moved) return false;
+    d.active = at;
+  });
+  O.def("deleteLayer", "Delete Layer", function (d, p) {
+    var i = p && p.index != null ? p.index : d.active;
+    if (!isGroup(d.layers[i])) return orig.deleteLayer(d, p);
+    var b = block(d, i); d.layers.splice(b[0], b[1] - b[0] + 1);
+    if (!d.layers.length) d.layers.push(D.layer({ name: "Layer 1", cv: M.canvas(d.w, d.h) }));
+    d.active = Math.max(0, Math.min(b[0] - 1, d.layers.length - 1)); if (b[0] === 0) d.active = 0;
+  });
+  function dupBlock(d, i) {
+    var b = block(d, i), map = {}, out = [];
+    for (var k = b[0]; k <= b[1]; k++) {
+      var s = d.layers[k], c = D.cloneLayer(s), nid = D.layer({}).id;
+      if (isGroup(s)) map[s.id] = nid;
+      c.id = nid; c.ver = 1; c.cow = -1; c.cache = null; if (s.cv) c.cv = M.copy(s.cv); if (s.mask) c.mask.cv = M.copy(s.mask.cv);
+      out.push(c);
+    }
+    out.forEach(function (c) { if (c.gid != null && map[c.gid] != null && c !== out[out.length - 1]) c.gid = map[c.gid]; });
+    out[out.length - 1].name = d.layers[b[1]].name + " copy";
+    splice(d, b[1] + 1, out); d.active = b[1] + out.length;
+  }
+  O.def("duplicateLayer", "Duplicate Layer", function (d, p) { var i = p && p.index != null ? p.index : d.active; if (!isGroup(d.layers[i])) return orig.duplicateLayer(d, p); dupBlock(d, i); });
+  O.def("layerVia", function (p) { return p.cut ? "Layer Via Cut" : "Layer Via Copy"; }, function (d, p) {
+    var l = D.active(d);
+    if (!isGroup(l)) return orig.layerVia(d, p);
+    if (d.sel) throw new Error("\u201c" + l.name + "\u201d is a group: choose one of its layers to copy what the selection holds");
+    dupBlock(d, d.active);
+  });
+  O.def("mergeDown", "Merge Down", function (d, p) {
+    var i = d.active, l = d.layers[i];
+    if (isGroup(l)) return O.list.mergeGroup.fn(d, p);
+    if (!any(d)) return orig.mergeDown(d, p);
+    var below = d.layers[i - 1];
+    if (below && isGroup(below)) throw new Error("the layer under this one is a group: merge the group first (Layer > Merge Group), or move this layer into it");
+    if (below && gidOf(below) !== gidOf(l)) throw new Error("this is the lowest layer in its group: nothing in the group lies under it to merge into");
+    var g = gidOf(l), r = orig.mergeDown(d, p); d.layers[d.active].gid = g; return r;
+  });
+  // Merge Visible: what shows, made one layer at the top level; hidden layers and groups kept as they are
+  O.def("mergeVisible", "Merge Visible", function (d, p) {
+    if (!any(d)) return orig.mergeVisible(d, p);
+    var keep = [], at = -1, name = null, k = 0;
+    while (k < d.layers.length) {
+      var t = C.unitTop(d, k, null), top = d.layers[t];
+      if (top.visible) { if (at < 0) at = keep.length; name = top.name; } else keep = keep.concat(d.layers.slice(k, t + 1));
+      k = t + 1;
+    }
+    if (at < 0) return false;
+    var m = D.layer({ name: name, cv: C.all(d), gid: null });
+    keep.splice(at, 0, m); d.layers = keep; d.active = at;
+  });
+  // the Move tool on a group moves all of its layers (and its mask); a selection is left where it is
+  O.def("moveBy", "Move", function (d, p) {
+    var G = D.active(d);
+    if (!isGroup(G)) return orig.moveBy(d, p);
+    if (G.locked) return false;
+    var b = block(d, d.active), keepA = d.active, keepS = d.sel, dx = Math.round(p.dx || 0), dy = Math.round(p.dy || 0);
+    d.sel = null;
+    try { for (var k = b[0]; k < b[1]; k++) { var l = d.layers[k]; if (isGroup(l) || l.kind === "adjust" && !l.mask) continue; d.active = k; orig.moveBy(d, { dx: dx, dy: dy }); } }
+    finally { d.active = keepA; d.sel = keepS; }
+    if (G.mask) G.mask = { cv: G.mask.cv, x: G.mask.x + dx, y: G.mask.y + dy, on: G.mask.on, def: G.mask.def };
+    G.ver++;
+  });
+  P.groups = { block: block, depth: depth, hidden: hidden, isGroup: isGroup };
+})();
+// MODULE: PHOTO_GROUPS - END
 // MODULE: PHOTO_OPS_SELECT - START
 // Depends: PHOTO_OPS, PHOTO_SEL_OPS, PHOTO_COMPOSITE
 // Exports: commands selectAll, deselect, reselect, inverse, selectShape, wand, colorRange, modify,
@@ -57919,11 +58158,12 @@ Lantern.RFB = (function () {
     function composite() {
       if (v.preview) return v.preview;
       var k = key();
-      if (v.below && v.belowAt === d.active) { v.scratch = C.from(d, v.below, d.active, { into: v.scratch }); return v.scratch; }
+      if (v.below && v.belowAt === d.active) { v.scratch = C.from(d, v.below, v.belowFrom, { into: v.scratch }); return v.scratch; }
       if (v.comp && v.compKey === k) return v.comp;
       v.comp = C.all(d); v.compKey = k; return v.comp;
     }
-    v.freeze = function () { v.below = d.active > 0 ? C.all(d, { until: d.active }) : null; v.belowAt = d.active; if (!v.below) { v.below = M.canvas(d.w, d.h); } };
+    // (a layer in a group: the cut is made below the group, so the group is drawn whole)
+    v.freeze = function () { var at = C.splitAt ? C.splitAt(d, d.active) : d.active; v.below = at > 0 ? C.all(d, { until: at }) : null; v.belowAt = d.active; v.belowFrom = at; if (!v.below) { v.below = M.canvas(d.w, d.h); } };
     v.thaw = function () { v.below = null; v.belowAt = -1; v.compKey = ""; };
     v.toDoc = function (e) { var r = cv.getBoundingClientRect(); return [(e.clientX - r.left) / v.zoom + v.ox, (e.clientY - r.top) / v.zoom + v.oy]; };
     v.toScreen = function (x, y) { return [(x - v.ox) * v.zoom, (y - v.oy) * v.zoom]; };
@@ -59118,15 +59358,19 @@ Lantern.RFB = (function () {
       if (k === "psd") {
         var r = P.psd.read(b);
         d = D.create(r.w, r.h, { name: name, dpi: r.dpi, label: "Open" }); d.layers = []; d.notes = r.notes.slice();
+        var rids = {}, pend = [];
         r.layers.forEach(function (ly) {
-          var l = D.layer({ name: ly.name, visible: ly.visible, opacity: ly.opacity, blend: ly.blend, clip: ly.clip });
-          if (ly.adj) { l.kind = "adjust"; l.adj = ly.adj; }
+          var l = D.layer({ name: ly.name, visible: ly.visible, opacity: ly.opacity, blend: ly.blend, clip: ly.clip, kind: ly.group ? "group" : "pixel", open: ly.open });
+          if (ly.group) rids[ly.rid] = l.id;
+          if (ly.pgid != null) pend.push([l, ly.pgid]);
+          if (ly.group) { /* a group has no pixels of its own */ }
+          else if (ly.adj) { l.kind = "adjust"; l.adj = ly.adj; }
           else if (ly.rgba) { l.cv = canvasOfRGBA(ly.w, ly.h, ly.rgba); l.x = ly.x; l.y = ly.y; }
           else { l.cv = M.canvas(1, 1); }
           if (ly.mask && ly.mask.w > 0) { var mk = M.canvas(ly.mask.w, ly.mask.h), mg = M.ctx(mk), im = mg.createImageData(ly.mask.w, ly.mask.h); for (var j = 0; j < ly.mask.data.length; j++) im.data[j * 4 + 3] = ly.mask.data[j]; mg.putImageData(im, 0, 0); l.mask = { cv: mk, x: ly.mask.x, y: ly.mask.y, on: ly.mask.on !== false, def: ly.mask.def || 0 }; }
-          if (ly.group) l.group = ly.group;
           d.layers.push(l);
         });
+        pend.forEach(function (q) { q[0].gid = rids[q[1]] == null ? null : rids[q[1]]; });
         if (!d.layers.length && r.merged) d.layers.push(D.layer({ name: "Background", cv: canvasOfRGBA(r.w, r.h, r.merged) }));
         if (!d.layers.length) d.layers.push(D.layer({ name: "Background", cv: M.canvas(r.w, r.h) }));
         d.active = d.layers.length - 1; d.hist = [{ label: "Open", state: D.snap(d) }];
@@ -59172,9 +59416,19 @@ Lantern.RFB = (function () {
         : [{ rgba: M.pixels(comp).data, colors: opt.colors || 256, dither: opt.dither }];
       bytes = P.gif.write(frames, d.w, d.h, { loop: 0 });
     } else if (fmt === "psd") {
-      var layers = d.layers.map(function (l) {
+      // a group goes in as Photoshop keeps one: a closing record under its layers, its own record above them
+      var starts = {};
+      d.layers.forEach(function (l, h) { if (l.kind === "group" && C.span) { var s0 = C.span(d, h); (starts[s0] = starts[s0] || []).push(h); } });
+      var layers = [];
+      d.layers.forEach(function (l, k) {
+        (starts[k] || []).sort(function (a, b) { return b - a; }).forEach(function () { layers.push({ divider: true, name: "</Layer group>", visible: true, opacity: 1, blend: "normal" }); });
+        layers.push(l);
+      });
+      layers = layers.map(function (l) {
+        if (l.divider) return l;
         var o = { name: l.name, visible: l.visible, opacity: l.opacity * (l.fill == null ? 1 : l.fill), blend: l.blend, clip: l.clip };
-        if (l.kind === "adjust" && P.psdAdj.write(l.adj || {})) { o.adj = l.adj; }
+        if (l.kind === "group") { o.group = true; o.open = l.open !== false; if (l.fx) d.notes.push("group \u201c" + l.name + "\u201d keeps its layers in the .psd, but not its layer style"); }
+        else if (l.kind === "adjust" && P.psdAdj.write(l.adj || {})) { o.adj = l.adj; }
         else {
           var keepMask = l.mask; l.mask = null; l.ver++;
           var cv = l.kind === "adjust" ? null : C.render(d, l); l.mask = keepMask; l.ver++;
@@ -59204,7 +59458,8 @@ Lantern.RFB = (function () {
 // paint on the layer again), its name (double-click to rename); the
 // blending mode, opacity, lock transparency and clipping of the one chosen;
 // buttons for a new layer, a copy, a mask, an adjustment layer, layer style,
-// merge down, up, down and delete. Ctrl+click a layer's picture to select
+// group, merge down, up, down and delete. A group shows its layers under it,
+// set in; the triangle shuts or opens it. Ctrl+click a layer's picture to select
 // what it holds. History: every step, newest last; click one to go back
 // to it (the circle sets where the History Brush paints from). Histogram:
 // the picture's levels, per channel. Info: the colour under the pointer in
@@ -59222,7 +59477,7 @@ Lantern.RFB = (function () {
   function maskThumb(d, l) { var m = D.maskData(d, l), cv = M.canvas(d.w, d.h), g = M.ctx(cv), id = g.createImageData(d.w, d.h); for (var j = 0; j < m.length; j++) { id.data[j * 4] = id.data[j * 4 + 1] = id.data[j * 4 + 2] = m[j]; id.data[j * 4 + 3] = 255; } g.putImageData(id, 0, 0); return thumb(cv, d.w, d.h); }
   function layers(api) {
     var box = el("div", { "class": "ph-panel" }), list = el("div", { "class": "ph-layers" }), ctl = el("div", { "class": "ph-lctl" }), thumbs = {};
-    var blend = el("select", { "aria-label": "Blending mode", title: "Blending mode" }, D.BLENDS.map(function (b) { return el("option", { value: b, text: b.replace(/-/g, " ") }); }));
+    var blend = el("select", { "aria-label": "Blending mode", title: "Blending mode" }, ["pass-through"].concat(D.BLENDS).map(function (b) { return el("option", { value: b, text: b.replace(/-/g, " ") }); }));
     var op = el("input", { type: "number", min: 0, max: 100, "aria-label": "Opacity", title: "Opacity (%)", style: "width:56px" });
     var lockA = el("input", { type: "checkbox", title: "Lock transparent pixels" }), clip = el("input", { type: "checkbox", title: "Clip to the layer below" });
     blend.onchange = function () { api.exec("setLayer", { blend: blend.value }); };
@@ -59236,22 +59491,29 @@ Lantern.RFB = (function () {
     function btn(t, title, fn) { return el("button", { text: t, title: title, "aria-label": title, onclick: function () { try { fn(); } catch (e) { api.status(e.message); } } }); }
     var bar = el("div", { "class": "ph-lbar" }, [btn("+", "New layer", function () { api.exec("newLayer", {}); }), btn("\u29c9", "Duplicate layer", function () { api.exec("duplicateLayer", {}); }),
       btn("\u25d0", "Add a layer mask (from the selection, if there is one)", function () { api.exec("addMask", {}); }), adjSel, btn("fx", "Layer style", function () { styleDialog(api); }),
-      btn("\u2913", "Merge down", function () { api.exec("mergeDown", {}); }), btn("\u2191", "Move up", function () { var d = api.d; if (d.active < d.layers.length - 1) api.exec("moveLayer", { to: d.active + 1 }); }),
+      btn("\ud83d\udcc1", "Group the layer (Ctrl+G); a new group if nothing is chosen", function () { api.exec(api.d.layers.length ? "groupLayers" : "newGroup", {}); }),
+      btn("\u2913", "Merge down (a group: Merge Group)", function () { var l = D.active(api.d); api.exec(l && l.kind === "group" && P.ops.list.mergeGroup ? "mergeGroup" : "mergeDown", {}); }), btn("\u2191", "Move up", function () { var d = api.d; if (d.active < d.layers.length - 1) api.exec("moveLayer", { to: d.active + 1 }); }),
       btn("\u2193", "Move down", function () { var d = api.d; if (d.active > 0) api.exec("moveLayer", { to: d.active - 1 }); }), btn("\ud83d\uddd1", "Delete layer", function () { api.exec("deleteLayer", {}); })]);
     box.appendChild(el("div", { "class": "ph-ptitle", text: "Layers" })); box.appendChild(ctl); box.appendChild(list); box.appendChild(bar);
     function update() {
       var d = api.d, l = D.active(d); list.innerHTML = "";
-      if (l) { blend.value = l.blend; op.value = Math.round(l.opacity * 100); lockA.checked = !!l.lockAlpha; clip.checked = !!l.clip; }
+      if (l) { blend.options[0].hidden = blend.options[0].disabled = l.kind !== "group"; blend.value = l.blend; op.value = Math.round(l.opacity * 100); lockA.checked = !!l.lockAlpha; clip.checked = !!l.clip; }
       for (var i = d.layers.length - 1; i >= 0; i--) (function (i) {
-        var ly = d.layers[i], row = el("div", { "class": "ph-lrow" + (i === d.active ? " on" : "") + (ly.clip ? " clip" : "") });
+        var ly = d.layers[i], G = P.groups;
+        if (G && G.hidden(d, ly)) return;   // inside a shut group
+        var row = el("div", { "class": "ph-lrow" + (i === d.active ? " on" : "") + (ly.clip ? " clip" : "") + (ly.kind === "group" ? " grp" : "") });
+        if (G) row.style.paddingLeft = (G.depth(d, ly) * 14) + "px";
         var eye = el("button", { "class": "ph-eye", text: ly.visible ? "\ud83d\udc41" : "\u2014", title: ly.visible ? "Hide" : "Show", "aria-label": (ly.visible ? "Hide " : "Show ") + ly.name, onclick: function (e) { e.stopPropagation(); api.exec("setLayer", { index: i, visible: !ly.visible }); } });
         var key = ly.id + ":" + ly.ver, th = thumbs[key];
-        if (!th) { th = ly.kind === "adjust" ? el("span", { "class": "ph-thumb ph-adj", text: "\u25d1" }) : thumb(C.render(d, ly), d.w, d.h); thumbs[key] = th; }
+        if (ly.kind === "group") th = el("span", { "class": "ph-thumb ph-adj", text: "\ud83d\udcc1" });
+        else if (!th) { th = ly.kind === "adjust" ? el("span", { "class": "ph-thumb ph-adj", text: "\u25d1" }) : thumb(C.render(d, ly), d.w, d.h); thumbs[key] = th; }
         th.onclick = function (e) { e.stopPropagation(); if (e.ctrlKey || e.metaKey) { api.exec("selectLayerAlpha", { index: i }); return; } d.active = i; d.editMask = false; api.refresh(); };
         if (ly.kind === "adjust") th.ondblclick = function (e) { e.stopPropagation(); if (P.adjUI) P.adjUI.open(api, ly.adj.type, true, i); };
         var name = el("span", { "class": "ph-lname", text: ly.name + (ly.kind === "text" ? "  T" : ly.kind === "shape" ? "  \u25b2" : "") + (ly.fx ? "  fx" : "") });
         name.ondblclick = function (e) { e.stopPropagation(); var inp = el("input", { type: "text", value: ly.name, style: "width:120px" }); name.replaceWith(inp); inp.focus(); inp.select(); inp.onkeydown = function (ev) { ev.stopPropagation(); if (ev.key === "Enter") inp.blur(); if (ev.key === "Escape") { inp.value = ly.name; inp.blur(); } }; inp.onblur = function () { if (inp.value && inp.value !== ly.name) api.exec("setLayer", { index: i, name: inp.value }); else update(); }; };
-        row.appendChild(eye); row.appendChild(th);
+        row.appendChild(eye);
+        if (ly.kind === "group") row.appendChild(el("button", { "class": "ph-eye ph-twist", text: ly.open ? "\u25be" : "\u25b8", title: ly.open ? "Shut the group" : "Open the group", "aria-label": (ly.open ? "Shut " : "Open ") + ly.name, "aria-expanded": ly.open ? "true" : "false", onclick: function (e) { e.stopPropagation(); api.exec("toggleGroup", { index: i }); api.refresh(); } }));
+        row.appendChild(th);
         if (ly.mask) { var mt = maskThumb(d, ly); mt.title = "Layer mask: click to paint on it (Shift+click turns it off)"; if (d.editMask && i === d.active) mt.classList.add("on"); if (!ly.mask.on) mt.style.opacity = "0.35"; mt.onclick = function (e) { e.stopPropagation(); if (e.shiftKey) { api.exec("setLayer", { index: i, maskOn: !ly.mask.on }); return; } d.active = i; d.editMask = true; api.refresh(); api.status("Painting on the mask: black hides, white shows"); }; row.appendChild(mt); }
         row.appendChild(name);
         row.onclick = function () { d.active = i; d.editMask = false; api.refresh(); };
@@ -59432,7 +59694,8 @@ Lantern.RFB = (function () {
         { label: "Trim\u2026", run: function () { dlg(api, "Trim", [{ key: "by", label: "Based on", type: "select", options: [["transparent", "Transparent Pixels"], ["topleft", "Top Left Pixel Color"], ["bottomright", "Bottom Right Pixel Color"]] }], { by: "transparent" }, function (p) { api.exec("trim", p); api.view.fit(); }); } },
         { label: "Reveal All", run: function () { api.exec("revealAll"); api.view.fit(); } }]],
       ["Layer", [{ label: "New Layer", key: "Ctrl+Shift+N", run: X("newLayer") }, { label: "Layer via Copy", key: "Ctrl+J", run: X("layerVia") }, { label: "Layer via Cut", key: "Ctrl+Shift+J", run: X("layerVia", { cut: true }) },
-        { label: "Duplicate Layer", run: X("duplicateLayer") }, { label: "Delete Layer", run: X("deleteLayer") }, { sep: 1 }, { label: "Layer Style\u2026", run: function () { P.panels.styleDialog(api); } },
+        { label: "Duplicate Layer", run: X("duplicateLayer") }, { label: "Delete Layer", run: X("deleteLayer") }, { sep: 1 },
+        { label: "New Group", run: X("newGroup") }, { label: "Group Layers", key: "Ctrl+G", run: X("groupLayers") }, { label: "Ungroup Layers", key: "Ctrl+Shift+G", run: X("ungroupLayers") }, { sep: 1 }, { label: "Layer Style\u2026", run: function () { P.panels.styleDialog(api); } },
         { label: "New Fill Layer", sub: [{ label: "Solid Color", run: function () { api.exec("newFill", { fillSpec: { type: "solid", color: api.d.fg.slice() }, name: "Color Fill" }); } }, { label: "Gradient", run: function () { var d = api.d; api.exec("newFill", { fillSpec: { type: "gradient", gradient: { stops: [[0, d.fg.slice(), 1], [1, d.bg.slice(), 1]] }, x0: 0, y0: 0, x1: 0, y1: d.h }, name: "Gradient Fill" }); } }, { label: "Pattern", run: function () { if (!api.d.pattern) { api.status("define a pattern first (Edit > Define Pattern)"); return; } api.exec("newFill", { fillSpec: { type: "pattern" }, name: "Pattern Fill" }); } }] },
         { label: "New Adjustment Layer", sub: adjItems(api, true) },
         { label: "Layer Mask", sub: [{ label: "Reveal All", run: X("addMask", { how: "reveal" }) }, { label: "Hide All", run: X("addMask", { how: "hide" }) }, { label: "Reveal Selection", run: X("addMask", { how: "selection" }) },
@@ -59441,7 +59704,7 @@ Lantern.RFB = (function () {
         { label: "Rasterize", run: X("rasterizeLayer") }, { sep: 1 },
         { label: "Align to the selection or canvas", sub: [["left", "Left Edges"], ["hcenter", "Horizontal Centers"], ["right", "Right Edges"], ["top", "Top Edges"], ["vcenter", "Vertical Centers"], ["bottom", "Bottom Edges"]].map(function (a) { return { label: a[1], run: X("alignLayers", { how: a[0] }) }; }) },
         { label: "Stack Mode (visible layers)", sub: [["median", "Median (takes away what moves)"], ["mean", "Mean (less noise)"], ["max", "Maximum"], ["min", "Minimum"]].map(function (a) { return { label: a[1], run: X("stack", { mode: a[0] }) }; }) },
-        { sep: 1 }, { label: "Merge Down", key: "Ctrl+E", run: X("mergeDown") }, { label: "Merge Visible", key: "Ctrl+Shift+E", run: X("mergeVisible") }, { label: "Stamp Visible", key: "Ctrl+Alt+Shift+E", run: X("stampVisible") }, { label: "Flatten Image", run: X("flatten") }]],
+        { sep: 1 }, { label: "Merge Down (a group: Merge Group)", key: "Ctrl+E", run: function () { var l = D.active(api.d); api.exec(l && l.kind === "group" && P.ops.list.mergeGroup ? "mergeGroup" : "mergeDown", {}); } }, { label: "Merge Visible", key: "Ctrl+Shift+E", run: X("mergeVisible") }, { label: "Stamp Visible", key: "Ctrl+Alt+Shift+E", run: X("stampVisible") }, { label: "Flatten Image", run: X("flatten") }]],
       ["Select", [{ label: "All", key: "Ctrl+A", run: X("selectAll") }, { label: "Deselect", key: "Ctrl+D", run: X("deselect") }, { label: "Reselect", key: "Ctrl+Shift+D", run: X("reselect") }, { label: "Inverse", key: "Ctrl+Shift+I", run: X("inverse") },
         { sep: 1 }, { label: "Subject (on a plain background)", run: function () { api.exec("selectSubject", { tolerance: 24 }); } },
         { label: "Color Range\u2026", run: function () { dlg(api, "Color Range", [{ key: "color", label: "Colour to select", type: "color" }, { key: "fuzziness", label: "Fuzziness", type: "range", min: 0, max: 200 }, { type: "note", label: "Tip: pick the colour with the Eyedropper (I) first; it fills in here." }], { color: api.d.fg, fuzziness: 40 }, function (p) { api.exec("colorRange", { colors: [p.color], fuzziness: p.fuzziness }); }); } },

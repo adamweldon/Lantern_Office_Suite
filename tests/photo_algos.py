@@ -191,6 +191,23 @@ try:
     sl = list(PSDImage.open(os.path.join(OUT, "selc.psd")))[1]
     check("Lantern's .psd: a Selective Color layer is one psd-tools reads as Photoshop's own (absolute; reds, blues, neutrals)", sl.kind == "selectivecolor" and sl.method == 1 and tuple(sl.data[1]) == (-30, 10, 0, 5) and tuple(sl.data[5]) == (0, 0, 20, 0) and tuple(sl.data[8]) == (0, -7, 0, 0) and tuple(sl.data[0]) == (0, 0, 0, 0), (sl.kind, getattr(sl, "method", None), getattr(sl, "data", None)))
     check("...and Lantern reads it back as it wrote it", r and r["type"] == "selectiveColor" and r["p"]["relative"] is False and r["p"]["reds"] == [-30, 10, 0, 5] and r["p"]["neutrals"] == [0, -7, 0, 0] and r["p"]["greens"] == [0, 0, 0, 0], r)
+    # groups: Lantern writes Photoshop's section records; psd-tools reads the tree and composes the picture from the layers alone
+    r = run("""var w = 60, h = 40, n = w * h; function solid(c, x0, x1) { var a = new Uint8ClampedArray(n * 4); for (var j = 0; j < n; j++) { var x = j % w; if (x >= x0 && x < x1) { a[j * 4] = c[0]; a[j * 4 + 1] = c[1]; a[j * 4 + 2] = c[2]; a[j * 4 + 3] = 255; } } return a; }
+      var comp = solid([0, 0, 0], 0, w), L = function (name, rgba, o) { var l = {name: name, x: 0, y: 0, w: w, h: h, rgba: rgba, visible: true, opacity: 1, blend: 'normal'}; for (var k in o || {}) l[k] = o[k]; return l; };
+      var b = P.psd.write({w: w, h: h, dpi: 72, composite: comp, layers: [L('Back', solid([230, 200, 120], 0, w)), {divider: true, name: '</Layer group>'}, L('Blue', solid([20, 90, 200], 5, 40)),
+        {divider: true, name: '</Layer group>'}, L('Red', solid([250, 40, 40], 25, 55), {blend: 'multiply'}), {group: true, name: 'Inner', visible: true, opacity: 1, blend: 'pass-through', open: false},
+        {group: true, name: 'Outer', visible: true, opacity: 160 / 255, blend: 'normal', open: true}]});
+      fs.writeFileSync(OUT + '/groups.psd', Buffer.from(b));
+      var back = P.psd.read(new Uint8Array(b)).layers; return back.map(function (l) { return [l.name, !!l.group, l.blend, Math.round(l.opacity * 255), l.rid == null ? null : l.rid, l.pgid == null ? null : l.pgid, l.open == null ? null : l.open]; });""")
+    gp = PSDImage.open(os.path.join(OUT, "groups.psd"))
+    def tree(g): return [(l.name, l.kind, str(l.blend_mode).split(".")[-1], l.opacity, tree(l) if l.is_group() else None) for l in g]
+    check("Lantern's .psd with a group in a group: psd-tools reads the tree, the modes (Pass Through, Normal) and the group's opacity", tree(gp) == [("Back", "pixel", "NORMAL", 255, None), ("Outer", "group", "NORMAL", 160, [("Blue", "pixel", "NORMAL", 255, None), ("Inner", "group", "PASS_THROUGH", 255, [("Red", "pixel", "MULTIPLY", 255, None)])])], tree(gp))
+    gc = np.asarray(gp.composite(ignore_preview=True).convert("RGB"), float)
+    # by hand: Red multiplies Blue inside Outer (made alone), Outer laid at 160/255 over Back
+    o = 160 / 255.0; bl = np.array([20, 90, 200.]); rd = np.array([250, 40, 40.]); bk = np.array([230, 200, 120.])
+    want = {10: bk * (1 - o) + bl * o, 30: bk * (1 - o) + bl * rd / 255 * o, 50: bk * (1 - o) + rd * o, 58: bk}
+    check("...and the picture psd-tools makes from those layers is the one the groups mean (within 2 levels)", all(np.abs(gc[20, x] - v).max() <= 2 for x, v in want.items()), [(x, list(gc[20, x]), list(np.round(v))) for x, v in want.items()])
+    check("...Lantern reads its own groups back: the tree, Inner shut, Outer open", r == [["Back", False, "normal", 255, None, None, None], ["Blue", False, "normal", 255, None, 2, None], ["Red", False, "multiply", 255, None, 1, None], ["Inner", True, "pass-through", 255, 1, 2, False], ["Outer", True, "normal", 160, 2, None, True]], r)
     # psd-tools' own layered PSD read by Lantern
     q = PSDImage.new("RGB", (W, H))
     from psd_tools.api.layers import PixelLayer

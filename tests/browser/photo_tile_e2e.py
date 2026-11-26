@@ -1,7 +1,7 @@
 # photo_tile_e2e.py -- the Photo tile (1.24.42) in a real browser (Chromium via Playwright), driven as a person drives it:
 # open pictures made here by PIL, ImageMagick and psd-tools; the tools by mouse (marquee, wand, brush, eraser, crop, free transform,
 # type, shape, gradient, bucket, clone, spot healing, patch, red eye); the menus and their boxes (Levels, Curves, Gaussian Blur ...);
-# layers, masks, adjustment layers, styles (Bevel & Emboss, Inner Glow); the adjustments Photoshop applies only to pixels; undo and History; Actions recorded, played and batched; every save format opened again
+# layers, groups (Pass Through and Normal, nested, saved and opened), masks, adjustment layers, styles (Bevel & Emboss, Inner Glow); the adjustments Photoshop applies only to pixels; undo and History; Actions recorded, played and batched; every save format opened again
 # by PIL, psd-tools and ImageMagick; keys; a phone-sized window. Usage: python3 tests/browser/photo_tile_e2e.py [site/index.html]
 import os, sys, io, json, re, threading, http.server, socketserver, tempfile, subprocess, zipfile
 from playwright.sync_api import sync_playwright
@@ -37,6 +37,18 @@ try:
         li = Image.new("RGBA", (W, H), (0, 0, 0, 0)); ImageDraw.Draw(li).rectangle(box, fill=col + (255,))
         p.append(PixelLayer.frompil(li, p, name))
     p.save(os.path.join(OUT, "made_by_psdtools.psd")); psd_ok = True
+    from psd_tools.api.layers import Group
+    from psd_tools.constants import BlendMode
+    q = PSDImage.new("RGB", (120, 80))
+    def lyr(name, draw):
+        li = Image.new("RGBA", (120, 80), (0, 0, 0, 0)); draw(ImageDraw.Draw(li)); return PixelLayer.frompil(li, q, name)
+    lyr("Back", lambda g: g.rectangle((0, 0, 119, 79), fill=(230, 200, 120, 255)))
+    og = Group.new(q, "Outer"); og.blend_mode = BlendMode.NORMAL; og.opacity = 160
+    og.append(lyr("Blue", lambda g: g.rectangle((10, 10, 70, 60), fill=(20, 90, 200, 255))))
+    ig = Group.new(og, "Inner", open_folder=False); ig.blend_mode = BlendMode.PASS_THROUGH
+    rl = lyr("Red", lambda g: g.ellipse((40, 20, 110, 75), fill=(250, 40, 40, 255))); rl.blend_mode = BlendMode.MULTIPLY; ig.append(rl)
+    q.save(os.path.join(OUT, "groups_psdtools.psd"))
+    groups_comp = np.asarray(PSDImage.open(os.path.join(OUT, "groups_psdtools.psd")).composite(ignore_preview=True).convert("RGB"), float)
 except Exception as e:
     print("SKIP  psd-tools could not make a layered PSD here: " + str(e)[:120])
 have_magick = subprocess.run(["which", "convert"], capture_output=True).returncode == 0
@@ -260,8 +272,39 @@ with sync_playwright() as pw:
     gl = [pix(151, 140), pix(200, 140), pix(140, 140)]
     check("Inner Glow: light just inside the edge, the middle and the outside as they were", gl[0][0] > 140 and gl[1][:4] == [128, 128, 128, 255] and gl[2][3] == 0, gl)
     check("...Layer Style is one History step each time", hist()[-1] == "Layer Style" and hist()[-2] == "Layer Style", hist()[-3:])
+    # --- Groups: Ctrl+G, the Layers panel, Pass Through against Normal, saved for psd-tools, a psd-tools file with groups opened ---
+    J("(() => { var api = Lantern.photo.api; api.exec('newLayer', {name: 'Square'}); api.exec('selectShape', {x: 20, y: 20, w: 60, h: 60}); api.exec('fill', {use: 'color', color: [0, 0, 255]}); api.exec('deselect'); })()")
+    pg.keyboard.press("Control+g"); pg.wait_for_timeout(250)
+    st = J("Lantern.photo.api.d.layers.slice(-2).map(function (l) { return [l.name, l.kind, l.gid == null ? null : l.gid, l.id]; })")
+    check("Ctrl+G: the layer goes into a new group just above it", st[1][1] == "group" and st[0][0] == "Square" and st[0][2] == st[1][3] and hist()[-1] == "Group Layers", st)
+    rows = J("Array.prototype.map.call(document.querySelectorAll('.ph-lrow'), function (r) { return [r.querySelector('.ph-lname').textContent, r.style.paddingLeft, !!r.querySelector('.ph-twist')]; })")
+    check("...the Layers panel shows the group with its triangle, and its layer set in under it", rows[0][2] and rows[1][0].startswith("Square") and rows[1][1] == "14px", rows[:3])
+    out0 = flat(5, 5)
+    J("(() => { var api = Lantern.photo.api, d = api.d; d.active = d.layers.length - 2; api.exec('newAdjustment', {type: 'invert', p: {}}); })()")
+    pas = [flat(5, 5), flat(50, 50)]
+    J("(() => { var api = Lantern.photo.api, d = api.d; api.exec('setLayer', {index: d.layers.length - 1, blend: 'normal'}); })()")
+    nor = [flat(5, 5), flat(50, 50)]
+    check("Pass Through: an Invert inside the group inverts what lies under the group too", pas[0][:3] == [255 - v for v in out0[:3]] and pas[1][:3] == [255, 255, 0], (out0, pas))
+    check("Normal: the group is made alone, so the Invert reaches only the group's own layer", nor[0][:3] == out0[:3] and nor[1][:3] == [255, 255, 0], (out0, nor))
+    pg.click(".ph-lrow .ph-twist"); pg.wait_for_timeout(200)
+    names = J("Array.prototype.map.call(document.querySelectorAll('.ph-lrow .ph-lname'), function (x) { return x.textContent; })")
+    check("the triangle shuts the group: its layers leave the panel, the picture stays", not any(x.startswith("Square") for x in names) and flat(50, 50)[:3] == [255, 255, 0], names[:4])
+    gpth = save("psd")
+    try:
+        gp = PSDImage.open(gpth); top = [l for l in gp][-1]
+        gimg = np.asarray(gp.composite(ignore_preview=True).convert("RGB"), int)
+        check("Save .psd: psd-tools finds the group (Normal, shut) holding the layer and the Invert", top.is_group() and [l.name for l in top] == ["Square", "invert"] and "NORMAL" in str(top.blend_mode), [(l.name, l.kind) for l in gp])
+        check("...and psd-tools' picture from those layers is Lantern's (within 2 levels)", all(abs(int(gimg[y, x][c]) - flat(x, y)[c]) <= 2 for x, y in [(5, 5), (50, 50), (150, 150)] for c in range(3)), [(list(gimg[y, x]), flat(x, y)) for x, y in [(5, 5), (50, 50), (150, 150)]])
+    except NameError:
+        print("SKIP  psd-tools not here: the saved groups not read back")
+    if psd_ok:
+        opn("groups_psdtools.psd")
+        gs = J("Lantern.photo.api.d.layers.map(function (l) { return [l.name, l.kind, l.blend, l.open]; })")
+        check("a .psd psd-tools made with a group in a group opens with both groups, their modes, the inner one shut", [x[:3] for x in gs] == [["Back", "pixel", "normal"], ["Blue", "pixel", "normal"], ["Red", "pixel", "multiply"], ["Inner", "group", "pass-through"], ["Outer", "group", "normal"]] and gs[3][3] is False, gs)
+        check("...and looks as psd-tools makes it (within 2 levels)", all(abs(flat(x, y)[c] - groups_comp[y, x][c]) <= 2 for x, y in [(20, 35), (60, 40), (100, 70), (5, 5)] for c in range(3)), [(flat(x, y)[:3], list(groups_comp[y, x])) for x, y in [(20, 35), (60, 40), (100, 70), (5, 5)]])
     # --- Actions: record, play, batch ---
     J("Array.prototype.forEach.call(document.querySelectorAll('.ph-side details'), function (x) { x.open = true; })")
+    J("(() => { Lantern.photo.api.d.active = 0; Lantern.photo.api.refresh(); })()")   # a picture layer (the file just opened has a group on top)
     pg.click("button:text-is('● Record')"); J("Lantern.photo.ops.adjustCmd('invert'); Lantern.photo.api.exec('adjust:invert', {})"); pg.click("button:text-is('■ Stop')")
     check("Actions: a recorded action holds the step", "Invert" in pg.inner_text(".ph-side") or "adjust:invert" in pg.inner_text(".ph-side"))
     opn("scene.png"); J("Array.prototype.forEach.call(document.querySelectorAll('.ph-side details'), function (x) { x.open = true; })")
