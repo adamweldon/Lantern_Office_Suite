@@ -9,7 +9,8 @@ import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SRC = open(os.path.join(ROOT, "src", "lantern.inner.html"), encoding="utf-8").read()
 NAMES = ["PHOTO_MATH", "PHOTO_ADJ_TONE", "PHOTO_ADJ_COLOR", "PHOTO_FILT_BLUR", "PHOTO_FILT_SHARPEN", "PHOTO_FILT_NOISE", "PHOTO_FILT_DISTORT", "PHOTO_FILT_STYLE",
-         "PHOTO_FILT_PIXELATE", "PHOTO_RESAMPLE", "PHOTO_SEL_OPS", "PHOTO_HEAL", "PHOTO_INPAINT", "PHOTO_PSD_ADJ", "PHOTO_PSD_READ", "PHOTO_PSD_WRITE", "PHOTO_TIFF", "PHOTO_GIF"]
+         "PHOTO_FILT_PIXELATE", "PHOTO_RESAMPLE", "PHOTO_SEL_OPS", "PHOTO_HEAL", "PHOTO_INPAINT", "PHOTO_PSD_ADJ", "PHOTO_PSD_READ", "PHOTO_PSD_WRITE", "PHOTO_TIFF", "PHOTO_GIF",
+         "PHOTO_LIQUIFY", "PHOTO_FUSE_SEAMS"]
 code = "".join(re.search(r"// MODULE: %s - START\n.*?// MODULE: %s - END\n" % (n, n), SRC, re.S).group(0) for n in NAMES)
 inflate = re.search(r"// MODULE: ZIP_INFLATE - START\n.*?// MODULE: ZIP_INFLATE - END\n", SRC, re.S)
 OUT = tempfile.mkdtemp(prefix="photo_algos_")
@@ -151,6 +152,19 @@ f = get("filled")[40:80, 60:100, :3]; ref = grad[40:80, 60:100]
 check("Content-Aware Fill of a hole in a smooth gradient: within 12 levels of the gradient (mean %.1f)" % np.abs(f - ref).mean(), np.abs(f - ref).mean() < 12, np.abs(f - ref).mean())
 hd = get("healed")[42:78, 62:98, :3]
 check("Healing a patch 30 levels too red: the membrane takes the 30 away", np.abs(hd - grad[42:78, 62:98]).max() <= 2, np.abs(hd - grad[42:78, 62:98]).max())
+# --- Merge Exposures, Content-Aware Scale, Liquify ---
+r = run("""var base = load('photo'); function sc(k) { var o = {width: base.width, height: base.height, data: new Uint8ClampedArray(base.data)}; for (var j = 0; j < o.data.length; j += 4) for (var c = 0; c < 3; c++) o.data[j + c] = Math.min(255, o.data[j + c] * k); return o; }
+  save('fused', P.fuse([sc(0.4), sc(1), sc(2.5)])); save('dark', sc(0.4)); save('light', sc(2.5));
+  var pic = load('photo'), prot = new Uint8Array(pic.width * pic.height); for (var y = 40; y < 80; y++) for (var x = 60; x < 90; x++) { prot[y * pic.width + x] = 255; var i = (y * pic.width + x) * 4; pic.data[i] = 255; pic.data[i + 1] = 0; pic.data[i + 2] = 0; }
+  save('carved', P.seams.carve(pic, 120, 100, prot));
+  var f = {w: 40, h: 30, dx: new Float32Array(1200).fill(7), dy: new Float32Array(1200).fill(-3)}; save('warped', P.liquify.warp(load('photo'), f)); return 1;""")
+fu = get("fused")[..., :3]; e_f = np.abs(fu - photo).mean(); e_d = np.abs(get("dark")[..., :3] - photo).mean(); e_l = np.abs(get("light")[..., :3] - photo).mean()
+check("Merge Exposures of shots at 0.4, 1 and 2.5 times the light: nearer the middle shot than either other (%.1f against %.1f and %.1f)" % (e_f, e_d, e_l), e_f < min(e_d, e_l) and np.isfinite(fu).all())
+cv_ = get("carved"); red = (cv_[..., 0] == 255) & (cv_[..., 1] == 0) & (cv_[..., 2] == 0)
+ys, xs = np.nonzero(red)
+check("Content-Aware Scale 160 x 120 to 120 x 100: that size, and the protected 30 x 40 red block kept whole", cv_.shape[:2] == (100, 120) and red.sum() == 1200 and xs.max() - xs.min() + 1 == 30 and ys.max() - ys.min() + 1 == 40, (cv_.shape, int(red.sum())))
+wp = get("warped")[..., :3]
+check("Liquify's warp: a field of (7, -3) takes each pixel from 7 right and 3 up", np.abs(wp[10:-10, 10:-10] - photo[7:-13, 17:-3]).max() <= 1, np.abs(wp[10:-10, 10:-10] - photo[7:-13, 17:-3]).max())
 # --- files: PSD both ways, TIFF, GIF, BMP ---
 try:
     from psd_tools import PSDImage

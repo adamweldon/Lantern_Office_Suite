@@ -26,6 +26,8 @@ grad = np.dstack([np.tile(np.linspace(0, 255, W), (H, 1))] * 3).astype(np.uint8)
 Image.fromarray(grad).save(os.path.join(OUT, "grad.png"))
 Image.fromarray(grad).save(os.path.join(OUT, "grad_lzw.tif"), compression="tiff_lzw")
 im.save(os.path.join(OUT, "scene.jpg"), quality=92)
+for k, f in [("dark", 0.4), ("light", 2.2)]:
+    Image.fromarray(np.clip(np.asarray(im, float) * f, 0, 255).astype(np.uint8)).save(os.path.join(OUT, "scene_%s.png" % k))
 psd_ok = False
 try:
     from psd_tools import PSDImage
@@ -216,6 +218,31 @@ with sync_playwright() as pw:
         check("a PSD made by ImageMagick opens", J("Lantern.photo.api.d.layers.length") >= 1 and J("Lantern.photo.api.d.w") == W)
     opn("grad_lzw.tif")
     check("an LZW TIFF made by PIL opens, its pixels the file's", flat(200, 10)[:3] == list(grad[10, 200]), (flat(200, 10), list(grad[10, 200])))
+    # --- the Pen: four corners, closed, made a selection ---
+    opn("scene.png")
+    tool("pen"); [click(p_) for p_ in [(60, 60), (160, 60), (160, 140), (60, 140), (60, 60)]]
+    menu("Select", "Make Selection from Path")
+    r = J("(() => { var d = Lantern.photo.api.d; return d.sel ? Lantern.photo.sel.bounds(Lantern.photo.doc.selMask(d), d.w, d.h) : null; })()")
+    check("Pen: four corners clicked and closed, Select > Make Selection from Path selects that box", r and abs(r["x"] - 60) <= 1 and abs(r["w"] - 100) <= 2 and abs(r["h"] - 80) <= 2, r)
+    J("Lantern.photo.api.exec('deselect')")
+    # --- Liquify: a drag in its own window, OK ---
+    J("(() => { var d = Lantern.photo.api.d; d.active = 0; Lantern.photo.api.refresh(); })()")
+    menu("Filter", "Liquify…"); pg.wait_for_selector(".ph-liquify canvas")
+    bx = pg.eval_on_selector(".ph-liquify canvas", "c => { var r = c.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; }")
+    pg.mouse.move(bx[0] + bx[2] * 0.3, bx[1] + bx[3] * 0.5); pg.mouse.down(); pg.mouse.move(bx[0] + bx[2] * 0.6, bx[1] + bx[3] * 0.5, steps=10); pg.mouse.up()
+    pg.click(".ph-liquify button:text-is('OK')"); pg.wait_for_timeout(500)
+    check("Liquify: a drag, OK: one History step, the picture moved", hist()[-1] == "Liquify" and J("!document.querySelector('.ph-liquify')"), hist()[-2:])
+    # --- Content-Aware Scale from the Edit menu ---
+    tool("wand"); click((290, 130))
+    menu("Edit", "Content-Aware Scale…")
+    J("(() => { var n = document.querySelectorAll('.ph-dialog input[type=number]'); n[0].value = 300; n[0].dispatchEvent(new Event('input')); n[1].value = 300; n[1].dispatchEvent(new Event('input')); })()"); ok()
+    pg.wait_for_function("Lantern.photo.api.d.w === 300", timeout=60000)
+    check("Content-Aware Scale with the red disc selected (protected): 400 wide to 300, the disc still round", J("Lantern.photo.api.d.w") == 300 and (lambda m: abs(m[0] - m[1]) <= 4)(J("(() => { var d = Lantern.photo.api.d, a = Lantern.photo.compose.all(d).getContext('2d').getImageData(0, 0, d.w, d.h).data, x0 = 1e9, x1 = -1, y0 = 1e9, y1 = -1; for (var y = 0; y < d.h; y++) for (var x = 0; x < d.w; x++) { var i = (y * d.w + x) * 4; if (a[i] > 180 && a[i + 1] < 80 && a[i + 2] < 80) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); } } return [x1 - x0, y1 - y0]; })()")))
+    pg.keyboard.press("Control+z"); pg.wait_for_timeout(200)
+    # --- Merge Exposures: three shots, one picture ---
+    J("""async () => { var fs = []; for (var n of ["scene_dark.png", "scene.png", "scene_light.png"]) { var b = await (await fetch("/" + n)).blob(); fs.push(new File([b], n, { type: "image/png" })); } Lantern.photo.api.mergeExposures(fs); }""")
+    pg.wait_for_function("Lantern.photo.api.d.name === 'Merged exposures'", timeout=60000)
+    check("Merge Exposures: three shots make one new picture of their size, its sky between the darkest and lightest shots'", J("[Lantern.photo.api.d.w, Lantern.photo.api.d.h]") == [W, H] and 80 <= flat(100, 20)[0] <= 255, flat(100, 20))
     # --- Actions: record, play, batch ---
     J("Array.prototype.forEach.call(document.querySelectorAll('.ph-side details'), function (x) { x.open = true; })")
     pg.click("button:text-is('● Record')"); J("Lantern.photo.ops.adjustCmd('invert'); Lantern.photo.api.exec('adjust:invert', {})"); pg.click("button:text-is('■ Stop')")
