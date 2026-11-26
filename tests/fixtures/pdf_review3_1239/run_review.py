@@ -32,6 +32,8 @@ def pdfinfo_title(f):
 def near(a, b, tol=40): return a is not None and b is not None and all(abs(x - y) <= tol for x, y in zip(a, b))
 def ink(m): return m is not None and m["dark"] > 2
 def save():
+    # (the review's record is written only in a run against 1.24.38, as it was made; a replay leaves it as it is)
+    if not OLD: return
     json.dump(cases, open(OUT, "w"), indent=1, ensure_ascii=False)
 
 # =============================================================== 1. TRAILERS

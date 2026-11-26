@@ -52,21 +52,23 @@ tick are not drawn or read; a FreeText comment, a note and a highlight are
 not drawn (no code reads /Annots). In order, each a version, Lantern's own
 code, a reviewer before it goes in, test PDFs made with reportlab/pypdf in
 tests/fixtures/:
-1. Done in 1.24.39 (but the PDF view, the measuring, JBIG2 and JPX, which
-   follow): read everything: decrypt (RC4, AES-128, AES-256 R6; no question for an
-   owner password only, ask for a user password); draw annotations' and form
-   widgets' appearance streams (/AP /N, as forms are drawn already) and read
-   field values into the text; a PDF view (thumbnails, zoom, find with
-   highlights, bookmarks, links, optional-content layers, print, read
-   aloud); measure on drawings (scale from a known length); JBIG2, then JPX.
-2. Change a PDF, always as a new copy: pages (combine, split, extract,
-   delete, rotate, reorder, insert, crop); comments; fill and flatten forms;
-   drawn or typed signature; header, footer, page numbers, watermark, Bates;
-   redaction by making the area a picture with nothing under it, and
-   removing metadata; password (AES-256) and permissions; compress.
-3. Compare two versions (words, and a two-colour overlay for drawings);
-   export pages as pictures, tables to Sheets; certificate signatures; guided
-   actions on many files; PDF/A, tags, preflight last.
+1. Done in 1.24.39 (reading) and 1.24.40 (the PDF tile: find, zoom,
+   panels, print, read aloud, measure): read everything -- decrypt, forms,
+   comments, layers, bookmarks, links. Left: JBIG2 scans (common in scanned
+   manuals; L), then JPEG 2000 (L).
+2. Done in 1.24.40: change a PDF, always as a new copy -- pages, combine
+   (pictures too), stamps and Bates, fill and flatten, comments, a drawn or
+   typed signature, a line of its own words, make a form, bookmarks and
+   links, redact and remove hidden data, AES-256 password, reduce size.
+   Left: attachments, sound and video; a background picture; forms found
+   automatically; pictures inside changed.
+3. Done in 1.24.40: compare two versions (overlay and words); export pages
+   as pictures, the words, tables as CSV. Left: Word that keeps the layout;
+   certificate signatures (L); guided actions on many files; an index across
+   a shelf of PDFs; PDF/A, accessibility tags, preflight last.
+Open from the reviews: none that is Lantern's (the replays keep six the
+oracles get wrong, each with its reason). Adam: what a PDF's maker asks
+(QUESTIONS 1).
 
 Bench checks the gradebook found: die-four-moves fails "5, 4, 1" (the numbers
 in the order asked; the check wants the words); a right QUOTE refused on the

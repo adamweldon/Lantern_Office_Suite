@@ -34,13 +34,17 @@ function buildDigest(L, text, q, file) {
   d.plan = sha(JSON.stringify(m.plan || null));
   return d;
 }
-function promptDigests(L) {
+// (bare: the list of tiles and the count of lessons and guides the system prompt names set aside -- a tile added since, as
+// 1.24.40's PDF tile and its guide, changes those two and nothing a reply is built from)
+function bareSystem(t) { return String(t).replace(/LANTERN\u2019S OWN TILES: [^\n]*/, "LANTERN\u2019S OWN TILES: -").replace(/They hold \d+ lessons and help guides/, "They hold - lessons and help guides"); }
+function promptDigests(L, bare) {
   var out = {}, Q = (L.aiBenchQuestions || []).concat(L.aiBenchQuestionsB || []), P = L.aiPrompt, was = P && P.mode ? P.mode() : null;
   Q.forEach(function (x) {
     var a, b, c;
     try { a = String(L.aiAct.prompt(x.q)); } catch (e) { a = "ERR " + e; }
     try { P.setMode("full"); b = String(L.CHAT.buildSystem(x.q)); } catch (e) { b = "ERR " + e; }
     try { P.setMode("short"); c = String(L.CHAT.buildSystem(x.q)); } catch (e) { c = "ERR " + e; }
+    if (bare) { b = bareSystem(b); c = bareSystem(c); }
     out[x.id] = sha(a) + " " + sha(b) + " " + sha(c);
   });
   try { if (was) P.setMode(was); } catch (e) { /* as it was */ }

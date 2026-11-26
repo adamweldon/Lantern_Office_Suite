@@ -59,10 +59,13 @@ cases.push({ id: "D-given-only-control", harm: "high", input: "every bench quest
       return lib.boot().then(function (x) {
         var diff = [], n = 0;
         [x.N.L, x.O.L].forEach(function (L) { L.aiPrompt.setMode(mode); });
+        // (1.24.40: a tile added since -- PDF -- and its guide change the list of tiles and the count of lessons and guides
+        // that the prompt names; those two are set aside, the rest compared byte for byte)
+        function bare(t) { return String(t).replace(/LANTERN\u2019S OWN TILES: [^\n]*/, "LANTERN\u2019S OWN TILES: -").replace(/They hold \d+ lessons and help guides/, "They hold - lessons and help guides"); }
         benchQs(x.N.L).forEach(function (b) {
           var a, o;
-          try { a = x.N.L.CHAT.buildSystem(b.q); } catch (e) { a = "THREW " + e; }
-          try { o = x.O.L.CHAT.buildSystem(b.q); } catch (e) { o = "THREW " + e; }
+          try { a = bare(x.N.L.CHAT.buildSystem(b.q)); } catch (e) { a = "THREW " + e; }
+          try { o = bare(x.O.L.CHAT.buildSystem(b.q)); } catch (e) { o = "THREW " + e; }
           n++;
           if (GIVEN_IDS.test(b.id)) { if (a === o) diff.push(b.id + " unchanged (its given is not in the system prompt)"); return; }
           if (a !== o) diff.push(b.id);

@@ -1,0 +1,268 @@
+INDEPENDENT REVIEW OF 1.24.40'S PDF TOOLS (review 1) -- 2026-11-25
+Build: the frozen lantern_1240.inner.html (sha256 78ee1a3b49a0327e...), loaded as the page in Chromium (Playwright).
+Line numbers below are of that file. I did not write the code and did not change src/.
+
+How it was tried: 32 PDFs made here by programs that are not Lantern (reportlab, pikepdf hand-written content,
+qpdf, pdflatex, xelatex, LibreOffice, Chromium's own Save as PDF, tesseract), plus two picture-heavy PDFs made at
+run time. Every result was read by qpdf, poppler (pdftotext, -bbox, pdftoppm, pdfimages), pypdf, pdftk and, for
+redaction, tesseract reading the redacted page back. make_fixtures.py says how each PDF is made; cases.json lists
+every check and what was seen.
+  run_redact.py   668 checks, 86 failed (some of them the oracle's strictness: see the note at the end of item 1)
+  run_tools.py    239 checks, 31 failed
+  run_tile.py      16 checks,  8 failed (the tile clicked through, in Chromium)
+  run_regress.py   44 + 44 checks, 0 failed (against 1.24.38 and against the 1.24.39 working tree)
+Usage: python3 make_fixtures.py; python3 run_redact.py <build.html> <outdir> (the same for run_tools.py, run_tile.py;
+run_regress.py <new.html> <old.html> <outdir>).
+
+=====================================================================================================================
+FAILURES, most serious first
+=====================================================================================================================
+
+1. REDACT LEAVES WORDS VISIBLE, OR IN THE FILE, WHEN THEY ARE NOT DRAWN LEVEL ON THE BASELINE  (a leak)
+   Words drawn turned (a vertical label on a drawing, a chart's axis title, a line in a form XObject placed turned,
+   Chromium's CSS-rotated text, every line of a landscape page whose drawing is turned under /Rotate 90), raised with
+   text rise (Ts), upside down, or in a Type 3 font with its own FontMatrix:
+   a) "Mark them all" puts the black box in the wrong place and the word stays readable in the redacted copy
+      (tesseract reads it back from poppler's picture of the copy):
+        t_fonts.pdf     TREMONTANE (vertical label)   Lantern's mark [516 196 524 211]; poppler: x 511-522, y 452-618
+                                                       -> an 8x15 pt black box at the label's foot, the word whole above it
+                        ZEPHYRINE (raised 18 pt)       mark on the baseline [180 516 255 531]; the word is at y 535-546
+                        BELLWEATHER (upside down)      27% of the word left uncovered
+        t_landscape.pdf ALDERGROVE, Vasquez            marks [67 68 77 85] and [97 68 107 85]: tiny boxes at two line
+                                                       starts (they also black out "La" and "Re"); both words readable.
+                                                       Same through the tile (run_tile.py: Redact, Mark them all, Apply,
+                                                       Save -> tesseract reads "Station ALDERGROVE pressures").
+        t_xobj.pdf      NIGHTJAR in the copy of the form placed turned 90: 19% covered, readable
+        t_chrome.pdf    MARGINALIA (CSS rotate(-90deg)): the marks went onto two other lines; readable
+        t_type3.pdf     PELLINORE: the mark is 18 pt wide for a 76 pt word (FontMatrix 0.01 ignored)
+   b) A box dragged over such a word where it is seen (the tile's drag, or an area given to redact()): the picture is
+      black there, but the word is kept in the invisible words written over the picture, in plain Helvetica, render
+      mode 3 -- pdftotext, pypdf, Acrobat's search and copy all get it back:
+        t_fonts.pdf p1 (and its /Rotate 90 copy): "VERTICAL LABEL TREMONTANE", "Before the raised word ZEPHYRINE
+        after it.", "UPSIDE DOWN BELLWEATHER" all still in pdftotext's words of the redacted page; t_landscape.pdf:
+        "ALDERGROVE" and "Vasquez"; t_xobj.pdf: "NIGHTJAR"; t_type3.pdf: "PELLINORE".
+        Through the tile too (run_tile.py: a box dragged over TREMONTANE as seen, Apply, Save: pdftotext and pypdf
+        read "VERTICAL LABEL TREMONTANE" on page 1 of the saved file).
+   Smallest reproduction:
+        reportlab: c.translate(520, 200); c.rotate(90); c.drawString(0, 0, "VERTICAL LABEL TREMONTANE")
+        var t = await P.pageText(pdf, 0); P.redactMarks(t.boxes, "tremontane")      -> [[515.8,196.4,524.2,211.4]]
+        await P.redact(pdf, {areas: [{page: 0, rect: [509, 450, 525, 620]}]}) ; pdftotext -> "VERTICAL LABEL TREMONTANE"
+   Likely cause:
+     - PDF_TEXT show() (49029-49042) keeps only x0 = m[4], y0 = m[5], x1 = m2[4] and letter starts cx = m[0]*adv + m[4]:
+       the run's direction (m[1], m[2]) is never kept, so a turned run becomes a level box at its first letter.
+     - PDF_TEXT has no Ts case in its operators (49057-49103): a raised run is put on the baseline (PDF_DRAW does
+       raise it, so the picture and the marks disagree).
+     - PDF_TEXT font() (48964-49001) reads Type 3 Widths as thousandths (49036 F.width(c) / 1000) and never reads
+       FontMatrix.
+     - PDF_TEXT groups runs into lines by y alone (49129-49135): on the landscape page all three lines start at the
+       same y (in the page's own space) and become one "line"; Chromium's sideways letters join every level line.
+     - PDF_REDACT marksOf() (52410-52439) makes level boxes from those; invisible() (52280-52290) tests a level box
+       at the baseline (52284) and writes every line level (52287).
+   Direction: keep each run's matrix (and rise, and the Type 3 FontMatrix); mark the bounding box of the run's four
+   corners; on a marked page, leave out of the invisible words any run that is not level (or test its corners), and
+   write the others with their own matrix. Until then, a run that is not level should never be marked by "Mark them
+   all" without saying so, and never kept as invisible words on a marked page.
+   (Why it matters: vertical labels on drawings, chart axis titles, table headers and landscape pages are common,
+   and a redacted copy is sent to people who must not read what was taken out.)
+   Note on the oracle: run_redact.py's "latex_find ... office 0.93" and "latex_area ... tesseract reads office" are the
+   oracle matching "officer," and other words with "office" in them, and "annots_find ... nowhere else" counts page 2's
+   own comment twice: not failures of Lantern. "annots_find_flatfirst: page 2 drawn as before" fails because Redact
+   flattens every page's comments first (the tile asks before it does): by design.
+
+2. A PDF WITH MORE THAN ONE OBJECT STREAM OPENS AS 0 PAGES, AND EVERY TOOL WRITES AN EMPTY PDF FROM IT
+   (in PDF_PARSE, already in 1.24.38 and 1.24.39; worse now, because the new tools write copies from it)
+   t_many_objstm.pdf (reportlab, 120 pages; qpdf --object-streams=generate packs 100 objects a stream: two streams):
+   the tile says "0 pages."; i_objstm_text.pdf (pikepdf, 60 pages, six object streams, 243 KB): Reduce size wrote a
+   309-byte PDF with no pages and called it 0 pictures smaller; Stamp, Pages, Protect etc. would do the same.
+   Lantern reads the catalog as one of the link annotations.
+   Smallest reproduction: qpdf --object-streams=generate on any PDF of more than ~100 objects; P.open(...).count === 0.
+   Likely cause: PDF_PARSE 47618-47634: packed[key] = function () { var l2 = new Lexer(txt); l2.p = first + pr[1]; ... }
+   (47631) closes over the loop's var txt and var first, so every packed object is read from the LAST object
+   stream's text at its own offset. One object stream (the existing fixtures) hides it. Fix: build each stream's
+   functions in a function of its own (txt, first as parameters). Also: a tool should refuse to write a PDF of 0 pages.
+
+3. EDIT TEXT ON A LANDSCAPE PAGE DELETES LINES NOBODY TOUCHED, AND WRITES THE NEW LINE SIDEWAYS
+   t_landscape.pdf (/Rotate 90, the drawing turned so the words read across as seen): the tile shows one tappable box
+   (20 x 58 px) for the three lines; a tap offers "Landscape report: ... Reading taken by ... This line is kept and must
+   stay where it is." as one line; changing it takes out all three lines and writes one line, level in the page's own
+   space, i.e. running up the page as seen (poppler's box for it is 13 x 82 pt, upright).
+   A vertical label changed (t_fonts.pdf TREMONTANE) is written level from the label's foot and runs off the page:
+   poppler finds none of the new words.
+   Likely cause: as 1 (PDF_TEXT 49129-49135 grouping by y; no direction kept), and PDF_EDIT_TEXT pieces() (52756-52769)
+   and editText (52792: new words always "1 0 0 1 x y Tm"). Direction: refuse a line that is not level (say so), or
+   keep its matrix for the new words.
+
+4. COMBINE DROPS THE FORM OF EVERY PDF BUT THE FIRST
+   combine([t_latex.pdf, f_form.pdf]): the form's widgets are copied onto its page, but the new file's AcroForm is the
+   first PDF's (none), so pypdf get_fields() -> {} and pdftk dump_data_fields -> nothing; Acrobat would not let anyone
+   fill them. Two copies of one form combined: 30 widgets on the pages, 11 fields in /AcroForm /Fields.
+   Lantern's own P.fields still lists them (it walks the pages' annotations), which is why tests/pdf_edit.js passes.
+   Likely cause: PDF_EDIT_PAGES combine(), 51380: keepCatalog only for k === 0. Direction: merge every PDF's
+   /Fields (and DR fonts); a name already used by an earlier PDF renamed (Acrobat merges same-named fields into one
+   value, which surprises people with two copies of one form).
+
+5. STAMP: ONE SEE-THROUGH SETTING A PAGE, SHARED BY EVERYTHING STAMPED, AND OVERWRITTEN BY THE NEXT STAMP
+   a) page numbers and a DRAFT watermark (opacity 0.3) in one stamp(): the page numbers are drawn at 30% too
+      (mean grey 241 against 208 without the watermark).
+   b) the tile's ordinary flow, Watermark then Page numbers (two Applies): the second stamp sets the page's /LtnGS to
+      /ca 1, and the first stamp's DRAFT (drawn with /LtnGS gs) becomes solid red over the page's words
+      (qpdf --qdf shows /LtnGS << /ca 1 >> on both pages; picture in tile_stamped_twice.pdf).
+   Likely cause: PDF_EDIT_STAMP 51613-51614: one ExtGState named LtnGS per page, ca = the smallest opacity of all items,
+   and the same name written again by the next stamp. Direction: one ExtGState per item, under a name the page's
+   resources do not already use (the same for the fonts LtnF/LtnFB).
+
+6. COMMENTS, NEW FORM BOXES AND FILLED FIELDS ON A PAGE TURNED 90 ARE DRAWN SIDEWAYS AS THE PAGE IS SEEN
+   - addAnnots on t_fonts_rot90.pdf: a text box and a stamp read up the page (poppler, after qpdf --flatten-annotations:
+     "ROTATEDNOTE" box 11 x 91 pt, "APPROVED" 8 x 50 pt). Acrobat writes these upright (/Rotate on the annotation, its
+     drawing turned). The signature picture the same way (not checked by picture).
+   - addFields on t_fonts_rot90.pdf, then fillForm: the typed words read up the page (box 11 x 63 pt).
+   - fillForm on f_rot_form.pdf, a field that says it is turned with its page (/MK /R 90, as Acrobat makes it):
+     drawn level in the page's own space, so sideways as seen (box 11 x 37 pt).
+   Likely cause: PDF_EDIT_ANNOT addAnnots (51947-51983) and PDF_FORM_MAKE addFields (53001-53017) never look at the
+   page's /Rotate; PDF_EDIT_FORMS fillForm (51825) and appearance() (51703-51753) ignore /MK /R. Scanned landscape
+   forms are usually pages turned 90, so this is the common case for "fill in a scanned form".
+
+7. EDIT TEXT LEAVES THE OLD WORDS IN /ActualText
+   t_actualtext.pdf: "/Span <</ActualText (Torque 45 Nm)>> BDC (Torque 45 Nm) Tj EMC": after changing the line to
+   "Torque 60 Nm", the Tj is gone but the BDC with "Torque 45 Nm" stays around the [n] TJ that replaced it: "45 Nm" is
+   still in the page's drawing, and Acrobat's copy and read-aloud use ActualText. Cause: PDF_EDIT_TEXT 52794-52795 cuts
+   only the showing operators. (Tagged PDFs from Word use /ActualText and /Alt.)
+
+8. REDACT'S SEARCHABLE WORDS: PLACED WRONG ON MULTI-COLUMN LINES, LOST ON TURNED PAGES; LINKS DROPPED; UNSEEN WORDS KEPT
+   - A marked page's kept words are written one merged "line" at a time in Helvetica stretched to the line's width
+     (52286-52287). On two-column pages the right column's words land up to 83 pt from where they are seen (t_fonts:
+     "Right" 83.5, "fever" 73.3); Chromium's page up to 121 pt (its sideways letters stretch every line to x 402).
+     A search hit is then highlighted in the wrong place and drag-select copies the wrong words.
+   - A mark in one column takes the other column's words on the same baseline out of the searchable words
+     (PDF_TEXT merges the two columns into one line; "a line a mark touches goes whole").
+   - On the landscape page (turned drawing) the kept words are written level, so poppler finds none of the 15 in their
+     places; slanted and vertical runs on any marked page likewise.
+   - Links on a marked page are dropped (52317 drops all its annotations): t_latex.pdf page 1, 2 links -> 0.
+   - Words never seen but on a marked page are written again as invisible words: outside the CropBox ("OUTSIDE THE
+     CROP: unseen words", t_offset_box.pdf), off the page (MARCHETTI), render mode 3 (ROSKILDE). Not a new leak (they
+     were in the file), but "each page with a mark becomes a picture of the page" suggests only what is seen stays,
+     and Remove hidden does not take hidden words out either (Acrobat's does).
+   Direction: write each run (each part) separately at its own place and matrix; keep only runs inside the page's
+   seen box; keep link annotations no mark touches.
+
+9. REDACT API: MARKS FOUND BEFORE FLATTENING MISS A TYPED COMMENT'S WORDS
+   redactMarks(pageText(unflattened).boxes, "esmeralda") puts a FreeText's words at the top-left of its rectangle
+   (PDF_TEXT 49121: y = r[3] - sz, x = r[0] .. r[2]); its drawing shows them 10 pt lower and 13 pt further left: the
+   mark covers 37% of the word (a_annots.pdf, upright page and turned page). The tile flattens first and is right
+   (annots_find_flatfirst passes). Either do the flatten inside the API path, or say in the API that marks must come
+   from the flattened PDF.
+
+10. REMOVE HIDDEN KEEPS A SCRIPT CHAINED UNDER ANOTHER ACTION
+   t_scripts.pdf: a link whose /A is a GoTo with /Next << /S /JavaScript /JS (app.alert('NEXTSCRIPT')) >>: kept.
+   Cause: PDF_REDACT sanitize clean() (52369-52375) looks at an action's top level only, and b.each visits only objects
+   of their own, not dictionaries inside them. Also kept (perhaps by choice; worth a word in the dialog): SubmitForm
+   actions (send the form's data to a web address) and GoToR/GoToE.
+
+11. CATALOG ENTRIES LOST BY EVERY REWRITE
+   PDF_EDIT_STAMP copyCatalog (51621-51627, used as P.keepCatalog by Stamp, Fill in, Flatten, Comment, Protect, Redact,
+   Edit text, Reduce size, Make form) and PDF_EDIT_PAGES keepCatalog (51325-51330) do not copy: the catalog's own
+   /Dests (named destinations the PDF 1.1 way: t_dests.pdf's link by name goes nowhere after a stamp), /OpenAction
+   (the page and zoom it opens at), /Metadata, /MarkInfo, /StructTreeRoot, /OutputIntents (a tagged PDF or a PDF/A stops
+   being one after any change). pagesOut also drops /PageLabels when every page is kept in its order (t_dests.pdf).
+   The structure tree is dropped on purpose (comment at 51323-51324); the others look like omissions.
+
+12. REDUCE SIZE: A PICTURE WITH /Mask LOSES ITS MASK
+   i_images.pdf pages 6 and 7 (made by make_fixtures.make_big): an RGB picture with a stencil-mask /Mask and one with a
+   colour-key /Mask [250 255 250 255 250 255]: after Reduce size the masked-out parts are drawn (a white background where
+   the red page showed through). PDF_COMPRESS 52910-52912 builds the new picture's dictionary with SMask and
+   Interpolate only. Direction: skip pictures with /Mask (a colour key cannot survive JPEG anyway), or copy a stencil
+   /Mask.
+
+13. FILL IN AND MAKE FORM, SMALLER THINGS
+   - A comb field (Ff comb, MaxLen 6) is drawn as plain text at the left (AB12CD across 152-199 of a 150-270 box), not one
+     letter a cell as Acrobat and poppler draw it; Flatten then keeps that look. (51825)
+   - A radio value that is none of its buttons ('Sunday'): every button turned Off, /V left at /Day (51813).
+   - A list box's /I (selected index) left at the old choice when /V changes (the standard says /V wins; some
+     viewers show /I). (51818-51822)
+   - Make form lets a box take the name of an existing parent field ("addr" beside addr.street, addr.city): the check
+     (52982-52987) compares full names of fields only, not their parents.
+   - Words beyond WinAnsi in a text box, a field, a stamp or Edit text are changed in the drawing: "≤" drawn
+     "<=", "Ω" drawn "Ohm" (the comment's /Contents and the field's /V keep what was typed, so the drawing and
+     the value differ). Fair as a fallback; it should be said, as Edit text says "in Helvetica".
+
+14. SMALLER STILL
+   - Bates digits above 12 come out short: digits 15 -> "X0000000000007" (13 characters). PDF_EDIT_STAMP 51600 pads
+     with "000000000000".
+   - pagesOut({order: [0, 1]}) on a 1-page PDF: no error; the page index past the end still counts, so every bookmark
+     then points at nothing (51359-51363).
+   - pagesOut with the same page twice ({order: [0, 0, 1]}): both copies share the same widget and comment objects
+     (12 shared on f_form.pdf; a widget must belong to one page). The tile has no "duplicate", so API only.
+
+15. WHERE TIMES WORDS SIT DEPENDS ON THE BROWSER'S "serif" FONT (a caution about the 1.24.40 width change)
+   With Chromium's serif here (Liberation Serif, metric-compatible with Times New Roman, as Windows has), Times words
+   now sit within 0.1 pt of poppler's (Smithfield 348.3-399.0 both; Courier exact; Helvetica exact). With a browser
+   whose serif is DejaVu Serif (simulated: FONTCONFIG_FILE=fonts_dejavu.conf, in this folder, before starting Chromium), the same line comes out about 25% wider: "Smithfield" placed at 415-487 against poppler's 348-399.
+   Lantern's own picture uses the same widths, so a redacted picture is still covered where Lantern drew the word;
+   but the page as drawn, searched and edited differs from other viewers, and Edit text's [n] TJ move (52771-52775)
+   would shift the words after a changed piece by the difference. Cause: PDF_TEXT stdWidth (49006-49019) measures
+   Times with the browser's "serif". Direction: a built-in width table for Times-Roman/Bold/Italic/BoldItalic (the
+   14 standard fonts' widths are published figures), as Helvetica already has.
+
+=====================================================================================================================
+WHAT PASSED
+=====================================================================================================================
+Redaction
+ - Words drawn level, in Helvetica, Times (no widths), Courier, Times Bold/Italic, Tz 150, Tc 3, Tw 10, in two
+   columns, on pages turned 90 and 270, with a CropBox offset, with a MediaBox not starting at 0 0, in a form XObject
+   placed level (also scaled 1.5), in pdflatex (ligatures), xelatex (Type 0), LibreOffice (TrueType, tagged),
+   Chromium (Type 0, flipped matrix), tesseract's scan with invisible words, after an inline image whose data holds
+   "EI", over three content streams, in a locked PDF, in an incremental update: found, marked, and gone: not in
+   poppler's or pypdf's words of the page, not held by anything the page holds (pikepdf walk), nowhere else in the
+   file, black where poppler showed the word, not read by tesseract (four turns).
+ - Pages not marked: drawing byte for byte as before; every page keeps its turn and seen box.
+ - The earlier revision of an incrementally updated page is not in the copy; the LibreOffice structure tree is not
+   carried; a note, an attached file and a typed comment on a marked page are not held by it, while page 2's are kept.
+ - White text and text under a white box inside a marked area go; text in a layer that is off is not carried.
+ - The tile: Mark them all + a dragged box, 3 marks shown, Apply, Save, qpdf clean.
+Edit text
+ - Lines changed in Helvetica, Times without widths, embedded TrueType, pdflatex, xelatex (Type 0), Chromium,
+   LibreOffice, tesseract's words, three content streams, after an inline image, a locked PDF, an offset MediaBox, a
+   page turned 90 (level words): old words gone from the page and from everything it holds, new words read by poppler
+   and pypdf, qpdf clean, every other word within 0.6 pt of where poppler had it, including the unit after a changed
+   value moved by TJ (Helvetica, Times, TrueType) and lines placed by Td after the changed one.
+ - A line drawn from a form XObject refused, and said.
+Protect
+ - AES-256 R6 opened by qpdf, pypdf and poppler with the user password; the owner password (non-ASCII) opens it as
+   owner; the limits asked read back exactly by qpdf; a wrong password refused; words identical to the original.
+ - Non-ASCII + emoji passwords, a 140-character password (qpdf and pypdf; poppler cannot open qpdf's own file with that
+   password either, so not Lantern's fault), an NFD-typed password opened with the NFC one.
+ - A PDF locked with AES-128 relocked: the new password opens it, the old does not. A form with object streams,
+   linearized: qpdf clean, fields read by pypdf. Info and bookmarks read back after decrypting.
+Stamp
+ - Upright at top-left and bottom-right where the page is seen on pages turned 90 and 270, a CropBox page, an offset
+   MediaBox page, the landscape page, and a page whose Rotate/MediaBox/Resources are inherited from the page tree.
+ - Comments, form fields and page labels kept; a file name with ü and € stamped as written.
+Pages: reorder and turn; inherited Rotate turned once more (180) and MediaBox/Resources kept.
+Combine: a locked PDF and one with object streams: qpdf clean, unlocked, words kept.
+Fill in: every kind on f_form.pdf read back by pypdf (text, multiline, password masked in the drawing, check, radio
+ group -- only Night on, combo by export value, list, right-aligned drawn at the right edge, parent/kids, one field on
+ two pages); ë and Å drawn as written; qpdf clean. Flatten looks as qpdf's own flattening (mean grey
+ difference < 2); no fields left; a /CA 0.3 box stays see-through; only links left; typed comment's words in the page.
+Make form on an existing form: old fields kept, new ones (a choice named Größe, a tick) read by pypdf.
+Remove hidden: document and open-action scripts, XMP, Info author, page XMP and PieceInfo, page /AA, the Launch and
+ JavaScript links, the attached file: all gone; the web link kept. The tile's dialog the same.
+Reduce size (150 and 72 dpi): RGB, gray, CMYK JPEG with Decode [1 0 ...], indexed, SMask, gray Decode [1 0], 16-bit,
+ small JPEG left alone, big JPEG, a picture through a form: each page looks as before (mean grey difference <= 4.3 at
+ 72 dpi, <= 0.3 at 150), file 4.75 MB -> 1.08 MB / 441 KB, qpdf clean.
+   (pages 6 and 7, pictures with /Mask, did not: failure 12)
+Export: page pictures the size the page is seen (turned 90, CropBox, offset box, inherited). Compare: a page with
+ itself nothing; with its turned copy, changes.
+Regressions: 31 PDFs (mine and the earlier fixtures) read and drawn by 1.24.38, 1.24.39 and 1.24.40: words read are
+ identical between 1.24.39 and 1.24.40 on every page; drawings as near poppler's or nearer (Times pages 1.94 vs 1.95
+ mean grey difference). Nothing threw or hung; no page errors in any run.
+The tile at phone width (390 px): no bar off the screen, no sideways scroll.
+
+=====================================================================================================================
+NOT TESTED
+=====================================================================================================================
+ - Acrobat or Adobe Reader itself (none here); Word- or Acrobat-made PDFs (LibreOffice, LaTeX, Chromium, reportlab and
+   pikepdf stand in). Firefox, Safari, Android Chrome (only Chromium on Linux).
+ - XFA forms; PDFs with certificate signatures through Protect, Stamp or Fill in; JBIG2, JPX and CCITT pictures in
+   Reduce size; very large PDFs (time, memory); printing; Measure; the guides; the AI side (Chat reading PDFs).
+ - Redaction with dpi other than 200; Undo after Redact; Combine with a picture other than through the API.
+ - The staged tests/pdf_edit.js now calls P.tablesOf, which the frozen build does not have; it stops there.

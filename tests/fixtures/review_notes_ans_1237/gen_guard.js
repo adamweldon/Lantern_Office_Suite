@@ -15,7 +15,7 @@ setTimeout(function () {
   var L = o.L;
   var pairs = lib.savedReplies(path.join(__dirname, ".."));
   var builds = pairs.map(function (p) { return lib.buildDigest(L, p.text, p.q, p.file); });
-  var prompts = lib.promptDigests(L);
-  fs.writeFileSync(path.join(__dirname, "guard_50f9ceb.json"), JSON.stringify({ version: L.version, from: "50f9ceb", builds: builds, prompts: prompts }, null, 0) + "\n");
+  var prompts = lib.promptDigests(L), bare = lib.promptDigests(L, true);
+  fs.writeFileSync(path.join(__dirname, "guard_50f9ceb.json"), JSON.stringify({ version: L.version, from: "50f9ceb", builds: builds, prompts: prompts, prompts_bare: bare }, null, 0) + "\n");
   console.log("wrote " + builds.length + " builds and " + Object.keys(prompts).length + " prompts of " + L.version);
 }, 120);

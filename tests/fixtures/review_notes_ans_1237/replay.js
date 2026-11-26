@@ -129,8 +129,10 @@ T.calc = async function (c, L) {
   if (found !== GUARD.builds.length) say("guard-count", ["saved replies of the guard found: " + found + ", guard: " + GUARD.builds.length], "medium");
   if (later) console.log("(" + later + " replies saved after the guard was made: not judged here)");
   order.forEach(function (f) { say("guard-" + f.replace(/\.json$/, "") + "-" + byFile[f].n, byFile[f].bad, "high"); });
-  var pn = lib.promptDigests(L), pb = Object.keys(GUARD.prompts).filter(function (k) { return pn[k] !== GUARD.prompts[k]; });
-  if (Object.keys(pn).length !== Object.keys(GUARD.prompts).length) pb.push("count " + Object.keys(pn).length + " vs " + Object.keys(GUARD.prompts).length);
+  // (1.24.40) the prompts compared bare: the tiles' list and the guides' count set aside (prompts_bare, made from 50f9ceb's
+  // own page by gen_guard.js, beside its prompts as they were)
+  var GP = GUARD.prompts_bare || GUARD.prompts, pn = lib.promptDigests(L, !!GUARD.prompts_bare), pb = Object.keys(GP).filter(function (k) { return pn[k] !== GP[k]; });
+  if (Object.keys(pn).length !== Object.keys(GP).length) pb.push("count " + Object.keys(pn).length + " vs " + Object.keys(GP).length);
   say("guard-prompts-" + Object.keys(GUARD.prompts).length, pb.length ? ["prompts differ from 50f9ceb: " + pb.join(",")] : [], "high");
 
   for (var k = 0; k < CASES.length; k++) {

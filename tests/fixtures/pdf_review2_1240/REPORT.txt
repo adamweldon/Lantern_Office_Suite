@@ -1,0 +1,269 @@
+INDEPENDENT REVIEW 2 OF 1.24.40'S PDF TOOLS (the mends of review 1) -- 2026-11-25
+Build under review: the frozen lantern_1240_r2.html (sha256 ca412c152256c278...), served as index.html, in Chromium
+through Playwright. Line numbers below are of that file. Its header still says version: "1.24.39".
+"Old" is the committed 1.24.39 page (git show HEAD:site/index.html, sha256 79891e0b...): the working tree's
+site/index.html named in the brief had already been rebuilt with the new tools by the time this review ran (it holds
+P.redact and stdWidth), so it could not stand for 1.24.39. I wrote none of the code under review and changed nothing
+outside this folder.
+
+How it was tried: 34 PDFs made here (make_fixtures.py) by programs that are not Lantern -- reportlab (standard fonts with
+no /Widths, AcroForm radio groups and a comb field), pdflatex (Computer Modern, two columns), xelatex (Greek, Cyrillic,
+symbols, labels turned 90), LibreOffice (Greek, Cyrillic, a 29-page document), Chromium's own print to PDF (CSS
+letter-spacing, word-spacing, rotate(-90deg), writing-mode: vertical-rl, a synthetic italic, a landscape table),
+tesseract (a scan with its words), qpdf (linearized, object streams), and pdfw.py here for hand-written drawing programs
+(Tc Tw Tz Ts, TJ letter by letter, turned / slanted / mirrored runs, forms nested 1 to 5 deep, a q left open) and file
+structures (incremental updates both ways between plain objects and object streams, a hybrid file, an unpacked PDF
+attached inside another, 150 bytes of junk before %PDF, offsets 2 bytes off, a table starting at 1, a reused object
+number). Every result was read by poppler (pdftotext, -bbox, pdftoppm), qpdf, pypdf, pikepdf and tesseract (eng, rus),
+and widths by reportlab's copy of Adobe's AFM tables. cases.json has every check (group, file, check, expected, got,
+pass); cases.log the same as text.
+  Usage: python3 make_fixtures.py ; python3 run_review.py <new.html> <old.html> <outdir> [groups]
+  Groups: afm redact find sweep form helv parse regress layout perf tile text.
+
+COUNTS
+  2085 checks, 89 failed (cases.json). By group:
+    redact   799 checks, 54 failed  (23 find and area cases on 17 PDFs: marks, poppler/pypdf words, file bytes, picture,
+                                     tesseract, words kept and where)
+    regress  905 checks,  2 failed  (224 PDFs -- every PDF under tests/fixtures -- opened, read and drawn by 1.24.39
+                                     and by this build: page count, words against poppler's, drawing against poppler's)
+    sweep    249 checks,  0 failed  (Redact a box on page 1 of every PDF there that opens: no error, no page lost,
+                                     qpdf clean)
+    afm 13/12, find 16/3, form 12/4, helv 22/2, parse 33/0, layout 13/1, perf 2/0, tile 7/4, text 8/7, harness 6/0
+  Of the 89: 4 are the oracle's alone (listed below); 1 is known (Type 3); the rest are items 1-16, most of them
+  several checks of one cause (the code-127 bullet alone fails 12 afm checks).
+  Usage: python3 make_fixtures.py ; python3 run_review.py <new.html> <old.html> <outdir> [groups] (with no groups it
+  writes cases.json; a run of some groups writes cases_<groups>.json and merge_cases.py joins them); about an hour in
+  all, most of it the regress and sweep groups. Pictures and the redacted copies named below are in evidence/.
+
+=====================================================================================================================
+FAILURES, most serious first  (L = something marked stays readable; I = the copy says something else than the page;
+R = regression against 1.24.39; N = new in this round, i.e. worse than the build review 1 tried)
+=====================================================================================================================
+
+1. [L] GREEK: A CAPITAL SIGMA AT THE END OF A WORD PUTS THE MARK IN THE WRONG PLACE
+   Uppercase Greek ends most surnames and many words in -ΟΣ/-ΑΣ (ΟΔΟΣ = street). "Mark them all" for such a word:
+   - on a turned line (a vertical label): one thin box at the line's foot, away from the word; the word stays drawn.
+     x_nonlatin.pdf, \rotatebox{90}{ΟΔΟΣ ΕΡΜΟΥ ΤΕΣΣΕΡΑ}: redactMarks(boxes, "οδος") -> [76 529 82 549]; poppler has
+     the word at x 71-82, y 459-490 (page space). In the copy 23% of poppler's box for it is black; the same
+     through the tile (Redact, Mark them all, Apply, Save: evidence/tile_redact_odos.pdf,
+     evidence/greek_vertical_tile_copy.png). Its letters are gone from the copy's words, so only the picture shows it
+     -- which is what a reader sees.
+   - on a level line: one box over the whole line ([68 677 544 697]): every other word of that line is blacked out and
+     taken out of the copy's words (210 bar, και, θερμοκρασία ... on the next line too).
+   Smallest reproduction: any run whose text holds "Σ" at a word's end, then redactMarks(boxes, "<any word on it>").
+   Cause: PDF_REDACT marksOf: the line is lowercased whole (52822: JavaScript turns Σ at a word's end into ς) but each
+   run letter by letter (52826: Σ -> σ), so low.indexOf(t, from) (52827) never finds the run; with no run placed, the
+   "whole line, to be safe" box (52841) is built from ln.x0, ln.x1 and ln.y -- for a turned line that is a sliver at
+   its first letter. Direction: fold both sides the same way (lowercase the line letter by letter, or map ς to σ
+   before comparing); for a line that is not level, build the fallback from its runs' quads, never from x0/x1/y.
+
+2. [L, N] A FORM VALUE OR A TYPED COMMENT IS MARKED AT THE BOTTOM OF THE PAGE; A FIELD WITH NO /AcroForm IS LEFT
+   READABLE
+   pageText puts a field's value and a typed comment's words in runs with no matrix (49271-49272), and the runs in
+   boxes carry neither y nor size (49317), so runBox's fallback (52572) puts their mark at y = 0:
+     h_orphan_links.pdf (a filled SSN field, /AP drawn, auto size, no /AcroForm -- a page split from a form):
+       redactMarks(boxes, "123-45-6789") -> [358 -6 451 12.5]
+     a_annots.pdf (review 1's typed comment ESMERALDA at the top): [297 -6 503 12.5]
+   - redact() does not flatten that field (needsFlat 52662-52669 counts neither a form without /Fields nor a widget as
+     a comment), draws its appearance into the page picture (pageDraw 50117-50129) and puts the black box at the foot:
+     the number stays readable (tesseract reads 123456789; 23% of its box black). The same through the tile
+     (evidence/tile_redact_orphan.pdf, evidence/orphan_ssn_tile_copy.png).
+   - through the API on an ordinary form or a page with a typed comment, the bogus boxes stay as black bars across the
+     page's foot (h_freetext_footer.pdf: [297 -6 523 12] over "Ashcombe Surveying Ltd page 1 of 1"; r_form.pdf: three
+     bars from the three filled fields).
+   - the viewer's Find (50875, the same marks grouped) highlights a hit in a field or a typed comment at the page foot.
+   Review 1's build put these at the top of the comment's rectangle; this is worse. Direction: carry y and size on the
+   runs in boxes (or give annotation runs a matrix); flatten widgets whenever there are any, with or without /Fields.
+
+3. [L] A COMB FIELD'S VALUE CANNOT BE FOUND, AND THROUGH THE API IT IS LEFT IN THE COPY
+   fillForm(r_form.pdf, {ssn: "987654321"}) then redact with marks from pageText and words ["987654321"]: redact
+   flattens the form, the comb draws one digit to a cell, and PDF_TEXT reads "SSN: 9 8 7 6 5 4 3 2 1" (a space
+   wherever the pen jumps more than 0.18 of the size, 49302), so finding the words again after flattening (52685)
+   finds nothing; the marks given came from the unflattened page and lie at its foot (item 2). The copy shows all nine
+   digits (evidence/comb_ssn_copy.png, evidence/redacted_form_find.pdf; pypdf reads them; 8% of poppler's box
+   black). In the tile (which flattens first) "Mark them all" says "Not found" while the number is on the page.
+   Same cause, item 4.
+
+4. [L] LETTER-SPACED WORDS FROM A BROWSER CANNOT BE FOUND
+   Chromium prints CSS letter-spacing by placing each letter itself; Lantern reads "C O N F I D E N T I A L M E R I W E
+   A T H E R" (poppler: "CONFIDENTIAL MERIWEATHER"). Mark them all: "Not found"; the API marks nothing and the word
+   stays (c_workorder.pdf: 21% of its box black, tesseract reads MERIWEATHER; evidence/meriweather_chrome_copy.png).
+   1.24.39 read the line the same way (not a regression of reading), but Redact and the viewer's Find now depend on
+   it. Direction: remember which spaces Lantern inserted (a pen jump, not a space letter)
+   and let a search match across them, as poppler joins letters whose gaps are even; or join single-letter runs
+   whose gaps are equal.
+
+5. [I] SYMBOL AND ZAPFDINGBATS LETTERS ARE DRAWN AS LATIN LETTERS, AND REDACT BURNS THAT INTO THE PAGE
+   r_symbol.pdf (Symbol, not embedded, as reportlab, groff, Crystal Reports and old iText write it): the redacted
+   page's picture reads "W = 4.7 k, a = 30°, DT < 5 K, m = 0.2" where the page showed "Ω = 4.7 κ, α = 30°, ΔΤ < 5 Κ,
+   μ = 0.2" (an ohm sign turned into a W); ZapfDingbats ✔ ✓ ■ became "4 3 n". The same for an Acrobat-made form:
+   ticks (ZapfDingbats "4") and radio dots ("l") are drawn "4" and "l" (h_form_zadb.pdf;
+   evidence/zapfdingbats_ticks_redacted_copy.png; evidence/symbol_redacted_copy.png against symbol_orig_poppler.png).
+   The copy's words say W, k, a, 4. Lantern's viewer already drew them so in 1.24.39; Redact makes it permanent in
+   a file that is sent on. Cause: PDF_TEXT font() (49118-49125) reads a standard font without
+   /Encoding as WinAnsi, but Symbol and ZapfDingbats have encodings of their own; PDF_DRAW then draws uni(c) in the
+   browser's font (49954-49965). Direction: their built-in encodings (glyph names -> Unicode, as for /Differences) and
+   their AFM widths, as the 1.24.40 change gave Helvetica and Times.
+
+6. [L, low] WORDS IN FORMS NESTED MORE THAN THREE DEEP ARE DRAWN BUT NOT FOUND
+   h_textops.pdf: DEPTHFOUR and DEPTHFIVE (forms 4 and 5 deep) -- Find counts 3 of 5 "depth"; Mark them all misses
+   them; tesseract reads them in the copy (19% of their boxes black). PDF_TEXT follows Do to depth 3 (49237),
+   PDF_DRAW to 8 (50075). Stamping tools wrap a page in a form each time, so depth grows. Direction: the same limit
+   in both (8).
+
+7. [L, low] A LINK NO MARK TOUCHES KEEPS ITS ADDRESS, EVEN WHEN IT HOLDS A WORD LOOKED FOR
+   h_orphan_links.pdf: "Open the chart" -> https://records.example.org/patient/WINTERBOURNE/chart is kept on the
+   page where WINTERBOURNE was found and marked (52694-52699 keep every untouched link). Direction: drop (or ask
+   about) a link on a marked page whose URI or destination holds a word looked for; or say so in Apply's message
+   ("bookmarks ... are not changed" already says it for those).
+
+8. [over-redaction] MARKS ARE A FIXED 3 PT WIDER AND TALLER THAN THE LETTERS: NEIGHBOURS ARE CUT AND LOST
+   marksOf: pad = 0.3 * (p.size || 10) (52838), but the runs in boxes carry no size (49317), so the pad is always 3 pt;
+   with runBox's -0.3 .. +0.95 em the mark of a 10 pt word is 18.5 pt tall. And the 0.5 shrink in invisible() (52630)
+   is in text-space units (0.375 pt under Chromium's 0.75 matrix). So at 9-10 pt:
+   - the words either side on the same line (a space is 2.5 pt) lose a sliver of a letter and drop out of the copy's
+     words: "after" and "fitted" beside "Corrigan" (evidence/marks_neighbours_chrome_copy.png); "Officers", "on" in
+     the LaTeX page;
+   - at single spacing (leading 1.2-1.25 em) the box clips the descenders of the line above and the tops of the line
+     below, and the words under it drop out ("relief valve" under each "Marchetti": 15 words on r_manual2col.pdf;
+     evidence/marks_neighbours_manual_copy.png and _orig.png); at leading 1.0 whole words of the line above go
+     ("area", "25 m" over "Harrowgate").
+   The check "the marks cover no part of a word not looked for" counts these per case.
+   Direction: pad relative to the run's own size (p.fs times its matrix), at most the line's leading; a mark from
+   the font's ascent to its descent, as Acrobat draws it.
+
+9. [R] A SLANTED OR RAISED RUN IS TAKEN OUT OF ITS LINE (Text Reader, Chat, copy, phrase search)
+   c_workorder.pdf (Chromium's synthetic italic for a font with no italic face): "Pump runs fast after Corrigan fitted
+   the seal.\nreally" (1.24.39: "Pump runs really fast after ..."); Find "really fast" -> 0. h_textops.pdf: a Tm skew
+   "1 0 0.25 1": "Level then Penhaligon end\nOblique"; a run raised 6 pt at 12 pt: "Raised Lockridge\nBelow after".
+   Cause: PDF_TEXT's level test (49187) needs m[2] = 0, so a skew (same baseline, same direction) is "not level" and
+   49285-49289 put it on a line of its own, sorted after; y0 includes the rise (49173) and lines are grouped within 0.4
+   of the size (49291). Direction: decide "level" by the baseline's direction (m[1] = 0, m[0] > 0) only; group by the
+   baseline without the rise.
+
+10. FILL IN (THE TILE) CANNOT CHOOSE A RADIO BUTTON
+   r_form.pdf, Fill in, tick "Night" (Day was on), Apply, Save: /V /Day, Day still on (evidence/tile_fill_radio.pdf).
+   Each button is a check box whose change sets values[groupname] = true/false (52377); fillForm (52091-52095)
+   ignores true for a radio group (a value none of the buttons has). Unticking Day turns the whole group off.
+   Direction: the tile sends the button's own state name (onOf of its widget), and shows a group's buttons as radios.
+
+11. FILL IN: ACROBAT'S /Opt RADIO GROUPS AND UTF-8 STATE NAMES CANNOT BE FILLED BY THEIR VALUES; P.fields LISTS NO
+    CHOICES FOR A RADIO GROUP
+   h_form_opt.pdf: a group with states /0 /1 /2 and /Opt (Klein Mittel Größe), as Acrobat writes export values that
+   are not plain names: fillForm({size: "Mittel"}) leaves it as it was ("2" works). A group whose states are UTF-8 in
+   #xx form (/Gr#C3#BCn): fillForm({colour: "Grün"}) leaves it as it was -- the lexer turns #C3#BC into two Latin-1
+   characters (47466), so the state reads "GrÃ¼n". P.fields gives {name, type, value} only, so nobody can learn the
+   choices. Direction: read /Opt for buttons; decode a name's bytes as UTF-8 where they are valid UTF-8 (as Acrobat
+   and pdf.js show them); list each radio group's choices.
+
+12. A STAMP COMMENT HAS NO /ActualText; MOST LETTERS BEYOND WINANSI ARE DRAWN AS "?"
+   addAnnots kind "stamp" (52003-52004) draws Y.lit(codes) without typed(): poppler reads "R = 4.7 KOHM <= 5 %, ?P >=
+   2 BAR, ?????? ?? ?? OK" for "R = 4.7 kΩ ≤ 5 %, Δp ≥ 2 bar, Привет 中文 😀 ok". Edit text, a text box, a field and
+   P.stamp do carry it, and poppler reads every letter back from them (the emoji as a surrogate pair). Only ten signs
+   are spelled out (SAY, 50406); Greek other than Ω, Cyrillic, Chinese and emoji are drawn "?" -- searchable, but a
+   person sees "??????". Worth saying in the tool when it happens.
+
+13. [minor] WINANSI CODE 127 (A BULLET) IS READ AS A CONTROL CHARACTER AND MEASURED AS "?"
+   The standard's WinAnsi table maps the unused codes (127, 129, 141, 143, 144, 157) to the bullet; reportlab writes
+   every "•" as \177 and poppler shows a bullet. Lantern reads U+007F (uni(), 49118-49125), draws nothing, and gives
+   it the width of "?" (556 Helvetica, 444 Times) instead of 350: the words after it sit 1.85 pt to the right at 9 pt
+   (a mark for "918-555-0199" starts 1.56 pt right of poppler's). After Redact the bullet is gone from the picture and
+   the copy's words hold U+007F. Every other WinAnsi width of Helvetica, Helvetica-Bold, Times-Roman/Bold/Italic/
+   BoldItalic, "Arial,Bold" and "TimesNewRomanPS-BoldItalicMT" equals Adobe's AFM (219 letters each).
+
+14. [minor] THE EXTRA FONTS FOR NON-WINANSI LETTERS HAVE NO /ToUnicode
+   Poppler decodes their /uniXXXX glyph names, so Greek and Cyrillic come back as themselves (checked on xelatex,
+   LibreOffice and Chromium pages); pypdf 6.0 does not, and returns "/uni03A4/uni03B5/uni03C7..." for every such
+   letter of a redacted page (pypdf's limitation -- the oracle -- but a ToUnicode CMap, 52723-52728, would make every
+   reader agree; pypdf is what many text pipelines use).
+
+15. [minor] SLANTED TEXT: THE MARK IS THE BOX ROUND THE WORD'S FOUR CORNERS
+   A word at 30 degrees gets an upright box that covers parts of its neighbours ("degree", "line" beside "Montague";
+   "TYP" beside "OBADIAH"). Inherent in marks that are rectangles (Acrobat's are quads); worth knowing.
+
+16. [minor] TURNING THE PHONE DOES NOT REFIT THE PAGES
+   Opened at 844 x 390, then 390 x 844: no sideways scroll of the page itself, but the first page stays 556 px wide in
+   a 390 px window (it scrolls inside the page area). Opening at 390 or 360 wide fits (passes).
+
+KNOWN (told by the coordinator): a Type 3 font's letters are drawn ten times too far apart (PDF_DRAW 49969 multiplies
+by FontMatrix[0] again). Seen here as the one drawing regression: review 1's t_type3.pdf, mean grey difference from
+poppler 0.86 against 1.24.39's 0.19.
+
+=====================================================================================================================
+CHECKS THAT FAILED BECAUSE THE ORACLE WAS WRONG (said plainly)
+=====================================================================================================================
+ - "night shift" in c_workorder.pdf: poppler's plain text breaks that line (CSS word-spacing), so it counts 0; Lantern's 1
+   is right.
+ - Two "stray mark" checks (title_find, ops_find): the marks are on OBADIAH (30 degrees) and on the mirrored "Quenby",
+   which poppler cannot put in a box (it reads "ybneuQ"); the marks are where the words are.
+ - Slanted (30 degree) lines: poppler groups slanted letters into different "words" in the copy, where each letter has
+   its own Tm ("0T" for "0", "TY"); the letters are where they were and -raw reads "R 450 TYP OBADIAH" in both. The
+   "kept words" checks of title_* and ops_find count these.
+ - "Waverley" read by tesseract in latex_find: the second one is hyphenated across lines ("Wa-" / "verley's"); neither
+   poppler nor Lantern sees it as the word.
+ - The title block's Symbol line: poppler here has no Symbol font and shows "■" for some letters; its words are not a
+   fair "expected" there (item 5 stands on r_symbol.pdf, where poppler reads Ω κ α).
+ - pypdf: no uniXXXX names (item 14) and it drops spaces between letters written one at a time ("Servicereport").
+ - pdf_review2_1239/ve_cycle.pdf (an optional-content cycle): poppler loops forever on it; Lantern opens and draws it.
+   The harness now stops any tool after 120 s.
+ - Letter-spaced lines (Tc 4, Tz 150 in r_invoice.pdf): poppler splits them into single letters; Lantern drops a whole
+   word when a mark reaches any of its letters, so a few letters counted "lost" in inv_find are by the rule (the mark
+   that reached them is item 8's).
+ - A first OCR check matched pieces shared with other words (Kestrel-5 beside Kestrel-3, DEPTHTWO beside DEPTHTHREE) and
+   joined OCR words; and a first ink check counted dark pixels, which unmarked black text also has. Both were mended
+   before the runs in cases.json.
+
+=====================================================================================================================
+WHAT PASSED
+=====================================================================================================================
+Redaction (poppler, pypdf, the file's bytes unpacked, the picture and tesseract all agree the word is gone):
+ - Level words in Helvetica, Helvetica-Bold, Times-Roman/Italic/Bold/BoldItalic and Courier with no /Widths; with Tc 4,
+   Tw 14, Tz 150 and 200, Ts 4 and 9 (a raised word: the mark is where it is drawn, review 1's ZEPHYRINE case); a number
+   found by part of it ("555-0143" took "918-555-0143" whole); Latin-1 letters (Þórsdóttir); TJ letter by letter; a
+   run at 2x and at 0.5x; two columns; justified text.
+ - Turned and odd runs: labels at 90 and 270 degrees, upside down, mirrored, a matrix skew, 30 degrees; a form XObject
+   placed level and turned 90; forms nested to depth 3; Chromium's rotate(-90deg) and writing-mode: vertical-rl
+   (one letter a Tj, joined into one line as the mend says); xelatex Greek and Cyrillic, level and turned 90 (words
+   with no capital sigma at their end); LibreOffice Greek and Cyrillic; tesseract's scan.
+ - Pages with a CropBox, turned 90 / 180 / 270 with a crop, a MediaBox at 100 200: every target black where poppler
+   shows it; a word wholly outside the seen box (OUTSIDERWORD) not written into the copy's words; of a word across the
+   crop's edge only the part inside kept; every page keeps its turn and seen box.
+ - A q left open with a clip and a cm, a second content stream, more Q than q, a form that leaves a cm: drawn as
+   poppler draws it (mean grey difference 0.19) and redacted cleanly.
+ - Filled text fields (not comb) and an Acrobat-style check box form: the values flattened, found and gone.
+ - Words kept: on every case without a cause above, every word away from the marks is found again by poppler, split as
+   poppler split the original, within 4 pt along its line; every Greek, Cyrillic or
+   symbol word kept (Ω ≤ ≥ ° ± µ √ → ∑) reads as itself in poppler.
+ - Robustness: 249 PDFs (every one in tests/fixtures that opens) redacted with a box on page 1: none threw, none lost a
+   page, every copy qpdf-clean.
+Reading (PDF_TEXT) against 1.24.39: 224 PDFs, 341 pages: words as near poppler's or nearer on all but h_textops.pdf
+ (item 9); nearer on t_chrome.pdf (0.74 -> 0.89), fonts_web.pdf (0.73 -> 1.00) and c_workorder.pdf -- Chromium's
+ sideways labels now read as words. Drawing: the same, or nearer poppler, on 339 of 340 pages (the one is Type 3).
+Adobe's metrics: every WinAnsi letter's width but code 127 equals the AFM for Helvetica, Helvetica-Bold,
+ Helvetica-Oblique, Times-Roman/Bold/Italic/BoldItalic, "Arial,Bold", "TimesNewRomanPS-BoldItalicMT"; Courier-Bold 600.
+PDF_PARSE: an incremental update with a classic table; an xref-stream update over an object-stream file whose new page
+ dictionary stands alone (the newer plain copy wins); a plain file updated with the new page in an object stream (the
+ stream wins over the older plain copy); a hybrid file (classic table + /XRefStm, the packed objects only in the stream,
+ as Word writes it); linearized files (plain and with object streams); an unpacked PDF attached inside another (plain
+ and with object streams: the outer document only); 150 bytes before %PDF; every offset 2 bytes off; a table starting
+ at 1; a number freed and reused at generation 1 -- all read as poppler reads them, and a stamped copy keeps the
+ newest page. 1.24.39 (git HEAD) reads them all the same way already (its PDF_PARSE had the cross-reference chain).
+ LibreOffice's 29-page document: drawn in 404 ms against 389 (and 327 against 360 with object streams) -- no
+ slower, but this document did not show the slowness the mend was for, so the gain is not confirmed.
+Fill in: a radio value ('Night'), a group none was on ('Card'), a value none of the buttons has (left as it was), ""
+ and "Off" (all off, /V /Off), a state name of an /Opt group ("2"), a comb drawn one digit to a 20 pt cell -- all
+ through the API.
+Words Helvetica cannot draw: Edit text, a text box comment, a field and P.stamp: drawn "Ohm", "<=", ">="; poppler reads
+ Ω ≤ ≥ Δ, Привет, 中文 back through /ActualText (the emoji as a surrogate pair); the field's /V is the text as typed; a
+ stamp of WinAnsi words only has no /ActualText and reads as typed.
+Layout: the tile at 390 x 844 (a landscape table, an 11 x 17 drawing), 360 x 740 and 844 x 390: no sideways scroll,
+ the first page fitted to the width, no page errors.
+The tile: Redact (Mark them all, Apply, Save) on a vertical Latin label (NIGHTJAR) and the level ΟΔΟΣ: black.
+
+=====================================================================================================================
+NOT TESTED
+=====================================================================================================================
+ - Acrobat or Adobe Reader themselves, Word-made PDFs (hybrid files were made by hand as Word writes them), Firefox,
+   Safari, Android; Greek OCR (no Greek for tesseract here: the Greek leak is shown by the picture check alone).
+ - Redaction at other than 200 dpi; very large pages (maxSide 5000); encrypted PDFs through redact (review 1 did).
+ - Remove hidden, Protect, Reduce size, Combine, Compare, Export (not among the mends).
