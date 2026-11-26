@@ -48787,14 +48787,21 @@ Lantern.RFB = (function () {
       if (f.checked && Array.isArray(bo) && /^\d+$/.test(on || "") && bo[+on] !== undefined) f.value = tx(R(bo[+on]));
       // (1.24.40) this button's own name and what it stands for (its /Opt value), to fill it and to list a group's choices
       f.on = on || "Yes"; f.export = Array.isArray(bo) && /^\d+$/.test(on || "") && bo[+on] !== undefined ? tx(R(bo[+on])) : f.on;
+      // (1.24.40) the letter of ZapfDingbats it is drawn with, when its maker named one (/MK /CA)
+      var mk = R(d.MK);
+      if (mk && typeof mk === "object" && R(mk.CA) !== undefined) f.ca = tx(R(mk.CA));
     } else if (ft === "/Ch") {
       f.type = "choice";
       var opt = R(inherit(d, "Opt", R)) || [], vals = Array.isArray(v) ? v.map(R) : v !== undefined ? [v] : [];
-      f.value = vals.map(function (x) {
+      f.chosen = vals.map(function (x) {
         var t = tx(x);
         opt.forEach(function (o) { o = R(o); if (Array.isArray(o) && tx(R(o[0])) === t) t = tx(R(o[1])); });
         return t;
-      }).join(", ");
+      });
+      f.value = f.chosen.join(", ");
+      // (1.24.40) a list box (not a drop-down) shows its choices, the chosen ones marked
+      f.combo = !!(ff & 131072);
+      f.list = Array.isArray(opt) ? opt.map(function (o) { o = R(o); return Array.isArray(o) ? tx(R(o[1])) : tx(o); }) : [];
     } else if (ft === "/Sig") { f.type = "signature"; f.value = v ? "signed" : ""; }
     else { f.type = "text"; f.value = tx(v); if (v && v.stream) f.vStream = v; f.multiline = !!(ff & 4096); f.password = !!(ff & 8192); f.maxLen = +inherit(d, "MaxLen", R) || 0; f.comb = !!(ff & 16777216) && f.maxLen > 0; }
     var dstr = inherit(d, "DA", R) || (acro && R(acro.DA));
@@ -49181,7 +49188,7 @@ Lantern.RFB = (function () {
     if (w == null || !isFinite(w)) w = 550 * u.length;
     return (wcache[key] = w);
   }
-  P.stdWidth = stdWidth;
+  P.stdWidth = stdWidth; P.symz = SYMZ;
   // pageText(pdf, i) -> {text, lines: [{y, text, size}], items}
   async function pageText(pdf, i) {
     var pg = pdf.pages[i], R = pdf.doc.resolve, prog = await P.pageProgram(pdf, pg), items = [], onWay = {};
@@ -49335,8 +49342,9 @@ Lantern.RFB = (function () {
       // letters drawn one at a time with an even gap between them (a browser's letter-spacing, which adds the same
       // space after every letter, give or take its kerning): that gap is not a space. Only in a row of four or more single
       // letters (cased letters: not digits, not signs) most of whose gaps (six in ten) are within 0.08 of the size of the
-      // smallest -- a table's one-letter cells sit at an even pitch, so their gaps differ with each letter's width; TeX's
-      // kerned pieces and an equation's signs keep the rule a gap over 0.18 of the size is a space
+      // smallest, and those gaps more even than the letters' starts -- a table's one-letter cells or a row of keys sit at
+      // an even pitch, so their gaps differ with each letter's width; TeX's kerned pieces and an equation's signs keep the
+      // rule a gap over 0.18 of the size is a space
       function one(p) { var t1 = p.text.replace(/\s/g, ""); return t1.length === 1 && !/\s/.test(p.text) && t1.toLowerCase() !== t1.toUpperCase(); }
       var tight = [], prt = ln.parts, pitch = [];
       for (var r0 = 0; r0 < prt.length;) {
@@ -49344,11 +49352,17 @@ Lantern.RFB = (function () {
         var r1 = r0;
         while (r1 + 1 < prt.length && one(prt[r1 + 1])) r1++;
         if (r1 - r0 >= 3) {
-          var gs = [];
-          for (var g1 = r0 + 1; g1 <= r1; g1++) gs.push(along(prt[g1]) - endOf(prt[g1 - 1]));
+          var gs = [], st = [];
+          for (var g1 = r0 + 1; g1 <= r1; g1++) { gs.push(along(prt[g1]) - endOf(prt[g1 - 1])); st.push(along(prt[g1]) - along(prt[g1 - 1])); }
           var gsort = gs.slice().sort(function (a, b) { return a - b; }), gmin = gsort[0], tol = 0.08 * ln.size;
           var close = gsort.filter(function (g) { return g <= gmin + tol; }).length;
-          if (close >= 3 && close >= 0.6 * gs.length && gmin < ln.size) {
+          // (and the gaps more even than the letters' starts: letter-spacing adds the same after letters of any width, so
+          // the starts follow the letters' widths; a row of keys or cells keeps its starts at an even pitch, and its gaps
+          // follow the widths -- "A B C D" is four keys)
+          var gl = [], sl = [];
+          gs.forEach(function (g, i) { if (g <= gmin + tol) { gl.push(g); sl.push(st[i]); } });
+          var gsp = Math.max.apply(null, gl) - Math.min.apply(null, gl), ssp = Math.max.apply(null, sl) - Math.min.apply(null, sl);
+          if (close >= 3 && close >= 0.6 * gs.length && gmin < ln.size && ssp > gsp + 0.01 * ln.size) {
             for (var g2 = r0 + 1; g2 <= r1; g2++) if (gs[g2 - r0 - 1] <= gmin + tol) tight[g2] = true;
             pitch.push({ g: gmin + tol, size: prt[r0].size || ln.size });
           }
@@ -52058,6 +52072,25 @@ Lantern.RFB = (function () {
       });
       p.push("ET Q EMC");
       res = { Font: { Helv: { Type: "/Font", Subtype: "/Type1", BaseFont: "/Helvetica", Encoding: "/WinAnsiEncoding" } } };
+    } else if (kind === "tick") {
+      // a box ticked as viewers draw one: its letter of ZapfDingbats (its /MK /CA; else 3, a tick, or l, a dot, for a radio
+      // button), in the middle of the box -- a letter, so it is read as one (U+2713, U+25CF)
+      var zc = String(o.ch || "3").charCodeAt(0), zs = o.size || Math.max(4, Math.min(w, h) * 0.8), zw = (P.symz && zc >= 32 && zc < 256 ? P.symz.zapf.w[zc - 32] : 0) || 800;
+      p.push("q BT /ZaDb " + n(zs) + " Tf " + col(o.color, "rg") + " " + n((w - zw * zs / 1000) / 2) + " " + n((h - zs * 0.7) / 2) + " Td " + Y.lit([zc]) + " Tj ET Q");
+      res = { Font: { ZaDb: { Type: "/Font", Subtype: "/Type1", BaseFont: "/ZapfDingbats" } } };
+    } else if (kind === "list") {
+      // a list box: its choices one a line from the top, the chosen ones on a blue band, as viewers show one
+      var lsz = o.size || 10, lh = lsz * 1.15;
+      p.push("/Tx BMC q 1 1 " + n(w - 2) + " " + n(h - 2) + " re W n");
+      (o.items || []).forEach(function (it, i) {
+        var y = h - 1 - lh * (i + 1);
+        if (y + lh < 0) return;
+        if ((o.chosen || []).indexOf(it) >= 0) p.push("q 0.6 0.75 0.86 rg 1 " + n(y) + " " + n(w - 2) + " " + n(lh) + " re f Q");
+        var cs = Y.codes(it);
+        p.push("BT /Helv " + n(lsz) + " Tf " + col(o.color, "rg") + " 2 " + n(y + lsz * 0.25) + " Td " + typed(it, Y.lit(cs) + " Tj") + " ET");
+      });
+      p.push("Q EMC");
+      res = { Font: { Helv: { Type: "/Font", Subtype: "/Type1", BaseFont: "/Helvetica", Encoding: "/WinAnsiEncoding" } } };
     } else if (kind === "check") {
       if (o.checked) p.push(o.radio ? "q " + col(o.color, "rg") + " " + circle(w / 2, h / 2, Math.min(w, h) * 0.28) + " f Q" :
         "q " + col(o.color, "RG") + " " + n(Math.max(1, Math.min(w, h) * 0.12)) + " w 1 J 1 j " + n(w * 0.2) + " " + n(h * 0.45) + " m " + n(w * 0.42) + " " + n(h * 0.22) + " l " + n(w * 0.8) + " " + n(h * 0.78) + " l S Q");
@@ -52254,8 +52287,11 @@ Lantern.RFB = (function () {
   function plain(a) {
     var w = a.rect[2] - a.rect[0], h = a.rect[3] - a.rect[1], rel = function (x, y) { return [x - a.rect[0], y - a.rect[1]]; };
     if (a.field) {
-      if (a.field.type === "check" || a.field.type === "radio") return appearance("check", { w: w, h: h, checked: a.field.checked, radio: a.field.type === "radio", color: a.textColor });
-      if (a.field.type === "text" || a.field.type === "choice") return appearance("text", { w: w, h: h, text: a.field.password ? new Array(String(a.field.value).length + 1).join("*") : a.field.value, size: a.fontSize, color: a.textColor, multiline: a.field.multiline, align: a.align });
+      // (1.24.40) a ticked box as a letter of ZapfDingbats, as viewers draw one; a list box with its choices; a comb field a
+      // letter a cell
+      if (a.field.type === "check" || a.field.type === "radio") return a.field.checked ? appearance("tick", { w: w, h: h, ch: a.field.ca || (a.field.type === "radio" ? "l" : "3"), size: a.fontSize, color: a.textColor }) : appearance("check", { w: w, h: h, checked: false });
+      if (a.field.type === "choice" && !a.field.combo && a.field.list && a.field.list.length) return appearance("list", { w: w, h: h, items: a.field.list, chosen: a.field.chosen, size: a.fontSize, color: a.textColor });
+      if (a.field.type === "text" || a.field.type === "choice") return appearance("text", { w: w, h: h, text: a.field.password ? new Array(String(a.field.value).length + 1).join("*") : a.field.value, size: a.fontSize, color: a.textColor, multiline: a.field.multiline, align: a.align, comb: a.field.comb && !a.field.multiline ? a.field.maxLen : 0 });
       return null;
     }
     var quads = (a.quads || []).map(function (q) { var xs = [q[0], q[2], q[4], q[6]], ys = [q[1], q[3], q[5], q[7]]; var p0 = rel(Math.min.apply(null, xs), Math.min.apply(null, ys)), p1 = rel(Math.max.apply(null, xs), Math.max.apply(null, ys)); return [p0[0], p0[1], p1[0], p1[1]]; });
