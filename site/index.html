@@ -61591,9 +61591,9 @@ Lantern.RFB = (function () {
     for (var i = 0; i < n; i++) for (var c = 0; c < k; c++, q += bps) {
       var v = ch[c][i];
       if (bits === 32) { dv.setFloat32(q, v, true); continue; }
-      v = v > 1 ? 1 : v < -1 ? -1 : v;
-      if (bits === 16) dv.setInt16(q, Math.round(v < 0 ? v * 32768 : v * 32767), true);
-      else { var x = Math.round(v < 0 ? v * 8388608 : v * 8388607); dv.setUint8(q, x & 255); dv.setUint8(q + 1, (x >> 8) & 255); dv.setUint8(q + 2, (x >> 16) & 255); }
+      // scaled by 2^15 (2^23) and clipped, as ffmpeg and most programs do, so a file read back is the same within half a step
+      if (bits === 16) dv.setInt16(q, Math.max(-32768, Math.min(32767, Math.round(v * 32768))), true);
+      else { var x = Math.max(-8388608, Math.min(8388607, Math.round(v * 8388608))); dv.setUint8(q, x & 255); dv.setUint8(q + 1, (x >> 8) & 255); dv.setUint8(q + 2, (x >> 16) & 255); }
     }
     o.bytes(tmp);
     return o.done();
@@ -62112,8 +62112,8 @@ Lantern.RFB = (function () {
       id: uid("s"), name: o.name || "Sequence 01", w: o.w || 1920, h: o.h || 1080, rate: o.rate || T.rate(30, 1), sampleRate: o.sampleRate || 48000,
       drop: o.drop !== undefined ? o.drop : T.dropOk(o.rate || T.rate(30, 1)), v: [], a: [], markers: [], cap: [], inF: null, outF: null, playhead: 0, bg: [0, 0, 0]
     };
-    for (var i = 1; i <= (o.vTracks || 3); i++) s.v.push(track("v", i));
-    for (i = 1; i <= (o.aTracks || 3); i++) s.a.push(track("a", i));
+    for (var i = 1; i <= (o.vTracks === undefined ? 3 : o.vTracks); i++) s.v.push(track("v", i));
+    for (i = 1; i <= (o.aTracks === undefined ? 3 : o.aTracks); i++) s.a.push(track("a", i));
     return s;
   }
   function project() {
@@ -62819,8 +62819,8 @@ Lantern.RFB = (function () {
 // Gaussian blur is separable: a row pass and a column pass with weights
 // exp(-x^2 / 2 sigma^2) out to three sigma, the edge pixels repeated beyond
 // the picture (SciPy's "nearest"); past a sigma of 12 three box blurs of
-// matched widths stand in for it (Kovesi's approximation, within a level
-// or two and far quicker). Unsharp Mask adds back the difference from the
+// matched widths stand in for it (Kovesi's approximation: within a few
+// levels of the true blur, and far quicker). Unsharp Mask adds back the difference from the
 // blur, as Photoshop and Premiere describe it: Amount in percent, Radius
 // as the blur's sigma, Threshold the least difference that is sharpened.
 // Median takes the middle value in a square of side 2r + 1. sample() reads
@@ -64308,7 +64308,12 @@ Lantern.RFB = (function () {
     if (hit) return Promise.resolve(hit);
     return queue(r, function () {
       var again = cacheGet(key); if (again) return again;
-      var p = m === "mjpeg" ? mjpeg(r, k, maxW) : m === "codecs" ? codecs(r, k, maxW).catch(function (e) { if (String(e && e.message) === "unsupported" || /unsupported|not supported|NotSupported/i.test(String(e))) { r.decMode = "element"; return element(r, s, maxW); } throw e; }) : element(r, s, maxW);
+      // a decoder that loses its way (a picture that never comes out) is started afresh at the sync picture, once
+      var p = m === "mjpeg" ? mjpeg(r, k, maxW) : m === "codecs" ? codecs(r, k, maxW).catch(function (e) {
+        if (String(e && e.message) === "unsupported" || /unsupported|not supported|NotSupported/i.test(String(e))) { r.decMode = "element"; return element(r, s, maxW); }
+        if (r.vd) r.vd.err = r.vd.err || e;
+        return codecs(r, k, maxW);
+      }) : element(r, s, maxW);
       return p.then(function (img) { cachePut(key, img); return img; });
     });
   }
@@ -64866,8 +64871,9 @@ Lantern.RFB = (function () {
 // level. Scene Edit Detection compares each frame's colour histogram with
 // the last (the chi-squared distance) and calls a cut where the change
 // jumps well above the clip's usual change. Synchronize finds how far one
-// recording is from another by the peak of the cross-correlation of their
-// loudness envelopes (100 a second), as a clap or a voice lines them up.
+// recording is from another by the best correlation of their loudness
+// envelopes (100 a second) over at least a second of overlap, as a clap or
+// a voice lines them up.
 (function () {
   var L = window.Lantern;
   if (!L) return;
@@ -64912,8 +64918,15 @@ Lantern.RFB = (function () {
   function envelope(x, sr) { var hop = Math.round(sr / 100), n = Math.floor(x.length / hop), e = new Float32Array(n); for (var i = 0; i < n; i++) { var s = 0; for (var j = i * hop; j < (i + 1) * hop; j++) s += x[j] * x[j]; e[i] = Math.sqrt(s / hop); } var m = 0; for (i = 0; i < n; i++) m += e[i]; m /= n || 1; for (i = 0; i < n; i++) e[i] -= m; return e; }
   // how many seconds b starts after a (b's sound at time t matches a's at t + lag)
   function sync(a, b, sr, maxLag) {
+    // the correlation coefficient over the overlap at each lag (at least a second of it), the best lag kept
     var ea = envelope(a, sr), eb = envelope(b, sr), M = Math.round((maxLag || 30) * 100), best = -Infinity, lag = 0;
-    for (var l = -M; l <= M; l++) { var s = 0, n = 0; for (var i = 0; i < eb.length; i++) { var j = i + l; if (j < 0 || j >= ea.length) continue; s += ea[j] * eb[i]; n++; } if (n > 50 && s > best) { best = s; lag = l; } }
+    for (var l = -M; l <= M; l++) {
+      var sab = 0, saa = 0, sbb = 0, sa = 0, sb = 0, n = 0;
+      for (var i = 0; i < eb.length; i++) { var j = i + l; if (j < 0 || j >= ea.length) continue; var x = ea[j], y = eb[i]; sab += x * y; saa += x * x; sbb += y * y; sa += x; sb += y; n++; }
+      if (n < 100) continue;
+      var cov = sab - sa * sb / n, va = saa - sa * sa / n, vb = sbb - sb * sb / n, r = va > 0 && vb > 0 ? cov / Math.sqrt(va * vb) : -1;
+      if (r > best) { best = r; lag = l; }
+    }
     return lag / 100;
   }
   V.scopes = { draw: draw, hist: hist, coarse: coarse, cutScore: cutScore, cuts: cuts, sync: sync };
@@ -65524,8 +65537,10 @@ Lantern.RFB = (function () {
     // hit: the clip and edge under a point of the lanes
     function hit(px, py) {
       var r = rowAt(py); if (!r) return null;
+      // the clip under the point first (an edge if within a few pixels of its own end); else an edge just beside the point
       var f = st.x0 + px / st.ppf, best = null;
-      r.t.clips.forEach(function (c) { var x1 = xOf(c.start), x2 = xOf(c.start + c.dur); if (px >= x1 - 4 && px <= x2 + 4) { var edge = px - x1 < Math.min(8, (x2 - x1) / 3) ? "head" : x2 - px < Math.min(8, (x2 - x1) / 3) ? "tail" : null; if (px >= x1 && px <= x2 || edge) { if (!best || edge) best = { c: c, edge: edge }; } } });
+      r.t.clips.forEach(function (c) { var x1 = xOf(c.start), x2 = xOf(c.start + c.dur), m = Math.min(8, (x2 - x1) / 3); if (px >= x1 && px < x2) best = { c: c, edge: px - x1 < m ? "head" : x2 - px < m ? "tail" : null }; });
+      if (!best) r.t.clips.forEach(function (c) { var x1 = xOf(c.start), x2 = xOf(c.start + c.dur); if (px >= x1 - 4 && px < x1) best = { c: c, edge: "head" }; else if (px >= x2 && px <= x2 + 4 && !best) best = { c: c, edge: "tail" }; });
       return { r: r, f: f, c: best && best.c, edge: best && best.edge };
     }
     function snapF(f, skip) {
