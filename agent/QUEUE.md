@@ -86,6 +86,24 @@ The Hue/Saturation, Brightness/Contrast and Colorize arithmetic follows
 psd-tools' reading of Photoshop's files: a Photoshop to try them on would
 settle them.
 
+**Video track: film work to Premiere Pro's reach** (Adam, 2026-11-26: "Lantern
+should have a video editor like adobe does"). 1.24.43 is the Video tile: of 65
+things from Adobe's Premiere Pro user guide (a PDF to Adam, "Lantern and
+Premiere Pro") it does 34, part of 15, not 8; 8 need Adobe's servers or
+trained models. Four reviews in two rounds (files and arithmetic; as a person
+uses it; then both again on the mended build) found 123 and then 65 failures,
+mended or kept with their reasons in tests/review_video_1243.py. Left, in
+order: a keyed filter swept through its settings (now the results at the keys
+are mixed); masks drawn with the Pen and tracked backward; a speed graph on the
+clip for Time Remapping; Interpret Footage (a high-frame-rate clip conformed to
+slow motion); nested bins and metadata columns; clip markers; the Trim Monitor;
+Warp Stabilizer's Perspective and Subspace Warp; .prfpset presets in and out;
+surround sound (L). History keeps a whole copy of the project at each step, the
+Warp Stabilizer's analysis and the tracked mask keys with it: on an hours-long
+project that wants a lighter Undo. Lumetri's and Ultra Key's arithmetic is
+Lantern's own (Adobe has not published theirs): a Premiere to try them on
+would settle how near they come.
+
 Bench checks the gradebook found: die-four-moves fails "5, 4, 1" (the numbers
 in the order asked; the check wants the words); a right QUOTE refused on the
 0.8B's doc-oil-change (to trace); a choking child given the recovery-position
@@ -909,6 +927,7 @@ with, and twenty questions tried in the search.
 
 | Tile | What it is | Audited | Notes |
 |---|---|---|---|
+| Video | A film editor (Premiere Pro's tools; MP4, WebM, MOV, AVI out; EDL and FCP XML both ways) | new, 1.24.43, four reviews in two rounds | 44 modules; see the Video track above |
 | Photo | A picture editor (Photoshop's tools, PSD both ways) | new, 1.24.42, four reviews | 53 modules; see the Photo track above |
 | Health | First aid, water, survival | yes, 1.24.4 | 42 lessons (28 new, 13 corrected), a breath and pulse counter, bleach for water, Print, Chat gives the lesson for a health need. Left: no medicine (questions for Adam), no pictures, not read by a trained person; nothing yet on long illnesses (tuberculosis, HIV, diabetes, high blood pressure, epilepsy, asthma), skin and eye disease, family planning, care of the dying and the dead, disability |
 | Food | Nutrition, cooking, preserving | yes, 1.24.5, against two sources only | 10 lessons (2 new, 8 revised), the tables corrected (no oil covering; temperatures), no number for a child in the sum, a help guide, three bench conversations. Checked against the CDC's and the US home-preserving centre's pages only. Left: five lessons drafted on `wip-2026-11-06` (cassava and beans, storing grain, deficiency illnesses, bread, fuel); figures not read on a page (kcal and protein a day, vitamin C, calcium, the plate, cellar storage, the sum's equation); nothing on canning (not without pressure, time and acidity from a source) |

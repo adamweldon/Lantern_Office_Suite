@@ -347,6 +347,76 @@ check("EDL read back: the same clips, places, in points and media (found by name
 check("Final Cut Pro XML read back: the same clips, places, in points and media", sorted(r["fromXml"]) == sorted(r["orig"]), (r["fromXml"], r["orig"]))
 check("SubRip read: times, words, tags taken off; WebVTT's settings ignored", r["cap"] == [{"start": 1, "end": 3.5, "text": "Hello there"}, {"start": 4, "end": 5, "text": "Second line"}] and r["vt"] == [{"start": 1, "end": 3.5, "text": "Hello there"}], r["cap"])
 check("captions written as SubRip and read again come back (to the frame at 29.97)", all(abs(a["start"] - b["start"]) < 0.034 and a["text"] == b["text"] for a, b in zip(r["again"], r["cap"])) and len(r["again"]) == 2, r["again"])
+LINKBODY = "var seed = SEED; function rnd() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; } function ri(a, b) { return a + Math.floor(rnd() * (b - a + 1)); }\nfunction build() {\n  var p = S.project(), seq = p.seqs[p.active]; seq.rate = T.rate(30, 1);\n  ['m0', 'm1', 'm2', 'm3', 'm4', 'm5'].forEach(function (m, i) { p.media[m] = { id: m, kind: 'video', dur: 4 + i, w: 320, h: 240, hasAudio: true }; });\n  [0, 1].forEach(function (pair) {\n    var f = ri(0, 10);\n    for (var k = 0; k < 6; k++) {\n      var dur = ri(20, 70), m = 'm' + ri(0, 5), src = rnd() * 1.5, l = S.uid('l');\n      if (src + dur / 30 > p.media[m].dur) dur = Math.floor((p.media[m].dur - src) * 30);\n      seq.v[pair].clips.push(S.clip({ media: m, start: f, dur: dur, srcIn: src, link: l }));\n      seq.a[pair].clips.push(S.clip({ media: m, start: f, dur: dur, srcIn: src, link: l }));\n      var gap = rnd() < 0.4 ? ri(2, 20) : 0;\n      // a gap on one track only now and then filled: a title on the picture's track, or sound of its own on the sound's\n      if (gap && rnd() < 0.6) { var g0 = ri(0, 1), g = ri(1, gap); if (rnd() < 0.5) seq.v[pair].clips.push(S.clip({ kind: 'title', start: f + dur + (g0 ? gap - g : 0), dur: g, name: 'g' })); else seq.a[pair].clips.push(S.clip({ media: 'm5', start: f + dur + (g0 ? gap - g : 0), dur: g, srcIn: rnd() * 2 })); }\n      f += dur + gap;\n    }\n  });\n  // a title on V3 now and then, and some sound of its own on A3\n  seq.v.push(S.track('v', 3)); seq.a.push(S.track('a', 3));\n  seq.v[2].clips.push(S.clip({ kind: 'title', start: 30, dur: 60, name: 'T' }));\n  seq.a[2].clips.push(S.clip({ media: 'm5', start: 10, dur: 90, srcIn: 0 }));\n  S.tracks(seq).forEach(function (t) { S.sort(t); });\n  return { p: p, seq: seq };\n}\nfunction bad(s) {\n  var out = [], seq = s.seq, groups = {};\n  S.tracks(seq).forEach(function (t) {\n    var cs = t.clips.slice().sort(function (a, b) { return a.start - b.start; });\n    for (var i = 0; i < cs.length; i++) { var c = cs[i]; if (c.dur < 1 || c.start < 0 || !isFinite(c.dur)) out.push('frames ' + t.name); if (i && c.start < cs[i - 1].start + cs[i - 1].dur) out.push('overlap ' + t.name);\n      var len = S.mediaLen(s.p, c); if (c.kind === 'av' && len !== Infinity && (c.srcIn < -1e-6 || c.srcIn + S.srcSpan(c, seq) > len + 1e-6)) out.push('source ' + t.name);\n      if (c.link) (groups[c.link] = groups[c.link] || []).push(c); }\n  });\n  for (var l in groups) { var g = groups[l]; if (g.some(function (c) { return c.start !== g[0].start || c.dur !== g[0].dur; })) out.push('parted ' + g.map(function (c) { return c.start + '+' + c.dur; }).join('/')); }\n  return out;\n}\nvar counts = { trim: [0, 0], roll: [0, 0], slide: [0, 0] }, examples = {};\nfor (var ep = 0; ep < 300; ep++) {\n  var s = build();\n  for (var st = 0; st < 30; st++) {\n    var all = S.all(s.seq).filter(function (x) { return x.c.link; }); if (!all.length) break;\n    var x = all[ri(0, all.length - 1)], kind = ['trim', 'roll', 'slide'][ri(0, 2)], edge = rnd() < 0.5 ? 'head' : 'tail', d = ri(-40, 40), ps = S.partners(s.seq, x.c);\n    var before = JSON.stringify(s.p);\n    if (kind === 'trim') E.trimLinked(s.p, s.seq, x.t, x.c, edge, d, ps);\n    else if (kind === 'roll') E.rollLinked(s.p, s.seq, x.t, x.c, edge, d, ps);\n    else E.slideLinked(s.p, s.seq, x.t, x.c, d, ps);\n    var b = bad(s); counts[kind][0]++;\n    if (b.length) { counts[kind][1]++; if (!examples[kind]) examples[kind] = b.slice(0, 3).join('; '); break; }\n  }\n}\nreturn { counts: counts, examples: examples };\n"
+
+# --- the Timeline's linked edits (1.24.43, after review 3): a plain trim, a rolling edit and a slide of a clip with its
+# linked partners, on tracks whose neighbours differ (a title in a picture's gap, sound of its own in a sound's gap):
+# no overlaps, no frame counts broken, no source past the media, and linked clips together
+LINKFUZZ = r"""var S = V.seq, T = V.time, E = V.edit;
+%s"""
+for seed in (1, 7):
+    r = run((LINKFUZZ % LINKBODY).replace("SEED", str(seed)))
+    for k in ("trim", "roll", "slide"):
+        check("linked %s (E.%sLinked, as the Timeline calls it), %d edits from seed %d: linked clips stay together and no rule is broken" % ({"trim": "plain trims", "roll": "rolling edits", "slide": "slides"}[k], k, r["counts"][k][0], seed), r["counts"][k][0] > 2000 and r["counts"][k][1] == 0, r["examples"].get(k))
+# --- a WAV's channel mask: 4.0 (L R C S) and 2.1 (L R LFE) folded to stereo as ffmpeg folds them (-ac 2)
+if FF:
+    for lay, nch in (("4.0", 4), ("2.1", 3), ("5.1(side)", 6)):
+        tt = np.arange(48000 * 2) / 48000.0; x = np.stack([0.1 * np.sin(2 * np.pi * (300 + 200 * i) * tt) for i in range(nch)], 1).astype("<f4")
+        open(p("mc.f32"), "wb").write(x.tobytes())
+        ff("-f", "f32le", "-ar", "48000", "-ch_layout", lay, "-i", p("mc.f32"), "-c:a", "pcm_f32le", p("mc.wav")); ff("-i", p("mc.wav"), "-ac", "2", "-f", "f32le", p("dm.f32"))
+        ref = np.frombuffer(open(p("dm.f32"), "rb").read(), "<f4").reshape(-1, 2)[:48000]
+        r = run(r"""var S = V.seq, T = V.time, w = V.riff.readWav(new Uint8Array(fs.readFileSync(%s))); V.media = V.media || { rt: {} }; V.media.rt = V.media.rt || {};
+          V.media.rt.mc = { audio: { sampleRate: w.sampleRate, data: w.data, mask: w.mask } }; var p = S.project(), seq = p.seqs[p.active]; seq.rate = T.rate(30, 1); p.media.mc = { id: 'mc', kind: 'audio', dur: 2 };
+          seq.a[0].clips.push(S.clip({ media: 'mc', start: 0, dur: 30 })); V.mix.clear(); var o = V.mix.range(p, seq, 0, 48000); return { mask: w.mask, l: Array.prototype.slice.call(o[0]), r: Array.prototype.slice.call(o[1]) };""" % json.dumps(p("mc.wav")))
+        y = np.stack([r["l"], r["r"]], 1)
+        check("a %s WAV (channel mask 0x%X) folded to stereo by its mask as ffmpeg folds it (-ac 2): within 1e-4" % (lay, r["mask"]), np.abs(y[200:-200] - ref[200:-200]).max() < 1e-4, np.abs(y[200:-200] - ref[200:-200]).max())
+# --- Maintain Audio Pitch keeps time: beeps at 1, 3 and 5 s of the source come at 2, 6 and 10 s at 50% and at 0.667,
+# 2 and 3.333 s at 150% (within 20 ms); Amplify keyed -20 dB with Hold, then 0 dB at frame 30: it steps at frame 30
+r = run(r"""var S = V.seq, T = V.time, sr = 48000, L = 12 * sr, d = new Float32Array(L), out = {};
+  [1, 3, 5].forEach(function (t0) { for (var i = 0; i < 0.1 * sr; i++) d[Math.round(t0 * sr) + i] = 0.5 * Math.sin(2 * Math.PI * 2000 * i / sr); });
+  for (var i = 0; i < L; i++) d[i] += 0.02 * Math.sin(2 * Math.PI * 440 * i / sr);
+  V.media = V.media || { rt: {} }; V.media.rt = V.media.rt || {}; V.media.rt.bp = { audio: { sampleRate: sr, data: [d, d] } };
+  out.beeps = [0.5, 1.5].map(function (sp) {
+    var p = S.project(), seq = p.seqs[p.active]; seq.rate = T.rate(30, 1); p.media.bp = { id: 'bp', kind: 'audio', dur: 12 };
+    var c = S.clip({ media: 'bp', start: 0, dur: Math.round(6 / sp * 30), srcIn: 0, speed: sp }); c.pitch = true; seq.a[0].clips.push(c); V.mix.clear();
+    var r = V.mix.clipSound(p, seq, c), ch = r.chs[0], on = [], last = -1;
+    for (var j = r.pad; j < ch.length; j += 48) { var e = 0; for (var q = 0; q < 48 && j + q < ch.length; q++) e = Math.max(e, Math.abs(ch[j + q])); if (e > 0.25 && (last < 0 || j - last > sr)) { on.push((j - r.pad) / sr); last = j; } }
+    return on;
+  });
+  var p = S.project(), seq = p.seqs[p.active]; seq.rate = T.rate(30, 1); var one = new Float32Array(3 * sr); one.fill(0.5); V.media.rt.dc = { audio: { sampleRate: sr, data: [one] } }; p.media.dc = { id: 'dc', kind: 'audio', dur: 3 };
+  var c = S.clip({ media: 'dc', start: 0, dur: 60 }), e = V.fx.make('amplify'); e.keys = { gain: [{ f: 0, v: -20, i: 'hold' }, { f: 30, v: 0, i: 'linear' }] }; c.fx.push(e); seq.a[0].clips.push(c); V.mix.clear();
+  var o = V.mix.range(p, seq, 0, 2 * sr)[0]; out.amp = [o[Math.round(29.5 / 30 * sr)], o[Math.round(29.99 / 30 * sr)], o[Math.round(30 / 30 * sr)], o[Math.round(30.5 / 30 * sr)]];
+  return out;""")
+b5, b15 = r["beeps"]
+check("Maintain Audio Pitch keeps time: beeps at 1, 3, 5 s of the source come at 2, 6, 10 s at 50%% and at 0.667, 2, 3.333 s at 150%% (within 20 ms)  [%s / %s]" % (np.round(b5, 3).tolist(), np.round(b15, 3).tolist()),
+      len(b5) == 3 and len(b15) == 3 and max(abs(a - b) for a, b in zip(b5, [2, 6, 10])) < 0.02 and max(abs(a - b) for a, b in zip(b15, [2 / 3, 2, 10 / 3])) < 0.02, (b5, b15))
+amp = [20 * math.log10(abs(v) / 0.5) if v else -99 for v in r["amp"]]
+check("Amplify keyed -20 dB with a Hold, then 0 dB at frame 30: -20 dB up to frame 30 (29.5, 29.99), 0 dB from it (30, 30.5) (within 0.1 dB)", all(abs(a + 20) < 0.1 for a in amp[:2]) and all(abs(a) < 0.1 for a in amp[2:]), np.round(amp, 2).tolist())
+# --- captions: WebVTT written with &amp; &lt; &gt;, read back the same; a character above U+FFFF read whole; SubRip's
+# text kept as typed (an &amp; in it is what was typed); only the known tags taken off
+r = run(r"""var C = V.cap, S = V.seq, T = V.time, p = S.project(), seq = p.seqs[p.active]; seq.rate = T.rate(30, 1);
+  var list = [{ start: 30, end: 60, text: 'I <3 you & a < b > c' }], vt = C.vtt(list, seq), back = C.parse(vt);
+  return { vt: vt, back: back.map(function (c) { return c.text; }), emoji: C.parse('WEBVTT\n\n00:01.000 --> 00:02.000\n&#128512; and &#x1F600;\n').map(function (c) { return c.text; }),
+    srt: C.parse('1\n00:00:01,000 --> 00:00:02,000\nFish &amp; chips <i>now</i> <3\n').map(function (c) { return c.text; }) };""")
+check("WebVTT written with &amp; &lt; &gt; (so a player shows 'I <3 you & a < b > c'), and read back the same", "I &lt;3 you &amp; a &lt; b &gt; c" in r["vt"] and r["back"] == ["I <3 you & a < b > c"], (r["vt"], r["back"]))
+check("WebVTT's &#128512; and &#x1F600; read as the emoji itself (U+1F600, two UTF-16 halves)", r["emoji"] == ["\U0001F600 and \U0001F600"], r["emoji"])
+check("SubRip: an &amp; is what was typed, <i> taken off, '<3' kept", r["srt"] == ["Fish &amp; chips now <3"], r["srt"])
+# --- EDL and FCP XML: a frame hold, a Dip to White centred on its cut, and fades at a clip's free ends come back
+r = run(r"""var S = V.seq, T = V.time, X = V.xchg, p = S.project(), seq = p.seqs[p.active]; seq.rate = T.rate(30, 1);
+  ['ta.mp4', 'tb.mp4'].forEach(function (nm, i) { p.media['m' + i] = { id: 'm' + i, name: nm, kind: 'video', dur: 20, w: 320, h: 240, hasAudio: true }; });
+  var v = seq.v[0], a = S.clip({ media: 'm0', start: 0, dur: 60, srcIn: 1 }), h = S.clip({ media: 'm0', start: 60, dur: 45, srcIn: 2 }), b = S.clip({ media: 'm1', start: 105, dur: 90, srcIn: 4 });
+  h.hold = 3; b.tin = { type: 'dipWhite', dur: 20, align: 'center' }; a.tin = { type: 'crossDissolve', dur: 15, align: 'start', single: true }; b.tout = { type: 'dipBlack', dur: 25, align: 'end', single: true };
+  v.clips.push(a, h, b);
+  function lay(sq) { return sq.v[0].clips.map(function (c) { return [c.start, c.dur, c.hold === null ? Math.round(c.srcIn * 30) : null, c.hold === null ? null : Math.round(c.hold * 30), c.tin ? [c.tin.type, c.tin.dur, c.tin.align, !!c.tin.single] : null, c.tout ? [c.tout.type, c.tout.dur, !!c.tout.single] : null]; }); }
+  var edl = X.edl(p, seq), q = S.sequence({ name: 'e', rate: T.rate(30, 1) }); X.readEdl(edl, p, q);
+  var xml = X.fcpxml(p, seq), back = X.readFcpxml(xml, p).seq;
+  // the record times of the EDL's events, in order: none may begin before the one before it ends (CMX 3600)
+  var recs = edl.split('\r\n').filter(function (l) { return /^\d{3}\s/.test(l); }).map(function (l) { var tc = l.match(/\d\d:\d\d:\d\d:\d\d/g); return [T.parseTc(tc[2], seq.rate), T.parseTc(tc[3], seq.rate)]; });
+  var over = 0; for (var i = 1; i < recs.length; i++) if (recs[i][0] < recs[i - 1][1] && recs[i][1] > recs[i][0]) over++;
+  return { orig: lay(seq), edl: lay(q), xml: lay(back), over: over, text: edl };""")
+check("EDL out and back: a frame hold, a Dip to White centred on its cut, a fade in and a fade out come back as they were (the hold by M2 000.0, the rest by LANTERN comments)", r["edl"] == r["orig"], (r["edl"], r["orig"]))
+check("EDL: no event begins before the one before it ends (the dissolve's outgoing event ends where it begins; OpenTimelineIO refuses overlaps)", r["over"] == 0, r["text"][:600])
+check("Final Cut Pro XML out and back: the same frame hold, Dip to White and fades (Time Remap 0, start-black and end-black)", r["xml"] == r["orig"], (r["xml"], r["orig"]))
 print("%d checks, %d failed" % (n, fails))
 print("ALL VIDEO ARITHMETIC CHECKS PASS" if not fails else "%d VIDEO ARITHMETIC CHECK(S) FAILED" % fails)
 shutil.rmtree(OUT, ignore_errors=True)

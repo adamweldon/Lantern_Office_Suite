@@ -9,7 +9,7 @@
 <noscript>Lantern needs JavaScript enabled. It never needs the internet.</noscript>
 <script>
 // ===========================================================================
-// LANTERN OFFICE SUITE -- v1.24.42 (Compose writing suite + on-device AI test build)
+// LANTERN OFFICE SUITE -- v1.24.43 (Compose writing suite + on-device AI test build)
 // Single-file, offline-first, zero-dependency office tools for low-end
 // hardware. Free to copy, share, translate, and modify. Public domain (CC0, or the
 // Zero-Clause BSD licence, 0BSD, if you prefer: LICENSE).
@@ -188,7 +188,7 @@
 //          Lantern.lists = {level(el), type(el), mark(type, n), css(scope)}
 // ===========================================================================
 var Lantern = window.Lantern = {
-  version: "1.24.42",
+  version: "1.24.43",
   apps: {},
   order: []
 };
@@ -61300,6 +61300,8 @@ Lantern.RFB = (function () {
         t.littleEndian = f === "sowt" || f === "raw " || (f === "lpcm" && !((t.lpcmFlags || 0) & 2)) || t.littleEndian === true;
         t.float = f === "fl32" || f === "fl64" || f === "fpcm" || (f === "lpcm" && ((t.lpcmFlags || 0) & 1));
         if (f === "in24") t.bits = 24; if (f === "in32" || f === "fl32") t.bits = 32; if (f === "fl64") t.bits = 64; if (f === "raw ") t.bits = 8;
+        // 8-bit sound is signed in 'twos' and 'sowt' (and in 'lpcm' marked signed, and ISO 'ipcm'); only 'raw ' is unsigned
+        t.signed8 = f === "twos" || f === "sowt" || f === "ipcm" || (f === "lpcm" && !!((t.lpcmFlags || 0) & 4));
         if (!t.bits) t.bits = 16;
       }
     }
@@ -61540,7 +61542,7 @@ Lantern.RFB = (function () {
 // MODULE: VIDEO_MKV_READ - END
 // MODULE: VIDEO_RIFF - START
 // Depends: CORE, VIDEO_BYTES
-// Exports: Lantern.video.riff = {readWav(u8) -> {sampleRate, channels, bits, data:[Float32Array]}, writeWav(channels, rate, bits)
+// Exports: Lantern.video.riff = {readWav(u8) -> {sampleRate, channels, bits, data:[Float32Array], mask}, writeWav(channels, rate, bits)
 //          -> Uint8Array, readAvi(source) -> Promise<{kind:"avi", duration, tracks}>, writeAvi({width, height, fps, frames:[jpeg],
 //          audio:{rate, channels, pcm16:Int16Array}}) -> Uint8Array}
 // ===========================================================================
@@ -61564,7 +61566,8 @@ Lantern.RFB = (function () {
     while (p + 8 <= b.length) {
       var id = str(b, p, 4), n = le32(b, p + 4);
       if (id === "fmt ") fmt = { tag: le16(b, p + 8), ch: le16(b, p + 10), rate: le32(b, p + 12), bits: le16(b, p + 22) };
-      if (id === "fmt " && fmt.tag === 0xFFFE && n >= 40) fmt.tag = le16(b, p + 32);
+      // WAVE_FORMAT_EXTENSIBLE: the channel mask (which speaker each channel is) and the real format tag
+      if (id === "fmt " && fmt.tag === 0xFFFE && n >= 40) { fmt.mask = le32(b, p + 28); fmt.tag = le16(b, p + 32); }
       if (id === "data") { data = { at: p + 8, n: Math.min(n === 0xFFFFFFFF ? b.length - p - 8 : n, b.length - p - 8) }; break; }
       p += 8 + n + (n & 1);
     }
@@ -61582,7 +61585,7 @@ Lantern.RFB = (function () {
       else v = dv.getInt32(q, true) / 2147483648;
       out[c][i] = v;
     }
-    return { sampleRate: fmt.rate, channels: fmt.ch, bits: fmt.bits, float: fmt.tag === 3, data: out };
+    return { sampleRate: fmt.rate, channels: fmt.ch, bits: fmt.bits, float: fmt.tag === 3, data: out, mask: fmt.mask || 0 };
   }
   // channels: [Float32Array]; bits 16, 24 or 32 (float); values beyond -1..1 are clipped for integers
   function writeWav(ch, rate, bits) {
@@ -61590,7 +61593,8 @@ Lantern.RFB = (function () {
     // more than two channels: WAVE_FORMAT_EXTENSIBLE with the speakers named (Microsoft's rule; 5.1 is L R C LFE Ls Rs);
     // an odd-sized data chunk gets its pad byte (RIFF)
     var n = ch[0].length, k = ch.length, bps = bits >> 3, size = n * k * bps, ext = k > 2, pad = size & 1, o = B.Out(size + 96), tag = bits === 32 ? 3 : 1;
-    var mask = k === 6 ? 0x3F : k === 4 ? 0x33 : k === 8 ? 0x63F : (1 << k) - 1;
+    // (5 is L R C Ls Rs, as the mixer folds five channels; 3 is L R C)
+    var mask = k === 6 ? 0x3F : k === 5 ? 0x37 : k === 4 ? 0x33 : k === 8 ? 0x63F : (1 << k) - 1;
     o.str("RIFF").le32((ext ? 60 : 36) + size + pad).str("WAVEfmt ").le32(ext ? 40 : 16).le16(ext ? 0xFFFE : tag).le16(k).le32(rate).le32(rate * k * bps).le16(k * bps).le16(bits);
     // the KSDATAFORMAT_SUBTYPE GUID: the format tag, then 00000010-8000-00AA00389B71
     if (ext) o.le16(22).le16(bits).le32(mask).le16(tag).le16(0).bytes(new Uint8Array([0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71]));
@@ -62204,7 +62208,22 @@ Lantern.RFB = (function () {
     }
     return s[Math.max(0, b)];
   }
-  function srcSec(c, seq, a, b) { return remapped(c) ? upTo(c, seq, b) - upTo(c, seq, a) : T.sec(b - a, seq.rate) * Math.abs(c.speed); }
+  function speedAt(c, j) { return Math.max(0, V.keys.value(c.keys.remap, j, 100)) / 100; }
+  // seconds of source over frames [a, b) of the clip (frames before its first, a < 0, by the keys kept there)
+  function srcSec(c, seq, a, b) {
+    if (!remapped(c)) return T.sec(b - a, seq.rate) * Math.abs(c.speed);
+    var fps = seq.rate.num / seq.rate.den, s = 0, j;
+    for (j = a; j < Math.min(b, 0); j++) s += speedAt(c, j) / fps;
+    return s + (b > 0 ? upTo(c, seq, b) - upTo(c, seq, Math.max(0, a)) : 0);
+  }
+  // how many whole frames can be added before the clip's head (edge "head") or after its tail before they would show
+  // more than sec seconds of source, at the speeds its keys give there (Infinity if those frames hold still)
+  function framesFor(c, seq, edge, sec) {
+    if (!remapped(c)) { var sp = Math.abs(c.speed); return sp > 0 ? Math.floor(sec * seq.rate.num / seq.rate.den / sp + 1e-6) : Infinity; }
+    var fps = seq.rate.num / seq.rate.den, s = 0, n = 0, j = edge === "head" ? -1 : c.dur, st = edge === "head" ? -1 : 1, still = 0;
+    while (n < 1000000) { var v = speedAt(c, j) / fps; if (s + v > sec + 1e-9) return n; s += v; n++; j += st; if (v === 0) { if (++still > 100000) return Infinity; } else still = 0; }
+    return n;
+  }
   // seconds of source a clip covers (speed applied; a held frame covers none)
   function srcSpan(c, seq) { return c.hold !== null ? 0 : remapped(c) ? upTo(c, seq, c.dur) : T.sec(c.dur, seq.rate) * Math.abs(c.speed); }
   // the source time shown at a sequence frame (frames counted from the clip's start; the middle of a frame is not
@@ -62226,7 +62245,7 @@ Lantern.RFB = (function () {
     return m.kind === "image" ? Infinity : m.dur;
   }
   function partners(seq, c) { if (!c.link) return []; return all(seq).filter(function (x) { return x.c.link === c.link && x.c !== c; }); }
-  V.seq = { project: project, sequence: sequence, track: track, clip: clip, uid: uid, tracks: tracks, all: all, find: find, trackOf: trackOf, at: at, end: end, srcTime: srcTime, srcSpan: srcSpan, srcSec: srcSec, remapped: remapped, mediaLen: mediaLen, partners: partners, clone: clone, sort: sort };
+  V.seq = { project: project, sequence: sequence, track: track, clip: clip, uid: uid, tracks: tracks, all: all, find: find, trackOf: trackOf, at: at, end: end, srcTime: srcTime, srcSpan: srcSpan, srcSec: srcSec, framesFor: framesFor, remapped: remapped, mediaLen: mediaLen, partners: partners, clone: clone, sort: sort };
 })();
 // MODULE: VIDEO_SEQ - END
 // MODULE: VIDEO_EDIT - START
@@ -62269,12 +62288,20 @@ Lantern.RFB = (function () {
   }
   // the link of the right-hand pieces when linked clips are cut at frame f: the same for every piece cut there, so a
   // picture's right half stays linked to its sound's right half and not to the left halves
-  function linkAt(link, f) { var s = link + "@" + f, h = 0; for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return "l" + (h >>> 0).toString(36) + f.toString(36); }
+  // (the link made the last time this link was cut at this frame is used again only while every clip that has it is of
+  // the other kind: a picture's right half for its sound's, or the sound's for the picture's, even when the edit moved
+  // the first before cutting the second; never a third clip into a pair already made)
+  var madeLinks = {};
+  function linkAt(seq, t, link, f) {
+    var key = link + "@" + f, l = madeLinks[key];
+    if (l) { var holders = S.all(seq).filter(function (x) { return x.c.link === l; }); if (holders.length && holders.every(function (x) { return x.t.kind !== t.kind; })) return l; }
+    l = S.uid("l"); madeLinks[key] = l; return l;
+  }
   // cut a clip at sequence frame f: the left part keeps its id, the right is new (returned)
   function split(seq, t, c, f) {
     if (f <= c.start || f >= c.start + c.dur) return null;
     var r = S.clone(c), left = f - c.start;
-    r.id = S.uid("c"); r.start = f; r.dur = c.dur - left; r.tin = null; c.tout = null; if (c.link) r.link = linkAt(c.link, f);
+    r.id = S.uid("c"); r.start = f; r.dur = c.dur - left; r.tin = null; c.tout = null; if (c.link) r.link = linkAt(seq, t, c.link, f);
     if (c.hold === null) {
       if (S.remapped && S.remapped(c)) r.srcIn = c.srcIn + S.srcSec(c, seq, 0, left);
       else if (c.reverse) c.srcIn = c.srcIn + secOf(seq, r.dur, c); else r.srcIn = c.srcIn + secOf(seq, left, c);
@@ -62287,7 +62314,7 @@ Lantern.RFB = (function () {
   }
   function trimHeadRaw(seq, c, d) {
     // a remapped clip's head: the source its first d frames showed (a head made longer: those frames at the first key's speed)
-    if (S.remapped && S.remapped(c)) { c.srcIn += d >= 0 ? S.srcSec(c, seq, 0, d) : d / fps(seq) * Math.max(0, V.keys.value(c.keys.remap, 0, 100)) / 100; c.start += d; c.dur -= d; shiftKeys(c, 0, d, d + c.dur); return; }
+    if (S.remapped && S.remapped(c)) { c.srcIn += d >= 0 ? S.srcSec(c, seq, 0, d) : -S.srcSec(c, seq, d, 0); c.start += d; c.dur -= d; shiftKeys(c, 0, d, d + c.dur); return; }
     c.start += d; c.dur -= d;
     if (c.hold === null && !c.reverse) c.srcIn += (d / fps(seq)) * c.speed;
     shiftKeys(c, 0, d, d + c.dur);
@@ -62338,7 +62365,9 @@ Lantern.RFB = (function () {
     });
     return n;
   }
-  function remove(seq, ids) { S.tracks(seq).forEach(function (t) { t.clips = t.clips.filter(function (c) { return ids.indexOf(c.id) < 0; }); }); }
+  function remove(seq, ids) { S.tracks(seq).forEach(function (t) { t.clips = t.clips.filter(function (c) { return ids.indexOf(c.id) < 0; }); }); tidyTrans(seq); }
+  // a transition between two clips goes when one of them does (or no longer touches it)
+  function tidyTrans(seq) { S.tracks(seq).forEach(function (t) { t.clips.forEach(function (c) { if (c.tin && !c.tin.single && !t.clips.some(function (x) { return x !== c && x.start + x.dur === c.start; })) c.tin = null; }); }); }
   // close the time ranges spans (each [a, b), apart or together) on the given tracks: each clip moves back by the length
   // of the ranges before it. A sync-locked track that has a clip in a range is left as it is (said)
   function closeRanges(seq, own, spans, skipIds) {
@@ -62358,8 +62387,34 @@ Lantern.RFB = (function () {
     ids.forEach(function (id) { var x = S.find(seq, id); if (x) { spans.push([x.c.start, x.c.start + x.c.dur]); if (own.indexOf(x.t) < 0) own.push(x.t); } });
     if (!spans.length) return "";
     remove(seq, ids);
-    var left = closeRanges(seq, own, spans);
+    var left = closeRanges(seq, own, spans); tidyTrans(seq);
     return left.length ? "Tracks " + left.join(", ") + " have clips across the gap, so they were not moved" : "";
+  }
+  // Q and W: the frames [a, b) taken out. On the own tracks the caller has trimmed the clip; the clips after it move
+  // back. On every other sync-locked track the same frames are cleared (a clip across them is cut, as Premiere removes
+  // the trimmed region there) and the clips after them move back, so nothing falls out of step
+  function rippleCut(seq, own, a, b, skip, from) {
+    var d = b - a, cut = [];
+    skip = skip || [];
+    syncTracks(seq, own).forEach(function (t) {
+      if (own.indexOf(t) >= 0) { var th = from && from[t.id] !== undefined ? from[t.id] : b; t.clips.forEach(function (x) { if (skip.indexOf(x) < 0 && x.start >= th) x.start -= d; }); S.sort(t); return; }
+      if (t.clips.some(function (x) { return x.start < b && x.start + x.dur > a; })) cut.push(t.name);
+      clearRange(seq, t, a, b); t.clips.forEach(function (x) { if (x.start >= b) x.start -= d; }); S.sort(t);
+    });
+    tidyTrans(seq);
+    note = cut.length ? "The same frames were taken out of " + cut.join(", ") + " (sync-locked), so it stays in step" : "";
+    return cut;
+  }
+  // Time Remapping that runs the picture past its media's end: the clip is cut where the media ends (as Premiere
+  // shortens a clip its keys speed up), and said
+  function fitRemap(p, seq, c) {
+    if (!S.remapped || !S.remapped(c) || c.reverse) return "";
+    var len = S.mediaLen(p, c), fits = function (n) { return c.srcIn + S.srcSec(c, seq, 0, n) <= len + 1e-6; };
+    if (len === Infinity || fits(c.dur)) return "";
+    var lo = 1, hi = c.dur;
+    while (lo < hi) { var mid = Math.ceil((lo + hi) / 2); if (fits(mid)) lo = mid; else hi = mid - 1; }
+    var was = c.dur; c.dur = lo; tidyTrans(seq);
+    return "The clip was shortened from " + was + " to " + lo + " frames, where its media ends";
   }
   // a ripple: d frames taken out (d < 0, the frames [at, at - d)) or put in (d > 0, at frame at) on the own tracks and on
   // every sync-locked track that can take it without two clips meeting; the clips in skip (the ones being trimmed) stay
@@ -62388,12 +62443,12 @@ Lantern.RFB = (function () {
   }
   // how far an edge may go: [most frames earlier, most frames later] for the head or the tail, from the media
   function limits(p, seq, c, edge) {
-    var len = S.mediaLen(p, c), f = fps(seq), sp = Math.abs(c.speed), span = S.srcSpan(c, seq);
-    if (c.hold !== null || len === Infinity) return [Infinity, Infinity];
-    var rm = S.remapped && S.remapped(c), sh = sp, st = sp;
-    if (rm) { sh = Math.max(0, V.keys.value(c.keys.remap, 0, 100)) / 100; st = Math.max(0, V.keys.value(c.keys.remap, c.dur - 1, 100)) / 100; }
+    var len = S.mediaLen(p, c), span = S.srcSpan(c, seq);
+    // a title, matte, still or held frame has no media end, but it still cannot be trimmed to nothing
+    if (c.hold !== null || len === Infinity) return edge === "head" ? [Infinity, c.dur - 1] : [c.dur - 1, Infinity];
+    var rm = S.remapped && S.remapped(c);
     var before = c.reverse && !rm ? len - (c.srcIn + span) : c.srcIn, after = c.reverse && !rm ? c.srcIn : len - (c.srcIn + span);
-    var head = sh > 0 ? Math.floor(before * f / sh + 1e-6) : Infinity, tail = st > 0 ? Math.floor(Math.max(0, after) * f / st + 1e-6) : Infinity;
+    var head = S.framesFor(c, seq, "head", Math.max(0, before)), tail = S.framesFor(c, seq, "tail", Math.max(0, after));
     return edge === "head" ? [head, c.dur - 1] : [c.dur - 1, tail];
   }
   // the old end of the clips being trimmed, by track (see rippleShift)
@@ -62481,16 +62536,76 @@ Lantern.RFB = (function () {
     c.start += d; S.sort(t);
     return d;
   }
+  // The Timeline's edits of a clip with its linked clips (partners: a list of {t, c}; null when Alt has taken the clip
+  // alone), so that they stay together, as Premiere keeps them with Linked Selection on. How far an edge can go is tried
+  // on a copy of each clip first, and every clip is moved by the least of them.
+  function tryTrim(p, seq, y, edge, d) {
+    var cp = S.clone(y.c), tp = { id: y.t.id, kind: y.t.kind, clips: y.t.clips.map(function (z) { return z === y.c ? cp : z; }) };
+    return edge === "head" ? trimHead(p, seq, tp, cp, d, "plain") : trimTail(p, seq, tp, cp, d, "plain");
+  }
+  function trimTo2(p, seq, y, edge, d) { return edge === "head" ? trimHead(p, seq, y.t, y.c, d, "plain") : trimTail(p, seq, y.t, y.c, d, "plain"); }
+  // the linked clips of the clips beside an edit (whose edges the edit moves) that the edit would not move otherwise
+  function besides(seq, nb, skip) {
+    var out = [], ids = skip.slice(), nbIds = nb.map(function (z) { return z.c.id; });
+    nb.forEach(function (z) { S.partners(seq, z.c).forEach(function (y) { if (ids.indexOf(y.c.id) < 0 && nbIds.indexOf(y.c.id) < 0) { ids.push(y.c.id); out.push({ y: y, edge: z.edge }); } }); });
+    return out;
+  }
+  // a plain trim of c's head or tail by d (head: + is later; tail: + is longer); returns the frames moved
+  function trimLinked(p, seq, t, c, edge, d, partners) {
+    var all = [{ t: t, c: c }].concat(partners || []);
+    all.forEach(function (y) { d = tryTrim(p, seq, y, edge, d); });
+    all.forEach(function (y) { trimTo2(p, seq, y, edge, d); });
+    return d;
+  }
+  // a rolling edit of the cut at c's head or tail by d frames; a linked clip with no clip beside it at its cut (a gap
+  // there) is trimmed instead, and the linked clips of the clips beside the cuts are trimmed with them
+  function rollLinked(p, seq, t, c, edge, d, partners) {
+    function pairOf(tt, cc) { var o = edge === "head" ? tt.clips.filter(function (y) { return y.start + y.dur === cc.start; })[0] : tt.clips.filter(function (y) { return y.start === cc.start + cc.dur; })[0]; return o ? (edge === "head" ? [o, cc] : [cc, o]) : null; }
+    var mine = pairOf(t, c); if (!mine) return 0;
+    var pairs = [mine], lone = [];
+    (partners || []).forEach(function (y) { var q = pairOf(y.t, y.c); if (q) pairs.push(q); else lone.push(y); });
+    var nb = pairs.map(function (q) { return { c: edge === "head" ? q[0] : q[1], edge: edge === "head" ? "tail" : "head" }; });
+    var extra = partners ? besides(seq, nb, pairs.map(function (q) { return q[0].id; }).concat(pairs.map(function (q) { return q[1].id; }), lone.map(function (y) { return y.c.id; }))) : [];
+    pairs.forEach(function (q) { var la = limits(p, seq, q[0], "tail"), lb = limits(p, seq, q[1], "head"); d = Math.max(-Math.min(la[0], lb[0], q[0].dur - 1), Math.min(la[1], lb[1], q[1].dur - 1, d)); });
+    lone.forEach(function (y) { d = tryTrim(p, seq, y, edge, d); });
+    extra.forEach(function (q) { d = tryTrim(p, seq, q.y, q.edge, d); });
+    if (!d) return 0;
+    pairs.forEach(function (q) { roll(p, seq, q[0], q[1], d); });
+    lone.forEach(function (y) { trimTo2(p, seq, y, edge, d); });
+    extra.forEach(function (q) { trimTo2(p, seq, q.y, q.edge, d); });
+    return d;
+  }
+  // a slide of c by d frames with its linked clips, by the least any of them can; the linked clips of the clips beside
+  // them are trimmed as those are
+  function slideLinked(p, seq, t, c, d, partners) {
+    var all = [{ t: t, c: c }].concat(partners || []), nb = [];
+    all.forEach(function (y) { var a = around(y.t, y.c); if (a.touchP) nb.push({ c: a.prev, edge: "tail" }); if (a.touchN) nb.push({ c: a.next, edge: "head" }); });
+    var extra = partners ? besides(seq, nb, all.map(function (y) { return y.c.id; })) : [];
+    all.forEach(function (y) { d = slideLimit(p, seq, y.t, y.c, d); });
+    extra.forEach(function (q) { d = tryTrim(p, seq, q.y, q.edge, d); });
+    if (!d) return 0;
+    all.forEach(function (y) { slide(p, seq, y.t, y.c, d); });
+    extra.forEach(function (q) { trimTo2(p, seq, q.y, q.edge, d); });
+    return d;
+  }
   // Rate Stretch: a new length, the same source, so a new speed
   // (edge "head": the clip's end stays and its start moves, limited by the clip before; else by the clip after)
+  // a clip's keys (its own, its effects', its masks') when its length changes from a to b frames with the same source:
+  // the first and last frames stay first and last, the rest in proportion; a remapped clip's speeds scale the other way
+  function scaleKeys(c, a, b) {
+    if (a === b) return;
+    var k = a > 1 && b > 1 ? (b - 1) / (a - 1) : b / a;
+    function sc(keys) { for (var key in keys || {}) if (keys[key]) keys[key].forEach(function (x) { x.f = Math.round(x.f * k); if (key === "remap" && typeof x.v === "number") x.v = x.v * a / b; }); }
+    sc(c.keys); if (c.mask) sc(c.mask.keys);
+    (c.fx || []).forEach(function (e) { sc(e.keys); if (e.mask) sc(e.mask.keys); });
+  }
   function rateStretch(seq, t, c, newDur, edge) {
     newDur = Math.max(1, Math.round(newDur));
     var end0 = c.start + c.dur;
     if (edge === "head") { var prev = t.clips.filter(function (x) { return x !== c && x.start + x.dur <= c.start; }).pop(); newDur = Math.min(newDur, end0 - (prev ? prev.start + prev.dur : 0)); }
     else { var next = t.clips.filter(function (x) { return x !== c && x.start >= c.start + c.dur; })[0]; if (next) newDur = Math.min(newDur, next.start - c.start); }
     if (c.hold === null) c.speed = c.speed * c.dur / newDur;
-    var k = newDur / c.dur;
-    for (var key in c.keys) c.keys[key].forEach(function (x) { x.f = Math.round(x.f * k); });
+    scaleKeys(c, c.dur, newDur);
     c.dur = newDur; if (edge === "head") c.start = end0 - newDur; return newDur;
   }
   // Speed/Duration: percent, reversed, whether later clips move to fit (Ripple Edit, Shifting Trailing Clips), and
@@ -62509,7 +62624,10 @@ Lantern.RFB = (function () {
     // move with this one (and they are left for the caller); a list: those clips are the ones changed with it
     if (ripple) { var withs = ripple === true ? S.partners(seq, c).filter(function (y) { return y.c.start === c.start && y.c.dur === c.dur; }) : ripple, all = [{ t: t, c: c }].concat(withs); rippleShift(seq, all.map(function (y) { return y.t; }), d < 0 ? old + d : old, d, all.map(function (y) { return y.c; }), ends(all)); note2 = note; }
     else { var next = t.clips.filter(function (x) { return x !== c && x.start >= old; })[0]; if (next && c.start + newDur > next.start) { newDur = next.start - c.start; note2 = "The clip was cut short where the next clip begins"; } }
+    if (c.hold === null) scaleKeys(c, c.dur, newDur);
     c.speed = pct / 100; c.reverse = !!reverse; c.dur = newDur; if (pitch !== undefined) c.pitch = !!pitch;
+    // a clip keeps one frame at least: when even that runs past its media's end, it is read from as near the end as fits
+    if (len !== Infinity && c.hold === null && c.srcIn + S.srcSpan(c, seq) > len + 1e-9) { c.srcIn = Math.max(0, len - S.srcSpan(c, seq)); note2 = note2 || "The clip's one frame is read from as near its media's end as it fits"; }
     return note2;
   }
   // move clips by df frames and dt tracks (same kind), overwriting where they land, or inserting
@@ -62530,6 +62648,7 @@ Lantern.RFB = (function () {
       syncTracks(seq, items.map(function (x) { return x.dest; })).forEach(function (t) { shiftFrom(seq, t, f, d); });
     }
     items.forEach(function (x) { place(seq, x.dest, x.c); });
+    tidyTrans(seq);
     return note;
   }
   function closeGaps(seq, t) { var f = 0; S.sort(t).clips.forEach(function (c) { c.start = f; f += c.dur; }); }
@@ -62541,9 +62660,9 @@ Lantern.RFB = (function () {
     if (seq.inF !== null) pts.push(seq.inF); if (seq.outF !== null) pts.push(seq.outF);
     return pts.filter(function (v, i, a) { return a.indexOf(v) === i; }).sort(function (a, b) { return a - b; });
   }
-  V.edit = { split: split, clearRange: clearRange, shiftFrom: shiftFrom, place: place, insert: insert, overwrite: overwrite, razor: razor, rippleDelete: rippleDelete, remove: remove, lift: lift, extract: extract,
+  V.edit = { trimLinked: trimLinked, rollLinked: rollLinked, slideLinked: slideLinked, rippleCut: rippleCut, fitRemap: fitRemap, split: split, clearRange: clearRange, shiftFrom: shiftFrom, place: place, insert: insert, overwrite: overwrite, razor: razor, rippleDelete: rippleDelete, remove: remove, lift: lift, extract: extract,
     trimHead: trimHead, trimTail: trimTail, roll: roll, slip: slip, slide: slide, rateStretch: rateStretch, setSpeed: setSpeed, move: move, closeGaps: closeGaps, snapPoints: snapPoints, limits: limits,
-    rippleShift: rippleShift, closeRanges: closeRanges, slideLimit: slideLimit, note: function () { return note; } };
+    rippleShift: rippleShift, closeRanges: closeRanges, slideLimit: slideLimit, around: around, tidyTrans: tidyTrans, scaleKeys: scaleKeys, note: function () { return note; } };
 })();
 // MODULE: VIDEO_EDIT - END
 // MODULE: VIDEO_KEYS - START
@@ -62579,7 +62698,7 @@ Lantern.RFB = (function () {
       if (b.f === a.f) return b.v;
       if (typeof a.v !== "number" || typeof b.v !== "number") return f < b.f ? a.v : b.v;
       var u = (f - a.f) / (b.f - a.f), it = a.i || "linear";
-      if (it === "hold") return a.v;
+      if (it === "hold") return f < b.f ? a.v : b.v;
       if (it === "ease") return a.v + (b.v - a.v) * ease(u);
       if (it === "auto") {
         var p0 = i > 0 ? list[i - 1] : a, p3 = i + 2 < n ? list[i + 2] : b, span = b.f - a.f;
@@ -63715,18 +63834,24 @@ Lantern.RFB = (function () {
     if (!m) return null;
     return (+(m[1] || 0)) * 3600 + (+m[2]) * 60 + (+m[3]) + (+m[4]) / Math.pow(10, m[4].length);
   }
+  var TAGS = /<\/?(?:c|i|b|u|v|lang|ruby|rt|font)(?:[.\s][^<>]*)?>|<\d[\d:.]*>/gi;
+  // a character from its number (above U+FFFF as the two halves JavaScript keeps it in)
+  function chr(n) { if (!(n > 0) || n > 0x10FFFF || (n >= 0xD800 && n <= 0xDFFF)) return "\ufffd"; if (n <= 0xFFFF) return String.fromCharCode(n); n -= 0x10000; return String.fromCharCode(0xD800 + (n >> 10), 0xDC00 + (n & 1023)); }
   function parse(text) {
-    var out = [], blocks = String(text || "").replace(/\r/g, "").replace(/^\ufeff/, "").split(/\n\s*\n/);
+    var src = String(text || "").replace(/\r/g, "").replace(/^\ufeff/, ""), vttFile = /^WEBVTT/.test(src), out = [], blocks = src.split(/\n\s*\n/);
     blocks.forEach(function (b) {
       var lines = b.split("\n").filter(function (l) { return l.trim() !== ""; }), i;
       for (i = 0; i < lines.length; i++) if (lines[i].indexOf("-->") >= 0) break;
       if (i >= lines.length) return;
       var parts = lines[i].split("-->"), a = sec(parts[0]), e = sec(parts[1]);
       if (a === null || e === null) return;
-      // tags taken off, then WebVTT's character references (and SubRip's, where a program wrote them) made characters
-      var words = lines.slice(i + 1).join("\n").replace(/<[^>]+>/g, "").replace(/&(amp|lt|gt|nbsp|lrm|rlm|quot|apos|#\d+|#x[0-9a-f]+);/gi, function (m0, e) {
-        var k = e.toLowerCase(); return k === "amp" ? "&" : k === "lt" ? "<" : k === "gt" ? ">" : k === "nbsp" ? "\u00a0" : k === "lrm" ? "\u200e" : k === "rlm" ? "\u200f" : k === "quot" ? "\x22" : k === "apos" ? "\x27" : String.fromCharCode(k.charAt(1) === "x" ? parseInt(k.slice(2), 16) : parseInt(k.slice(1), 10));
-      }).trim();
+      // the tags WebVTT and SubRip have taken off (a word between < and > that is not one stays), then, in WebVTT, its
+      // character references made characters (SubRip has none: an &amp; typed in one is what was typed)
+      var words = lines.slice(i + 1).join("\n").replace(TAGS, "");
+      if (vttFile) words = words.replace(/&(amp|lt|gt|nbsp|lrm|rlm|quot|apos|#\d+|#x[0-9a-f]+);/gi, function (m0, e) {
+        var k = e.toLowerCase(); return k === "amp" ? "&" : k === "lt" ? "<" : k === "gt" ? ">" : k === "nbsp" ? "\u00a0" : k === "lrm" ? "\u200e" : k === "rlm" ? "\u200f" : k === "quot" ? "\x22" : k === "apos" ? "\x27" : chr(k.charAt(1) === "x" ? parseInt(k.slice(2), 16) : parseInt(k.slice(1), 10));
+      });
+      words = words.trim();
       if (words) out.push({ start: a, end: e, text: words });
     });
     return out.sort(function (x, y) { return x.start - y.start; });
@@ -63736,7 +63861,9 @@ Lantern.RFB = (function () {
   function toSec(list, seq) { return list.map(function (c) { return { start: T.sec(c.start, seq.rate), end: T.sec(c.end, seq.rate), text: c.text }; }); }
   function toFrames(list, seq) { return list.map(function (c) { return { id: "k" + Math.random().toString(36).slice(2, 9), start: Math.round(c.start * seq.rate.num / seq.rate.den), end: Math.max(Math.round(c.start * seq.rate.num / seq.rate.den) + 1, Math.round(c.end * seq.rate.num / seq.rate.den)), text: c.text }; }); }
   function srt(list, seq) { return toSec(list, seq).map(function (c, i) { return (i + 1) + "\n" + stamp(c.start, ",") + " --> " + stamp(c.end, ",") + "\n" + c.text + "\n"; }).join("\n"); }
-  function vtt(list, seq) { return "WEBVTT\n\n" + toSec(list, seq).map(function (c) { return stamp(c.start, ".") + " --> " + stamp(c.end, ".") + "\n" + c.text + "\n"; }).join("\n"); }
+  // WebVTT's text has &, < and > written as &amp; &lt; &gt; (else a player takes them for tags)
+  function vesc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function vtt(list, seq) { return "WEBVTT\n\n" + toSec(list, seq).map(function (c) { return stamp(c.start, ".") + " --> " + stamp(c.end, ".") + "\n" + vesc(c.text) + "\n"; }).join("\n"); }
   function at(seq, f) { return (seq.cap || []).filter(function (c) { return f >= c.start && f < c.end; }); }
   function draw(ctx, seq, f, w, h, k) {
     var cs = at(seq, f); if (!cs.length) return;
@@ -64013,7 +64140,10 @@ Lantern.RFB = (function () {
   var A = 16, BETA = 9, CUT = 0.9;
   function i0(x) { var s = 1, tm = 1, k = 1; do { tm *= (x / (2 * k)) * (x / (2 * k)); s += tm; k++; } while (tm > 1e-12 * s); return s; }
   var I0B = i0(BETA);
-  function kaiser(x) { var r = x / A; return r <= -1 || r >= 1 ? 0 : i0(BETA * Math.sqrt(1 - r * r)) / I0B; }
+  // the window kept as a table of 4,096 steps (worked out once; between steps in proportion), so reading faster than the
+  // source, which works the window for every tap, costs no Bessel series
+  var KT = new Float32Array(4098); (function () { for (var q = 0; q <= 4096; q++) { var r = q / 4096; KT[q] = i0(BETA * Math.sqrt(Math.max(0, 1 - r * r))) / I0B; } KT[4097] = 0; })();
+  function kaiser(x) { var r = Math.abs(x / A); if (r >= 1) return 0; var fq = r * 4096, q = Math.floor(fq); return KT[q] + (KT[q + 1] - KT[q]) * (fq - q); }
   function sinc(x) { if (x === 0) return 1; var px = Math.PI * x; return Math.sin(px) / px; }
   function lanczos(x) { return x <= -A || x >= A ? 0 : sinc(x) * kaiser(x); }
   var TABLE = [];
@@ -64035,21 +64165,29 @@ Lantern.RFB = (function () {
   }
   // Waveform-similarity overlap-add (Verhelst and Roelands, 1993): windows of 40 ms laid every 20 ms of the output, each
   // taken from where the input has gone at the speed, moved up to 10 ms to where it best continues the last one
-  function wsola(x, speed, outLen) {
-    var N = 1920, H = N / 2, tol = 480, win = new Float32Array(N), y = new Float32Array(outLen + N), wsum = new Float32Array(outLen + N), prev = -1;
-    for (var i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N);
+  // (the channels share one choice of windows, made on their sum, so a sound in both stays where it was between the
+  // speakers; each window's place is found every 8 samples, then to the sample around the best)
+  function wsola(xs, speed, outLen) {
+    var N = 1920, H = N / 2, tol = 480, win = new Float32Array(N), prev = -1, L = xs[0].length, x = xs.length > 1 ? new Float32Array(L) : xs[0], i, ch;
+    if (xs.length > 1) for (ch = 0; ch < xs.length; ch++) for (i = 0; i < L; i++) x[i] += xs[ch][i];
+    var ys = xs.map(function () { return new Float32Array(outLen + N); }), wsum = new Float32Array(outLen + N);
+    for (i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N);
+    function score(c0, want, step) { var s = 0; for (var q = 0; q < H; q += step) s += x[c0 + q] * x[want + q]; return s; }
     for (var k = 0; k * H < outLen; k++) {
-      var nominal = Math.round(k * H * speed), best = nominal;
+      // (the window's middle where the input has gone at the speed by the middle of its place in the output, so a sound
+      // comes when it should: not half a window early when slowed, nor late when sped up)
+      var nominal = Math.max(0, Math.round((k * H + N / 2) * speed - N / 2)), best = nominal;
       if (prev >= 0) {
-        var want = prev + H, bs = -Infinity;
-        for (var d = -tol; d <= tol; d += 8) { var c0 = nominal + d; if (c0 < 0 || c0 + N > x.length) continue; var s = 0; for (var q = 0; q < H; q += 4) s += x[c0 + q] * x[want + q]; if (s > bs) { bs = s; best = c0; } }
+        var want = prev + H, bs = -Infinity, d, c0, s;
+        for (d = -tol; d <= tol; d += 8) { c0 = nominal + d; if (c0 < 0 || c0 + N > L) continue; s = score(c0, want, 4); if (s > bs) { bs = s; best = c0; } }
+        var coarse = best; bs = -Infinity;
+        for (d = -7; d <= 7; d++) { c0 = coarse + d; if (c0 < 0 || c0 + N > L) continue; s = score(c0, want, 1); if (s > bs) { bs = s; best = c0; } }
       }
-      if (best < 0) best = 0; if (best + N > x.length) best = Math.max(0, x.length - N);
-      for (i = 0; i < N; i++) { var o = k * H + i; y[o] += x[best + i] * win[i]; wsum[o] += win[i]; }
+      if (best < 0) best = 0; if (best + N > L) best = Math.max(0, L - N);
+      for (i = 0; i < N; i++) { var o = k * H + i; for (ch = 0; ch < xs.length; ch++) ys[ch][o] += xs[ch][best + i] * win[i]; wsum[o] += win[i]; }
       prev = best;
     }
-    var out = new Float32Array(outLen); for (i = 0; i < outLen; i++) out[i] = wsum[i] > 1e-3 ? y[i] / wsum[i] : 0;
-    return out;
+    return ys.map(function (y) { var out = new Float32Array(outLen); for (i = 0; i < outLen; i++) out[i] = wsum[i] > 1e-3 ? y[i] / wsum[i] : 0; return out; });
   }
   // a sound effect over a clip's sound (index i is the clip's frame (i - pad) / sr * fps). Keyframed: a gain (Amplify)
   // follows its keys frame by frame; any other effect is worked out at each key's settings and, between two keys,
@@ -64060,9 +64198,12 @@ Lantern.RFB = (function () {
     if (!keyed.length) return def.run(chs, F.values(e, 0), sr);
     var n = chs[0].length, frameOf = function (i) { return (i - pad) / sr * fps; };
     if (def.gain) {
-      var f0 = Math.floor(frameOf(0)), f1 = Math.ceil(frameOf(n)) + 1, g = [];
-      for (var f = f0; f <= f1; f++) g.push(def.gain(F.values(e, f)));
-      return chs.map(function (c) { var o = new Float32Array(c.length); for (var i = 0; i < c.length; i++) { var x = frameOf(i) - f0, j = Math.floor(x), u = x - j; o[i] = c[i] * (g[j] + (g[Math.min(g.length - 1, j + 1)] - g[j]) * u); } return o; });
+      // the gain worked out 16 times a frame (so a Hold key steps where it is, within 2 ms) and joined between
+      // (up to a key after a Hold the gain is not joined to the next: it steps there, as Premiere's Hold does)
+      var Q = 16, f0 = Math.floor(frameOf(0)), f1 = Math.ceil(frameOf(n)) + 1, g = [], step = {};
+      for (var f = f0 * Q; f <= f1 * Q; f++) g.push(def.gain(F.values(e, f / Q)));
+      for (k in e.keys || {}) (e.keys[k] || []).forEach(function (x, xi, all) { if (x.i === "hold" && all[xi + 1]) step[Math.round((all[xi + 1].f - f0) * Q)] = true; });
+      return chs.map(function (c) { var o = new Float32Array(c.length); for (var i = 0; i < c.length; i++) { var x = (frameOf(i) - f0) * Q, j = Math.floor(x), u = x - j; o[i] = c[i] * (step[j + 1] ? g[j] : g[j] + (g[Math.min(g.length - 1, j + 1)] - g[j]) * u); } return o; });
     }
     var fs = keyed.filter(function (x, i) { return keyed.indexOf(x) === i; }).sort(function (a, b) { return a - b; });
     var outs = fs.map(function (fk) { return def.run(chs.map(function (c) { return new Float32Array(c); }), F.values(e, fk), sr) || chs; });
@@ -64078,8 +64219,20 @@ Lantern.RFB = (function () {
   // more than two channels folded to stereo as ITU-R BS.775 does: the centre and each surround at -3 dB (0.7071) into
   // its side, the low-frequency channel left out. Orders as the browser and WAV give them: 3 L R C; 4 L R Ls Rs;
   // 5 L R C Ls Rs; 6 L R C LFE Ls Rs; 8 L R C LFE Lb Rb Ls Rs
-  function fold(chs) {
+  // a WAV's channel mask (WAVE_FORMAT_EXTENSIBLE) names each channel's speaker (in bit order FL FR FC LFE BL BR FLC FRC
+  // BC SL SR); folded as ffmpeg folds them: the centre to both sides at -3 dB, a back or side channel to its own side
+  // at -3 dB, the back centre to both at -6 dB, the LFE left out
+  var R2 = Math.SQRT1_2, SPK = [[1, 0], [0, 1], [R2, R2], [0, 0], [R2, 0], [0, R2], [1, 0], [0, 1], [0.5, 0.5], [R2, 0], [0, R2]];
+  function foldMask(chs, mask) {
+    var roles = [], b; for (b = 0; b < 18 && roles.length < chs.length; b++) if (mask & (1 << b)) roles.push(b);
+    if (roles.length !== chs.length) return null;
+    var n = chs[0].length, L = new Float32Array(n), R = new Float32Array(n);
+    roles.forEach(function (r, j) { var g = SPK[r] || [0, 0], d = chs[j]; if (!g[0] && !g[1]) return; for (var i = 0; i < n; i++) { L[i] += d[i] * g[0]; R[i] += d[i] * g[1]; } });
+    return [L, R];
+  }
+  function fold(chs, mask) {
     var k = chs.length; if (k <= 2) return chs;
+    if (mask) { var byMask = foldMask(chs, mask); if (byMask) return byMask; }
     var map = { 3: [[0, 2], [1, 2], []], 4: [[0, 2], [1, 3]], 5: [[0, 2, 3], [1, 2, 4]], 6: [[0, 2, 4], [1, 2, 5]], 8: [[0, 2, 4, 6], [1, 2, 5, 7]] }[k];
     if (!map) return chs.slice(0, 2);
     return [0, 1].map(function (side) {
@@ -64105,15 +64258,19 @@ Lantern.RFB = (function () {
     var sr = seq.sampleRate, fps = fps0, pad = Math.ceil(padS * sr), n = Math.round(c.dur / fps * sr) + 2 * pad, out = [], step = Math.abs(c.speed) * a.sampleRate / sr;
     var g = Math.pow(10, (c.gain || 0) / 20), srcLen = a.data[0].length / a.sampleRate;
     var keep = c.pitch === true && Math.abs(c.speed) !== 1 && c.hold === null, sp = Math.abs(c.speed);
-    var src = a.stereo || (a.stereo = fold(a.data));
-    for (var ch = 0; ch < src.length; ch++) {
+    var src = a.stereo || (a.stereo = fold(a.data, a.mask));
+    if (keep) {
+      // Maintain Audio Pitch: the source read at its own speed, then stretched in time (WSOLA) to the clip's length
+      var m = Math.round(n * sp) + 2048, s0 = c.srcIn - pad / sr * sp, xs = src.map(function (d0) {
+        var x = new Float32Array(m);
+        for (var j = 0; j < m; j++) { var tj = c.reverse ? c.srcIn + c.dur / fps * sp + pad / sr * sp - j / sr : s0 + j / sr; if (tj >= 0 && tj < srcLen) x[j] = at(d0, tj * a.sampleRate, a.sampleRate / sr) * g; }
+        return x;
+      });
+      out = wsola(xs, sp, n);
+    }
+    for (var ch = 0; ch < src.length && !keep; ch++) {
       var d = src[ch], o = new Float32Array(n);
-      if (keep) {
-        // Maintain Audio Pitch: the source read at its own speed, then stretched in time (WSOLA) to the clip's length
-        var m = Math.round(n * sp) + 2048, x = new Float32Array(m), s0 = c.srcIn - pad / sr * sp;
-        for (var j = 0; j < m; j++) { var tj = c.reverse ? c.srcIn + c.dur / fps * sp + pad / sr * sp - j / sr : s0 + j / sr; if (tj >= 0 && tj < srcLen) x[j] = at(d, tj * a.sampleRate, a.sampleRate / sr) * g; }
-        o.set(wsola(x, sp, n));
-      } else for (var i = 0; i < n; i++) {
+      for (var i = 0; i < n; i++) {
         var local = (i - pad) / sr, st;
         if (c.hold !== null) { o[i] = 0; continue; }
         st = c.reverse ? c.srcIn + c.dur / fps * sp - local * sp : c.srcIn + local * sp;
@@ -64290,7 +64447,7 @@ Lantern.RFB = (function () {
     for (i = 0; i < n; i++) for (c = 0; c < ch; c++, q += bps) {
       var v;
       if (t.float) v = bps === 8 ? dv.getFloat64(q, le) : dv.getFloat32(q, le);
-      else if (bps === 1) v = (dv.getUint8(q) - 128) / 128;
+      else if (bps === 1) v = t.signed8 ? dv.getInt8(q) / 128 : (dv.getUint8(q) - 128) / 128;
       else if (bps === 2) v = dv.getInt16(q, le) / 32768;
       else if (bps === 3) { var x = le ? (dv.getUint8(q) | (dv.getUint8(q + 1) << 8) | (dv.getInt8(q + 2) << 16)) : ((dv.getInt8(q) << 16) | (dv.getUint8(q + 1) << 8) | dv.getUint8(q + 2)); v = x / 8388608; }
       else v = dv.getInt32(q, le) / 2147483648;
@@ -64356,7 +64513,7 @@ Lantern.RFB = (function () {
   function decodeAudio(r) {
     if (r.audio) return Promise.resolve(r.audio);
     var t = r.aTrack, p;
-    if (r.kind === "wav") p = r.src.read(0, r.src.size).then(function (b) { var w = V.riff.readWav(b); return { sampleRate: w.sampleRate, data: w.data }; });
+    if (r.kind === "wav") p = r.src.read(0, r.src.size).then(function (b) { var w = V.riff.readWav(b); return { sampleRate: w.sampleRate, data: w.data, mask: w.mask || 0 }; });
     else if (!t) p = viaBrowser(r.file);
     else if (t.pcm) p = viaPcm(r.src, t);
     else p = viaCodecs(r.src, t).catch(function (e) { if (r.file && r.file.size < 400e6) return viaBrowser(r.file); throw e; });
@@ -64614,20 +64771,43 @@ Lantern.RFB = (function () {
     for (var i = 0, q = 0; i < a.length; i++, q += 4) { var k = a[i]; if (k >= 1) continue; for (var c = 0; c < 4; c++) d[q + c] = before[q + c] + (d[q + c] - before[q + c]) * k; }
     return img;
   }
-  // follow the mask's patch through frames [{data, width, height}] (grey enough): returns [{f, dx, dy}]
-  function track(frames, m, f0) {
-    var out = [], ox = 0, oy = 0, R = 12;
-    var bx = Math.round(m.kind === "ellipse" ? m.cx : m.pts.reduce(function (s, p) { return s + p[0]; }, 0) / m.pts.length), by = Math.round(m.kind === "ellipse" ? m.cy : m.pts.reduce(function (s, p) { return s + p[1]; }, 0) / m.pts.length);
+  // follow the mask's patch through frames [{data, width, height}] (grey enough): returns [{f, dx, dy}], each move to a
+  // fraction of a pixel: the patch is read where the mask is (between pixels by bilinear reading, so fractions are
+  // kept), matched at whole-pixel steps (sum of squared differences), and the best step refined by a parabola through
+  // its neighbours; so a slow move (under a pixel a frame) adds up instead of being rounded away. With st (kept by the
+  // caller from one call to the next), the patch is the one where tracking began, so small errors do not add up either
+  function track(frames, m, f0, st) {
+    var out = [], ox = 0, oy = 0, R = 12, N = 2 * R + 1;
+    var bx = m.kind === "ellipse" ? m.cx : m.pts.reduce(function (s, p) { return s + p[0]; }, 0) / m.pts.length, by = m.kind === "ellipse" ? m.cy : m.pts.reduce(function (s, p) { return s + p[1]; }, 0) / m.pts.length;
     var hw = Math.max(4, Math.round((m.rx || 20) * 0.7)), hh = Math.max(4, Math.round((m.ry || 20) * 0.7));
-    function lum(fr, x, y) { x = Math.max(0, Math.min(fr.width - 1, x)); y = Math.max(0, Math.min(fr.height - 1, y)); var q = (y * fr.width + x) * 4; return 0.2126 * fr.data[q] + 0.7152 * fr.data[q + 1] + 0.0722 * fr.data[q + 2]; }
+    function grey(fr) { var n = fr.width * fr.height, g = new Float32Array(n), d = fr.data; for (var i = 0, q = 0; i < n; i++, q += 4) g[i] = 0.2126 * d[q] + 0.7152 * d[q + 1] + 0.0722 * d[q + 2]; return { g: g, w: fr.width, h: fr.height }; }
+    function at(G, x, y) {
+      x = Math.max(0, Math.min(G.w - 1, x)); y = Math.max(0, Math.min(G.h - 1, y));
+      var x0 = Math.floor(x), y0 = Math.floor(y), x1 = Math.min(G.w - 1, x0 + 1), y1 = Math.min(G.h - 1, y0 + 1), u = x - x0, v = y - y0, g = G.g;
+      return (1 - v) * ((1 - u) * g[y0 * G.w + x0] + u * g[y0 * G.w + x1]) + v * ((1 - u) * g[y1 * G.w + x0] + u * g[y1 * G.w + x1]);
+    }
+    function vertex(a, b0, c) { var den = a - 2 * b0 + c; return den > 0 ? Math.max(-0.5, Math.min(0.5, (a - c) / (2 * den))) : 0; }
+    var A = grey(frames[0]);
     for (var i = 1; i < frames.length; i++) {
-      var a = frames[i - 1], b = frames[i], best = Infinity, bdx = 0, bdy = 0;
+      var B = grey(frames[i]), px = bx + ox, py = by + oy, tpl = [], x, y;
+      if (st && st.tpl) tpl = st.tpl;
+      else { for (y = -hh; y <= hh; y += 2) for (x = -hw; x <= hw; x += 2) tpl.push(at(A, px + x, py + y)); if (st) st.tpl = tpl; }
+      var cost = new Float64Array(N * N), best = Infinity, bdx = 0, bdy = 0;
       for (var sy = -R; sy <= R; sy++) for (var sx = -R; sx <= R; sx++) {
-        var sad = 0;
-        for (var y = -hh; y <= hh; y += 2) for (var x = -hw; x <= hw; x += 2) sad += Math.abs(lum(a, bx + ox + x, by + oy + y) - lum(b, bx + ox + sx + x, by + oy + sy + y));
-        if (sad < best) { best = sad; bdx = sx; bdy = sy; }
+        var ssd = 0, k = 0;
+        for (y = -hh; y <= hh; y += 2) for (x = -hw; x <= hw; x += 2) { var e = tpl[k++] - at(B, px + sx + x, py + sy + y); ssd += e * e; }
+        cost[(sy + R) * N + sx + R] = ssd;
+        if (ssd < best) { best = ssd; bdx = sx; bdy = sy; }
       }
-      ox += bdx; oy += bdy; out.push({ f: f0 + i, dx: ox, dy: oy });
+      var fx = 0, fy = 0, ci = (bdy + R) * N + bdx + R;
+      if (bdx > -R && bdx < R) fx = vertex(cost[ci - 1], cost[ci], cost[ci + 1]);
+      if (bdy > -R && bdy < R) fy = vertex(cost[ci - N], cost[ci], cost[ci + N]);
+      // (given to a thousandth of a pixel; kept whole inside, so nothing is rounded away from one frame to the next)
+      ox += bdx + fx; oy += bdy + fy; out.push({ f: f0 + i, dx: Math.round(ox * 1000) / 1000, dy: Math.round(oy * 1000) / 1000 });
+      // when the patch no longer matches well (the thing has turned, or the light changed), the next match is against
+      // this frame's patch instead
+      if (st) { var mu = 0, vr = 0, n = tpl.length; tpl.forEach(function (q) { mu += q; }); mu /= n; tpl.forEach(function (q) { vr += (q - mu) * (q - mu); }); if (best > 0.2 * vr) st.tpl = null; }
+      A = B;
     }
     return out;
   }
@@ -64871,9 +65051,15 @@ Lantern.RFB = (function () {
           gdb += o.loudness - got;
           if (gdb > 40) break;
         }
+        // the limiter holds the samples under -1 dB, but between samples the wave can still pass it (true peak, ITU-R
+        // BS.1770 annex 2): it is measured, and the limiter run again with its ceiling lowered by what passed (three times
+        // at most)
+        var tp = V.loud.truePeak ? V.loud.truePeak(out) : -Infinity, ceil = -1;
+        for (var r2 = 0; r2 < 3 && tp > -1 && V.fx && V.fx.defs.limiter; r2++) { ceil -= tp + 1 + 0.05; var lr2 = V.fx.defs.limiter.run(out, { ceil: ceil, gain: 0, rel: 80 }, sr); if (!lr2) break; out = lr2; limited = true; tp = V.loud.truePeak(out); }
+        if (r2) got = V.loud.integrated(out, sr);
         chs = out;
         notes.push(Math.abs(got - o.loudness) <= 0.5 ? "Loudness " + now.toFixed(1) + " LUFS brought to " + o.loudness + " LUFS" : "Loudness " + now.toFixed(1) + " LUFS brought to " + got.toFixed(1) + " LUFS: " + o.loudness + " could not be reached with the peaks held under -1 dB");
-        if (limited) notes.push("peaks held under -1 dB by the Hard Limiter");
+        if (limited) notes.push(tp > -1 ? "peaks held under -1 dB by the Hard Limiter; the true peak is " + tp.toFixed(1) + " dBTP" : "peaks held under -1 dBTP (true peak) by the Hard Limiter");
       } else notes.push("The sequence is silent, so its loudness was left as it is");
     }
     return chs;
@@ -64966,7 +65152,7 @@ Lantern.RFB = (function () {
       var audioP;
       if (fmt === "mov") audioP = Promise.resolve({ pcm: true });
       else if (webm) audioP = encodeAudio(achs, sr, "opus", o.audioBitrate);
-      else audioP = encodeAudio(achs, sr, "mp4a.40.2", o.audioBitrate).catch(function () { notes.push("This browser cannot encode AAC sound, so the sound is Opus (every current player and editor reads it; an old one may not)"); return encodeAudio(achs, sr, "opus", o.audioBitrate); });
+      else audioP = encodeAudio(achs, sr, "mp4a.40.2", o.audioBitrate).catch(function () { notes.push("This browser cannot encode AAC sound, so the sound is Opus: browsers and VLC play it, but Premiere Pro, many televisions and older players do not (the .mov choice has sound every editor reads)"); return encodeAudio(achs, sr, "opus", o.audioBitrate); });
       return audioP.catch(function (e) { notes.push("The sound could not be encoded here (" + e.message + "), so the file has none"); return null; }).then(function (aud) {
         var vt = { type: "video", codec: vid.codec, description: vid.meta && vid.meta.description ? new Uint8Array(vid.meta.description) : null, width: pl.w, height: pl.h };
         var tracks = [vt];
@@ -65017,29 +65203,57 @@ Lantern.RFB = (function () {
   function nameOf(p, c) { if (c.kind === "av") { var m = p.media[c.media]; return m ? m.name : c.name || "clip"; } return c.name || ({ title: "Graphic", matte: "Color Matte", bars: "Bars and Tone", black: "Black Video", adjust: "Adjustment Layer", nest: "Nested Sequence" })[c.kind] || "clip"; }
   function srcFrames(c, seq) { var f = seq.rate.num / seq.rate.den; return [Math.round(c.srcIn * f), Math.round((c.srcIn + S.srcSpan(c, seq)) * f)]; }
   function hourOf(rate, drop) { return T.parseTc("01:00:00" + (drop ? ";" : ":") + "00", rate, drop); }
+  // a two-sided transition into c (after prev): how many frames before the cut the dissolve begins, as far as both
+  // clips' sources and the outgoing clip's length allow
+  function offOf(c, prev, seq) {
+    if (!prev || !c.tin || c.tin.single) return 0;
+    var w = V.trans && V.trans.window ? V.trans.window(c, "in", seq) : null, s = srcFrames(c, seq);
+    return w ? Math.max(0, Math.min(c.start - w.from, s[0], prev.dur - 1)) : 0;
+  }
+  function before(t, c) { return t.clips.filter(function (x) { return x.start + x.dur === c.start; })[0] || null; }
+  function after(t, c) { return t.clips.filter(function (x) { return x.start === c.start + c.dur; })[0] || null; }
+  // the speed a clip plays its source at, in source frames a second (a hold 0, Time Remapping its average)
+  function fpsOf(c, seq) { var f = seq.rate.num / seq.rate.den; if (c.hold !== null) return 0; return (c.reverse ? -1 : 1) * S.srcSpan(c, seq) / Math.max(1e-9, T.sec(c.dur, seq.rate)) * f; }
   function edl(p, seq) {
     var drop = seq.drop && T.dropOk(seq.rate), tc = function (f) { return T.tc(f, seq.rate, drop); }, out = ["TITLE: " + seq.name, "FCM: " + (drop ? "DROP FRAME" : "NON-DROP FRAME"), ""], n = 0;
-    var ev = [];
+    var ev = [], f0 = seq.rate.num / seq.rate.den;
     seq.v.forEach(function (t, i) { t.clips.forEach(function (c) { ev.push({ c: c, t: t, ch: i === 0 ? "V" : "V" + (i + 1) }); }); });
     seq.a.forEach(function (t, i) { t.clips.forEach(function (c) { if (c.kind === "av") ev.push({ c: c, t: t, ch: i === 0 ? "A" : i === 1 ? "A2" : "A" + (i + 1) }); }); });
     ev.sort(function (a, b) { return a.c.start - b.c.start; });
     // record times start at one hour, 01:00:00:00 in the sequence's own timecode (frame 86400 at 23.976 non-drop)
     var hour = hourOf(seq.rate, drop);
+    function M2(reel, c, s0) { var v = fpsOf(c, seq), a = Math.abs(v).toFixed(1); while (a.length < 5) a = "0" + a; return "M2   " + reel + "       " + (v < 0 ? "-" : "") + a + "                " + tc(s0); }
     ev.forEach(function (e) {
-      var c = e.c, s = srcFrames(c, seq), rec = [c.start + hour, c.start + c.dur + hour], reel = c.kind === "av" ? "AX" : c.kind === "black" ? "BL" : "AX";
+      var c = e.c, s = srcFrames(c, seq), rec = [c.start + hour, c.start + c.dur + hour], reel = c.kind === "black" ? "BL" : "AX";
+      var sp = Math.abs(c.speed), mv = c.hold !== null ? 0 : 1;
+      // a frame hold: the frame held, at speed 0 (M2), its source out as far on as the record's
+      if (c.hold !== null) { var hf = Math.round(c.hold * f0); s = [hf, hf + c.dur]; }
+      // the event ends where a dissolve into the next clip begins (CMX 3600 events do not overlap)
+      var nx = after(e.t, c), back = nx && nx.tin && !nx.tin.single ? offOf(nx, c, seq) : 0;
+      if (back) { rec[1] -= back; s[1] -= Math.round(back * sp * mv); }
       n++;
-      var prev = c.tin && !c.tin.single && /issolve/.test(c.tin.type) ? e.t.clips.filter(function (x) { return x.start + x.dur === c.start; })[0] : null;
+      var prev = c.tin && !c.tin.single ? before(e.t, c) : null;
       if (prev) {
-        // a dissolve: the outgoing clip's last frame (a C event of no length), then the incoming one (D), the record in
-        // where the dissolve begins; FROM names the outgoing clip, TO the incoming (CMX 3600)
-        // (no further back than the incoming clip's source goes: a source time before its start cannot be written)
-        var w = V.trans && V.trans.window ? V.trans.window(c, "in", seq) : null, off = w ? Math.max(0, Math.min(c.start - w.from, s[0])) : 0, ps = srcFrames(prev, seq);
-        out.push(pad3(n) + "  " + reel + "       " + e.ch + "     C        " + tc(ps[1] - off) + " " + tc(ps[1] - off) + " " + tc(rec[0] - off) + " " + tc(rec[0] - off));
-        out.push(pad3(n) + "  " + reel + "       " + e.ch + "     D    " + pad3(c.tin.dur) + " " + tc(s[0] - off) + " " + tc(s[1]) + " " + tc(rec[0] - off) + " " + tc(rec[1]));
-      } else out.push(pad3(n) + "  " + reel + "       " + e.ch + "     C        " + tc(s[0]) + " " + tc(s[1]) + " " + tc(rec[0]) + " " + tc(rec[1]));
-      if (Math.abs(c.speed) !== 1 || c.reverse) out.push("M2   " + reel + "       " + ((c.reverse ? -1 : 1) * Math.abs(c.speed) * seq.rate.num / seq.rate.den).toFixed(1) + "                " + tc(s[0]));
-      if (prev) out.push("* FROM CLIP NAME: " + nameOf(p, prev), "* TO CLIP NAME: " + nameOf(p, c), "");
-      else out.push("* FROM CLIP NAME: " + nameOf(p, c), "");
+        // a dissolve: the outgoing clip's frame where it begins (a C event of no length), then the incoming one (D), the
+        // record in where the dissolve begins; FROM names the outgoing clip, TO the incoming (CMX 3600); any other kind
+        // of transition is written as a dissolve, its own kind in a LANTERN comment that other programs pass over
+        var off = offOf(c, prev, seq), ps = srcFrames(prev, seq), pe = ps[0] + (prev.hold !== null ? prev.dur : ps[1] - ps[0]) - Math.round(off * Math.abs(prev.speed) * (prev.hold !== null ? 0 : 1));
+        if (prev.hold !== null) pe = Math.round(prev.hold * f0);
+        out.push(pad3(n) + "  " + reel + "       " + e.ch + "     C        " + tc(pe) + " " + tc(pe) + " " + tc(rec[0] - off) + " " + tc(rec[0] - off));
+        out.push(pad3(n) + "  " + reel + "       " + e.ch + "     D    " + pad3(c.tin.dur) + " " + tc(s[0] - Math.round(off * sp * mv)) + " " + tc(s[1]) + " " + tc(rec[0] - off) + " " + tc(rec[1]));
+        if (mv === 0 || sp !== 1 || c.reverse || S.remapped(c)) out.push(M2(reel, c, s[0] - Math.round(off * sp * mv)));
+        out.push("* FROM CLIP NAME: " + nameOf(p, prev), "* TO CLIP NAME: " + nameOf(p, c));
+        out.push("* LANTERN TRANSITION: " + c.tin.type + " " + (c.tin.align || "center") + " " + off);
+      } else {
+        out.push(pad3(n) + "  " + reel + "       " + e.ch + "     C        " + tc(s[0]) + " " + tc(s[1]) + " " + tc(rec[0]) + " " + tc(rec[1]));
+        if (mv === 0 || sp !== 1 || c.reverse || S.remapped(c)) out.push(M2(reel, c, s[0]));
+        out.push("* FROM CLIP NAME: " + nameOf(p, c));
+      }
+      // fades from and to black (one-sided transitions): kept for Lantern in comments; other programs see a cut
+      if (c.tin && c.tin.single) out.push("* LANTERN FADE IN: " + c.tin.type + " " + c.tin.dur);
+      if (c.tout && c.tout.single) out.push("* LANTERN FADE OUT: " + c.tout.type + " " + c.tout.dur);
+      if (S.remapped(c)) out.push("* LANTERN NOTE: Time Remapping written as its average speed");
+      out.push("");
     });
     return out.join("\r\n");
   }
@@ -65061,7 +65275,7 @@ Lantern.RFB = (function () {
         // a C event of no length is the outgoing clip's last frame before a dissolve: nothing to lay
         if (f[3] <= f[2]) { last = { zero: true }; return; }
         var ch = m[3].toUpperCase(), both = /^(B|AA\/V)$/.test(ch), isA = !both && /^A/.test(ch), tn = parseInt(ch.replace(/^[A-Z]+/, ""), 10) || 1;
-        last = { src: [f[0], f[1]], rec: [f[2] - hour, f[3] - hour], trans: m[4] === "D" ? (+m[5] || 0) : 0, clips: [] };
+        last = { src: [f[0], f[1]], rec: [f[2] - hour, f[3] - hour], trans: m[4] === "D" ? (+m[5] || 0) : 0, clips: [], tracks: [] };
         // B (and AA/V): the picture and its sound, linked
         var on = both ? [track(false, 1), track(true, 1)] : [track(isA, tn)], link = both ? S.uid("l") : null;
         on.forEach(function (tr) {
@@ -65074,7 +65288,7 @@ Lantern.RFB = (function () {
             if (off > 0 && off <= last.trans && off < c.dur) { c.start += off; c.dur -= off; c.srcIn += T.sec(off, seq.rate); al = off >= last.trans ? "end" : Math.abs(off - last.trans / 2) <= 1 ? "center" : "start"; }
             c.tin = { type: "crossDissolve", dur: last.trans, align: al };
           }
-          E.place(seq, tr, c); last.clips.push(c);
+          E.place(seq, tr, c); last.clips.push(c); last.tracks.push(tr);
         });
         return;
       }
@@ -65087,12 +65301,35 @@ Lantern.RFB = (function () {
         else last.from = nm[2].trim();
       }
       var sp = /^M2\s+\S+\s+(-?[\d.]+)/.exec(ln.trim());
-      if (sp && last && last.clips) { var fps = seq.rate.num / seq.rate.den, v = +sp[1] / fps; last.clips.forEach(function (c) { c.speed = Math.abs(v) || 1; c.reverse = v < 0; }); }
+      // M2: the speed in frames a second; 0 is a frame hold (the event's source in held)
+      if (sp && last && last.clips) { var fps = seq.rate.num / seq.rate.den, v = +sp[1] / fps; last.clips.forEach(function (c) { if (!v) { c.hold = c.srcIn; c.speed = 1; c.reverse = false; return; } c.speed = Math.abs(v); c.reverse = v < 0; }); }
+      // Lantern's own comments: a transition's kind, alignment and where its cut is; fades from and to black
+      var lt = /^\*\s*LANTERN TRANSITION:\s*(\w+)\s+(start|center|end)\s+(\d+)/.exec(ln.trim());
+      if (lt && last && last.clips && last.trans) last.clips.forEach(function (c, i) {
+        var tr = last.tracks[i], off = +lt[3], pv = tr && tr.clips.filter(function (x) { return x !== c && x.start + x.dur === c.start; })[0];
+        if (!c.tin && !pv) return;
+        if (off > 0 && off < c.dur && pv) { pv.dur += off; c.start += off; c.dur -= off; if (c.hold === null) c.srcIn += T.sec(off, seq.rate) * Math.abs(c.speed) * (c.reverse ? -1 : 1); S.sort(tr); }
+        c.tin = { type: lt[1], dur: last.trans, align: lt[2] };
+      });
+      var lf = /^\*\s*LANTERN FADE (IN|OUT):\s*(\w+)\s+(\d+)/.exec(ln.trim());
+      if (lf && last && last.clips) last.clips.forEach(function (c) { var o = { type: lf[2], dur: Math.max(1, Math.min(c.dur, +lf[3])), align: lf[1] === "IN" ? "start" : "end", single: true }; if (lf[1] === "IN") c.tin = o; else c.tout = o; });
     });
     finish();
     return notes.length ? "Not among this project's media (import them and the clips will find them by name): " + notes.filter(function (x, i, a) { return a.indexOf(x) === i; }).join(", ") : "";
   }
   function xesc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\x22/g, "&quot;"); }
+  // a transition's name in FCP 7 XML (Premiere's names for its sound crossfades), and back
+  var ANAMES = { constantPower: "Cross Fade (+3dB)", constantGain: "Cross Fade (0dB)", exponential: "Exponential Fade" };
+  function transName(type, kind) {
+    if (kind === "a") return [ANAMES[type] || ANAMES.constantPower, "Crossfade"];
+    var d = V.trans && V.trans.defs && V.trans.defs[type]; return d ? [d.name, d.cat || "Dissolve"] : ["Cross Dissolve", "Dissolve"];
+  }
+  function typeOf(name, audio) {
+    var nm = String(name || "").toLowerCase(), k;
+    if (audio) { for (k in ANAMES) if (ANAMES[k].toLowerCase() === nm) return k; return "constantPower"; }
+    if (V.trans && V.trans.defs) for (k in V.trans.defs) if (V.trans.defs[k].name.toLowerCase() === nm) return k;
+    return /dip/.test(nm) ? (/white/.test(nm) ? "dipWhite" : "dipBlack") : "crossDissolve";
+  }
   function rateXml(r) { var ntsc = r.den === 1001; return "<rate><timebase>" + (ntsc ? Math.round(r.num / 1000) : Math.round(r.num / r.den)) + "</timebase><ntsc>" + (ntsc ? "TRUE" : "FALSE") + "</ntsc></rate>"; }
   function fcpxml(p, seq) {
     var o = ['<?xml version="1.0" encoding="UTF-8"?>', "<!DOCTYPE xmeml>", '<xmeml version="4">', '<sequence id="' + xesc(seq.id) + '">', "<name>" + xesc(seq.name) + "</name>", "<duration>" + S.end(seq) + "</duration>", rateXml(seq.rate), "<media>"];
@@ -65111,13 +65348,15 @@ Lantern.RFB = (function () {
       if (!c.link) return "";
       return Object.keys(where).filter(function (id) { return where[id].link === c.link; }).map(function (id) { var w = where[id]; return "<link><linkclipref>" + xesc(w.id) + "</linkclipref><mediatype>" + w.type + "</mediatype><trackindex>" + w.ti + "</trackindex><clipindex>" + w.ci + "</clipindex></link>"; }).join("");
     }
-    // a transition into a clip, as Premiere writes one (a transition item between the two clip items)
-    function trans(c, t, kind) {
-      if (!c.tin || c.tin.single || !V.trans || !V.trans.window) return "";
-      var w = V.trans.window(c, "in", seq); if (!w) return "";
-      var nm = kind === "a" ? "Cross Fade (+3dB)" : /dip/i.test(c.tin.type) ? "Dip to Black" : "Cross Dissolve";
-      return "<transitionitem><start>" + w.from + "</start><end>" + w.to + "</end><alignment>" + (c.tin.align === "start" ? "start" : c.tin.align === "end" ? "end" : "center") + "</alignment>" + rateXml(seq.rate) +
-        "<effect><name>" + nm + "</name><effectid>" + nm + "</effectid><effectcategory>" + (kind === "a" ? "Crossfade" : "Dissolve") + "</effectcategory><effecttype>transition</effecttype><mediatype>" + (kind === "a" ? "audio" : "video") + "</mediatype></effect></transitionitem>";
+    // a transition into a clip, as Premiere writes one (a transition item between the two clip items); a fade from or to
+    // black (one-sided) is a transition item aligned start-black or end-black, before or after its clip item
+    function trans(c, t, kind, edge) {
+      var tt = edge === "out" ? c.tout : c.tin;
+      if (!tt || !V.trans || !V.trans.window || (edge === "out" && !tt.single)) return "";
+      var w = V.trans.window(c, edge || "in", seq); if (!w) return "";
+      var nm = transName(tt.type, kind), al = tt.single ? (edge === "out" ? "end-black" : "start-black") : tt.align === "start" ? "start" : tt.align === "end" ? "end" : "center";
+      return "<transitionitem><start>" + w.from + "</start><end>" + w.to + "</end><alignment>" + al + "</alignment>" + rateXml(seq.rate) +
+        "<effect><name>" + xesc(nm[0]) + "</name><effectid>" + xesc(nm[0]) + "</effectid><effectcategory>" + xesc(nm[1]) + "</effectcategory><effecttype>transition</effecttype><mediatype>" + (kind === "a" ? "audio" : "video") + "</mediatype></effect></transitionitem>";
     }
     function items(t, kind) {
       return t.clips.map(function (c) {
@@ -65125,13 +65364,18 @@ Lantern.RFB = (function () {
         // a title as a Text generator, so another program makes words of it (not a clip with no file)
         if (c.kind === "title" && c.data) {
           var tl = (c.data.layers || []).filter(function (l) { return l.type === "text"; })[0];
-          return trans(c, t, kind) + '<generatoritem id="' + xesc(id) + '"><name>' + xesc(nameOf(p, c)) + "</name><enabled>" + (c.enabled ? "TRUE" : "FALSE") + "</enabled><duration>" + c.dur + "</duration>" + rateXml(seq.rate) +
+          return trans(c, t, kind, "in") + '<generatoritem id="' + xesc(id) + '"><name>' + xesc(nameOf(p, c)) + "</name><enabled>" + (c.enabled ? "TRUE" : "FALSE") + "</enabled><duration>" + c.dur + "</duration>" + rateXml(seq.rate) +
             "<start>" + c.start + "</start><end>" + (c.start + c.dur) + "</end><in>0</in><out>" + c.dur + "</out><effect><name>Text</name><effectid>Text</effectid><effectcategory>Text</effectcategory><effecttype>generator</effecttype><mediatype>video</mediatype>" +
-            "<parameter><parameterid>str</parameterid><name>Text</name><value>" + xesc(tl ? tl.text : "") + "</value></parameter></effect></generatoritem>";
+            "<parameter><parameterid>str</parameterid><name>Text</name><value>" + xesc(tl ? tl.text : "") + "</value></parameter></effect></generatoritem>" + trans(c, t, kind, "out");
         }
-        return trans(c, t, kind) + '<clipitem id="' + xesc(id) + '"><name>' + xesc(nameOf(p, c)) + "</name><enabled>" + (c.enabled ? "TRUE" : "FALSE") + "</enabled><duration>" + (s[1] - s[0]) + "</duration>" + rateXml(seq.rate) +
+        // <duration> is the whole file's length, as Final Cut Pro 7 and Premiere write it; a frame hold is a Time Remap of
+        // speed 0 from its frame, Time Remapping its average speed
+        var m = c.kind === "av" ? p.media[c.media] : null, fl = m && m.dur ? Math.round(m.dur * seq.rate.num / seq.rate.den) : 0, hold = c.hold !== null, rm = S.remapped(c);
+        if (hold) { var hf = Math.round(c.hold * seq.rate.num / seq.rate.den); s = [hf, hf + c.dur]; }
+        var pct = hold ? 0 : Math.round(fpsOf(c, seq) / (seq.rate.num / seq.rate.den) * 1e4) / 100;
+        return trans(c, t, kind, "in") + '<clipitem id="' + xesc(id) + '"><name>' + xesc(nameOf(p, c)) + "</name><enabled>" + (c.enabled ? "TRUE" : "FALSE") + "</enabled><duration>" + Math.max(fl, s[1]) + "</duration>" + rateXml(seq.rate) +
           "<start>" + c.start + "</start><end>" + (c.start + c.dur) + "</end><in>" + s[0] + "</in><out>" + s[1] + "</out>" + (c.kind === "av" ? file(c) : "") +
-          (Math.abs(c.speed) !== 1 || c.reverse ? "<filter><effect><name>Time Remap</name><effectid>timeremap</effectid><parameter><parameterid>speed</parameterid><value>" + (c.reverse ? -100 : 100) * Math.abs(c.speed) + "</value></parameter><parameter><parameterid>reverse</parameterid><value>" + (c.reverse ? "TRUE" : "FALSE") + "</value></parameter></effect></filter>" : "") + links(c) + "</clipitem>";
+          (hold || rm || Math.abs(c.speed) !== 1 || c.reverse ? "<filter><effect><name>Time Remap</name><effectid>timeremap</effectid><parameter><parameterid>speed</parameterid><value>" + pct + "</value></parameter><parameter><parameterid>reverse</parameterid><value>" + (c.reverse ? "TRUE" : "FALSE") + "</value></parameter></effect></filter>" : "") + links(c) + "</clipitem>" + trans(c, t, kind, "out");
       }).join("");
     }
     o.push("<video><format><samplecharacteristics><width>" + seq.w + "</width><height>" + seq.h + "</height>" + rateXml(seq.rate) + "</samplecharacteristics></format>");
@@ -65158,12 +65402,18 @@ Lantern.RFB = (function () {
         var t = S.track(kind === "video" ? "v" : "a", (kind === "video" ? seq.v : seq.a).length + 1); (kind === "video" ? seq.v : seq.a).push(t);
         var nodes = Array.prototype.filter.call(tn.childNodes, function (x) { return /^(clipitem|transitionitem|generatoritem)$/.test(x.nodeName); });
         // where a transition puts the cut: its middle (center), its start or its end
-        function cutOf(tr) { var a = +txt(tr, "start"), b = +txt(tr, "end"), al = txt(tr, "alignment"); return /^start/.test(al) ? a : /^end/.test(al) ? b : Math.round((a + b) / 2); }
+        // (a centred one of odd length begins half a frame early, as Lantern lays one)
+        function cutOf(tr) { var a = +txt(tr, "start"), b = +txt(tr, "end"), al = txt(tr, "alignment"); return /^start/.test(al) ? a : /^end/.test(al) ? b : Math.floor((a + b) / 2); }
+        function black(tr) { return /black$/.test(txt(tr, "alignment")); }
         nodes.forEach(function (ci, k) {
           if (ci.nodeName === "transitionitem") return;
           var st = +txt(ci, "start"), en = +txt(ci, "end"), inn = +txt(ci, "in"), r = kid(ci, "rate") ? rateOf(ci) : seq.rate, fl = kid(ci, "file"), nm = fl ? (txt(fl, "name") || fileNames[fl.getAttribute("id")]) : txt(ci, "name");
           // Premiere writes -1 for an end that lies inside a transition: the transition beside it says where the cut is
           var before = k > 0 && nodes[k - 1].nodeName === "transitionitem" ? nodes[k - 1] : null, after = nodes[k + 1] && nodes[k + 1].nodeName === "transitionitem" ? nodes[k + 1] : null;
+          // a fade from black before the clip, or to black after it, is its own (it has no other clip)
+          var fadeIn = before && /^start-black/.test(txt(before, "alignment")) ? before : null, fadeOut = after && /^end-black/.test(txt(after, "alignment")) ? after : null;
+          if (fadeIn) before = null; if (fadeOut) after = null;
+          if (before && black(before)) before = null; if (after && black(after)) after = null;
           if (st < 0 && before) st = cutOf(before);
           if (en < 0 && after) en = cutOf(after);
           if (st < 0 || en <= st) return;
@@ -65181,11 +65431,13 @@ Lantern.RFB = (function () {
             // speed written as Time Remap
             Array.prototype.forEach.call(ci.getElementsByTagName("effect"), function (ef2) {
               if (!/time ?remap/i.test(txt(ef2, "effectid") + " " + txt(ef2, "name"))) return;
-              Array.prototype.forEach.call(ef2.getElementsByTagName("parameter"), function (pa) { var pid = txt(pa, "parameterid"), v = txt(pa, "value"); if (pid === "speed" && +v) { c.speed = Math.abs(+v) / 100; if (+v < 0) c.reverse = true; } if (pid === "reverse" && v === "TRUE") c.reverse = true; });
+              Array.prototype.forEach.call(ef2.getElementsByTagName("parameter"), function (pa) { var pid = txt(pa, "parameterid"), v = txt(pa, "value"); if (pid === "speed" && v !== "" && +v === 0) c.hold = c.srcIn; if (pid === "speed" && +v) { c.speed = Math.abs(+v) / 100; if (+v < 0) c.reverse = true; } if (pid === "reverse" && v === "TRUE") c.reverse = true; });
             });
             var lk = ci.getElementsByTagName("linkclipref"); if (lk.length > 1) c.link = "x" + Array.prototype.map.call(lk, function (x) { return x.textContent.trim(); }).sort().join("|");
           }
-          if (before && t.clips.length) c.tin = { type: kind === "audio" ? "constantPower" : /dip/i.test(txt(kid(before, "effect"), "name")) ? "dipBlack" : "crossDissolve", dur: +txt(before, "end") - +txt(before, "start"), align: /^start/.test(txt(before, "alignment")) ? "start" : /^end/.test(txt(before, "alignment")) ? "end" : "center" };
+          if (before && t.clips.length) c.tin = { type: typeOf(txt(kid(before, "effect"), "name"), kind === "audio"), dur: +txt(before, "end") - +txt(before, "start"), align: /^start/.test(txt(before, "alignment")) ? "start" : /^end/.test(txt(before, "alignment")) ? "end" : "center" };
+          if (fadeIn) c.tin = { type: typeOf(txt(kid(fadeIn, "effect"), "name"), kind === "audio"), dur: Math.max(1, Math.min(c.dur, +txt(fadeIn, "end") - +txt(fadeIn, "start"))), align: "start", single: true };
+          if (fadeOut) c.tout = { type: typeOf(txt(kid(fadeOut, "effect"), "name"), kind === "audio"), dur: Math.max(1, Math.min(c.dur, +txt(fadeOut, "end") - +txt(fadeOut, "start"))), align: "end", single: true };
           E.place(seq, t, c);
         });
       });
@@ -65340,8 +65592,14 @@ Lantern.RFB = (function () {
       if (v / (bs * bs) < 20) continue;
       // a block's own move can differ from the whole (a turn moves corners more): searched around the whole move,
       // first coarsely at half size, then to a pixel
+      // a block that the whole move takes near or past the picture's edge is left out: its true match may lie outside,
+      // and the best one inside would be wrong
+      var mg = 3;
+      if (bx + g0x < mg || by + g0y < mg || bx + bs + g0x > A.w - mg || by + bs + g0y > A.h - mg) continue;
       var rh = best(ah, bh, bx >> 1, by >> 1, bs >> 1, g0x >> 1, g0y >> 1, Math.max(3, R1 >> 1)), r2 = best(A, B, bx, by, bs, rh[0] * 2, rh[1] * 2, 2);
       if (!isFinite(r2[2])) continue;
+      // nor one whose best at half size is at the edge of its search (its match lies further off: something moving)
+      if (Math.abs(rh[0] - (g0x >> 1)) >= Math.max(3, R1 >> 1) || Math.abs(rh[1] - (g0y >> 1)) >= Math.max(3, R1 >> 1)) continue;
       var sx = para(sad(A, B, bx, by, bs, r2[0] - 1, r2[1]), r2[2], sad(A, B, bx, by, bs, r2[0] + 1, r2[1])), sy = para(sad(A, B, bx, by, bs, r2[0], r2[1] - 1), r2[2], sad(A, B, bx, by, bs, r2[0], r2[1] + 1));
       blocks.push({ x: bx + bs / 2 - A.w / 2, y: by + bs / 2 - A.h / 2, u: r2[0] + sx, v: r2[1] + sy, e: r2[2] / (bs * bs) });
     }
@@ -65385,7 +65643,13 @@ Lantern.RFB = (function () {
     if (!(sig > 0)) return xs.slice();
     var r = Math.ceil(3 * sig), w = [], out = [];
     for (var k = -r; k <= r; k++) w.push(Math.exp(-k * k / (2 * sig * sig)));
-    for (var i = 0; i < xs.length; i++) { var s = 0, ws = 0; for (k = -r; k <= r; k++) { var j = Math.max(0, Math.min(xs.length - 1, i + k)); s += xs[j] * w[k + r]; ws += w[k + r]; } out.push(s / ws); }
+    // beyond the ends the path is carried on along the straight line that fits its first (or last) frames, so a
+    // steady pan stays steady to the clip's first and last frames, and a shake at an end does not bend it
+    var n = xs.length, m = Math.max(2, Math.min(n, r));
+    function line(i0) { var sx = 0, sy = 0, sxx = 0, sxy = 0; for (var q = i0; q < i0 + m; q++) { sx += q; sy += xs[q]; sxx += q * q; sxy += q * xs[q]; } var den = m * sxx - sx * sx, b = den ? (m * sxy - sx * sy) / den : 0; return [(sy - b * sx) / m, b]; }
+    var L0 = n > 1 ? line(0) : [xs[0], 0], L1 = n > 1 ? line(n - m) : [xs[0], 0];
+    function at(j) { if (j < 0) return L0[0] + L0[1] * j; if (j >= n) return L1[0] + L1[1] * j; return xs[j]; }
+    for (var i = 0; i < n; i++) { var s = 0, ws = 0; for (k = -r; k <= r; k++) { s += at(i + k) * w[k + r]; ws += w[k + r]; } out.push(s / ws); }
     return out;
   }
   function mat(p) { var c = Math.exp(p.s) * Math.cos(p.r), s = Math.exp(p.s) * Math.sin(p.r); return [c, s, p.x, p.y]; }
@@ -65635,8 +65899,9 @@ Lantern.RFB = (function () {
       return n ? "" : "There is no clip under the playhead to cut";
     });
   };
-  // the selected clips with their linked partners, never a clip on a locked track
-  function selIds(seq) { var ids = A.sel.slice(); if (A.linked) A.sel.forEach(function (id) { var x = S.find(seq, id); if (x) S.partners(seq, x.c).forEach(function (y) { if (ids.indexOf(y.c.id) < 0) ids.push(y.c.id); }); }); return ids.filter(function (id) { var x = S.find(seq, id); return x && !x.t.lock; }); }
+  // the selected clips as they are (a click with Linked Selection on has chosen the partners too; an Alt-click chose one
+  // half alone, and that half alone is what is deleted or copied), never a clip on a locked track
+  function selIds(seq) { return A.sel.filter(function (id) { var x = S.find(seq, id); return x && !x.t.lock; }); }
   // a gap chosen on the Timeline: closed, the clips after it on its track and on every sync-locked track moved back,
   // unless one of those has a clip in the gap (then nothing moves and it is said, as Premiere refuses it)
   C.closeGap = function () {
@@ -65681,10 +65946,11 @@ Lantern.RFB = (function () {
       });
       if (!items.length) return "no clip under the playhead on the targeted tracks";
       var same = items.every(function (x) { return x.d === items[0].d && x.end === items[0].end; }), msg = "";
-      if (same && E.rippleShift) {
-        // the frames taken out: [start, start + d) for Q (the clip keeps its start), [playhead, old end) for W
-        var from = {}; items.forEach(function (x) { from[x.t.id] = x.end; });
-        E.rippleShift(seq, items.map(function (x) { return x.t; }), dir < 0 ? edit : items[0].end - items[0].d, -items[0].d, items.map(function (x) { return x.c; }), from);
+      if (same && E.rippleCut) {
+        // the frames taken out: [start, start + d) for Q (the clip keeps its start), [playhead, old end) for W; the same
+        // frames come out of the sync-locked tracks that are not targeted (a linked sound among them)
+        var from = {}, a0 = dir < 0 ? edit : items[0].end - items[0].d; items.forEach(function (x) { from[x.t.id] = x.end; });
+        E.rippleCut(seq, items.map(function (x) { return x.t; }), a0, a0 + items[0].d, items.map(function (x) { return x.c; }), from);
         msg = E.note ? E.note() : "";
       } else {
         // trimmed by different lengths: each track's later clips move by its own; the other tracks are left as they are
@@ -65696,8 +65962,12 @@ Lantern.RFB = (function () {
     });
   };
   // Ctrl+D, Ctrl+Shift+D: the default transition at the cut nearest the playhead on the targeted tracks, or on the selected clips
+  // ("both", Shift+D: the video and the audio ones, as one step in History)
   C.transition = function (kind, type) {
-    A.exec(kind === "audio" ? "Apply Audio Transition" : "Apply Video Transition", function (seq, p) {
+    if (kind === "both") { A.exec("Apply Default Transitions", function (seq, p) { var a = putTrans(seq, p, "video"), b = putTrans(seq, p, "audio"); return a && b ? "no cut near the playhead on the targeted tracks" : ""; }); return; }
+    A.exec(kind === "audio" ? "Apply Audio Transition" : "Apply Video Transition", function (seq, p) { return putTrans(seq, p, kind, type); });
+  };
+  function putTrans(seq, p, kind, type) {
       var f = seq.playhead, list = kind === "audio" ? seq.a : seq.v, n = 0, dur = Math.max(1, Math.round((kind === "audio" ? p.prefs.aTransSec : p.prefs.transSec) * fps()));
       var def = type || (kind === "audio" ? "constantPower" : "crossDissolve");
       var sel = A.sel.map(function (id) { return S.find(seq, id); }).filter(function (x) { return x && list.indexOf(x.t) >= 0; });
@@ -65715,8 +65985,7 @@ Lantern.RFB = (function () {
         if (best) put(t, best.c, best.edge);
       });
       return n ? "" : "no cut near the playhead on the targeted " + (kind === "audio" ? "audio" : "video") + " track";
-    });
-  };
+  }
   C.applyFx = function (type) {
     var d = V.fx && V.fx.defs[type]; if (!d) return;
     A.exec("Apply " + d.name, function (seq) {
@@ -65749,9 +66018,22 @@ Lantern.RFB = (function () {
     A.exec("Clear Transition", function (seq) { var x = S.find(seq, s.id); if (!x) return; if (s.edge === "in") x.c.tin = null; else x.c.tout = null; });
     A.selTrans = null; A.refresh("sel"); return true;
   };
+  // a transition is no longer than its clips allow: centred, twice the shorter clip; at the cut's start, the incoming
+  // clip; at its end, the outgoing one; a fade, its own clip (said when a longer one was asked for)
+  function transMax(x, tr, edge) {
+    var c = x.c; if (edge === "out" || tr.single) return c.dur;
+    var a = x.t.clips.filter(function (y) { return y.start + y.dur === c.start; })[0]; if (!a) return c.dur;
+    return tr.align === "start" ? c.dur : tr.align === "end" ? a.dur : 2 * Math.min(a.dur, c.dur);
+  }
   C.setTransition = function (fn, done) {
     var s = A.selTrans; if (!s) return;
-    var go = function (seq) { var x = S.find(seq, s.id), tr = x && (s.edge === "in" ? x.c.tin : x.c.tout); if (tr) fn(tr, x); };
+    var go = function (seq) {
+      var x = S.find(seq, s.id), tr = x && (s.edge === "in" ? x.c.tin : x.c.tout); if (!tr) return;
+      fn(tr, x);
+      var mx = transMax(x, tr, s.edge), want = tr.dur;
+      tr.dur = Math.max(1, Math.min(mx, Math.round(tr.dur) || 1));
+      if (want > mx) return "The transition is as long as its clips allow: " + mx + " frames";
+    };
     if (done === false && V.live) V.live("Transition", go, false); else if (V.live) V.live("Transition", go, true); else A.exec("Transition", go);
   };
   C.enable = function () { if (!A.sel.length) { A.status("select clips in the Timeline first"); return; } A.exec("Enable", function (seq) { selIds(seq).forEach(function (id) { var x = S.find(seq, id); if (x) x.c.enabled = !x.c.enabled; }); }); };
@@ -65833,7 +66115,8 @@ Lantern.RFB = (function () {
     A.exec("Paste Attributes", function (seq) { A.sel.forEach(function (id) { var x = S.find(seq, id); if (!x || x.t.kind !== A.clipboard[0].kind) return; x.c.motion = S.clone(from.motion); x.c.opacity = from.opacity; x.c.blend = from.blend; x.c.fx = S.clone(from.fx).map(function (e) { e.id = S.uid("e"); return e; }); x.c.keys = S.clone(from.keys); x.c.vol = from.vol; x.c.pan = from.pan; }); });
   };
   // Duplicate: a copy right after the selected clips (wherever the playhead is)
-  C.duplicate = function () { if (!A.sel.length) { A.status("select clips in the Timeline first"); return; } C.copy(); var seq = A.seq, end = Math.max.apply(null, A.selected().map(function (x) { return x.c.start + x.c.dur; })); seq.playhead = end; C.paste(false); };
+  // (inserted: the clips after it move on, as nothing is laid over them; the clipboard is left as it was)
+  C.duplicate = function () { if (!A.sel.length) { A.status("select clips in the Timeline first"); return; } var keep = A.clipboard; C.copy(); var seq = A.seq, end = Math.max.apply(null, A.selected().map(function (x) { return x.c.start + x.c.dur; })); seq.playhead = end; C.paste(true); A.clipboard = keep; var nd = Math.max.apply(null, A.selected().map(function (x) { return x.c.start + x.c.dur; })) - end; if (nd > 0) A.status("Duplicated right after the clip; the clips after it moved on " + nd + " frames (nothing was overwritten)"); };
   C.selectAll = function () { A.sel = S.all(A.seq).filter(function (x) { return !x.t.lock; }).map(function (x) { return x.c.id; }); A.refresh("sel"); };
   C.deselect = function () { A.sel = []; A.selGap = null; A.selTrans = null; A.refresh("sel"); };
   C.addTrack = function (kind) { A.exec("Add Track", function (seq) { var list = kind === "a" ? seq.a : seq.v; list.push(S.track(kind === "a" ? "a" : "v", list.length + 1)); }); };
@@ -66007,7 +66290,8 @@ Lantern.RFB = (function () {
       play(next);
     }
     window.addEventListener("resize", function () { show(); });
-    if (prog) A.on(function (w) { if (w === "playhead-only") return; if (!st.playing) show(); }, box);
+    // (the resolution box follows View > Playback Resolution)
+    if (prog) A.on(function (w) { if (w === "playhead-only") return; var rv = String(A.playRes); if (res.value !== rv) res.value = rv; if (!st.playing) show(); }, box);
     return { el: box, view: view, show: show, play: play, stop: stop, playing: function () { return st.playing; }, step: step, markIn: markIn, markOut: markOut, goIn: goIn, goOut: goOut, shuttle: shuttle, canvas: cv };
   }
   V.monitor = monitor;
@@ -66185,6 +66469,7 @@ Lantern.RFB = (function () {
       // show it by applying to a copy and painting, then put the real project back
       A.p = JSON.parse(d.base); A.seq = A.p.seqs[d.seqId]; apply(d, true); paint();
     });
+    // returns what the edit has to say (a ripple that left a track as it was)
     function apply(d, preview) {
       var seq = A.seq, x = S.find(seq, d.id); if (!x) return;
       var c = x.c, t = x.t, df = d.df || 0;
@@ -66199,11 +66484,7 @@ Lantern.RFB = (function () {
         var mode = d.mode, partners = A.linked && !d.alone ? S.partners(seq, c) : [];
         // the linked sound (or picture) is rolled, stretched or trimmed with the clip, as with Linked Selection on in Premiere
         if (mode === "roll") {
-          var pairOf = function (tt, cc) { var o = d.edge === "head" ? tt.clips.filter(function (y) { return y.start + y.dur === cc.start; })[0] : tt.clips.filter(function (y) { return y.start === cc.start + cc.dur; })[0]; return o ? (d.edge === "head" ? [o, cc] : [cc, o]) : null; };
-          var pairs = [pairOf(t, c)].concat(partners.map(function (y) { return pairOf(y.t, y.c); })).filter(function (q) { return q; });
-          // the least the cuts can all move
-          var rd = dd; pairs.forEach(function (q) { var la = E.limits(A.p, seq, q[0], "tail"), lb = E.limits(A.p, seq, q[1], "head"); rd = Math.max(-Math.min(la[0], lb[0], q[0].dur - 1), Math.min(la[1], lb[1], q[1].dur - 1, rd)); });
-          if (pairOf(t, c)) pairs.forEach(function (q) { E.roll(A.p, seq, q[0], q[1], rd); });
+          E.rollLinked(A.p, seq, t, c, d.edge, dd, A.linked && !d.alone ? partners : null);
         } else if (mode === "rate") {
           var nd = d.edge === "tail" ? c.dur + dd : c.dur - dd;
           // the shortest the clip and its partners can all be stretched to
@@ -66211,17 +66492,12 @@ Lantern.RFB = (function () {
           [{ t: t, c: c }].concat(partners).forEach(function (y) { E.rateStretch(seq, y.t, y.c, nd, d.edge); S.sort(y.t); });
         } else if (mode === "ripple") {
           if (d.edge === "head") E.trimHead(A.p, seq, t, c, dd, mode, partners); else E.trimTail(A.p, seq, t, c, dd, mode, partners);
-          if (!preview && E.note && E.note()) A.status(E.note());
-        } else {
-          var got = d.edge === "head" ? E.trimHead(A.p, seq, t, c, dd, mode) : E.trimTail(A.p, seq, t, c, dd, mode);
-          partners.forEach(function (y) { if (d.edge === "head") E.trimHead(A.p, seq, y.t, y.c, got, mode); else E.trimTail(A.p, seq, y.t, y.c, got, "plain"); });
-        }
+          return E.note ? E.note() : "";
+        } else E.trimLinked(A.p, seq, t, c, d.edge, dd, partners);
       } else if (d.kind === "slip") { E.slip(A.p, seq, c, -df); S.partners(seq, c).forEach(function (y) { if (A.linked && !d.alone) E.slip(A.p, seq, y.c, -df); }); }
       else if (d.kind === "slide") {
         // the linked clips slide by the least any of them can
-        var ps = A.linked && !d.alone ? S.partners(seq, c) : [], sd = df;
-        [{ t: t, c: c }].concat(ps).forEach(function (y) { sd = E.slideLimit(A.p, seq, y.t, y.c, sd); });
-        [{ t: t, c: c }].concat(ps).forEach(function (y) { E.slide(A.p, seq, y.t, y.c, sd); });
+        E.slideLinked(A.p, seq, t, c, df, A.linked && !d.alone ? S.partners(seq, c) : null);
       }
     }
     lanes.addEventListener("pointerdown", function (e) {
@@ -66247,7 +66523,13 @@ Lantern.RFB = (function () {
       if (!d) return;
       if (d.kind === "marquee") {
         var m = st.marquee; st.marquee = null;
-        if (m) { var f0 = frameAt(Math.min(m.x0, m.x1)), f1 = frameAt(Math.max(m.x0, m.x1)), add = []; rows().forEach(function (r) { if (r.y + r.h < Math.min(m.y0, m.y1) || r.y > Math.max(m.y0, m.y1)) return; r.t.clips.forEach(function (c) { if (c.start < f1 && c.start + c.dur > f0) add.push(c.id); }); }); A.sel = e.shiftKey ? A.sel.concat(add) : add; }
+        if (m) {
+          var f0 = frameAt(Math.min(m.x0, m.x1)), f1 = frameAt(Math.max(m.x0, m.x1)), add = [];
+          rows().forEach(function (r) { if (r.t.lock || r.y + r.h < Math.min(m.y0, m.y1) || r.y > Math.max(m.y0, m.y1)) return; r.t.clips.forEach(function (c) { if (c.start < f1 && c.start + c.dur > f0) add.push(c.id); }); });
+          // with Linked Selection on, a clip's linked partners come with it (as a click takes them)
+          if (A.linked) add.slice().forEach(function (id) { var x = S.find(A.seq, id); if (x) S.partners(A.seq, x.c).forEach(function (y) { if (!y.t.lock && add.indexOf(y.c.id) < 0) add.push(y.c.id); }); });
+          A.sel = e.shiftKey ? A.sel.concat(add.filter(function (id) { return A.sel.indexOf(id) < 0; })) : add;
+        }
         else {
           // a click: in a gap between clips (or before the first) it chooses the gap, as Premiere does (Delete closes it);
           // after the last clip it moves the playhead
@@ -66261,7 +66543,7 @@ Lantern.RFB = (function () {
       A.p = JSON.parse(d.base); A.seq = A.p.seqs[d.seqId];
       if (!d.df && !d.dt) { A.refresh("sel"); return; }
       var names = { move: d.insert ? "Move (insert)" : "Move", trim: d.mode === "ripple" ? "Ripple Trim" : d.mode === "roll" ? "Rolling Edit" : d.mode === "rate" ? "Rate Stretch" : "Trim", slip: "Slip", slide: "Slide" };
-      A.exec(names[d.kind] || "Edit", function () { apply(d, false); });
+      A.exec(names[d.kind] || "Edit", function () { return apply(d, false); });
     });
     lanes.addEventListener("dblclick", function (e) { var p = pos(e, lanes), h = hit(p[0], p[1]); if (h && h.c && h.c.kind === "av" && A.openSource) A.openSource(h.c.media, h.c.srcIn); if (h && h.c && h.c.kind === "title" && A.showPanel) A.showPanel("graphics"); if (h && h.c && h.c.kind === "nest" && A.p.seqs[h.c.nest]) { A.setSeq(h.c.nest); A.status("Opened the nested sequence " + A.seq.name + " (its own Timeline; the Project panel opens the others)"); } });
     lanes.addEventListener("wheel", function (e) {
@@ -66413,12 +66695,13 @@ Lantern.RFB = (function () {
     var s = Math.min(1, 640 / m.w), W = Math.round(m.w * s), H = Math.round(m.h * s), f0 = Math.max(0, Math.min(c.dur - 1, seq.playhead - c.start));
     var mk = own.mask, dx0 = K.value(mk.keys.dx || [], f0, 0), dy0 = K.value(mk.keys.dy || [], f0, 0);
     var cur = { kind: mk.kind, cx: (mk.cx + dx0) * s, cy: (mk.cy + dy0) * s, rx: mk.rx * s, ry: mk.ry * s, pts: mk.pts ? mk.pts.map(function (q) { return [(q[0] + dx0) * s, (q[1] + dy0) * s]; }) : null };
-    var out = [{ f: f0, dx: dx0, dy: dy0 }], prev = null, f = f0, stop = false, len = m.dur || Infinity;
-    function esc(e) { if (e.key === "Escape") stop = true; }
-    document.addEventListener("keydown", esc); btn.disabled = true;
+    var out = [{ f: f0, dx: dx0, dy: dy0 }], prev = null, f = f0, stop = false, len = m.dur || Infinity, kept = {};
+    // Esc stops the tracking (and only that: it is taken before the Timeline's Esc, which deselects)
+    function esc(e) { if (e.key === "Escape") { stop = true; e.preventDefault(); e.stopPropagation(); } }
+    document.addEventListener("keydown", esc, true); btn.disabled = true;
     function grab(fr) { var st = Math.max(0, Math.min(len - 1e-4, S.srcTime(c, c.start + fr, seq))); return V.dec.frame(R, st, W).then(function (img) { var cv = V.render ? V.render.canvas(W, H) : el("canvas", { width: W, height: H }), x = cv.getContext("2d"); if (img) x.drawImage(img, 0, 0, W, H); return x.getImageData(0, 0, W, H); }); }
     function finish(msg) {
-      document.removeEventListener("keydown", esc); btn.disabled = false;
+      document.removeEventListener("keydown", esc, true); btn.disabled = false;
       if (out.length < 2) { A.status(msg || "Nothing was tracked"); return; }
       A.exec("Track mask", function (sq) {
         var z = S.find(sq, id), zo = z && owner(z.c, fxId); if (!zo || !zo.mask) return;
@@ -66431,7 +66714,7 @@ Lantern.RFB = (function () {
       if (stop) { finish("Tracking stopped at " + A.tc(c.start + f)); return; }
       if (f >= c.dur - 1) { finish(); return; }
       grab(f + 1).then(function (b) {
-        var r = V.mask.track([prev, b], cur, f)[0]; f++; prev = b;
+        var r = V.mask.track([prev, b], cur, f, kept)[0]; f++; prev = b;
         if (cur.pts) cur.pts.forEach(function (q) { q[0] += r.dx; q[1] += r.dy; }); cur.cx += r.dx; cur.cy += r.dy;
         var last = out[out.length - 1]; out.push({ f: f, dx: last.dx + r.dx / s, dy: last.dy + r.dy / s });
         if (f % 10 === 0) A.status("Tracking: frame " + (f - f0) + " of " + (c.dur - 1 - f0) + " (Esc stops)");
@@ -66447,11 +66730,11 @@ Lantern.RFB = (function () {
     var c = y.c, seq = A.seq, m = A.p.media[c.media], R = V.media && V.media.rt[c.media];
     if (c.kind !== "av" || !m || !m.w || !R || !V.dec) { A.status("Only a video clip can be analysed"); return; }
     var W = Math.min(320, m.w), H = Math.max(8, Math.round(m.h * W / m.w)), len = m.dur || Infinity, steps = [], prev = null, f = 0, stop = false, key = V.stab.keyOf(c);
-    function esc(ev) { if (ev.key === "Escape") stop = true; }
-    document.addEventListener("keydown", esc); btn.disabled = true;
+    function esc(ev) { if (ev.key === "Escape") { stop = true; ev.preventDefault(); ev.stopPropagation(); } }
+    document.addEventListener("keydown", esc, true); btn.disabled = true;
     function grab(fr) { var st = Math.max(0, Math.min(len - 1e-4, S.srcTime(c, c.start + fr, seq))); return V.dec.frame(R, st, W).then(function (img) { var cv = V.render ? V.render.canvas(W, H) : el("canvas", { width: W, height: H }), x = cv.getContext("2d"); if (img) x.drawImage(img, 0, 0, W, H); return V.stab.grey(x.getImageData(0, 0, W, H)); }); }
     function done(msg) {
-      document.removeEventListener("keydown", esc); btn.disabled = false;
+      document.removeEventListener("keydown", esc, true); btn.disabled = false;
       if (msg) { A.status(msg); return; }
       A.exec("Analyze", function (sq) { var z = S.find(sq, id), e = z && owner(z.c, fxId); if (e) e.data = { id: S.uid("w"), key: key, w: W, h: H, fps: seq.rate.num / seq.rate.den, steps: steps }; return "Analysed " + (steps.length + 1) + " frames"; });
     }
@@ -66587,7 +66870,7 @@ Lantern.RFB = (function () {
         if ((c.kind === "av" || c.kind === "nest") && c.hold === null) {
           var rv = K.has(c, "remap") ? K.get(c, "remap", f, 100) : Math.abs(c.speed) * 100;
           box.appendChild(section("Time Remapping", [prop("Speed (%)", { type: "num", min: 0, max: 1000, step: 0.1 }, Math.round(rv * 10) / 10, function (v, done) {
-            if (K.has(c, "remap")) { live("Time Remapping", function (seq) { var x = S.find(seq, c.id); if (!x || !K.has(x.c, "remap")) return; K.set(x.c.keys.remap, Math.max(0, Math.min(x.c.dur - 1, seq.playhead - x.c.start)), v); }, done); return; }
+            if (K.has(c, "remap")) { live("Time Remapping", function (seq) { var x = S.find(seq, c.id); if (!x || !K.has(x.c, "remap")) return; K.set(x.c.keys.remap, Math.max(0, Math.min(x.c.dur - 1, seq.playhead - x.c.start)), v); if (V.edit && V.edit.fitRemap) return V.edit.fitRemap(A.p, seq, x.c); }, done); return; }
             if (done && V.edit) A.exec("Speed", function (seq, p) { var x = S.find(seq, c.id); if (x) return V.edit.setSpeed(p, seq, x.t, x.c, Math.max(1, v), x.c.reverse, false); });
           }, keysFor(c, "remap", c, Math.round(rv * 10) / 10, "Time Remapping Speed")), K.has(c, "remap") ? el("p", { "class": "muted", text: "The picture's speed changes at the keys; its sound stays at the clip's speed. Turn the stopwatch off to go back to one speed." }) : null]));
         }
@@ -66686,6 +66969,8 @@ Lantern.RFB = (function () {
     function durBox(key, label) {
       var inp = el("input", { type: "number", min: 0.04, max: 30, step: 0.01, value: A.p && A.p.prefs ? A.p.prefs[key] : 1, "class": "vd-num", "aria-label": label });
       inp.onchange = function () { var v = Math.max(0.04, Math.min(30, +inp.value || 1)); A.exec(label, function (seq, p) { p.prefs = p.prefs || {}; p.prefs[key] = v; }); };
+      // (the box follows Undo, Redo and a project opened)
+      A.on(function (w) { if (w === "all" && A.p && A.p.prefs && A.p.prefs[key] !== undefined && document.activeElement !== inp && +inp.value !== A.p.prefs[key]) inp.value = A.p.prefs[key]; }, inp);
       return el("label", { "class": "vd-prow" }, [el("span", { text: label }), inp]);
     }
     box.appendChild(durBox("transSec", "Default Transition Duration, video (s)")); box.appendChild(durBox("aTransSec", "Default Transition Duration, sound (s)"));
@@ -66951,7 +67236,7 @@ Lantern.RFB = (function () {
       Object.keys(rows).forEach(function (k) { rows[k].style.display = show[k] ? "" : "none"; });
       info.textContent = fmt === "srt" ? "The sequence's captions as SubRip" : fmt === "wav" ? "Sound only, " + A.tc(pl.to - pl.from) : "Frames " + (pl.to - pl.from) + " (" + A.tc(pl.to - pl.from) + ")  \u2022  " + pl.w + " \u00d7 " + pl.h;
       V.exp.can(fmt, pl.w, pl.h, A.fps()).then(function (ok) { if (!ok) info.textContent += "  \u2022  This browser cannot encode this format here: Motion JPEG (.avi) always works, or use Chrome or Edge."; });
-      if (fmt === "mp4" && V.exp.aacOk) V.exp.aacOk(seq.sampleRate).then(function (ok) { if (!ok && f.value === "mp4") info.textContent += "  \u2022  This browser cannot encode AAC, so the sound will be Opus, which some televisions and older players do not play (the .mov or .webm choices, or Chrome or Edge on Windows or a Mac, avoid it)."; });
+      if (fmt === "mp4" && V.exp.aacOk) V.exp.aacOk(seq.sampleRate).then(function (ok) { if (!ok && f.value === "mp4") info.textContent += "  \u2022  This browser cannot encode AAC, so the sound will be Opus, which Premiere Pro, many televisions and older players do not play (the .mov choice, or Chrome or Edge on Windows or a Mac, avoid it)."; });
     }
     [f, range, size].forEach(function (x) { x.onchange = check; });
     var d = box("Export Settings", [row("Format", f), row("File name", name), row("Range", range), rows.size, rows.vb, rows.ab, rows.loud, rows.burn, rows.gifw, info, bar], function () {
@@ -67088,7 +67373,7 @@ Lantern.RFB = (function () {
         ["Scale to Frame Size", "", function () { C.fit("set"); }], ["Fill Frame", "", function () { C.fit("fill"); }], ["Add Frame Hold", "", function () { C.frameHold("add"); }], ["Insert Frame Hold Segment", "", function () { C.frameHold("insert"); }], null,
         ["Scene Edit Detection\u2026", "", function () { D.scenes(); }], ["Synchronize (by sound)", "", function () { D.sync(); }]]],
       ["Sequence", [["Sequence Settings\u2026", "", function () { D.sequence(false); }], ["New Sequence\u2026", "Ctrl+N", function () { D.sequence(true); }], null, ["Add Edit", "Ctrl+K", function () { C.razor(false); }], ["Add Edit to All Tracks", "Ctrl+Shift+K", function () { C.razor(true); }], ["Ripple Trim Previous Edit to Playhead", "Q", function () { C.trimTo(-1); }], ["Ripple Trim Next Edit to Playhead", "W", function () { C.trimTo(1); }], null,
-        ["Apply Video Transition", "Ctrl+D", function () { C.transition("video"); }], ["Apply Audio Transition", "Ctrl+Shift+D", function () { C.transition("audio"); }], ["Apply Default Transitions to Selection", "Shift+D", function () { C.transition("video"); C.transition("audio"); }], null,
+        ["Apply Video Transition", "Ctrl+D", function () { C.transition("video"); }], ["Apply Audio Transition", "Ctrl+Shift+D", function () { C.transition("audio"); }], ["Apply Default Transitions to Selection", "Shift+D", function () { C.transition("both"); }], null,
         ["Lift", ";", function () { C.lift(); }], ["Extract", "'", function () { C.extract(); }], ["Close Gap", "", function () { C.closeGaps(); }], null, ["Snap in Timeline", "S", function () { A.snap = !A.snap; A.refresh("tl"); }], ["Linked Selection", "", function () { A.linked = !A.linked; A.refresh("tl"); }], null,
         ["Add Video Track", "", function () { C.addTrack("v"); }], ["Add Audio Track", "", function () { C.addTrack("a"); }], ["Delete Empty Tracks", "", function () { C.deleteEmptyTracks(); }]]],
       ["Markers", [["Mark In", "I", function () { api.markIn(); }], ["Mark Out", "O", function () { api.markOut(); }], ["Mark Clip", "X", function () { C.markClip(); }], ["Go to In", "Shift+I", function () { api.goIn(); }], ["Go to Out", "Shift+O", function () { api.goOut(); }], ["Clear In and Out", "Ctrl+Shift+X", function () { C.clearInOut(); }], null,
@@ -67126,7 +67411,7 @@ Lantern.RFB = (function () {
   function key(e, api) {
     var t = e.target, tag = t && t.tagName, k = e.key, ctrl = e.ctrlKey || e.metaKey, sh = e.shiftKey, alt = e.altKey;
     if (tag === "TEXTAREA" || (tag === "INPUT" && !/^(range|checkbox|button|color)$/.test(t.type)) || tag === "SELECT") return false;
-    if (A.dialog) return false;
+    if (A.dialog || e.defaultPrevented) return false;
     var lk = k.length === 1 ? k.toLowerCase() : k;
     function done(fn) { e.preventDefault(); fn(); return true; }
     if (ctrl) {
@@ -67139,7 +67424,7 @@ Lantern.RFB = (function () {
       if (lk === "i") return done(function () { if (A.pickImport) A.pickImport(); }); if (lk === "s") return done(function () { A.save((A.p.name || "Project") + ".lvproj", new Blob([A.projectText()], { type: "application/json" })); });
       if (lk === "a") return done(function () { if (sh) C.deselect(); else C.selectAll(); }); if (lk === "l") return done(function () { C.link(); }); if (lk === "t") return done(function () { C.newGraphic("title"); });
       if (lk === "n") return done(function () { D.sequence(true); }); if (lk === "o") return done(function () { var f = el("input", { type: "file", accept: ".lvproj,.json" }); f.onchange = function () { var x = f.files[0]; if (x) x.text().then(function (tx) { try { A.openProject(tx, x.name); } catch (er) { A.status(er.message); } }); }; f.click(); });
-      if (lk === "/" && sh) return done(function () { C.duplicate(); });
+      if (sh && (lk === "/" || lk === "?" || e.code === "Slash")) return done(function () { C.duplicate(); });
       return false;
     }
     if (alt) return false;
@@ -67154,7 +67439,7 @@ Lantern.RFB = (function () {
     if (lk === "q") return done(function () { C.trimTo(-1); }); if (lk === "w") return done(function () { C.trimTo(1); });
     if (k === "Delete" || k === "Backspace") return done(function () { if (A.selTrans && C.removeTransition) { C.removeTransition(); return; } if (A.selGap && C.closeGap) { C.closeGap(); return; } if (sh) C.rippleDelete(); else C.clear(); });
     if (lk === "m") return done(function () { if (sh) C.goMarker(1); else C.addMarker(); }); if (lk === "g") return done(function () { D.gain(); });
-    if (lk === "d" && sh) return done(function () { C.transition("video"); C.transition("audio"); });
+    if (lk === "d" && sh) return done(function () { C.transition("both"); });
     if (lk === "e" && sh) return done(function () { C.enable(); });
     if (lk === "s" && !sh) return done(function () { A.snap = !A.snap; A.status(A.snap ? "Snap on" : "Snap off"); A.refresh("tl"); });
     if (k === "=" || k === "+") return done(function () { api.zoom(1.5); }); if (k === "-") return done(function () { api.zoom(1 / 1.5); }); if (k === "\\") return done(function () { api.fit(); });

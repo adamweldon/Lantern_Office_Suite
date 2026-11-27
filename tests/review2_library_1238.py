@@ -10,6 +10,8 @@
 # produce, illness, babies, animals' food and people going without are not food kept; a class opened only alone; the
 # 60 questions counted in the surety, a shelf's own count drawn toward its kind's by ten questions' weight. After that
 # every case agrees but these. No third reviewer has tried these mends: each reads less than the round the second tried.
+# (1.24.43: A46, "How long can cooked rice be kept for the next day?", now finds a sure passage in the Perishables lesson
+# and is handed it: the Video guide's words changed how rare the question's words are across the lessons.)
 # Usage: python3 tests/review2_library_1238.py [-v]
 import os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -42,7 +44,6 @@ KEEP = {
     "A41": KEEPS_MISS,
     "A44": KEEPS_MISS,
     "A45": KEEPS_MISS,
-    "A46": KEEPS_MISS,
     "A47": KEEPS_MISS,
     "A48": KEEPS_MISS,
     "A49": KEEPS_MISS,

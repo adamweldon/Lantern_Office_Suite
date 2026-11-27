@@ -1,0 +1,339 @@
+VIDEO TILE (Lantern 1.24.43) -- REVIEW 3: FILES AND ARITHMETIC, ON THE NEWEST AND MENDED PARTS
+================================================================================================
+Reviewer: a separate agent that did not write the tile and did not copy reviews 1 or 2. Date: 2026-11-27.
+Code reviewed: src/lantern.inner.html at commit dbd0ecf (branch lantern-1.24.43). Line numbers below are of that file.
+Nothing outside this folder was changed; nothing was committed.
+
+Files here
+  run.py      self-contained. Makes its own sound, pictures and files afresh in a temporary folder (fixed seeds), cuts the
+              non-UI Video modules from ../../../src/lantern.inner.html and runs them in Node (as tests/video_algos.py does),
+              and Chromium (Playwright) only where the browser itself is the reference. One line per check, "PASS  ..." or
+              "FAIL  ...  [what was seen]", then "<n> checks, <m> failed". Sections can be run alone:
+                python3 run.py [pitch resample fold mix remap keys fuzz stab mask xchg files captions loud]
+              A whole run takes about 2.5 minutes on 2 cores. OpenTimelineIO (and its CMX 3600 and FCP 7 XML adapters) is
+              used if importable, else pip-installed into the temporary folder; if neither works those checks say SKIP.
+  REPORT.txt  this file.
+
+References used (none of them Lantern): ffmpeg/ffprobe 6.1 (swr and soxr resamplers, atempo and rubberband stretchers,
+the ITU downmix of -ac 2, ebur128 with true peak, the WebM/MKV/MP4/MOV/AVI/WAV/GIF demuxers and decoders, its AVIO read
+statistics), SciPy (resample_poly, freqz, filters), NumPy, PIL, pyloudnorm, Python's xml.etree, OpenTimelineIO 0.18.1
+with otio-cmx3600-adapter 1.0.0 and otio-fcp-adapter 1.0.0, Chromium's WebVTT parser, decodeAudioData and AudioDecoder,
+and closed forms worked out in run.py (SMPTE drop-frame timecode, the similarity geometry of the stabiliser's zoom, the
+key curves the KEYS header describes, the RBJ low-pass response).
+
+RESULT: 269 checks, 38 failed (and the same in a second run; see RUNS at the end).
+
+How sure: "certain" = reproduced here and traced to the code; "high" = reproduced, and the expected behaviour is a
+published rule or a well-known program's; "judgement" = the bar is mine or Premiere's behaviour is from memory.
+Check descriptions name only the case and the reference, so two runs compare line by line.
+
+
+THE MOST SERIOUS PROBLEMS FIRST
+-------------------------------
+
+1. A title, matte, still or frame hold can be trimmed to no length or less, and then overlaps its neighbours. (certain)
+   E.limits() returns [Infinity, Infinity] for any clip whose media has no end or that holds a frame (line 62392), so
+   trimHead/trimTail (plain and ripple) and slideLimit lose the "at most dur - 1" bound they have for every other clip.
+   The Timeline passes the mouse's frames straight in (apply(), 66216), so dragging a title's head past its tail does it.
+   Seen: title head +50 -> start 60, dur -31; matte tail -30 -> dur -20; title rippled +25 -> dur -5, -20 -> dur -8;
+   frame hold head +40 -> dur -25. The fuzz found 9 plain trims, 21 ripple trims and 8 slides ending with a clip of 0 or
+   fewer frames, and 17 of those edits left clips overlapping (a slide: a 24-frame clip slid 27 frames right cut the
+   19-frame title after it to -8 frames and ran over the next title).
+   Mend: in that branch return [Infinity, c.dur - 1] for a head and [c.dur - 1, Infinity] for a tail.
+
+2. Linked picture and sound are pulled apart, silently, by plain trims, rolls and slides. (certain about Lantern; high
+   that Premiere keeps a linked trim together, medium for slide)
+   The fuzz (two seeds, about 3,100 of each edit, called exactly as VIDEO_TIMELINE apply() calls them, on V1/A1 pairs
+   with sound of its own in some of A1's gaps, titles on V3, sync lock on every track):
+   - plain trim: 89 of 3,272 parted a pair without a word. apply() trims the clicked clip, then each partner by what the
+     clip got (66216-66217); a partner whose own track is closer to a neighbour trims less. E.g. a picture's head moved
+     2 frames earlier into a gap, its sound only 1 (a one-frame sound clip sat there): 480+40 / 481+39. Roll, rate and
+     slide already take the least over all partners; plain trim does not.
+   - roll: 93 of 3,192. pairs is filtered to the partners that have a neighbour at the edit (66203); a partner with a gap
+     there is not touched at all while the clip rolls (333+67 / 327+73).
+   - slide: 46 of 3,092. E.slide trims the neighbours on the slid clip's own track (62475); when a neighbour is itself
+     linked its partner is left as it was (a 6-frame sound-only clip slid 26 frames right cut 26 frames off the head of
+     the next clip's sound but not of its picture: 266+31 / 292+5).
+   - move: 2 of 3,210, both from problem 6 below.
+
+3. Maintain Audio Pitch smears and moves a stereo picture of the sound, and joins periodic sound out of phase. (certain;
+   the second half judged against ffmpeg's atempo, another WSOLA)
+   a. Each channel is stretched on its own (the loop at 64109 runs wsola() per channel), so the left and right windows
+      are taken from different places (each may move 10 ms, so up to 20 ms apart), every 20 ms. Sound common to both channels (two different
+      tones notched out, band noise in both): at 75% and 133% the L/R lag is non-zero in 111 of 111 and 105 of 109
+      windows, up to 12.5 ms (the search's limit in this measure); the source and ffmpeg's atempo: 0 of 439 / 261. A
+      centred voice wanders between the speakers and sounds phasey. Mend: search once, on the sum of the channels, and
+      use the same offset for every channel.
+   b. The offsets are tried every 8 samples with no finer step after (64045), so a join can be off by 4 samples. A 6 kHz tone (an eighth of 48 kHz) at 37% and 133% drops 3 dB with sidebands at -6 dB (6020/5980 Hz
+      seen); a 1 kHz sawtooth at 37% has its harmonics 6.4 dB above the rest (atempo 70 dB), 500 Hz 10 dB (atempo 70),
+      a 220 Hz sawtooth at 75% 20 dB (atempo 36): the upper harmonics of any voice or instrument are blurred. Mend: after
+      the coarse step, search single samples around the best.
+   c. White noise at 133% comes out 1.2 dB quieter than the source by pyloudnorm (atempo 0.5 dB quieter): the Hann
+      windows are normalised by their sum, which is right only for sound that matches across the join. Minor.
+   What holds: pitch kept within 0.2% for tones from 1.2 to 7.8 kHz at 37-300%, and for chirps forward and reversed at
+   10%, 50%, 200% and 1000% (STFT within 2%); level within 0.5 dB on tones, and no clicks (the Hann cross-fades leave
+   no step: the second difference stays within a steady sine's); sound from the clip's first 10 ms to its last and none
+   after; speech-like and music-like sound keep their loudness within 1 dB; without the option the
+   pitch follows the speed.
+
+4. Time Remapping loses each frame's source through head trims, limits and Rate Stretch. (certain)
+   The mend that keeps every key through cuts (shiftKeys) left the head trim and the limits computing with the speed at
+   the clip's own first or last frame, while the keys now kept beyond the ends shape the frames added there.
+   a. A remapped clip (100% to 300% over 60 frames) trimmed in 10 frames and out again: every frame then shows a source
+      1.8 frames off what it showed. After a cut, the right half's head made 5 frames longer: its old frames move by
+      half a source frame. trimHeadRaw (62290) moves srcIn by d times the speed at frame 0; it should move it by the
+      sum of the speeds of the frames added (srcSec over [d, 0) with the keys as shifted).
+   b. limits() (62396) gives a tail as far as the media allows at the last frame's speed; the kept keys beyond the end
+      speed it up, so the clip shows source past its media: after a cut, the left half's tail to its limit ends at
+      4.27 s of a 4.0 s file; a 40-frame clip with keys to frame 60, 10.77 s of a 9.0 s file. (The head side uses the
+      first frame's speed the same way; with keys before the head it can be wrong too, not seen to fail here.)
+   c. Rate Stretch of a remapped clip to twice its length (62491-62493) scales the keys' frames but not their speeds,
+      and the remap ignores c.speed: the source span doubles (6.97 s -> 13.97 s), against the header's "a new length,
+      the same source", and can run past the media's end.
+   d. Final Cut Pro XML writes a remapped clip with no speed at all (judgement): a constant 200% key read back plays at
+      100% from the in point (its last frame shows 11.96 s, was 13.92 s).
+   What holds: frame j shows in + the sum of the speeds of the frames before it over the rate (linear and Ease keys,
+   to 1e-9 s); srcSpan/srcSec agree; a cut keeps every frame of both halves; slips move every frame by the same and
+   stop at both ends of the media; a tail trim keeps the frames that stay.
+
+5. Export's loudness normalisation lets the true peak pass 0 dBTP. (certain)
+   mixed() (64868) runs the Hard Limiter only when the sample peak is over -1 dBFS, and the limiter holds sample peaks.
+   The EXPORT header says peaks are held under -1 dBTP. 12 kHz hi-hat-like bursts (sampled off their peaks) over quiet
+   music, normalised to -14 LUFS: sample peak -2.8 dBFS, true peak +0.10 dBTP by ffmpeg's ebur128 -- over full scale, so
+   an AAC/Opus encoder or a DAC clips it. V.loud.truePeak() exists: test and limit with it. What holds: the loudness
+   reached is within 0.5 LU of the target by ebur128 for speech-like, music-like and drum material, and where it could
+   not be reached the note says the loudness actually reached (-15.8 and -16.9 LUFS said and measured).
+
+6. A cut gives the right-hand pieces the same new link every time the same link is cut at the same frame. (certain)
+   linkAt(link, f) (62272, used by split at 62277) is a hash of the old link and the frame only. A picture and its sound
+   lifted at 50-60 (right halves get the link "L@60"), the right halves moved away, the left halves lengthened, lifted at
+   50-60 again: the new right half is linked to its sound AND to the two older pieces (partners V1 260+40, A1 60+30,
+   A1 260+40). Selecting it selects, moves and deletes all four. Mend: one S.uid per edit, given to every split of that
+   edit (as razor already does with its links map).
+
+7. An EDL with a dissolve has overlapping events. (high: CMX 3600 practice; OpenTimelineIO enforces it)
+   For a dissolve centred on a cut at 100 (85 to 115), the outgoing clip's event keeps its record out at the cut
+   (01:00:04:00) while the D event's record in is where the dissolve begins (01:00:03:10, line 65037). OpenTimelineIO's
+   CMX 3600 reader refuses the file: "Overlapping record in value: 01:00:03:10". In the conventional form the outgoing
+   event ends where the dissolve begins; OpenTimelineIO and Lantern both read that form as a start-aligned dissolve
+   showing the same frames at every moment (checked). Lantern reads its own overlapping form back right. Some editors
+   may accept the overlap (they lay later events over earlier ones); a strict reader will not.
+
+8. Mask tracking never follows slow movement. (certain)
+   V.mask.track (64618), as Track forward calls it, matches each frame against the one before in whole pixels. An object
+   moving 0.4 px a frame for 50 frames is tracked as not moving at all (0 px; truth 19 px). At 1.5 and 3 px a frame it
+   follows within 2 px. Mend: a sub-pixel step (the parabola VIDEO_STAB uses) and matching against the first frame's
+   patch (or the last key's), so fractions add up instead of being rounded away each frame.
+
+9. Captions: WebVTT is written without its escapes, and characters above U+FFFF are read wrong. (certain)
+   vtt() (63739) writes the caption text as it is. A caption "I <3 you" is shown by Chromium as "I " and "a < b > c" as
+   "a  c" (Chromium's own parser on Lantern's file); Lantern's own reader strips the same "tags" from both its .vtt and
+   its .srt, and turns a literal "&amp;" typed in a caption into "&". Reading &#128512; or &#x1F600; gives U+F600, not
+   the emoji: String.fromCharCode (63728) takes 16 bits. Mend: write &amp; &lt; &gt; in WebVTT; for code points above
+   0xFFFF build the surrogate pair.
+
+10. Warp Stabilizer's Smooth Motion bends a steady pan at the clip's ends. (judgement)
+    gauss() (65384) holds the path's first and last values beyond the ends, so a straight pan of 2 px a frame is
+    "corrected" by up to 11.9 px near the ends and Auto-scale zooms 8% for nothing. Adobe does not publish its method;
+    extending the path by reflecting it through its end values (2 x0 - x[-k]) keeps a steady pan steady. What holds:
+    a 2 Hz shake of 5 px on a pan is removed (under 0.5 px left).
+
+11. Keyframed sound effects. (judgement)
+    a. Amplify's Hold key: the gains are worked out per frame and joined linearly (64064-64065), so a Hold from -20 to
+       0 dB at frame 30 rises through frame 29 (up to 20 dB wrong during that frame). Premiere's Hold steps at the key.
+    b. A keyed filter is the two whole runs crossfaded (as the header says), not a sweep: Lowpass keyed 200 Hz -> 5000 Hz,
+       half way a 1 kHz tone is -6.3 dB; the low-pass at the setting there (2600 Hz) passes it at -0.1 dB. Premiere sweeps
+       the setting. At the keys themselves the result is exactly the RBJ low-pass's (0.2 dB).
+
+12. Linked clips parted by an edit a sync-locked track cannot take. (judgement; Premiere's behaviour from memory)
+    In the fuzz, 319 ripple trims, ripple deletes, Q/W and Speed/Duration changes (of about 13,000) moved one of a linked
+    pair and not the other, each with a note ("Tracks A1, A3 have clips across the edit, so they were not moved", "The
+    clip was cut short where the next clip begins"). The note names tracks, not the link it broke.
+
+13. Smaller ones (certain unless said)
+    a. readWav ignores the WAV's channel mask (61566): a 4.0 (L R C S) WAV is folded as quad (C to the left only, S to
+       the right only; ffmpeg: C to both at -3 dB, S to both at -6 dB) and a 2.1 WAV's LFE goes into both sides at -3 dB.
+    b. Lantern's own 5-channel WAV is labelled FL FR FC LFE BL (mask (1<<5)-1, line 61593) while its fold takes five
+       channels as L R C Ls Rs. (The export writes stereo only, so this is reached only by other callers.)
+    c. Signed 8-bit PCM in a .mov (ffmpeg's pcm_s8, written as 8-bit 'sowt') is read as unsigned (pcmOf, 64293): wrong
+       by up to full scale.
+    d. FCP XML: a clip item's <duration> is the length used, not the file's (judgement, fairly sure: FCP 7's xmeml
+       reference and Premiere's exports give the media's length there; most importers use in/out anyway).
+    e. FCP XML with ends of -1 beside a 15-frame centred transition (43-58, where Lantern's own window puts one on a cut
+       at 50): the cut is read at 51 (cutOf rounds 50.5 up, 65161). Premiere's own rounding for odd lengths unverified.
+    f. Speed/Duration 200% on a one-frame clip 0.02 s from its media's end keeps one frame whose span runs to 3.247 s of
+       a 3.2 s file (setSpeed keeps at least one frame, 62503); its sound plays silence for the part past the end. An
+       early fuzz run met the same through the Speed/Duration dialog (a clip ending 0.033 s past a 3.2 s file).
+    g. Speed, not a check: the mixer's path for reading faster than the source (any source above 48 kHz, any speed over
+       100%) works the Kaiser window's Bessel series for every tap of every sample (at(), 64022-64026): 10 s of mono at
+       96 kHz took 2.2 s in Node (48 kHz: 0.7 s); a 10-minute 96 kHz stereo clip would take about 4.5 minutes before it
+       plays or exports (measured in Node, not in a browser). A table of the window, as the other path has, would do.
+
+
+EVERY FAIL, WITH ITS INPUT, WHAT LANTERN DID AND WHAT THE REFERENCE DID
+----------------------------------------------------------------------
+Each line is the run's own FAIL line: the case and the reference are in its words, what Lantern did in [brackets].
+
+ 1. Maintain Audio Pitch: a 6000 Hz tone at 37%, 75%, 133% and 300% keeps its pitch (within 0.2%), its level (10 ms envelope within 0.5 dB) and has no click (second difference within 1.1 times a steady sine's) (an eighth of 48 kHz: a join off by 4 samples is half a cycle; ffmpeg's atempo keeps it)  [37%: 6020.0 Hz, -3.02..-2.40 dB; 133%: 5980.0 Hz, -3.02..-2.40 dB]
+    -> problem 3b above; how sure: certain (the level and sidebands); ffmpeg's atempo keeps the tone
+ 2. Maintain Audio Pitch keeps a 1000 Hz sawtooth at 37% harmonic: harmonics-to-rest within 10 dB of ffmpeg's atempo (judgement)  [Lantern 6.4 dB, atempo 70.2 dB]
+    -> problem 3b above; how sure: certain measurement; the bar (10 dB of atempo) is judgement
+ 3. Maintain Audio Pitch keeps a 500 Hz sawtooth at 37% harmonic: harmonics-to-rest within 10 dB of ffmpeg's atempo (judgement)  [Lantern 10.0 dB, atempo 70.2 dB]
+    -> problem 3b above; how sure: certain measurement; the bar (10 dB of atempo) is judgement
+ 4. Maintain Audio Pitch keeps a 220 Hz sawtooth at 75% harmonic: harmonics-to-rest within 10 dB of ffmpeg's atempo (judgement)  [Lantern 20.0 dB, atempo 35.7 dB]
+    -> problem 3b above; how sure: certain measurement; the bar (10 dB of atempo) is judgement
+ 5. Maintain Audio Pitch keeps the level of white noise at 133% (loudness by pyloudnorm within 1 dB of the part of the source played, or within 0.5 dB of ffmpeg's atempo)  [Lantern -15.10, source -13.91, atempo -14.41 LUFS]
+    -> problem 3c above; how sure: certain measurement; the bar is judgement
+ 6. Maintain Audio Pitch keeps a stereo clip's two channels in step at 75% (the sound common to both: no L/R lag in any 40 ms window, as in the source and in ffmpeg's atempo)  [Lantern: 111 of 111 windows lagged, up to 600 samples; atempo: 0 of 439]
+    -> problem 3a above; how sure: certain
+ 7. Maintain Audio Pitch keeps a stereo clip's two channels in step at 133% (the sound common to both: no L/R lag in any 40 ms window, as in the source and in ffmpeg's atempo)  [Lantern: 105 of 109 windows lagged, up to 600 samples; atempo: 0 of 261]
+    -> problem 3a above; how sure: certain
+ 8. 4 channels as ffmpeg's '4.0' WAV: folded to stereo as ffmpeg's ITU downmix (-ac 2: centre and surrounds -3 dB, LFE out) (judgement: the WAV's channel mask says this layout; Lantern does not read the mask)  [Lantern gains [[1.0, 0.0], [0.0, 1.0], [0.707, 0.0], [0.0, 0.707]], ffmpeg [[1.0, 0.0], [0.0, 1.0], [0.707, 0.707], [0.5, 0.5]]]
+    -> problem 13a above; how sure: certain; whether to honour the mask is judgement
+ 9. 3 channels as ffmpeg's '2.1' WAV: folded to stereo as ffmpeg's ITU downmix (-ac 2: centre and surrounds -3 dB, LFE out) (judgement: the WAV's channel mask says this layout; Lantern does not read the mask)  [Lantern gains [[1.0, 0.0], [0.0, 1.0], [0.707, 0.707]], ffmpeg [[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]]
+    -> problem 13a above; how sure: certain; whether to honour the mask is judgement
+10. Lantern's 5-channel WAV (24-bit, odd length): ffprobe reads it, 5 channels, layout the one Lantern's fold assumes (5.0)  [ffprobe: 5 channels, layout 5 channels (FL+FR+FC+LFE+BL)]
+    -> problem 13b above; how sure: certain
+11. keyframed Amplify (hold keys) follows its keys: gain at every sample within 0.1 dB of the key curve (the KEYS header's curves; a Hold keeps its value up to the next key, as Premiere's does)  [worst 20.00 dB at frame 30.00]
+    -> problem 11a above; how sure: certain about Lantern; Premiere's Hold from memory (high)
+12. keyed Lowpass: half way between the keys the tone passes as the low-pass at the setting there (2600 Hz) would pass it, as Premiere sweeps a keyed setting (judgement: the header chose to mix instead)  [Lantern -6.30 dB, a 2600 Hz low-pass -0.09 dB]
+    -> problem 11b above; how sure: judgement (the header chose to mix)
+13. a remapped clip's head trimmed in 10 frames and out again: every frame shows the source it showed (keys kept beyond the head shape the frames put back)  [off by up to 0.0611 s (1.83 frames of source)]
+    -> problem 4a above; how sure: certain
+14. after a cut in a remapped clip, the right half's head made 5 frames longer: its frames that were there show the source they showed  [-5; off by up to 0.0167 s]
+    -> problem 4a above; how sure: certain
+15. after a cut, the left half's tail extended as far as the limits allow: no frame shows source past the media's end (keys beyond the end speed it up)  [span ends at 4.2667 s, last frame at 4.1667 s, media 4.0 s]
+    -> problem 4b above; how sure: certain
+16. a whole remapped clip's tail extended as far as the limits allow: no source past the media's end  [{'end': 10.766666666666643, 'last': 10.666666666666643, 'media': 9}]
+    -> problem 4b above; how sure: certain
+17. Rate Stretch of a remapped clip to twice its length shows the same source (the EDIT header: 'a new length, the same source')  [source span 6.967 s before, 13.967 s after]
+    -> problem 4c above; how sure: certain
+18. fuzz, a plain trim of either edge (partners trimmed by what the clip got, as the Timeline does) (about 3,000 edits from two seeds): after each, no two clips meet on a track, no negative or broken frame counts, no source outside the media, linked clips together  [3272 edits: {'linked+silent': 89, 'frames': 9} -- linked+silent: 0+26 in 0.041 / 0+17 in 0.041; frames: V3 start 98 dur -9]
+    -> problem 2 and 1 above; how sure: certain
+19. fuzz, a ripple trim with its linked partners (about 3,000 edits from two seeds): after each, no two clips meet on a track, no negative or broken frame counts, no source outside the media, linked clips together  [3300 edits: {'frames': 21, 'overlap': 11} -- frames: V3 start 218 dur -14 (said: Tracks A3 have clips across the edit, so they were not moved); overlap: V3 124+41 / 136 (said: Tracks V1, V2, A1, A2, A3 have clips across the edit, so they were not moved)]
+    -> problem 1 above; how sure: certain
+20. fuzz, a rolling edit (every linked pair rolled by the least) (about 3,000 edits from two seeds): after each, no two clips meet on a track, no negative or broken frame counts, no source outside the media, linked clips together  [3192 edits: {'linked+silent': 93} -- linked+silent: 333+67 in 11.354 / 327+73 in 11.054]
+    -> problem 2 above; how sure: certain
+21. fuzz, a slide (gaps beside it allowed) (about 3,000 edits from two seeds): after each, no two clips meet on a track, no negative or broken frame counts, no source outside the media, linked clips together  [3092 edits: {'linked+silent': 46, 'frames': 8, 'overlap': 6} -- linked+silent: 266+31 in 0.040 / 292+5 in 2.047; frames: V3 start 235 dur 0; overlap: V3 46+19 / 48]
+    -> problem 2 and 1 above; how sure: certain about Lantern; Premiere's slide of linked neighbours medium
+22. fuzz, a move of linked clips (to another track pair, inserting or not) (about 3,000 edits from two seeds): after each, no two clips meet on a track, no negative or broken frame counts, no source outside the media, linked clips together  [3210 edits: {'linked+silent': 2} -- linked+silent: 98+9 in 1.111 / 123+20 in 1.411]
+    -> problem 6 above; how sure: certain
+23. fuzz: linked clips are never parted by an edit that a sync-locked track cannot take (judgement: Lantern says which tracks it did not move, or that a clip was cut short, and goes on)  [319 edits parted them, each said: ripple 131: 71+39 in 12.296 / 66+39 in 12.296 (said: Tracks A1, A3 have clips across the edit, so they were not moved) | rippleDelete 65: 242+67 in 0.145 / 253+67 in 0.145 (said: Tracks A1, A3 have clips across the gap, so they were not moved) | QW 11: 191+40 in 3.546 / 184+40 in 3.546 (said: Tracks V2, V3, A2 have clips across the edit, so they were not moved) | speed 112: 210+3 in 0.337 / 210+1 in 0.337 (said: The clip was cut short where the next clip begins)]
+    -> problem 12 above; how sure: judgement
+24. a picture and its sound cut at frame 60 twice (Lift, the first right halves moved away, the left halves lengthened, Lift again): the new right half's only partner is its own sound  [partners: ['V1 260+40', 'A1 60+30', 'A1 260+40']]
+    -> problem 6 above; how sure: certain
+25. Speed/Duration 200% on a one-frame clip 0.02 s before its media's end: it shows no source past the end (the EDIT header: an edge stops at the end of its media)  [length 1 frame(s), source to 3.2467 s of 3.2]
+    -> problem 13f above; how sure: certain
+26. a title's head trimmed 50 frames, a matte's tail -30, a title rippled 25 and -20, a frame hold's head 40: each stops at one frame (as a clip with media does)  [[['title', 60, -31], ['matte', 40, -20], ['title', 100, -5], ['title', 175, -8], ['av hold', 295, -25]]]
+    -> problem 1 above; how sure: certain
+27. Warp Stabilizer, Smooth Motion (50%) on a steady pan of 2 px a frame with no shake: no frame moved by more than 1 px, so no zoom needed (judgement: there is nothing to steady)  [frames moved up to 11.9 px, Auto-scale 1.080]
+    -> problem 10 above; how sure: judgement
+28. mask tracking (as Track forward calls it, a frame at a time) of a textured square moving 0.4 px a frame over a still texture for 50 frames: the mask follows within 2 px all along  [moved 0 px by the end, truth 19 (worst 19 px off)]
+    -> problem 8 above; how sure: certain
+29. EDL, a centred dissolve: the outgoing clip's event ends where the dissolve begins (CMX 3600 events do not overlap; OpenTimelineIO's reader refuses an overlap)  [outgoing ends 01:00:04:00, dissolve begins 01:00:03:10]
+    -> problem 7 above; how sure: high
+30. EDL with a centred dissolve read by OpenTimelineIO's CMX 3600 reader  [EDLParseError('Overlapping record in value: 01:00:03:10 for clip b roll.mov')]
+    -> problem 7 above; how sure: high
+31. FCP XML: a clip item's <duration> is its file's whole length, as Final Cut Pro 7 and Premiere write it (judgement: the xmeml reference says so; importers mostly use in/out)  [[('Café & <Bar> "1" 日本.mp4', 100), ('b roll.mov', 150), ('Café & <Bar> "1" 日本.mp4', 120)]]
+    -> problem 13d above; how sure: judgement, fairly sure
+32. FCP XML of a clip with Time Remapping (a constant 200% key) read back: its first and last frames show the source they showed (judgement: Lantern writes no variable speed)  [{'orig': [10, 13.920000000000002], 'back': [10, 11.96]}]
+    -> problem 4d above; how sure: judgement
+33. FCP XML with ends of -1 beside a 15-frame centred transition from 43 to 58 (where Lantern's own window puts one centred on a cut at 50): the cut read at 50 (judgement: Premiere's rounding for odd lengths not verified)  [window [43, 58], read [(0, 51), (51, 49)]]
+    -> problem 13e above; how sure: judgement
+34. MOV pcm_s8 (2 channels, 'sowt') read by Lantern and decoded as ffmpeg decodes it  [shape (66150, 2) vs (66150, 2), worst 1; Lantern's bits 8 little-endian True float False]
+    -> problem 13c above; how sure: certain
+35. WebVTT and SRT written for captions with & < > (and an emoji, two lines) read back by Lantern as written  [vtt ['Tom & Jerry', 'a  c', 'I <3 you', 'Fish & Chips (as typed)', 'café 日本 😀', 'line one\nline two'], srt ['Tom & Jerry', 'a  c', 'I <3 you', 'Fish & Chips (as typed)', 'café 日本 😀', 'line one\nline two']]
+    -> problem 9 above; how sure: certain
+36. WebVTT character references read by Lantern: &amp; &lt; &gt; &#233; &#xe9; &nbsp; and the emoji &#128512; &#x1F600; made characters (a broken one left as it is)  [['R&D <b> > é&#x E9; é \xa0x \uf600 \uf600', 'tagged <i>not a tag</i>'] vs ['R&D <b> > é&#x E9; é \xa0x 😀 😀', 'tagged <i>not a tag</i>']]
+    -> problem 9 above; how sure: certain
+37. Lantern's WebVTT read by Chromium's own parser (the text a browser shows): every caption as written, & < > included  [['Tom & Jerry', 'a  c', 'I ', 'Fish & Chips (as typed)', 'café 日本 😀', 'line one\nline two']]
+    -> problem 9 above; how sure: certain
+38. export normalised to -14 LUFS, 12 kHz hi-hat-like bursts sampled off their peaks, over quiet music: true peak at most -1 dBTP as the EXPORT header says (ffmpeg's ebur128 true peak, 0.1 dB allowed)  [true peak 0.10 dBTP; note: Loudness -24.4 LUFS brought to -14 LUFS]
+    -> problem 5 above; how sure: certain
+
+
+WHAT WAS VERIFIED AS RIGHT (the PASS lines, grouped)
+----------------------------------------------------
+- The resampler: 8, 11.025, 22.05, 32, 44.1, 88.2 and 96 kHz into 48 kHz keep a 997 Hz tone's level within 0.05 dB with
+  nothing else above -90 dB; images and aliases no worse than ffmpeg's default swr anywhere tested, and far less above
+  the new Nyquist (a 26 kHz tone from 96 kHz: -103 dB; swr -34 dB); at 150-300% speed what would pass the Nyquist is
+  removed (under -80 dB; ffmpeg's asetrate+aresample leaves -61 dB). The header's "about 100 dB down" holds below about
+  0.4 of the source rate: at 0.45 of it the image is 27 dB down, exactly as with ffmpeg's swr and SciPy's resample_poly
+  defaults (soxr reaches -136 dB); a 20 kHz tone from 96 kHz loses 1.2 dB (swr 0.04) because the filter starts at 0.9
+  of the new Nyquist -- a choice, not a fault.
+- Surround folded to stereo: 3.0, quad, 5.0, 5.1, 5.1(side) and 7.1 WAVs fold exactly as ffmpeg's -ac 2 ITU downmix
+  (to 1e-4); Chromium's decodeAudioData gives WAV, FLAC, Ogg Opus, WebM Opus and MP4 AAC 5.1 in the order the fold
+  assumes (L R C LFE Ls Rs), and so does the tile's own path (Lantern's WebM and MP4 readers into WebCodecs).
+- Amplify follows linear and Ease keys, and keys kept from before the clip, at every sample within 0.1 dB.
+- A nested sequence's clip plays the nested mix sample for sample (both channels, pans, levels); a 44.1 kHz nested
+  sequence in a 48 kHz one matches SciPy's resample_poly of its mix within -60 dB.
+- Bars and Tone's tone: 1 kHz, peak 0.1 (-20 dBFS by AES17), both ears, silent outside the clip.
+- Audio transitions of 3 to 8 s, Constant Power, Constant Gain and Exponential, aligned centre, start and end: both
+  clips heard over the whole transition on the curve (each frame within 0.03).
+- Keyframes on Volume, Opacity, Scale, an effect and a mask, with Ease, Auto Bezier, Hold, Linear and mixed curves,
+  through three cuts, a head trim and a tail trim: every frame of every piece has its old value (to 1e-9).
+- The fuzz: Rate Stretch, slip, Add Edit on all or targeted tracks, Ripple Delete, closing a gap, Q/W, Speed/Duration,
+  insert/overwrite, Lift/Extract never left an overlap, a broken frame count, source outside the media or a silently
+  parted link. Head trims stop at frame 0; Speed/Duration with ripple on, called for a picture and then its sound, moves
+  the clips after once; Rate Stretch from the head keeps the end and stops at the clip before.
+- Warp Stabilizer: on views of a texture shifted (sub-pixel), turned (0.4 and 5 degrees a frame), zoomed (0.8% a
+  frame) and all three, clean, with noise and with half the picture flat, every frame's move within 0.25 px, 0.05
+  degrees and 0.1%; a 20 px shake found; a textured object crossing a still background is not taken for camera motion;
+  the effect itself, No Motion, puts every frame back on frame 0 (mean difference under 3 of 255); the No Motion zoom is
+  exactly the least that keeps every corner inside (closed form); a 2 Hz shake is removed by Smooth Motion. Its range:
+  a move of more than about 32 analysis pixels (10% of 320) between two frames is not found (seen at 36-43 px).
+- Masks on an effect: only the inside changes, Inverted the outside, a 20 px Feather ramps steadily, keyed position
+  followed, a half-size preview covered the same; tracking follows at 1.5 and 3 px a frame.
+- EDL: at 23.976, 24, 25, 29.97 DF and NDF, 30, 50, 59.94 DF and NDF and 60 the record times start at the hour and
+  events a minute and ten minutes in are at their SMPTE timecodes; Lantern and OpenTimelineIO read them back to the same
+  frames; the C event of no length and D 030 are written, with FROM and TO names; M2 speeds (50, 12.5, -25 at 25 fps) read back by Lantern
+  and by OpenTimelineIO; a 200% M2 at 29.97 DF read back within 0.1%; B and AA/V events read as a linked picture and
+  sound.
+- FCP XML: well formed; names and texts with & < > quotes, accents, CJK and an emoji come back from Python's parser as
+  written; links point at clip items and pair each picture with its sound; the dissolve is a centred transition item
+  85-115 and the sound's a Cross Fade (+3dB); Time Remap speeds 200 and -50; Lantern reads back every clip, link,
+  transition and the title's words; OpenTimelineIO's FCP 7 reader sees the same clips and the centred dissolve; ends of
+  -1 beside even-length centre, start and end transitions are read at the right cut.
+- WebM and Matroska: a SeekHead first whose entries point at Info, Tracks and Cues; ffmpeg seeking to 14:50 of a
+  15-minute file reads under 5% of it; ffprobe's duration is exactly the last picture's time plus one.
+- MP4: AAC and Opus packets with priming, rewritten with the true length: the edit list skips the priming and shows the
+  length as ffmpeg's own file does (same elst, same ffprobe start and length), and the sound decodes in step. (The
+  movie timescale of 1000 rounds the length to the millisecond, as ffmpeg's own does; ffmpeg's decoder does not trim
+  the end by the edit list, so the sample count could not be the reference.)
+- WAV: 1, 3, 4, 5, 6 and 8 channels at 24 bits with an odd number of frames: RIFF size and pad byte right, ffmpeg
+  decodes the same samples, SciPy reads it.
+- GIF: frames of 256, 2, 256 and 2 colours (random pixels, long runs that fill the LZW table, a ramp) decode exactly in
+  PIL and ffmpeg; a loop count of 0 when looping and no loop block when playing once; delays kept; delay totals within
+  a hundredth of a second (240 frames at 60 fps: 401 for 400).
+- PCM readers: MOV sowt/twos, in24, in32, fl32, fl64 in both byte orders (enda), unsigned 8-bit 'raw '; MKV PCM 16/24/
+  32-bit, float, big-endian, 6 channels; AVI 16-bit 6-channel and 24-bit (WAVE_FORMAT_EXTENSIBLE), float, 8-bit, 32-bit:
+  all decode as ffmpeg decodes them (to 1e-6).
+- Timecode: "00:00:10.5", "+2:00", "1:30.25", "10.5", "150", "00;01;00;02", "01:00:00;00" DF, "-00:00:01:00",
+  "00:10:00;00" at 59.94 DF, 23.976 and 29.97 cases give the frames worked out here; drop-frame shown with semicolons
+  throughout as worked out here; every frame of two hours at 29.97 and 59.94 DF shown and typed back to itself.
+- Export loudness: reached within 0.5 LU (ebur128) or honestly said.
+
+
+WHAT I COULD NOT TEST
+---------------------
+- Everything here ran the modules in Node, called as the UI calls them (apply(), trimTo, closeGap, the Speed/Duration
+  dialog's loop were copied into the fuzz); the mouse paths themselves were not driven (review 2 did that).
+- The export through WebCodecs: no AAC encoder here, so whether Chrome's AAC chunks start at 0 with the priming inside
+  (the export then gives pts from 0 and no edit-list skip) is unknown; the MP4 writer was tested with ffmpeg's packets.
+- Maintain Audio Pitch in the browser's playback path, and with real speech and music recordings (synthetic only).
+- The Warp Stabilizer on real handheld footage, rolling shutter, parallax or zooms through the lens; Auto-scale against
+  Premiere's own numbers.
+- Mask tracking of objects that turn, scale or change in light.
+- The EDL and XML files in Premiere, Resolve or Avid themselves: OpenTimelineIO's readers stand in for them.
+- Premiere's exact behaviour where marked "judgement" (Hold on sound keys, keyed filter sweeps, sync-locked tracks that
+  cannot ripple, odd centred transitions with -1 ends, clipitem <duration>).
+
+
+RUNS
+----
+Run 1 of the final run.py: 269 checks, 38 failed, 144 s.
+Run 2 of the same file: 269 checks, 38 failed, 139 s.
+The PASS/FAIL verdict and description of every line are identical in the two runs.
+Earlier full runs of near-final versions of run.py (checks added since are new lines; a few descriptions were reworded):
+  first earlier full run (267 checks, 37 failed): 263 lines in common with the final, 0 with a different verdict
+  second earlier full run (268 checks, 38 failed): 264 lines in common with the final, 0 with a different verdict
