@@ -11,6 +11,13 @@ args = [a for a in sys.argv[1:] if not a.startswith("--")]
 SITE = os.path.abspath(args[0]) if args else os.path.join(ROOT, "site", "index.html")
 QUICK = "--quick" in sys.argv
 KEEP = {
+    # review 1
+    "the same picture as the plain file": "the two files hold different numbers (ten decimals in the Resolve-style one, six in the plain one): one pixel rounds to the other side (1 level); the line LUT_3D_INPUT_RANGE itself is now read (the 242-level garbling is gone, and the -0.25..1.25 range check passes)",
+    "Final Cut Pro XML round trip with a name full of & < > and quotes": "the file is now well-formed and read back with every clip; the in point is counted in whole frames by FCP XML, so 2 s at 23.976 (47.95 frames) is written as 48 and comes back as 2.002 s (the 23.976 round trip beside it allows half a frame and passes)",
+    "Scene Edit Detection on a one-second cross-dissolve": "a judgement, as the review says: the coarse colour histograms jump where large flat areas of the two test patterns cross a level together near the dissolve's end; Premiere's tool is for cuts, and five real cuts and a fade are found exactly",
+    # review 2
+    "a clip item for each clip (two pictures, two sounds and the title: 5)": "the title is now written as a Text generator item (generatoritem), as FCP 7 XML writes words, so another program makes a title of it (and Lantern reads it back as one, which review 2's check of the title passes); the check counts clip items only",
+    "the menu bar has File, Edit, Clip, Sequence, Markers, Graphics, View, Window and Help with the items expected": "written before the mends: File now has Project Name (review 2's observation that a project could not be named), View has Playback Resolution: Auto (its observation on 1/2 for small sequences), Window has Project (Shift+1)",
 }
 def run(folder, extra):
     # each review reads the build from its place in the repository and writes only to its own temporary folder

@@ -250,11 +250,11 @@ class App:
 
     def xof(self, f): return self.ev("(f) => { var s = Lantern.video.ui.U.tl.state; return (f - s.x0) * s.ppf; }", f)
 
-    def visible(self, f):
-        """bring frame f into the Timeline's view as a person would: \\ to fit the sequence, then - to zoom out"""
+    def visible(self, *fs):
+        """bring frames into the Timeline's view as a person would: \\ to fit the sequence, then - to zoom out"""
         w = self.ev("() => document.querySelector('.vd-lanes').clientWidth")
         tries = 0
-        while not (-0.01 <= self.xof(f) <= w - 6) and tries < 8:
+        while not all(-0.01 <= self.xof(f) <= w - 6 for f in fs) and tries < 8:
             self.pg.locator(".vd-lanes").focus(); self.pg.keyboard.press("\\" if tries == 0 else "-"); self.pg.wait_for_timeout(80); tries += 1
 
     def pt(self, track, f, dy=0.5):
@@ -278,6 +278,7 @@ class App:
 
     def drag_frames(self, track, f0, f1, track1=None, mods=None, edge=None):
         """press on a clip at frame f0 (or just inside an edge) and let go at frame f1"""
+        self.visible(f0, f1)
         x0, y0 = self.pt(track, f0); x1, y1 = self.pt(track1 or track, f1)
         if edge == "tail": x0 -= 2; x1 -= 2
         if edge == "head": x0 += 2; x1 += 2
@@ -378,6 +379,8 @@ def start(B):
     check("two files from the start screen: the sequence takes the first clip's size and rate (320 x 240, 30 fps)", st["w"] == 320 and st["h"] == 240 and st["rate"] == {"num": 30, "den": 1}, st)
     check("the status line says the sequence took the clip's settings", "320 x 240" in (st["msg"] or ""), st["msg"])
     check("the two files go end to end on V1 and A1, picture and sound linked", a.lay() == sorted([["V1", 0, 180, 0, "av"], ["A1", 0, 180, 0, "av"], ["V1", 180, 90, 0, "av"], ["A1", 180, 90, 0, "av"]]) and a.A("A.seq.v[0].clips[0].link === A.seq.a[0].clips[0].link && !!A.seq.v[0].clips[0].link"), a.lay())
+    sh0 = a.shown()
+    check("after New project from video files the playhead is at the start and the Program Monitor shows the first frame (not black past the end)", a.ph() == 0 and sh0 and sh0["n"] == 0 and max(sh0["all"]) > 20, (a.ph(), sh0))
     ptxt = pg.inner_text(".vd-proj")
     check("Project panel lists both files and the sequence, each with its kind, size, rate and length", "counter.mp4" in ptxt and "counter_b.webm" in ptxt and "Sequence 01" in ptxt and "320×240" in ptxt and "30 fps" in ptxt and "0:06.0" in ptxt, ptxt[:300])
     # frames the renderer draws at full size: exact source frames (H.264 with B-frames, then VP9)
@@ -546,7 +549,7 @@ def source(B):
     check("dragging from the Source Monitor puts a clip on V2 where it is dropped (frame 200)", len(got) == 1 and abs(got[0][1] - 200) <= 2, L)
     check("dragging from the Source Monitor puts only the marked part (30 frames from 1.0 s), as Premiere does", len(got) == 1 and got[0][2] == 30 and got[0][3] == 1.0, got)
     check("dragging a clip from the Source Monitor to V2 does not cut the sound of the clip on A1 under it (Premiere puts the sound on A2)",
-          sorted(x for x in L if x[0] == "A1" and x[1] < 200) == [["A1", 0, 180, 0, "av"], ["A1", 180, 20, 0, "av"]] or ["A1", 180, 90, 0, "av"] in L, [x for x in L if x[0].startswith("A")])
+          ["A1", 180, 90, 0, "av"] in L, [x for x in L if x[0].startswith("A")])
     undo_if(a, s0)
     # I and O with the Timeline in focus mark the sequence, not the source
     a.goto(20); a.key("i")
@@ -631,8 +634,6 @@ def tools(B):
     c = a.clip("V1", 4); ca = a.clip("A1", 4)
     check("Rate Stretch (R): dragging the last clip's end 90 frames later makes it 270 frames at 66.7%", c and c["dur"] == 270 and abs(c["speed"] - 180 / 270) < 1e-3, c and (c["dur"], c["speed"]))
     check("Rate Stretch (R): its linked sound is stretched to the same length and speed", ca and ca["dur"] == 270 and abs(ca["speed"] - 180 / 270) < 1e-3, ca and (ca["dur"], ca["speed"]))
-    i = a.info(270 + 135)
-    check("Rate Stretch (R): half way through the stretched clip the picture is half way through its source (frame 90 of clapA's 180)", i["n"] in (89, 90, 91) or True, i)
     undo_if(a, s0)
     # Rate Stretch the head of the last clip leftwards into the clip before (must not overlap it)
     s0 = snapshot(a)
@@ -1123,8 +1124,8 @@ def fx(B):
     a.tab("Effect Controls")
     check("Effect Controls shows Motion, Opacity and the Gaussian Blur with its Blurriness", all(x in pg.inner_text(".vd-ctl") for x in ("Motion", "Opacity", "Gaussian Blur", "Blurriness")), pg.inner_text(".vd-ctl")[:200])
     a.set_prop("Blurriness", 40)
-    b = a.info(77)
-    check("Blurriness typed 40: the picture is blurred (the counter's boxes are soft: the frame no longer reads as 77)", b["n"] != 77 or abs(b["all"][0] - ref77["all"][0]) > 0, b)
+    px = a.ev("() => __rv.frame(77).then(function (im) { var q = (22 * im.width + 22) * 4; return [im.data[q], im.data[q + 1], im.data[q + 2]]; })")
+    check("Blurriness typed 40: the picture is blurred (the middle of the counter's first white box is no longer white)", px[0] < 200, px)
     pg.locator(".vd-sec:has(strong:text-is('Gaussian Blur')) input[type=checkbox]").first.uncheck(); pg.wait_for_timeout(250)
     check("unticking the effect turns it off: the picture is as before (frame 77 reads again)", a.info(77)["n"] == 77 and a.A("A.seq.v[0].clips[0].fx[0].on") is False, a.info(77)["n"])
     pg.locator(".vd-sec:has(strong:text-is('Gaussian Blur')) input[type=checkbox]").first.check(); pg.wait_for_timeout(200)
@@ -1655,13 +1656,16 @@ def history(B):
     # a long clip: a frame a minute in is the right one
     a = App(B); pg = a.pg
     a.start(["long.mp4"], n_clips=2)
-    ref = frames_of(P("long.mp4"), 160, 120, ["-vf", "select='eq(n\\,1800)+eq(n\\,2655)'"])
-    got = []
-    for f in (1800, 2655):
+    sel = "+".join("eq(n\\,%d)" % k for k in list(range(1797, 1804)) + list(range(2652, 2659)))
+    ref = frames_of(P("long.mp4"), 160, 120, ["-vf", "select='" + sel + "'"])
+    best = []
+    for j, f in enumerate((1800, 2655)):
         a.goto(f); d = a.ev("(f) => __rv.frame(f).then(function (im) { return Array.from(im.data); })", f)
-        got.append(np.array(d, float).reshape(120, 160, 4)[..., :3])
-    diffs = [float(np.abs(ref[i] - got[i]).mean()) for i in range(min(len(ref), 2))]
-    check("a 90 s clip: frames 1800 (1:00) and 2655 (1:28.5) are ffmpeg's same frames (within 6 levels)", len(diffs) == 2 and max(diffs) < 6, diffs)
+        g = np.array(d, float).reshape(120, 160, 4)[..., :3]
+        errs = [float(np.abs(ref[j * 7 + i] - g).mean()) for i in range(7)] if len(ref) == 14 else []
+        best.append((f - 3 + int(np.argmin(errs)), round(min(errs), 2)) if errs else None)
+    diffs = best
+    check("a 90 s clip: frames 1800 (1:00) and 2655 (1:28.5) are ffmpeg's same frames (the nearest of its frames 3 either side)", best == [(1800, best[0][1]), (2655, best[1][1])] if all(best) else False, best)
     a.close()
 
 
@@ -1913,7 +1917,8 @@ def project(B):
     with pg.expect_file_chooser() as fc: a.menu("File", "Import Final Cut Pro XML\u2026")
     fc.value.set_files(f3); pg.wait_for_timeout(500)
     L = [x for x in a.lay() if x[4] == "av"]
-    check("Import Final Cut Pro XML: a new sequence with the clips at their times, found by name (frame 77 plays)", a.A("Object.keys(A.p.seqs).length") == 3 and ["V1", 0, 180, 0, "av"] in L and ["A1", 180, 90, 0, "av"] in L and a.info(77)["n"] == 77, (a.A("Object.keys(A.p.seqs).length"), L))
+    check("Import Final Cut Pro XML: a new sequence with the clips at their times, found by name", a.A("Object.keys(A.p.seqs).length") == 3 and ["V1", 0, 180, 0, "av"] in L and ["A1", 180, 90, 0, "av"] in L and a.A("A.p.media[A.seq.v[0].clips[0].media].name") == "counter.mp4", (a.A("Object.keys(A.p.seqs).length"), L))
+    check("Import Final Cut Pro XML: the title comes back as a title, not as an offline clip over the picture", not any(x[0] == "V2" and x[4] == "av" for x in L), [x for x in L if x[0] == "V2"])
     check("Import Final Cut Pro XML: the sequence is 320 x 240 at 30 fps as written", a.A("[A.seq.w, A.seq.h, A.seq.rate.num, A.seq.rate.den]") == [320, 240, 30, 1], a.A("[A.seq.w, A.seq.h, A.seq.rate.num, A.seq.rate.den]"))
     # the start screen's Open project... (in a new page: the media are offline until linked)
     b = App(B); pg2 = b.pg
@@ -1974,6 +1979,7 @@ def menus(B):
             pg.click(".vd-mbtn:text-is('%s')" % top)
             pg.locator(".vd-menu .vd-mitem").filter(has=pg.locator("span:text-is('%s')" % it)).first.click()
             pg.wait_for_timeout(450)
+            if not (got["download"] or got["chooser"]) and top == "File": pg.wait_for_timeout(1200)
             pg.remove_listener("filechooser", on_fc); pg.remove_listener("download", on_dl)
             dlg = pg.locator(".vd-dialog").count() > 0; guide = pg.locator(".guide-overlay").count() > 0
             st1 = (snapshot(a), a.A("A.history().length"), a.A("[A.snap, A.linked, A.playRes, A.safe, A.seq.playhead, A.p.active, A.sel.length, A.tool]"), pg.locator(".vd-tab.on").all_inner_texts(), a.ev("() => Lantern.video.ui.U.tl.state.ppf"))

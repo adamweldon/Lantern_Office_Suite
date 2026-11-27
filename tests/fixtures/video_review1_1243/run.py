@@ -9,6 +9,7 @@
 # Output: one line per check, "PASS  ..." or "FAIL  ...", then "<n> checks, <m> failed".
 import os, re, sys, json, shutil, subprocess, tempfile, math
 import numpy as np
+np.seterr(all="ignore")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
@@ -123,7 +124,7 @@ def compare_tracks(label, f, lt, pk, st, tol, key_check=True, size_check=True, o
         if extra_ok:
             keep = [i for i in range(len(lt["off"])) if lt["off"][i] in have]
             lt = dict(lt, pts=[lt["pts"][i] for i in keep], key=[lt["key"][i] for i in keep], size=[lt["size"][i] for i in keep], off=[lt["off"][i] for i in keep])
-    check("%s %s: %d packets, as many as ffprobe lists%s" % (label, lt["type"], len(pk), " (and the ones its edit list cuts whole, all before 0 s)" if extra_ok else ""), ok_n or extra_ok, (len(lt["pts"]), len(pk)))
+    check("%s %s: as many packets as ffprobe lists (any more only ones its edit list cuts whole, all before 0 s)" % (label, lt["type"]), ok_n or extra_ok, (len(lt["pts"]), len(pk)))
     if not (ok_n or extra_ok) or not pk: return
     # match by byte position (both list them); ffprobe gives pos for every packet of these containers
     pos = [int(x["pos"]) for x in pk] if all(x.get("pos") not in (None, "N/A") for x in pk) else None
@@ -350,7 +351,7 @@ def remux_checks(srcf, outf, opts=None, audio_tracks=1, video=True):
     check("%s rewritten by Lantern as %s: ffmpeg reads it with no error or warning" % (srcf, outf), e == "", e)
     if video:
         sa, sb = vsig(a), vsig(b)
-        check("%s -> %s: every picture decodes the same (%d frames)" % (srcf, outf, len(sa)), sa == sb and len(sa) > 5, (len(sa), len(sb), sum(1 for x, y in zip(sa, sb) if x != y)))
+        check("%s -> %s: every picture decodes the same" % (srcf, outf), sa == sb and len(sa) > 5, (len(sa), len(sb), sum(1 for x, y in zip(sa, sb) if x != y)))
         pa, pb = packet_pts(a, "v:0"), packet_pts(b, "v:0")
         tolp = 0.0011 if cross else 0.0006   # an MP4 edit list counts in the movie's milliseconds: half of one is allowed
         okp = len(pa) == len(pb) and max(abs(x - y) for x, y in zip(pa, pb)) <= tolp
@@ -358,15 +359,16 @@ def remux_checks(srcf, outf, opts=None, audio_tracks=1, video=True):
         # seeking: ask both files for the frame 60% of the way in, by its own time (a quarter of a frame early)
         k = int(len(pa) * 0.6); dur_ = (pa[-1] - pa[0]) / max(1, len(pa) - 1); t_ = pa[k] - 0.25 * dur_
         fa = vsig(a, ["-seek_timestamp", "1", "-ss", "%.5f" % t_])[:1]; fb = vsig(b, ["-seek_timestamp", "1", "-ss", "%.5f" % t_])[:1]
-        check("%s -> %s: a seek to picture %d (60%% of the way in) finds that picture" % (srcf, outf, k), fb and fb == [sa[k]] if fa == [sa[k]] else fb == fa, (fa, fb, sa[k]))
+        check("%s -> %s: a seek to the picture 60%% of the way in finds that picture" % (srcf, outf), fb and fb == [sa[k]] if fa == [sa[k]] else fb == fa, (fa, fb, sa[k]))
     for kk in range(audio_tracks):
         x, y = sound_from_zero(a, kk), sound_from_zero(b, kk)
         lag, diff = sound_lag(x, y)
         tol = 48 if cross else 0
         check("%s -> %s: sound track %d plays the same samples from time 0 on, in step with the pictures (within %d samples)" % (srcf, outf, kk + 1, tol),
               lag is not None and abs(lag) <= tol and diff == 0, ("lag", lag, "max diff after aligning", diff, len(x), len(y)))
-    da = float(probe(ref, "-show_format")["format"]["duration"]); db_ = float(probe(b, "-show_format")["format"]["duration"])
-    check("%s -> %s: the file lasts as long as ffmpeg's own rewrite (%.3f s, within 1/30 s)" % (srcf, outf, da), abs(da - db_) <= 0.034, (da, db_))
+    # how long the file says it lasts: as the original or as ffmpeg's own rewrite (which may move the start), within 1/30 s
+    da = float(probe(ref, "-show_format")["format"]["duration"]); db_ = float(probe(b, "-show_format")["format"]["duration"]); d0 = float(probe(a, "-show_format")["format"]["duration"])
+    check("%s -> %s: the file lasts as long as the original or ffmpeg's own rewrite of it (within 1/30 s)" % (srcf, outf), min(abs(da - db_), abs(d0 - db_)) <= 0.034, ("original", d0, "ffmpeg's rewrite", da, "Lantern's", db_))
 
 if want("writers"):
     need = ["phone_portrait.mp4", "sd_23976_mono441.mp4", "odd_642x362_25_51.mp4", "ntsc5994.mp4", "vfr.mp4", "hevc.mp4", "av1.mp4", "frag.mp4",
@@ -426,7 +428,7 @@ if want("writers"):
         m = re.findall(r"Statistics: (\d+) bytes read", e)
         return int(m[-1]) if m else -1
     size_ = os.path.getsize(p("w_minute.webm")); rb = bytes_read_seeking(p("w_minute.webm")); rb_ff = bytes_read_seeking(p("minute.webm"))
-    check("Lantern's WebM: a seek to 55 s of a 60 s file reads less than a quarter of it (its Cues found through a SeekHead, as ffmpeg's own file allows: %d%% read there)" % round(100 * rb_ff / os.path.getsize(p("minute.webm"))),
+    check("Lantern's WebM: a seek to 55 s of a 60 s file reads less than a quarter of it (its Cues found through a SeekHead, as in ffmpeg's own file)",
           0 < rb < size_ / 4, ("bytes read", rb, "of", size_, "ffmpeg's own file", rb_ff))
 
     # AVI: Motion JPEG pictures and 16-bit sound, written by Lantern from ffmpeg's JPEGs
@@ -443,7 +445,7 @@ if want("writers"):
             else: make(srcf, *LAVV("640x480", "30000/1001"), "-c:v", "mjpeg", "-q:v", "5")
         r = run(AVI_JS % (J(p(srcf)), fps, rate, J(p(outf)), wa))
         e = errors_of(p(outf))
-        check("AVI %s (%d frames, %d of odd length): ffmpeg reads it with no error or warning" % (outf, r[0], r[1]), e == "", e)
+        check("AVI %s (some JPEGs of odd length): ffmpeg reads it with no error or warning" % outf, e == "", (e, r))
         check("AVI %s: every picture decodes as ffmpeg's own JPEGs" % outf, vsig(p(srcf)) == vsig(p(outf)), (len(vsig(p(srcf))), len(vsig(p(outf)))))
         st = probe(p(outf), "-show_streams", "-count_packets")["streams"]
         num, den = [int(x) for x in fps.strip("{}").replace("num:", "").replace("den:", "").split(",")]
@@ -451,13 +453,13 @@ if want("writers"):
         if r[2]:
             got = np.frombuffer(subprocess.run([FF, "-v", "error", "-i", p(outf), "-map", "0:a", "-f", "s16le", "-"], capture_output=True).stdout, np.int16)
             want_ = np.frombuffer(open(p(outf) + ".pcm", "rb").read(), np.int16)
-            check("AVI %s: the sound decodes sample for sample as given (%d frames)" % (outf, r[2]), got.shape == want_.shape and (got == want_).all(), (got.shape, want_.shape))
+            check("AVI %s: the sound decodes sample for sample as given" % outf, got.shape == want_.shape and (got == want_).all(), (got.shape, want_.shape))
             vd = r[0] * den / num; ad = r[2] / rate
             check("AVI %s: the sound lasts as long as the pictures (%.3f s)" % (outf, vd), abs(vd - ad) < 1.0 / rate * 2, (vd, ad))
         kf = int(r[0] * 0.55); allf = vsig(p(srcf))
         tb_ = (kf - 0.25) * den / num
         fb_ = vsig(p(outf), ["-seek_timestamp", "1", "-ss", "%.5f" % tb_])[:1]
-        check("AVI %s: a seek to picture %d finds that picture" % (outf, kf), fb_ == [allf[kf]], (fb_, allf[kf], allf.index(fb_[0]) if fb_ and fb_[0] in allf else None))
+        check("AVI %s: a seek to the picture 55%% of the way in finds that picture" % outf, fb_ == [allf[kf]], (fb_, allf[kf], allf.index(fb_[0]) if fb_ and fb_[0] in allf else None))
 
     # WAV: written by Lantern, read by ffmpeg
     WAVW_JS = r"""var n = %d, k = %d, bits = %d, sr = %d, chs = [], seed = 3; function rnd() { seed = (seed * 1103515245 + 12345) %% 2147483648; return seed / 2147483648 * 2 - 1; }
@@ -498,7 +500,7 @@ if want("writers"):
                 arr = np.array(f_.convert("RGB")).astype(float); frames.append(arr); durs.append(f_.info.get("duration"))
             errs = [np.abs(frames[i] - src[d[i]["frame"]]).mean() for i in range(min(len(frames), len(d)))]
             total = len(src) * b / a
-            check("GIF at %d/%d fps: PIL reads %d frames, each within 4 levels on average of the picture given" % (a, b, len(d)), len(frames) == len(d) and max(errs) < 4, (len(frames), len(d), max(errs) if errs else None))
+            check("GIF at %d/%d fps: PIL reads every frame kept, each within 4 levels on average of the picture given" % (a, b), len(frames) == len(d) and max(errs) < 4, (len(frames), len(d), max(errs) if errs else None))
             check("GIF at %d/%d fps: the delays add up to the clip's length (%.3f s) within 1/100 s, none under 2/100" % (a, b, total), abs(sum(durs) / 1000 - total) <= 0.0101 and min(durs) >= 20, (sum(durs), durs[:8]))
             check("GIF at %d/%d fps: ffmpeg decodes it with no error" % (a, b), errors_of(fn) == "", errors_of(fn))
         lp = open(p("g_30_1.gif"), "rb").read()
@@ -649,7 +651,7 @@ return st;""")
              "rateStretch": "Rate Stretch", "setSpeed": "Speed/Duration (linked sound with it)", "move": "a move (overwriting where it lands)", "moveInsert": "a move that inserts"}
     for op, nm in names.items():
         x = r[op]
-        check("fuzz (%d random %s edits on linked picture and sound, 5 frame rates): no two clips on a track overlap afterwards" % (x["n"], nm), x["overlap"] == 0, (x["overlap"], x["ex"].get("overlap"), x["ex"].get("thrown")))
+        check("fuzz (random %s edits on linked picture and sound, 5 frame rates): no two clips on a track overlap afterwards" % nm, x["overlap"] == 0, (x["overlap"], "of", x["n"], x["ex"].get("overlap"), x["ex"].get("thrown")))
         check("fuzz %s: every clip starts on a whole frame at or after 0 and lasts at least a frame" % nm, x["bounds"] == 0, (x["bounds"], x["ex"].get("bounds")))
         check("fuzz %s: no clip shows source before 0 s or past the end of its media" % nm, x["src"] == 0, (x["src"], x["ex"].get("src")))
         if op in ("roll", "slide", "rateStretch"): continue
@@ -709,6 +711,8 @@ h.seq.playhead = 140; trimTo(h.p, h.seq, -1); out.h11b = { v1: lay(h.seq.v[0]), 
 h = fresh(); var lv = put(h.seq, h.seq.v[0], 'lv', 0, 90, 0, { link: 'LL' }), la = put(h.seq, h.seq.a[0], 'la', 0, 90, 0, { link: 'LL' });
 E.insert(h.seq, 45, [{ t: h.seq.v[1], c: S.clip({ media: 'm0', dur: 20, name: 'ins' }) }]);
 out.h11c = S.partners(h.seq, h.seq.v[0].clips[0]).map(function (y) { return [y.t.name, y.c.start, y.c.dur]; });
+// H11d ... and Ripple Delete of that left half (the tile adds its linked partners to the selection) leaves the right half
+var lv2 = h.seq.v[0].clips[0], ids2 = [lv2.id].concat(S.partners(h.seq, lv2).map(function (y) { return y.c.id; })); E.rippleDelete(h.seq, ids2); out.h11d = [lay(h.seq.v[0]), lay(h.seq.a[0])];
 // H12 Overwrite into the middle of a clip: three pieces, the last one's in point continuing
 h = fresh(); put(h.seq, h.seq.v[0], 'base', 0, 90, 3); E.overwrite(h.seq, 30, [{ t: h.seq.v[0], c: S.clip({ media: 'm0', dur: 20, name: 'new' }) }]);
 out.h12 = h.seq.v[0].clips.map(function (c) { return [c.name, c.start, c.dur, +c.srcIn.toFixed(6)]; });
@@ -730,7 +734,7 @@ return out;""")
     check("a ripple trim of a tail (-20) while a sync-locked track has a clip across the cut leaves no clips overlapping", not r["h2"]["bad"], r["h2"])
     check("a ripple trim of a head (+20) while a sync-locked track has a clip across the cut leaves no clips overlapping", not r["h2b"]["bad"], r["h2b"])
     check("Slide 30 frames left with a 20-frame gap before the clip: it stops at the clip before the gap (no overlap)", not r["h3"]["bad"], r["h3"])
-    check("Slide 20 frames right with a 10-frame gap after the next clip... (no clip after the slid one): no overlap with the clip after the gap", not r["h4"]["bad"], r["h4"])
+    check("Slide 20 frames right with a 10-frame gap after the clip: it stops at the clip after the gap (no overlap)", not r["h4"]["bad"], r["h4"])
     check("Roll right by 1000: stops after 59 frames, where the incoming clip would vanish; its in point moves 59 frames", r["h5"] == [59, 149, 149, 1, round(1 + 59 / 30, 6)], r["h5"])
     check("Roll left by 1000: stops after 30 frames, where the incoming clip's media begins (it starts 1 s in)", r["h5b"] == [-30, 60, 60, 90, 0.0], r["h5b"])
     check("Insert into the middle of a clip at 25 fps: the right part continues from 2 + 40/25 = 3.6 s and moves after the new clip", r["h6"] == [[0, 40, 2.0], [40, 10, 0.0], [50, 60, 3.6]], r["h6"])
@@ -744,6 +748,7 @@ return out;""")
     check("Ripple Trim Previous Edit to Playhead (Q) at frame 140, V1 and A1 targeted: both clips lose 40 frames from their head and the rest move left once",
           r["h11b"]["v1"] == [["v0", 0, 100], ["v1", 100, 60], ["v2", 160, 100]] and r["h11b"]["a1"] == [["a0", 0, 100], ["a1", 100, 60], ["a2", 160, 100]], r["h11b"])
     check("Insert into the middle of a linked picture and sound: the left picture's partner is its own sound only (A1 at 0 for 45), not the right halves too", r["h11c"] == [["A1", 0, 45]], r["h11c"])
+    check("... then Ripple Delete of the left picture (its sound selected with it, as the tile does): the right halves stay, moved 45 frames left to 20", r["h11d"] == [[["lv", 20, 45]], [["la", 20, 45]]], r["h11d"])
     check("Overwrite into the middle of a clip: three pieces, the last continuing at 3 + 50/30 s", r["h12"] == [["base", 0, 30, 3.0], ["new", 30, 20, 0.0], ["base", 50, 40, round(3 + 50 / 30, 6)]], r["h12"])
     check("a plain head trim outward by 30 stops at the clip before (10 frames), the in point 10 frames earlier", r["h14"] == [-10, 40, 50, round(5 - 10 / 30, 6)], r["h14"])
     check("a plain head trim outward by 30 of a clip at frame 10 (nothing before it) stops at frame 0 of the sequence", r["h14b"] == [-10, 0, 50], r["h14b"])
@@ -885,6 +890,9 @@ if want("mix"):
                        ("cp90", "Constant Power, 3 s, two unrelated sounds"), ("cg120", "Constant Gain, 4 s, a sound joined to its own continuation")):
         lv = np.array(r[key]); dev = float(np.abs(lv).max())
         check("mixer: audio transition %s: the level through it stays within 1 dB of the sound's own (50 ms windows)" % label, dev <= 1.0, ("worst %.2f dB" % dev, "levels", [round(x, 1) for x in lv[lv.argsort()[:4]]]))
+    r = run(MIX_LIB + r"""var h = proj(T.rate(30, 1)); media(h.p, 's', 48000, [sine(48000, 1000, 48000 * 4, 0.25)]); V.mix.clear(); var c = S.clip({ media: 's', start: 0, dur: 90 }); c.tin = { type: 'constantPower', dur: 30, align: 'start', single: true }; h.seq.a[0].clips.push(c);
+      var o = V.mix.range(h.p, h.seq, 0, 48000 * 2)[0]; function db(a, b) { var s = 0; for (var i = a; i < b; i++) s += o[i] * o[i]; return 10 * Math.log10(s / (b - a) / (0.25 * 0.25 / 2) + 1e-30); } return [db(0, 480), db(24000 - 480, 24000 + 480), db(48000 + 4800, 96000)];""")
+    check("mixer: a 1 s Constant Power fade-in at a clip's head starts from silence, is at -3 dB half-way and at full level after", r[0] < -25 and abs(r[1] + 3.01) < 0.15 and abs(r[2]) < 0.05, r)
     # a 5.1 file whose dialogue is in the centre channel (as films and many cameras' surround tracks are)
     r = run(MIX_LIB + r"""var h = proj(), n = 48000 * 2, z = function () { return new Float32Array(n); }, d = sine(48000, 500, n, 0.3); media(h.p, 'six', 48000, [z(), z(), d, z(), z(), z()]); V.mix.clear();
       h.seq.a[0].clips.push(S.clip({ media: 'six', start: 0, dur: 60 })); var o = V.mix.range(h.p, h.seq, 0, n); var s = 0; for (var i = 0; i < n; i++) s += o[0][i] * o[0][i] + o[1][i] * o[1][i]; return 10 * Math.log10(s / n / 2 / (0.3 * 0.3 / 2) + 1e-30);""")
@@ -931,7 +939,7 @@ if want("loud"):
     for name, segs, want_ in tests:
         tone_wav(name + ".wav", segs)
         r = run(LOUD_JS % (J(p(name + ".wav")), J([])))
-        check("loudness, EBU Tech 3341 case %s: %.2f LUFS, the test's %.1f within 0.1 LU" % (name.split("_")[1], r["I"], want_), abs(r["I"] - want_) <= 0.1, r["I"])
+        check("loudness, EBU Tech 3341 case %s: the test's %.1f LUFS within 0.1 LU" % (name.split("_")[1], want_), abs(r["I"] - want_) <= 0.1, r["I"])
     # mono at 44.1 kHz; 5.1 pink noise; speech-like bursts; a short loud sound in a long quiet one
     ff("-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=44100:duration=10,volume=0.1", "-c:a", "pcm_f32le", p("mono441.wav"))
     ff("-f", "lavfi", "-i", "anoisesrc=color=pink:sample_rate=48000:amplitude=0.25:seed=4:duration=12", "-filter_complex", "[0]asplit=6[a][b][c][d][e][f];[b]adelay=7[b2];[c]adelay=13[c2];[d]adelay=17[d2];[e]adelay=23[e2];[f]adelay=29[f2];[a][b2][c2][d2][e2][f2]join=inputs=6:channel_layout=5.1",
@@ -943,16 +951,16 @@ if want("loud"):
         I, TP, fr = ebur128(p(f))
         at = [t for t, m, s_ in fr if t >= 3.0 and m > -70 and s_ > -70][::17][:6]
         r = run(LOUD_JS % (J(p(f)), J(at)))
-        check("loudness of %s: %.2f LUFS, ffmpeg's ebur128 %.1f (within 0.1 LU)" % (f, r["I"], I), abs(r["I"] - I) <= 0.1, (r["I"], I))
+        check("loudness of %s: ffmpeg's ebur128 integrated loudness within 0.1 LU" % f, abs(r["I"] - I) <= 0.1, (r["I"], I))
         if f in ("pink51.wav",):
             from scipy.io import wavfile
             x = wavfile.read(p(f))[1].astype(float)
             ref = bs1770_48k(x)
-            check("loudness of %s: within 0.1 LU of BS.1770-4 worked here with the Recommendation's 48 kHz filter (%.2f)" % (f, ref), abs(r["I"] - ref) <= 0.1, (r["I"], ref))
-        check("true peak of %s: %.2f dBTP, ffmpeg's %.1f (within 0.2 dB), never below the sample peak" % (f, r["TP"], TP), abs(r["TP"] - TP) <= 0.2 and r["TP"] >= r["P"] - 1e-6, (r["TP"], TP, r["P"]))
+            check("loudness of %s: within 0.1 LU of BS.1770-4 worked here with the Recommendation's 48 kHz filter" % f, abs(r["I"] - ref) <= 0.1, (r["I"], ref))
+        check("true peak of %s: ffmpeg's within 0.2 dB, never below the sample peak" % f, abs(r["TP"] - TP) <= 0.2 and r["TP"] >= r["P"] - 1e-6, (r["TP"], TP, r["P"]))
         fm = {round(t, 1): (m, s_) for t, m, s_ in fr}
         dm = [abs(a - fm[round(t, 1)][0]) for a, t in zip(r["M"], at)]; ds = [abs(a - fm[round(t, 1)][1]) for a, t in zip(r["S"], at)]
-        check("momentary and short-term loudness of %s at %d times: within 0.2 LU of ffmpeg's M and S" % (f, len(at)), at and max(dm) <= 0.2 and max(ds) <= 0.2, (list(zip(at, r["M"], [fm[round(t, 1)][0] for t in at]))[:3], list(zip(at, r["S"], [fm[round(t, 1)][1] for t in at]))[:3]))
+        check("momentary and short-term loudness of %s at several times: within 0.2 LU of ffmpeg's M and S" % f, at and max(dm) <= 0.2 and max(ds) <= 0.2, (list(zip(at, r["M"], [fm[round(t, 1)][0] for t in at]))[:3], list(zip(at, r["S"], [fm[round(t, 1)][1] for t in at]))[:3]))
     # true peak where the samples miss it: a quarter-rate sine sampled 45 degrees off its crests
     from scipy.io import wavfile
     k = np.arange(48000 * 2); x = (0.5 * np.sin(2 * np.pi * 12000 * k / 48000 + np.pi / 4)).astype(np.float32)
@@ -961,7 +969,7 @@ if want("loud"):
     k = np.arange(44100 * 2); z = (0.891 * np.sin(2 * np.pi * 997 * k / 44100)).astype(np.float32); wavfile.write(p("tp_997.wav"), 44100, np.stack([z, z], 1))
     for f, want_ in (("tp_quarter.wav", 20 * np.log10(0.5)), ("tp_click.wav", 20 * np.log10(0.9)), ("tp_997.wav", 20 * np.log10(0.891))):
         r = run(LOUD_JS % (J(p(f)), J([])))
-        check("true peak of %s: %.2f dBTP, the signal's own %.2f (BS.1770 tolerance +0.2/-0.4 dB)" % (f, r["TP"], want_), -0.4 <= r["TP"] - want_ <= 0.2, (r["TP"], want_, "sample peak", r["P"]))
+        check("true peak of %s: the signal's own %.2f dBTP (BS.1770 tolerance +0.2/-0.4 dB)" % (f, want_), -0.4 <= r["TP"] - want_ <= 0.2, (r["TP"], want_, "sample peak", r["P"]))
     r = run(r"""var z = [new Float32Array(48000 * 3), new Float32Array(48000 * 3)]; var q = [new Float32Array(10000), new Float32Array(10000)]; for (var i = 0; i < 10000; i++) q[0][i] = q[1][i] = 0.5 * Math.sin(i / 7);
       return [V.loud.integrated(z, 48000), V.loud.integrated(q, 48000)];""")
     check("loudness of silence and of a sound shorter than one 400 ms block: no number (minus infinity), not a made-up one", r[0] is None or r[0] < -1e300 or r[0] == "-Infinity", r)
@@ -1145,7 +1153,7 @@ if want("color"):
     bl = np.dstack([ndimage.gaussian_filter(X[..., c], 2, mode="nearest", truncate=3.0) for c in range(3)])
     ref = np.clip(X + (X - bl) * 1.0, 0, 255)
     d = np.abs(got("usm.rgba")[..., :3] - ref).max()
-    check("Unsharp Mask 100%%, radius 2: the picture plus its difference from the blur, within 1.5 levels (%.2f)" % d, d <= 1.5, d)
+    check("Unsharp Mask 100%, radius 2: the picture plus its difference from the blur, within 1.5 levels", d <= 1.5, d)
     bl = np.dstack([ndimage.gaussian_filter(X[..., c], 1.5, mode="nearest", truncate=math.ceil(4.5) / 1.5) for c in range(3)])
     diff = X - np.round(bl); ref = np.where(np.abs(diff) >= 12, np.clip(X + diff * 1.5, 0, 255), X)
     d = np.abs(got("usm_t.rgba")[..., :3] - ref)
@@ -1232,8 +1240,8 @@ if want("color"):
         out = np.frombuffer(open(p("key.rgba"), "rb").read(), np.uint8).reshape(120, 160, 4).astype(float)
         inner = ndimage.binary_erosion(subj, iterations=2)
         a_back = (out[..., 3][back] <= 13).mean(); a_subj = (out[..., 3][inner] >= 242).mean()
-        check("Ultra Key, %s screen (key colour picked from it, defaults): the backdrop goes (alpha <= 5%% on %.1f%% of it, wanting 99%%)" % (nm, 100 * a_back), a_back >= 0.99, a_back)
-        check("Ultra Key, %s screen: the person stays (alpha >= 95%% on %.1f%% of face, shirt and white collar, wanting 99%%)" % (nm, 100 * a_subj), a_subj >= 0.99, a_subj)
+        check("Ultra Key, %s screen (key colour picked from it, defaults): the backdrop goes (alpha <= 5%% on 99%% of it)" % nm, a_back >= 0.99, a_back)
+        check("Ultra Key, %s screen: the person stays (alpha >= 95%% on 99%% of face, shirt and white collar)" % nm, a_subj >= 0.99, a_subj)
         X2 = im.astype(float)
         def cbcr_(a): y_ = luma(a); return np.stack([(a[..., 2] - y_) / 1.8556, (a[..., 0] - y_) / 1.5748], -1)
         kc = cbcr_(np.array(key, float)[None, None, :])[0, 0]; ku = kc / np.linalg.norm(kc)
@@ -1265,8 +1273,30 @@ if want("color"):
         refC = np.where(keep[:, None], Cr * 255, Cb * 255); refA = np.where(keep, ao[:, 0] * 255, ab[:, 0] * 255)
         worst[m] = float(max(np.abs(out[:, :3] - refC).max(), np.abs(out[:, 3] - refA).max()))
     check("blend modes with see-through layers (layer alpha 0.16-1 times opacity 0.7, the one below 0-1), against the W3C compositing formula: within 1.5 levels", max(worst.values()) <= 1.5, worst)
-    check("blend mode Dissolve at 35%%: about 35%% of the pixels taken (%.1f%%)" % (100 * r["diss"]), abs(r["diss"] - 0.35) < 0.02, r["diss"])
+    check("blend mode Dissolve at 35%: about 35% of the pixels taken (within 2 points)", abs(r["diss"] - 0.35) < 0.02, r["diss"])
 
+
+if want("color"):
+    # masks: coverage, feather, invert, opacity, and tracking a moving patch
+    r = run(r"""var M = V.mask, w = 200, h = 120, out = {};
+      var e = M.make('ellipse', w, h); e.feather = 0; var a = M.alpha(e, w, h, 0, 1), s = 0; for (var i = 0; i < a.length; i++) s += a[i]; out.ell = s;
+      var rct = M.make('rect', w, h); rct.feather = 0; a = M.alpha(rct, w, h, 0, 1); out.rect = [a[60 * w + 100], a[5 * w + 5], a[(60 - 30 + 1) * w + 100], a[(60 - 30 - 1) * w + 100]];
+      rct.invert = true; rct.opacity = 50; a = M.alpha(rct, w, h, 0, 1); out.inv = [a[60 * w + 100], a[5 * w + 5]];
+      var f = M.make('rect', w, h); f.feather = 8; a = M.alpha(f, w, h, 0, 1); out.feather = [a[30 * w + 100], a[60 * w + 100], a[22 * w + 100], a[38 * w + 100]];
+      var ex = M.make('rect', w, h); ex.feather = 0; ex.expand = 5; a = M.alpha(ex, w, h, 0, 1); out.expand = [a[(30 - 4) * w + 100], a[(30 - 6) * w + 100]];
+      // a textured patch moving 3 px right and 2 px up each frame, followed by the tracker
+      var frames = []; for (var k = 0; k < 8; k++) { var d = new Uint8ClampedArray(w * h * 4); for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) { var q = (y * w + x) * 4, xx = x - 3 * k, yy = y + 2 * k, inside = xx >= 80 && xx < 120 && yy >= 40 && yy < 80;
+          var v = inside ? ((xx * 37 + yy * 91) % 97) * 2.5 : 20 + ((x * 13 + y * 7) % 11); d[q] = d[q + 1] = d[q + 2] = v; d[q + 3] = 255; } frames.push({ data: d, width: w, height: h }); }
+      var tm = M.make('rect', w, h); tm.pts = [[85, 45], [115, 45], [115, 75], [85, 75]]; tm.rx = 20; tm.ry = 20; out.track = M.track(frames, tm, 0);
+      return out;""")
+    area = np.pi * (200 / 6) * (120 / 4)
+    check("mask: an ellipse with no feather covers its own area (pi a b) within 1%", abs(r["ell"] / area - 1) < 0.01, (r["ell"], area))
+    check("mask: a rectangle with no feather is 1 inside and 0 outside, the edge on the pixel it should be", r["rect"] == [1, 0, 1, 0], r["rect"])
+    check("mask: Inverted at 50% opacity is 0 inside and 0.5 outside", r["inv"] == [0, 0.5], r["inv"])
+    check("mask: Feather 8 makes the edge soft (half at the edge, full well inside, nothing well outside)", abs(r["feather"][0] - 0.5) < 0.08 and r["feather"][1] > 0.99 and r["feather"][2] < 0.05 and r["feather"][3] > 0.95, r["feather"])
+    check("mask: Expansion 5 moves a rectangle's edge 5 pixels out", r["expand"] == [1, 0], r["expand"])
+    tr = r["track"]
+    check("mask tracking: a patch moving 3 px right and 2 px up a frame is followed exactly for 7 frames", [(x["dx"], x["dy"]) for x in tr] == [(3 * k, -2 * k) for k in range(1, 8)], tr)
 
 # ============================================================================================================
 # 9. AUDIO EFFECTS: the RBJ cookbook biquads, the dynamics, the delay
@@ -1335,7 +1365,7 @@ if want("afx"):
     check("Notch Filter at 60 Hz takes 60, 120 and 180 Hz down by 30 dB or more and leaves 1 kHz (within 0.1 dB)", all(x < -30 for x in r["notch"][:3]) and abs(r["notch"][3]) < 0.1, r["notch"])
     check("Dynamics Processing, threshold -20 dB, ratio 4:1: a -6 dB square comes out at -16.5 dB (within 0.3); one below the threshold is unchanged; make-up +6 adds 6",
           abs(r["comp"] + 16.5) < 0.3 and abs(r["compBelow"] - 20 * np.log10(0.05)) < 0.05 and abs(r["compMk"] - r["comp"] - 6) < 0.05, (r["comp"], r["compBelow"], r["compMk"]))
-    check("Hard Limiter, ceiling -1 dB, 12 dB of boost on loud noise: no sample above -1 dB (%.3f)" % r["limPeak"], r["limPeak"] <= -1 + 1e-4, r["limPeak"])
+    check("Hard Limiter, ceiling -1 dB, 12 dB of boost on loud noise: no sample above -1 dB", r["limPeak"] <= -1 + 1e-4, r["limPeak"])
     check("Hard Limiter: sound that stays under the ceiling passes untouched but for its boost", r["limQuiet"] < 1e-6, r["limQuiet"])
     check("Noise Gate at -50 dB: a -66 dB hum is shut out; a -20 dB tone passes at its level (within 0.1 dB)", r["gateClosed"] < 1e-6 and abs(r["gateOpen"]) < 0.1, (r["gateClosed"], r["gateOpen"]))
     check("Delay 250 ms, feedback 40%, mix 30%: an impulse comes out at 0.7, then 0.3 at 250 ms, 0.12 at 500 ms, 0.048 at 750 ms", np.allclose(r["delay"], [0.7, 0.3, 0.12, 0.048, 0, 0], atol=1e-6), r["delay"])
@@ -1388,7 +1418,7 @@ if want("xchg"):
     okb = len(r["back"]) == len(r["orig"]) and all(a[:5] == b[:5] for a, b in zip(r["orig"], r["back"]))
     check("Lantern's EDL read back: the same clips on the same tracks (V1, V2, A1, A2), places, in points and media", okb, (r["orig"], r["back"]))
     sp = [x for x in r["back"] if x[1] == 450 and x[0] == "V1"]
-    check("Lantern's EDL read back: a clip at 200%% comes back at 200%% (within 0.1%%; the EDL's M2 line gives %s)" % [l for l in r["edl"] if l.startswith("M2")][:1], sp and abs(sp[0][5] - 2) < 0.002, sp)
+    check("Lantern's EDL read back: a clip at 200% comes back at 200% (within 0.1%)", sp and abs(sp[0][5] - 2) < 0.002, (sp, [l for l in r["edl"] if l.startswith("M2")][:1]))
     # Final Cut Pro XML
     xml_trans = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE xmeml>
@@ -1418,8 +1448,8 @@ if want("xchg"):
     check("Final Cut Pro XML written by Lantern for a file named 'Tom & Jerry <cut> \"final\".mov' is well-formed XML (Python's parser reads it)", wf == "", (wf, [l for l in r["xml"].split("\n") if "pathurl" in l][:1]))
     okx = isinstance(r["back"], list) and [a[:5] for a in r["orig"]] == [b[:5] for b in r["back"]]
     check("Final Cut Pro XML round trip with a name full of & < > and quotes: Lantern reads back its own file", okx, (r["orig"], r["back"]))
-    okx = [a[:5] for a in r["orig"]] == [b[:5] for b in r["back2"]] and r["rate2"] == {"num": 24000, "den": 1001}
-    check("Final Cut Pro XML round trip at 23.976: the same clips, places, in points and media, the rate 24000/1001", okx, (r["orig"], r["back2"], r["rate2"]))
+    okx = len(r["orig"]) == len(r["back2"]) and all(a[0:3] == b[0:3] and a[4] == b[4] and abs(a[3] - b[3]) <= 0.5 * 1001 / 24000 for a, b in zip(r["orig"], r["back2"])) and r["rate2"] == {"num": 24000, "den": 1001}
+    check("Final Cut Pro XML round trip at 23.976: the same clips, places and media, in points within half a frame (XML counts frames), the rate 24000/1001", okx, (r["orig"], r["back2"], r["rate2"]))
     sp = [x for x in r["back2"] if x[1] == 96]
     check("Final Cut Pro XML round trip: a clip at 200% (written as Time Remap 200) comes back at 200%", sp and abs(sp[0][5] - 2) < 1e-3, sp)
     check("a Lantern video project saved and opened again is the same, every field", r["json"])
@@ -1440,6 +1470,91 @@ if want("xchg"):
     check("SubRip written: numbered from 1, times as HH:MM:SS,mmm --> HH:MM:SS,mmm", lines[0] == "1" and re.match(r"^\d\d:\d\d:\d\d,\d\d\d --> \d\d:\d\d:\d\d,\d\d\d$", lines[1]) is not None, lines[:3])
     check("captions written at 23.976 and read again: each cue's times within half a frame, its words the same", len(r["again"]) == 4 and all(abs(a["start"] - b["start"]) <= 0.5 * 1001 / 24000 + 1e-3 and a["text"] == b["text"] for a, b in zip(r["again"], sorted(r["bom"] + r["overlap"], key=lambda c: c["start"]))), r["again"])
     check("WebVTT written begins WEBVTT and reads back the same cues", r["vttOut"].startswith("WEBVTT") and [c["text"] for c in r["againV"]] == [c["text"] for c in r["again"]], r["vttOut"][:80])
+
+
+# ============================================================================================================
+# 11. SCENE EDIT DETECTION AND SYNCHRONIZE on pictures and sound ffmpeg makes
+# ============================================================================================================
+SCN_JS = r"""var raw = fs.readFileSync(%s), w = 64, h = 36, n = raw.length / (w * h * 4), hs = [];
+  for (var i = 0; i < n; i++) hs.push(V.scopes.coarse({ data: new Uint8ClampedArray(raw.buffer, raw.byteOffset + i * w * h * 4, w * h * 4) }));
+  var sc = []; for (var j = 1; j < hs.length; j++) sc.push(V.scopes.cutScore(hs[j - 1], hs[j])); return { n: n, cuts: V.scopes.cuts(sc, 1) };"""
+def frames_of(f, out):
+    ff("-i", f, "-vf", "scale=64:36:flags=area,format=rgba", "-f", "rawvideo", out)
+if want("scenes"):
+    srcs = ["testsrc2=size=320x180:rate=25:duration=2", "smptehdbars=size=320x180:rate=25:duration=2", "mandelbrot=size=320x180:rate=25:end_scale=0.3",
+            "testsrc=size=320x180:rate=25:duration=2", "rgbtestsrc=size=320x180:rate=25:duration=2", "cellauto=size=320x180:rate=25:rule=110"]
+    inputs = []
+    for s_ in srcs: inputs += ["-f", "lavfi", "-t", "2", "-i", s_]
+    fc = "".join("[%d:v]format=yuv420p,setsar=1[v%d];" % (i, i) for i in range(len(srcs))) + "".join("[v%d]" % i for i in range(len(srcs))) + "concat=n=%d:v=1:a=0[o]" % len(srcs)
+    ff(*inputs, "-filter_complex", fc, "-map", "[o]", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", p("cuts.mp4"))
+    frames_of(p("cuts.mp4"), p("cuts.rgba"))
+    r = run(SCN_JS % J(p("cuts.rgba")))
+    check("Scene Edit Detection on six ffmpeg sources joined by hard cuts (H.264 at crf 30): the five cuts at frames 50, 100, 150, 200, 250 and no others", r["cuts"] == [50, 100, 150, 200, 250], r)
+    # a continuous moving shot, a dissolve, a fade through black: none of them a cut
+    ff("-f", "lavfi", "-i", "mandelbrot=size=320x180:rate=25:end_scale=0.05", "-t", "6", "-c:v", "libx264", "-preset", "ultrafast", p("zoom.mp4"))
+    frames_of(p("zoom.mp4"), p("zoom.rgba")); r = run(SCN_JS % J(p("zoom.rgba")))
+    check("Scene Edit Detection on 6 s of one continuous zoom: no cuts", r["cuts"] == [], r)
+    ff("-f", "lavfi", "-t", "3", "-i", "testsrc2=size=320x180:rate=25", "-f", "lavfi", "-t", "3", "-i", "smptehdbars=size=320x180:rate=25", "-filter_complex", "[0][1]xfade=transition=fade:duration=1:offset=2,format=yuv420p", "-c:v", "libx264", "-preset", "ultrafast", p("diss.mp4"))
+    frames_of(p("diss.mp4"), p("diss.rgba")); r = run(SCN_JS % J(p("diss.rgba")))
+    check("Scene Edit Detection on a one-second cross-dissolve between two shots: no hard cut reported", r["cuts"] == [], r)
+    ff("-f", "lavfi", "-t", "3", "-i", "testsrc2=size=320x180:rate=25", "-f", "lavfi", "-t", "3", "-i", "smptehdbars=size=320x180:rate=25", "-filter_complex",
+       "[0]fade=t=out:st=2:d=0.6[a];[1]fade=t=in:st=0:d=0.6[b];[a][b]concat=n=2:v=1:a=0,format=yuv420p", "-c:v", "libx264", "-preset", "ultrafast", p("fadeblack.mp4"))
+    frames_of(p("fadeblack.mp4"), p("fadeblack.rgba")); r = run(SCN_JS % J(p("fadeblack.rgba")))
+    check("Scene Edit Detection on a fade to black and up into the next shot: at most the one join at frame 75 (where black meets black)", r["cuts"] in ([], [75]), r)
+    # Synchronize: two recordings of the same scene, one later, quieter, through another microphone
+    rng3 = np.random.default_rng(12); sr = 16000; n = sr * 40
+    env = np.zeros(n); t = 0.3
+    while t < 40:
+        L = rng3.uniform(0.08, 0.5); a0 = int(t * sr); env[a0:a0 + int(L * sr)] = rng3.uniform(0.2, 1.0); t += L + rng3.uniform(0.1, 0.7)
+    speech = rng3.normal(0, 1, n) * env
+    from scipy import signal as _sg
+    for lag in (2.5, -1.37, 0.456):
+        k = int(round(lag * sr))
+        b = np.roll(speech, -k) if k >= 0 else np.roll(speech, -k)
+        b = _sg.lfilter(*_sg.butter(2, 3000 / (sr / 2)), b) * 0.3 + rng3.normal(0, 0.01, n)
+        a = speech[sr * 5:sr * 35]; b = b[sr * 5:sr * 35]
+        a.astype(np.float32).tofile(p("sa.f32")); b.astype(np.float32).tofile(p("sb.f32"))
+        got_ = run(r"""return V.scopes.sync(new Float32Array(f32(OUT + '/sa.f32')), new Float32Array(f32(OUT + '/sb.f32')), %d, 5);""" % sr)
+        check("Synchronize: a second recording (quieter, another microphone, its own noise) whose sound at t is the first's at t %+.3f s is found %+.3f s off (within 10 ms)" % (lag, lag), abs(got_ - lag) <= 0.0101, got_)
+
+# ============================================================================================================
+# 12. BRINGING MEDIA IN: what kind a file is, and the uncompressed sound Lantern decodes itself
+# ============================================================================================================
+if want("media"):
+    kinds = {}
+    def mk_(name, *a): ff(*a, p(name)); return name
+    files = [mk_("k.mov", *LAVV("160x120", "25", 0.5), "-c:v", "libx264", "-preset", "ultrafast"), mk_("k.mp4", *LAVV("160x120", "25", 0.5), "-c:v", "libx264", "-preset", "ultrafast"),
+             mk_("k.m4a", *LAVA(48000, 2, 0.5), "-c:a", "aac"), mk_("k.webm", *LAVV("160x120", "25", 0.5), "-c:v", "libvpx"), mk_("k.mkv", *LAVV("160x120", "25", 0.5), "-c:v", "libx264"),
+             mk_("k.avi", *LAVV("160x120", "25", 0.5), "-c:v", "mjpeg"), mk_("k.wav", *LAVA(48000, 2, 0.5)), mk_("k_id3.mp3", *LAVA(44100, 2, 0.5), "-c:a", "libmp3lame", "-metadata", "title=x"),
+             mk_("k_noid3.mp3", *LAVA(44100, 2, 0.5), "-c:a", "libmp3lame", "-id3v2_version", "0", "-write_xing", "0"), mk_("k.flac", *LAVA(44100, 2, 0.5)), mk_("k.ogg", *LAVA(44100, 2, 0.5), "-c:a", "libvorbis"),
+             mk_("k.opus", *LAVA(48000, 2, 0.5), "-c:a", "libopus"), mk_("k.png", "-f", "lavfi", "-i", "testsrc2=size=64x48", "-frames:v", "1"), mk_("k.jpg", "-f", "lavfi", "-i", "testsrc2=size=64x48", "-frames:v", "1")]
+    shutil.copy(p("k.m4a"), p("phone_voice_memo.M4A"))
+    files.append("phone_voice_memo.M4A")
+    want_k = {"k.mov": "mp4", "k.mp4": "mp4", "k.m4a": "audio", "k.webm": "mkv", "k.mkv": "mkv", "k.avi": "avi", "k.wav": "wav", "k_id3.mp3": "audio", "k_noid3.mp3": "audio", "k.flac": "audio",
+              "k.ogg": "audio", "k.opus": "audio", "k.png": "image", "k.jpg": "image", "phone_voice_memo.M4A": "audio"}
+    r = run(r"""var out = {}; %s.forEach(function (n) { var b = fs.readFileSync(OUT + '/' + n); out[n] = V.media.kindOf(n, new Uint8Array(b.buffer, b.byteOffset, 64)); }); return out;""" % J(files))
+    bad = {k: (v, want_k[k]) for k, v in r.items() if v != want_k[k]}
+    check("each kind of file the module names is told apart by its first bytes and name (MOV, MP4, M4A, WebM, MKV, AVI, WAV, MP3 with and without ID3, FLAC, Ogg, Opus, PNG, JPEG)", not bad, bad)
+    # uncompressed sound in MOV, AVI and MKV, decoded by Lantern itself, against ffmpeg
+    pcm_files = []
+    for codec, tag in [("pcm_s16le", "s16le"), ("pcm_s16be", "s16be"), ("pcm_s24le", "s24le"), ("pcm_s24be", "s24be"), ("pcm_s32le", "s32le"), ("pcm_f32le", "f32le"), ("pcm_f32be", "f32be")]:
+        pcm_files.append(mk_("dec_%s.mov" % tag, *LAVV("160x120", "25", 1), "-f", "lavfi", "-i", "anoisesrc=sample_rate=48000:amplitude=0.5:seed=1:duration=1", "-ac", "2", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", codec, "-shortest"))
+    pcm_files.append(mk_("dec_u8.avi", *LAVV("160x120", "25", 1), "-f", "lavfi", "-i", "anoisesrc=sample_rate=22050:amplitude=0.5:seed=1:duration=1", "-c:v", "mjpeg", "-c:a", "pcm_u8", "-shortest"))
+    pcm_files.append(mk_("dec_s16.avi", *LAVV("160x120", "25", 1), "-f", "lavfi", "-i", "anoisesrc=sample_rate=44100:amplitude=0.5:seed=1:duration=1", "-ac", "2", "-c:v", "mjpeg", "-c:a", "pcm_s16le", "-shortest"))
+    pcm_files.append(mk_("dec_s16.mkv", *LAVV("160x120", "25", 1), "-f", "lavfi", "-i", "anoisesrc=sample_rate=48000:amplitude=0.5:seed=1:duration=1", "-ac", "2", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "pcm_s16le", "-shortest"))
+    pcm_files.append(mk_("dec_s24.mkv", *LAVV("160x120", "25", 1), "-f", "lavfi", "-i", "anoisesrc=sample_rate=48000:amplitude=0.5:seed=1:duration=1", "-ac", "2", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "pcm_s24le", "-shortest"))
+    for f in pcm_files:
+        r = run(r"""var f = %s, src = bytes(OUT + '/' + f), rd = /mkv$/.test(f) ? V.mkv.read(src) : /avi$/.test(f) ? V.riff.readAvi(src) : V.mp4.read(src);
+          return rd.then(function (m) { var t = m.tracks.filter(function (x) { return x.type === 'audio'; })[0], r = { kind: 'mp4', aTrack: t, src: src };
+            var pr; try { pr = V.media.decodeAudio(r); } catch (e) { return { error: 'thrown: ' + String(e && e.message || e) }; }
+            return pr.then(function (a) { var n = a.data[0].length, o = new Float32Array(n * a.data.length); for (var i = 0; i < n; i++) for (var c = 0; c < a.data.length; c++) o[i * a.data.length + c] = a.data[c][i]; save32(OUT + '/dec.f32', o); return [a.sampleRate, a.data.length, n]; },
+              function (e) { return { error: String(e && e.message || e) }; }); });""" % J(f))
+        ref = decode_f32(p(f))
+        if isinstance(r, dict):
+            check("sound of %s decoded by Lantern: %d frames as ffmpeg decodes them (within 1e-6)" % (f, ref.shape[0]), False, r["error"]); continue
+        got_ = np.fromfile(p("dec.f32"), np.float32).reshape(-1, r[1])
+        ok_ = got_.shape == ref.shape and np.nan_to_num(np.abs(got_ - ref), nan=1e9).max() <= 1e-6
+        check("sound of %s decoded by Lantern: %d frames as ffmpeg decodes them (within 1e-6)" % (f, ref.shape[0]), ok_, (r, ref.shape, float(np.nan_to_num(np.abs(got_ - ref), nan=1e9).max()) if got_.shape == ref.shape else "shape"))
 
 # ==== END OF SECTIONS ====
 print("%d checks, %d failed" % (N, FAILS))

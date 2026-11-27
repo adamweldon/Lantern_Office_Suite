@@ -1,0 +1,376 @@
+VIDEO TILE, FILES AND ARITHMETIC: AN INDEPENDENT REVIEW (Lantern 1.24.43, branch lantern-1.24.43)
+=========================================================================================================
+
+Written by a reviewer who did not write the tile, from its module headers and its code, with inputs of its own.
+Nothing under src/, site/ or tests/ (outside this folder) was changed. Nothing was committed.
+
+How to run:   python3 tests/fixtures/video_review1_1243/run.py            (about 3 minutes)
+              python3 tests/fixtures/video_review1_1243/run.py edits mix   (only some sections)
+Sections:     readers writers time edits keys mix loud color afx xchg scenes media
+Needs:        node, ffmpeg/ffprobe (run here with 6.1.1), python3 with numpy, scipy, PIL. It makes all its media
+              afresh in a temporary folder with ffmpeg; every random choice has a fixed seed. Math.random inside
+              the tile is replaced by a seeded generator, so ids and the Dissolve blend repeat.
+Result here:  1068 checks, 68 failed. Two full runs gave the same descriptions and the same verdicts.
+              Check descriptions name only the case and the reference, never a value Lantern produced, so a run
+              after a fix can be compared line by line with this one.
+
+The references used (never Lantern's own idea of itself):
+- ffprobe -show_packets/-show_streams for every reader; ffmpeg decoding (framemd5, md5, raw PCM) for every writer,
+  and ffmpeg's own "-c copy" rewrite into the same container where two containers keep time differently;
+- ffmpeg's ebur128 (integrated, momentary, short-term, true peak), EBU Tech 3341 cases 1-5, and BS.1770-4 worked
+  in NumPy with the Recommendation's published 48 kHz filter coefficients;
+- ffmpeg's lut3d and lut1d; the Cube LUT Specification's trilinear lookup worked in NumPy (for domains ffmpeg
+  treats differently);
+- SciPy (gaussian_filter, uniform_filter, median_filter, sobel, correlate, lfilter, freqz); the RBJ Audio EQ
+  Cookbook worked in Python from its text; the W3C Compositing and Blending formula with the Photoshop blend
+  functions; a direct linear solve for homographies; ffmpeg's default resampler for comparison;
+- SMPTE 12M drop-frame arithmetic written independently in Python;
+- what Premiere does for the edits (stated case by case below), and the CMX 3600 / FCP7 XML / WebVTT
+  conventions as other programs write them.
+
+
+THE MOST SERIOUS PROBLEMS (in order)
+------------------------------------
+1. MOV files with little-endian 24-bit, 32-bit or float PCM sound play as full-scale noise.
+   ffmpeg (and programs built on it) store pcm_s24le / pcm_s32le / pcm_f32le in MOV as 'in24' / 'in32' / 'fl32'
+   with an 'enda' atom (value 1 = little-endian) inside 'wave'. VIDEO_MP4_READ entry() never reads 'enda', so
+   VIDEO_MEDIA pcmOf() reads them big-endian. Measured against ffmpeg's decode of the same file: s24le max
+   error 1.35 (full scale is 1), s32le 1.35, f32le values up to 3.4e38 (and NaN). Big-endian in24 and 16-bit
+   sowt/twos are right. This would come out of the speakers as loud noise, in preview and in export.
+   (F64-F66: "sound of dec_s24le.mov / dec_s32le.mov / dec_f32le.mov decoded by Lantern")
+
+2. Matroska/WebM files with PCM sound have no sound at all: VIDEO_MKV_READ marks A_PCM/INT/LIT tracks pcm=true,
+   so VIDEO_MEDIA decodeAudio() sends them to viaPcm(), which reads t.chunks - a field only the MP4 and AVI
+   readers make. It throws "Cannot read properties of undefined (reading '0')". (F67-F68)
+
+3. A 5.1 clip loses its centre channel (the dialogue of nearly every film and many cameras' surround tracks):
+   VIDEO_MIX clipSound() takes channels 0 and 1 only (Math.min(2, a.data.length)), no fold-down. A 5.1 file
+   with a tone only in the centre mixed to silence (-300 dB); ITU-R BS.775 fold-down would give -3 dB in each
+   ear. The browser's decodeAudioData and WebCodecs both hand over all six channels, so this is reached.
+   (F46)
+
+4. Timeline edits that leave clips overlapping, re-ordered, or deleted that the person did not choose
+   (VIDEO_EDIT, and the Q/W command in VIDEO_CMDS). Details under EDITS below. The ordinary ones:
+   - Ripple Trim Next/Previous Edit to Playhead (W / Q) with V1 and A1 targeted (the default) on a linked clip
+     moves everything after it TWICE: each per-track ripple trim already moves every sync-locked track.
+     Clips overlap by 40 frames on V1 and A1. (F29-F30)
+   - After Insert, Overwrite, Lift or Extract cuts a linked clip in two (VIDEO_EDIT split()), both halves keep
+     the same link id, so the left picture's "partners" are its own sound AND both right halves. Selecting the
+     left half and pressing Shift+Delete deletes the right half too. (F31-F32; razor() gives the right
+     halves a new link, split() does not.)
+   - Ripple Delete of two clips that are not side by side closes one gap of the combined span: A B C D minus
+     A and C gives D at 0 and B at 30 (order swapped), overlaps in other layouts. (F15, F23; F14 is the same,
+     reached through the shared link above)
+   - A ripple trim when another sync-locked track has a clip across the cut point overlaps clips on that
+     track (head and tail), and Speed/Duration with Ripple does the same. (F17-F19, F21, F24, F25)
+   - Slide next to a gap moves the clip onto the clip beyond the gap. (F20, F26, F27)
+   - A plain head trim outward on a clip with nothing before it goes past frame 0 (start -20). (F16, F33)
+
+5. EDLs at 23.976, 29.97 non-drop and 59.94 non-drop are an hour-mark wrong both ways (VIDEO_XCHG):
+   hour = Math.round(3600 * fps) frames is 86314 at 23.976, but 01:00:00:00 non-drop is frame 86400 (24 x 3600).
+   Lantern writes record times from 00:59:56:10 (23.976), 00:59:56:12 (29.97 NDF), 00:59:56:24 (59.94 NDF);
+   and reading a standard 23.976 EDL (record from 01:00:00:00, as Premiere and Resolve write it) puts every
+   clip 86 frames (3.6 s) late. Drop-frame 29.97 and integer rates are right. 23.976 is the most common film
+   rate. (F50-F53)
+
+6. A .cube LUT with Resolve's LUT_3D_INPUT_RANGE (or LUT_1D_INPUT_RANGE) line is silently garbled:
+   parseCube() skips keywords matching /^[A-Z_]+$/, which has no digits, so "LUT_3D_INPUT_RANGE 0.0 1.0" is
+   taken as a row of the table (NaN 0 1) and every entry after it shifts by one channel. The picture comes out
+   wrong by up to 242 levels with no error. (F47-F48)
+
+7. The Video Limiter effect does not exist: VIDEO_FX_IMAGE adds it as type "limiter", and VIDEO_AFX later adds
+   the Hard Limiter sound effect under the same type, replacing it. make('limiter') gives the sound effect; a
+   saved project with a Video Limiter on a clip would run the audio limiter on a picture (TypeError).
+   (F49)
+
+8. Final Cut Pro XML (VIDEO_XCHG):
+   - a file name with "&" (Q&A.mp4, Tom & Jerry.mov) makes Lantern's XML ill-formed: <pathurl> uses encodeURI,
+     which leaves & as it is; Python's parser and Lantern's own reader refuse it. (F59-F60)
+   - no <link> elements are written, though the header says the links between picture and sound are.
+     (F58)
+   - Premiere's XML gives -1 as <end>/<start> of the clips joined by a transition; readFcpxml() drops any clip
+     with start < 0, so two clips with a Cross Dissolve between them both vanish on import. (F57)
+   - speed written as Time Remap is not read back. (F61)
+
+9. Keyframes change when a clip is cut or its head trimmed (VIDEO_EDIT shiftKeys): the keys it inserts at the
+   cut are "linear", so Ease and Auto Bezier curves change shape (12 and 5.7 units on a 0-100 property); and when
+   no keyframe lies inside the right part (its last keyframe is past the trimmed end) the right half becomes
+   constant: a fade-out disappears (36.7 units). Linear keys come through exactly. (F34-F37)
+
+10. AVI with WAVE_FORMAT_EXTENSIBLE PCM (24-bit, more than 2 channels, or above 48 kHz - ffmpeg writes these so)
+    is not taken as PCM ("audio tag 65534"), so it has no sound (no browser decodes AVI). (F1-F2)
+
+
+EVERY FAIL, WITH ITS INPUT, WHAT LANTERN DID AND WHAT THE REFERENCE DID
+-----------------------------------------------------------------------
+
+READERS, WAV included (532 checks, 2 failed)
+F1  mjpeg_pcm24.avi: ffmpeg -f lavfi testsrc2 320x240 25 fps + sine 48 kHz stereo, -c:v mjpeg -c:a pcm_s24le.
+    ffprobe: pcm_s24le. Lantern: codec "audio tag 65534", pcm false. ffmpeg's WAV/AVI muxer writes
+    WAVE_FORMAT_EXTENSIBLE for >16 bits, >2 channels or >48 kHz; readAvi's strf parser keeps the tag 0xFFFE and
+    never reads the SubFormat GUID (readWav does: it is right for the same cases).
+F2  mjpeg_pcm96k.avi: the same with 96 kHz 16-bit: same result.
+
+WRITERS (191 checks, 9 failed)
+F3-F5  Remuxing an MP4 with AAC (sd_23976_mono441.mp4, ntsc5994.mp4, two_audio.mp4) through V.mp4.read ->
+    V.mp4w.write: the file lasts 2.043 s where the original and ffmpeg's own "-c copy" rewrite last 2.000 s
+    (1.536 vs 1.500).
+    Cause: the reader keeps no sample durations; the writer gives the last AAC packet the previous packet's 1024
+    and writes an edit list whose duration covers it, so the encoder's end padding (here 888 samples) is no
+    longer cut. Pictures and sound otherwise decode sample-exact. Low severity (up to 21 ms of padding at 48 kHz);
+    the same thing happens in export whenever the last AAC packet is partly padding.
+F6  A 60 s VP8+Opus WebM rewritten by V.webmw.write: "ffmpeg -ss 55" reads 4,423,680 of 4,471,485 bytes
+    (99%); on ffmpeg's own file it reads 131,647. Lantern writes Cues at the end but no SeekHead, so a reader
+    cannot find them without walking every cluster. A long export will seek slowly in every player that reads
+    WebM this way (ffmpeg, and Chrome, which uses ffmpeg's demuxer; not tried in a browser here).
+F7-F8  WAV written with 6 channels (16- and 24-bit) uses format tag 1 (plain PCM), with no channel mask.
+    Microsoft asks for WAVE_FORMAT_EXTENSIBLE above 2 channels so a reader knows which speaker each channel is.
+    ffmpeg reads the file and the values are right. Low severity (export writes stereo).
+F9 WAV, 24-bit mono, 4801 frames: data chunk of 14,403 bytes has no pad byte; RIFF size 14,439 for a file of
+    14,447 bytes. RIFF requires odd chunks to be padded. ffmpeg reads it anyway. Low severity.
+F10 GIF: a 256x32 ramp of 64 greys (steps of 4), added with dithering off: comes back as 32 greys, error 4.
+    nearestFn() caches the nearest palette entry per 15-bit colour (r>>3, g>>3, b>>3), so two colours closer than
+    8 levels share one entry. A frame with 256 colours or fewer could be exact. Low severity: export dithers.
+F11 GIF: 200x150 noise with exactly 256 colours, undithered: errors up to 26 levels. Median cut splits boxes by
+    pixel count, so duplicate entries appear and some colours merge, besides the cache above. Low severity.
+
+TIMECODE (24 checks, 2 failed)
+F12 parseTc("00:00:10.5", 30 fps): the module's own comment gives this as 10.5 seconds; Lantern returns 305
+    (10 s + 5 frames), not 315.
+F13 parseTc("+2:00", 30 fps): the comment gives this as two seconds; Lantern returns null.
+    Both are only the header's examples being wrong or unbuilt; low severity.
+
+EDITS (98 checks, 20 failed)
+The fuzz: 120 projects, each a random rate of 23.976/25/29.97/30/60, five media of 2.2 to 10 s, three V and
+three A tracks, linked picture+sound pairs always on V(i)+A(i), then 40 random edits each, applied the way the
+Timeline applies them to linked clips (VIDEO_TIMELINE apply(): partner trims with "keep"/"plain", slips on
+partners, Ripple Delete with partners as C.selIds adds them). After every edit: no overlaps, whole frames >= 0,
+no source outside [0, media length], every linked picture beside its sound, refused trims change nothing. Each
+edit starts from a sound state: an edit that breaks something is counted against itself and undone.
+F14 Ripple Delete of one clip and its linked sound: 3 of 262 left an overlap. These come through the shared
+    link of F31 (the partners include the clip's other half elsewhere, so the selection is not one span).
+F15 Ripple Delete of two random clips with their sound: 11 of 240 overlaps. See F23.
+F16 A plain head trim outward: 38 cases of a clip starting before frame 0 (e.g. d=-50 -> start -50). See F33.
+F17 A ripple head trim: 34 of 278 overlaps (see F24-F25); F18: one clip moved to start -5 (a ripple head trim of
+    30 pulls a later clip on another track before 0).
+F19 A ripple tail trim: 6 of 268 overlaps (see F24).
+F20 Slide: 18 of 208 overlaps (see F26-F27).
+F21 Speed/Duration with Ripple: 4 of 233 overlaps (the same as F24: later clips moved while a clip on another
+    sync-locked track spans the old end).
+F22 Speed/Duration: 5 of 233 clips show source past the media's end, e.g. 150% at 30 fps, srcIn 3.937 s +
+    3.85 s > 7.77 s: the new length is rounded to whole frames with Math.round, so up to half a frame past
+    the end. Trivial (the last frame's own start is inside the media); see F28.
+F23 V1: A[0,30) B[30,60) C[60,90) D[90,120); rippleDelete([A, C]). Premiere: B at 0, D at 30. Lantern: D at 0,
+    B at 30. rippleDelete() takes one span from the first start to the last end and moves only what starts after
+    it; B (inside the span, kept) stays while D jumps over it.
+F24 V1: X[0,60) Y[60,120); A2 (sync-locked): Z[0,100) W[100,150). trimTail(X, -20, "ripple"). Lantern moves W to
+    80 while Z still ends at 100: overlap on A2. Premiere never lets a ripple overlap clips on a sync-locked
+    track (it limits the trim or takes the frames from that track too).
+F25 The same layout, trimHead(Y, +20, "ripple"): the same overlap.
+F26 V1: X[0,30), gap, C[50,80) N[80,110). slide(C, -30): Lantern returns -30, C at [20,50) on top of X.
+    slide() only looks at a neighbour exactly touching; a gap is not treated as a limit (Premiere treats a gap
+    like a clip that can shrink to nothing).
+F27 V1: X[0,30) C[30,60), gap, Y[70,100). slide(C, +20): C at [50,80) over Y.
+F28 A 30-frame clip showing all of a 1.000 s file, Speed 70% with Ripple: 43 frames, srcIn+span = 1.00333 s.
+    Trivial (rounding: Math.round(1/0.7*30) = 43 frames, 43/30*0.7 = 1.0033).
+F29 The W command (VIDEO_CMDS C.trimTo, copied here line for line): linked v0/a0 [0,100), v1/a1 [100,200),
+    v2/a2 [200,300) on V1/A1, both targeted (the default), playhead 60. Expected v0,a0 [0,60), v1 at 60, v2 at
+    160. Lantern: v2 at 120, overlapping v1 [60,160) on both tracks. The V1 ripple trim moved everything on
+    every sync-locked track; the A1 trim then moved it all again.
+F30 The Q command at 140: v1 trimmed to [100,160), v2 should be at 160; Lantern puts it at 120 (overlap).
+F31 Linked v/a [0,90) on V1/A1; insert a 20-frame clip on V2 at 45. Partners of the left picture: Lantern
+    [V1 65+45, A1 0+45, A1 65+45]; expected only A1 0+45.
+F32 ... then rippleDelete(left picture + its partners, as Shift+Delete does): Lantern deletes both halves
+    (V1 and A1 end up empty); expected the right halves kept and moved to 20.
+F33 A clip at frame 10 with 5 s of handle before its in point; trimHead(-30, "plain") with nothing before it:
+    Lantern returns -30 and starts the clip at -20. Expected to stop at frame 0 (-10).
+
+KEYFRAMES (13 checks, 4 failed)
+F34 Opacity keys {0: 0 ease} {89: 100} on a 90-frame clip, Add Edit at 30: the right half's values differ from
+    the original by up to 12.1 (at frame 67). The new key at the cut is "linear" and the eased curve is
+    re-spread over the shorter span. Premiere keeps the curve.
+F35 Auto Bezier keys {0:0} {30:80} {89:10}, cut at 50: up to 5.7 different (frame 20: the left part's curve
+    changes because its end key is now a new linear one).
+F36 Opacity {0: 100 linear} {120: 0} on a clip trimmed to 90 frames, cut at 45: the right half is held at 62.5
+    instead of fading 62.5 -> 25.8 (difference 36.7 at its last frame). shiftKeys() adds an end key only when
+    some key lies inside the part.
+F37 Keys {0: 0 ease} {60: 100}, head trimmed by 20: the frames that stay differ by up to 12.2.
+
+MIXER (37 checks, 9 failed)
+F38-F42 Pure tones resampled to the 48 kHz sequence by VIDEO_MIX at(): distortion plus noise (THD+N, the
+    residual after removing the best-fitting sine at the right pitch) is -64.7 dB (1 kHz from 44.1 kHz),
+    -65.3 (5 kHz from 44.1), -56.3 (10 kHz from 44.1), -63.2 (1 kHz from 32 kHz), -66.0 (1 kHz from 22.05 kHz).
+    ffmpeg's default resampler on the same signals: -100 to -105 dB. Level, pitch and timing are exact (within
+    0.05 dB and 0.001 rad), and whole-number ratios (96 -> 48 kHz, 2x and 0.5x at 48 kHz) are clean.
+    The -70 dB bar is the reviewer's choice: a 44.1 kHz music file (the common case) in a 48 kHz sequence gets
+    distortion products at about -65 dB, audible on tones and quiet passages, masked in most mixes. It is the
+    Lanczos-8 interpolator doing what it does (its images near the source rate fold back); the header's claim
+    (Lanczos, eight lobes) is met. Medium-low severity.
+F43 A 30 kHz tone in a 96 kHz file comes out at 18 kHz, -46.2 dB (should be removed: >= 60 dB down; ffmpeg -106).
+F44 A 15 kHz tone at 200% speed (30 kHz) folds to 18 kHz at -46.2 dB. The stretched kernel used for faster-than-
+    source reading attenuates too little.
+F45 Two pieces of the same noise file joined (A src 2-12 s, B src 12 s on), a 4-second Constant Gain transition
+    centred on the cut: the level dips 2.4 dB in its first and last second. clipSound() computes each clip's sound
+    only 1 s (pad = sr) beyond its edges, so a centred transition longer than 2 s has silence where one side
+    should still sound. 1 s and 3 s transitions stayed within 1 dB. Medium-low severity.
+F46 See problem 3 (5.1 centre channel dropped).
+
+LOUDNESS (25 checks, 0 failed)
+
+COLOUR AND EFFECTS (79 checks, 3 failed)
+F47 look33_resolve.cube (the same 33-point LUT as look33.cube with CRLF, tabs, comments and
+    "LUT_3D_INPUT_RANGE 0.0 1.0"): differs from the plain file by up to 242 levels. See problem 6.
+F48 range_resolve.cube with "LUT_3D_INPUT_RANGE -0.25 1.25": up to 189 levels from the specification's lookup
+    over that range (same cause). Note: LUT_*_INPUT_RANGE is Resolve's keyword, not in Adobe's 1.0 text; ffmpeg's
+    lut3d does not read it either. The plain 0..1 form (F47) is the ordinary one.
+F49 See problem 7 (Video Limiter replaced by Hard Limiter).
+
+AUDIO EFFECTS (24 checks, 0 failed)
+
+EDL, FINAL CUT PRO XML, CAPTIONS (26 checks, 13 failed)
+F50-F52 See problem 5. The lines Lantern wrote for one 48-frame clip:
+    23.976: "001  AX       V     C        00:00:00:00 00:00:02:00 00:59:56:10 00:59:58:10"
+    29.97 NDF: "... 00:59:56:12 00:59:58:00"; 59.94 NDF: "... 00:59:56:24 00:59:57:12".
+F53 Hand-written 23.976 NDF EDL, events 001 a.mov rec 01:00:00:00-01:00:02:00 and 002 b.mov rec 01:00:02:00:
+    Lantern puts them at frames 86 and 134; expected 0 and 48.
+F54 Hand-written standard dissolve:
+      002  AX  V  C        00:00:05:00 00:00:05:00 01:00:04:00 01:00:04:00
+      002  AX  V  D    025 00:00:10:00 00:00:13:00 01:00:04:00 01:00:07:00
+      * FROM CLIP NAME: a.mov
+      * TO CLIP NAME: b.mov
+    Lantern makes the incoming clip (at 4 s, from 10 s, 25-frame dissolve: all right) out of a.mov: it reads
+    only FROM CLIP NAME and gives it to the last event. CMX 3600 names the outgoing clip FROM and the incoming TO.
+F55 "001  AX  B  C ..." (B = picture and sound): Lantern places the picture only. readEdl() sets a "both" flag
+    and never uses it. (Not every program writes B; Avid and older systems do.) Medium-low.
+F56 Lantern's own EDL for a dissolve from interview.mp4 into broll.mov writes only "* FROM CLIP NAME:
+    broll.mov" (the incoming clip under FROM, no TO). Another program reading it will take broll.mov as the
+    outgoing clip.
+F57 Hand-written FCP7 XML (as Premiere exports it) with a.mov <start>0</start><end>-1</end>, a Cross Dissolve
+    transitionitem 100-125, b.mov <start>-1</start><end>200</end>: Lantern imports no clips at all (readFcpxml
+    drops start < 0 and end <= start).
+F58 Lantern's XML for a linked picture+sound: no <link> entries (the header says it writes them).
+F59 Lantern's XML for media named 'Tom & Jerry <cut> "final".mov': <pathurl>file://localhost/Tom%20&%20Jerry...
+    is not well-formed (raw &). Python: "not well-formed (invalid token)".
+F60 ... and Lantern's own readFcpxml cannot read it back ("this XML has no sequence in it").
+F61 A 200% clip written as Time Remap 200 comes back at 100% (the reader ignores <filter>).
+F62 WebVTT "<v Roger>Fish &amp; chips</v>" comes in as "Fish &amp; chips"; "A &lt;b&gt;" stays escaped.
+    The WebVTT spec defines these character references; YouTube's and most generated VTT files use them.
+
+SCENES AND SYNC (7 checks, 1 failed)
+F63 testsrc2 (3 s) cross-dissolving for 1 s into smptehdbars (xfade, ffmpeg): Lantern reports a hard cut at
+    frame 74, near the end of the dissolve. The coarse 16-level histograms jump when large flat areas cross a bin
+    edge together (score 0.48 against 0.05-0.24 around it). Premiere's Scene Edit Detection is for cuts; a
+    false cut here would split the clip inside the dissolve. Medium-low; real footage dissolves less flatly.
+
+MEDIA (12 checks, 5 failed)
+F64-F66 See problem 1. Files: ffmpeg -f lavfi anoisesrc 48 kHz stereo 1 s, -c:a pcm_s24le / pcm_s32le /
+    pcm_f32le into .mov ('in24'/'in32'/'fl32' + enda=1).
+F67-F68 See problem 2. Files: the same noise as pcm_s16le / pcm_s24le in .mkv.
+
+
+WHERE THE REFERENCE MAY BE THE ODD ONE OUT, OR THE BAR IS A JUDGEMENT
+--------------------------------------------------------------------
+- cut_copy.mp4 ("ffmpeg -ss 1.3 -c copy"): its edit list starts 1.3 ms before a frame boundary. ffmpeg moves the
+  frames onto the boundary; ISO 14496-12 does not, and Lantern follows the standard. Allowed half a frame there.
+- Edits in MP4 counted in a 1000-per-second movie timescale: Lantern's empty edits are quantised to 1 ms (a
+  fragmented source rewritten is 0.33 ms off). Allowed 0.6 ms. Matroska keeps milliseconds, so AAC rewritten
+  between MP4 and MKV is up to 32 samples off; allowed 1 ms (48 samples), as ffmpeg itself is further off.
+- H.264+AAC MKV rewritten as MKV: ffmpeg's own rewrite moves the start by the AAC codec delay and says 2.047 s,
+  the original 2.021 s, Lantern's 2.005 s; the duration check takes the original or ffmpeg's rewrite.
+- Opus WebM rewritten as MP4 decodes 648 samples longer at the end, exactly as ffmpeg's own rewrite does (the
+  DiscardPadding has no MP4 form in either); counted as right.
+- The resampler bar (-70 dB) and the alias bar (60 dB) are the reviewer's, stated in the check names, with
+  ffmpeg's numbers beside them.
+- Kovesi's three box blurs: the module says "within a few levels"; the bar is 5 (sigma 30 was 3.5 levels off).
+- Ultra Key's spill: measured as the component of each pixel's Rec. 709 colour difference along the key colour's;
+  "taken down by a fifth" is the reviewer's bar (Lantern took off about 30% at Spill 50).
+- Scene detection (F63): whether a dissolve should ever count as a cut is a judgement; Premiere's tool is for cuts.
+- GIF exactness (F10-F11): no standard asks for it; good encoders give it.
+
+
+VERIFIED RIGHT (all passing)
+----------------------------
+Readers, against ffprobe packet by packet (count, byte position, size, presentation time, keyframe flag) and
+streams (size, rate, channels, display rotation):
+- MP4/MOV/M4A: phone portrait 1080x1920 H.264 with 3 B-frames + AAC; 854x480 23.976 no B-frames + mono AAC
+  44.1 kHz; 642x362 25 fps + 5.1 AAC; 29.97 with faststart; 50 and 59.94 fps; variable frame rate; a 90 kHz
+  timescale; display rotation 90, 180 and 270 (Lantern's clockwise = minus ffprobe's); stream copy from the middle
+  (edit list cutting media) and audio 0.5 s late (an empty edit); two audio tracks; audio-only M4A; fragmented
+  MP4 with default-base-is-moof and with explicit base offsets; HEVC (hvc1); AV1; MP3 in MP4; a camera-style MOV
+  with a timecode track; MOV PCM s16le/s16be/s24le/s24be/s32le/f32le/f32be and mono (frame counts right; see F64
+  for the byte order);
+- WebM/MKV: VP8+Vorbis, VP9+Opus portrait, AV1+Opus, H.264 with B-frames + AAC (29.97), H.264 + FLAC,
+  H.264 + PCM 16/24, HEVC with two audio tracks and a subtitle track, a "live" file, tiny clusters; the last Opus
+  packet's DiscardPadding equal to ffprobe's skip_end;
+- AVI: MJPEG + PCM 16 stereo 44.1, MJPEG + unsigned 8-bit mono 8 kHz, MJPEG 29.97 without sound; packet data
+  of H.264+MP3 AVI (times/keys not claimed there);
+- WAV: u8, s16, s24, s32, f32, f64, 5.1 24-bit extensible, 96 kHz extensible, a LIST chunk of odd length before
+  the data, RF64, odd-length data: every sample as ffmpeg decodes it.
+Writers: remuxed through Lantern, decoded by ffmpeg with no error or warning, every picture identical (framemd5)
+and shown at the same time, a seek to 60% finding the right picture, sound sample-identical from time 0 and in
+step: the MP4 cases above, frag -> plain MP4, MOV -> MP4, VP9+Opus WebM -> MP4, MKV -> MP4, MOV PCM s16 (LE, BE,
+mono), M4A; WebM VP8/Vorbis, VP9/Opus, AV1/Opus, H.264 MKV with B-frames, MP4 -> MKV, FLAC MKV. AVI MJPEG at
+25, 29.97 and 23.976 with 44.1/48 kHz sound and odd-length JPEGs: clean, frame rate right, sound exact, the same
+length as the pictures, seekable. WAV 16/24/32-bit mono/stereo/6 ch at 44.1/48/96 kHz: values right (clipped
+for integers). GIF at 30, 25, 29.97, 59.94, 12, 23.976 and 50 fps: frames within 4 levels, delays adding up to
+the clip within 1/100 s, none under 2/100, ffmpeg decodes them, loops for ever.
+Timecode: every frame of the first 20 minutes and every 9973rd to 30 hours for 29.97 DF, 59.94 DF, 29.97 NDF,
+23.976, 25, 50, 24 and 59.94 NDF equal SMPTE 12M arithmetic, and each reads back to its frame; negatives;
+bad input refused; measured rates named (29.98 -> 30000/1001 etc.).
+Edits: Insert, Overwrite, Add Edit, Lift, Extract, Roll, Slip, Rate Stretch, moves: no overlaps, whole frames,
+no source outside the media, linked clips together (once a split's shared link is allowed for), refused trims
+change nothing. By hand: Roll limits both ways, Slip limits, Insert into a clip (in point continues), Rate
+Stretch (speed 2/3, same source), Speed 50% with and without Ripple (stops at the next clip with a note),
+Extract with sync lock, Overwrite into a clip, a plain head trim stopped by the clip before, a reversed clip's
+tail, a move that inserts, Lift on targeted tracks.
+Keyframes: linear, ease (3u^2 - 2u^3), hold, Auto Bezier through its keys with no kink, text values, set/remove;
+Add Edit and head trims through linear keys keep every value.
+Mixer: 0 dB, Volume +-6, Gain + Volume, track volume, master, keyframed volume in dB, Pan +-100, track pan,
+mute/solo/disabled, stereo and Left-only clips, a clip placed to the sample at 1 s from 0.5 s in, reversed
+sound sample-exact, Constant Power 1 s and 3 s and Constant Gain 1 s transitions level within 1 dB, a fade-in
+from silence at -3 dB half-way, pitch and level of resampled and speed-changed tones.
+Loudness: EBU Tech 3341 cases 1-5 within 0.02 LU; mono 44.1 kHz, 5.1 pink noise (also against BS.1770-4's own
+48 kHz filter), bursts, a short loud sound in quiet, hot white noise within 0.1 LU of ebur128; momentary and
+short-term within 0.2 LU; true peak within 0.2 dB of ebur128 and of the signal's own peak between samples
+(quarter-rate sine 45 degrees off its crests, a click, 997 Hz); silence and sub-block sounds give no number.
+Colour: 33-point 3D LUT and 1024-step 1D LUT within 1 level of ffmpeg's lut3d/lut1d; exponent-form numbers;
+DOMAIN_MIN/MAX; identity; incomplete files refused; Look intensity 50%. Curves: through their points, monotone
+between them, no overshoot (150 random sets). Lumetri exactly identity at defaults; Temperature, Tint, Exposure
+(linear light), Contrast, Highlights, Shadows, Whites, Blacks, Saturation (luma kept), Vibrance, Faded Film,
+Vignette, Sharpen, wheels' brightness, HSL Secondary all act in their documented direction. Gaussian blur
+(sigma 0.7-12) within 1 level of SciPy; box blur, median (identical), unsharp mask and threshold, Sobel, Emboss
+at two angles; Invert, Threshold, Gamma, Channel Mixer, Solarize, ProcAmp (luma kept), Equalize, Brightness &
+Contrast, Tint, Crop, flips; Corner Pin homography (5 quads) and warp within 1 level; Ultra Key on green and blue
+screens (backdrop out, person kept, spill reduced, colours kept); nine pixel blend modes with see-through layers
+against the W3C formula; Dissolve share; masks (area, edges, invert, opacity, feather, expansion) and tracking.
+Audio effects: 12 biquads equal to the RBJ cookbook at 200 frequencies; the filter equal to SciPy's lfilter;
+Bass/Treble, Notch, compressor static curve and make-up, Hard Limiter never above its ceiling and transparent
+below it, Noise Gate, Delay impulse response, Amplify, Reverb tail, Swap.
+Exchange: Lantern's own EDL at 29.97 drop-frame with V1, V2, A1, A2 and a 200% clip reads back to the same
+layout; FCP XML round trip at 23.976 (plain names) within half a frame; project save/load identical. Captions:
+SRT with BOM and CRLF, without numbers, one-digit and 100-hour times with a full stop, overlapping cues out of
+order with <font>/<b>; SRT and VTT written and read back within half a frame at 23.976.
+Scenes and sync: five hard cuts between six ffmpeg sources at crf 30 found exactly; none in a continuous zoom or
+a fade through black; Synchronize finds +2.5, -1.37 and +0.456 s offsets within 10 ms with another "microphone".
+
+
+NOT TESTED HERE, OR SEEN ONLY BY READING THE CODE
+------------------------------------------------
+- Nothing in a browser: WebCodecs decoding/encoding, the renderer, transitions (canvas), titles, the export
+  pipeline's AudioEncoder timestamps (whether Chrome's AAC priming is cut), Chrome's own WebM seeking.
+- VIDEO_TIMELINE applies Roll, Slide and Rate Stretch to the clicked clip only, not to its linked sound
+  (Premiere moves linked edits together), so these drags will put sound out of step with picture. Read, not run.
+- VIDEO_MP4_WRITE writes the sample rate as rate*65536 in 32 bits, which overflows above 65535 Hz (96 kHz PCM
+  or AAC). Export uses the sequence rate (48 kHz by default), so it is not reached there. Read, not run.
+- V.gifw.start(w, h, false) writes a NETSCAPE loop count of 1, which browsers play twice; export always loops.
+- EDL source times are counted from 00:00:00:00 of each file, not the file's own start timecode (a camera's
+  tmcd track); other programs relinking by timecode would miss. A convention question; not counted.
+- The MKV reader does not read rotation (not claimed). AVCHD .MTS/.M2TS camera files are not a kind the tile
+  reads (not claimed).
+
+
+FOR THE RECORD (the media the checks make)
+------------------------------------------
+All inputs are built by run.py with ffmpeg's lavfi sources (testsrc2, testsrc, smptehdbars, mandelbrot,
+rgbtestsrc, cellauto, sine, anoisesrc) and NumPy; see the make()/ff() calls in each section for the exact
+command lines. The edit fuzz uses seed 20261126; the colour picture seed 7; the curves seed 3.

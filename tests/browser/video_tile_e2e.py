@@ -2,7 +2,8 @@
 # videos made here by ffmpeg brought in from the start screen; frames the Program Monitor shows compared with ffmpeg's own
 # decode; the Timeline by mouse (drag a clip, trim an edge, the Razor, a marquee) and by keys (I, O, Ctrl+K, Shift+Delete,
 # Ctrl+D, Q, W, arrows, Ctrl+Z); the Effects panel, Effect Controls (a slider dragged, a keyframe), Lumetri, Essential
-# Graphics, Captions, Markers, the Audio Track Mixer's loudness, the Source Monitor's insert and overwrite, Speed/Duration;
+# Graphics, Captions, Markers, the Audio Track Mixer's loudness, the Source Monitor's insert and overwrite, Speed/Duration
+# (with Maintain Audio Pitch), a mask tracked forward;
 # then Export Media to MP4, WebM, Motion JPEG AVI, GIF and WAV, each file opened by ffprobe and decoded by ffmpeg, the MP4's
 # frames compared with the Program Monitor's; a project saved and opened again; EDL and XML out; a phone-sized window.
 # Usage: python3 tests/browser/video_tile_e2e.py [site/index.html]
@@ -149,9 +150,10 @@ with sync_playwright() as pw:
     check("the Audio Track Mixer measures the sequence's loudness", "LUFS" in pg.inner_text(".vd-loud"), pg.inner_text(".vd-loud"))
     # --- Speed/Duration
     pg.mouse.click(pg.locator(".vd-lanes").bounding_box()["x"] + xof(130), pg.locator(".vd-lanes").bounding_box()["y"] + vy[1] + vy[2] / 2)
-    pg.keyboard.press("Control+r"); pg.wait_for_selector(".vd-dialog"); pg.fill(".vd-dialog .vd-drow:has-text('Speed') input", "50"); pg.click(".vd-dialog button:text-is('OK')"); pg.wait_for_timeout(200)
-    sp = ev("() => { var c = Lantern.video.app.seq.v[0].clips[1]; return [c.speed, c.dur]; }")
+    pg.keyboard.press("Control+r"); pg.wait_for_selector(".vd-dialog"); pg.fill(".vd-dialog .vd-drow:has-text('Speed') input", "50"); pg.check(".vd-dialog .vd-drow:has-text('Maintain Audio Pitch') input"); pg.click(".vd-dialog button:text-is('OK')"); pg.wait_for_timeout(200)
+    sp = ev("() => { var A = Lantern.video.app, c = A.seq.v[0].clips[1], s = A.seq.a[0].clips.filter(function (x) { return x.link === c.link; })[0]; return [c.speed, c.dur, s.speed, s.pitch]; }")
     check("Speed/Duration 50%: the clip plays at half speed (as long as the room after it allows)", sp[0] == 0.5, sp)
+    check("Speed/Duration with Maintain Audio Pitch ticked: its linked sound at 50% too, keeping its pitch", sp[2] == 0.5 and sp[3] is True, sp)
     pg.keyboard.press("Control+z")
     # --- export: MP4, WebM, AVI, GIF, WAV
     def export(fmt, extra=None):
@@ -201,6 +203,76 @@ with sync_playwright() as pw:
     with pg.expect_download() as dl: pg.click(".vd-mbtn:text-is('File')"); pg.click(".vd-mitem:has-text('Export Final Cut Pro XML')")
     x = P("e.xml"); dl.value.save_as(x); txt = open(x).read()
     check("Export Final Cut Pro XML: an xmeml sequence with clip items", "<xmeml version=\"4\">" in txt and txt.count("<clipitem") >= 4, txt[:200])
+    # --- a mask tracked forward: a patch moving 3 pixels a frame to the right on grey
+    ff("-f", "lavfi", "-i", "color=c=gray:s=320x240:r=30", "-f", "lavfi", "-i", "testsrc=s=40x40:r=30", "-filter_complex", "[0][1]overlay=x='60+3*n':y=100", "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", P("mv.mp4"))
+    tk = ctx.new_page(); tk.add_init_script("window.showSaveFilePicker = undefined;"); tk.on("pageerror", lambda e: errs.append(str(e)[:300]))
+    tk.goto("http://127.0.0.1:%d/index.html#video" % port); tk.wait_for_selector("text=New project from video files", timeout=60000)
+    tk.set_input_files(".vd-start input[type=file][multiple]", [P("mv.mp4")]); tk.wait_for_function("() => Lantern.video.seq.all(Lantern.video.app.seq).length === 1", timeout=30000)
+    tk.evaluate("() => { var A = Lantern.video.app, S = Lantern.video.seq, v = A.seq.v[0].clips[0]; A.sel = [v.id]; A.seq.playhead = 0; A.refresh('all'); }"); tk.wait_for_timeout(300)
+    tk.select_option(".vd-prop:has(.vd-plab:text-is('Mask')) select", "Ellipse"); tk.wait_for_timeout(300)
+    tk.evaluate("() => { var A = Lantern.video.app; A.exec('place', function (seq) { var m = seq.v[0].clips[0].mask; m.cx = 80; m.cy = 120; m.rx = 20; m.ry = 20; }); }"); tk.wait_for_timeout(300)
+    tk.click("button:text-is('Track forward')"); tk.wait_for_function("() => /Tracked|stopped/.test(Lantern.video.app.msg)", timeout=120000)
+    tr = tk.evaluate("() => { var m = Lantern.video.app.seq.v[0].clips[0].mask; return { msg: Lantern.video.app.msg, dx: m.keys.dx.map(function (k) { return [k.f, k.v]; }), dy: m.keys.dy.map(function (k) { return k.v; }) }; }")
+    check("Track forward: the mask follows a patch moving 3 pixels a frame (every frame within 1.5 pixels, none up or down)", len(tr["dx"]) == 60 and all(abs(v - 3 * f) <= 1.5 for f, v in tr["dx"]) and all(abs(v) <= 1.5 for v in tr["dy"]), tr)
+    tk.keyboard.press("Control+z"); tk.wait_for_timeout(200)
+    check("Undo takes the tracking back as one step", tk.evaluate("() => JSON.stringify(Lantern.video.app.seq.v[0].clips[0].mask.keys)") == "{}")
+    # a mask on an effect (Mosaic over the patch, as a face is hidden), placed by its numbers and tracked: the blocks follow it
+    tk.evaluate("() => { var A = Lantern.video.app; A.exec('Mosaic', function (seq) { var c = seq.v[0].clips[0]; c.mask = null; c.fx.push(Lantern.video.fx.make('mosaic')); }); }"); tk.wait_for_timeout(300)
+    sec = ".vd-sec:has(.vd-sech strong:text-is('Mosaic')) "
+    tk.select_option(sec + ".vd-prop:has(.vd-plab:text-is('Mask')) select", "Rectangle"); tk.wait_for_timeout(300)
+    for lab, v in (("Mask centre X", 80), ("Mask centre Y", 120), ("Mask width", 40), ("Mask height", 40)):
+        i = tk.locator(sec + ".vd-prop:has(.vd-plab:text-is('%s')) input[type=number]" % lab); i.fill(str(v)); i.dispatch_event("change"); tk.wait_for_timeout(150)
+    tk.click(sec + "button:text-is('Track forward')"); tk.wait_for_function("() => /Tracked/.test(Lantern.video.app.msg)", timeout=120000)
+    span = tk.evaluate("""() => new Promise(function (ok) { var A = Lantern.video.app, R = Lantern.video.render, e = A.seq.v[0].clips[0].fx[0]; R.frame(A.p, A.seq, 45, { scale: 1, full: true }).then(function (c) { var a = c.getContext('2d').getImageData(0, 0, 320, 240).data; e.on = false; R.frame(A.p, A.seq, 45, { scale: 1, full: true }).then(function (c2) { var b = c2.getContext('2d').getImageData(0, 0, 320, 240).data, x0 = 999, x1 = -1; for (var y = 0; y < 240; y++) for (var x = 0; x < 320; x++) { var q = (y * 320 + x) * 4; if (Math.abs(a[q] - b[q]) + Math.abs(a[q + 1] - b[q + 1]) > 30) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); } } e.on = true; ok([x0, x1]); }); }); })""")
+    check("a mask on Mosaic, placed by its numbers and tracked: at frame 45 the blocks are where the patch went (x 195 to 235, within the feather)", 185 <= span[0] <= 200 and 230 <= span[1] <= 245, span)
+    # Time Remapping: the stopwatch on Speed at frame 0 (100%), then 50% typed at frame 30: the picture slows through the ramp
+    tk.evaluate("() => { var A = Lantern.video.app; A.exec('clear', function (seq) { seq.v[0].clips[0].fx = []; }); A.seq.playhead = 0; A.refresh('all'); }"); tk.wait_for_timeout(200)
+    row = ".vd-sec:has(.vd-sech strong:text-is('Time Remapping')) .vd-prop:has(.vd-plab:text-is('Speed (%)')) "
+    tk.click(row + ".vd-sw"); tk.wait_for_timeout(200)
+    tk.evaluate("() => { var A = Lantern.video.app; A.seq.playhead = 30; A.refresh('all'); }"); tk.wait_for_timeout(200)
+    i = tk.locator(row + "input[type=number]"); i.fill("50"); i.dispatch_event("change"); tk.wait_for_timeout(300)
+    def xpos(f):
+        d = tk.evaluate("(f) => new Promise(function (ok) { var A = Lantern.video.app; Lantern.video.render.frame(A.p, A.seq, f, { scale: 1, full: true }).then(function (c) { ok(Array.from(c.getContext('2d').getImageData(0, 120, 320, 1).data)); }); })", f)
+        r = np.array(d, float).reshape(320, 4)[:, :3]; xs = np.where(np.abs(r - r[5]).sum(1) > 40)[0]; return int(xs.min()) if len(xs) else -999
+    src = [tk.evaluate("(f) => Lantern.video.seq.srcTime(Lantern.video.app.seq.v[0].clips[0], f, Lantern.video.app.seq)", f) for f in (30, 59)]
+    want = sum((100 - 50 * j / 30) / 100 / 30 for j in range(30)); moved = xpos(59) - xpos(30)
+    check("Time Remapping (100% to 50% over the first second, then 50%): the source at frames 30 and 59 is the sum of the speeds, and the picture moves that far (3 pixels a source frame)", abs(src[0] - want) < 1e-9 and abs(src[1] - want - 29 * 0.5 / 30) < 1e-9 and abs(moved - 3 * (int(src[1] * 30 + 1e-6) - int(src[0] * 30 + 1e-6))) <= 3, (src, want, moved))
+    tk.close()
+    # --- Warp Stabilizer: a shaky camera (a 320 x 240 window moved and turned at random over a still textured picture)
+    rng = np.random.default_rng(3); nz = rng.random((360, 480)); k = np.exp(-(np.fft.fftfreq(360)[:, None] ** 2 + np.fft.fftfreq(480)[None, :] ** 2) * (2 * np.pi * 2.5) ** 2 / 2)
+    nz = np.fft.ifft2(np.fft.fft2(nz) * k).real; nz = (nz - nz.min()) / (nz.max() - nz.min())
+    open(P("still.rgb"), "wb").write(np.stack([nz * 230 + 20, nz * 200 + 30, nz * 160 + 60], -1).astype(np.uint8).tobytes())
+    ff("-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "480x360", "-i", P("still.rgb"), "-frames:v", "1", P("still.png"))
+    ff("-loop", "1", "-i", P("still.png"), "-vf", "fps=30,rotate=a='0.02*sin(n*0.9)':c=none:ow=480:oh=360,crop=320:240:x='80+12*sin(n*1.3)+6*sin(n*0.31)':y='60+9*cos(n*1.7)'", "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "12", P("shake.mp4"))
+    def pc(a, b):
+        w = np.outer(np.hanning(a.shape[0]), np.hanning(a.shape[1])); R = np.fft.fft2((a - a.mean()) * w).conj() * np.fft.fft2((b - b.mean()) * w); R /= np.abs(R) + 1e-9; r = np.fft.ifft2(R).real
+        y, x = np.unravel_index(np.argmax(r), r.shape); return abs(x if x < a.shape[1] / 2 else x - a.shape[1]) + abs(y if y < a.shape[0] / 2 else y - a.shape[0])
+    st = ctx.new_page(); st.add_init_script("window.showSaveFilePicker = undefined;"); st.on("pageerror", lambda e: errs.append(str(e)[:300]))
+    st.goto("http://127.0.0.1:%d/index.html#video" % port); st.wait_for_selector("text=New project from video files", timeout=60000)
+    st.set_input_files(".vd-start input[type=file][multiple]", [P("shake.mp4")]); st.wait_for_function("() => Lantern.video.seq.all(Lantern.video.app.seq).length === 1", timeout=30000)
+    st.evaluate("() => { var A = Lantern.video.app, v = A.seq.v[0].clips[0]; A.sel = [v.id]; A.seq.playhead = 0; A.refresh('all'); }"); st.wait_for_timeout(300)
+    st.click(".vd-tab:text-is('Effects')"); st.fill("input[placeholder='Find an effect']", "warp"); st.click(".vd-fxitem:text-is('Warp Stabilizer')"); st.wait_for_timeout(300)
+    added = st.evaluate("() => Lantern.video.app.msg"); st.click(".vd-tab:text-is('Effect Controls')"); st.wait_for_timeout(200)
+    sec = ".vd-sec:has(.vd-sech strong:text-is('Warp Stabilizer')) "
+    st.click(sec + "button:text-is('Analyze')"); st.wait_for_function("() => /Analysed/.test(Lantern.video.app.msg)", timeout=180000)
+    def rend(f, on):
+        return np.array(st.evaluate("""(a) => new Promise(function (ok) { var A = Lantern.video.app, e = A.seq.v[0].clips[0].fx[0]; e.on = a[1]; Lantern.video.render.frame(A.p, A.seq, a[0], { scale: 1, full: true }).then(function (c) { var d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, o = []; for (var i = 0; i < d.length; i += 4) o.push(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]); e.on = true; ok(o); }); })""", [f, on]), float).reshape(240, 320)[60:180, 80:240]
+    st.select_option(sec + ".vd-prop:has(.vd-plab:text-is('Result')) select", "No Motion"); st.wait_for_timeout(200)
+    on = [rend(f, True) for f in range(0, 40, 3)]; off = [rend(f, False) for f in range(0, 40, 3)]
+    m_on = np.mean([pc(on[0], x) for x in on[1:]]); m_off = np.mean([pc(off[0], x) for x in off[1:]])
+    check("Warp Stabilizer from the Effects panel, Analyze, No Motion: a camera shaking about 17 pixels holds within a pixel of its first frame", "Analyze" in added and m_off > 8 and m_on <= 1, (added, m_off, m_on))
+    st.select_option(sec + ".vd-prop:has(.vd-plab:text-is('Result')) select", "Smooth Motion"); st.wait_for_timeout(200)
+    on = [rend(f, True) for f in range(0, 20)]
+    jit = np.mean([pc(on[i], on[i + 1]) for i in range(19)])
+    check("Warp Stabilizer, Smooth Motion: the frame-to-frame shake is gone (under a pixel a frame)", jit < 1, jit)
+    # an effect preset: saved from Effect Controls, put on a clip from the Effects panel (without the analysis, which is the clip's own)
+    st.fill("input[placeholder='Preset name']", "Steady"); st.click("button:text-is('Save effects as preset')"); st.wait_for_timeout(200)
+    st.evaluate("() => { var A = Lantern.video.app; A.exec('clear', function (seq) { seq.v[0].clips[0].fx = []; }); }")
+    st.click(".vd-tab:text-is('Effects')"); st.fill("input[placeholder='Find an effect']", ""); st.click(".vd-fxitem:text-is('Steady')"); st.wait_for_timeout(200)
+    fx = st.evaluate("() => Lantern.video.app.seq.v[0].clips[0].fx.map(function (e) { return [e.type, e.p.result, !!e.data]; })")
+    check("Save effects as preset, then the preset from the Effects panel: the same effect and settings on the clip, the analysis not carried", fx == [["warpStabilizer", "Smooth Motion", False]], fx)
+    st.evaluate("() => Lantern.video.cmd.dropPreset('Steady')")
+    st.close()
     # --- a phone-sized window
     ph = ctx.new_page(); ph.set_viewport_size({"width": 390, "height": 844}); ph.add_init_script("window.showSaveFilePicker = undefined;")
     ph.goto("http://127.0.0.1:%d/index.html#video" % port); ph.wait_for_selector("text=New project from video files", timeout=60000)

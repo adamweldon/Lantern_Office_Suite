@@ -6,13 +6,13 @@
 # mixer's resampling, EDL and Final Cut Pro XML both ways, captions, blend modes, scene cuts and sync by sound.
 # The modules run in Node, taken from src/lantern.inner.html between their markers. A check that needs a program not on
 # the machine says SKIP. Usage: python3 tests/video_algos.py
-import os, re, sys, json, shutil, subprocess, tempfile
+import os, re, sys, json, math, shutil, subprocess, tempfile
 import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SRC = open(os.path.join(ROOT, "src", "lantern.inner.html"), encoding="utf-8").read()
 NAMES = ["VIDEO_TIME", "VIDEO_BYTES", "VIDEO_MP4_READ", "VIDEO_MKV_READ", "VIDEO_RIFF", "VIDEO_MP4_WRITE", "VIDEO_WEBM_WRITE", "VIDEO_GIF_WRITE", "VIDEO_SEQ", "VIDEO_EDIT", "VIDEO_KEYS",
          "VIDEO_COLOR", "VIDEO_FX", "VIDEO_LUMETRI", "VIDEO_FILT", "VIDEO_FX_IMAGE", "VIDEO_FX_SPACE", "VIDEO_FX_KEY", "VIDEO_TRANS", "VIDEO_TITLE", "VIDEO_CAPTIONS", "VIDEO_AFX",
-         "VIDEO_LOUD", "VIDEO_MIX", "VIDEO_BLEND", "VIDEO_MASK", "VIDEO_SCOPES", "VIDEO_XCHG"]
+         "VIDEO_LOUD", "VIDEO_MIX", "VIDEO_BLEND", "VIDEO_MASK", "VIDEO_SCOPES", "VIDEO_STAB", "VIDEO_XCHG"]
 code = "".join(re.search(r"// MODULE: %s - START\n.*?// MODULE: %s - END\n" % (n, n), SRC, re.S).group(0) for n in NAMES)
 OUT = tempfile.mkdtemp(prefix="video_algos_")
 lib = os.path.join(OUT, "lib.js")
@@ -139,7 +139,7 @@ r = run(r"""var S = V.seq, E = V.edit, T = V.time, out = {}, p = S.project(), se
   var t0 = S.srcTime(rc, 0, s2), t59 = S.srcTime(rc, 59, s2); var rr = E.split(s2, s2.v[0], rc, 30); out.rev = [+t0.toFixed(6), +t59.toFixed(6), +S.srcTime(rc, 0, s2).toFixed(6), +S.srcTime(rr, 30, s2).toFixed(6), +S.srcTime(rr, 59, s2).toFixed(6)];
   // ripple trim keeps linked sound with its picture
   var q2 = S.project(), s3 = q2.seqs[q2.active]; s3.rate = T.rate(30, 1); q2.media.m = { id: 'm', kind: 'video', dur: 10 }; var l = 'L1', v1 = S.clip({ media: 'm', start: 0, dur: 60, link: l }), a1b = S.clip({ media: 'm', start: 0, dur: 60, link: l }), v2 = S.clip({ media: 'm', start: 60, dur: 30, srcIn: 5 }), a2 = S.clip({ media: 'm', start: 60, dur: 30, srcIn: 5 });
-  s3.v[0].clips.push(v1, v2); s3.a[0].clips.push(a1b, a2); var got = E.trimHead(q2, s3, s3.v[0], v1, 15, 'ripple'); E.trimHead(q2, s3, s3.a[0], a1b, got, 'keep');
+  s3.v[0].clips.push(v1, v2); s3.a[0].clips.push(a1b, a2); E.trimHead(q2, s3, s3.v[0], v1, 15, 'ripple', S.partners(s3, v1));
   out.rip = [v1.start, v1.dur, +v1.srcIn.toFixed(4), a1b.start, a1b.dur, +a1b.srcIn.toFixed(4), v2.start, a2.start];
   var K = V.keys, list = [{ f: 0, v: 0, i: 'ease' }, { f: 10, v: 100, i: 'linear' }, { f: 20, v: 50, i: 'hold' }, { f: 30, v: 0 }];
   out.keys = [K.value(list, 5), +K.value(list, 2).toFixed(6), K.value(list, 15), K.value(list, -3), K.value(list, 25), K.value(list, 40)];
@@ -156,7 +156,7 @@ check("rate stretch: a clip with one right after it cannot grow; the last clip d
 check("after every edit: no overlaps, no clip past its media", r["sane2"])
 check("extract shortens the sequence by its range; lift leaves a gap", r["ext"] == 10 and r["lift"] == 5, (r["ext"], r["lift"]))
 check("a reversed clip plays its source backwards, and cut in two the halves still do", r["rev"] == [3.966667, 2.0, 3.966667, 2.966667, 2.0], r["rev"])
-check("a ripple trim keeps the linked sound with its picture and moves what follows", r["rip"] == [0, 45, 0.5, 0, 45, 0.5, 45, 45], r["rip"])
+check("a ripple trim (its linked sound trimmed with it) keeps the sound with its picture and moves what follows, once", r["rip"] == [0, 45, 0.5, 0, 45, 0.5, 45, 45], r["rip"])
 check("keyframes: ease (3u^2 - 2u^3), linear, hold, before the first and after the last", r["keys"] == [50, 10.4, 75, 0, 50, 0], r["keys"])
 check("Auto Bezier passes a straight line through equally spaced keys", abs(r["auto"][0] - 5) < 1e-9 and abs(r["auto"][1] - 15) < 1e-9, r["auto"])
 # --- the mixer
@@ -168,6 +168,11 @@ r = run(r"""var S = V.seq, T = V.time, out = {}, sr0 = 44100, n0 = sr0 * 3, d = 
   c.vol = -6; V.mix.clear(); o = V.mix.range(p, seq, 0, 48000); var rms = 0; for (k = 0; k < 48000; k++) rms += o[0][k] * o[0][k]; out.vol = 20 * Math.log10(Math.sqrt(rms / 48000) / (0.5 / Math.SQRT2));
   c.vol = 0; c.pan = -100; V.mix.clear(); o = V.mix.range(p, seq, 0, 4800); out.pan = [Math.max.apply(null, Array.prototype.slice.call(o[0])), Math.max.apply(null, Array.prototype.slice.call(o[1]))];
   c.pan = 0; c.speed = 2; c.dur = 30; V.mix.clear(); o = V.mix.range(p, seq, 0, 48000); var zc = 0; for (k = 1; k < 24000; k++) if ((o[0][k-1] < 0) !== (o[0][k] < 0)) zc++; out.pitch = zc;
+  // Maintain Audio Pitch: a chord of 300 and 700 Hz at 200% and 50%, kept at its pitch and level, the clip's length filled
+  var d2 = new Float32Array(n0); for (i = 0; i < n0; i++) d2[i] = 0.3 * Math.sin(2 * Math.PI * 300 * i / sr0) + 0.2 * Math.sin(2 * Math.PI * 700 * i / sr0);
+  V.media.rt.m2 = { audio: { sampleRate: sr0, data: [d2] } }; p.media.m2 = { id: 'm2', kind: 'audio', dur: 3 }; out.keep = [];
+  [[2, 30], [0.5, 120], [1.5, 40]].forEach(function (sd) { var c2 = S.clip({ media: 'm2', start: 0, dur: sd[1] }); c2.speed = sd[0]; c2.pitch = true; seq.a[1].clips = [c2]; seq.a[0].mute = true; V.mix.clear(); var o2 = V.mix.range(p, seq, 0, sd[1] * 1600 + 4800); out.keep.push([sd[0], Array.prototype.slice.call(o2[0], 2400, sd[1] * 1600 - 2400)]); });
+  seq.a[1].clips = []; seq.a[0].mute = false;
   seq.a[0].mute = true; V.mix.clear(); o = V.mix.range(p, seq, 0, 4800); out.mute = Math.max.apply(null, Array.prototype.slice.call(o[0]).map(Math.abs));
   out.fades = [V.mix.fade('constantPower', 0.5), V.mix.fade('constantGain', 0.5), V.mix.fade('exponential', 0.5)];
   return out;""")
@@ -176,7 +181,60 @@ check("Volume -6 dB is -6 dB (within 0.01)", abs(r["vol"] + 6) < 0.01, r["vol"])
 check("Pan hard left: all in the left ear", r["pan"][0] > 0.49 and r["pan"][1] < 1e-6, r["pan"])
 check("200% speed: 880 Hz from 440 (the sound plays faster, higher)", abs(r["pitch"] - 880) < 4, r["pitch"])
 check("a muted track is silent", r["mute"] == 0)
+for sp, sig in r["keep"]:
+    x = np.array(sig); spec = np.abs(np.fft.rfft(x * np.hanning(len(x)))); fq = np.fft.rfftfreq(len(x), 1 / 48000)
+    top = sorted(fq[np.argsort(spec)[-2:]]); lv = 20 * np.log10(np.sqrt(np.mean(x ** 2)) / np.sqrt(0.3 ** 2 / 2 + 0.2 ** 2 / 2))
+    check("Maintain Audio Pitch at %d%%: a chord of 300 and 700 Hz stays 300 and 700 Hz (within 2 Hz), its level within 1 dB, sound to the clip's end" % (sp * 100), abs(top[0] - 300) < 2 and abs(top[1] - 700) < 2 and abs(lv) < 1 and np.sqrt(np.mean(x[-2400:] ** 2)) > 0.1, (top, lv))
 check("transition curves at the middle: constant power 0.7071, constant gain 0.5, exponential 0.25", abs(r["fades"][0] - 0.70710678) < 1e-6 and r["fades"][1] == 0.5 and r["fades"][2] == 0.25, r["fades"])
+# --- Time Remapping and a nested sequence's sound
+r = run(r"""var S = V.seq, T = V.time, E = V.edit, out = {};
+  var p = S.project(), seq = p.seqs[p.active]; seq.rate = T.rate(30, 1); p.media.m = { id: 'm', kind: 'video', dur: 20, w: 320, h: 240 };
+  var c = S.clip({ media: 'm', start: 0, dur: 120, srcIn: 1 }); seq.v[0].clips.push(c);
+  c.keys.remap = [{ f: 0, v: 100, i: 'linear' }, { f: 30, v: 100, i: 'linear' }, { f: 60, v: 50, i: 'linear' }];
+  out.t = [S.srcTime(c, 30, seq), S.srcTime(c, 60, seq), S.srcTime(c, 90, seq), S.srcSpan(c, seq)];
+  var r = E.split(seq, seq.v[0], c, 45); out.split = [r.srcIn, S.srcTime(c, 45, seq), S.srcTime(r, 60, seq), out.t[1]];
+  E.trimHead(p, seq, seq.v[0], c, 10, 'plain'); out.trim = [c.start, S.srcTime(c, 30, seq)];
+  var sr = 48000, d = new Float32Array(sr * 4); for (var i = 0; i < d.length; i++) d[i] = 0.5 * Math.sin(2 * Math.PI * 440 * i / sr);
+  V.media = V.media || { rt: {} }; V.media.rt = V.media.rt || {}; V.media.rt.m1 = { audio: { sampleRate: sr, data: [d] } };
+  var q = S.project(), s2 = q.seqs[q.active]; s2.rate = T.rate(30, 1); q.media.m1 = { id: 'm1', kind: 'audio', dur: 4 };
+  var ns = S.sequence({ name: 'N' }); ns.rate = T.rate(30, 1); q.seqs[ns.id] = ns; ns.a[0].clips.push(S.clip({ media: 'm1', start: 0, dur: 90, srcIn: 0.5 }));
+  s2.a[0].clips.push(S.clip({ kind: 'nest', nest: ns.id, start: 30, dur: 60, srcIn: 1 })); V.mix.clear();
+  var o = V.mix.range(q, s2, 0, sr * 4), e = 0, before = 0; for (var s = sr + 100; s < sr * 3 - 100; s++) e = Math.max(e, Math.abs(o[0][s] - 0.5 * Math.sin(2 * Math.PI * 440 * (s / sr + 0.5))));
+  for (s = 0; s < sr - 1000; s++) before = Math.max(before, Math.abs(o[0][s])); out.nest = [e, before];
+  // Amplify keyed from 0 dB at frame 0 to -20 dB at frame 60: the level along the way
+  var s3 = q.seqs[q.active], c3 = S.clip({ media: 'm1', start: 0, dur: 90 }), e3 = V.fx.make('amplify'); e3.keys.gain = [{ f: 0, v: 0, i: 'linear' }, { f: 60, v: -20, i: 'linear' }]; c3.fx.push(e3); s3.a[0].clips = [c3]; V.mix.clear();
+  o = V.mix.range(q, s3, 0, sr * 3); out.amp = [12000, 24000, 48000, 96000].map(function (at) { var r2 = 0; for (var k = at - 800; k < at + 800; k++) r2 += o[0][k] * o[0][k]; return 20 * Math.log10(Math.sqrt(r2 / 1600) / (0.5 / Math.SQRT2)); });
+  return out;""")
+ramp = sum((100 - 50 * j / 30) / 100 / 30 for j in range(30))
+check("Time Remapping: the source shown is the sum of each frame's speed (100% for a second, a ramp to 50%, then 50%); the clip covers 1 s + the ramp + 1 s of source", all(abs(a - b) < 1e-9 for a, b in zip(r["t"], [2, 2 + ramp, 2.5 + ramp, 1 + ramp + 1])), r["t"])
+check("Time Remapping: a cut and a head trim keep each frame's source where it was", abs(r["split"][0] - r["split"][1]) < 1e-9 and abs(r["split"][2] - r["split"][3]) < 1e-9 and r["trim"][0] == 10 and abs(r["trim"][1] - 2) < 1e-9, (r["split"], r["trim"]))
+check("Amplify keyframed 0 dB to -20 dB over 60 frames: -2.5, -5, -10 and (after the last key) -20 dB at 0.25, 0.5, 1 and 2 s (within 0.1 dB)", all(abs(a - b) < 0.1 for a, b in zip(r["amp"], [-2.5, -5, -10, -20])), r["amp"])
+check("a nested sequence's clip plays that sequence's sound, to the sample (within 1e-6), silent before it starts", r["nest"][0] < 1e-6 and r["nest"][1] == 0, r["nest"])
+# --- Warp Stabilizer: the camera's move between two views of one picture, found again; the path held still or smoothed
+r = run(r"""var G = V.filt, S = V.stab, out = { fits: [] }, seed = 7;
+  function rnd() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
+  var big = { width: 480, height: 360, data: new Uint8ClampedArray(480 * 360 * 4) }; for (var i = 0; i < 480 * 360; i++) { var v = rnd() * 255; big.data[i * 4] = big.data[i * 4 + 1] = big.data[i * 4 + 2] = v; big.data[i * 4 + 3] = 255; } G.gaussian(big, 1.5);
+  // a 320 x 240 view: its point p (from its centre) shows the picture at R(th) s p + t
+  function view(th, s, tx, ty) { var W = 320, H = 240, d = new Uint8ClampedArray(W * H * 4), o = [0, 0, 0, 0], c = Math.cos(th) * s, sn = Math.sin(th) * s; for (var y = 0; y < H; y++) for (var x = 0; x < W; x++) { var px = x + 0.5 - W / 2, py = y + 0.5 - H / 2; G.sample(big, c * px - sn * py + tx + 240 - 0.5, sn * px + c * py + ty + 180 - 0.5, o); var q = (y * W + x) * 4; d[q] = o[0]; d[q + 1] = o[1]; d[q + 2] = o[2]; d[q + 3] = 255; } return { width: W, height: H, data: d }; }
+  var a = S.grey(view(0, 1, 0, 0));
+  [[0, 1, 7.3, -4.6], [0.03, 1, 2, 1], [-0.05, 1.04, -6, 3], [0, 1, 25, 18]].forEach(function (t) {
+    var m = S.motion(a, S.grey(view(t[0], t[1], t[2], t[3]))), c = Math.cos(t[0]) * t[1], sn = Math.sin(t[0]) * t[1], dd = c * c + sn * sn, ia = c / dd, ib = -sn / dd;
+    out.fits.push({ truth: [ia, ib, -(ia * t[2] - ib * t[3]), -(ib * t[2] + ia * t[3])], psr: m.psr, pos: m.pos });
+  });
+  // a path that shakes about a slow pan: No Motion undoes all of it, Smooth Motion keeps the pan
+  var steps = [], xs = [0]; for (i = 1; i < 60; i++) xs.push(0.5 * i + 6 * Math.sin(i * 1.3));
+  for (i = 1; i < 60; i++) steps.push({ pos: [1, 0, xs[i] - xs[i - 1], 0], psr: [1, 0, xs[i] - xs[i - 1], 0] });
+  var an = { steps: steps, w: 320, h: 240, fps: 30 }, still = S.plan(an, { result: 'No Motion', smooth: 50, method: 'Position' }, 320, 240), smooth = S.plan(an, { result: 'Smooth Motion', smooth: 50, method: 'Position' }, 320, 240);
+  out.still = still.mats.map(function (M, k) { return M[2] - xs[k]; }); out.zoom = still.zoom; out.maxx = Math.max.apply(null, xs.map(Math.abs));
+  out.smooth = smooth.mats.map(function (M, k) { return xs[k] - M[2]; });
+  return out;""")
+for f in r["fits"]:
+    t_, p_ = f["truth"], f["psr"]
+    ok = abs(p_[0] - t_[0]) < 0.003 and abs(p_[1] - t_[1]) < 0.002 and abs(p_[2] - t_[2]) < 0.35 and abs(p_[3] - t_[3]) < 0.35
+    check("Warp Stabilizer's analysis: a view moved (%.1f, %.1f), turned %.2f rad, scaled %.2f is found again (turn within 0.002, shift within 0.35 pixel)" % (-t_[2], -t_[3], -math.atan2(t_[1], t_[0]), 1 / math.hypot(t_[0], t_[1])), ok, f)
+sm = np.array(r["smooth"])
+check("No Motion: each frame moved back by exactly the camera's move (within 1e-9); Auto-scale enlarges just enough for the largest move (half-width / (half-width - move))", max(abs(x) for x in r["still"]) < 1e-9 and abs(r["zoom"] - 160 / (160 - r["maxx"])) < 1e-3, (r["still"][:5], r["zoom"], r["maxx"]))
+check("Smooth Motion (50%): the kept path has the pan (0.5 pixel a frame) and almost none of the shake (frame-to-frame change within 0.15 of the pan's)", np.max(np.abs(np.diff(sm[10:-10]) - 0.5)) < 0.15, np.diff(sm)[10:20])
 # --- loudness against ffmpeg's ebur128
 if FF:
     sigs = {"sine997_stereo": "sine=frequency=997:sample_rate=48000,volume=0.1", "pink_noise": "anoisesrc=color=pink:sample_rate=48000:amplitude=0.2:seed=3", "sine1k_441": "sine=frequency=1000:sample_rate=44100,volume=0.3", "tone_and_quiet": "sine=frequency=500:sample_rate=48000,volume='if(lt(t,4),0.5,0.005)':eval=frame"}
